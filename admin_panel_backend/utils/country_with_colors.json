@@ -1,0 +1,790 @@
+{
+    "AF": {
+      "name": "Afghanistan",
+      "color": "#a12b90"
+    },
+    "AL": {
+      "name": "Albania",
+      "color": "#ca1a2e"
+    },
+    "DZ": {
+      "name": "Algeria",
+      "color": "#ccb18f"
+    },
+    "AS": {
+      "name": "American Samoa",
+      "color": "#51dce4"
+    },
+    "AD": {
+      "name": "Andorra",
+      "color": "#e0f660"
+    },
+    "AO": {
+      "name": "Angola",
+      "color": "#a5db9d"
+    },
+    "AI": {
+      "name": "Anguilla",
+      "color": "#b88ea5"
+    },
+    "AQ": {
+      "name": "Antarctica",
+      "color": "#39025c"
+    },
+    "AG": {
+      "name": "Antigua and Barbuda",
+      "color": "#d4f59d"
+    },
+    "AR": {
+      "name": "Argentina",
+      "color": "#862329"
+    },
+    "AM": {
+      "name": "Armenia",
+      "color": "#ace38e"
+    },
+    "AW": {
+      "name": "Aruba",
+      "color": "#100a28"
+    },
+    "AU": {
+      "name": "Australia",
+      "color": "#0b2441"
+    },
+    "AT": {
+      "name": "Austria",
+      "color": "#caaace"
+    },
+    "AZ": {
+      "name": "Azerbaijan",
+      "color": "#7762de"
+    },
+    "BS": {
+      "name": "Bahamas",
+      "color": "#834b5c"
+    },
+    "BH": {
+      "name": "Bahrain",
+      "color": "#110df9"
+    },
+    "BD": {
+      "name": "Bangladesh",
+      "color": "#f37942"
+    },
+    "BB": {
+      "name": "Barbados",
+      "color": "#5cb6ea"
+    },
+    "BY": {
+      "name": "Belarus",
+      "color": "#4f8d00"
+    },
+    "BE": {
+      "name": "Belgium",
+      "color": "#d7cbf0"
+    },
+    "BZ": {
+      "name": "Belize",
+      "color": "#68de77"
+    },
+    "BJ": {
+      "name": "Benin",
+      "color": "#a715c6"
+    },
+    "BM": {
+      "name": "Bermuda",
+      "color": "#c5e30c"
+    },
+    "BT": {
+      "name": "Bhutan",
+      "color": "#2c20d3"
+    },
+    "BO": {
+      "name": "Bolivia",
+      "color": "#93b574"
+    },
+    "BA": {
+      "name": "Bosnia and Herzegovina",
+      "color": "#859059"
+    },
+    "BW": {
+      "name": "Botswana",
+      "color": "#5293c5"
+    },
+    "BR": {
+      "name": "Brazil",
+      "color": "#b9dc31"
+    },
+    "BN": {
+      "name": "Brunei",
+      "color": "#e48f70"
+    },
+    "BG": {
+      "name": "Bulgaria",
+      "color": "#17f0fc"
+    },
+    "BF": {
+      "name": "Burkina Faso",
+      "color": "#10d00a"
+    },
+    "BI": {
+      "name": "Burundi",
+      "color": "#33c47d"
+    },
+    "KH": {
+      "name": "Cambodia",
+      "color": "#4c254e"
+    },
+    "CM": {
+      "name": "Cameroon",
+      "color": "#a8095f"
+    },
+    "CA": {
+      "name": "Canada",
+      "color": "#ef288d"
+    },
+    "CV": {
+      "name": "Cape Verde",
+      "color": "#49a23b"
+    },
+    "CF": {
+      "name": "Central African Republic",
+      "color": "#c58b62"
+    },
+    "TD": {
+      "name": "Chad",
+      "color": "#e0183a"
+    },
+    "CL": {
+      "name": "Chile",
+      "color": "#fbd09f"
+    },
+    "CN": {
+      "name": "China",
+      "color": "#c2fd31"
+    },
+    "CO": {
+      "name": "Colombia",
+      "color": "#e4323a"
+    },
+    "KM": {
+      "name": "Comoros",
+      "color": "#6d93e3"
+    },
+    "CD": {
+      "name": "Congo (DRC)",
+      "color": "#ba6745"
+    },
+    "CG": {
+      "name": "Congo (Republic)",
+      "color": "#d41980"
+    },
+    "CR": {
+      "name": "Costa Rica",
+      "color": "#1a6659"
+    },
+    "HR": {
+      "name": "Croatia",
+      "color": "#1105da"
+    },
+    "CU": {
+      "name": "Cuba",
+      "color": "#8d61b5"
+    },
+    "CY": {
+      "name": "Cyprus",
+      "color": "#022928"
+    },
+    "CZ": {
+      "name": "Czech Republic",
+      "color": "#193924"
+    },
+    "DK": {
+      "name": "Denmark",
+      "color": "#a72c6f"
+    },
+    "DJ": {
+      "name": "Djibouti",
+      "color": "#d54ecb"
+    },
+    "DM": {
+      "name": "Dominica",
+      "color": "#a0836a"
+    },
+    "DO": {
+      "name": "Dominican Republic",
+      "color": "#0acf4c"
+    },
+    "EC": {
+      "name": "Ecuador",
+      "color": "#436868"
+    },
+    "EG": {
+      "name": "Egypt",
+      "color": "#f24944"
+    },
+    "SV": {
+      "name": "El Salvador",
+      "color": "#d1f311"
+    },
+    "GQ": {
+      "name": "Equatorial Guinea",
+      "color": "#1f267a"
+    },
+    "ER": {
+      "name": "Eritrea",
+      "color": "#001c9a"
+    },
+    "EE": {
+      "name": "Estonia",
+      "color": "#62e7e5"
+    },
+    "ET": {
+      "name": "Ethiopia",
+      "color": "#a4adff"
+    },
+    "FJ": {
+      "name": "Fiji",
+      "color": "#8f3cd5"
+    },
+    "FI": {
+      "name": "Finland",
+      "color": "#32e71e"
+    },
+    "FR": {
+      "name": "France",
+      "color": "#fc6cf0"
+    },
+    "GA": {
+      "name": "Gabon",
+      "color": "#18b015"
+    },
+    "GM": {
+      "name": "Gambia",
+      "color": "#5cd3aa"
+    },
+    "GE": {
+      "name": "Georgia",
+      "color": "#44fa66"
+    },
+    "DE": {
+      "name": "Germany",
+      "color": "#61d9c3"
+    },
+    "GH": {
+      "name": "Ghana",
+      "color": "#2c7146"
+    },
+    "GR": {
+      "name": "Greece",
+      "color": "#fe0ca4"
+    },
+    "GD": {
+      "name": "Grenada",
+      "color": "#d7816c"
+    },
+    "GT": {
+      "name": "Guatemala",
+      "color": "#a78099"
+    },
+    "GN": {
+      "name": "Guinea",
+      "color": "#fe545c"
+    },
+    "GW": {
+      "name": "Guinea-Bissau",
+      "color": "#fdcb8c"
+    },
+    "GY": {
+      "name": "Guyana",
+      "color": "#7f13f9"
+    },
+    "HT": {
+      "name": "Haiti",
+      "color": "#0165ca"
+    },
+    "HN": {
+      "name": "Honduras",
+      "color": "#fa668c"
+    },
+    "HU": {
+      "name": "Hungary",
+      "color": "#f10b2c"
+    },
+    "IS": {
+      "name": "Iceland",
+      "color": "#ea6633"
+    },
+    "IN": {
+      "name": "India",
+      "color": "#415862"
+    },
+    "ID": {
+      "name": "Indonesia",
+      "color": "#861a6c"
+    },
+    "IR": {
+      "name": "Iran",
+      "color": "#84ea81"
+    },
+    "IQ": {
+      "name": "Iraq",
+      "color": "#980350"
+    },
+    "IE": {
+      "name": "Ireland",
+      "color": "#b86e19"
+    },
+    "IL": {
+      "name": "Israel",
+      "color": "#2f3dc8"
+    },
+    "IT": {
+      "name": "Italy",
+      "color": "#177e0e"
+    },
+    "JM": {
+      "name": "Jamaica",
+      "color": "#ead40e"
+    },
+    "JP": {
+      "name": "Japan",
+      "color": "#f294b5"
+    },
+    "JO": {
+      "name": "Jordan",
+      "color": "#acc981"
+    },
+    "KZ": {
+      "name": "Kazakhstan",
+      "color": "#3d335e"
+    },
+    "KE": {
+      "name": "Kenya",
+      "color": "#913601"
+    },
+    "KI": {
+      "name": "Kiribati",
+      "color": "#de11be"
+    },
+    "KP": {
+      "name": "Korea (North)",
+      "color": "#3afb10"
+    },
+    "KR": {
+      "name": "Korea (South)",
+      "color": "#b01ec7"
+    },
+    "KW": {
+      "name": "Kuwait",
+      "color": "#22ce72"
+    },
+    "KG": {
+      "name": "Kyrgyzstan",
+      "color": "#2143c8"
+    },
+    "LA": {
+      "name": "Laos",
+      "color": "#4f3e6b"
+    },
+    "LV": {
+      "name": "Latvia",
+      "color": "#9e2e9e"
+    },
+    "LB": {
+      "name": "Lebanon",
+      "color": "#04ca54"
+    },
+    "LS": {
+      "name": "Lesotho",
+      "color": "#3ca0f1"
+    },
+    "LR": {
+      "name": "Liberia",
+      "color": "#67dc6e"
+    },
+    "LY": {
+      "name": "Libya",
+      "color": "#d39d0e"
+    },
+    "LI": {
+      "name": "Liechtenstein",
+      "color": "#209369"
+    },
+    "LT": {
+      "name": "Lithuania",
+      "color": "#763f42"
+    },
+    "LU": {
+      "name": "Luxembourg",
+      "color": "#f1ac45"
+    },
+    "MG": {
+      "name": "Madagascar",
+      "color": "#e98404"
+    },
+    "MW": {
+      "name": "Malawi",
+      "color": "#700785"
+    },
+    "MY": {
+      "name": "Malaysia",
+      "color": "#5b4170"
+    },
+    "MV": {
+      "name": "Maldives",
+      "color": "#a005cf"
+    },
+    "ML": {
+      "name": "Mali",
+      "color": "#560425"
+    },
+    "MT": {
+      "name": "Malta",
+      "color": "#1c79ab"
+    },
+    "MH": {
+      "name": "Marshall Islands",
+      "color": "#56ff93"
+    },
+    "MR": {
+      "name": "Mauritania",
+      "color": "#3d881f"
+    },
+    "MU": {
+      "name": "Mauritius",
+      "color": "#fc1645"
+    },
+    "MX": {
+      "name": "Mexico",
+      "color": "#99e880"
+    },
+    "FM": {
+      "name": "Micronesia",
+      "color": "#0bd4bb"
+    },
+    "MD": {
+      "name": "Moldova",
+      "color": "#7666d7"
+    },
+    "MC": {
+      "name": "Monaco",
+      "color": "#f48215"
+    },
+    "MN": {
+      "name": "Mongolia",
+      "color": "#f90cfc"
+    },
+    "ME": {
+      "name": "Montenegro",
+      "color": "#80c1b7"
+    },
+    "MA": {
+      "name": "Morocco",
+      "color": "#6ba00e"
+    },
+    "MZ": {
+      "name": "Mozambique",
+      "color": "#6668e0"
+    },
+    "MM": {
+      "name": "Myanmar",
+      "color": "#8f0cd9"
+    },
+    "NA": {
+      "name": "Namibia",
+      "color": "#f37126"
+    },
+    "NR": {
+      "name": "Nauru",
+      "color": "#120c6a"
+    },
+    "NP": {
+      "name": "Nepal",
+      "color": "#26ed96"
+    },
+    "NL": {
+      "name": "Netherlands",
+      "color": "#53f205"
+    },
+    "NZ": {
+      "name": "New Zealand",
+      "color": "#65c76a"
+    },
+    "NI": {
+      "name": "Nicaragua",
+      "color": "#d47988"
+    },
+    "NE": {
+      "name": "Niger",
+      "color": "#ace99f"
+    },
+    "NG": {
+      "name": "Nigeria",
+      "color": "#dfa6d6"
+    },
+    "NO": {
+      "name": "Norway",
+      "color": "#cbc8ef"
+    },
+    "OM": {
+      "name": "Oman",
+      "color": "#08dde7"
+    },
+    "PK": {
+      "name": "Pakistan",
+      "color": "#8c08bb"
+    },
+    "PW": {
+      "name": "Palau",
+      "color": "#1d4843"
+    },
+    "PA": {
+      "name": "Panama",
+      "color": "#33925a"
+    },
+    "PG": {
+      "name": "Papua New Guinea",
+      "color": "#97ea2c"
+    },
+    "PY": {
+      "name": "Paraguay",
+      "color": "#95ff81"
+    },
+    "PE": {
+      "name": "Peru",
+      "color": "#967c23"
+    },
+    "PH": {
+      "name": "Philippines",
+      "color": "#98cfbf"
+    },
+    "PL": {
+      "name": "Poland",
+      "color": "#6bfd7b"
+    },
+    "PT": {
+      "name": "Portugal",
+      "color": "#01d55b"
+    },
+    "QA": {
+      "name": "Qatar",
+      "color": "#21425c"
+    },
+    "RO": {
+      "name": "Romania",
+      "color": "#488a1a"
+    },
+    "RU": {
+      "name": "Russia",
+      "color": "#b432ce"
+    },
+    "RW": {
+      "name": "Rwanda",
+      "color": "#d48366"
+    },
+    "KN": {
+      "name": "Saint Kitts and Nevis",
+      "color": "#b90217"
+    },
+    "LC": {
+      "name": "Saint Lucia",
+      "color": "#d72a5f"
+    },
+    "VC": {
+      "name": "Saint Vincent and the Grenadines",
+      "color": "#ac7d3d"
+    },
+    "WS": {
+      "name": "Samoa",
+      "color": "#4e1f39"
+    },
+    "SM": {
+      "name": "San Marino",
+      "color": "#820725"
+    },
+    "ST": {
+      "name": "Sao Tome and Principe",
+      "color": "#300199"
+    },
+    "SA": {
+      "name": "Saudi Arabia",
+      "color": "#1b840a"
+    },
+    "SN": {
+      "name": "Senegal",
+      "color": "#ccf356"
+    },
+    "RS": {
+      "name": "Serbia",
+      "color": "#db2aef"
+    },
+    "SC": {
+      "name": "Seychelles",
+      "color": "#803b21"
+    },
+    "SL": {
+      "name": "Sierra Leone",
+      "color": "#866638"
+    },
+    "SG": {
+      "name": "Singapore",
+      "color": "#99a784"
+    },
+    "SK": {
+      "name": "Slovakia",
+      "color": "#43e4c8"
+    },
+    "SI": {
+      "name": "Slovenia",
+      "color": "#e3dd04"
+    },
+    "SB": {
+      "name": "Solomon Islands",
+      "color": "#347c6c"
+    },
+    "SO": {
+      "name": "Somalia",
+      "color": "#c6ef00"
+    },
+    "ZA": {
+      "name": "South Africa",
+      "color": "#2f87c7"
+    },
+    "SS": {
+      "name": "South Sudan",
+      "color": "#c38de7"
+    },
+    "ES": {
+      "name": "Spain",
+      "color": "#bb4a5b"
+    },
+    "LK": {
+      "name": "Sri Lanka",
+      "color": "#69fcc5"
+    },
+    "SD": {
+      "name": "Sudan",
+      "color": "#5591e1"
+    },
+    "SR": {
+      "name": "Suriname",
+      "color": "#9f8589"
+    },
+    "SZ": {
+      "name": "Swaziland",
+      "color": "#2a9116"
+    },
+    "SE": {
+      "name": "Sweden",
+      "color": "#a567d6"
+    },
+    "CH": {
+      "name": "Switzerland",
+      "color": "#3213c9"
+    },
+    "SY": {
+      "name": "Syria",
+      "color": "#30a029"
+    },
+    "TW": {
+      "name": "Taiwan",
+      "color": "#02bf5f"
+    },
+    "TJ": {
+      "name": "Tajikistan",
+      "color": "#731a73"
+    },
+    "TZ": {
+      "name": "Tanzania",
+      "color": "#ff36b1"
+    },
+    "TH": {
+      "name": "Thailand",
+      "color": "#ca2b7c"
+    },
+    "TL": {
+      "name": "Timor-Leste",
+      "color": "#b1ce05"
+    },
+    "TG": {
+      "name": "Togo",
+      "color": "#e4910b"
+    },
+    "TO": {
+      "name": "Tonga",
+      "color": "#907e6d"
+    },
+    "TT": {
+      "name": "Trinidad and Tobago",
+      "color": "#c0b9e1"
+    },
+    "TN": {
+      "name": "Tunisia",
+      "color": "#6e451b"
+    },
+    "TR": {
+      "name": "Turkey",
+      "color": "#c3a407"
+    },
+    "TM": {
+      "name": "Turkmenistan",
+      "color": "#93434b"
+    },
+    "TV": {
+      "name": "Tuvalu",
+      "color": "#8050cd"
+    },
+    "UG": {
+      "name": "Uganda",
+      "color": "#9ad735"
+    },
+    "UA": {
+      "name": "Ukraine",
+      "color": "#9f987d"
+    },
+    "AE": {
+      "name": "United Arab Emirates",
+      "color": "#878298"
+    },
+    "GB": {
+      "name": "United Kingdom",
+      "color": "#15482d"
+    },
+    "US": {
+      "name": "United States",
+      "color": "#9cd443"
+    },
+    "UY": {
+      "name": "Uruguay",
+      "color": "#ce98fa"
+    },
+    "UZ": {
+      "name": "Uzbekistan",
+      "color": "#8e13e1"
+    },
+    "VU": {
+      "name": "Vanuatu",
+      "color": "#6f94b0"
+    },
+    "VE": {
+      "name": "Venezuela",
+      "color": "#54d9cf"
+    },
+    "VN": {
+      "name": "Vietnam",
+      "color": "#b08a3d"
+    },
+    "YE": {
+      "name": "Yemen",
+      "color": "#0031da"
+    },
+    "ZM": {
+      "name": "Zambia",
+      "color": "#db0cc2"
+    },
+    "ZW": {
+      "name": "Zimbabwe",
+      "color": "#eb16f8"
+    }
+  }

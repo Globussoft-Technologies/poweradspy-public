@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <title>Daily Competitor Pulse</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet" />
+  <style>
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      width: 100% !important;
+      -webkit-text-size-adjust: 100%;
+      -ms-text-size-adjust: 100%;
+      background-color: #fff7ec;
+      font-family: "Inter", "Poppins", Arial, sans-serif;
+      color: #1a2240;
+    }
+    table, td { border-collapse: collapse !important; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+    a { text-decoration: none; }
+
+    .pulse-wrap { background-color: #fff7ec; padding: 28px 16px 48px; }
+    .pulse-shell { max-width: 720px; margin: 0 auto; }
+    .pulse-inner { padding: 0 30px; }
+
+    /* ===== HERO CARD ===== */
+    .pulse-hero-card {
+      background-color: #2e4374;
+      background-image:
+        radial-gradient(circle 180px at 8% 6%, rgba(243, 155, 44, 0.33) 0%, rgba(0,0,0,0) 70%),
+        radial-gradient(circle 160px at 92% 92%, rgba(243, 155, 44, 0.20) 0%, rgba(0,0,0,0) 70%),
+        linear-gradient(135deg, #2e4374 0%, #1f2c54 100%);
+      border-radius: 18px;
+      padding: 28px 30px 22px;
+      margin-bottom: 22px;
+      color: #ffffff;
+      box-shadow: 0 8px 24px rgba(28, 40, 80, 0.18);
+    }
+
+    .pulse-logo-row { margin-bottom: 16px; }
+    .pulse-logo-img {
+      max-width: 180px; height: auto; display: inline-block;
+    }
+
+    .pulse-date-row {
+      font-size: 11px; font-weight: 700;
+      color: #f39b2c;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+    .pulse-hero-text {
+      font-size: 32px; line-height: 36px; font-weight: 800;
+      letter-spacing: -0.6px;
+      margin: 0;
+      color: #ffffff;
+    }
+    .pulse-num-tag {
+      display: inline-block;
+      background: #f39b2c;
+      color: #2e4374;
+      padding: 0 10px;
+      border-radius: 6px;
+      font-weight: 900;
+      line-height: 36px;
+      letter-spacing: -0.6px;
+    }
+
+    .pulse-hero-divider {
+      height: 1px;
+      background: rgba(255,255,255,0.12);
+      margin: 22px 0 16px;
+    }
+    .pulse-hero-stats {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .pulse-hero-stat {
+      vertical-align: top;
+      padding: 0;
+    }
+    .pulse-hero-stat-label {
+      font-size: 10px; font-weight: 600;
+      color: #ffffff;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      opacity: 0.85;
+    }
+    .pulse-hero-stat-value {
+      font-size: 20px; font-weight: 800; color: #ffffff;
+      letter-spacing: -0.2px;
+      line-height: 24px;
+    }
+    .pulse-hero-stat-value.accent { color: #f39b2c; }
+
+    /* ===== Brand section header ===== */
+    .pulse-brand-head {
+      padding: 6px 6px 12px;
+    }
+    .pulse-brand-head-table { width: 100%; border-collapse: collapse; }
+    .pulse-brand-head-table td { vertical-align: middle; }
+    .pulse-brand-bar {
+      width: 5px; height: 22px;
+      background: #f39b2c;
+      border-radius: 4px;
+      display: inline-block;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    .pulse-brand-eyebrow {
+      display: inline-block;
+      font-size: 10px; font-weight: 700; color: #6b7590;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+    .pulse-brand-name {
+      display: inline-block;
+      font-size: 18px; font-weight: 800;
+      color: #1a2240; letter-spacing: -0.2px; line-height: 22px;
+      vertical-align: middle;
+      margin: 0;
+    }
+    .pulse-brand-comp-count {
+      font-size: 12px; color: #6b7590; font-weight: 400;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    /* ===== Brand white card (one per competitor) ===== */
+    .pulse-brand-card {
+      background: #ffffff;
+      border: 1px solid #f0e2c8;
+      border-radius: 14px;
+      padding: 18px 18px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 10px rgba(28, 40, 80, 0.04);
+    }
+
+    /* ===== Competitor head row ===== */
+    .pulse-comp-head-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+    .pulse-comp-head-table td { vertical-align: middle; }
+    .pulse-avatar {
+      width: 42px; height: 42px; border-radius: 50%;
+      color: #ffffff;
+      font-weight: 800; font-size: 21px;
+      text-align: center; line-height: 42px;
+      display: inline-block;
+      text-transform: uppercase; letter-spacing: -0.5px;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
+    }
+    .pulse-comp-name {
+      font-size: 16px; font-weight: 800; color: #1a2240;
+      margin: 0; line-height: 19px; letter-spacing: -0.1px;
+    }
+    .pulse-comp-domain {
+      font-size: 11.5px; color: #6b7590; margin: 2px 0 0; word-break: break-all;
+      font-weight: 400;
+    }
+    .pulse-view-pill {
+      display: inline-block;
+      background: #fff1d8;
+      color: #f39b2c !important;
+      font-size: 11px; font-weight: 700;
+      padding: 7px 12px; border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    /* ===== Ad layout row (V2 Alignment Fixes) ===== */
+    .pulse-ad-layout { width: 100% !important; }
+    .pulse-ad-layout td { vertical-align: top !important; }
+    .pulse-ad-primary-cell { width: 124px !important; }
+    .pulse-ad-mini-stack-cell { width: 66px !important; padding: 0 4px !important; }
+    table.pulse-ad-mini-stack { width: 100% !important; height: 124px !important; background: transparent !important; }
+    .pulse-ad-mini-wrap { height: 58px !important; max-height: 58px !important; padding: 0 !important; overflow: hidden !important; }
+    .pulse-ad-mini { height: 58px !important; max-height: 58px !important; }
+    .pulse-ad-mini > tbody > tr > td { height: 58px !important; max-height: 58px !important; box-sizing: border-box !important; overflow: hidden !important; }
+    .pulse-ad-mini-gap { height: 8px !important; max-height: 8px !important; background: transparent !important; padding: 0 !important; }
+    table.pulse-ad-primary { width: 100% !important; height: 124px !important; max-height: 124px !important; }
+    table.pulse-ad-primary > tbody > tr > td { height: 124px !important; max-height: 124px !important; box-sizing: border-box !important; overflow: hidden !important; vertical-align: top !important; }
+    .pulse-count-cell { padding: 0 4px !important; }
+    .pulse-count-link { display: block !important; height: 124px !important; border-radius: 10px !important; overflow: hidden !important; border: 1.5px solid #f0e2c8 !important; background: #f7f9fd !important; box-sizing: border-box !important; }
+    .pulse-count-inner { border: none !important; background: transparent !important; width: 100% !important; height: 100% !important; border-collapse: separate !important; border-spacing: 0 !important; border-radius: 10px !important; overflow: hidden !important; }
+    .pulse-count-value { font-size: 18px !important; font-weight: 800 !important; letter-spacing: -0.3px !important; }
+    .pulse-count-label { font-size: 13px !important; font-weight: 600 !important; }
+
+    /* Primary ad card */
+    .pulse-ad-primary {
+      background-color: #0a2540;
+      background-image:
+        radial-gradient(120% 80% at 0% 0%, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0) 55%),
+        linear-gradient(135deg, #0a2540 0%, #1568d4 100%);
+      border-radius: 10px;
+      height: 124px !important;
+      max-height: 124px !important;
+      min-height: 124px !important;
+      box-sizing: border-box;
+      padding: 10px;
+      color: #ffffff;
+      box-shadow: 0 1px 2px rgba(20, 30, 60, 0.14);
+      overflow: hidden !important;
+    }
+    /* Primary card uses a TABLE for the <td background> image pattern — pin its height too. */
+    table.pulse-ad-primary { height: 124px !important; max-height: 124px !important; }
+    table.pulse-ad-primary > tbody > tr > td { height: 124px !important; max-height: 124px !important; }
+    /* Platform icon imgs render at 16/14/12px; classes left for fallback */
+    .pulse-ad-icon-square { display: inline-block; vertical-align: middle; margin-bottom: 4px; }
+
+    .pulse-ad-sponsored {
+      font-size: 8px; font-weight: 600;
+      letter-spacing: 0.4px; text-transform: uppercase;
+      color: #ffffff;
+      margin: 0 0 4px;
+    }
+    /* Advertiser / post-owner name at the top of the creative card.
+       Bigger than the old "Sponsored" eyebrow so the brand reads first. */
+    .pulse-ad-owner {
+      font-size: 10px; font-weight: 700;
+      color: #ffffff;
+      margin: 0 0 4px;
+      letter-spacing: 0.1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pulse-ad-owner img { vertical-align: middle; margin-right: 4px; }
+    .pulse-ad-primary-title {
+      font-size: 10.5px; font-weight: 700; line-height: 12.5px;
+      color: #ffffff; margin: 0 0 3px;
+      letter-spacing: -0.1px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      word-break: break-word;
+    }
+    .pulse-ad-primary-body {
+      font-size: 8.5px; line-height: 11px;
+      color: #ffffff; margin: 0 0 5px;
+      font-weight: 400;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      word-break: break-word;
+      white-space: nowrap;       /* email clients that ignore line-clamp still won't wrap */
+      text-overflow: ellipsis;
+    }
+    .pulse-ad-primary-cta {
+      display: inline-block;
+      background: rgba(255,255,255,0.95);
+      color: #111111;
+      font-size: 8px; font-weight: 600;
+      letter-spacing: 0.2px;
+      padding: 3px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+
+    /* Empty-state placeholder ad card (when competitor has 0 creatives) */
+    .pulse-ad-empty-card {
+      background: #faf6ec;
+      border: 1px dashed #e0d6b8;
+      border-radius: 10px;
+      height: 124px;
+      box-sizing: border-box;
+      padding: 10px;
+      text-align: center;
+    }
+    .pulse-ad-empty-title {
+      font-size: 11px; font-weight: 700; color: #8b9aaf;
+      margin: 0 0 4px; line-height: 14px;
+    }
+    .pulse-ad-empty-sub {
+      font-size: 9px; color: #b8c0db; margin: 0; line-height: 12px;
+      font-weight: 500;
+    }
+
+    /* Mini stack: 58 + 8 (gap) + 58 = 124  → matches primary card height */
+    .pulse-ad-mini-stack {
+      border-collapse: separate;
+      border-spacing: 0;
+      height: 124px;          /* anchor the column so it always matches primary */
+    }
+    .pulse-ad-mini-stack .pulse-ad-mini-gap { height: 8px; line-height: 8px; font-size: 0; }
+    .pulse-ad-mini {
+      height: 58px !important;
+      box-sizing: border-box;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #ffffff;
+      box-shadow: 0 1px 2px rgba(20, 30, 60, 0.14);
+    }
+    .pulse-ad-mini-text {
+      font-size: 9.5px; font-weight: 700; line-height: 11px;
+      color: #ffffff; margin: 0;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      word-break: break-word;
+    }
+    .pulse-ad-mini-icon-sm {
+      display: inline-block; vertical-align: middle; margin-bottom: 4px;
+    }
+    .pulse-ad-mini-empty {
+      background: #f2ebda;
+    }
+    .pulse-ad-mini-empty .pulse-ad-mini-text { color: #8b9aaf; font-weight: 500; }
+
+    /* Count cells */
+    .pulse-count-cell {
+      vertical-align: top;
+    }
+    .pulse-ad-layout > tbody > tr > td.pulse-count-cell {
+      padding: 0 4px;
+    }
+    .pulse-ad-layout > tbody > tr > td.pulse-count-cell:last-child {
+      padding-right: 0;
+    }
+    /* Now rendered as a real <table> in buildCountCell — Gmail ignores
+       display:flex, which used to collapse this card's height. The table
+       attributes height="124" + style="height:124px" pin it reliably. */
+    .pulse-count-inner {
+      background: #f7f9fd;
+      border: 1px solid #f0e2c8;
+      border-radius: 8px;
+      height: 124px;
+      box-sizing: border-box;
+    }
+    .pulse-count-head {
+      margin-bottom: 0;
+      white-space: nowrap;
+    }
+    /* Adds a real gap between the platform icon (img) and the label
+       text — img+text don't get inherited margin from the inline-block
+       icon, so we set margin-right on the img itself via platformIconImg. */
+    .pulse-count-head img {
+      margin-right: 8px !important;
+      vertical-align: middle;
+    }
+    .pulse-count-icon-sm {
+      display: inline-block; vertical-align: middle; margin-right: 8px;
+    }
+    .pulse-count-label {
+      display: inline-block;
+      font-size: 12px; font-weight: 600;
+      color: #6b7590;
+      vertical-align: middle;
+      letter-spacing: 0.1px;
+    }
+    .pulse-count-value {
+      font-size: 18px; font-weight: 800; color: #1a2240;
+      line-height: 20px;
+      letter-spacing: -0.3px;
+    }
+    .pulse-count-suffix {
+      font-size: 9.5px; font-weight: 500;
+      color: #6b7590; line-height: 12px;
+      margin-left: 5px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    /* "62k ads all-time" subtitle below the divider */
+    .pulse-count-alltime {
+      font-size: 9.5px; font-weight: 600;
+      color: #6b7590;
+      white-space: nowrap;
+    }
+    .pulse-count-divider {
+      height: 1px;
+      background: rgba(243, 155, 44, 0.35);
+      margin: 0 0 6px 0;
+    }
+    .pulse-count-link {
+      color: #1a2240 !important;
+      display: block;
+    }
+
+    /* ===== Bottom CTA card ===== */
+    .pulse-cta-card {
+      background-color: #2e4374;
+      background-image: linear-gradient(135deg, #2e4374 0%, #1f2c54 100%);
+      border-radius: 18px;
+      padding: 28px;
+      margin: 14px 0 24px;
+      text-align: center;
+      color: #ffffff;
+    }
+    .pulse-cta-eyebrow {
+      font-size: 11px; font-weight: 700; color: #f39b2c;
+      text-transform: uppercase; letter-spacing: 1.5px;
+      margin-bottom: 8px;
+    }
+    .pulse-cta-title {
+      font-size: 20px; font-weight: 800; color: #ffffff;
+      margin: 0 0 6px; letter-spacing: -0.3px;
+    }
+    .pulse-cta-sub {
+      font-size: 12.5px; color: #b8c0db; margin: 0 0 18px;
+    }
+    .pulse-cta-btn {
+      display: inline-block; background: #f39b2c; color: #2e4374 !important;
+      padding: 11px 22px; border-radius: 999px;
+      font-size: 13px; font-weight: 800; letter-spacing: 0.3px;
+    }
+
+    /* ===== Footer ===== */
+    .pulse-foot { text-align: center; font-size: 11.5px; color: #8b9aaf; line-height: 18px; padding: 8px; }
+    .pulse-foot-stats { color: #6b7590; margin-bottom: 6px; }
+    .pulse-foot-stats b { color: #1a2240; font-weight: 700; }
+    .pulse-foot-links a { color: #6b7590; text-decoration: underline; }
+    .pulse-foot-links span { margin: 0 6px; color: #c8c0a8; }
+
+    @media only screen and (max-width: 620px) {
+      .pulse-inner { padding: 0 12px; }
+      .pulse-shell { max-width: 100% !important; }
+      .pulse-wrap { padding: 16px 8px 32px !important; }
+      .pulse-hero-card { padding: 22px 18px 18px !important; border-radius: 14px !important; }
+      .pulse-hero-text { font-size: 22px !important; line-height: 26px !important; }
+      .pulse-num-tag { line-height: 26px !important; }
+      .pulse-hero-stat-value { font-size: 18px !important; line-height: 22px !important; }
+
+      /* ===== Stack the ad row on mobile so cards never overflow =====
+         Order: primary creative (full width) → mini stack (full width)
+         → count cards (2-up grid, 50% each). */
+      .pulse-brand-card { padding: 14px 12px !important; border-radius: 12px !important; }
+      .pulse-comp-name { font-size: 15px !important; }
+      .pulse-comp-domain { font-size: 11px !important; }
+
+      /* Layout table becomes a vertical stack on mobile. */
+      .pulse-ad-layout {
+        width: 100% !important;
+        max-width: 100% !important;
+        display: block !important;
+        table-layout: auto !important;
+      }
+      /* Default for non-count cells: full-width block, stacked. */
+      .pulse-ad-layout > tbody > tr > td.pulse-ad-primary-cell,
+      .pulse-ad-layout > tr > td.pulse-ad-primary-cell,
+      .pulse-ad-layout > tbody > tr > td.pulse-ad-mini-stack-cell,
+      .pulse-ad-layout > tr > td.pulse-ad-mini-stack-cell {
+        width: 100% !important;
+        max-width: 100% !important;
+        display: block !important;
+        box-sizing: border-box !important;
+        padding: 0 0 8px 0 !important;
+      }
+      /* Primary creative card: stretch to row width, taller for mobile. */
+      .pulse-ad-primary-cell .pulse-ad-primary,
+      .pulse-ad-primary-cell table.pulse-ad-primary {
+        width: 100% !important;
+        height: 180px !important;
+        max-height: 180px !important;
+      }
+      .pulse-ad-primary-cell table.pulse-ad-primary > tbody > tr > td {
+        height: 180px !important;
+      }
+      .pulse-ad-empty-card {
+        width: 100% !important;
+        height: 120px !important;
+      }
+      /* Mini cards on mobile: stack column must equal primary height
+         (180px) — so each mini is (180 - 8 gap) / 2 = 86px. Anything
+         else makes the row look unbalanced when viewed side-by-side. */
+      .pulse-ad-mini-stack {
+        width: 100% !important;
+        height: 180px !important;
+      }
+      .pulse-ad-mini-stack-cell .pulse-ad-mini {
+        width: 100% !important;
+        height: 86px !important;
+        padding: 10px 12px !important;
+      }
+
+      /* Count cells: 2-up grid. Use td.pulse-count-cell to MATCH the
+         specificity of the broader selectors above, and place this rule
+         AFTER them so it wins on tie. Outer .pulse-ad-layout is `display:
+         block` so we use inline-block to flow two cards per row. */
+      .pulse-ad-layout > tbody > tr > td.pulse-count-cell,
+      .pulse-ad-layout > tr > td.pulse-count-cell {
+        width: 50% !important;
+        max-width: 50% !important;
+        display: inline-block !important;
+        padding: 0 4px 8px 0 !important;
+        vertical-align: top !important;
+        box-sizing: border-box !important;
+      }
+      .pulse-ad-layout > tbody > tr > td.pulse-count-cell:nth-of-type(even),
+      .pulse-ad-layout > tr > td.pulse-count-cell:nth-of-type(even) {
+        padding-right: 0 !important;
+        padding-left: 4px !important;
+      }
+      .pulse-count-inner { width: 100% !important; height: 86px !important; padding: 10px !important; }
+      .pulse-count-value { font-size: 18px !important; line-height: 20px !important; }
+
+      /* CTA card */
+      .pulse-cta-card { padding: 22px 18px !important; border-radius: 14px !important; }
+      .pulse-cta-title { font-size: 17px !important; line-height: 22px !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="pulse-wrap">
+    <div class="pulse-shell">
+
+      <!-- HERO CARD -->
+      <div class="pulse-hero-card">
+        <div class="pulse-logo-row">
+          <img src="https://competitor.poweradspy.com/public/poweradspy-logo.webp" alt="PowerAdSpy" width="180" class="pulse-logo-img" />
+        </div>
+        <div class="pulse-date-row">Daily Competitor Pulse · Thu, May 28</div>
+        <h1 class="pulse-hero-text">
+          Hey prashant_test —<br />
+          your rivals shipped <span class="pulse-num-tag">323</span> ads in last 24 hours.
+        </h1>
+        <div class="pulse-hero-divider"></div>
+        <table role="presentation" class="pulse-hero-stats" cellpadding="0" cellspacing="0" width="100%">
+          <tr>
+            <td class="pulse-hero-stat" width="33%" align="left">
+              <div class="pulse-hero-stat-label">Brands</div>
+              <div class="pulse-hero-stat-value">1</div>
+            </td>
+            <td class="pulse-hero-stat" width="34%" align="left">
+              <div class="pulse-hero-stat-label">Competitors</div>
+              <div class="pulse-hero-stat-value">1</div>
+            </td>
+            <td class="pulse-hero-stat" width="33%" align="left">
+              <div class="pulse-hero-stat-label">New ads</div>
+              <div class="pulse-hero-stat-value accent">323</div>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      
+    <div class="pulse-brand-head">
+      <table role="presentation" class="pulse-brand-head-table" cellpadding="0" cellspacing="0">
+        <tr>
+          <td>
+            <span class="pulse-brand-bar"></span><span class="pulse-brand-eyebrow">Your brand</span><h2 class="pulse-brand-name">bewakoof</h2>
+          </td>
+          <td align="right" class="pulse-brand-comp-count">1 competitor</td>
+        </tr>
+      </table>
+    </div>
+    <div class="pulse-brand-card">
+    <table role="presentation" class="pulse-comp-head-table" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="52">
+          <span class="pulse-avatar" style="background:#0a2540;">A</span>
+        </td>
+        <td>
+          <p class="pulse-comp-name">ajio</p>
+          <p class="pulse-comp-domain">ajio.com</p>
+        </td>
+        <td align="right" width="80">
+          <a href="https://platform.poweradspy.com/?advertiser=ajio" target="_blank" class="pulse-view-pill">View all →</a>
+        </td>
+      </tr>
+    </table>
+    <table role="presentation" class="pulse-ad-layout" cellpadding="0" cellspacing="0" border="0" width="624" height="124" style="width:624px; height:124px; max-width:100%; border-collapse:separate;"><tr>
+    <td class="pulse-ad-primary-cell" width="124" style="width:124px;" valign="top">
+      <!--[if mso]>
+      <v:rect xmlns:v="urn:schemas-microsoft-com:vml" stroked="false" filled="true"
+              style="width:124px;height:124px;mso-position-horizontal:left;">
+        <v:fill type="frame" src="https://media.globussoft.com/pas-prod/stream/fb/thumbnail/202511/39177323.webp" color="#0a2540" />
+        <v:textbox inset="10px,10px,10px,10px">
+      <![endif]-->
+      <table role="presentation" class="pulse-ad-primary" cellpadding="0" cellspacing="0" border="0"
+             width="124" height="124"
+             style="width:124px; height:124px; max-height:124px; border-collapse:separate; border-radius:10px; overflow:hidden; background-color:#0a2540; box-shadow:0 1px 2px rgba(20,30,60,0.14);">
+        <tr>
+          <td width="124" height="124" valign="top" bgcolor="#0a2540"
+              style="width:124px; height:124px; max-height:124px; padding:10px; color:#ffffff; background-color:#0a2540; background-image: linear-gradient(180deg, rgba(10,37,64,0.20) 0%, rgba(10,37,64,0.85) 100%), url('https://media.globussoft.com/pas-prod/stream/fb/thumbnail/202511/39177323.webp'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+            <!-- TOP: icon + advertiser (post_owner_name) -->
+            <p class="pulse-ad-owner" style="margin:0 0 4px;"><img src="https://competitor.poweradspy.com/public/fb.png" alt="Facebook" width="18" height="18" style="display:inline-block;width:18px;height:18px;border:0;outline:none;vertical-align:middle;background:transparent;" />&nbsp;ajio</p>
+            <!-- MIDDLE: ad title -->
+            <p class="pulse-ad-primary-title" style="margin:0 0 6px;">TERBAIK &amp; TERAMAN</p>
+            <!-- BOTTOM: CTA chip (only when present) -->
+            <span class="pulse-ad-primary-cta">Sign up</span>
+          </td>
+        </tr>
+      </table>
+      <!--[if mso]>
+        </v:textbox>
+      </v:rect>
+      <![endif]-->
+    </td>
+    <td class="pulse-ad-mini-stack-cell" valign="top" width="66" height="124"
+        style="width:66px; height:124px; vertical-align:top;">
+      <table role="presentation" class="pulse-ad-mini-stack" cellpadding="0" cellspacing="0" border="0"
+             width="66" height="124"
+             style="width:66px; height:124px; border-collapse:separate;">
+        
+    <tr><td class="pulse-ad-mini-wrap" style="padding:0;">
+      <table role="presentation" class="pulse-ad-mini" cellpadding="0" cellspacing="0" border="0"
+             width="100%" height="58"
+             style="width:100%; height:58px; max-height:58px; border-collapse:separate; border-radius:8px; overflow:hidden; background-color:#0a2540; box-shadow:0 1px 2px rgba(20,30,60,0.14);">
+        <tr>
+          <td height="58" valign="middle" bgcolor="#0a2540"
+              style="height:58px; max-height:58px; padding:6px 8px; color:#ffffff; background-color:#0a2540; background-image: linear-gradient(180deg, rgba(10,37,64,0.22) 0%, rgba(10,37,64,0.82) 100%), url('https://media.globussoft.com/pas-prod/stream/insta/adImage/202605/57782019.jpg'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+            <p class="pulse-ad-mini-text" style="margin:0;"><img src="https://competitor.poweradspy.com/public/ig.png" alt="Instagram" width="14" height="14" style="display:inline-block;width:14px;height:14px;border:0;outline:none;vertical-align:middle;background:transparent;" />&nbsp;AjioLuxe</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+        <tr><td class="pulse-ad-mini-gap" height="8" style="height:8px; line-height:8px; font-size:0;">&nbsp;</td></tr>
+        
+    <tr><td class="pulse-ad-mini-wrap" style="padding:0;">
+      <table role="presentation" class="pulse-ad-mini" cellpadding="0" cellspacing="0" border="0"
+             width="100%" height="58"
+             style="width:100%; height:58px; max-height:58px; border-collapse:separate; border-radius:8px; overflow:hidden; background-color:#0a2540; box-shadow:0 1px 2px rgba(20,30,60,0.14);">
+        <tr>
+          <td height="58" valign="middle" bgcolor="#0a2540"
+              style="height:58px; max-height:58px; padding:6px 8px; color:#ffffff; background-color:#15c39a; background-image: radial-gradient(120% 80% at 0% 0%, rgba(255,255,255,0.20) 0%, rgba(255,255,255,0) 55%), linear-gradient(135deg, #062b1f 0%, #15c39a 100%);">
+            <p class="pulse-ad-mini-text" style="margin:0;"><img src="https://competitor.poweradspy.com/public/g.png" alt="Google" width="14" height="14" style="display:inline-block;width:14px;height:14px;border:0;outline:none;vertical-align:middle;background:transparent;" />&nbsp;Ajio Online</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+      </table>
+    </td>
+    <td class="pulse-count-cell" width="134" style="width:134px;" valign="top">
+      <a href="https://platform.poweradspy.com/?advertiser=ajio&platform=facebook" target="_blank" class="pulse-count-link" style="text-decoration:none; color:inherit; display:block;">
+        <table role="presentation" class="pulse-count-inner" cellpadding="0" cellspacing="0" border="0"
+               width="100%" height="124"
+               style="width:100%; height:124px; border-collapse:separate; border-radius:8px; background:#f7f9fd; border:1px solid #f0e2c8;">
+          <tr>
+            <td valign="top" style="padding:12px 14px 2px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td valign="middle" style="padding:0; margin-right:8px; display:inline-flex; align-items:center;"><img src="https://competitor.poweradspy.com/public/fb.png" alt="Facebook" width="20" height="20" style="display:inline-block;width:20px;height:20px;border:0;outline:none;vertical-align:middle;background:transparent;" /></td>
+                <td valign="middle" style="padding:0; display:inline-flex; align-items:center;">
+                  <span class="pulse-count-label" style="font-size:13px;">Facebook</span>
+                </td>
+              </tr></table>
+            </td>
+          </tr>
+          <tr>
+            <td valign="middle" style="padding:2px 14px; white-space:nowrap;">
+              <span class="pulse-count-value">2</span><span class="pulse-count-suffix">ads last 24 hours</span>
+            </td>
+          </tr>
+          <tr>
+            <td valign="bottom" style="padding:6px 14px 12px; white-space:nowrap;">
+              <div class="pulse-count-divider"></div>
+              <span class="pulse-count-alltime">1.3k ads all-time</span>
+            </td>
+          </tr>
+        </table>
+      </a>
+    </td>
+    <td class="pulse-count-cell" width="134" style="width:134px;" valign="top">
+      <a href="https://platform.poweradspy.com/?advertiser=ajio&platform=instagram" target="_blank" class="pulse-count-link" style="text-decoration:none; color:inherit; display:block;">
+        <table role="presentation" class="pulse-count-inner" cellpadding="0" cellspacing="0" border="0"
+               width="100%" height="124"
+               style="width:100%; height:124px; border-collapse:separate; border-radius:8px; background:#f7f9fd; border:1px solid #f0e2c8;">
+          <tr>
+            <td valign="top" style="padding:12px 14px 2px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td valign="middle" style="padding:0; margin-right:8px; display:inline-flex; align-items:center;"><img src="https://competitor.poweradspy.com/public/ig.png" alt="Instagram" width="20" height="20" style="display:inline-block;width:20px;height:20px;border:0;outline:none;vertical-align:middle;background:transparent;" /></td>
+                <td valign="middle" style="padding:0; display:inline-flex; align-items:center;">
+                  <span class="pulse-count-label" style="font-size:13px;">Instagram</span>
+                </td>
+              </tr></table>
+            </td>
+          </tr>
+          <tr>
+            <td valign="middle" style="padding:2px 14px; white-space:nowrap;">
+              <span class="pulse-count-value">309</span><span class="pulse-count-suffix">ads last 24 hours</span>
+            </td>
+          </tr>
+          <tr>
+            <td valign="bottom" style="padding:6px 14px 12px; white-space:nowrap;">
+              <div class="pulse-count-divider"></div>
+              <span class="pulse-count-alltime">3.1k ads all-time</span>
+            </td>
+          </tr>
+        </table>
+      </a>
+    </td>
+    <td class="pulse-count-cell" width="134" style="width:134px;" valign="top">
+      <a href="https://platform.poweradspy.com/?advertiser=ajio&platform=google" target="_blank" class="pulse-count-link" style="text-decoration:none; color:inherit; display:block;">
+        <table role="presentation" class="pulse-count-inner" cellpadding="0" cellspacing="0" border="0"
+               width="100%" height="124"
+               style="width:100%; height:124px; border-collapse:separate; border-radius:8px; background:#f7f9fd; border:1px solid #f0e2c8;">
+          <tr>
+            <td valign="top" style="padding:12px 14px 2px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td valign="middle" style="padding:0; margin-right:8px; display:inline-flex; align-items:center;"><img src="https://competitor.poweradspy.com/public/g.png" alt="Google" width="20" height="20" style="display:inline-block;width:20px;height:20px;border:0;outline:none;vertical-align:middle;background:transparent;" /></td>
+                <td valign="middle" style="padding:0; display:inline-flex; align-items:center;">
+                  <span class="pulse-count-label" style="font-size:13px;">Google</span>
+                </td>
+              </tr></table>
+            </td>
+          </tr>
+          <tr>
+            <td valign="middle" style="padding:2px 14px; white-space:nowrap;">
+              <span class="pulse-count-value">12</span><span class="pulse-count-suffix">ads last 24 hours</span>
+            </td>
+          </tr>
+          <tr>
+            <td valign="bottom" style="padding:6px 14px 12px; white-space:nowrap;">
+              <div class="pulse-count-divider"></div>
+              <span class="pulse-count-alltime">15k ads all-time</span>
+            </td>
+          </tr>
+        </table>
+      </a>
+    </td></tr></table></div>
+
+      <div class="pulse-cta-card">
+        <div class="pulse-cta-eyebrow">See every creative</div>
+        <h3 class="pulse-cta-title">Dig into all 323 ads on your dashboard</h3>
+        <p class="pulse-cta-sub">Filter by platform, date, format — and save what's working.</p>
+        <a href="https://platform.poweradspy.com/project/email-click?fromEmail=competitorUpdate" class="pulse-cta-btn" target="_blank">Explore all ads →</a>
+      </div>
+
+      <div class="pulse-foot">
+        <p class="pulse-foot-stats">
+          You track <b>1 competitors</b> across <b>1 brands</b>.
+        </p>
+        <p class="pulse-foot-links">
+          <a href="https://platform.poweradspy.com/facebook/unsubscribe-page?email=prashant.tiwari%40globussoft.in&page=competitor">Unsubscribe</a>
+          <span>·</span>
+          <a href="https://platform.poweradspy.com/project?fromEmail=competitorUpdate">Manage tracking</a>
+        </p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Preview-only enhancement script — runs in browsers, ignored by
+       every email client (which strip <script>). It only touches things
+       that need DOM manipulation; the URL-stripping block from the v1
+       script has been removed because it was deleting the background
+       image URL and leaving a flat color, which is the OPPOSITE of what
+       we want. -->
+  <script>
+  (function(){
+    // Add SPONSORED badge to each primary card
+    document.querySelectorAll('table.pulse-ad-primary>tbody>tr>td').forEach(td=>{
+      if(!td.querySelector('.pulse-ad-sponsored')){
+        const b=document.createElement('p');
+        b.className='pulse-ad-sponsored';
+        b.textContent='SPONSORED';
+        b.style.cssText='font-size:7.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:rgba(255,255,255,0.85);margin:0 0 5px;';
+        td.insertBefore(b,td.firstChild);
+      }
+    });
+    // Lay out count-card header (icon + label) inline with 8px gap.
+    // We preserve the margin-right we set in the HTML by setting gap on
+    // the parent flex container instead of wiping each td's style.
+    document.querySelectorAll('.pulse-count-inner').forEach(inner=>{
+      const t=inner.rows[0]?.cells[0]?.querySelector('table');
+      if(t){
+        t.style.cssText='display:inline-flex!important;align-items:center;gap:8px;width:auto;';
+        t.querySelectorAll('tr').forEach(r=>{if(r.style.display==='none')r.style.display='';});
+        t.querySelectorAll('td').forEach(td=>{
+          // Preserve any margin-right set inline; just add flex alignment.
+          td.style.display='inline-flex';
+          td.style.alignItems='center';
+          td.style.padding='0';
+        });
+      }
+      if(inner.rows[0]?.cells[0]) inner.rows[0].cells[0].style.cssText='padding:10px 12px 4px;vertical-align:top;';
+      if(inner.rows[1]?.cells[0]) inner.rows[1].cells[0].style.cssText='padding:0 12px 12px;vertical-align:bottom;';
+    });
+  })();
+  </script>
+</body>
+</html>

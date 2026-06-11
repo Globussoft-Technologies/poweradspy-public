@@ -1,0 +1,41 @@
+'use strict';
+
+// PHP $this->currentTableColumns from NativeAdController::insertAdToElasticSearch()
+const NATIVE_INSERT_COLUMNS = [
+  'native_ad.id',
+  'native_ad.source',
+  'native_ad.post_date',
+  'native_ad.last_seen',
+  'native_ad.days_running',
+  'native_ad.ad_position',
+  'native_ad.type',
+  'native_country_only.country',
+  'native_ad_variants.title|ru,fr,sp,ge,exactly',
+  'native_ad_variants.text|ru,fr,sp,ge,exactly',
+  'native_ad_variants.newsfeed_description|ru,fr,sp,ge,exactly',
+  'native_ad_variants.image_object|ru,fr,sp,exactly',
+  'native_ad_variants.image_celebrity|ru,fr,sp,exactly',
+  'native_ad_variants.image_brand_logo|ru,fr,sp,exactly',
+  'native_ad_variants.image_ocr|ru,fr,sp,exactly',
+  'native_ad_url.url',
+  'native_ad_post_owners.post_owner_name|ru,fr,sp,ge,exactly',
+  'native_ad_post_owners.post_owner_lower',
+  'native_ad_post_owners.post_owner_image',
+  'native_ad_meta_data.destination_url',
+  'native_ad_meta_data.redirect_url',
+  'native_ad_meta_data.firstSeenOnDesktop',
+  'native_ad_meta_data.built_with',
+  'native_ad_meta_data.affiliate_data',
+  'native_ad_meta_data.built_with_analytics_tracking',
+  'networks.network',
+  'target_site.target_site',
+  'native_ad.network_id',
+  'native_ad.target_site_id',
+  'native_placement_url.placement_url',
+  'native_ad_domains.domain_registered_date',
+  'native_ad_translation.ad_text',
+  'native_ad_translation.news_feed_description',
+  'native_ad_translation.ad_title',
+];
+
+module.exports = { NATIVE_INSERT_COLUMNS };

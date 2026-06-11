@@ -1,0 +1,138 @@
+{
+  "email": "prashant.tiwari@globussoft.in",
+  "name": "prashant_test",
+  "brands": [
+    {
+      "brand_name": "bewakoof",
+      "project_name": "Your brand",
+      "brand_url": "bewakoof.com",
+      "competitors": [
+        {
+          "name": "ajio",
+          "domain": "ajio.com",
+          "post_owner_image_url": "",
+          "counts": {
+            "facebook":  { "total": 1284,  "last24h": "999K"  },
+            "instagram": { "total": 3092,  "last24h": 8  },
+            "google":    { "total": 15130, "last24h": 12 }
+          },
+          "ads": [
+            { "platform": "facebook",  "title": "TERBAIK & TERAMAN 👉",     "body": "Fulham FC didirikan pada tahu…", "cta": "Sign up",  "image_url": "https://media.globussoft.com/pas-prod/stream/fb/thumbnail/202511/39177323.webp",     "post_owner_image_url": "", "post_owner_name": "ajio" },
+            { "platform": "instagram", "title": "AjioLuxe",                  "body": "Everything you need for a cas…", "cta": "Shop Now", "image_url": "https://media.globussoft.com/pas-prod/stream/insta/adImage/202605/57782019.jpg",       "post_owner_image_url": "", "post_owner_name": "Ajio Luxe" },
+            { "platform": "google",    "title": "Online Shopping Site fo…", "body": "https://www.ajio.com",            "cta": "",         "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "Ajio" }
+          ]
+        },
+        {
+          "name": "hm",
+          "domain": "hm.com",
+          "post_owner_image_url": "",
+          "counts": {
+            "facebook":  { "total": 902,   "last24h": 1 },
+            "instagram": { "total": 938,   "last24h": 3 },
+            "google":    { "total": 13680, "last24h": 9 }
+          },
+          "ads": [
+            { "platform": "facebook",  "title": "HM Brothers Insulation",     "body": "",                                  "cta": "",         "image_url": "https://media.globussoft.com/pas-prod/stream/fb/adImage/202605/40849933.webp",       "post_owner_image_url": "", "post_owner_name": "HM Brothers insulat…" },
+            { "platform": "instagram", "title": "Villas HM Paraiso del M…",  "body": "☀️ Your next holiday in parad…",   "cta": "Book now", "image_url": "https://media.globussoft.com/pas-prod/stream/insta/thumbnail/202605/57706462.webp",  "post_owner_image_url": "", "post_owner_name": "HM hotels" },
+            { "platform": "google",    "title": "Clothes sale | Discount…",  "body": "https://www2.hm.com › HM.com …",    "cta": "",         "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "H&M" }
+          ]
+        },
+        {
+          "name": "myntra",
+          "domain": "myntra.com",
+          "post_owner_image_url": "",
+          "counts": {
+            "facebook":  { "total": 12820, "last24h": 24 },
+            "instagram": { "total": 14560, "last24h": 41 },
+            "google":    { "total": 10410, "last24h": 18 }
+          },
+          "ads": [
+            { "platform": "facebook",  "title": "🥁 EORS Starts May 29", "body": "Get Top Fashion Brands on 50-…", "cta": "",          "image_url": "https://media.globussoft.com/pas-prod/stream/fb/thumbnail/202605/41046746.webp",     "post_owner_image_url": "", "post_owner_name": "Myntra" },
+            { "platform": "instagram", "title": "🥁 EORS Starts May 29", "body": "Get Top Fashion Brands on 50-…", "cta": "Shop now",  "image_url": "https://media.globussoft.com/pas-prod/stream/insta/adImage/202605/57669481.jpg",       "post_owner_image_url": "", "post_owner_name": "Myntra" },
+            { "platform": "google",    "title": "Online Shopping for Wom…", "body": "https://www.myntra.com",        "cta": "",         "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "Myntra" }
+          ]
+        }
+      ]
+    },
+    {
+      "brand_name": "nyakaa",
+      "project_name": "Your brand",
+      "brand_url": "nyakaa.com",
+      "competitors": [
+        {
+          "name": "mamaearth",
+          "domain": "https://mamaearth.in",
+          "post_owner_image_url": "",
+          "counts": {
+            "facebook":  { "total": 7950, "last24h": 15 },
+            "instagram": { "total": 7120, "last24h": 11 },
+            "google":    { "total": 5120, "last24h": 6  }
+          },
+          "ads": [
+            { "platform": "facebook",  "title": "Mamaearth",              "body": "Glow naturally with Mamaearth…",     "cta": "shop now", "image_url": "https://media.globussoft.com/pas-prod/stream/fb/thumbnail/202605/40855745.webp",     "post_owner_image_url": "", "post_owner_name": "Mamaearth" },
+            { "platform": "instagram", "title": "Mamaearth",              "body": "Glow naturally with Mamaearth…",     "cta": "Shop now", "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "Mamaearth" },
+            { "platform": "google",    "title": "Best Baby Care Products…", "body": "https://mamaearth.in › produc…",  "cta": "",         "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "Mamaearth" }
+          ]
+        },
+        {
+          "name": "sephora",
+          "domain": "sephora.com",
+          "post_owner_image_url": "",
+          "counts": {
+            "facebook":  { "total": 14420,  "last24h": 27 },
+            "instagram": { "total": 174720, "last24h": 92 },
+            "google":    { "total": 26640,  "last24h": 14 }
+          },
+          "ads": [
+            { "platform": "facebook",  "title": "Acne? IDK her||,Daniell…", "body": "Unlike your therapist, tarte …", "cta": "shop now",   "image_url": "https://media.globussoft.com/pas-prod/stream/fb/adImage/202605/40972989.webp",       "post_owner_image_url": "", "post_owner_name": "SEPHORA" },
+            { "platform": "instagram", "title": "Sephora",                  "body": "Visit Sephora Grove Marketpla…","cta": "Learn more", "image_url": "https://media.globussoft.com/pas-prod/stream/insta/thumbnail/202605/57718136.webp",  "post_owner_image_url": "", "post_owner_name": "Sephora" },
+            { "platform": "google",    "title": "Makeup Sale | Beauty Sa…", "body": "https://www.sephora.com › sale","cta": "",           "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "Sephora" }
+          ]
+        },
+        {
+          "name": "dermstore",
+          "domain": "dermstore.com",
+          "post_owner_image_url": "",
+          "counts": {
+            "facebook":  { "total": 1360, "last24h": 4 },
+            "instagram": { "total": 1260, "last24h": 2 },
+            "google":    { "total": 4400, "last24h": 7 }
+          },
+          "ads": [
+            { "platform": "facebook",  "title": "Save on Summer-Ready Be…", "body": "Shop PCA SKIN at Dermstore's …",      "cta": "",         "image_url": "https://media.globussoft.com/pas-prod/stream/fb/thumbnail/202605/40830299.webp",     "post_owner_image_url": "", "post_owner_name": "Dermstore" },
+            { "platform": "instagram", "title": "Dermstore",                  "body": "Use code: SUN to get your rou…",    "cta": "Shop Now", "image_url": "https://media.globussoft.com/pas-prod/stream/insta/thumbnail/202605/57433800.webp",  "post_owner_image_url": "", "post_owner_name": "Dermstore" },
+            { "platform": "google",    "title": "Beauty Products Sale",      "body": "https://www.dermstore.com › s…",  "cta": "",         "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "Dermstore" }
+          ]
+        },
+        {
+          "name": "lookfantastic",
+          "domain": "lookfantastic.com",
+          "post_owner_image_url": "",
+          "counts": {
+            "facebook":  { "total": 2110,  "last24h": 5  },
+            "instagram": { "total": 780,   "last24h": 1  },
+            "google":    { "total": 18420, "last24h": 22 }
+          },
+          "ads": [
+            { "platform": "facebook",  "title": "Shop MAC at LOOKFANTAST…", "body": "Multi-use, minimal space, max…", "cta": "shop now", "image_url": "https://media.globussoft.com/pas-prod/stream/fb/thumbnail/202605/40905193.webp",     "post_owner_image_url": "", "post_owner_name": "Lookfantastic" },
+            { "platform": "instagram", "title": "Shop MAC at LOOKFANTAST…", "body": "Multi-use, minimal space, max…", "cta": "Shop now", "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "LOOKFANTASTIC" },
+            { "platform": "google",    "title": "Beauty Box | Once Off &…", "body": "https://www.lookfantastic.com…",  "cta": "",         "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "lookfantastic" }
+          ]
+        },
+        {
+          "name": "forestessentials",
+          "domain": "forestessentials.com",
+          "post_owner_image_url": "",
+          "counts": {
+            "instagram": { "total": 910, "last24h": 3 },
+            "google":    { "total": 60,  "last24h": 1 }
+          },
+          "ads": [
+            { "platform": "instagram", "title": "Forest Essentials",  "body": "Unveil a luminous, youthful g…",     "cta": "Shop Now", "image_url": "https://media.globussoft.com/pas-prod/stream/insta/thumbnail/202601/54970058.webp",  "post_owner_image_url": "", "post_owner_name": "forestessentials" },
+            { "platform": "google",    "title": "Forest Essentials UK", "body": "https://www.forestessentials.…",  "cta": "",         "image_url": "",                                                                              "post_owner_image_url": "", "post_owner_name": "forestessentials" }
+          ]
+        }
+      ]
+    }
+  ]
+}

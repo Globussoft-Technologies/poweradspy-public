@@ -1,0 +1,65 @@
+import Joi from "joi";
+
+// Validator for create/update api
+class TikTokValidation {
+  createDetails(body) {
+    const schema = Joi.object().keys({
+      ad_id: Joi.string().required(),
+      ad_title: Joi.string().empty(""),
+      video_id: Joi.string().empty(""),
+      video_url: Joi.string().required(),
+      thumbnailVaild: Joi.string().required(),
+      video_duration: Joi.number().precision(2).required(),
+      video_cover: Joi.string().required(),
+      library_url: Joi.string().required(),
+      post_owner: Joi.string().required(),
+      destination_url: Joi.string().required(),
+      likes: Joi.number().empty(""),
+      comments: Joi.number().empty(""),
+      shares: Joi.number().empty(""),
+      countries: Joi.array().items(Joi.string()).required(),
+      cost: Joi.number().precision(2).empty(""),
+      ctr: Joi.number().precision(5).empty(""),
+      source: Joi.string().empty(""),
+      objectives: Joi.array().items(Joi.string()).empty(""),
+      target_keywords: Joi.array().items(Joi.string()).empty(""),
+      type: Joi.string().required(),
+      platform: Joi.string().required(),
+      first_seen: Joi.date().empty(""),
+      last_seen: Joi.date().empty(""),
+      unique_users: Joi.string().empty(""),
+      target_users: Joi.string().empty(""),
+      ad_paid_for: Joi.string().empty(""),
+      post_owner_location: Joi.string().empty(""),
+      audience: Joi.string().empty(""),
+      interest: Joi.string().empty(""),
+      video_interection: Joi.string().empty(""),
+      creator_interactions: Joi.string().empty(""),
+      gender: Joi.object().empty(""),
+      age: Joi.object().empty(""),
+      country_users: Joi.object().empty(""),
+      budget: Joi.string().empty(""),
+      top_ctr: Joi.string().empty(""),
+      top_cvr: Joi.string().empty(""),
+      top_clicks: Joi.string().empty(""),
+      top_conversion: Joi.string().empty(""),
+      top_remains: Joi.string().empty(""),
+      ctr_graph: Joi.array().items(Joi.object()).empty(""),
+      cvr_graph: Joi.array().items(Joi.object()).empty(""),
+      clicks_graph: Joi.array().items(Joi.object()).empty(""),
+      conversion_graph: Joi.array().items(Joi.object()).empty(""),
+      remain_graph: Joi.array().items(Joi.object()).empty(""),
+      city: Joi.string().required(),
+      state: Joi.string().required(),
+      popularity: Joi.number().empty(""),
+      impression: Joi.number().empty(""),
+      industry: Joi.string().empty(""),
+      tiktok_account_id: Joi.string().required(),
+      tiktok_account_name: Joi.string().empty(""),
+      system_id: Joi.string().empty(""),
+    });
+    const result = schema.validate(body);
+    return result;
+  }
+}
+export default new TikTokValidation();

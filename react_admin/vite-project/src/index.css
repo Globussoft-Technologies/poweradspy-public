@@ -1,0 +1,172 @@
+/* Declare layer order first: `rsuite` is lowest priority, so Tailwind's
+   utilities always win over rsuite's global element resets (e.g. its
+   `td,th{padding:0}`, which is unlayered in the package and would otherwise
+   override every Tailwind padding utility on tables). */
+@layer rsuite;
+@import "rsuite/dist/rsuite.min.css" layer(rsuite);
+@import "tailwindcss";
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+#root {
+  box-sizing: border-box;
+}
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+body {
+  font-family: 'Poppins', sans-serif!important;
+}
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  /* background-color: #1a1a1a; */
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+/* For WebKit-based browsers (Chrome, Safari, Edge) */
+*::-webkit-scrollbar {
+  width: 8px; /* Adjust width */
+  /* height: 800px!important; Adjust height for horizontal scrollbars */
+}
+
+*::-webkit-scrollbar-track {
+  background: #f1f1f1; /* Light gray background */
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #888; /* Dark gray scrollbar */
+  border-radius: 10px;
+  /* transition: background 0.3s; */
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #555; /* Darker color on hover */
+}
+.custom-date-picker {
+  width: 150px; /* Adjust as needed */
+  text-align: center;
+  padding: 8px;
+  border: 1px solid #ccc;
+  background: white;
+  cursor: pointer;
+  margin-right: 16px;
+}
+*{
+  box-sizing: border-box;
+  font-family: "Public Sans", sans-serif;
+}
+
+.graphChart > div {
+  min-height: 272px !important;
+}
+/* .css-r64h58-MuiSlider-rail{
+
+} */
+#ecomplatformads > span:nth-child(2) span:nth-child(1) {
+  background-color: #ececec !important;
+  opacity: 100% !important;
+}
+#ecomplatformads .Mui-disabled{
+  color: revert !important;
+}
+#ecomplatformads > span:nth-child(2) span:nth-child(2) {
+  background-color: #94b7fb !important;
+}
+
+.css-1l5f56d-MuiSlider-root.Mui-disabled{
+  color: revert !important;
+}
+.apexcharts-tooltip {
+  background: #f3f3f3;
+  /* color: #264688; */
+}
+.apexcharts-tooltip .apexcharts-xaxistooltip-text{
+   color: #264688!important;
+}
+/* .apexcharts-tooltip.apexcharts-theme-light .apexcharts-tooltip-title{
+  background-color: #fff!important;
+  color: #264688!important;
+} */
+.apexcharts-tooltip.apexcharts-theme-light .apexcharts-tooltip-title{
+  background-color: #fff!important;
+  color: #264688!important;
+}
+.apexcharts-tooltip.apexcharts-theme-light .apexcharts-tooltip-series-group .apexcharts-tooltip-text .apexcharts-tooltip-y-group > span:nth-child(2){
+  color: #264688!important;
+}
+.apexcharts-tooltip.apexcharts-theme-light .apexcharts-tooltip-series-group .apexcharts-tooltip-text .apexcharts-tooltip-y-group > span:nth-child(1){
+  color: #575757!important;
+}
+/* Add this to your global styles if needed */
+.custom-scrollbar::-webkit-scrollbar {
+  height: 6px; /* Adjust scrollbar height */
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f1f1; /* Track color */
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #264688; /* Scrollbar color */
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #264688; /* Scrollbar color on hover */
+}
+

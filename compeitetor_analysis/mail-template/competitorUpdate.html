@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <title>Daily Competitor Pulse</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet" />
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <style>
+    /* Outlook (Word engine) can't load web fonts and mishandles line-height
+       on rounded text — force Arial and exact line-height here only. */
+    * { font-family: Arial, Helvetica, sans-serif !important; }
+    table { mso-line-height-rule: exactly; }
+  </style>
+  <![endif]-->
+</head>
+<body style="margin:0; padding:0; width:100%; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#fff7ec; font-family:'Inter','Poppins',Arial,sans-serif; color:#1a2240;">
+  <!-- Outer wrapper TABLE (not a div): Outlook/Word renders full-bleed
+       background-color reliably only on table cells, so the cream bg now
+       lives on a <table>/<td bgcolor>. -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fff7ec" style="border-collapse:collapse; mso-table-lspace:0pt; mso-table-rspace:0pt; background-color:#fff7ec;">
+    <tr>
+      <td align="center" style="background-color:#fff7ec; padding:28px 16px 48px; font-family:'Inter','Poppins',Arial,sans-serif;">
+        <!--[if mso]>
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" align="center"><tr><td>
+        <![endif]-->
+        <div style="max-width:600px; margin:0 auto; text-align:left;">
+
+      <!-- HERO CARD — rendered as a table so the dark bg survives Outlook
+           (a <div> background-color is dropped by Word, which would leave
+           white text on a white card). bgcolor is the Outlook fallback;
+           the gradient background-image still enhances modern clients. -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse; mso-table-lspace:0pt; mso-table-rspace:0pt; margin-bottom:22px;">
+        <tr>
+          <td bgcolor="#2e4374" style="background-color:#2e4374; background-image: radial-gradient(circle 180px at 8% 6%, rgba(243, 155, 44, 0.33) 0%, rgba(0,0,0,0) 70%), radial-gradient(circle 160px at 92% 92%, rgba(243, 155, 44, 0.20) 0%, rgba(0,0,0,0) 70%), linear-gradient(135deg, #2e4374 0%, #1f2c54 100%); border-radius:18px; padding:28px 30px 22px; color:#ffffff; box-shadow:0 8px 24px rgba(28, 40, 80, 0.18); font-family:'Inter','Poppins',Arial,sans-serif;">
+        <div style="margin-bottom:16px;">
+          <a href="{{ manageUrl }}" target="_blank" style="text-decoration:none;display:inline-block;">
+            <img src="{{ logoUrl }}" alt="PowerAdSpy" width="180" style="max-width:180px; height:auto; display:inline-block; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;" />
+          </a>
+        </div>
+        <div style="font-size:11px; font-weight:700; color:#f39b2c; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:14px;">Daily Competitor Pulse · {{ dateLabel }}</div>
+        <h1 style="font-size:32px; line-height:36px; font-weight:800; letter-spacing:-0.6px; margin:0; color:#ffffff;">
+          Hey {{ name }} —<br />
+          your rivals shipped <span style="display:inline-block; background:#f39b2c; color:#2e4374; padding:0 10px; border-radius:6px; font-weight:900; line-height:36px; letter-spacing:-0.6px;">{{ totalAds }}</span> ads in last 24 hours.
+        </h1>
+        <div style="height:1px; line-height:1px; font-size:0; background:rgba(255,255,255,0.12); margin:22px 0 16px;">&nbsp;</div>
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%; border-collapse:collapse; mso-table-lspace:0pt; mso-table-rspace:0pt;">
+          <tr>
+            <td width="33%" align="left" style="vertical-align:top; padding:0;">
+              <div style="font-size:10px; font-weight:600; color:#ffffff; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:4px; opacity:0.85;">Brands</div>
+              <div style="font-size:20px; font-weight:800; color:#ffffff; letter-spacing:-0.2px; line-height:24px;">{{ brandsCount }}</div>
+            </td>
+            <td width="34%" align="left" style="vertical-align:top; padding:0;">
+              <div style="font-size:10px; font-weight:600; color:#ffffff; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:4px; opacity:0.85;">Competitors</div>
+              <div style="font-size:20px; font-weight:800; color:#ffffff; letter-spacing:-0.2px; line-height:24px;">{{ competitorsCount }}</div>
+            </td>
+            <td width="33%" align="left" style="vertical-align:top; padding:0;">
+              <div style="font-size:10px; font-weight:600; color:#ffffff; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:4px; opacity:0.85;">New ads</div>
+              <div style="font-size:20px; font-weight:800; color:#f39b2c; letter-spacing:-0.2px; line-height:24px;">{{ totalAds }}</div>
+            </td>
+          </tr>
+        </table>
+          </td>
+        </tr>
+      </table>
+
+      {{ brandsHtml }}
+
+      <!-- BOTTOM CTA — table + bgcolor so the dark card and its white text
+           survive Outlook (Word drops div background-color). -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse; mso-table-lspace:0pt; mso-table-rspace:0pt; margin:14px 0 24px;">
+        <tr>
+          <td bgcolor="#2e4374" align="center" style="background-color:#2e4374; background-image: linear-gradient(135deg, #2e4374 0%, #1f2c54 100%); border-radius:18px; padding:28px; text-align:center; color:#ffffff; font-family:'Inter','Poppins',Arial,sans-serif;">
+        <div style="font-size:11px; font-weight:700; color:#f39b2c; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:8px;">See every creative</div>
+        <h3 style="font-size:20px; font-weight:800; color:#ffffff; margin:0 0 6px; letter-spacing:-0.3px;">Dig into all {{ totalAds }} ads on your dashboard</h3>
+        <p style="font-size:12.5px; color:#b8c0db; margin:0 0 18px;">Filter by platform, date, format — and save what's working.</p>
+        <a href="{{ ctaUrl }}" target="_blank" style="text-decoration:none; display:inline-block; background:#f39b2c; color:#2e4374; padding:11px 22px; border-radius:999px; font-size:13px; font-weight:800; letter-spacing:0.3px;">Explore all ads →</a>
+          </td>
+        </tr>
+      </table>
+
+      <div style="text-align:center; font-size:11.5px; color:#8b9aaf; line-height:18px; padding:8px;">
+        <p style="color:#6b7590; margin-bottom:6px;">
+          You track <b style="color:#1a2240; font-weight:700;">{{ competitorsCount }} competitors</b> across <b style="color:#1a2240; font-weight:700;">{{ brandsCount }} brands</b>.
+        </p>
+        <p style="margin:0;">
+          <a href="{{ unsubscribe_link }}" style="color:#6b7590; text-decoration:underline;">Unsubscribe</a>
+          <span style="margin:0 6px; color:#c8c0a8;">·</span>
+          <a href="{{ manageUrl }}" style="color:#6b7590; text-decoration:underline;">Manage tracking</a>
+        </p>
+      </div>
+
+        </div><!-- /shell -->
+        <!--[if mso]>
+        </td></tr></table>
+        <![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

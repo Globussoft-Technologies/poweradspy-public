@@ -1,0 +1,721 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom themed scrollbar */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) var(--color-bg);
+}
+
+/* Modal scrollbar — transparent track on white card */
+[data-theme="light"] .modal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-theme="light"] .modal-scroll {
+  scrollbar-color: var(--color-border) transparent;
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* ── Google Translate Widget — hide all visible UI chrome ── */
+.goog-te-banner-frame,
+.goog-te-balloon-frame,
+iframe.goog-te-banner-frame {
+  display: none !important;
+}
+.skiptranslate {
+  display: none !important;
+}
+/* Prevent Google Translate from pushing body down */
+body {
+  top: 0 !important;
+}
+/* Hide the "Translated by Google" tooltip */
+.goog-tooltip,
+.goog-tooltip:hover {
+  display: none !important;
+}
+.goog-text-highlight {
+  background: none !important;
+  box-shadow: none !important;
+  color: inherit !important;
+}
+/* Google Translate inserts <font> elements (with or without class) inside
+   buttons and links. Making every <font> inside a button/link non-interactive
+   ensures clicks pass through to the actual element underneath.
+   <font> is a deprecated tag and never appears in our own code. */
+button font,
+button font *,
+a font,
+a font * {
+  pointer-events: none !important;
+}
+/* Hide newer Google Translate bar selectors and floating badge */
+.VIpgJd-ZVi9od-ORHb-OEVmcd,
+.VIpgJd-ZVi9od-aZ2wEe,
+.VIpgJd-ZVi9od-SmfZ,
+#goog-gt-tt,
+.goog-te-spinner-pos,
+.goog-te-menu-frame,
+.goog-te-gadget,
+.goog-te-gadget-icon,
+.goog-logo-link,
+.goog-te-gadget img {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+@layer base {
+  .theme {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+  }
+  :root {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.708 0 0);
+  }
+  .dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.488 0.243 264.376);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.556 0 0);
+  }
+  * {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+::view-transition-old(root), ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+}
+
+/* ── Theme-toggle perf: while the view-transition is active, pause every
+   element-level transition so the GPU isn't fighting other animations
+   during the clip-path reveal. Keyframe animations are left running so
+   spinners/gradients don't visibly snap. ── */
+[data-magicui-theme-vt="active"] *,
+[data-magicui-theme-vt="active"] *::before,
+[data-magicui-theme-vt="active"] *::after {
+  transition: none !important;
+}
+[data-magicui-theme-vt="active"] {
+  /* Hint compositor that the snapshot layer is the only thing changing. */
+  contain: layout style paint;
+}
+
+/* ── Media thumbnail loading skeleton (MasonryCard / AnalyticsModal) ──────────
+   The card + modal creative area is near-black, so the old loaders (a 4–8%
+   white sheen with no base, and a bg-zinc-900/60 pulse) read as a flat black
+   panel while the image decoded. This gives a defined base + a clearly visible
+   sweeping highlight so the loading state is obvious — matching the spinner
+   AdDetailModal already shows. Purely visual: it overlays the still-decoding
+   <img> and is removed on load, so it does NOT affect load timing. */
+@keyframes media-shimmer-sweep {
+  0%   { background-position: -150% 0; }
+  100% { background-position: 250% 0; }
+}
+.media-shimmer {
+  background-color: #16181d;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 55% 100%;
+  background-repeat: no-repeat;
+  animation: media-shimmer-sweep 1.4s ease-in-out infinite;
+}
+/* Light theme: light-gray base + dark sweep, so it reads as a skeleton on a
+   light card/modal instead of a black box. */
+[data-theme="light"] .media-shimmer {
+  background-color: #e2e8f0;
+  background-image: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0) 0%,
+    rgba(15, 23, 42, 0.07) 50%,
+    rgba(15, 23, 42, 0) 100%
+  );
+}
+
+/* ============================================================================
+   LIGHT MODE OVERRIDE LAYER
+   ----------------------------------------------------------------------------
+   Single-source remap for hardcoded dark colors used across ~50 component
+   files. Migrating each file to theme tokens is a multi-day refactor; this
+   layer covers the common patterns in one place. Targets the *opacity
+   variants* of text-white (placeholder/muted text), and the handful of dark
+   hex backgrounds/borders that dominate the codebase.
+
+   Intentionally NOT remapping pure `text-white` — it's used on saturated
+   colored buttons (red/blue/green) where it must stay white. Tooltips and
+   surfaces that swap their bg also need their pure `text-white` swapped;
+   those are handled with scoped descendant rules below.
+   ========================================================================== */
+
+[data-theme="light"] {
+  /* --- Muted/secondary text (text-white/XX) → slate-900 counterparts ---
+     Rebased to rgb(15 23 42) so the spec-mandated #0f172a (slate-900) is
+     the anchor for every shade. These read as washed-out on a light
+     surface unless re-mapped to a dark color at the same opacity. */
+  .text-white\/5  { color: rgb(15 23 42 / 0.05); }
+  .text-white\/10 { color: rgb(15 23 42 / 0.10); }
+  .text-white\/20 { color: rgb(15 23 42 / 0.20); }
+  .text-white\/30 { color: rgb(15 23 42 / 0.30); }
+  .text-white\/40 { color: rgb(15 23 42 / 0.40); }
+  .text-white\/50 { color: rgb(15 23 42 / 0.55); }
+  .text-white\/60 { color: rgb(15 23 42 / 0.65); }
+  .text-white\/70 { color: rgb(15 23 42 / 0.75); }
+  .text-white\/80 { color: rgb(15 23 42 / 0.85); }
+  .text-white\/90 { color: rgb(15 23 42 / 0.92); }
+  .hover\:text-white\/70:hover { color: rgb(15 23 42 / 0.75); }
+  .hover\:text-white\/80:hover { color: rgb(15 23 42 / 0.85); }
+  .hover\:text-white\/90:hover { color: rgb(15 23 42 / 0.92); }
+  /* Pure hover:text-white on icon buttons sits above a swapped-light bg —
+     keep it dark so the icon stays readable on hover. */
+  .hover\:text-white:hover { color: #0f172a; }
+
+  /* `disabled:hover:text-white/70` chain (AdDateDropdown's Clear Filter
+     when there are no dates selected). Tailwind compiles it with a
+     `:disabled:hover` qualifier which beats the bare `.text-white/70`
+     rule on specificity — without this override the text reverts to
+     white-at-70% on hover and the disabled:opacity-40 fades it to
+     ~28% effective opacity = invisible. */
+  .disabled\:hover\:text-white\/70:disabled:hover { color: rgb(15 23 42 / 0.75); }
+  .disabled\:hover\:text-white:disabled:hover     { color: #0f172a; }
+
+  /* `group-hover:text-white` follows the same rule. The category-filter
+     chevron (NestedMultiselectFilter.jsx:156) uses it to brighten on row
+     hover — without this it flips to white-on-white in light mode and
+     the dropdown arrow disappears under the cursor. Same fix for the
+     /70 and /50 variants used in CompetitorComparison's "i" tooltip. */
+  .group:hover .group-hover\:text-white       { color: #0f172a; }
+  .group:hover .group-hover\:text-white\/70   { color: rgb(15 23 42 / 0.75); }
+  .group:hover .group-hover\:border-white\/50 { border-color: rgb(15 23 42 / 0.50); }
+
+  /* --- Light-gray text utilities (text-gray-100..400 are designed for dark
+     surfaces — invisible/low-contrast on a light surface). Swap to a
+     consistent slate ramp anchored at #0f172a (slate-900). Covers
+     Tailwind's gray, zinc, slate, neutral, stone palettes — the card
+     body uses zinc-100 for the advertiser name and zinc-500 for the
+     handle/date, AnalyticsModal uses slate-*, etc. */
+  .text-gray-100, .text-zinc-100, .text-slate-100, .text-neutral-100, .text-stone-100 { color: #0f172a; }
+  .text-gray-200, .text-zinc-200, .text-slate-200, .text-neutral-200, .text-stone-200 { color: #1e293b; }
+  .text-gray-300, .text-zinc-300, .text-slate-300, .text-neutral-300, .text-stone-300 { color: #334155; }
+  .text-gray-400, .text-zinc-400, .text-slate-400, .text-neutral-400, .text-stone-400 { color: #475569; }
+  .text-zinc-500, .text-slate-500, .text-neutral-500, .text-stone-500 { color: #64748b; }
+  .hover\:text-gray-100:hover, .hover\:text-zinc-100:hover, .hover\:text-slate-100:hover { color: #0f172a; }
+  .hover\:text-gray-200:hover, .hover\:text-zinc-200:hover, .hover\:text-slate-200:hover { color: #1e293b; }
+  .hover\:text-gray-300:hover, .hover\:text-zinc-300:hover, .hover\:text-slate-300:hover { color: #334155; }
+
+  /* --- MasonryCard ad-type badge ---
+     The badge forces !bg-black/60 in BOTH themes (it overlays ad media), so
+     its label must stay light. The gray Text / Text-Image badges use
+     text-gray-400, which the rule above remaps to slate-600 (#475569) for
+     light surfaces — on this always-dark badge that reads dark-on-dark and
+     vanishes. Restore a light gray for the badge only; the compound selector
+     (0,3,0) beats the bare .text-gray-400 (0,2,0) without !important. Colored
+     badges (red/blue/amber-400) keep their hue — those aren't remapped. */
+  .ad-type-badge.text-gray-400 { color: #cbd5e1; }
+
+  /* --- Arbitrary hex grey text utilities ---
+     The analytics modals use raw greys (text-[#aaa], text-[#9f9f9f],
+     text-[#888]) for detail-row labels (FIRST SEEN, AFFILIATE NETWORK…),
+     the AD LEVEL/ADVERTISER LEVEL toggles, and section headers. On a white
+     modal these read as low-contrast/dull. Map to slate-600 — a clear
+     secondary-label tone that pairs with the slate-900 values. */
+  .text-\[\#aaa\], .text-\[\#aaaaaa\],
+  .text-\[\#9f9f9f\], .text-\[\#999\], .text-\[\#999999\],
+  .text-\[\#888\], .text-\[\#888888\] { color: #475569; }
+  .text-\[\#777\], .text-\[\#666\] { color: #334155; }
+  .text-\[\#bbb\], .text-\[\#ccc\] { color: #64748b; }
+
+  /* --- Active "AD LEVEL / ADVERTISER LEVEL" toggle button ---
+     The active state is `bg-[#3762c1]/15 text-white/90` (CountryAnalytics)
+     or `bg-indigo-500/15 text-white/90` (SocialEngagements, Demographics).
+     A 15%-opacity tint reads as washed-out lavender on the light gray-100
+     track, so the active state is barely distinguishable. We can't flip
+     `bg-[#3762c1]/15` globally — ChipCluster uses the same tint as a chip
+     bg. Instead target the COMPOUND (tint + text-white/90 on one element),
+     which only matches the toggle buttons (chips use text-[#6b99ff]).
+     Give them a solid fill + white text + matching border so the active
+     state pops, mirroring the dark-mode look. */
+  .bg-\[\#3762c1\]\/15.text-white\/90 {
+    background-color: #3762c1;
+    border-color: #3762c1 !important;
+    color: #ffffff;
+  }
+  .bg-indigo-500\/15.text-white\/90 {
+    background-color: #6366f1;
+    border-color: #6366f1 !important;
+    color: #ffffff;
+  }
+
+  /* --- ChipCluster child chips (category subcategory pills) ---
+     Children render as text-[#cfd9f0] (near-white) on a faint #3762c1/25
+     blue tint — built for dark mode, near-invisible on the light filter
+     bar. #cfd9f0 is ChipCluster-exclusive, so remap it to a deep blue that
+     reads on the pale pill (the +N more button uses the /80 variant). The
+     /25 fill is likewise unique to the inline child chip — firm up its
+     fill + border so the pills stay distinct from the white bar. */
+  .text-\[\#cfd9f0\]      { color: #2a4894; }
+  .text-\[\#cfd9f0\]\/80  { color: rgb(42 72 148 / 0.85); }
+  .bg-\[\#3762c1\]\/25 {
+    background-color: rgb(55 98 193 / 0.16);
+    border-color: rgb(55 89 163 / 0.55) !important;
+  }
+
+  /* --- Placeholder text (input/textarea ::placeholder) ---
+     Tailwind emits these as `.placeholder\:text-white\/60::placeholder`.
+     The white-on-light placeholder is the worst readability offender.
+     Anchored at slate-900 to match the rest of the light-mode palette. */
+  .placeholder\:text-white\/40::placeholder { color: rgb(15 23 42 / 0.40); }
+  .placeholder\:text-white\/50::placeholder { color: rgb(15 23 42 / 0.50); }
+  .placeholder\:text-white\/60::placeholder { color: rgb(15 23 42 / 0.55); }
+  .placeholder\:text-white\/70::placeholder { color: rgb(15 23 42 / 0.65); }
+
+  /* --- White borders → light borders ---
+     Covers every opacity step actually used in the codebase. /30 in
+     particular is the unselected-checkbox border in NestedMultiselect
+     (category filter) — without this it's a near-invisible white border
+     on a white sidebar and only appears on hover via
+     `group-hover:border-theme-text`. */
+  .border-white\/5  { border-color: rgb(15 23 42 / 0.06); }
+  .border-white\/10 { border-color: rgb(15 23 42 / 0.12); }
+  .border-white\/20 { border-color: rgb(15 23 42 / 0.18); }
+  .border-white\/25 { border-color: rgb(15 23 42 / 0.22); }
+  .border-white\/30 { border-color: rgb(15 23 42 / 0.30); }
+  .border-white\/40 { border-color: rgb(15 23 42 / 0.40); }
+  .border-white\/50 { border-color: rgb(15 23 42 / 0.50); }
+
+  /* --- Dark surface hex backgrounds → light equivalents --- */
+  /* Page bg / app shell */
+  .bg-\[\#0a0a0a\]   { background-color: #f5f5f5; }
+  .bg-\[\#0a0a0a\]\/95,
+  .bg-\[\#0a0a0a\]\/98 { background-color: rgb(245 245 245 / 0.96); }
+  /* Card bg */
+  .bg-\[\#111\],
+  .bg-\[\#111111\]   { background-color: #ffffff; }
+  /* Ad card root + variants (MasonryCard, Masonry pill, SavedAdsPage) —
+     this is the dark blue-grey that was still showing through in light
+     mode. Flip to clean white so cards visually pop against the page bg. */
+  .bg-\[\#0f111a\]      { background-color: #ffffff; }
+  .bg-\[\#0f111a\]\/80  { background-color: rgb(255 255 255 / 0.85); }
+  .bg-\[\#0f111a\]\/90  { background-color: rgb(255 255 255 / 0.92); }
+  /* Surface / elevated */
+  .bg-\[\#161616\]   { background-color: #fafafa; }
+  /* Tooltips & popovers — kept dark in light mode (conventional dark chip
+     with white text). bg-[#1a1a1a] and bg-[#222] are used ONLY for
+     tooltips/popovers across the app, so we hold them dark rather than
+     flipping to light (which would put white text on a light chip). */
+  .bg-\[\#1a1a1a\]   { background-color: #1f2937; }
+  .bg-\[\#222\]      { background-color: #1f2937; }
+  /* Tooltip border: border-[#333] is shared with form inputs (which need a
+     light border), so only darken it when it sits on a tooltip's bg-[#222]
+     (compound = tooltip only). */
+  .bg-\[\#222\].border-\[\#333\] { border-color: #334155; }
+  .bg-\[\#1c1c1c\]   { background-color: #f0f0f0; }
+  .bg-\[\#1f1f1f\]   { background-color: #ededed; }
+  .bg-\[\#333\]      { background-color: #d8d8d8; }
+
+  /* --- bg-white/X opacity variants ---
+     Used for hairline elevated surfaces, hover states, and the platform-
+     icon corner ribbons on every ad card. In dark mode rgba(255,255,255,0.2)
+     reads as a soft white wash; in light mode it reads as invisible white.
+     Re-map to dark-tint equivalents so the same surfaces / badges remain
+     visible on a light card. */
+  .bg-white\/5  { background-color: rgb(0 0 0 / 0.04); }
+  .bg-white\/10 { background-color: rgb(0 0 0 / 0.06); }
+  .bg-white\/15 { background-color: rgb(0 0 0 / 0.08); }
+  .bg-white\/20 { background-color: rgb(17 24 39 / 0.18); } /* corner ribbon — slightly darker so the "G"/"F"/etc. badge actually shows */
+  .hover\:bg-white\/5:hover  { background-color: rgb(0 0 0 / 0.05); }
+  .hover\:bg-white\/10:hover { background-color: rgb(0 0 0 / 0.08); }
+  .hover\:bg-white\/15:hover { background-color: rgb(0 0 0 / 0.10); }
+  /* Arbitrary white-opacity surfaces (AdDetailModal engagement stat cards +
+     keyword chips use bg-white/[0.025], border-white/[0.05], etc.). On a
+     white modal these are invisible; give them a faint slate tint + border
+     so the stat cards read as subtle surfaces like they do in dark mode. */
+  .bg-white\/\[0\.02\]    { background-color: rgb(15 23 42 / 0.03); }
+  .bg-white\/\[0\.025\]   { background-color: rgb(15 23 42 / 0.035); }
+  .bg-white\/\[0\.03\]    { background-color: rgb(15 23 42 / 0.04); }
+  .bg-white\/\[0\.04\]    { background-color: rgb(15 23 42 / 0.05); }
+  .bg-white\/\[0\.05\]    { background-color: rgb(15 23 42 / 0.06); }
+  .bg-white\/\[0\.06\]    { background-color: rgb(15 23 42 / 0.06); }
+  .border-white\/\[0\.05\] { border-color: rgb(15 23 42 / 0.08); }
+  .border-white\/\[0\.08\] { border-color: rgb(15 23 42 / 0.10); }
+  .border-white\/\[0\.12\] { border-color: rgb(15 23 42 / 0.14); }
+  .hover\:bg-white\/\[0\.05\]:hover    { background-color: rgb(15 23 42 / 0.07); }
+  .hover\:border-white\/\[0\.12\]:hover { border-color: rgb(15 23 42 / 0.16); }
+
+  /* --- Dark hex borders → light borders --- */
+  .border-\[\#1c1c1c\] { border-color: #e5e5e5; }
+  .border-\[\#222\]    { border-color: #dcdcdc; }
+  .border-\[\#333\]    { border-color: #d0d0d0; }
+
+  /* --- Pure text-white scoped to swapped surfaces ---
+     Targets `text-white` ONLY when it lives inside (descendant) or on the
+     same element (compound) as a dark hex bg we just remapped to light.
+     Saturated colored buttons (bg-red-*, bg-[#335296], etc.) are NOT in
+     this list, so their `text-white` correctly stays white. Tooltips at
+     bg-[#1a1a1a] are also not in this list (we kept that bg dark), so the
+     white tooltip text stays white. */
+  .bg-\[\#0a0a0a\] .text-white,
+  .bg-\[\#0a0a0a\]\/95 .text-white,
+  .bg-\[\#0a0a0a\]\/98 .text-white,
+  .bg-\[\#0f111a\] .text-white,
+  .bg-\[\#0f111a\]\/80 .text-white,
+  .bg-\[\#0f111a\]\/90 .text-white,
+  .bg-\[\#111\] .text-white,
+  .bg-\[\#111111\] .text-white,
+  .bg-\[\#161616\] .text-white,
+  .bg-\[\#1c1c1c\] .text-white,
+  .bg-\[\#1f1f1f\] .text-white,
+  .bg-\[\#0a0a0a\].text-white,
+  .bg-\[\#0f111a\].text-white,
+  .bg-\[\#111\].text-white,
+  .bg-\[\#111111\].text-white,
+  .bg-\[\#161616\].text-white,
+  .bg-theme-bg .text-white,
+  .bg-theme-card .text-white,
+  .bg-theme-surface .text-white { color: #0f172a; }
+
+  /* Re-promote text-white back to white on saturated brand-blue surfaces.
+     Same pattern as the bg-black/* overlay fix: those backgrounds are
+     intentionally dark in BOTH themes (active calendar tab, primary
+     buttons, avatars), so their `text-white` must stay white even when
+     the button is nested in a swapped-light parent like bg-theme-surface.
+     Listed for the buttons under bg-[#335296] (active tab, "Clear Filter"
+     enabled state, avatar) and the hover state bg-[#3762c1]. Same
+     specificity as the bg-theme-* rule above, so source order — this
+     block must stay AFTER that one — picks the saturated-bg case. */
+  .bg-\[\#335296\] .text-white, .bg-\[\#335296\].text-white,
+  .bg-\[\#3762c1\] .text-white, .bg-\[\#3762c1\].text-white,
+  .hover\:bg-\[\#3762c1\]:hover .text-white,
+  .hover\:bg-\[\#3762c1\]:hover.text-white { color: #ffffff; }
+
+  /* Tooltips keep a dark bg in light mode (bg-[#1a1a1a] / bg-[#222] → both
+     held dark above), so their `text-white` must stay white. These tooltips
+     are rendered INSIDE cards (bg-[#0f111a]) and modals (bg-theme-*), so the
+     descendant flip above was turning the tooltip text dark slate →
+     invisible on the dark chip. Re-promote to white. Source order after the
+     flip block wins on equal specificity. */
+  .bg-\[\#1a1a1a\] .text-white, .bg-\[\#1a1a1a\].text-white,
+  .bg-\[\#222\] .text-white, .bg-\[\#222\].text-white { color: #ffffff; }
+
+  /* Note: bg-theme-text/[0.04] (used as search-input fill) and all other
+     `*-theme-*` utilities resolve via --color-text / --color-border / etc,
+     which useTheme.jsx already swaps. No override needed for those. */
+
+  /* --- Scrollbar in light mode --- */
+  *::-webkit-scrollbar-track { background: #ececec; }
+  *::-webkit-scrollbar-thumb { background: #c5c5c5; }
+  *::-webkit-scrollbar-thumb:hover { background: #999999; }
+
+  /* --- Sidebar (<aside>) in light mode ---
+     The sidebar's source class is `bg-theme-bg`, same as the page bg.
+     Without an override the sidebar and page would be identical slate-200
+     in light mode and there'd be no visual separation. Bump the sidebar
+     one step lighter (slate-100) and recolour its dividers to a very-
+     light-blue so the section breaks read clearly on the cool-grey
+     background. Dark mode is untouched — `aside` falls through to
+     `bg-theme-bg` like before. */
+  aside.bg-theme-bg {
+    background-color: #ffffff;
+  }
+
+  /* SidebarDivider renders `mx-3 border-t border-theme-border`. Targeting
+     `aside .border-t.border-theme-border` flips ONLY those horizontal
+     dividers; the "Clear All" button below uses `border` (not `border-t`)
+     so it keeps its existing border. */
+  aside .border-t.border-theme-border {
+    border-color: #dbeafe; /* blue-100 — very light blue */
+  }
+
+  /* Right-edge gradient bar (Sidebar.jsx) hardcodes rgba(255,255,255,…) —
+     invisible on a light sidebar. Repaint it in the same very-light-blue
+     so the sidebar/main-content split stays visually present. The element
+     has no class hook, so we target the unique attribute pattern. */
+  aside > div[style*="rgba(255,255,255"] {
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      rgba(147, 197, 253, 0.35) 15%,
+      rgba(147, 197, 253, 0.7)  50%,
+      rgba(147, 197, 253, 0.4)  70%,
+      rgba(147, 197, 253, 0.3)  85%,
+      transparent
+    ) !important;
+  }
+
+  /* --- Header bg → solid white in light mode ---
+     Header uses `bg-theme-bg/95`. With page bg = slate-200 that resolves
+     to a translucent slate the header gets lost against. Spec-mandated
+     white with a slight translucency for the blur to work cleanly. */
+  header.bg-theme-bg\/95 {
+    background-color: rgb(255 255 255 / 0.96);
+  }
+
+  /* --- Hover icon buttons on ad cards must stay white in light mode ---
+     The card-overlay action buttons (Like/Download/Hide/Copy in
+     MasonryCard.jsx ~ll. 711-794) use `bg-black/55…/75` for image-overlay
+     contrast — that black bg is correct in BOTH themes (it sits over the
+     ad image, not the card surface). But the icon inside is
+     `text-zinc-100` / `text-white`, which the global gray-flip would
+     turn DARK in light mode → invisible icon on dark button. Re-promote
+     to white when nested inside one of those overlay backgrounds.
+     Higher specificity than the bare `.text-zinc-100` rule above, so
+     this wins for the overlay case without affecting card-body usage. */
+  .bg-black\/30 .text-zinc-100, .bg-black\/30.text-zinc-100,
+  .bg-black\/40 .text-zinc-100, .bg-black\/40.text-zinc-100,
+  .bg-black\/50 .text-zinc-100, .bg-black\/50.text-zinc-100,
+  .bg-black\/55 .text-zinc-100, .bg-black\/55.text-zinc-100,
+  .bg-black\/60 .text-zinc-100, .bg-black\/60.text-zinc-100,
+  .bg-black\/65 .text-zinc-100, .bg-black\/65.text-zinc-100,
+  .bg-black\/70 .text-zinc-100, .bg-black\/70.text-zinc-100,
+  .bg-black\/75 .text-zinc-100, .bg-black\/75.text-zinc-100,
+  .bg-black\/30 .text-white, .bg-black\/30.text-white,
+  .bg-black\/40 .text-white, .bg-black\/40.text-white,
+  .bg-black\/50 .text-white, .bg-black\/55 .text-white,
+  .bg-black\/60 .text-white, .bg-black\/65 .text-white,
+  .bg-black\/70 .text-white, .bg-black\/75 .text-white,
+  /* Same overlay buttons but with `text-white/{70,80,90}` opacity variants
+     (the "Original Preview" carousel button uses bg-black/40 + text-white/80).
+     Without these, my global text-white/XX → slate-900 flip turned the label
+     dark on top of a dark overlay = unreadable. */
+  .bg-black\/30 .text-white\/70, .bg-black\/30.text-white\/70,
+  .bg-black\/30 .text-white\/80, .bg-black\/30.text-white\/80,
+  .bg-black\/30 .text-white\/90, .bg-black\/30.text-white\/90,
+  .bg-black\/40 .text-white\/70, .bg-black\/40.text-white\/70,
+  .bg-black\/40 .text-white\/80, .bg-black\/40.text-white\/80,
+  .bg-black\/40 .text-white\/90, .bg-black\/40.text-white\/90,
+  .bg-black\/50 .text-white\/70, .bg-black\/50.text-white\/70,
+  .bg-black\/50 .text-white\/80, .bg-black\/50.text-white\/80,
+  .bg-black\/50 .text-white\/90, .bg-black\/50.text-white\/90,
+  .bg-black\/60 .text-white\/70, .bg-black\/60.text-white\/70,
+  .bg-black\/60 .text-white\/80, .bg-black\/60.text-white\/80,
+  /* And the hover:text-white case on the same overlay button — Tailwind
+     generates `.hover\:text-white:hover` and my bare override flips it
+     to slate-900. The compound (`.bg-black\/40.hover\:text-white:hover`)
+     is more specific so it wins. */
+  .bg-black\/30.hover\:text-white:hover, .bg-black\/40.hover\:text-white:hover,
+  .bg-black\/50.hover\:text-white:hover, .bg-black\/55.hover\:text-white:hover,
+  .bg-black\/60.hover\:text-white:hover, .bg-black\/65.hover\:text-white:hover,
+  .bg-black\/70.hover\:text-white:hover, .bg-black\/75.hover\:text-white:hover,
+  /* Title overlay on ad media (MasonryCard.jsx:669) is a gradient that
+     fades from black/90 at the bottom to transparent at the top, with a
+     `text-white` <h3> inside. The earlier `bg-[#0f111a] .text-white`
+     rule (which flips card-body white text to dark) was incorrectly
+     catching the overlay because the gradient sits inside the card
+     root. Re-promote any text-white nested in a dark `from-black/*`
+     gradient stop back to white — those overlays exist precisely to
+     give white text a dark scrim, in both themes. */
+  .from-black\/50 .text-white, .from-black\/55 .text-white,
+  .from-black\/60 .text-white, .from-black\/70 .text-white,
+  .from-black\/80 .text-white, .from-black\/90 .text-white,
+  .from-black .text-white,
+  /* The title overlay <h3> can also have text-white directly on the
+     gradient element in some cards; cover the compound too. */
+  .from-black\/90.text-white, .from-black\/80.text-white {
+    color: #ffffff !important;
+  }
+
+  /* --- SliderFilter / RangeFilter input chips ---
+     SliderFilter uses `bg-[#2a2f3d] border-[#525a70]` for the min/max
+     number chips, and RangeFilter uses `border-[#444]` for its input
+     underline. Both vanish on a light sidebar; remap to light-slate
+     equivalents so the numeric values stay legible. */
+  .bg-\[\#2a2f3d\]                  { background-color: #f1f5f9; }
+  .border-\[\#525a70\]              { border-color: #cbd5e1; }
+  .hover\:bg-\[\#323848\]:hover     { background-color: #e2e8f0; }
+  .hover\:border-\[\#7a8499\]:hover { border-color: #94a3b8; }
+  .focus\:bg-\[\#3759a3\]\/20:focus { background-color: rgb(55 89 163 / 0.08); }
+  .focus\:border-\[\#5a82d6\]:focus { border-color: #5a82d6; }
+  .focus\:text-white:focus          { color: #0f172a; }
+  .border-\[\#444\]                 { border-color: #cbd5e1; }
+
+  /* --- Default text weight in light mode → semibold ---
+     User-spec: light mode reads heavier. Setting font-weight on body so
+     it inherits everywhere; elements with explicit font-{bold,medium,
+     light,normal} keep their override. Doesn't touch dark mode. */
+  body { font-weight: 600; }
+
+  /* --- AdDateDropdown calendar (react-day-picker) ---
+     This component ships a sizeable inline <style> block with hardcoded
+     dark hex colours for every visual surface inside the calendar
+     (.rdp-* classes) plus a few utility classes on the surrounding
+     chrome (.bg-[#222325] tabs, .border-[#363840]/70 dividers). External
+     overrides win on specificity ([data-theme="light"] .x is 0,0,2 vs
+     the inline 0,0,1) without forcing me to touch the component file. */
+
+  /* Tab strip + dividers + dropdown surface */
+  .bg-\[\#222325\]            { background-color: #f8fafc; }
+  .bg-\[\#292b31\]            { background-color: #e2e8f0; }
+  .hover\:bg-\[\#292b31\]:hover { background-color: #e2e8f0; }
+  .focus\:bg-\[\#292b31\]:focus { background-color: #e2e8f0; }
+  .border-\[\#363840\]\/70    { border-color: #e2e8f0; }
+  .border-\[\#363840\]\/80    { border-color: #cbd5e1; }
+  .border-\[\#5a5c66\]\/40    { border-color: #93c5fd; }
+  .hover\:border-\[\#5a5c66\]\/40:hover { border-color: #93c5fd; }
+
+  /* react-day-picker internals */
+  .rdp-day_button             { color: #0f172a; }
+  .rdp-day_button:hover:not([disabled]) {
+    background-color: rgb(15 23 42 / 0.06) !important;
+  }
+  .rdp-day_button[disabled]   { color: #94a3b8; }
+  .rdp-day.rdp-disabled .rdp-day_button { color: #94a3b8 !important; }
+  .rdp-head_cell              { color: #475569; }
+  .rdp-dropdown               { color: #0f172a; }
+  .rdp-dropdown option        { background-color: #ffffff; color: #0f172a; }
+  /* Month / year caption pills: keep a subtle hover and dropdown-focus tint
+     that matches the slate-100 page bg instead of the dark #292b31. */
+  .rdp-dropdown:hover ~ .rdp-caption_label,
+  .rdp-dropdown:focus ~ .rdp-caption_label,
+  .rdp-dropdown:focus-visible ~ .rdp-caption_label {
+    background-color: #e2e8f0 !important;
+  }
+  /* Nav chevron buttons: slate bg with dark icon (was #3f414a with white). */
+  .rdp-nav button             { background-color: #e2e8f0; }
+  .rdp-nav button:hover:not([disabled]) { background-color: #cbd5e1; }
+  .rdp-nav svg                { fill: #0f172a; }
+  .rdp-dropdown_root svg      { fill: #0f172a; }
+  /* Range highlight: the middle days of a selected range use #242529 in
+     dark mode — that's invisible-on-invisible in light. Soft blue tint
+     with slate-500 numbers so the start/end pills (slate-900 text on
+     blue) clearly stand out against the middle range. */
+  .rdp-range_middle           { background-color: rgb(51 82 150 / 0.08); }
+  .rdp-range_middle .rdp-day_button { color: #64748b; }
+  /* Custom-select dropdown menu (month/year, etc.) */
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  /* --- Ad-card placeholder gradients (banner / text-only / image-error)
+     The card preview area uses tailwind gradient utilities that hard-code
+     dark stops (indigo-950, slate-900, zinc-900/800). Even after the
+     parent bg flips light, the semi-transparent dark stops layer on top
+     and render as the grey wash visible in the screenshot. Remap each
+     stop's CSS variable to a solid slate-50 → slate-100 gradient.
+     Tailwind v3 gradient utilities are driven by `--tw-gradient-from` /
+     `--tw-gradient-to`, so overriding those is enough — no class edits
+     needed. */
+  .from-indigo-950\/40 {
+    --tw-gradient-from: #f8fafc var(--tw-gradient-from-position); /* slate-50 */
+    --tw-gradient-to: rgb(248 250 252 / 0) var(--tw-gradient-to-position);
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+  }
+  .to-slate-900\/40 {
+    --tw-gradient-to: #f1f5f9 var(--tw-gradient-to-position); /* slate-100 */
+  }
+  .from-zinc-900\/70 {
+    --tw-gradient-from: #f8fafc var(--tw-gradient-from-position);
+    --tw-gradient-to: rgb(248 250 252 / 0) var(--tw-gradient-to-position);
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+  }
+  .to-zinc-800\/40 {
+    --tw-gradient-to: #f1f5f9 var(--tw-gradient-to-position);
+  }
+}

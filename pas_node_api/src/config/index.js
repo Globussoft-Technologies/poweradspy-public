@@ -1,0 +1,431 @@
+'use strict';
+
+require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+
+// ─── Load config.json ───────────────────────────────────────
+let fileConfig = {};
+const configPath = path.resolve(process.cwd(), 'config.json');
+
+try {
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    fileConfig = JSON.parse(raw);
+  }
+} catch (err) {
+  console.error(`[config] Failed to load config.json: ${err.message}`);
+}
+
+/**
+ * Get a value from config.json first, then fall back to environment variable.
+ * @param {*} jsonValue - Value from config.json (can be undefined)
+ * @param {string} envKey - Environment variable name to fall back to
+ * @param {Function} [transform] - Optional transform function (e.g. parseInt, parseFloat)
+ * @returns {*} The resolved value
+ */
+function getVal(jsonValue, envKey, transform) {
+  // If jsonValue is explicitly set (not undefined), use it
+  if (jsonValue !== undefined && jsonValue !== null && jsonValue !== '') {
+    return transform ? transform(jsonValue) : jsonValue;
+  }
+  // Fallback to env
+  const envVal = process.env[envKey];
+  if (envVal !== undefined && envVal !== null && envVal !== '') {
+    return transform ? transform(envVal) : envVal;
+  }
+  // No value found anywhere
+  return undefined;
+}
+
+const toInt = (v) => parseInt(v, 10);
+const toBool = (v) => v === true || v === 'true';
+
+// ─── Build config object ─────────────────────────────────────
+
+const config = {
+  env: getVal(fileConfig.server?.nodeEnv, 'NODE_ENV'),
+  port: getVal(fileConfig.server?.port, 'PORT', toInt),
+  host: getVal(fileConfig.server?.host, 'HOST'),
+  bodyLimit: getVal(fileConfig.server?.bodyLimit, 'BODY_LIMIT'),
+  trustProxy: getVal(fileConfig.server?.trustProxy, 'TRUST_PROXY', toInt),
+
+  jwt: {
+    secret: getVal(fileConfig.jwt?.secret, 'JWT_SECRET'),
+    expiresIn: getVal(fileConfig.jwt?.expiresIn, 'JWT_EXPIRES_IN'),
+    cookieMaxAgeMs: getVal(fileConfig.jwt?.cookieMaxAgeMs, 'JWT_COOKIE_MAX_AGE_MS', toInt) || 86400000,
+  },
+
+  rateLimit: {
+    windowMs: getVal(fileConfig.rateLimit?.windowMs, 'RATE_LIMIT_WINDOW_MS', toInt),
+    maxRequests: getVal(fileConfig.rateLimit?.maxRequests, 'RATE_LIMIT_MAX_REQUESTS', toInt),
+  },
+
+  cluster: {
+    enabled: getVal(fileConfig.cluster?.enabled, 'CLUSTER_ENABLED', toBool),
+    workers: getVal(fileConfig.cluster?.workers, 'CLUSTER_WORKERS', toInt),
+    maxRestarts: getVal(fileConfig.cluster?.maxRestarts, 'CLUSTER_MAX_RESTARTS', toInt),
+    restartWindowMs: getVal(fileConfig.cluster?.restartWindowMs, 'CLUSTER_RESTART_WINDOW_MS', toInt),
+    maxRestartDelayMs: getVal(fileConfig.cluster?.maxRestartDelayMs, 'CLUSTER_MAX_RESTART_DELAY_MS', toInt),
+    gracefulShutdownTimeoutMs: getVal(fileConfig.cluster?.gracefulShutdownTimeoutMs, 'CLUSTER_GRACEFUL_SHUTDOWN_MS', toInt),
+  },
+
+  cache: {
+    defaultTTL: getVal(fileConfig.cache?.defaultTTL, 'CACHE_DEFAULT_TTL', toInt),
+    enabled: getVal(fileConfig.cache?.enabled, 'CACHE_ENABLED', toBool),
+  },
+
+  localCache: {
+    dir: getVal(fileConfig.localCache?.dir, 'LOCAL_CACHE_DIR'),
+    cleanupIntervalMs: getVal(fileConfig.localCache?.cleanupIntervalMs, 'LOCAL_CACHE_CLEANUP_MS', toInt),
+  },
+
+  redis: {
+    host: getVal(fileConfig.redis?.host, 'REDIS_HOST'),
+    port: getVal(fileConfig.redis?.port, 'REDIS_PORT', toInt),
+    password: getVal(fileConfig.redis?.password, 'REDIS_PASSWORD'),
+    db: getVal(fileConfig.redis?.db, 'REDIS_DB', toInt),
+    connectTimeoutMs: getVal(fileConfig.redis?.connectTimeoutMs, 'REDIS_CONNECT_TIMEOUT_MS', toInt),
+    maxRetriesPerRequest: getVal(fileConfig.redis?.maxRetriesPerRequest, 'REDIS_MAX_RETRIES', toInt),
+    retryDelayBase: getVal(fileConfig.redis?.retryDelayBase, 'REDIS_RETRY_DELAY_BASE', toInt),
+    retryDelayMax: getVal(fileConfig.redis?.retryDelayMax, 'REDIS_RETRY_DELAY_MAX', toInt),
+  },
+
+  log: {
+    level: getVal(fileConfig.logging?.level, 'LOG_LEVEL'),
+    dir: getVal(fileConfig.logging?.dir, 'LOG_DIR'),
+    errorLogMaxSize: fileConfig.logging?.errorLogMaxSize,
+    errorLogMaxDays: fileConfig.logging?.errorLogMaxDays,
+    combinedLogMaxSize: fileConfig.logging?.combinedLogMaxSize,
+    combinedLogMaxDays: fileConfig.logging?.combinedLogMaxDays,
+    zippedArchive: fileConfig.logging?.zippedArchive,
+  },
+
+  databases: {
+    sql: {
+      host: getVal(fileConfig.databases?.sql?.host, 'DB_SQL_HOST'),
+      user: getVal(fileConfig.databases?.sql?.user, 'DB_SQL_USER'),
+      password: getVal(fileConfig.databases?.sql?.password, 'DB_SQL_PASSWORD'),
+      port: getVal(fileConfig.databases?.sql?.port, 'DB_SQL_PORT', toInt),
+      database: getVal(fileConfig.databases?.sql?.database, 'DB_SQL_DATABASE'),
+      tiktokdatabase: getVal(fileConfig.databases?.sql?.tiktokdatabase, 'DB_SQL_TIKTOK_DATABASE'),
+      poolSize: getVal(fileConfig.databases?.sql?.poolSize, 'DB_SQL_POOL_SIZE', toInt),
+      idleTimeout: fileConfig.databases?.sql?.idleTimeout,
+      keepAliveInitialDelay: fileConfig.databases?.sql?.keepAliveInitialDelay,
+      queueLimit: fileConfig.databases?.sql?.queueLimit,
+    },
+    mongo: {
+      uri: getVal(fileConfig.databases?.mongo?.uri, 'DB_MONGO_URI'),
+      database: getVal(fileConfig.databases?.mongo?.database, 'DB_MONGO_DATABASE'),
+      poolSize: getVal(fileConfig.databases?.mongo?.poolSize, 'DB_MONGO_POOL_SIZE', toInt),
+      minPoolSize: fileConfig.databases?.mongo?.minPoolSize,
+      serverSelectionTimeoutMs: fileConfig.databases?.mongo?.serverSelectionTimeoutMs,
+      heartbeatFrequencyMs: fileConfig.databases?.mongo?.heartbeatFrequencyMs,
+    },
+    elastic: {
+      node: getVal(fileConfig.databases?.elastic?.node, 'DB_ELASTIC_NODE'),
+      auth: {
+        username: getVal(fileConfig.databases?.elastic?.username, 'DB_ELASTIC_USERNAME'),
+        password: getVal(fileConfig.databases?.elastic?.password, 'DB_ELASTIC_PASSWORD'),
+      },
+      maxRetries: fileConfig.databases?.elastic?.maxRetries,
+      requestTimeoutMs: fileConfig.databases?.elastic?.requestTimeoutMs,
+    },
+    elastic_tiktok: {
+      node: getVal(fileConfig.databases?.elastic_tiktok?.node, 'DB_ELASTIC_TIKTOK_NODE'),
+      auth: {
+        username: getVal(fileConfig.databases?.elastic_tiktok?.username, 'DB_ELASTIC_TIKTOK_USERNAME'),
+        password: getVal(fileConfig.databases?.elastic_tiktok?.password, 'DB_ELASTIC_TIKTOK_PASSWORD'),
+      },
+      maxRetries: fileConfig.databases?.elastic?.maxRetries,
+      requestTimeoutMs: fileConfig.databases?.elastic?.requestTimeoutMs,
+    },
+  },
+
+  serverTimeouts: {
+    keepAliveTimeoutMs: getVal(fileConfig.serverTimeouts?.keepAliveTimeoutMs, 'SERVER_KEEP_ALIVE_TIMEOUT_MS', toInt),
+    headersTimeoutMs: getVal(fileConfig.serverTimeouts?.headersTimeoutMs, 'SERVER_HEADERS_TIMEOUT_MS', toInt),
+    maxHeadersCount: getVal(fileConfig.serverTimeouts?.maxHeadersCount, 'SERVER_MAX_HEADERS_COUNT', toInt),
+    requestTimeoutMs: getVal(fileConfig.serverTimeouts?.requestTimeoutMs, 'SERVER_REQUEST_TIMEOUT_MS', toInt),
+    workerGracefulShutdownMs: getVal(fileConfig.serverTimeouts?.workerGracefulShutdownMs, 'SERVER_WORKER_SHUTDOWN_MS', toInt),
+  },
+
+  apiTimeouts: {
+    networkSearchTimeoutMs: getVal(fileConfig.apiTimeouts?.networkSearchTimeoutMs, 'API_NETWORK_SEARCH_TIMEOUT_MS', toInt),
+  },
+
+  circuitBreaker: {
+    failureThreshold: getVal(fileConfig.circuitBreaker?.failureThreshold, 'CB_FAILURE_THRESHOLD', toInt),
+    resetTimeoutMs: getVal(fileConfig.circuitBreaker?.resetTimeoutMs, 'CB_RESET_TIMEOUT_MS', toInt),
+  },
+
+  compression: {
+    threshold: getVal(fileConfig.compression?.threshold, 'COMPRESSION_THRESHOLD', toInt),
+  },
+
+  cors: {
+    origin: getVal(fileConfig.cors?.origin, 'CORS_ORIGIN'),
+    methods: fileConfig.cors?.methods || ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: fileConfig.cors?.allowedHeaders || ['Content-Type', 'Authorization', 'x-request-id'],
+  },
+
+  admin: {
+    enabled: getVal(fileConfig.admin?.enabled, 'ADMIN_ENABLED', toBool),
+    username: getVal(fileConfig.admin?.username, 'ADMIN_USERNAME'),
+    password: getVal(fileConfig.admin?.password, 'ADMIN_PASSWORD'),
+    sessionSecret: getVal(fileConfig.admin?.sessionSecret, 'ADMIN_SESSION_SECRET'),
+    sessionMaxAgeMs: getVal(fileConfig.admin?.sessionMaxAgeMs, 'ADMIN_SESSION_MAX_AGE_MS', toInt),
+    telegramBotToken: getVal(fileConfig.admin?.telegramBotToken, 'TELEGRAM_BOT_TOKEN'),
+    telegramChatId: getVal(fileConfig.admin?.telegramChatId, 'TELEGRAM_CHAT_ID'),
+  },
+
+  metricsConfig: {
+    enabled: getVal(fileConfig.metrics?.enabled, 'METRICS_ENABLED', toBool),
+    retentionMinutes: getVal(fileConfig.metrics?.retentionMinutes, 'METRICS_RETENTION_MINUTES', toInt),
+    snapshotIntervalMs: getVal(fileConfig.metrics?.snapshotIntervalMs, 'METRICS_SNAPSHOT_INTERVAL_MS', toInt),
+  },
+
+  blockedIps: {
+    filePath: getVal(fileConfig.blockedIps?.filePath, 'BLOCKED_IPS_FILE_PATH') || 'data/blocked-ips.json',
+  },
+
+  cdn: {
+    baseUrl: getVal(fileConfig.cdn?.baseUrl, 'CDN_BASE_URL') || '',
+  },
+
+  elasticsearch: {
+    safeFrom: getVal(fileConfig.elasticsearch?.safeFrom, 'ES_SAFE_FROM', toInt) || 9000,
+  },
+
+  // ─── Insertion engine (NEW — high-throughput ad insertion) ───
+  // Global tuning shared by all networks. Per-network on/off is in networks.<net>.insertion.enabled.
+  insertion: {
+    concurrency: getVal(fileConfig.insertion?.concurrency, 'INSERTION_CONCURRENCY', toInt) || 8,
+    useWorkerThreads: getVal(fileConfig.insertion?.useWorkerThreads, 'INSERTION_USE_WORKER_THREADS', toBool) === true,
+    workerThreads: getVal(fileConfig.insertion?.workerThreads, 'INSERTION_WORKER_THREADS', toInt) || 4,
+    // HMAC secret for x-signature auth. config.json first, then env INSERTION_SECRET_KEY (mirrors PHP).
+    secretKey: getVal(fileConfig.insertion?.secretKey, 'INSERTION_SECRET_KEY') || '',
+    signatureHeader: (getVal(fileConfig.insertion?.signatureHeader, 'INSERTION_SIGNATURE_HEADER') || 'x-signature').toLowerCase(),
+    // body.platform value that bypasses signature auth (PHP platform==12). null disables the bypass.
+    allowPlatformBypass: fileConfig.insertion?.allowPlatformBypass !== undefined
+      ? fileConfig.insertion.allowPlatformBypass
+      : '12',
+    // Secret token for the secure delete endpoint (PHP API_DELETE_TOKEN). config.json → env.
+    deleteToken: getVal(fileConfig.insertion?.deleteToken, 'API_DELETE_TOKEN') || '',
+    // ES field prefix carried over on UPDATE re-index (PHP TRANSLATION_FEILD).
+    translationField: getVal(fileConfig.insertion?.translationField, 'TRANSLATION_FEILD') || 'facebook_translations',
+    // Shared NAS media-upload settings (common helper, used by all networks). config.json → env.
+    nas: {
+      videoUrl: getVal(fileConfig.insertion?.nas?.videoUrl, 'NAS_VIDEO_URL') || '',
+      videoUploadPath: getVal(fileConfig.insertion?.nas?.videoUploadPath, 'NAS_VIDEO_UPLOAD_PATH') || '/upload',
+      mediaUploadPath: getVal(fileConfig.insertion?.nas?.mediaUploadPath, 'NAS_MEDIA_UPLOAD_PATH') || '/{bucket}/upload',
+      mediaUrl: getVal(fileConfig.insertion?.nas?.mediaUrl, 'NAS_MEDIA_URL') || '',
+      mediaToken: getVal(fileConfig.insertion?.nas?.mediaToken, 'NAS_MEDIA_TOKEN') || '',
+      // Explicit bucket override; else derived from env (production → pas-prod, otherwise pas-dev).
+      bucket: getVal(fileConfig.insertion?.nas?.bucket, 'NAS_BUCKET') || '',
+      verifyTls: fileConfig.insertion?.nas?.verifyTls === true,
+      timeoutMs: getVal(fileConfig.insertion?.nas?.timeoutMs, 'NAS_TIMEOUT_MS', toInt) || 60000,
+    },
+    // Shared external-API endpoints (translation/impression/popularity/adgpt). config.json → env.
+    api: {
+      translationUrl: getVal(fileConfig.insertion?.api?.translationUrl, 'LANGUAGE_TRANSLATION_API') || '',
+      // true (default) = PHP-faithful: a failed translation aborts metaAdsData with 503.
+      // false = dev/testing: skip translation gracefully and continue inserting.
+      translationRequired: fileConfig.insertion?.api?.translationRequired !== false,
+      impressionUrl: getVal(fileConfig.insertion?.api?.impressionUrl, 'IMPRESSION_API') || 'https://impression.poweradspy.com/get_impressions_and_popularity',
+      popularityUrl: getVal(fileConfig.insertion?.api?.popularityUrl, 'API_IMPRESSION_POPULARITY') || '',
+      adgptInsertionUrl: getVal(fileConfig.insertion?.api?.adgptInsertionUrl, 'ADGPT_INSERTION_API') || '',
+      adgptTimeoutMs: getVal(fileConfig.insertion?.api?.adgptTimeoutMs, 'ADGPT_TIMEOUT_MS', toInt) || 100,
+      timeoutMs: getVal(fileConfig.insertion?.api?.timeoutMs, 'INSERTION_API_TIMEOUT_MS', toInt) || 15000,
+    },
+  },
+
+  amember: {
+    apiUrl: getVal(fileConfig.amember?.apiUrl, 'AMEMBER_API_URL') || '',
+    apiKey: getVal(fileConfig.amember?.apiKey, 'AMEMBER_API_KEY') || '',
+    frontendUrl: getVal(fileConfig.amember?.frontendUrl, 'AMEMBER_FRONTEND_URL') || 'http://localhost:5173',
+    freePlanCode: getVal(fileConfig.amember?.freePlanCode, 'AMEMBER_FREE_PLAN_CODE', toInt) || 20,
+    plans: fileConfig.amember?.plans || {},
+  },
+
+  dailyKeyword: {
+    newPlanUser: (() => {
+      const val = getVal(fileConfig.dailyKeyword?.newPlanUser, 'NEW_PLAN_USER');
+      if (!val) return [];
+      try { return (Array.isArray(val) ? val : JSON.parse(val)).map(String); } catch { return []; }
+    })(),
+    realTimeStore: getVal(fileConfig.dailyKeyword?.realTimeStore, 'REAL_TIME_STORE') || 'on',
+  },
+
+  sendgrid: {
+    enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
+    apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),
+    fromEmail: getVal(fileConfig.sendgrid?.fromEmail, 'SENDGRID_FROM_EMAIL') || 'noreply@poweradspy.com',
+    fromName: getVal(fileConfig.sendgrid?.fromName, 'SENDGRID_FROM_NAME') || 'PowerAdSpy',
+  },
+
+  firebase: {
+    enabled: getVal(fileConfig.firebase?.enabled, 'FIREBASE_ENABLED', toBool),
+    projectId: getVal(fileConfig.firebase?.projectId, 'FIREBASE_PROJECT_ID'),
+    credentialsPath: getVal(fileConfig.firebase?.credentialsPath, 'FIREBASE_CREDENTIALS_PATH') || 'firebase-credentials.json',
+  },
+
+  notifications: {
+    enabled: getVal(fileConfig.notifications?.enabled, 'NOTIFICATIONS_ENABLED', toBool),
+    // Timezone for ALL cron times (IANA name). Default IST so "daily 12:30 AM" = India time.
+    timezone: getVal(fileConfig.notifications?.timezone, 'NOTIFICATIONS_TIMEZONE') || 'Asia/Kolkata',
+    // Human-friendly schedules (e.g. "1 min", "1 hour", "daily 12:30 AM") — parsed to cron in the cron job.
+    pushSchedule: getVal(fileConfig.notifications?.pushSchedule, 'NOTIFICATIONS_PUSH_SCHEDULE') || '5 min',
+    emailSchedule: getVal(fileConfig.notifications?.emailSchedule, 'NOTIFICATIONS_EMAIL_SCHEDULE') || 'daily 12:30 AM',
+    resetSchedule: getVal(fileConfig.notifications?.resetSchedule, 'NOTIFICATIONS_RESET_SCHEDULE') || 'daily 12:30 AM',
+    // Per-cron on/off toggles (default ON unless explicitly false).
+    pushEnabled: getVal(fileConfig.notifications?.pushEnabled, 'NOTIFICATIONS_PUSH_ENABLED', toBool) !== false,
+    emailEnabled: getVal(fileConfig.notifications?.emailEnabled, 'NOTIFICATIONS_EMAIL_ENABLED', toBool) !== false,
+    resetEnabled: getVal(fileConfig.notifications?.resetEnabled, 'NOTIFICATIONS_RESET_ENABLED', toBool) !== false,
+    keywordStatusEnabled: getVal(fileConfig.notifications?.keywordStatusEnabled, 'NOTIFICATIONS_KEYWORD_STATUS_ENABLED', toBool) !== false,
+    // Which DB (network) + tables the notification crons read/write — all driven by config, no hardcoding.
+    pendingNetwork: getVal(fileConfig.notifications?.pendingNetwork, 'NOTIFICATIONS_PENDING_NETWORK') || 'linkedin',
+    pendingTable: getVal(fileConfig.notifications?.pendingTable, 'NOTIFICATIONS_PENDING_TABLE') || 'daily_keyword_requests',
+    tokenNetwork: getVal(fileConfig.notifications?.tokenNetwork, 'NOTIFICATIONS_TOKEN_NETWORK') || 'facebook',
+    tokenTable: getVal(fileConfig.notifications?.tokenTable, 'NOTIFICATIONS_TOKEN_TABLE') || 'am_user_action',
+    inAppTable: getVal(fileConfig.notifications?.inAppTable, 'NOTIFICATIONS_INAPP_TABLE') || 'ad_notifications',
+  },
+};
+
+
+// Computed convenience properties
+config.isDev = config.env !== 'production';
+
+// ─── Hot-reload support ─────────────────────────────────────
+/**
+ * Reload config.json from disk and merge updated values.
+ * Used by the admin panel to apply config changes at runtime.
+ */
+config.reload = () => {
+  try {
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf-8');
+      const newFileConfig = JSON.parse(raw);
+      
+      // Update rate limit
+      if (newFileConfig.rateLimit) {
+        if (newFileConfig.rateLimit.windowMs !== undefined) config.rateLimit.windowMs = toInt(newFileConfig.rateLimit.windowMs);
+        if (newFileConfig.rateLimit.maxRequests !== undefined) config.rateLimit.maxRequests = toInt(newFileConfig.rateLimit.maxRequests);
+      }
+
+      // Update API timeouts
+      if (newFileConfig.apiTimeouts) {
+        if (newFileConfig.apiTimeouts.networkSearchTimeoutMs !== undefined) config.apiTimeouts.networkSearchTimeoutMs = newFileConfig.apiTimeouts.networkSearchTimeoutMs;
+      }
+
+      // Update server timeouts
+      if (newFileConfig.serverTimeouts) {
+        Object.assign(config.serverTimeouts, newFileConfig.serverTimeouts);
+      }
+
+      // Update cluster settings
+      if (newFileConfig.cluster) {
+        if (newFileConfig.cluster.maxRestarts !== undefined) config.cluster.maxRestarts = toInt(newFileConfig.cluster.maxRestarts);
+        if (newFileConfig.cluster.restartWindowMs !== undefined) config.cluster.restartWindowMs = toInt(newFileConfig.cluster.restartWindowMs);
+      }
+
+      // Update circuit breaker
+      if (newFileConfig.circuitBreaker) {
+        Object.assign(config.circuitBreaker, newFileConfig.circuitBreaker);
+      }
+
+      // Update admin
+      if (newFileConfig.admin) {
+        Object.assign(config.admin, newFileConfig.admin);
+      }
+
+      // Update metrics
+      if (newFileConfig.metrics) {
+        if (newFileConfig.metrics.enabled !== undefined) config.metricsConfig.enabled = newFileConfig.metrics.enabled;
+        if (newFileConfig.metrics.retentionMinutes !== undefined) config.metricsConfig.retentionMinutes = newFileConfig.metrics.retentionMinutes;
+      }
+
+      // Update compression
+      if (newFileConfig.compression) {
+        Object.assign(config.compression, newFileConfig.compression);
+      }
+
+      // Update CORS
+      if (newFileConfig.cors) {
+        Object.assign(config.cors, newFileConfig.cors);
+      }
+
+      // Update logging
+      if (newFileConfig.logging) {
+        if (newFileConfig.logging.level) config.log.level = newFileConfig.logging.level;
+      }
+
+      return true;
+    }
+  } catch (err) {
+    console.error(`[config] Failed to reload config.json: ${err.message}`);
+    return false;
+  }
+};
+
+/**
+ * Get the raw config.json file content (for admin UI display).
+ */
+config.getRawFileConfig = () => {
+  try {
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error(`[config] Failed to read config.json: ${err.message}`);
+  }
+  return {};
+};
+
+/**
+ * Write new config values to config.json.
+ * Automatically archives the previous config.json into data/config_backups (max 10 files).
+ * @param {Object} newConfig - The full config object to write
+ */
+config.writeConfigFile = (newConfig) => {
+  try {
+    // Backup existing file before overwrite
+    if (fs.existsSync(configPath)) {
+      const backupDir = path.resolve(process.cwd(), 'data', 'config_backups');
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+      
+      const timestamp = Date.now();
+      const backupPath = path.join(backupDir, `config_${timestamp}.json`);
+      fs.copyFileSync(configPath, backupPath);
+
+      // Prune backups to keep only the latest 10
+      const backups = fs.readdirSync(backupDir)
+        .filter(f => f.startsWith('config_') && f.endsWith('.json'))
+        .map(f => ({ name: f, time: fs.statSync(path.join(backupDir, f)).mtime.getTime() }))
+        .sort((a, b) => b.time - a.time);
+
+      if (backups.length > 10) {
+        const toDelete = backups.slice(10);
+        for (const fileObj of toDelete) {
+          try {
+            fs.unlinkSync(path.join(backupDir, fileObj.name));
+          } catch (e) {
+            console.error(`[config] Failed to delete old backup ${fileObj.name}`, e);
+          }
+        }
+      }
+    }
+
+    fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf-8');
+    config.reload();
+    return true;
+  } catch (err) {
+    console.error(`[config] Failed to write config.json: ${err.message}`);
+    return false;
+  }
+};
+
+module.exports = config;

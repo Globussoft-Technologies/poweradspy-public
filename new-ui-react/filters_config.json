@@ -1,0 +1,903 @@
+﻿{
+    "groups":  [
+                   {
+                       "_id":  "category",
+                       "title":  "CATEGORY",
+                       "rank":  1,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "category",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "categories",
+                                           "group_id":  "category",
+                                           "label":  "Categories",
+                                           "type":  "checkbox",
+                                           "rank":  1,
+                                           "query_param":  "categories",
+                                           "multi_select":  true,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "ecommerce",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Ecommerce",
+                                                               "value":  "Ecommerce",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "finance_insurance",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Finance \u0026 Insurance",
+                                                               "value":  "Finance \u0026 Insurance",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "crypto",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Crypto",
+                                                               "value":  "Crypto",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "clothing_accessories",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Clothing \u0026 Accessories",
+                                                               "value":  "Clothing \u0026 Accessories",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "education",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Education",
+                                                               "value":  "Education",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "software_saas",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Software \u0026 SaaS",
+                                                               "value":  "Software \u0026 SaaS",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "health_fitness",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Health \u0026 Fitness",
+                                                               "value":  "Health \u0026 Fitness",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "travel",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Travel",
+                                                               "value":  "Travel",
+                                                               "rank":  8,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "real_estate",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Real Estate",
+                                                               "value":  "Real Estate",
+                                                               "rank":  9,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "gaming",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Gaming",
+                                                               "value":  "Gaming",
+                                                               "rank":  10,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "automotive",
+                                                               "filter_id":  "categories",
+                                                               "label":  "Automotive",
+                                                               "value":  "Automotive",
+                                                               "rank":  11,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "ad_type",
+                       "title":  "AD TYPE",
+                       "rank":  2,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "ad_type",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "ad_types",
+                                           "group_id":  "ad_type",
+                                           "label":  "Ad Types",
+                                           "type":  "checkbox",
+                                           "rank":  1,
+                                           "query_param":  "adTypes",
+                                           "multi_select":  true,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "image",
+                                                               "filter_id":  "ad_types",
+                                                               "label":  "Image",
+                                                               "value":  "Image",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "video",
+                                                               "filter_id":  "ad_types",
+                                                               "label":  "Video",
+                                                               "value":  "Video",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "carousel",
+                                                               "filter_id":  "ad_types",
+                                                               "label":  "Carousel",
+                                                               "value":  "Carousel",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "story",
+                                                               "filter_id":  "ad_types",
+                                                               "label":  "Story",
+                                                               "value":  "Story",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "reel",
+                                                               "filter_id":  "ad_types",
+                                                               "label":  "Reel",
+                                                               "value":  "Reel",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "cta",
+                       "title":  "CALL TO ACTION",
+                       "rank":  3,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "cta",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "ctas",
+                                           "group_id":  "cta",
+                                           "label":  "Call to Actions",
+                                           "type":  "checkbox",
+                                           "rank":  1,
+                                           "query_param":  "ctas",
+                                           "multi_select":  true,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "shop_now",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Shop Now",
+                                                               "value":  "Shop Now",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "learn_more",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Learn More",
+                                                               "value":  "Learn More",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "sign_up",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Sign Up",
+                                                               "value":  "Sign Up",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "download",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Download",
+                                                               "value":  "Download",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "book_now",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Book Now",
+                                                               "value":  "Book Now",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "contact_us",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Contact Us",
+                                                               "value":  "Contact Us",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "add_to_cart",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Add to Cart",
+                                                               "value":  "Add to Cart",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "get_offer",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Get Offer",
+                                                               "value":  "Get Offer",
+                                                               "rank":  8,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "watch_more",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Watch More",
+                                                               "value":  "Watch More",
+                                                               "rank":  9,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "apply_now",
+                                                               "filter_id":  "ctas",
+                                                               "label":  "Apply Now",
+                                                               "value":  "Apply Now",
+                                                               "rank":  10,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "country",
+                       "title":  "COUNTRY",
+                       "rank":  4,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "country",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "countries",
+                                           "group_id":  "country",
+                                           "label":  "Countries",
+                                           "type":  "checkbox",
+                                           "rank":  1,
+                                           "query_param":  "countries",
+                                           "multi_select":  true,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "united_states",
+                                                               "filter_id":  "countries",
+                                                               "label":  "United States",
+                                                               "value":  "United States",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "united_kingdom",
+                                                               "filter_id":  "countries",
+                                                               "label":  "United Kingdom",
+                                                               "value":  "United Kingdom",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "canada",
+                                                               "filter_id":  "countries",
+                                                               "label":  "Canada",
+                                                               "value":  "Canada",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "australia",
+                                                               "filter_id":  "countries",
+                                                               "label":  "Australia",
+                                                               "value":  "Australia",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "india",
+                                                               "filter_id":  "countries",
+                                                               "label":  "India",
+                                                               "value":  "India",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "germany",
+                                                               "filter_id":  "countries",
+                                                               "label":  "Germany",
+                                                               "value":  "Germany",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "france",
+                                                               "filter_id":  "countries",
+                                                               "label":  "France",
+                                                               "value":  "France",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "brazil",
+                                                               "filter_id":  "countries",
+                                                               "label":  "Brazil",
+                                                               "value":  "Brazil",
+                                                               "rank":  8,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "singapore",
+                                                               "filter_id":  "countries",
+                                                               "label":  "Singapore",
+                                                               "value":  "Singapore",
+                                                               "rank":  9,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "uae",
+                                                               "filter_id":  "countries",
+                                                               "label":  "UAE",
+                                                               "value":  "UAE",
+                                                               "rank":  10,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "south_africa",
+                                                               "filter_id":  "countries",
+                                                               "label":  "South Africa",
+                                                               "value":  "South Africa",
+                                                               "rank":  11,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "japan",
+                                                               "filter_id":  "countries",
+                                                               "label":  "Japan",
+                                                               "value":  "Japan",
+                                                               "rank":  12,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "engagement",
+                       "title":  "ENGAGEMENT",
+                       "rank":  5,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "engagement",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "likes_range",
+                                           "group_id":  "engagement",
+                                           "label":  "Likes",
+                                           "type":  "range",
+                                           "rank":  1,
+                                           "query_param":  "likes",
+                                           "multi_select":  false,
+                                           "visible":  true,
+                                           "min":  0,
+                                           "max":  1000000
+                                       },
+                                       {
+                                           "_id":  "shares_range",
+                                           "group_id":  "engagement",
+                                           "label":  "Shares",
+                                           "type":  "range",
+                                           "rank":  2,
+                                           "query_param":  "shares",
+                                           "multi_select":  false,
+                                           "visible":  true,
+                                           "min":  0,
+                                           "max":  1000000
+                                       },
+                                       {
+                                           "_id":  "comments_range",
+                                           "group_id":  "engagement",
+                                           "label":  "Comments",
+                                           "type":  "range",
+                                           "rank":  3,
+                                           "query_param":  "comments",
+                                           "multi_select":  false,
+                                           "visible":  true,
+                                           "min":  0,
+                                           "max":  1000000
+                                       },
+                                       {
+                                           "_id":  "impressions_range",
+                                           "group_id":  "engagement",
+                                           "label":  "Impressions",
+                                           "type":  "range",
+                                           "rank":  4,
+                                           "query_param":  "impressions",
+                                           "multi_select":  false,
+                                           "visible":  true,
+                                           "min":  0,
+                                           "max":  1000000
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "time",
+                       "title":  "TIME",
+                       "rank":  6,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "time",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "ad_seen",
+                                           "group_id":  "time",
+                                           "label":  "Ad Seen",
+                                           "type":  "radio",
+                                           "rank":  1,
+                                           "query_param":  "adSeen",
+                                           "multi_select":  false,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "anytime",
+                                                               "filter_id":  "ad_seen",
+                                                               "label":  "Anytime",
+                                                               "value":  "Anytime",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "today",
+                                                               "filter_id":  "ad_seen",
+                                                               "label":  "Today",
+                                                               "value":  "Today",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "yesterday",
+                                                               "filter_id":  "ad_seen",
+                                                               "label":  "Yesterday",
+                                                               "value":  "Yesterday",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "last_7_days",
+                                                               "filter_id":  "ad_seen",
+                                                               "label":  "Last 7 Days",
+                                                               "value":  "Last 7 Days",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "last_30_days",
+                                                               "filter_id":  "ad_seen",
+                                                               "label":  "Last 30 Days",
+                                                               "value":  "Last 30 Days",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "this_month",
+                                                               "filter_id":  "ad_seen",
+                                                               "label":  "This Month",
+                                                               "value":  "This Month",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "last_month",
+                                                               "filter_id":  "ad_seen",
+                                                               "label":  "Last Month",
+                                                               "value":  "Last Month",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "post_date",
+                       "title":  "POST DATE",
+                       "rank":  7,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "post_date",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "post_date",
+                                           "group_id":  "post_date",
+                                           "label":  "Post Date",
+                                           "type":  "radio",
+                                           "rank":  1,
+                                           "query_param":  "postDate",
+                                           "multi_select":  false,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "post_anytime",
+                                                               "filter_id":  "post_date",
+                                                               "label":  "Anytime",
+                                                               "value":  "Anytime",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "post_today",
+                                                               "filter_id":  "post_date",
+                                                               "label":  "Today",
+                                                               "value":  "Today",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "post_yesterday",
+                                                               "filter_id":  "post_date",
+                                                               "label":  "Yesterday",
+                                                               "value":  "Yesterday",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "post_last_7_days",
+                                                               "filter_id":  "post_date",
+                                                               "label":  "Last 7 Days",
+                                                               "value":  "Last 7 Days",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "post_last_30_days",
+                                                               "filter_id":  "post_date",
+                                                               "label":  "Last 30 Days",
+                                                               "value":  "Last 30 Days",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "post_this_month",
+                                                               "filter_id":  "post_date",
+                                                               "label":  "This Month",
+                                                               "value":  "This Month",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "post_last_month",
+                                                               "filter_id":  "post_date",
+                                                               "label":  "Last Month",
+                                                               "value":  "Last Month",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "domain_age",
+                       "title":  "DOMAIN AGE",
+                       "rank":  8,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "domain_age",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "domain_age",
+                                           "group_id":  "domain_age",
+                                           "label":  "Domain Age",
+                                           "type":  "radio",
+                                           "rank":  1,
+                                           "query_param":  "domainAge",
+                                           "multi_select":  false,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "all_ages",
+                                                               "filter_id":  "domain_age",
+                                                               "label":  "All Ages",
+                                                               "value":  "All Ages",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "new_less_1yr",
+                                                               "filter_id":  "domain_age",
+                                                               "label":  "New (\u003c 1 yr)",
+                                                               "value":  "New (\u003c 1 yr)",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "1_3_years",
+                                                               "filter_id":  "domain_age",
+                                                               "label":  "1â3 Years",
+                                                               "value":  "1â3 Years",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "3_5_years",
+                                                               "filter_id":  "domain_age",
+                                                               "label":  "3â5 Years",
+                                                               "value":  "3â5 Years",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "5_plus_years",
+                                                               "filter_id":  "domain_age",
+                                                               "label":  "5+ Years",
+                                                               "value":  "5+ Years",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   },
+                   {
+                       "_id":  "lander_affiliates",
+                       "title":  "LANDER \u0026 AFFILIATES",
+                       "rank":  9,
+                       "collapsed_by_default":  false,
+                       "visible":  true,
+                       "icon":  "lander_affiliates",
+                       "created_at":  "2026-03-13T11:33:18.71Z",
+                       "filters":  [
+                                       {
+                                           "_id":  "ecommerce",
+                                           "group_id":  "lander_affiliates",
+                                           "label":  "Ecommerce",
+                                           "type":  "checkbox",
+                                           "rank":  1,
+                                           "query_param":  "ecommerce",
+                                           "multi_select":  true,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "shopify",
+                                                               "filter_id":  "ecommerce",
+                                                               "label":  "Shopify",
+                                                               "value":  "Shopify",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "woocommerce",
+                                                               "filter_id":  "ecommerce",
+                                                               "label":  "WooCommerce",
+                                                               "value":  "WooCommerce",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "magento",
+                                                               "filter_id":  "ecommerce",
+                                                               "label":  "Magento",
+                                                               "value":  "Magento",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "bigcommerce",
+                                                               "filter_id":  "ecommerce",
+                                                               "label":  "BigCommerce",
+                                                               "value":  "BigCommerce",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "wix",
+                                                               "filter_id":  "ecommerce",
+                                                               "label":  "Wix",
+                                                               "value":  "Wix",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "squarespace",
+                                                               "filter_id":  "ecommerce",
+                                                               "label":  "Squarespace",
+                                                               "value":  "Squarespace",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "prestashop",
+                                                               "filter_id":  "ecommerce",
+                                                               "label":  "Prestashop",
+                                                               "value":  "Prestashop",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       },
+                                       {
+                                           "_id":  "funnels",
+                                           "group_id":  "lander_affiliates",
+                                           "label":  "Funnels",
+                                           "type":  "checkbox",
+                                           "rank":  2,
+                                           "query_param":  "funnels",
+                                           "multi_select":  true,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "clickfunnels",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "ClickFunnels",
+                                                               "value":  "ClickFunnels",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "leadpages",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "LeadPages",
+                                                               "value":  "LeadPages",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "kajabi",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "Kajabi",
+                                                               "value":  "Kajabi",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "kartra",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "Kartra",
+                                                               "value":  "Kartra",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "instapage",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "Instapage",
+                                                               "value":  "Instapage",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "getresponse",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "GetResponse",
+                                                               "value":  "GetResponse",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "convertri",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "Convertri",
+                                                               "value":  "Convertri",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "builderall",
+                                                               "filter_id":  "funnels",
+                                                               "label":  "Builderall",
+                                                               "value":  "Builderall",
+                                                               "rank":  8,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       },
+                                       {
+                                           "_id":  "affiliates",
+                                           "group_id":  "lander_affiliates",
+                                           "label":  "Affiliates",
+                                           "type":  "checkbox",
+                                           "rank":  3,
+                                           "query_param":  "affiliates",
+                                           "multi_select":  true,
+                                           "visible":  true,
+                                           "options":  [
+                                                           {
+                                                               "_id":  "clickbank",
+                                                               "filter_id":  "affiliates",
+                                                               "label":  "ClickBank",
+                                                               "value":  "ClickBank",
+                                                               "rank":  1,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "shareasale",
+                                                               "filter_id":  "affiliates",
+                                                               "label":  "ShareASale",
+                                                               "value":  "ShareASale",
+                                                               "rank":  2,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "commission_junction",
+                                                               "filter_id":  "affiliates",
+                                                               "label":  "Commission Junction",
+                                                               "value":  "Commission Junction",
+                                                               "rank":  3,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "rakuten",
+                                                               "filter_id":  "affiliates",
+                                                               "label":  "Rakuten",
+                                                               "value":  "Rakuten",
+                                                               "rank":  4,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "maxbounty",
+                                                               "filter_id":  "affiliates",
+                                                               "label":  "MaxBounty",
+                                                               "value":  "MaxBounty",
+                                                               "rank":  5,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "peerfly",
+                                                               "filter_id":  "affiliates",
+                                                               "label":  "PeerFly",
+                                                               "value":  "PeerFly",
+                                                               "rank":  6,
+                                                               "selected_by_default":  false
+                                                           },
+                                                           {
+                                                               "_id":  "jvzoo",
+                                                               "filter_id":  "affiliates",
+                                                               "label":  "JVZoo",
+                                                               "value":  "JVZoo",
+                                                               "rank":  7,
+                                                               "selected_by_default":  false
+                                                           }
+                                                       ]
+                                       }
+                                   ]
+                   }
+               ]
+}

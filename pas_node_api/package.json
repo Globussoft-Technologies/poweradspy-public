@@ -1,0 +1,51 @@
+{
+  "name": "pas-node-api",
+  "version": "1.0.0",
+  "description": "High-performance Node.js API Gateway with 10 social media network microservices",
+  "keywords": [
+    "microservices",
+    "api-gateway",
+    "nodejs"
+  ],
+  "license": "ISC",
+  "author": "PowerAdspy",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "vitest run --coverage",
+    "test:load": "npx autocannon -c 100 -d 10 -p 10 http://localhost:3000/health"
+  },
+  "dependencies": {
+    "@elastic/elasticsearch": "^7.17.14",
+    "axios": "^1.13.6",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.6.0",
+    "compression": "^1.7.4",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "js-yaml": "^4.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^7.1.0",
+    "mysql2": "^3.11.0",
+    "node-cron": "^4.2.1",
+    "rate-limit-redis": "^4.2.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1",
+    "swagger-ui-express": "^5.0.1",
+    "uuid": "^10.0.0",
+    "winston": "^3.14.2",
+    "winston-daily-rotate-file": "^5.0.0"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.7",
+    "supertest": "^7.2.2",
+    "vitest": "^4.1.7"
+  }
+}

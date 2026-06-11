@@ -1,0 +1,25 @@
+# List all the excludes for committing the code to Bitbucket ( version controller )
+# -------------------------------------------------------------------------------
+# Node Modules
+
+node_modules
+
+
+# Package-lock.json files
+
+package-lock.json
+
+
+# Log files
+
+resources/logs/responselogs/*
+resources/views/swagger-api-view.json
+audit.json
+
+
+# For Config remover
+config/*.json
+.env
+storageconfig.json
+Sequelize_cli/config/*.json
+

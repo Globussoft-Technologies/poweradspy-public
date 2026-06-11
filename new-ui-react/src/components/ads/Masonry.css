@@ -1,0 +1,101 @@
+.masonry-list {
+  position: relative;
+  width: 100%;
+}
+    
+.masonry-item {
+  position: absolute;
+  cursor: pointer;
+  overflow: hidden;
+  /* Positioned by GSAP via `left`/`top` inline styles — see Masonry.jsx.
+     Avoid transform-based positioning so every card renders on the main
+     compositor surface with identical (subpixel-AA) text rendering. */
+}
+
+.masonry-item > .masonry-item-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0px 10px 50px -10px rgba(0, 0, 0, 0.2);
+}
+
+/* Auto-height mode: let content define the height */
+.masonry-item--auto {
+  overflow: visible;
+  height: auto !important;
+}
+
+.masonry-item--auto > .masonry-item-inner {
+  height: auto;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+/* ── Card gradient border on hover ──────────────────────────────────────── */
+.masonry-card-wrapper {
+  position: relative;
+  border-radius: 12px;
+  transition: border-color 0.3s ease;
+}
+
+.masonry-card-wrapper::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 13px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(200, 200, 200, 0) 0%,
+    rgba(200, 200, 200, 0) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition:
+    opacity 0.3s ease,
+    background 0.3s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.masonry-card-wrapper:hover::before {
+  background: linear-gradient(
+    135deg,
+    rgba(139, 92, 246, 0.8) 0%,
+    rgba(99, 102, 241, 0.6) 40%,
+    rgba(168, 85, 247, 0.5) 70%,
+    rgba(79, 70, 229, 0.8) 100%
+  );
+  opacity: 1;
+}
+
+/* ── Shimmer skeleton ────────────────────────────────────────────────────── */
+@keyframes masonry-shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+.masonry-shimmer-line {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 75%
+  );
+  background-size: 800px 100%;
+  animation: masonry-shimmer 1.6s ease-in-out infinite;
+  border-radius: 6px;
+}

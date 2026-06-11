@@ -1,0 +1,143 @@
+﻿{
+    "header": {
+        "brand": {
+            "logo_svg": "https://app.poweradspy.com/assets/imgs/bbmfm-yellow-logo.png",
+            "logo_type": "url",
+            "name": "POWERADSPY"
+        },
+        "features": [],
+        "platforms": [
+            {
+                "id": "platform_facebook",
+                "label": "FB",
+                "meta": "https://img.icons8.com/?size=100&id=XsvEZR0h6fav&format=png&color=000000",
+                "meta_type": "url",
+                "selected_by_default": true,
+                "unique_identifier": "facebook"
+            },
+            {
+                "id": "platform_instagram",
+                "label": "IG",
+                "meta": "https://img.icons8.com/?size=100&id=XsvEZR0h6fav&format=png&color=000000",
+                "meta_type": "url",
+                "selected_by_default": true,
+                "unique_identifier": "instagram"
+            },
+            {
+                "id": "platform_youtube",
+                "label": "YT",
+                "meta": "https://img.icons8.com/?size=100&id=XsvEZR0h6fav&format=png&color=000000",
+                "meta_type": "url",
+                "selected_by_default": false,
+                "unique_identifier": "youtube"
+            },
+            {
+                "id": "platform_linkedin",
+                "label": "IN",
+                "meta": "https://img.icons8.com/?size=100&id=XsvEZR0h6fav&format=png&color=000000",
+                "meta_type": "url",
+                "selected_by_default": false,
+                "unique_identifier": "linkedin"
+            },
+            {
+                "id": "platform_google",
+                "label": "GGL",
+                "meta": "https://img.icons8.com/?size=100&id=XsvEZR0h6fav&format=png&color=000000",
+                "meta_type": "url",
+                "selected_by_default": false,
+                "unique_identifier": "google"
+            }
+        ],
+        "search_config": {
+            "autosuggest": true,
+            "debounce_ms": 400,
+            "max_length": 120,
+            "min_length": 2,
+            "placeholder": "Search keyword, advertiser, or domain..."
+        },
+        "search_types": [
+            {
+                "api_field": "keyword",
+                "id": "search_keyword",
+                "label": "Keyword",
+                "meta": "",
+                "meta_type": "svg",
+                "unique_identifier": "keyword"
+            },
+            {
+                "api_field": "advertiser_name",
+                "id": "search_advertiser",
+                "label": "Advertiser",
+                "meta": "",
+                "meta_type": "svg",
+                "unique_identifier": "advertiser"
+            }
+        ],
+        "sorting": [
+            {
+                "default": true,
+                "id": "sort_newest",
+                "label": "Newest",
+                "query_sort": "-created_at",
+                "unique_identifier": "newest"
+            },
+            {
+                "default": false,
+                "id": "sort_popular",
+                "label": "Popular",
+                "query_sort": "-likes",
+                "unique_identifier": "popular"
+            }
+        ]
+    },
+    "sidebar_filters": [
+        {
+            "collapsed_by_default": false,
+            "filters": [
+                {
+                    "id": "filter_ecommerce",
+                    "label": "Ecommerce",
+                    "query_value": "Ecommerce",
+                    "unique_identifier": "ecommerce"
+                },
+                {
+                    "id": "filter_finance",
+                    "label": "Finance \u0026 Insurance",
+                    "query_value": "Finance \u0026 Insurance",
+                    "unique_identifier": "finance_insurance"
+                }
+            ],
+            "id": "group_category",
+            "label": "CATEGORY",
+            "unique_identifier": "category"
+        },
+        {
+            "collapsed_by_default": false,
+            "filters": [
+                {
+                    "id": "filter_video",
+                    "label": "Video",
+                    "query_value": "Video",
+                    "unique_identifier": "video"
+                }
+            ],
+            "id": "group_ad_type",
+            "label": "AD TYPE",
+            "unique_identifier": "ad_type"
+        },
+        {
+            "collapsed_by_default": false,
+            "filters": [],
+            "id": "group_cta",
+            "label": "CALL TO ACTION",
+            "unique_identifier": "cta"
+        },
+        {
+            "collapsed_by_default": false,
+            "filters": [],
+            "id": "group_country",
+            "label": "COUNTRY",
+            "unique_identifier": "country"
+        }
+    ]
+}

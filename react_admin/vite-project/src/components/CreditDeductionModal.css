@@ -1,0 +1,1200 @@
+.credit-deduction-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 9998;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+.credit-deduction-modal-backdrop.closing {
+  opacity: 0;
+}
+
+.credit-deduction-modal-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+  opacity: 1;
+  transform: scale(1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.credit-deduction-modal-container.closing {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+.credit-deduction-modal {
+  width: 95%;
+  max-width: 1200px;
+  max-height: 90vh;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Scoped glass effect */
+.credit-deduction-glass {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+/* Modal Header */
+.credit-deduction-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 24px 32px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.credit-deduction-header-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  flex: 1;
+}
+
+.credit-deduction-title-section h2 {
+  margin: 0 0 8px 0;
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  color: #667eea; /* Fallback */
+}
+
+.credit-deduction-title-section p {
+  margin: 0;
+  color: #4b5563;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.credit-deduction-user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  min-width: 280px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+}
+
+.credit-deduction-user-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.credit-deduction-user-details h4 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.credit-deduction-user-details p {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.credit-deduction-user-stats {
+  margin-left: auto;
+}
+
+.credit-deduction-user-stat {
+  text-align: center;
+}
+
+.credit-deduction-stat-value {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-stat-label {
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.credit-deduction-close-button {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #374151;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-close-button:hover {
+  background: rgba(255, 255, 255, 1);
+  color: #1f2937;
+  transform: scale(1.05);
+}
+
+.credit-deduction-close-button svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+/* Modal Tabs */
+.credit-deduction-modal-tabs {
+  display: flex;
+  padding: 0 32px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.credit-deduction-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 24px;
+  background: none;
+  border: none;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 2px solid transparent;
+}
+
+.credit-deduction-tab svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.credit-deduction-tab:hover {
+  color: #374151;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.credit-deduction-tab.active {
+  color: #667eea;
+  border-bottom-color: #667eea;
+  background: rgba(102, 126, 234, 0.1);
+  font-weight: 600;
+}
+
+/* Modal Body */
+.credit-deduction-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+/* Stats Grid */
+.credit-deduction-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.credit-deduction-stat-card {
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: transform 0.2s ease;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.credit-deduction-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-stat-icon {
+  font-size: 32px;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-stat-content h3 {
+  margin: 0 0 4px 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-stat-content p {
+  margin: 0 0 8px 0;
+  color: #4b5563;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.credit-deduction-stat-trend {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 12px;
+  display: inline-block;
+}
+
+.credit-deduction-stat-trend.up {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+
+.credit-deduction-stat-trend.down {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+.credit-deduction-stat-trend.neutral {
+  background: rgba(107, 114, 128, 0.15);
+  color: #6b7280;
+}
+
+/* Charts Section */
+.credit-deduction-charts-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.credit-deduction-chart-card {
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.credit-deduction-chart-card.large {
+  grid-column: 1 / -1;
+}
+
+.credit-deduction-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.credit-deduction-chart-header h3,
+.credit-deduction-chart-header h4 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.credit-deduction-chart-action {
+  background: none;
+  border: none;
+  color: #667eea;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.credit-deduction-chart-action:hover {
+  background: rgba(102, 126, 234, 0.1);
+}
+
+/* Pie Chart */
+.credit-deduction-pie-chart-container {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+.credit-deduction-pie-chart {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 360deg
+  );
+}
+
+.credit-deduction-pie-segment {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+
+.credit-deduction-pie-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100px;
+  height: 100px;
+  background: white;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-total-credits {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-pie-center small {
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* Chart Legend */
+.credit-deduction-chart-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.credit-deduction-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+.credit-deduction-legend-item:hover {
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateX(4px);
+}
+
+.credit-deduction-legend-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.credit-deduction-legend-info {
+  flex: 1;
+}
+
+.credit-deduction-legend-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.credit-deduction-legend-value {
+  display: block;
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.credit-deduction-legend-percentage {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+/* Models Grid */
+.credit-deduction-models-breakdown {
+  margin-top: 32px;
+}
+
+.credit-deduction-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.credit-deduction-section-header h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-view-toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  padding: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-toggle-btn {
+  padding: 8px 16px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.credit-deduction-toggle-btn.active {
+  background: white;
+  color: #1f2937;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  font-weight: 600;
+}
+
+.credit-deduction-models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.credit-deduction-model-card {
+  padding: 20px;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.credit-deduction-model-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.credit-deduction-model-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.credit-deduction-model-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: white;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.credit-deduction-model-info h4 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-model-info p {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.credit-deduction-model-badge {
+  margin-left: auto;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f2937;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-model-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.credit-deduction-model-stat {
+  text-align: center;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+}
+
+.credit-deduction-model-stat-value {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 2px;
+}
+
+.credit-deduction-model-stat-label {
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.credit-deduction-usage-progress {
+  margin-top: 12px;
+}
+
+.credit-deduction-progress-bar {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.credit-deduction-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Detailed View */
+.credit-deduction-detailed-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.credit-deduction-detailed-header-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-detailed-header-content p {
+  margin: 0;
+  color: #4b5563;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.credit-deduction-filter-group {
+  display: flex;
+  gap: 12px;
+}
+
+.credit-deduction-filter-select {
+  padding: 8px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+  color: #1f2937;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.credit-deduction-analytics-table {
+  overflow: hidden;
+  margin-bottom: 24px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.credit-deduction-analytics-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.credit-deduction-analytics-table th {
+  padding: 16px 12px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4b5563;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.credit-deduction-analytics-table td {
+  padding: 16px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.credit-deduction-analytics-table tr:hover td {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.credit-deduction-model-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.credit-deduction-model-avatar-sm {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.credit-deduction-model-details {
+  display: flex;
+  flex-direction: column;
+}
+
+.credit-deduction-model-name {
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.credit-deduction-model-type {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.credit-deduction-metric-value {
+  font-weight: 700;
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.credit-deduction-percentage-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.credit-deduction-percentage-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.credit-deduction-percentage-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.credit-deduction-efficiency-badge {
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  display: inline-block;
+  text-align: center;
+}
+
+.credit-deduction-efficiency-badge.high {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.credit-deduction-efficiency-badge.medium {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.credit-deduction-efficiency-badge.low {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.credit-deduction-trend-indicator {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.credit-deduction-trend-indicator.up {
+  color: #16a34a;
+}
+
+/* Insights Grid */
+.credit-deduction-insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+}
+
+.credit-deduction-insight-card {
+  padding: 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+}
+
+.credit-deduction-insight-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-insight-icon {
+  font-size: 24px;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-insight-content h5 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-insight-content p {
+  margin: 0 0 8px 0;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.credit-deduction-insight-metric {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 8px;
+  display: inline-block;
+}
+
+.credit-deduction-insight-metric.positive {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+/* Charts View */
+.credit-deduction-charts-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.credit-deduction-bar-chart-vertical {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  height: 200px;
+  padding: 20px 0;
+}
+
+.credit-deduction-bar-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+}
+
+.credit-deduction-bar-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+  text-align: center;
+}
+
+.credit-deduction-bar-track {
+  flex: 1;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-end;
+  min-height: 40px;
+}
+
+.credit-deduction-bar-fill {
+  width: 100%;
+  border-radius: 4px;
+  transition: height 0.3s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.credit-deduction-bar-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.credit-deduction-chart-placeholder {
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 12px;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px dashed rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-comparison-section {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+}
+
+.credit-deduction-metrics-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.credit-deduction-metric-card {
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.credit-deduction-metric-icon {
+  font-size: 24px;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-metric-content h5 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.credit-deduction-metric-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 8px;
+}
+
+.credit-deduction-metric-progress {
+  height: 4px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.credit-deduction-metric-progress .credit-deduction-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Modal Footer */
+.credit-deduction-modal-footer {
+  padding: 20px 32px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.credit-deduction-footer-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.credit-deduction-footer-info {
+  display: flex;
+  gap: 24px;
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.credit-deduction-footer-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.credit-deduction-btn-secondary, 
+.credit-deduction-btn-primary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-btn-secondary {
+  background: rgba(255, 255, 255, 0.9);
+  color: #4b5563;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.credit-deduction-btn-secondary:hover {
+  background: rgba(255, 255, 255, 1);
+  color: #1f2937;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.credit-deduction-btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  font-weight: 600;
+}
+
+.credit-deduction-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+/* Loading State */
+.credit-deduction-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.credit-deduction-loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-top: 3px solid #667eea;
+  border-radius: 50%;
+  animation: credit-deduction-spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes credit-deduction-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+  .credit-deduction-modal {
+    width: 98%;
+    max-height: 95vh;
+  }
+  
+  .credit-deduction-charts-section,
+  .credit-deduction-charts-grid,
+  .credit-deduction-comparison-section {
+    grid-template-columns: 1fr;
+  }
+  
+  .credit-deduction-header-content {
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  .credit-deduction-user-info {
+    min-width: auto;
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .credit-deduction-modal-container {
+    padding: 10px;
+  }
+  
+  .credit-deduction-modal-header {
+    padding: 20px;
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  .credit-deduction-modal-tabs {
+    padding: 0 20px;
+    overflow-x: auto;
+  }
+  
+  .credit-deduction-modal-body {
+    padding: 20px;
+  }
+  
+  .credit-deduction-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .credit-deduction-models-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .credit-deduction-footer-content {
+    flex-direction: column;
+    gap: 16px;
+    align-items: stretch;
+  }
+  
+  .credit-deduction-footer-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .credit-deduction-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .credit-deduction-filter-group {
+    flex-direction: column;
+  }
+  
+  .credit-deduction-analytics-table {
+    overflow-x: auto;
+  }
+  
+  .credit-deduction-tab {
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+}
+
+.model-icon {
+  height: 20px;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* color: #1f2937; */
+}
+
+/* Ensure proper styling for the model icons in different contexts */
+.credit-deduction-legend-badge .model-icon,
+.credit-deduction-model-avatar .model-icon,
+.credit-deduction-model-avatar-sm .model-icon {
+  font-size: 16px;
+}
+
+.credit-deduction-model-avatar-sm .model-icon {
+  height: 16px;
+  width: 16px;
+}

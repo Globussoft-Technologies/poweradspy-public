@@ -1,0 +1,1687 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
+import mpBranch from "../../assets/marketingPlatform/branch.png";
+import mpConversionx from "../../assets/marketingPlatform/conversionx.co.png";
+import mpDemdex from "../../assets/marketingPlatform/demdex.net.png";
+import mpDoubleclick from "../../assets/marketingPlatform/doubleclick.png";
+import mpHubspot from "../../assets/marketingPlatform/hubs.ly.png";
+import mpHootsuite from "../../assets/marketingPlatform/ow.ly.png";
+import mpKenshoo from "../../assets/marketingPlatform/xg4ken.com.png";
+
+const MARKETING_PLATFORM_IMGS = {
+  'agkn.com': mpAgkn,
+  'branch': mpBranch,
+  'conversionx.co': mpConversionx,
+  'demdex.net': mpDemdex,
+  'doubleclick': mpDoubleclick,
+  'hubs.ly': mpHubspot,
+  'ow.ly': mpHootsuite,
+  'xg4ken.com': mpKenshoo,
+};
+
+import ecBigCommerce from "../../assets/ecommercePlatform/BigCommerce.png";
+import ecDemandware from "../../assets/ecommercePlatform/Demandware.png";
+import ecPrestaShop from "../../assets/ecommercePlatform/PrestaShop.png";
+import ecShopify from "../../assets/ecommercePlatform/Shopify.png";
+import ecSquarespace from "../../assets/ecommercePlatform/Squarespace.png";
+import ecVolusion from "../../assets/ecommercePlatform/Volusion.png";
+import ecWix from "../../assets/ecommercePlatform/Wix.png";
+import ecWooCommerce from "../../assets/ecommercePlatform/WooCommerce.png";
+import ec3dCart from "../../assets/ecommercePlatform/_3dCart.png";
+import ecMagento from "../../assets/ecommercePlatform/magento.png";
+
+const ECOMMERCE_PLATFORM_IMGS = {
+  'bigcommerce': ecBigCommerce,
+  'demandware': ecDemandware,
+  'prestashop': ecPrestaShop,
+  'shopify': ecShopify,
+  'squarespace': ecSquarespace,
+  'volusion': ecVolusion,
+  'wix': ecWix,
+  'woocommerce': ecWooCommerce,
+  '3dcart': ec3dCart,
+  'magento': ecMagento,
+};
+
+import fnBuilderall from "../../assets/funnels/builderall.png";
+import fnClickfunnel from "../../assets/funnels/clickfunnel.png";
+import fnConvertri from "../../assets/funnels/convertri.png";
+import fnGetresponse from "../../assets/funnels/getresponse.png";
+import fnInstapage from "../../assets/funnels/instapage.png";
+import fnKajabi from "../../assets/funnels/kajabi.png";
+import fnKartra from "../../assets/funnels/kartra.png";
+import fnKeap from "../../assets/funnels/keap.png";
+import fnLandingi from "../../assets/funnels/landingi.png";
+import fnLeadpages from "../../assets/funnels/leadpages.png";
+import fnOptimizepress from "../../assets/funnels/optimizepress.png";
+import fnSamcart from "../../assets/funnels/samcart.png";
+import fnWishpond from "../../assets/funnels/wishpond.png";
+
+const FUNNEL_IMGS = {
+  'builderall': fnBuilderall,
+  'clickfunnels': fnClickfunnel,
+  'clickfunnel': fnClickfunnel,
+  'convertri': fnConvertri,
+  'getresponse': fnGetresponse,
+  'instapage': fnInstapage,
+  'kajabi': fnKajabi,
+  'kartra': fnKartra,
+  'keap': fnKeap,
+  'landingi': fnLandingi,
+  'leadpages': fnLeadpages,
+  'optimizepress': fnOptimizepress,
+  'samcart': fnSamcart,
+  'wishpond': fnWishpond,
+};
+
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+import {
+  Calendar,
+  Activity,
+  Globe,
+  Monitor,
+  MapPin,
+  Hash,
+  ExternalLink,
+  ThumbsUp,
+  Eye,
+  Share2,
+  MessageCircle,
+  Play,
+  Image,
+  Film,
+  Layers,
+  Clock,
+  TrendingUp,
+  BarChart3,
+  Zap,
+  DollarSign,
+  Star,
+  StarHalf,
+  Tag,
+  Type,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  FileText,
+} from "lucide-react";
+import { useTheme } from "../../hooks/useTheme";
+import { useAdInsights } from "../../hooks/useAdInsights";
+import { mapAdToCard, resolveNasUrl, fetchFreshTikTokVideoUrl, getVideoEmbedUrl } from '../../services/api';
+import he from "he";
+
+// ─── Popularity → Star rating ────────────────────────────────────────
+function toStars(value, maxValue = 100) {
+  const LOW_MAX = 33.34;
+  const MOD_MAX = 35.41;
+  let raw;
+  if (value <= LOW_MAX) {
+    raw = 0.5 + (value / LOW_MAX) * 2.0;
+  } else if (value <= MOD_MAX) {
+    raw = 2.5 + ((value - LOW_MAX) / (MOD_MAX - LOW_MAX)) * 1.0;
+  } else {
+    const capped = Math.min(value, maxValue);
+    raw = 3.5 + ((capped - MOD_MAX) / (maxValue - MOD_MAX)) * 1.5;
+  }
+  return Math.round(raw * 2) / 2;
+}
+
+const StarRating = ({ value, isLight }) => {
+  const rating = toStars(value);
+  const stars = [];
+  for (let i = 1; i <= 5; i++) {
+    if (i <= Math.floor(rating)) {
+      stars.push(
+        <Star key={i} size={14} className="text-amber-400 fill-amber-400" />,
+      );
+    } else if (i - 0.5 === rating) {
+      stars.push(
+        <StarHalf
+          key={i}
+          size={14}
+          className="text-amber-400 fill-amber-400"
+        />,
+      );
+    } else {
+      stars.push(
+        <Star
+          key={i}
+          size={14}
+          strokeWidth={2.5}
+          className={isLight ? "text-black/30" : "text-white/50"}
+        />,
+      );
+    }
+  }
+  return (
+    <div className="flex items-center gap-0.5">
+      {stars}
+      <span
+        className={`text-xs ml-1 tabular-nums ${isLight ? "text-black/30" : "text-white/30"}`}
+      >
+        {rating}
+      </span>
+    </div>
+  );
+};
+
+import AnalyticsHeader from "./analytics/AnalyticsHeader";
+import BasicInfo from "./analytics/BasicInfo";
+import AudienceSection from "./analytics/AudienceSection";
+import SocialEngagements from "./analytics/SocialEngagements";
+import LanderDetails from "./analytics/LanderDetails";
+import Demographics from "./analytics/Demographics";
+import CountryAnalytics from "./analytics/CountryAnalytics";
+import TikTokTimeAnalysis from "./analytics/TikTokTimeAnalysis";
+
+// ─── Platform engagement rules ───────────────────────────────────────
+const ENGAGEMENT_RULES = {
+  facebook: {
+    "news feed": {
+      like: true,
+      share: true,
+      comment: true,
+      view: true,
+      impression: true,
+      popularity: true,
+      ad_budget: true,
+    },
+    "video feed": {
+      like: true,
+      share: true,
+      comment: true,
+      view: true,
+      impression: true,
+      popularity: true,
+      ad_budget: true,
+    },
+    "side column": {},
+    marketplace: {},
+    _default: { like: true, share: true, comment: true, view: true },
+    _videoOverride: { view: true },
+  },
+  instagram: {
+    image: {
+      like: true,
+      comment: true,
+      view: true,
+      impression: true,
+      popularity: true,
+      ad_budget: true,
+    },
+    stories: {
+      like: true,
+      comment: true,
+      view: true,
+      impression: true,
+      popularity: true,
+      ad_budget: true,
+    },
+    _default: { like: true, comment: true, view: true, impression: true },
+  },
+  youtube: {
+    video: {
+      like: true,
+      comment: true,
+      view: true,
+      impression: true,
+      popularity: true,
+      ad_budget: true,
+    },
+    discovery: { like: true, comment: true, view: true },
+    image: {},
+    banner: {},
+    display: {},
+    "text-image": {},
+    _default: {},
+  },
+  google: {
+    image: {},
+    text: {},
+    _default: {},
+  },
+};
+
+const AD_TYPE_CONFIG = {
+  video: {
+    label: "VIDEO",
+    icon: Film,
+    cls: "text-red-600 bg-red-500/10 border-red-500/20 dark:text-red-300 dark:bg-red-500/20 dark:border-red-500/10",
+  },
+  carousel: {
+    label: "CAROUSEL",
+    icon: Layers,
+    cls: "text-amber-600 bg-amber-500/10 border-amber-500/20 dark:text-amber-300 dark:bg-amber-500/20 dark:border-amber-500/10",
+  },
+  image: {
+    label: "IMAGE",
+    icon: Image,
+    cls: "text-blue-600 bg-blue-500/10 border-blue-500/20 dark:text-blue-300 dark:bg-blue-500/20 dark:border-blue-500/10",
+  },
+  banner: {
+    label: "BANNER",
+    icon: Monitor,
+    cls: "text-purple-600 bg-purple-500/10 border-purple-500/20 dark:text-purple-300 dark:bg-purple-500/20 dark:border-purple-500/10",
+  },
+  display: {
+    label: "DISPLAY",
+    icon: Monitor,
+    cls: "text-teal-600 bg-teal-500/10 border-teal-500/20 dark:text-teal-300 dark:bg-teal-500/20 dark:border-teal-500/10",
+  },
+  discovery: {
+    label: "DISCOVERY",
+    icon: Search,
+    cls: "text-sky-600 bg-sky-500/10 border-sky-500/20 dark:text-sky-300 dark:bg-sky-500/20 dark:border-sky-500/10",
+  },
+  "text-image": {
+    label: "TEXT-IMAGE",
+    icon: Type,
+    cls: "text-gray-600 bg-gray-500/10 border-gray-500/20 dark:text-gray-300 dark:bg-gray-500/20 dark:border-gray-500/10",
+  },
+  text: {
+    label: "TEXT",
+    icon: Type,
+    cls: "text-gray-600 bg-gray-500/10 border-gray-500/20 dark:text-gray-300 dark:bg-gray-500/20 dark:border-gray-500/10",
+  },
+};
+
+const ASPECT_RATIOS = {
+  facebook: {
+    "side column": ["16:9", "1:1", "4:5", "9:16"],
+    "news feed": ["3:2", "1:1", "4:5"],
+    "video feed": ["1:1"],
+    marketplace: ["4:5", "3:2", "1:1", "9:16"],
+  },
+  instagram: { _default: ["1:1", "4:5", "9:16"] },
+  youtube: { _default: ["16:9"] },
+  google: { _default: ["auto"] },
+};
+
+function getAspectStyle(platform, position, adAspectRatio) {
+  if (adAspectRatio && adAspectRatio !== "auto") {
+    return { aspectRatio: adAspectRatio.replace(":", "/") };
+  }
+  const p = (platform || "").toLowerCase();
+  const pos = (position || "").toLowerCase();
+  const ratioMap = ASPECT_RATIOS[p] || {};
+  const ratios = ratioMap[pos] || ratioMap._default || ["4/5"];
+  const r = ratios[0];
+  if (r === "auto") return {};
+  return { aspectRatio: r.replace(":", "/") };
+}
+
+const AdTextBlock = ({ text, isLight }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  const isLong = text.length > 150;
+  const textCls = isLight
+    ? "text-[13px] text-black/65 leading-relaxed font-semibold"
+    : "text-[13px] text-white/60 leading-relaxed font-light";
+  if (!isLong) return <p className={textCls}>{text}</p>;
+  return (
+    <div>
+      <div
+        className={
+          expanded ? "max-h-[140px] overflow-y-auto scrollbar-hide pr-1" : ""
+        }
+      >
+        <p className={`${textCls} ${expanded ? "" : "line-clamp-3"}`}>{text}</p>
+      </div>
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="text-[12px] text-[#6b99ff]/70 hover:text-[#6b99ff] font-medium mt-1.5 transition-colors"
+      >
+        {expanded ? "Show less" : "Read more"}
+      </button>
+    </div>
+  );
+};
+
+const TargetedKeywords = ({ adDetails, ad, isLight }) => {
+  const keywords =
+    adDetails?.target_keyword ||
+    ad?.target_keyword ||
+    ad?.keywords ||
+    ad?.target_keywords;
+  const kwList = Array.isArray(keywords)
+    ? keywords
+    : typeof keywords === "string"
+      ? keywords
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean)
+      : [];
+  return (
+    <div className="px-6">
+      <h3
+        className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
+      >
+        <Tag size={16} className="opacity-60" />
+        Targeted Keywords
+      </h3>
+      {kwList.length === 0 ? (
+        <div
+          className={`rounded-xl border py-12 flex items-center justify-center ${isLight ? "bg-gray-50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
+        >
+          <span
+            className={`text-sm ${isLight ? "text-gray-400" : "text-white/30"}`}
+          >
+            No keywords found
+          </span>
+        </div>
+      ) : (
+        <div
+          className={`rounded-xl border p-4 flex flex-wrap gap-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
+        >
+          {kwList.map((kw, i) => (
+            <span
+              key={i}
+              className={`inline-flex items-center rounded-full px-3 py-1 text-sm border ${isLight ? "bg-white border-blue-200 text-blue-700" : "bg-blue-500/10 border-blue-500/20 text-blue-300"}`}
+            >
+              {kw}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AdDetailsActivity = ({ targetSiteData, isLight }) => {
+  const data = Array.isArray(targetSiteData) ? targetSiteData : [];
+  const chartData = data.map((d) => ({ date: d.date, count: d.count || 0 }));
+  const rawMax =
+    chartData.length > 0 ? Math.max(...chartData.map((d) => d.count)) : 0;
+  const yMax = Math.ceil(Math.max(rawMax * 1.3, rawMax + 1, 2));
+  const axisColor = isLight ? "#9f9f9f" : "rgba(159,159,159)";
+  const gridColor = isLight ? "#f3f4f6" : "rgba(255,255,255,0.05)";
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div
+        className={`px-3 py-1.5 rounded text-xs font-semibold shadow ${isLight ? "bg-gray-800 text-white" : "bg-white text-gray-900"}`}
+      >
+        {label}: {payload[0].value}
+      </div>
+    );
+  };
+  return (
+    <div className="px-6">
+      <h3
+        className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
+      >
+        <Activity size={16} className="opacity-60" />
+        Ad Details Activity
+      </h3>
+      {targetSiteData === null ? (
+        <div
+          className={`rounded-xl border py-12 flex items-center justify-center ${isLight ? "bg-gray-50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
+        >
+          <span
+            className={`text-sm ${isLight ? "text-gray-400" : "text-white/30"}`}
+          >
+            Loading...
+          </span>
+        </div>
+      ) : data.length === 0 ? (
+        <div
+          className={`rounded-xl border py-12 flex items-center justify-center ${isLight ? "bg-gray-50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
+        >
+          <span
+            className={`text-sm ${isLight ? "text-gray-400" : "text-white/30"}`}
+          >
+            No data found
+          </span>
+        </div>
+      ) : (
+        <div
+          className={`rounded-xl border p-5 ${isLight ? "bg-white shadow-sm border-gray-200" : "bg-white/[0.02] border-white/5"}`}
+        >
+          <p
+            className={`text-sm font-semibold text-center mb-4 ${isLight ? "text-gray-700" : "text-white/80"}`}
+          >
+            Daily activity of Ad
+          </p>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart
+              data={chartData}
+              margin={{ top: 10, right: 30, left: 20, bottom: 40 }}
+            >
+              <CartesianGrid vertical={false} stroke={gridColor} />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: axisColor, fontSize: 12 }}
+                axisLine={{ stroke: gridColor }}
+                tickLine={false}
+                tickFormatter={(v) => {
+                  const d = new Date(v);
+                  return d.toLocaleDateString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  });
+                }}
+                label={{
+                  value: "Ad shown date",
+                  position: "insideBottom",
+                  offset: -10,
+                  fill: axisColor,
+                  fontSize: 12,
+                }}
+              />
+              <YAxis
+                domain={[0, yMax]}
+                tick={{ fill: axisColor, fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+                allowDecimals={false}
+                label={{
+                  value: "No of times ad was shown",
+                  angle: -90,
+                  position: "center",
+                  dx: -20,
+                  offset: -3,
+                  fill: axisColor,
+                  fontSize: 12,
+                }}
+              />
+              <Tooltip
+                content={<CustomTooltip />}
+                cursor={{
+                  fill: isLight ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)",
+                }}
+              />
+              <Bar
+                dataKey="count"
+                fill="#4f8ef7"
+                radius={[4, 4, 0, 0]}
+                maxBarSize={80}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const NAS_BASE_URL = import.meta.env.VITE_NAS_BASE_URL;
+
+// ─── Creative Preview: thumbnail + video playback ─────────────────────
+const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActiveIndex }) => {
+  const hasCarousel = (ad?.carouselMedia?.length > 1) || (ad?.carouselTitles?.length > 1);
+  const isVideo = isTikTok || ctx.adType.includes('video') || d?.type?.toLowerCase() === 'video';
+  const isTextImageAd = ctx.adType === 'text-image';
+
+  // If carousel exists, use its media. Otherwise use single thumbnail/video logic.
+  const currentMedia = hasCarousel ? ad.carouselMedia[activeIndex] : null;
+  // Prefer `ad.thumbnail` (already-cached grid image) over SSE-arriving URLs to
+  // avoid a visible re-fetch when adDetails resolves a few hundred ms after open.
+  const computedThumbnailSrc = resolveNasUrl(currentMedia) || ad?.thumbnail || resolveNasUrl(d?.image_video_url) || resolveNasUrl(d?.image_url) || resolveNasUrl(d?.video_cover) || null;
+  // Lock to the first non-null URL we ever computed. Otherwise, when SSE
+  // arrives and `processedAd` is re-derived via mapAdToCard, the thumbnail
+  // URL can swap out from under us — which resets `imgLoaded` to false and
+  // makes the already-visible image vanish. The `key={processedAd.id}` on
+  // CreativePreview unmounts/remounts this component for a different ad,
+  // resetting the ref naturally — so carousel navigation (which keys on
+  // activeIndex via currentMedia) still updates correctly.
+  const stableSrcRef = useRef(null);
+  if (!stableSrcRef.current && computedThumbnailSrc) {
+    stableSrcRef.current = computedThumbnailSrc;
+  }
+  // Carousel paging needs the source to track activeIndex — only use the
+  // locked value for the non-carousel case where stability matters.
+  const thumbnailSrc = hasCarousel ? computedThumbnailSrc : (stableSrcRef.current || computedThumbnailSrc);
+  const isQuora = ctx.platform === 'quora';
+  // Quora: image_url_original first (primary), video_url as fallback — mirrors MasonryCard/api.js mapAdToCard logic
+  const videoSrc = isQuora
+    ? (resolveNasUrl(d?.image_url_original || '') || resolveNasUrl(d?.video_url || '') || ad?.videoUrl || null)
+    : (resolveNasUrl(d?.video_url || '') || resolveNasUrl(d?.image_url_original || '') || resolveNasUrl(ad?.image_url_original || '') || ad?.videoUrl || null);
+  const videoSrcFallback = isQuora ? (resolveNasUrl(d?.video_url || '') || null) : null;
+  // YouTube and Facebook ads ship their playable URL in `ad_url` (mapped to
+  // ad.adUrl) — not in ad.videoUrl — so for those we embed via iframe rather
+  // than <video> (which can't decode either platform's watch page).
+  const embedUrl = getVideoEmbedUrl(ad?.adUrl);
+
+  const aspectStyle = {
+    ...getAspectStyle(ctx.platform, ctx.position, ad?.aspect_ratio),
+    maxHeight: "40vh",
+  };
+
+  const [playing, setPlaying] = useState(false);
+  const [resolvedVideoUrl, setResolvedVideoUrl] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [videoUnavailable, setVideoUnavailable] = useState(false);
+  const refreshAttempted = useRef(false);
+  const videoStallTimerRef = useRef(null);
+
+  const clearVideoStallTimer = useCallback(() => {
+    if (videoStallTimerRef.current) {
+      clearTimeout(videoStallTimerRef.current);
+      videoStallTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearVideoStallTimer(), [clearVideoStallTimer]);
+
+  // Image error / retry state (mirrors MasonryCard pattern)
+  const [imgError, setImgError] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgRetryCount, setImgRetryCount] = useState(0);
+  const imgRetryTimerRef = useRef(null);
+  const MAX_IMG_RETRIES = 2;
+
+  const handleImgError = useCallback(() => {
+    setImgRetryCount((prev) => {
+      if (prev >= MAX_IMG_RETRIES) {
+        setImgError(true);
+        return prev;
+      }
+      const delays = [300, 800];
+      imgRetryTimerRef.current = setTimeout(() => {
+        setImgRetryCount((c) => c + 1);
+      }, delays[prev] || 800);
+      setImgError(false);
+      return prev;
+    });
+  }, []);
+
+  // Cached images can fire `load` before React attaches `onLoad`, so the
+  // handler never runs and imgLoaded stays false → image stuck at opacity-0.
+  // Callback ref runs synchronously on mount; check `complete` to catch this.
+  const handleImgRef = useCallback((node) => {
+    if (node && node.complete && node.naturalWidth > 0) {
+      setImgLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    setImgError(false);
+    setImgLoaded(false);
+    setImgRetryCount(0);
+    if (imgRetryTimerRef.current) clearTimeout(imgRetryTimerRef.current);
+  }, [thumbnailSrc]);
+
+  useEffect(() => () => {
+    if (imgRetryTimerRef.current) clearTimeout(imgRetryTimerRef.current);
+  }, []);
+
+  const effectiveVideoSrc = resolvedVideoUrl || videoSrc;
+
+  const fetchFromLibraryUrl = useCallback(async () => {
+    if (!isTikTok || refreshAttempted.current || !ad?.tiktokLibraryUrl) {
+      // No (more) recovery options — make the dead state explicit instead of
+      // letting the player buffer forever on an expired CDN URL.
+      if (isTikTok && refreshAttempted.current) {
+        setPlaying(false);
+        setVideoUnavailable(true);
+      }
+      return;
+    }
+    refreshAttempted.current = true;
+    setIsRefreshing(true);
+    try {
+      const freshUrl = await fetchFreshTikTokVideoUrl(ad.tiktokLibraryUrl);
+      if (freshUrl) { setResolvedVideoUrl(freshUrl); setPlaying(true); }
+      else { setPlaying(false); setVideoUnavailable(true); }
+    } catch {
+      setPlaying(false);
+      setVideoUnavailable(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isTikTok, ad?.tiktokLibraryUrl]);
+
+  // Auto-fetch video when no direct URL is available (e.g. CDN URL missing from adDetails)
+  useEffect(() => {
+    if (!thumbnailSrc && !effectiveVideoSrc && isTikTok && ad?.tiktokLibraryUrl) {
+      fetchFromLibraryUrl();
+    }
+  }, [thumbnailSrc, effectiveVideoSrc, isTikTok, ad?.tiktokLibraryUrl, fetchFromLibraryUrl]);
+
+  const videoFallbackAttempted = useRef(false);
+  const handleVideoError = useCallback(async () => {
+    clearVideoStallTimer();
+    // Quora: primary URL (image_url_original) failed — switch to video_url fallback
+    if (isQuora && videoSrcFallback && !videoFallbackAttempted.current) {
+      videoFallbackAttempted.current = true;
+      setResolvedVideoUrl(videoSrcFallback);
+      return;
+    }
+    // TikTok: refresh via library URL if we haven't yet. fetchFromLibraryUrl
+    // itself sets `videoUnavailable` when its own attempt fails / is exhausted.
+    if (isTikTok && ad?.tiktokLibraryUrl) {
+      fetchFromLibraryUrl();
+      return;
+    }
+    // No fallback available — stop trying so we don't loop on a dead source.
+    setPlaying(false);
+    setVideoUnavailable(true);
+  }, [clearVideoStallTimer, isQuora, videoSrcFallback, isTikTok, ad?.tiktokLibraryUrl, fetchFromLibraryUrl]);
+
+  // 12s without first-frame ⇒ treat as expired. HTMLMediaElement won't always
+  // raise `error` for a dead URL (the browser keeps retrying at the network
+  // layer), so we have to bound the wait ourselves.
+  const handleVideoLoadStart = useCallback(() => {
+    clearVideoStallTimer();
+    videoStallTimerRef.current = setTimeout(() => {
+      handleVideoError();
+    }, 12000);
+  }, [clearVideoStallTimer, handleVideoError]);
+
+  const handleVideoCanPlay = useCallback(() => {
+    clearVideoStallTimer();
+  }, [clearVideoStallTimer]);
+
+  // Reset video-unavailable verdict when the source actually changes (carousel
+  // page or new ad) so a fresh URL gets a clean chance.
+  useEffect(() => {
+    setVideoUnavailable(false);
+    videoFallbackAttempted.current = false;
+    refreshAttempted.current = false;
+    setResolvedVideoUrl(null);
+    clearVideoStallTimer();
+  }, [videoSrc, clearVideoStallTimer]);
+
+  if (!thumbnailSrc && !effectiveVideoSrc) {
+    if (isRefreshing) {
+      return (
+        <div
+          className="w-full flex items-center justify-center bg-black"
+          style={{ aspectRatio: "4/3" }}
+        >
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+            <span className="text-[11px] text-white/50">Loading video…</span>
+          </div>
+        </div>
+      );
+    }
+    const textTitle = ad?.title || ad?.ad_title || d?.ad_title || '';
+    const isBanner = ctx.adType === 'banner';
+    const isTextImage = ctx.adType === 'text-image';
+    return (
+      <div
+        className={`w-full flex items-center justify-center p-8 ${isLight ? 'bg-gradient-to-br from-indigo-100/60 to-slate-100/60' : 'bg-gradient-to-br from-indigo-950/40 to-slate-900/40'}`}
+        style={{ aspectRatio: "4/3" }}
+      >
+        {isTextImage ? (
+          <p className={`text-[15px] font-semibold leading-relaxed text-center line-clamp-6 drop-shadow-lg ${isLight ? 'text-gray-800' : 'text-white'}`}>
+            {ad?.textImageTitle || textTitle || ad?.adText || 'Text-Image Ad'}
+          </p>
+        ) : isBanner ? (
+          <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+            {(ad?.subtitle || d?.newsfeed_description) && (
+              <p className={`text-sm font-bold leading-snug line-clamp-4 ${isLight ? 'text-gray-800' : 'text-zinc-100'}`}>
+                {ad?.subtitle || d?.newsfeed_description}
+              </p>
+            )}
+            {(ad?.adText || d?.ad_text) && (
+              <p className={`text-xs leading-relaxed line-clamp-3 ${isLight ? 'text-gray-600' : 'text-zinc-400'}`}>
+                {ad?.adText || d?.ad_text}
+              </p>
+            )}
+            {textTitle && (
+              <p className={`text-xs line-clamp-2 ${isLight ? 'text-gray-500' : 'text-zinc-500'}`}>
+                {textTitle}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className={`text-[16px] font-medium leading-relaxed text-center line-clamp-6 ${isLight ? 'text-gray-700' : 'text-zinc-300'}`}>
+            {textTitle ? `"${textTitle}"` : 'Text Ad'}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (isVideo && playing && (effectiveVideoSrc || embedUrl)) {
+    return (
+      <div className="relative bg-black overflow-hidden w-full" style={{ ...aspectStyle, maxWidth: '100%' }}>
+        {effectiveVideoSrc ? (
+          <video
+            key={effectiveVideoSrc}
+            src={effectiveVideoSrc}
+            autoPlay
+            controls
+            className="absolute inset-0 w-full h-full object-contain"
+            onEnded={() => setPlaying(false)}
+            onError={handleVideoError}
+            onLoadStart={handleVideoLoadStart}
+            onCanPlay={handleVideoCanPlay}
+          />
+        ) : (
+          <iframe
+            key={embedUrl}
+            src={embedUrl}
+            title="Video ad"
+            className="absolute inset-0 w-full h-full border-0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        )}
+        {isRefreshing && (
+          <div className="absolute inset-0 z-10 bg-black/70 flex flex-col items-center justify-center gap-2">
+            <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+            <span className="text-[11px] text-white/70 font-medium">Refreshing video…</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const handlePlayClick = () => {
+    if (!isVideo) return;
+    if (videoUnavailable) return;
+    if (effectiveVideoSrc || embedUrl) { setPlaying(true); return; }
+    if (ad?.tiktokLibraryUrl) { fetchFromLibraryUrl(); return; }
+    // Nothing playable — no direct media URL, no YouTube/Facebook embed, no
+    // TikTok refresh path. Mark unavailable so the play affordance hides and
+    // the thumbnail stands on its own.
+    setVideoUnavailable(true);
+  };
+
+  return (
+    <div className={`relative ${videoUnavailable ? '' : 'cursor-pointer'} group/carousel`} style={aspectStyle} onClick={handlePlayClick}>
+      {/* Thumbnail — only render img if we have a src, avoid spurious onError from null src */}
+      {thumbnailSrc && !imgError && (
+        <img
+          key={`${thumbnailSrc}_${imgRetryCount}`}
+          ref={handleImgRef}
+          src={thumbnailSrc}
+          alt="Ad Preview"
+          loading="eager"
+          decoding="async"
+          fetchpriority="high"
+          className={`w-full h-full object-contain group-hover/card:scale-105 transition-transform duration-500 ${imgLoaded ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => setImgLoaded(true)}
+          onError={handleImgError}
+        />
+      )}
+      {thumbnailSrc && !imgError && !imgLoaded && (
+        <div className="absolute inset-0 media-shimmer pointer-events-none" />
+      )}
+      {/* Text-Image overlay: dark overlay + centered text on top of background image */}
+      {isTextImageAd && thumbnailSrc && !imgError && imgLoaded && (
+        <>
+          <div className="absolute inset-0 bg-black/40 z-10" />
+          <p className="absolute inset-0 z-20 flex items-center justify-center text-[14px] font-semibold leading-relaxed text-white text-center px-6 line-clamp-5 drop-shadow-lg">
+            {ad?.textImageTitle || ad?.title || ad?.adText || ''}
+          </p>
+        </>
+      )}
+      {/* "Preview unavailable" — only when the thumbnail itself failed. If
+          just the video URL is dead but the thumbnail loaded fine, we keep
+          the thumbnail visible and rely on hiding the play button to signal
+          that playback isn't possible. */}
+      {imgError && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-900/70 to-zinc-800/40 pointer-events-none">
+          <Image size={28} className="text-zinc-500" strokeWidth={1.5} />
+          <span className="text-[10px] font-medium text-zinc-400 tracking-wide">Preview unavailable</span>
+        </div>
+      )}
+      {/* Play button — always show for videos regardless of thumbnail state,
+          unless the video URL is known-dead. */}
+      {isVideo && !videoUnavailable && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          {isRefreshing ? (
+            <div className="w-10 h-10 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+          ) : (
+            <div className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center border border-white/20 transition-transform group-hover/card:scale-110">
+              <Play fill="white" size={16} className="text-white ml-0.5" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Carousel Controls */}
+      {hasCarousel && (
+        <>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const maxLen = Math.max(ad?.carouselMedia?.length || 0, ad?.carouselTitles?.length || 0);
+              setActiveIndex((prev) => (prev > 0 ? prev - 1 : maxLen - 1));
+            }}
+            className={`absolute left-2 top-1/2 -translate-y-1/2 z-20 p-1.5 rounded-full backdrop-blur-md border shadow-lg transition-all hover:scale-110 active:scale-95 ${isLight ? 'bg-white/80 border-black/10 text-black' : 'bg-black/40 border-white/20 text-white'}`}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const maxLen = Math.max(ad?.carouselMedia?.length || 0, ad?.carouselTitles?.length || 0);
+              setActiveIndex((prev) => (prev < maxLen - 1 ? prev + 1 : 0));
+            }}
+            className={`absolute right-2 top-1/2 -translate-y-1/2 z-20 p-1.5 rounded-full backdrop-blur-md border shadow-lg transition-all hover:scale-110 active:scale-95 ${isLight ? 'bg-white/80 border-black/10 text-black' : 'bg-black/40 border-white/20 text-white'}`}
+          >
+            <ChevronRight size={16} />
+          </button>
+
+          {/* Indicators */}
+          <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20 px-4 flex-wrap">
+            {ad.carouselMedia.map((_, idx) => (
+              <div
+                key={idx}
+                onClick={(e) => { e.stopPropagation(); setActiveIndex(idx); }}
+                className={`h-1 rounded-full transition-all duration-300 cursor-pointer ${idx === activeIndex
+                  ? `w-4 ${isLight ? 'bg-indigo-600' : 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.8)]'}`
+                  : `w-1 ${isLight ? 'bg-black/20 hover:bg-black/40' : 'bg-white/30 hover:bg-white/50'}`
+                  }`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+const AnalyticsModal = ({
+  ad,
+  onClose,
+  onPrev,
+  onNext,
+  hasPrev = false,
+  hasNext = false,
+}) => {
+  const { theme } = useTheme();
+  const isLight = theme === 'light';
+  const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(ad?.id, ad?.network, 281, 'en', ad?.postOwnerId);
+  const adDetailsData = insights.adDetails?.[0] || insights.adDetails || null;
+  const tiktokAnalytics = insights.analytics || null;
+  const isTikTok =
+    (ad?.network || ad?.platform || "").toLowerCase() === "tiktok";
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+
+  const scrollRef = useRef(null);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const [creativeClosed, setCreativeClosed] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [regionExpanded, setRegionExpanded] = useState(false);
+
+  useEffect(() => {
+    setActiveIndex(0);
+    setRegionExpanded(false);
+  }, [ad]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+    setCreativeClosed(false);
+    const onScroll = () => {
+      setScrollProgress(el.scrollTop);
+      if (el.scrollTop === 0) setCreativeClosed(false);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [ad]);
+
+  useEffect(() => {
+    if (!ad) return;
+    const handler = (e) => {
+      if (e.key === "ArrowLeft" && hasPrev) onPrev?.();
+      if (e.key === "ArrowRight" && hasNext) onNext?.();
+      if (e.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [ad, hasPrev, hasNext, onPrev, onNext, onClose]);
+
+  const creativeInitialWidth = useMemo(() => {
+    const style = getAspectStyle(
+      ad?.platform,
+      ad?.ad_position || ad?.position,
+      ad?.aspect_ratio,
+    );
+    if (!style.aspectRatio) return 22;
+    const parts = style.aspectRatio.split("/");
+    const ratio = parseFloat(parts[0]) / parseFloat(parts[1]);
+    if (ratio >= 1.4) return 28;
+    if (ratio >= 1) return 22;
+    return 18;
+  }, [ad]);
+
+  const processedAd = useMemo(() => {
+    if (!ad) return null;
+    if (ad.carouselMedia?.length > 1 && !ad._fromUrl) return ad;
+    // For TikTok, media fields live in tiktokAnalytics (analytics SSE event), not adDetails
+    const rawSource = isTikTok
+      ? { ...ad, ...(tiktokAnalytics || {}), ...(adDetailsData || {}) }
+      : { ...ad, ...(adDetailsData || {}) };
+    if (adDetailsData || tiktokAnalytics) {
+      const merged = mapAdToCard(rawSource);
+      if (!merged.videoUrl && ad.videoUrl) merged.videoUrl = ad.videoUrl;
+      // Always prefer the original `ad.thumbnail` (the URL already cached by
+      // MasonryCard / AdDetailModal) over whatever `mapAdToCard` derived from
+      // SSE fields. For TikTok specifically, `mapAdToCard` resolves thumbnail
+      // from `video_cover` first when `tiktokAnalytics` arrives, producing a
+      // different URL than what the grid endpoint returned — and the user
+      // ends up seeing a different image in this modal than in the card and
+      // detail view. Falling back to `merged.thumbnail` only when there's no
+      // original keeps coverage for ads that legitimately had no grid image.
+      merged.thumbnail = ad.thumbnail || merged.thumbnail;
+      if (!merged.tiktokLibraryUrl && ad.tiktokLibraryUrl) merged.tiktokLibraryUrl = ad.tiktokLibraryUrl;
+      if (!merged.network && ad.network) merged.network = ad.network;
+      return merged;
+    }
+    return ad;
+  }, [ad, adDetailsData, tiktokAnalytics, isTikTok]);
+
+  const ctx = useMemo(() => {
+    const a = processedAd || ad || {};
+    // Prefer platform_network from adDetails (backend canonical), then fall back to card network
+    const platform = ((adDetailsData?.platform_network) || a.network || a.platform || 'facebook').toLowerCase();
+    const adType = (a.adType || a.ad_type || 'image').toLowerCase();
+    const position = (a.ad_position || a.position || '').toLowerCase();
+    const platformRules = ENGAGEMENT_RULES[platform] || ENGAGEMENT_RULES.facebook;
+    let rules = platformRules[position] || platformRules[adType] || platformRules._default || {};
+    if (platform === 'facebook' && adType.includes('video') && platformRules._videoOverride) rules = platformRules._videoOverride;
+    let typeKey = Object.keys(AD_TYPE_CONFIG).find(k => adType.includes(k)) || 'image';
+    const typeBadge = AD_TYPE_CONFIG[typeKey];
+    const likes = a.likes || 0;
+    const views = a.views || 0;
+    const impressions = a.impressions || 0;
+    const shares = a.share || a.shares || 0;
+    const comments = a.comments || 0;
+    const popularity = a.popularity || 0;
+    const start = a.first_seen || a.post_date ? new Date(a.first_seen || a.post_date) : null;
+    const end = a.last_seen ? new Date(a.last_seen) : null;
+    const runningDays = (start && end && !isNaN(start) && !isNaN(end))
+      ? Math.max(1, Math.round((end - start) / 86400000))
+      : null;
+    const items = [];
+    if (likes) items.push({ key: 'likes', label: 'Likes', value: likes, icon: <ThumbsUp size={13} className="lucide lucide-thumbs-up text-indigo-400" /> });
+    if (comments) items.push({ key: 'comments', label: 'Comments', value: comments, icon: <MessageCircle size={13} className="lucide lucide-message-circle text-yellow-500" /> });
+    if (shares) items.push({ key: 'shares', label: 'Shares', value: shares, icon: <Share2 size={13} className="lucide lucide-share2 text-green-500" /> });
+    if (views) items.push({ key: 'views', label: 'Views', value: views, icon: <Eye size={13} className="lucide lucide-eye text-purple-400" /> });
+    if (impressions) items.push({ key: 'impressions', label: 'Impressions', value: impressions, icon: <TrendingUp size={13} className="lucide lucide-trending-up text-blue-400" /> });
+    if (popularity > 0) items.push({ key: 'popularity', label: 'Popularity', value: popularity, isStars: true });
+    return { platform, adType, position, typeBadge, runningDays, engagementItems: items, hasEngagement: items.length > 0 };
+  }, [processedAd, ad, isLight]);
+
+  if (!ad) return null;
+
+  // Show 404 immediately when backend sends code:404 for adDetails event — don't wait for SSE stream to finish
+  if (adNotFound && notFoundForId === ad?.id) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div className="flex flex-col items-center gap-4 text-center p-8">
+          <span className="text-7xl font-black text-white/80">404</span>
+          <p className="text-lg font-bold text-white/80">Ad not found</p>
+          <p className="text-sm font-bold text-white/80">This ad may have been removed or the link is invalid.</p>
+          <button
+            onClick={() => onClose?.()}
+            className="mt-2 px-5 py-2 rounded-lg bg-[#3762c1] text-white text-sm font-semibold hover:bg-[#4a75d4] transition-colors"
+          >
+            Go back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (insightsLoading && !processedAd) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div className="w-10 h-10 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+      </div>
+    );
+  }
+
+  if (!processedAd) return null;
+  // For TikTok, media fields (video_cover, video_url) come from the analytics SSE event, not adDetails
+  const d = isTikTok
+    ? { ...(adDetailsData || {}), ...(tiktokAnalytics || {}), ...(ad || {}) }
+    : (adDetailsData || ad || {});
+  const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
+  const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
+
+  const hasCarousel = (processedAd.carouselMedia?.length > 1) || (processedAd.carouselTitles?.length > 1);
+  const rawTitleStr = (processedAd.carouselTitles?.length > activeIndex ? processedAd.carouselTitles[activeIndex] : processedAd.title) || '';
+  const currentTitle = rawTitleStr.replace(/^,|,$/g, '').trim();
+
+  const fmtDate = (val) => {
+    if (!val) return '—';
+    const num = Number(val);
+    if (!isNaN(num) && /^\d{9,13}$/.test(String(val).trim())) {
+      const ms = num < 1e10 ? num * 1000 : num;
+      const d = new Date(ms);
+      if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+    }
+    const s = String(val);
+    if (s.includes('T')) return s.split('T')[0];
+    if (s.includes(' ')) return s.split(' ')[0];
+    return s;
+  };
+  const detailRows = (() => {
+    const tt = tiktokAnalytics || {};
+    if (isTikTok)
+      return [
+        {
+          label: "FIRST SEEN",
+          value: fmtDate(tt.first_seen || d.first_seen),
+          icon: Calendar,
+          color: "text-blue-400",
+        },
+        {
+          label: "LAST SEEN",
+          value: fmtDate(tt.last_seen || d.last_seen),
+          icon: Activity,
+          color: "text-emerald-400",
+        },
+        {
+          label: "RUNNING DAYS",
+          value: (tt.days_running || d.days_running || ctx.runningDays) ? `${tt.days_running || d.days_running || ctx.runningDays} days` : "—",
+          icon: Clock,
+          color: "text-orange-400",
+        },
+        {
+          label: "AD LANGUAGE",
+          value: tt.language || d.language || d.lang || "—",
+          icon: Globe,
+          color: "text-[#6b99ff]",
+        },
+        {
+          label: "AD TYPE",
+          value: ctx.typeBadge.label,
+          icon: Monitor,
+          color: "text-pink-400",
+        },
+        {
+          label: "SOURCE",
+          value: tt.source || d.source || "TikTok Ads Manager",
+          icon: ExternalLink,
+          color: "text-[#5f8ae7]",
+        },
+        {
+          label: "REGION",
+          value: (tt.countries || ad?.countries || []).slice(0, 8).join(", ") || "—",
+          fullValue: (tt.countries || ad?.countries || []).join(", ") || "—",
+          expandable: (tt.countries || ad?.countries || []).length > 8,
+          icon: MapPin,
+          color: "text-yellow-400",
+        },
+        {
+          label: "Category",
+          value: tt.industry || ad?.industry || "—",
+          icon: Tag,
+          color: "text-cyan-400",
+        },
+      ];
+    return [
+      {
+        label: "FIRST SEEN",
+        value: fmtDate(d.first_seen),
+        icon: Calendar,
+        color: "text-blue-400",
+      },
+      {
+        label: "LAST SEEN",
+        value: fmtDate(d.last_seen),
+        icon: Activity,
+        color: "text-emerald-400",
+      },
+      {
+        label: "POST DATE",
+        value: fmtDate(d.post_date),
+        icon: Hash,
+        color: "text-purple-400",
+      },
+      {
+        label: "RUNNING DAYS",
+        value: (d.days_running || ctx.runningDays) ? `${d.days_running || ctx.runningDays} days` : "—",
+        icon: Clock,
+        color: "text-orange-400",
+      },
+      {
+        label: "AD LANGUAGE",
+        value: d.language || d.lang || d.adLanguage || "—",
+        icon: Globe,
+        color: "text-[#6b99ff]",
+      },
+      {
+        label: "AD TYPE",
+        value: ctx.typeBadge.label,
+        icon: Monitor,
+        color: "text-pink-400",
+      },
+      {
+        label: "AD POSITION",
+        value: (() => {
+          const pos = d.ad_position || ad?.adPosition || ad?.position || "";
+          return pos ? pos.toUpperCase() : "—";
+        })(),
+        icon: MapPin,
+        color: "text-yellow-400",
+      },
+      {
+        label: "SOURCE",
+        value: d.source || "—",
+        icon: ExternalLink,
+        color: "text-[#5f8ae7]",
+      },
+      {
+        label: "DOMAIN",
+        value: d.domain || ad?.domain || "—",
+        icon: Globe,
+        color: "text-cyan-400",
+      },
+      {
+        label: "DOMAIN REG DATE",
+        value: fmtDate(d.domain_registered_date),
+        icon: Calendar,
+        color: "text-teal-400",
+      },
+      {
+        label: "CATEGORY",
+        value: (() => {
+          const p = ctx.platform;
+          const cat = ad?.[`${p}.category`] || d[`${p}.category`] || d.ad_category || d.category || ad?.category;
+          if (!cat) return "—";
+          return Array.isArray(cat) ? cat.join(", ") : String(cat);
+        })(),
+        icon: Layers,
+        color: "text-violet-400",
+      },
+      {
+        label: "SUB CATEGORY",
+        value: (() => {
+          const p = ctx.platform;
+          const sub = ad?.[`${p}.subCategory`] || d[`${p}.subCategory`] || d.subCategory || ad?.subCategory;
+          if (!sub) return "—";
+          return Array.isArray(sub) ? sub.join(", ") : String(sub);
+        })(),
+        icon: Layers,
+        color: "text-fuchsia-400",
+      },
+      {
+        label: "AFFILIATE NETWORK",
+        value: (() => {
+          const aff = d.affiliate_data;
+          if (!aff) return "—";
+          return Array.isArray(aff) ? aff.join(", ") : String(aff);
+        })(),
+        icon: DollarSign,
+        color: "text-green-400",
+      },
+      {
+        label: "ECOMMERCE PLATFORM",
+        value: (() => {
+          const ec = d.built_with;
+          if (!ec) return "—";
+          return Array.isArray(ec) ? ec.join(", ") : String(ec);
+        })(),
+        icon: BarChart3,
+        color: "text-sky-400",
+      },
+      {
+        label: "FUNNEL",
+        value: (() => {
+          const funnel = d.built_with_analytics_tracking;
+          if (!funnel) return "—";
+          return Array.isArray(funnel) ? funnel.join(", ") : String(funnel);
+        })(),
+        icon: Zap,
+        color: "text-amber-400",
+      },
+    ];
+  })();
+
+  return (
+    <div
+      className={`fixed inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-xl animate-in fade-in zoom-in-95 ${isLight ? "bg-black/40" : "bg-[#0a0a0a]/90"}`}
+    >
+      {hasPrev && (
+        <button
+          onClick={onPrev}
+          className={`absolute left-2 top-1/2 -translate-y-1/2 z-[210] w-9 h-9 rounded-full flex items-center justify-center transition-all backdrop-blur-sm border-2 ${isLight ? "bg-white/80 border-black/30" : "bg-white/5 border-white/30"}`}
+          title="Previous (←)"
+        >
+          <ChevronLeft size={18} />
+        </button>
+      )}
+      {hasNext && (
+        <button
+          onClick={onNext}
+          className={`absolute right-2 top-1/2 -translate-y-1/2 z-[210] w-9 h-9 rounded-full flex items-center justify-center transition-all backdrop-blur-sm border-2 ${isLight ? "bg-white/80 border-black/30" : "bg-white/5 border-white/30"}`}
+          title="Next (→)"
+        >
+          <ChevronRight size={18} />
+        </button>
+      )}
+      <div
+        className={`w-full max-w-[1240px] rounded-[32px] overflow-hidden flex flex-col relative group border-2 ${isLight ? "bg-white border-black/30 shadow-2xl" : "bg-[#0e0e0e] border-white/30 shadow-[0_0_100px_rgba(0,0,0,0.8)]"}`}
+        style={{ maxHeight: "94vh" }}
+      >
+        {!isLight && (
+          <div className="absolute top-0 left-1/4 w-1/2 h-64 bg-[#3762c1]/10 blur-[120px] opacity-50" />
+        )}
+        <AnalyticsHeader
+          adId={ad?.id}
+          platform={ctx.platform}
+          onClose={onClose}
+        />
+        {!creativeClosed && (
+          <div
+            className="hidden lg:block absolute right-6 top-16 z-30 transition-all duration-300 ease-in-out overflow-hidden"
+            style={{
+              width: `${Math.max(10, creativeInitialWidth - Math.min(scrollProgress / 8, creativeInitialWidth - 10))}%`,
+              maxWidth: 'calc(100% - 1.5rem)',
+            }}
+          >
+            <div
+              className={`rounded-xl overflow-hidden group/card relative shadow-xl ${isLight ? "bg-gray-50 shadow-black/10" : "bg-[#131313] shadow-black/50"}`}
+              style={{ maxHeight: "40vh" }}
+            >
+              {scrollProgress > 0 && (
+                <button
+                  onClick={() => setCreativeClosed(true)}
+                  className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-full flex items-center justify-center transition-all backdrop-blur-sm border ${isLight ? "bg-white/80 hover:bg-white border-black/10 hover:border-black/20 text-black/50 hover:text-black" : "bg-black/50 hover:bg-black/70 border-white/10 hover:border-white/20 text-white/50 hover:text-white"}`}
+                  title="Close preview"
+                >
+                  <X size={14} />
+                </button>
+              )}
+              <CreativePreview
+                key={processedAd.id}
+                d={d}
+                ad={processedAd}
+                ctx={ctx}
+                isTikTok={isTikTok}
+                isLight={isLight}
+                activeIndex={activeIndex}
+                setActiveIndex={setActiveIndex}
+              />
+            </div>
+          </div>
+        )}
+
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto scrollbar-thin modal-scroll py-4 relative z-10"
+        >
+          {/* ── Hero Section ────────────────────────────────────── */}
+          <div
+            className="px-6 pb-6"
+            style={{ marginRight: `${creativeInitialWidth + 3}%` }}
+          >
+            <div className="space-y-4">
+              {/* Advertiser */}
+              <div className="flex items-center gap-2.5">
+                {d?.post_owner_image || ad?.advertiserImage ? (
+                  <img
+                    src={
+                      d?.post_owner_image
+                        ? `${NAS_BASE_URL}${d.post_owner_image}`
+                        : ad?.advertiserImage
+                    }
+                    alt=""
+                    className="w-8 h-8 rounded-lg object-cover shrink-0"
+                    onError={(e) => {
+                      e.target.style.display = "none";
+                      e.target.nextSibling.style.display = "flex";
+                    }}
+                  />
+                ) : null}
+                <div
+                  className={`w-8 h-8 rounded-lg items-center justify-center text-xs font-black shrink-0 ${d?.post_owner_image || ad?.advertiserImage ? "hidden" : "flex"} ${isLight ? "bg-[#3762c1]/10 text-[#335296]" : "bg-[#3762c1]/10 text-[#6b99ff]"}`}
+                >
+                  {(d?.post_owner || ad?.post_owner || ad?.advertiser || "K")[0]}
+                </div>
+                <span
+                  className={`text-[18px] font-semibold block truncate min-w-0 ${isLight ? "text-gray-800" : "text-white/90"}`}
+                >
+                  {d?.post_owner || ad?.post_owner || ad?.advertiser}
+                </span>
+              </div>
+
+              {/* Marketing Platform + Ecommerce Platform + Funnel logos below advertiser name */}
+              {(() => {
+                // --- Marketing Platform logos (detected from URLs) ---
+                const MARKET_PLATFORMS = [
+                  { match: 'demdex.net',    title: 'Adobe Audience Manager',    file: 'demdex.net' },
+                  { match: 'branch',        title: 'Branch',                    file: 'branch' },
+                  { match: 'conversionx.co',title: 'Conversionx',              file: 'conversionx.co' },
+                  { match: 'doubleclick',   title: 'Google Marketing Platform', file: 'doubleclick' },
+                  { match: 'ow.ly',         title: 'Hootsuite',                 file: 'ow.ly' },
+                  { match: 'hubs.ly',       title: 'Hubspot',                   file: 'hubs.ly' },
+                  { match: 'xg4ken.com',    title: 'Kenshoo',                   file: 'xg4ken.com' },
+                  { match: 'agkn.com',      title: 'Neustar',                   file: 'agkn.com' },
+                ];
+                const outgoing = Array.isArray(insights.outgoingLinks) ? insights.outgoingLinks[0] : insights.outgoingLinks;
+                const mpUrlObj = d?.market_platform_urls || ad?.marketPlatformUrls || {};
+                const mpRedirects = (mpUrlObj?.url_redirects || '').split('||').map(s => s.trim()).filter(Boolean);
+                const mpRedirectUrlsArr = Array.isArray(mpUrlObj?.redirect_urls)
+                  ? mpUrlObj.redirect_urls
+                  : typeof mpUrlObj?.redirect_urls === 'string' && mpUrlObj.redirect_urls
+                    ? [mpUrlObj.redirect_urls]
+                    : [];
+                const urlsToCheck = [
+                  d?.destination_url, d?.url, d?.redirect_url, d?.final_url, d?.source_url,
+                  outgoing?.source_url, outgoing?.redirect_url, outgoing?.final_url,
+                  mpUrlObj?.destination_url,
+                  mpUrlObj?.url_destination,
+                  mpUrlObj?.source_url,
+                  mpUrlObj?.redirect_url,
+                  mpUrlObj?.final_url,
+                  ...mpRedirects,
+                  ...mpRedirectUrlsArr,
+                ].filter(Boolean);
+                if (Array.isArray(d?.urlArray)) {
+                  d.urlArray.forEach(u => u?.url && urlsToCheck.push(u.url));
+                }
+                const seen = new Set();
+                const mpLogos = [];
+                for (const url of urlsToCheck) {
+                  const lower = url.toLowerCase();
+                  for (const mp of MARKET_PLATFORMS) {
+                    if (lower.includes(mp.match) && !seen.has(mp.match)) {
+                      seen.add(mp.match);
+                      const src = MARKETING_PLATFORM_IMGS[mp.file];
+                      if (src) mpLogos.push({ key: mp.match, src, title: mp.title });
+                    }
+                  }
+                }
+
+                // --- Ecommerce Platform logos (from built_with) ---
+                const ecRaw = d.built_with || ad?.built_with;
+                const ecList = Array.isArray(ecRaw) ? ecRaw : ecRaw ? [ecRaw] : [];
+                const ecLogos = ecList.map(name => {
+                  const src = ECOMMERCE_PLATFORM_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                  return src ? { key: `ec_${name}`, src, title: name } : null;
+                }).filter(Boolean);
+
+                // --- Funnel logos (from built_with_analytics_tracking) ---
+                const fnRaw = d.built_with_analytics_tracking || ad?.built_with_analytics_tracking;
+                const fnList = Array.isArray(fnRaw) ? fnRaw : fnRaw ? [fnRaw] : [];
+                const fnLogos = fnList.map(name => {
+                  const src = FUNNEL_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                  return src ? { key: `fn_${name}`, src, title: name } : null;
+                }).filter(Boolean);
+
+                const allLogos = [...mpLogos, ...ecLogos, ...fnLogos];
+                if (allLogos.length === 0) return null;
+
+                return (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {allLogos.map((logo) => (
+                      <div
+                        key={logo.key}
+                        className="relative shrink-0"
+                        onMouseEnter={(e) => {
+                          const tip = e.currentTarget.querySelector('.pl-tip');
+                          if (tip) {
+                            tip.style.left = e.clientX + 'px';
+                            tip.style.top = (e.clientY - 32) + 'px';
+                            tip.style.opacity = '1';
+                          }
+                        }}
+                        onMouseMove={(e) => {
+                          const tip = e.currentTarget.querySelector('.pl-tip');
+                          if (tip) {
+                            tip.style.left = e.clientX + 'px';
+                            tip.style.top = (e.clientY - 32) + 'px';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          const tip = e.currentTarget.querySelector('.pl-tip');
+                          if (tip) tip.style.opacity = '0';
+                        }}
+                      >
+                        <img
+                          src={logo.src}
+                          alt={logo.title}
+                          className="h-6 w-auto object-contain"
+                          style={{ display: 'none' }}
+                          onLoad={(e) => { e.target.style.display = 'block'; }}
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                        <div className="pl-tip fixed px-2 py-1 rounded text-[10px] font-semibold whitespace-nowrap pointer-events-none bg-gray-800 text-white z-[9999] -translate-x-1/2 transition-opacity opacity-0">
+                          {logo.title}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Title */}
+              <div className="flex items-center gap-2.5">
+                <h3 className={`text-[16px] font-bold leading-snug ${isLight ? 'text-gray-900' : 'text-white/70'}`}>
+                  {he.decode(currentTitle || d?.ad_title || ad?.title || '')}
+                </h3>
+              </div>
+
+              {/* Description */}
+              <div>
+                {(d?.ad_text ||
+                  ad?.ad_text ||
+                  ad?.subtitle ||
+                  ad?.description) && (
+                  <AdTextBlock
+                    text={he.decode(
+                      d?.ad_text ||
+                      ad?.ad_text ||
+                      ad?.subtitle ||
+                      ad?.description
+                    )}
+                    isLight={isLight}
+                  />
+                )}
+              </div>
+
+              {/* Google keywords */}
+              {ctx.platform === "google" && ctx.keywords && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Tag size={14} className="text-sky-400/60 shrink-0" />
+                  {ctx.keywords.split(",").map((kw, i) => (
+                    <span
+                      key={i}
+                      className="text-xs px-2 py-0.5 bg-sky-500/10 text-sky-300/70 rounded border border-sky-500/10"
+                    >
+                      {kw.trim()}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Engagement */}
+
+              {/* Quora: like/share/comment data not shown */}
+              {ctx.hasEngagement && ctx.platform !== 'quora' ? (
+                <div className="flex items-center gap-5">
+                  {ctx.engagementItems.map((stat, i) =>
+                    stat.isStars ? (
+                      <div key={i} className="relative group/stat inline-flex items-center">
+                        <StarRating value={stat.value} isLight={isLight} />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/stat:opacity-100 pointer-events-none transition-opacity z-50">
+                          {stat.label}
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={i} className="relative group/stat flex items-center gap-1.5">
+                        {stat.icon}
+                        <span
+                          className={`text-[13px] font-medium tabular-nums ${isLight ? "text-black/45" : "text-white/45"}`}
+                        >
+                          {stat.value}
+                        </span>
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/stat:opacity-100 pointer-events-none transition-opacity z-50">
+                          {stat.label}
+                        </div>
+                      </div>
+                    ),
+                  )}
+                </div>
+              ) : (
+                <span className="text-[12px] italic text-[#9f9f9f]"> </span>
+              )}
+            </div>
+
+            {/* Ad Details table */}
+            <div className="pt-4 mt-4">
+              <h2
+                className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
+              >
+                <FileText size={16} />
+                Ad Details
+              </h2>
+              <div
+                className={`rounded-2xl border-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/10"}`}
+              >
+                <div className="grid grid-cols-2 divide-x divide-white/10">
+                  {detailRows.filter(item => !(["FUNNEL", "AFFILIATE", "ECOMMERCE PLATFORM", "CATEGORY", "SUB CATEGORY"].includes(item.label) && item.value === "—")).map((item, i, arr) => {
+                    const isLastOdd = i === arr.length - 1 && arr.length % 2 !== 0;
+                    const isEvenRow = Math.floor(i / 2) < Math.floor((arr.length - 1) / 2);
+                    return (
+                    <div
+                      key={i}
+                      className={`flex items-center justify-between px-4 py-3 ${isLastOdd ? "col-span-2 border-t border-white/10" : isEvenRow ? "border-b border-white/10" : ""}`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <item.icon
+                          size={14}
+                          className={`${item.color} opacity-80`}
+                        />
+                        <span className="text-[12px] font-bold text-[#aaa]">
+                          {item.label}
+                        </span>
+                      </div>
+                      {item.expandable ? (
+                        <div className="flex items-center gap-1.5 max-w-[60%]">
+                          <span className={`text-[14px] font-semibold ${isLight ? "text-gray-900" : "text-white/85"}`}>
+                            {regionExpanded ? item.fullValue : item.value}
+                          </span>
+                          <button
+                            onClick={() => setRegionExpanded(e => !e)}
+                            className={`text-[11px] font-bold px-1.5 py-0.5 rounded border transition-colors flex-shrink-0 ${isLight ? "border-gray-300 text-gray-500 hover:bg-gray-100" : "border-white/20 text-white/50 hover:bg-white/10"}`}
+                          >
+                            {regionExpanded ? "less" : "..."}
+                          </button>
+                        </div>
+                      ) : (
+                        <span
+                          className={`text-[14px] font-semibold truncate max-w-[60%] ${isLight ? "text-gray-900" : "text-white/85"}`}
+                        >
+                          {item.value}
+                        </span>
+                      )}
+                    </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Sections below hero ────────────────────────────── */}
+          <div className="space-y-6 pt-6">
+            <BasicInfo
+              adDetails={adDetailsData}
+              outgoingLinks={insights.outgoingLinks}
+              platform={ctx.platform}
+              tiktokAnalytics={tiktokAnalytics}
+              ad={ad}
+            />
+
+            {/* Lander Details */}
+            {![
+              "google",
+              "gdn",
+              "native",
+              "linkedin",
+              "reddit",
+              "quora",
+              "pinterest",
+              "tiktok",
+            ].includes(ctx.platform) && (
+              <LanderDetails
+                screenshotUrl={
+                  adDetailsData?.white_ad_screenshot || ad?.white_ad_screenshot
+                }
+              />
+            )}
+
+            {/* Target Audience — Facebook only */}
+            {ctx.platform === "facebook" && (
+              <AudienceSection adDetails={adDetailsData} />
+            )}
+
+            {/* Social Engagements — Facebook, Instagram, YouTube, LinkedIn, Reddit & TikTok */}
+            {['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok'].includes(ctx.platform) && (
+              <SocialEngagements
+                adId={ad?.id}
+                adLcs={insights.lcs}
+                advertiserLcs={insights.advertiserLCSData}
+                postOwnerId={postOwnerId}
+                availableYears={availableYears}
+                network={ctx.platform}
+              />
+            )}
+
+            {/* Demographics / TikTok time analysis / Google keywords / Native TargetSite */}
+            {isTikTok ? (
+              <TikTokTimeAnalysis analytics={tiktokAnalytics} />
+            ) : ctx.platform === "google" ? (
+              <TargetedKeywords
+                adDetails={adDetailsData}
+                ad={ad}
+                isLight={isLight}
+              />
+            ) : ctx.platform === "native" ? (
+              <AdDetailsActivity
+                targetSiteData={insights.targetSite}
+                isLight={isLight}
+              />
+            ) : !["gdn", "pinterest", "reddit", "linkedin", "youtube", "quora"].includes(
+                ctx.platform,
+              ) && !(insightErrors.userData && !insights.advertiserUserData) ? (
+              <Demographics
+                adUserData={insights.userData}
+                advertiserUserData={insights.advertiserUserData}
+                platform={ctx.platform}
+                network={ctx.platform}
+                postOwnerId={postOwnerId}
+                availableYears={availableYears}
+              />
+            ) : null}
+
+            <CountryAnalytics
+              adId={ad?.id}
+              adCountry={insights.country}
+              advertiserCountry={insights.advertiserCountryData}
+              platform={ctx.platform}
+              network={ctx.platform}
+              tiktokAnalytics={tiktokAnalytics}
+              postOwnerId={postOwnerId}
+              availableYears={availableYears}
+            />
+          </div>
+          <div className="h-12" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default AnalyticsModal;
