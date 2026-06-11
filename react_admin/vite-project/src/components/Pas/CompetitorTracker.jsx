@@ -826,7 +826,6 @@ const CompetitorTracker = () => {
                       {visibleBrands.map(({ brand: b, competitors, i }) => {
                         const key = brandKey(b, i);
                         const open = searching || expandedBrands.has(key);
-                        const maxAds = Math.max(1, ...competitors.map((c) => Number(c.ads) || 0));
                         return (
                           <div key={key} className="border border-gray-100 rounded-2xl overflow-hidden shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
                             <button
@@ -859,26 +858,40 @@ const CompetitorTracker = () => {
                                 {(!competitors || competitors.length === 0) ? (
                                   <p className="px-4 py-4 text-[12px] text-gray-400">No competitors</p>
                                 ) : (
-                                  competitors.map((c, j) => (
-                                  <div key={c.id || j} className="flex items-center gap-3 px-4 py-3 border-t border-gray-50 hover:bg-[#fafbff] transition-colors">
-                                    <span className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 text-[11px] font-bold flex items-center justify-center flex-shrink-0">
-                                      {initials(c.name)}
-                                    </span>
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block text-[13.5px] font-semibold text-gray-800 truncate" title={c.name}>{c.name}</span>
-                                      {c.url && (
-                                        <a href={c.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-                                          className="inline-flex items-center gap-1 text-[11px] text-[#3F51B5] hover:underline truncate max-w-[200px]">
-                                          <span className="truncate">{c.url.replace(/^https?:\/\//, "")}</span>
-                                          <FiExternalLink className="w-3 h-3 flex-shrink-0" />
-                                        </a>
-                                      )}
-                                    </span>
-                                    <span className="hidden sm:block w-20 flex-shrink-0"><Bar value={Number(c.ads) || 0} max={maxAds} height="h-1.5" /></span>
-                                    <span className="text-[13px] font-bold text-gray-800 flex-shrink-0 w-14 text-right whitespace-nowrap">{fmtNum(c.ads)} <span className="text-gray-400 font-medium">ads</span></span>
-                                    <span className="w-14 text-right flex-shrink-0"><Growth pct={c.growth} /></span>
-                                  </div>
-                                  ))
+                                  <>
+                                    {/* column header for the per-competitor ad metrics */}
+                                    <div className="flex items-center gap-3 px-4 py-2 border-t border-gray-100 bg-gray-50/60">
+                                      <span className="w-8 flex-shrink-0" aria-hidden="true" />
+                                      <span className="flex-1 min-w-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Competitor</span>
+                                      <span className="w-16 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Total</span>
+                                      <span className="w-16 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Today</span>
+                                      <span className="w-16 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Yesterday</span>
+                                      <span className="w-16 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">7 Days</span>
+                                      <span className="w-14 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Growth</span>
+                                    </div>
+                                    {competitors.map((c, j) => (
+                                      <div key={c.id || j} className="flex items-center gap-3 px-4 py-3 border-t border-gray-50 hover:bg-[#fafbff] transition-colors">
+                                        <span className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 text-[11px] font-bold flex items-center justify-center flex-shrink-0">
+                                          {initials(c.name)}
+                                        </span>
+                                        <span className="min-w-0 flex-1">
+                                          <span className="block text-[13.5px] font-semibold text-gray-800 truncate" title={c.name}>{c.name}</span>
+                                          {c.url && (
+                                            <a href={c.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                                              className="inline-flex items-center gap-1 text-[11px] text-[#3F51B5] hover:underline truncate max-w-[200px]">
+                                              <span className="truncate">{c.url.replace(/^https?:\/\//, "")}</span>
+                                              <FiExternalLink className="w-3 h-3 flex-shrink-0" />
+                                            </a>
+                                          )}
+                                        </span>
+                                        <span className="w-16 text-right flex-shrink-0 text-[13px] font-bold text-gray-800 whitespace-nowrap" title="All-time ads">{fmtNum(c.ads)}</span>
+                                        <span className="w-16 text-right flex-shrink-0 text-[13px] font-semibold text-gray-700 whitespace-nowrap" title="Ads today">{fmtNum(c.today)}</span>
+                                        <span className="w-16 text-right flex-shrink-0 text-[13px] font-semibold text-gray-700 whitespace-nowrap" title="Ads yesterday">{fmtNum(c.yesterday)}</span>
+                                        <span className="w-16 text-right flex-shrink-0 text-[13px] font-semibold text-gray-700 whitespace-nowrap" title="Ads in the last 7 days">{fmtNum(c.last7Days)}</span>
+                                        <span className="w-14 text-right flex-shrink-0"><Growth pct={c.growth} /></span>
+                                      </div>
+                                    ))}
+                                  </>
                                 )}
                               </>
                             )}
@@ -887,7 +900,7 @@ const CompetitorTracker = () => {
                       })}
                     </div>
                   )}
-                  <p className="text-[11px] text-gray-300 mt-5">Ads are today's count; growth is vs. yesterday — live from the competitor-analysis service.</p>
+                  <p className="text-[11px] text-gray-300 mt-5">Total is all-time; Today / Yesterday / 7 Days are by last-seen date; growth is day-over-day — live from the competitor-analysis service.</p>
                 </>
               )}
             </div>
