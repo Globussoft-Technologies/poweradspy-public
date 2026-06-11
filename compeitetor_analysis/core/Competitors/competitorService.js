@@ -2268,6 +2268,61 @@ async fetchCompetitorsForUpdateNew(req, res) {
       .trim();
   }
 
+  // Python/LLM returns raw candidates that get deduplicated by name at several
+  // layers (saveUniqueCompetitors, the Competitors unique index, $addToSet). If
+  // even one candidate name collides, the unique count lands below the requested
+  // number and the generation loop can never reach TARGET. Over-fetch a buffer so
+  // dedup losses still leave >= TARGET unique competitors.
+  competitorOverfetchLimit(n) {
+    const target = Number(n) || 0;
+    if (target <= 0) return target;
+    const ratio = config.has("COMP_OVERFETCH_RATIO")
+      ? Number(config.get("COMP_OVERFETCH_RATIO"))
+      : 0.2;
+    // ceil() guarantees at least 1 extra candidate even for small N
+    return target + Math.ceil(target * ratio);
+  }
+
+  // Attach up to (TARGET - alreadyAttached) fresh, name-unique competitors to the
+  // user's request. Caps at TARGET so over-fetching never overshoots the number
+  // the user asked for. Returns how many new competitors were attached.
+  async attachCompetitorsCappedToTarget({ user_id, normalizedKey, competitors, TARGET }) {
+    if (!Array.isArray(competitors) || !competitors.length) return 0;
+
+    const advertiserArray = [normalizedKey];
+
+    // Names already attached to this user's request
+    const existingRows = await this.getCompetitorTableRows({
+      project_name: normalizedKey,
+      user_id
+    });
+    const attachedNames = new Set(
+      existingRows
+        .map(r => (r.name || "").toLowerCase().trim())
+        .filter(Boolean)
+    );
+
+    const need = TARGET - attachedNames.size;
+    if (need <= 0) return 0;
+
+    // Pick fresh, name-unique candidates up to `need`
+    const seen = new Set();
+    const fresh = [];
+    for (const c of competitors) {
+      const name = c.tool_name?.toLowerCase().trim();
+      if (!name || attachedNames.has(name) || seen.has(name)) continue;
+      seen.add(name);
+      fresh.push(c);
+      if (fresh.length >= need) break;
+    }
+    if (!fresh.length) return 0;
+
+    await this.saveUniqueCompetitors(normalizedKey, fresh, TARGET);
+    const ids = await this.getCompetitorIdsFromMaster(fresh);
+    await this.attachCompetitorsToUserRequest(user_id, advertiserArray, ids, fresh);
+    return fresh.length;
+  }
+
   //insert unique competitors (advertiser+url unique)
   async saveUniqueCompetitors(advertiserRaw, competitors, max = 200) {
     if (!Array.isArray(competitors) || !competitors.length) return 0;
@@ -2485,17 +2540,20 @@ async isDailyLimitExceeded(userObjectId) {
 
     let competitors = [];
     if (remaining > 0) {
+      // Fetch the whole over-fetched candidate pool from skip=0 so dedup has
+      // enough headroom to fill up to TARGET unique competitors.
+      const fetchLimit = this.competitorOverfetchLimit(TARGET);
       logger.info("Calling competitor python API 1", {
-        skip: attachedCount,
-        limit: remaining,
+        skip: 0,
+        limit: fetchLimit,
         content_ref_id
       });
       try {
         const response = await axios.get(keywordUrlC, {
           params: {
             content_ref_id,
-            skip: attachedCount,
-             limit: remaining
+            skip: 0,
+            limit: fetchLimit
           }
         });
 
@@ -2514,24 +2572,16 @@ async isDailyLimitExceeded(userObjectId) {
         });
       }
       if (competitors.length) {
-      await this.saveUniqueCompetitors(normalizedKey, competitors, TARGET);
-        logger.info("Competitors saved to Existing_competitors 1", {
-        advertiser: normalizedKey,
-        count: competitors.length
-      });
-        const competitorIds =
-          await this.getCompetitorIdsFromMaster(competitors);
-
-        await this.attachCompetitorsToUserRequest(
+        const attached = await this.attachCompetitorsCappedToTarget({
           user_id,
-          advertiserArray,
-          competitorIds,
-          competitors
-        );
+          normalizedKey,
+          competitors,
+          TARGET
+        });
         logger.info("Competitors attached to user request 1", {
           user_id,
           advertiser: normalizedKey,
-          count: competitorIds.length
+          count: attached
         });
       }
     }
@@ -2585,6 +2635,7 @@ async generateCompetitorsInBackground({
   const MAX_STABLE_RETRIES = 5;
   const MAX_PROCESSING_RETRIES = 30; // wait up to ~90s for API to finish processing
   let processingRetries = 0;
+  let tokenExceeded = false;
 
   try {
     while (true) {
@@ -2613,6 +2664,7 @@ async generateCompetitorsInBackground({
           target: TARGET
         });
 
+        tokenExceeded = true;
         break;
       }
 
@@ -2636,14 +2688,15 @@ async generateCompetitorsInBackground({
         break;
       }
 
-      // 🌐 API CALL — always fetch from skip=0 so we get all available competitors
+      // 🌐 API CALL — always fetch from skip=0 so we get all available competitors.
+      // Over-fetch the candidate pool so name-dedup still leaves >= TARGET unique.
       let response;
       try {
         response = await axios.get(keywordUrlC, {
           params: {
             content_ref_id,
             skip: 0,
-            limit: TARGET
+            limit: this.competitorOverfetchLimit(TARGET)
           }
         });
       } catch (err) {
@@ -2665,18 +2718,13 @@ async generateCompetitorsInBackground({
         lastCount = competitors.length;
         stableCount = 0;
 
-        // SAVE
-        await this.saveUniqueCompetitors(normalizedKey, competitors, TARGET);
-
-        const competitorIds =
-          await this.getCompetitorIdsFromMaster(competitors);
-
-        await this.attachCompetitorsToUserRequest(
+        // SAVE — attach up to TARGET unique competitors (caps overshoot from over-fetch)
+        await this.attachCompetitorsCappedToTarget({
           user_id,
-          advertiserArray,
-          competitorIds,
-          competitors
-        );
+          normalizedKey,
+          competitors,
+          TARGET
+        });
 
         // SEND TO UI
         const rows = await this.getCompetitorTableRows({
@@ -2781,6 +2829,27 @@ async generateCompetitorsInBackground({
 
   } catch (err) {
     logger.error("BG ERROR", err);
+  } finally {
+    // Guarantee the UI stops "generating" no matter how the loop exited.
+    // The top-of-loop progress event only emits "completed" when attachedCount
+    // reaches TARGET; the retry-cap exits (stable / still-processing) break
+    // silently, which would otherwise leave the spinner running forever.
+    if (!tokenExceeded) {
+      try {
+        const finalDoc = await Competitors_request.findOne(
+          { user_id: userObjectId, advertiser: advertiserArray },
+          { competitors: 1 }
+        );
+        const finalCount = finalDoc?.competitors?.length || 0;
+        getIO().to(content_ref_id).emit("competitor-progress", {
+          generated: finalCount,
+          target: TARGET,
+          status: "completed"
+        });
+      } catch (emitErr) {
+        logger.error("Failed to emit final competitor-progress", emitErr);
+      }
+    }
   }
 }
   async attachCompetitorsToUserRequest(user_id, advertiserArray, competitorIds, competitors) {
@@ -3229,7 +3298,8 @@ async checkDailyTokenLimit(req, res) {
       const formParams = {
         content_ref_id: content_ref_id,
         keywords: keywords,
-        limit: limit,
+        // Over-fetch so name-dedup losses still leave >= `limit` unique competitors
+        limit: this.competitorOverfetchLimit(limit),
         advertiser: fullBrand, // SEND FULL DOMAIN TO PYTHON API
         domain_validation: false,
         input_token_budget: 20000,

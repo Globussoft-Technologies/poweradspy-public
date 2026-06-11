@@ -519,7 +519,13 @@ const NAS_BASE_URL = import.meta.env.VITE_NAS_BASE_URL;
 
 // ─── Creative Preview: thumbnail + video playback ─────────────────────
 const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActiveIndex }) => {
-  const hasCarousel = (ad?.carouselMedia?.length > 1) || (ad?.carouselTitles?.length > 1);
+  // Only treat an ad as a carousel when it actually has multiple *images*.
+  // Some ads (e.g. certain Instagram ads) carry multiple `carouselTitles` but a
+  // single image — paging those just swapped the title while the image stayed
+  // put, which reads as a broken carousel. Arrows now appear only when there's
+  // more than one slide to navigate. (MasonryCard/AdDetailModal already gate on
+  // image count via carouselImages.length.)
+  const hasCarousel = ad?.carouselMedia?.length > 1;
   const isVideo = isTikTok || ctx.adType.includes('video') || d?.type?.toLowerCase() === 'video';
   const isTextImageAd = ctx.adType === 'text-image';
 
@@ -1056,7 +1062,6 @@ const AnalyticsModal = ({
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
   const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
 
-  const hasCarousel = (processedAd.carouselMedia?.length > 1) || (processedAd.carouselTitles?.length > 1);
   const rawTitleStr = (processedAd.carouselTitles?.length > activeIndex ? processedAd.carouselTitles[activeIndex] : processedAd.title) || '';
   const currentTitle = rawTitleStr.replace(/^,|,$/g, '').trim();
 

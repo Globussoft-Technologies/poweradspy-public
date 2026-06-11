@@ -387,7 +387,10 @@ const AdDetailModal = ({
   // Must live before the early-return below so the hook count stays consistent.
   const carouselImages = useMemo(() => {
     const media = ad?.carouselMedia || [];
-    if (ad?.thumbnail && media.length > 0 && !media.includes(ad.thumbnail)) {
+    // `carouselMedia` is already DefaultImage-filtered in mapAdToCard; also skip
+    // the cover when it's the placeholder so a broken first slide doesn't render.
+    const coverOk = ad?.thumbnail && !ad.thumbnail.includes("DefaultImage");
+    if (coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
       return [ad.thumbnail, ...media];
     }
     return media;
