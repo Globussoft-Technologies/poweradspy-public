@@ -1,0 +1,76 @@
+# ---- Dependencies ----
+node_modules/
+.pnp/
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+jspm_packages/
+vendor/
+
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+config/local.json
+
+# ---- Build / output ----
+dist/
+build/
+out/
+.next/
+.nuxt/
+.vite/
+.turbo/
+.cache/
+.parcel-cache/
+coverage/
+*.tsbuildinfo
+
+# ---- Logs ----
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ---- Runtime / temp ----
+pids/
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+
+# ---- Testing ----
+.nyc_output/
+
+# ---- PHP / Composer (legacy) ----
+composer.phar
+/vendor/
+
+# ---- Editors / IDEs ----
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# ---- OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini

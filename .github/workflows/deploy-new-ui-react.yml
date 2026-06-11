@@ -66,14 +66,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Per-service server + login (every app has its own) -> repo Secrets,
-      # prefixed NEW_UI_REACT_*.
+      # prefixed NEW_UI_REACT_*. The login user MUST be the unix user that
+      # owns REMOTE_PATH and runs pm2 — we run everything directly as them,
+      # no sudo.
       REMOTE_HOST: ${{ secrets.NEW_UI_REACT_DEPLOY_HOST }}
       REMOTE_USER: ${{ secrets.NEW_UI_REACT_DEPLOY_USER }}
       # Per-service values (every app differs) -> repo Variables, prefixed
       # NEW_UI_REACT_*. Set them in Settings -> Secrets and variables ->
       # Actions -> Variables. Not secret, so Variables (not Secrets).
       REMOTE_PATH: ${{ vars.NEW_UI_REACT_REMOTE_PATH }}    # absolute path the app lives in on the server
-      SERVICE_USER: ${{ vars.NEW_UI_REACT_SERVICE_USER }}  # unix user that owns REMOTE_PATH / runs pm2
       PM2_PROCESS: ${{ vars.NEW_UI_REACT_PM2_PROCESS }}    # pm2 process name (pm2 list) to restart
       APP_PORT: ${{ vars.NEW_UI_REACT_APP_PORT }}          # port the frontend listens on (health check)
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
@@ -85,7 +86,7 @@ jobs:
         # instead of rsync-ing into an empty path or grepping an empty port.
         run: |
           missing=0
-          for v in REMOTE_PATH SERVICE_USER PM2_PROCESS APP_PORT; do
+          for v in REMOTE_PATH PM2_PROCESS APP_PORT; do
             if [ -z "${!v}" ]; then
               echo "::error::Variable NEW_UI_REACT_${v} is not set (Settings -> Secrets and variables -> Actions -> Variables)"
               missing=1
@@ -141,7 +142,6 @@ jobs:
             --exclude='.git/' \
             --exclude='.github/' \
             --exclude='*.log' \
-            --rsync-path="sudo -u $SERVICE_USER rsync" \
             new-ui-react/ \
             deploy:"$REMOTE_PATH/"
 
@@ -150,7 +150,7 @@ jobs:
         # Always install for the frontend — Vite builds need the full dep
         # tree, and dep-hash comparison is cheaper than a stale-build bug.
         run: |
-          ssh deploy "sudo -u $SERVICE_USER -H bash -lc '\
+          ssh deploy "bash -lc '\
             source ~/.nvm/nvm.sh && \
             cd $REMOTE_PATH && \
             npm install --no-audit --no-fund'"
@@ -159,7 +159,7 @@ jobs:
         if: env.DRY_RUN != 'true'
         # Server .env provides VITE_* vars that get baked into the bundle.
         run: |
-          ssh deploy "sudo -u $SERVICE_USER -H bash -lc '\
+          ssh deploy "bash -lc '\
             source ~/.nvm/nvm.sh && \
             cd $REMOTE_PATH && \
             npm run build'"
@@ -167,7 +167,7 @@ jobs:
       - name: Restart pm2 process
         if: env.DRY_RUN != 'true'
         run: |
-          ssh deploy "sudo -u $SERVICE_USER -H bash -lc '\
+          ssh deploy "bash -lc '\
             source ~/.nvm/nvm.sh && \
             pm2 restart $PM2_PROCESS --update-env && \
             pm2 save'"
@@ -176,7 +176,8 @@ jobs:
         if: env.DRY_RUN != 'true'
         run: |
           sleep 5
-          ssh deploy "sudo ss -tlnp | grep ':$APP_PORT ' || (echo 'port $APP_PORT not listening'; exit 3)"
+          # `ss` without sudo/-p: no root needed, we only need to see the port bound.
+          ssh deploy "ss -tln | grep ':$APP_PORT ' || (echo 'port $APP_PORT not listening'; exit 3)"
           ssh deploy "curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 http://127.0.0.1:$APP_PORT/ || (echo 'frontend not reachable'; exit 4)"
 
       - name: Cleanup
