@@ -2097,4 +2097,374 @@ async function getSummaryStats(req, elastic, logger) {
   }
 }
 
-module.exports = { getIntelligenceStats, getTopUsers, getAllSearches, getKeywordTrends, getProjectActivity, getOtherActivities, purgeOldActivities, getFilterOptions, getSummaryStats };
+// Helper: Platform-specific field mappings for keyword/advertiser/domain searches
+const PLATFORM_FIELD_MAPPINGS = {
+  facebook: {
+    keyword: [
+      'facebook_ad_variants.title',
+      'facebook_ad_variants.text',
+      'facebook_ad_variants.newsfeed_description',
+      'facebook_ad_variants.title_exactly',
+      'facebook_ad_variants.text_exactly',
+      'facebook_ad_variants.newsfeed_description_exactly',
+      'facebook_translation.ad_text',
+      'facebook_translation.news_feed_description',
+      'facebook_translation.ad_title',
+      'facebook_translations.ar.title',
+      'facebook_translations.ar.text',
+      'facebook_translations.ar.newsfeed_description',
+    ],
+    advertiser: [
+      'facebook_ad_post_owners.post_owner_name',
+      'facebook_ad_post_owners.post_owner_name_ru',
+      'facebook_ad_post_owners.post_owner_name_fr',
+      'facebook_ad_post_owners.post_owner_name_sp',
+      'facebook_ad_post_owners.post_owner_name_ge',
+      'facebook_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'facebook_ad_meta_data.destination_url',
+  },
+  instagram: {
+    keyword: [
+      'instagram_ad_variants.title',
+      'instagram_ad_variants.text',
+      'instagram_ad_variants.newsfeed_description',
+      'instagram_ad_variants.title_exactly',
+      'instagram_ad_variants.text_exactly',
+      'instagram_ad_variants.newsfeed_description_exactly',
+      'instagram_translation.ad_text',
+      'instagram_translation.news_feed_description',
+      'instagram_translation.ad_title',
+      'instagram_translations.ar.title',
+      'instagram_translations.ar.text',
+      'instagram_translations.ar.newsfeed_description',
+    ],
+    advertiser: [
+      'instagram_ad_post_owners.post_owner_name',
+      'instagram_ad_post_owners.post_owner_name_ru',
+      'instagram_ad_post_owners.post_owner_name_fr',
+      'instagram_ad_post_owners.post_owner_name_sp',
+      'instagram_ad_post_owners.post_owner_name_ge',
+      'instagram_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'instagram_ad_meta_data.destination_url',
+  },
+  google: {
+    keyword: [
+      'google_ad_variants.title',
+      'google_ad_variants.text',
+      'google_ad_variants.newsfeed_description',
+      'google_ad_variants.title_exactly',
+      'google_ad_variants.text_exactly',
+      'google_ad_variants.newsfeed_description_exactly',
+    ],
+    advertiser: [
+      'google_ad_post_owners.post_owner_name',
+      'google_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'google_ad_meta_data.destination_url',
+  },
+  gdn: {
+    keyword: [
+      'gdn_ad_variants.title',
+      'gdn_ad_variants.text',
+      'gdn_ad_variants.newsfeed_description',
+      'gdn_ad_variants.title_exactly',
+      'gdn_ad_variants.text_exactly',
+      'gdn_ad_variants.newsfeed_description_exactly',
+    ],
+    advertiser: [
+      'gdn_ad_post_owners.post_owner_name',
+      'gdn_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'gdn_ad_meta_data.destination_url',
+  },
+  youtube: {
+    keyword: [
+      'youtube_ad_variants.title',
+      'youtube_ad_variants.text',
+      'youtube_ad_variants.newsfeed_description',
+    ],
+    advertiser: [
+      'youtube_ad_post_owners.post_owner_name',
+    ],
+    domain: 'youtube_ad_meta_data.destination_url',
+  },
+  linkedin: {
+    keyword: [
+      'ad_title',
+      'ad_text',
+      'newsfeed_description',
+    ],
+    advertiser: [
+      'linkedin_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'destination_url',
+  },
+  reddit: {
+    keyword: [
+      'reddit_ad_variants.title',
+      'reddit_ad_variants.text',
+      'reddit_ad_variants.newsfeed_description',
+    ],
+    advertiser: [
+      'reddit_ad_post_owners.post_owner_name',
+      'reddit_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'reddit_ad_meta_data.destination_url',
+  },
+  pinterest: {
+    keyword: [
+      'pinterest_ad_variants.title',
+      'pinterest_ad_variants.text',
+      'pinterest_ad_variants.newsfeed_description',
+    ],
+    advertiser: [
+      'pinterest_ad_post_owners.post_owner_name',
+      'pinterest_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'pinterest_ad_meta_data.destination_url',
+  },
+  quora: {
+    keyword: [
+      'quora_ad_variants.title',
+      'quora_ad_variants.text',
+      'quora_ad_variants.newsfeed_description',
+    ],
+    advertiser: [
+      'quora_ad_post_owners.post_owner_name',
+      'quora_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'quora_ad_meta_data.destination_url',
+  },
+  native: {
+    keyword: [
+      'native_ad_variants.title',
+      'native_ad_variants.text',
+      'native_ad_variants.newsfeed_description',
+    ],
+    advertiser: [
+      'native_ad_post_owners.post_owner_name',
+      'native_ad_post_owners.post_owner_name_exactly',
+    ],
+    domain: 'native_ad_meta_data.destination_url',
+  },
+  tiktok: {
+    keyword: [
+      'ad_title',
+      'industry',
+      'post_owner',
+      'target_keywords',
+    ],
+    advertiser: [
+      'post_owner',
+    ],
+    domain: 'destination_url',
+  },
+};
+
+// Helper: Fetch ads count from platform-specific indices
+async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue, searchType, logger) {
+  if (!elastic || !platforms || platforms.length === 0) {
+    return 0;
+  }
+
+  const dayStart = new Date(`${dateStr}T00:00:00Z`).getTime();
+  const dayEnd = new Date(`${dateStr}T23:59:59Z`).getTime();
+
+  let totalCount = 0;
+
+  // Map platform names to their Elasticsearch index names
+  const platformIndexMap = {
+    facebook: 'search_mix',
+    instagram: 'search_mix',
+    google: 'search_mix',
+    gdn: 'search_mix',
+    tiktok: 'tiktok_ads',
+    linkedin: 'search_mix',
+    youtube: 'search_mix',
+    reddit: 'search_mix',
+    pinterest: 'search_mix',
+    quora: 'search_mix',
+    native: 'search_mix',
+  };
+
+  // Query each platform's data
+  for (const platform of platforms) {
+    try {
+      const indexName = platformIndexMap[platform.toLowerCase()] || 'search_mix';
+      const platformConfig = PLATFORM_FIELD_MAPPINGS[platform.toLowerCase()];
+
+      if (!platformConfig) {
+        logger?.warn?.('[fetchAdsCountByPlatform] Unknown platform:', platform);
+        continue;
+      }
+
+      // Build query based on search type
+      const baseQuery = {
+        bool: {
+          filter: [
+            { range: { post_date: { gte: dayStart, lte: dayEnd } } },
+            { term: { 'platform': platform.toLowerCase() } }
+          ],
+          must: []
+        }
+      };
+
+      // Add search-specific query based on type
+      if (searchType === '1') {
+        // Keyword search
+        const keywordFields = platformConfig.keyword;
+        if (keywordFields && keywordFields.length > 0) {
+          baseQuery.bool.must.push({
+            multi_match: {
+              query: searchValue,
+              type: 'phrase',
+              fields: keywordFields
+            }
+          });
+        }
+      } else if (searchType === '2') {
+        // Advertiser search
+        const advertiserFields = platformConfig.advertiser;
+        if (advertiserFields && advertiserFields.length > 0) {
+          baseQuery.bool.must.push({
+            multi_match: {
+              query: searchValue,
+              type: 'phrase',
+              fields: advertiserFields
+            }
+          });
+        }
+      } else if (searchType === '3') {
+        // Domain search - use wildcard
+        const domainField = platformConfig.domain;
+        if (domainField) {
+          // Extract domain name from URL
+          let domain;
+          try {
+            const parsed = new URL(searchValue.startsWith('http') ? searchValue : `http://${searchValue}`);
+            domain = parsed.hostname;
+          } catch {
+            domain = searchValue.split('/')[0];
+          }
+          baseQuery.bool.must.push({
+            wildcard: {
+              [domainField]: `*${domain}*`
+            }
+          });
+        }
+      }
+
+      // Only execute query if we have a must clause
+      if (baseQuery.bool.must.length === 0) {
+        logger?.warn?.('[fetchAdsCountByPlatform] No search clause built for type:', searchType);
+        continue;
+      }
+
+      const esResult = await elastic.search({
+        index: indexName,
+        body: {
+          size: 0,
+          query: baseQuery
+        }
+      });
+
+      const hits = esResult.hits || esResult.body?.hits;
+      const count = typeof hits.total === 'object' ? hits.total.value : hits.total;
+      totalCount += (count || 0);
+
+      logger?.info?.('[fetchAdsCountByPlatform]', { platform, date: dateStr, searchType, count: count || 0 });
+    } catch (err) {
+      logger?.warn?.('[fetchAdsCountByPlatform] Failed for platform:', platform, 'Error:', err.message);
+      // Continue with other platforms if one fails
+    }
+  }
+
+  return totalCount;
+}
+
+async function getKeywordScrapingHistory(req, elastic, logger) {
+  try {
+    const { keyword, advertiser, domain, type } = req.query;
+    logger?.info?.('[getKeywordScrapingHistory] Query:', { keyword, advertiser, domain, type });
+
+    if (!keyword && !advertiser && !domain) {
+      return { code: 400, message: 'At least one of keyword, advertiser, or domain is required' };
+    }
+
+    // Read from sample data file
+    let sampleData = [];
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const sampleFilePath = path.join(__dirname, '..', 'sample_scraping_history.json');
+      logger?.info?.('[getKeywordScrapingHistory] Reading from:', sampleFilePath);
+      const fileContent = fs.readFileSync(sampleFilePath, 'utf8');
+      sampleData = JSON.parse(fileContent);
+      logger?.info?.('[getKeywordScrapingHistory] Loaded sample data with', sampleData.length, 'entries');
+    } catch (fileErr) {
+      logger?.error?.('[getKeywordScrapingHistory] Could not load sample file:', fileErr.message);
+      return { code: 400, message: 'Sample data file not found: ' + fileErr.message };
+    }
+
+    // Find matching entry based on type and value
+    let matchedEntry = null;
+    if (type === '1' && keyword) {
+      matchedEntry = sampleData.find(item => item.type === 1 && item.value.toLowerCase() === keyword.toLowerCase());
+    } else if (type === '2' && advertiser) {
+      matchedEntry = sampleData.find(item => item.type === 2 && item.value.toLowerCase() === advertiser.toLowerCase());
+    } else if (type === '3' && domain) {
+      matchedEntry = sampleData.find(item => item.type === 3 && item.value.toLowerCase() === domain.toLowerCase());
+    } else {
+      matchedEntry = sampleData.find(item =>
+        item.value.toLowerCase() === (keyword || advertiser || domain).toLowerCase()
+      );
+    }
+
+    if (!matchedEntry) {
+      logger?.warn?.('[getKeywordScrapingHistory] No matching entry found for', { keyword, advertiser, domain, type });
+      return { code: 404, message: 'No scraping history found for this keyword/advertiser/domain', data: { history: [] } };
+    }
+
+    // Convert scrapping_status to history format
+    let history = (matchedEntry.scrapping_status || []).map(run => ({
+      date: run.date,
+      status: run.status,
+      startTime: run.startTime,
+      endTime: run.endTime,
+    }));
+
+    // Fetch ads count from Elasticsearch for each date and platform
+    if (elastic && matchedEntry.platform && Array.isArray(matchedEntry.platform)) {
+      const searchValue = keyword || advertiser || domain;
+      for (let i = 0; i < history.length; i++) {
+        const run = history[i];
+        try {
+          const adsCount = await fetchAdsCountByPlatform(elastic, matchedEntry.platform, run.date, searchValue, type, logger);
+          run.adsCount = adsCount;
+          logger?.info?.('[getKeywordScrapingHistory] Fetched ads count for', { date: run.date, adsCount });
+        } catch (err) {
+          logger?.warn?.('[getKeywordScrapingHistory] Failed to fetch ads count for date:', run.date, err.message);
+        }
+      }
+    }
+
+    return {
+      code: 200,
+      message: 'Scraping history fetched successfully',
+      data: {
+        keyword: type === '1' ? keyword : null,
+        advertiser: type === '2' ? advertiser : null,
+        domain: type === '3' ? domain : null,
+        platform: matchedEntry.platform || [],
+        history,
+      },
+    };
+  } catch (err) {
+    logger?.error?.('[searchIntelligenceController] getKeywordScrapingHistory error:', err);
+    return { code: 500, message: 'Internal server error', error: err.message };
+  }
+}
+
+module.exports = { getIntelligenceStats, getTopUsers, getAllSearches, getKeywordTrends, getProjectActivity, getOtherActivities, purgeOldActivities, getFilterOptions, getSummaryStats, getKeywordScrapingHistory };

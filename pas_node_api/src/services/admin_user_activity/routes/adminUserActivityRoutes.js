@@ -7,7 +7,7 @@ const databaseManager = require('../../../database/DatabaseManager');
 const { getUsersCount } = require('../controllers/getUsersCountController');
 const { getActiveUsers, getExpiredUsers, getPendingUsers } = require('../controllers/getUsersListController');
 const { getKeywords, getAdvertiser, getDomain, getProjects, getAllSearches: getUserActivitySearches, getSearchCounts } = require('../controllers/userActivitySearchController');
-const { getIntelligenceStats, getTopUsers, getAllSearches, getKeywordTrends, getProjectActivity, getOtherActivities, purgeOldActivities, getFilterOptions, getSummaryStats } = require('../controllers/searchIntelligenceController');
+const { getIntelligenceStats, getTopUsers, getAllSearches, getKeywordTrends, getProjectActivity, getOtherActivities, purgeOldActivities, getFilterOptions, getSummaryStats, getKeywordScrapingHistory } = require('../controllers/searchIntelligenceController');
 
 const ELASTIC_FALLBACK_NETWORKS = ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'pinterest', 'quora', 'native', 'gdn', 'google'];
 
@@ -180,6 +180,18 @@ function createAdmin_user_activityRoutes(service) {
     authMiddleware,
     asyncHandler(async (req, res) => {
       const result = await getSummaryStats(req, getElastic(service.db), service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // GET /api/v1/admin_user_activity/intelligence/scraping-history
+  // Returns 30-day scraping history for a keyword, advertiser, or domain
+  // Query params: keyword, advertiser, domain (at least one required)
+  router.get(
+    '/intelligence/scraping-history',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getKeywordScrapingHistory(req, getElastic(service.db), service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

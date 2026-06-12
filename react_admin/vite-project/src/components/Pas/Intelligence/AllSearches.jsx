@@ -579,6 +579,89 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   const [error, setError] = useState(null);
   const [summaryStats, setSummaryStats] = useState({ platforms: [], activity_types: [], sort_by: [], pages_visited: [], total: 0, search_counts: { keywords: { unique: 0, total: 0 }, advertisers: { unique: 0, total: 0 }, domains: { unique: 0, total: 0 } }, action_counts: { sorting_total: 0, sorting_breakdown: [], other_actions_total: 0, other_actions_breakdown: {}, filters_total: 0, filters_breakdown: [] } });
 
+  // Modal state for keyword status history
+  const [statusModalOpen, setStatusModalOpen] = useState(false);
+  const [statusModalData, setStatusModalData] = useState(null);
+  const [statusHistory, setStatusHistory] = useState([]);
+  const [statusHistoryLoading, setStatusHistoryLoading] = useState(false);
+
+  const generateSampleData = () => {
+    const sampleData = [];
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toLocaleDateString();
+      const adsCount = Math.floor(Math.random() * 500) + 100;
+      sampleData.push({
+        date: dateStr,
+        adsCount: adsCount,
+        status: 'success',
+      });
+    }
+    return sampleData;
+  };
+
+  const openStatusModal = async (rowData) => {
+    setStatusModalData({ ...rowData, platform: rowData.platform || [] });
+    setStatusModalOpen(true);
+    setStatusHistoryLoading(true);
+
+    // Set sample data immediately as fallback
+    setStatusHistory(generateSampleData());
+
+    try {
+      const params = new URLSearchParams();
+
+      // Determine type (1=keyword, 2=advertiser, 3=domain) and add the appropriate parameter
+      if (rowData.keyword) {
+        params.set("type", "1");
+        params.set("keyword", rowData.keyword);
+      } else if (rowData.advertiser) {
+        params.set("type", "2");
+        params.set("advertiser", rowData.advertiser);
+      } else if (rowData.domain) {
+        params.set("type", "3");
+        params.set("domain", rowData.domain);
+      }
+
+      if (!params.toString()) {
+        console.warn("[openStatusModal] No keyword/advertiser/domain provided");
+        setStatusHistoryLoading(false);
+        return;
+      }
+
+      const url = `${NODE_API}/intelligence/scraping-history?${params.toString()}`;
+      console.log("[openStatusModal] Fetching from:", url);
+      console.log("[openStatusModal] Row data:", rowData);
+
+      const token = Cookies.get("token");
+      const response = await fetch(url, {
+        headers: token ? { "Authorization": `Bearer ${token}` } : {},
+      });
+
+      console.log("[openStatusModal] Response status:", response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log("[openStatusModal] API response:", data);
+        if (data.data?.history && data.data.history.length > 0) {
+          setStatusHistory(data.data.history);
+        }
+        // Update modal data with platform from API response
+        if (data.data?.platform) {
+          setStatusModalData(prev => ({ ...prev, platform: data.data.platform }));
+        }
+      } else {
+        const errText = await response.text();
+        console.error("Failed to fetch scraping history:", response.status, errText);
+      }
+    } catch (err) {
+      console.error("Error fetching scraping history:", err);
+    } finally {
+      setStatusHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       if (!NODE_API) {
@@ -789,10 +872,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", textAlign: "left", whiteSpace: "nowrap" }}>
             {row.ads_count != null ? Number(row.ads_count).toLocaleString() : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
-          <td style={{ padding: "10px 12px" }}>
-            {row.other_activity ? (
-              <span style={{ display: "inline-block", background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap" }}>
-                {row.other_activity}
+          <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", textAlign: "center", whiteSpace: "nowrap" }}>
+            {(row.keyword || row.advertiser || row.domain) ? (
+              <span
+                onClick={() => openStatusModal(row)}
+                style={{ display: "inline-block", background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+              >
+                ✓
               </span>
             ) : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
@@ -800,6 +886,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
             {row.filters_applied?.length > 0
               ? <FilterPillsCell pills={row.filters_applied} />
               : <span style={{ color: "#9ca3af" }}>—</span>}
+          </td>
+          <td style={{ padding: "10px 12px" }}>
+            {row.other_activity ? (
+              <span style={{ display: "inline-block", background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap" }}>
+                {row.other_activity}
+              </span>
+            ) : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
         </tr>
       );
@@ -1010,13 +1103,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               <col style={{ minWidth: "90px" }} />
               <col style={{ minWidth: "100px" }} />
               <col style={{ minWidth: "70px" }} />
+              <col style={{ minWidth: "120px" }} />
+              <col style={{ minWidth: "280px" }} />
               <col style={{ minWidth: "160px" }} />
-              <col style={{ minWidth: "240px" }} />
-              <col style={{ minWidth: "90px" }} />
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
-                {["TIMESTAMP", "USER", "KEYWORD", "ADVERTISER", "DOMAIN", "PLATFORM", "AD COUNT", "OTHER ACTIVITY", "FILTERS APPLIED"].map((h) => (
+                {["TIMESTAMP", "USER", "KEYWORD", "ADVERTISER", "DOMAIN", "PLATFORM", "AD COUNT", "KEYWORD STATUS", "FILTERS APPLIED", "OTHER ACTIVITY"].map((h) => (
                   <th key={h} style={{ padding: h === "AD COUNT" ? "10px 6px" : "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
                     {h}
                   </th>
@@ -1059,6 +1152,106 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           </p>
         </div>
       </div>
+
+      {/* Keyword Status Modal */}
+      {statusModalOpen && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "white", borderRadius: "10px", padding: "20px", maxWidth: "900px", width: "90%", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1f2937" }}>Scraping Status - Last 30 Days</h2>
+              <button
+                onClick={() => setStatusModalOpen(false)}
+                style={{ background: "none", border: "none", fontSize: "24px", cursor: "pointer", color: "#6b7280" }}
+              >
+                ×
+              </button>
+            </div>
+
+            {statusModalData && (statusModalData.keyword || statusModalData.advertiser || statusModalData.domain) && (
+              <div style={{ marginBottom: "16px", padding: "12px", background: "#f3f4f6", borderRadius: "6px" }}>
+                {statusModalData.keyword && (
+                  <p style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#6b7280" }}>
+                    <strong>Keyword:</strong> {statusModalData.keyword}
+                  </p>
+                )}
+                {statusModalData.advertiser && (
+                  <p style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#6b7280" }}>
+                    <strong>Advertiser:</strong> {statusModalData.advertiser}
+                  </p>
+                )}
+                {statusModalData.domain && (
+                  <p style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#6b7280" }}>
+                    <strong>Domain:</strong> {statusModalData.domain}
+                  </p>
+                )}
+                {Array.isArray(statusModalData.platform) && statusModalData.platform.length > 0 && (
+                  <p style={{ margin: "0", fontSize: "12px", color: "#6b7280" }}>
+                    <strong>Platform:</strong> {statusModalData.platform.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {statusHistoryLoading ? (
+              <div style={{ textAlign: "center", padding: "40px 20px", color: "#9ca3af" }}>Loading...</div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "90px 140px 140px 80px 90px", gap: "10px", marginBottom: "12px", paddingBottom: "8px", borderBottom: "1px solid #e5e7eb", textAlign: "center" }}>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Date</strong>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Start Time</strong>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>End Time</strong>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Ads Count</strong>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Status</strong>
+                  </div>
+                  {statusHistory.map((item, idx) => {
+                    let statusColor, statusBg, statusText;
+                    if (item.status === 'success' || item.status === 'completed') {
+                      statusBg = "#d1fae5";
+                      statusColor = "#065f46";
+                      statusText = "✓ OK";
+                    } else if (item.status === 'no_ads_found') {
+                      statusBg = "#fecaca";
+                      statusColor = "#991b1b";
+                      statusText = "✗ No Ads";
+                    } else if (item.status === 'scrapping') {
+                      statusBg = "#fef3c7";
+                      statusColor = "#92400e";
+                      statusText = "⟳ Scrapping";
+                    } else {
+                      statusBg = "#f3f4f6";
+                      statusColor = "#6b7280";
+                      statusText = "- N/A";
+                    }
+                    const startTime = item.startTime ? new Date(item.startTime).toLocaleTimeString() : "-";
+                    const endTime = item.endTime ? new Date(item.endTime).toLocaleTimeString() : "-";
+                    return (
+                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "90px 140px 140px 80px 90px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", textAlign: "center" }}>
+                        <span style={{ fontSize: "11px", color: "#374151" }}>{item.date}</span>
+                        <span style={{ fontSize: "11px", color: "#374151" }}>{startTime}</span>
+                        <span style={{ fontSize: "11px", color: "#374151" }}>{endTime}</span>
+                        <span style={{ fontSize: "11px", color: "#374151", fontWeight: 500 }}>{item.adsCount ?? "-"}</span>
+                        <span style={{ fontSize: "10px", padding: "2px 4px", borderRadius: "3px", background: statusBg, color: statusColor, fontWeight: 600 }}>
+                          {statusText}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: "16px", textAlign: "right" }}>
+              <button
+                onClick={() => setStatusModalOpen(false)}
+                style={{ background: "#6366f1", color: "white", border: "none", padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
