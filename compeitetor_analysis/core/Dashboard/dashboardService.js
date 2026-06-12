@@ -1324,7 +1324,7 @@ const getAdvertiserAdCount = async (advertiser) => {
           const compDocs = competitorIds.length
             ? await Competitors.find(
                 { _id: { $in: competitorIds } },
-                { competitor_name: 1, competitor_url: 1 }
+                { competitor_name: 1, competitor_url: 1, facebook_status: 1, instagram_status: 1, youtube_status: 1, google_status: 1 }
               ).lean()
             : [];
 
@@ -1342,6 +1342,14 @@ const getAdvertiserAdCount = async (advertiser) => {
                   yesterday: s.yesterday.total,         // ads seen yesterday
                   last7Days: s.last7days.total,         // ads seen in the last 7 days
                   growth: growthPct(s.today.total, s.yesterday.total), // day-over-day %
+                  // Whether the competitor was dispatched to the scraping plugin
+                  // today, per platform: 0 = not sent, 1|2 = sent. The plugin
+                  // resets these to 0 each day, so a non-zero value reflects
+                  // today's run only.
+                  facebookStatus: Number(c.facebook_status) || 0,
+                  instagramStatus: Number(c.instagram_status) || 0,
+                  youtubeStatus: Number(c.youtube_status) || 0,
+                  googleStatus: Number(c.google_status) || 0,
                 },
                 today: s.today, // per-platform today, for the brand/total ads-today split
               };

@@ -95,6 +95,25 @@ function Growth({ pct }) {
   );
 }
 
+// Per-platform scraping-dispatch state for a competitor. status 0 = not sent to
+// the scraping plugin today; 1|2 = sent. The plugin resets these to 0 daily, so
+// a lit chip reflects today's run only.
+function ScrapeChip({ label, name, status }) {
+  const on = (Number(status) || 0) > 0;
+  const who = name || label;
+  return (
+    <span
+      title={on ? `${who}: sent to the scraping plugin today` : `${who}: not sent to the scraping plugin yet today`}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold leading-none ${
+        on ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-400"
+      }`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${on ? "bg-green-500" : "bg-gray-300"}`} />
+      {label}
+    </span>
+  );
+}
+
 // Date presets for the per-brand ads chart (custom range available too).
 const RANGE_PRESETS = [
   { key: "7d", label: "7d", days: 7 },
@@ -635,20 +654,24 @@ const CompetitorTracker = () => {
           startY: cursorY,
           margin: tableMargin,
           theme: "striped",
-          styles: { fontSize: 8.5, cellPadding: 5, overflow: "ellipsize", valign: "middle" },
+          styles: { fontSize: 8.5, cellPadding: 5, overflow: "ellipsize", valign: "middle", minCellHeight: 18 },
           headStyles: { fillColor: [244, 246, 252], textColor: [107, 114, 128], fontStyle: "bold", fontSize: 8 },
           alternateRowStyles: { fillColor: [250, 251, 255] },
+          // Widths only; alignment is set in didParseCell so headers match their
+          // body cells (column 1 "Scraping" is custom-drawn in didDrawCell).
           columnStyles: {
-            0: { cellWidth: 175 },
-            1: { halign: "right", cellWidth: 58 },
-            2: { halign: "right", cellWidth: 52 },
-            3: { halign: "right", cellWidth: 66 },
-            4: { halign: "right", cellWidth: 54 },
-            5: { halign: "right" },
+            0: { cellWidth: 165 },
+            1: { cellWidth: 86, halign: "center" },
+            2: { cellWidth: 48 },
+            3: { cellWidth: 44 },
+            4: { cellWidth: 58 },
+            5: { cellWidth: 46 },
+            6: { cellWidth: 44 },
           },
-          head: [["Competitor", "Total", "Today", "Yesterday", "7 Days", "Growth"]],
+          head: [["Competitor", "Scraping", "Total", "Today", "Yesterday", "7 Days", "Growth"]],
           body: comps.map((c) => [
             c.url ? `${c.name || "—"}\n${c.url.replace(/^https?:\/\//, "")}` : c.name || "—",
+            "", // Scraping — drawn as chips in didDrawCell
             fmtNum(c.ads),
             fmtNum(c.today),
             fmtNum(c.yesterday),
@@ -656,10 +679,43 @@ const CompetitorTracker = () => {
             `${Number(c.growth) >= 0 ? "+" : ""}${Number(c.growth) || 0}%`,
           ]),
           didParseCell: (d) => {
-            if (d.section === "body" && d.column.index === 5) {
+            // Right-align every numeric column (header + body) so they line up.
+            if (d.column.index >= 2) d.cell.styles.halign = "right";
+            if (d.column.index === 1) d.cell.styles.halign = "center";
+            if (d.section === "body" && d.column.index === 6) {
               d.cell.styles.textColor = (Number(comps[d.row.index]?.growth) || 0) >= 0 ? [22, 163, 74] : [225, 29, 72];
               d.cell.styles.fontStyle = "bold";
             }
+          },
+          didDrawCell: (d) => {
+            // Render the per-platform scraping chips (FB/IG/YT/GG) for column 1.
+            if (d.section !== "body" || d.column.index !== 1) return;
+            const c = comps[d.row.index];
+            if (!c) return;
+            const chips = [
+              ["FB", c.facebookStatus],
+              ["IG", c.instagramStatus],
+              ["YT", c.youtubeStatus],
+              ["GG", c.googleStatus],
+            ];
+            const chipW = 17;
+            const chipH = 9;
+            const gap = 1.5;
+            const totalW = chips.length * chipW + (chips.length - 1) * gap;
+            let x = d.cell.x + (d.cell.width - totalW) / 2;
+            const y = d.cell.y + (d.cell.height - chipH) / 2;
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(6);
+            chips.forEach(([label, status]) => {
+              const on = (Number(status) || 0) > 0;
+              const [fr, fg, fb] = on ? [220, 252, 231] : [243, 244, 246];
+              const [tr, tg, tb] = on ? [22, 163, 74] : [156, 163, 175];
+              pdf.setFillColor(fr, fg, fb);
+              pdf.roundedRect(x, y, chipW, chipH, 1.5, 1.5, "F");
+              pdf.setTextColor(tr, tg, tb);
+              pdf.text(label, x + chipW / 2, y + chipH / 2, { align: "center", baseline: "middle" });
+              x += chipW + gap;
+            });
           },
         });
         cursorY = pdf.lastAutoTable.finalY + 18;
@@ -1042,6 +1098,7 @@ const CompetitorTracker = () => {
                                     <div className="flex items-center gap-3 px-4 py-2 border-t border-gray-100 bg-gray-50/60">
                                       <span className="w-8 flex-shrink-0" aria-hidden="true" />
                                       <span className="flex-1 min-w-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Competitor</span>
+                                      <span className="w-[92px] text-center flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400" title="Whether the competitor was sent to the scraping plugin today (resets daily)">Scraping</span>
                                       <span className="w-16 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Total</span>
                                       <span className="w-16 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Today</span>
                                       <span className="w-16 text-right flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wider text-gray-400">Yesterday</span>
@@ -1062,6 +1119,12 @@ const CompetitorTracker = () => {
                                               <FiExternalLink className="w-3 h-3 flex-shrink-0" />
                                             </a>
                                           )}
+                                        </span>
+                                        <span className="w-[92px] flex-shrink-0 flex flex-wrap items-center justify-center gap-1">
+                                          <ScrapeChip label="FB" name="Facebook" status={c.facebookStatus} />
+                                          <ScrapeChip label="IG" name="Instagram" status={c.instagramStatus} />
+                                          <ScrapeChip label="YT" name="YouTube" status={c.youtubeStatus} />
+                                          <ScrapeChip label="GG" name="Google" status={c.googleStatus} />
                                         </span>
                                         <span className="w-16 text-right flex-shrink-0 text-[13px] font-bold text-gray-800 whitespace-nowrap" title="All-time ads">{fmtNum(c.ads)}</span>
                                         <span className="w-16 text-right flex-shrink-0 text-[13px] font-semibold text-gray-700 whitespace-nowrap" title="Ads today">{fmtNum(c.today)}</span>
