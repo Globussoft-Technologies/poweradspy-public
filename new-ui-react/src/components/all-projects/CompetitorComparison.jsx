@@ -1112,13 +1112,13 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                 onChange={(e) => setBudgetView(e.target.value)}
                 className="bg-white/5 border border-white/15 text-white/80 text-xs rounded-md px-2 py-1.5 outline-none cursor-pointer hover:border-white/30 transition-colors"
               >
-                <option value="month" className="bg-[#1a1a2e]">
+                <option value="month" className="bg-[#1a1a2e] text-white">
                   Monthly View
                 </option>
-                <option value="day" className="bg-[#1a1a2e]">
+                <option value="day" className="bg-[#1a1a2e] text-white">
                   Daily View
                 </option>
-                <option value="year" className="bg-[#1a1a2e]">
+                <option value="year" className="bg-[#1a1a2e] text-white">
                   Yearly View
                 </option>
               </select>

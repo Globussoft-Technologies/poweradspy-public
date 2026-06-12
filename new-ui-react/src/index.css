@@ -502,6 +502,23 @@ a font * {
   .bg-\[\#1a1a1a\] .text-white, .bg-\[\#1a1a1a\].text-white,
   .bg-\[\#222\] .text-white, .bg-\[\#222\].text-white { color: #ffffff; }
 
+  /* CompetitorComparison's CustomTooltip & InfoTooltip (bg-[#1a1a2e]), its
+     export menu (bg-[#1e2235]) and the budget-view <select>'s dark <option>s
+     all stay dark in light mode, so their white text — and every opacity
+     variant — must stay white. Without this the descendant flip above turns
+     them dark slate → invisible on the dark surface (the reported bug). Same
+     specificity as that flip; placed after it so source order wins. */
+  .bg-\[\#1a1a2e\] .text-white,  .bg-\[\#1a1a2e\].text-white,
+  .bg-\[\#1e2235\] .text-white,  .bg-\[\#1e2235\].text-white,
+  .bg-\[\#1a1a2e\] .hover\:text-white:hover,
+  .bg-\[\#1e2235\] .hover\:text-white:hover { color: #ffffff; }
+  .bg-\[\#1a1a2e\] .text-white\/40, .bg-\[\#1e2235\] .text-white\/40 { color: rgb(255 255 255 / 0.40); }
+  .bg-\[\#1a1a2e\] .text-white\/50, .bg-\[\#1e2235\] .text-white\/50 { color: rgb(255 255 255 / 0.55); }
+  .bg-\[\#1a1a2e\] .text-white\/60, .bg-\[\#1e2235\] .text-white\/60 { color: rgb(255 255 255 / 0.65); }
+  .bg-\[\#1a1a2e\] .text-white\/70, .bg-\[\#1e2235\] .text-white\/70 { color: rgb(255 255 255 / 0.75); }
+  .bg-\[\#1a1a2e\] .text-white\/80, .bg-\[\#1e2235\] .text-white\/80 { color: rgb(255 255 255 / 0.85); }
+  .bg-\[\#1a1a2e\] .text-white\/90, .bg-\[\#1e2235\] .text-white\/90 { color: rgb(255 255 255 / 0.92); }
+
   /* Note: bg-theme-text/[0.04] (used as search-input fill) and all other
      `*-theme-*` utilities resolve via --color-text / --color-border / etc,
      which useTheme.jsx already swaps. No override needed for those. */
