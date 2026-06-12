@@ -104,7 +104,7 @@ function pdfSafe(str) {
     .replace(/[‐‑‒–—―]/g, "-")   // all Unicode dashes
     .replace(/[^\x00-\x7E]/g, (ch) => {
       // catch-all: replace any remaining non-ASCII with closest ASCII or space
-      const map = { '…': '...', '·': '.', 'ℹ': 'i', '–': '-', '—': '-', '→': '->', '·': '.' };
+      const map = { '…': '...', '·': '.', 'ℹ': 'i', '–': '-', '—': '-', '→': '->' };
       return map[ch] ?? ' ';
     });
 }

@@ -948,17 +948,13 @@ function getAuthUser() {
 }
 
 // Cache country for the session so we don't call ipapi.co on every search
-let _cachedCountry = null;
+// Fetch user's current country from their request IP
+// This is done server-side using the request IP, so we pass a signal from the frontend
+// The backend will detect the country from the HTTP request IP
 async function getCountryByIP() {
-  if (_cachedCountry) return _cachedCountry;
-  try {
-    const res = await fetch('https://ipapi.co/json/');
-    const data = await res.json();
-    _cachedCountry = data.country_name || 'NA';
-  } catch {
-    _cachedCountry = 'NA';
-  }
-  return _cachedCountry;
+  // Return a marker that tells the backend to auto-detect from request IP
+  // The backend will call geoip or similar to get the country from the request IP
+  return 'auto-detect';
 }
 
 async function trackUserActivity(payload, meta) {
@@ -1198,6 +1194,9 @@ async function trackUserActivity(payload, meta) {
       meta_ads_lib_filter: (payload.platform === 15 || Array.isArray(payload.platform_positions)) ? 'true' : 'NA',
       size:            payload.size              ?? 'NA',
       nativeNetwork:   payload.nativeNetwork     ?? 'NA',
+      ad_sub_position: payload.ad_sub_position   ?? 'NA',
+      budget:          payload.budget && payload.budget !== 'NA' ? payload.budget : 'NA',
+      ctr:             rangeToStr(payload.ctr),
     };
   } else if (networkKey === 'tiktok') {
     extra = {

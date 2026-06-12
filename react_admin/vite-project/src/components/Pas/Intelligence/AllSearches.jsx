@@ -35,9 +35,19 @@ const EMPTY = {
   dateRange: "Last 90 days",
   fromDate: todayStr(), fromTime: "00:00",
   toDate: todayStr(),   toTime: "23:59",
-  userFilter: "", keyword: "", advertiser: "", domain: "",
-  platform: "Any", country: "",
+  includedUsers: [], excludedUsers: [],
+  keyword: "", advertiser: "", domain: "",
+  platform: "", activityType: "",
 };
+
+const ACTIVITY_TYPES = [
+  { key: "keyword", label: "Keyword" },
+  { key: "advertiser", label: "Advertiser" },
+  { key: "domain", label: "Domain" },
+  { key: "filters", label: "Filters" },
+  { key: "other_activity", label: "Other Activity" },
+  { key: "sorting_filters", label: "Sorting Filters" },
+];
 
 // ── Autocomplete dropdown input ───────────────────────────────────────────────
 const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, style }) => {
@@ -56,8 +66,8 @@ const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, st
   }, []);
 
   const filtered = query
-    ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase())).slice(0, 30)
-    : options.slice(0, 30);
+    ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
+    : options;
 
   const select = (val) => {
     setQuery(val);
@@ -72,7 +82,8 @@ const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, st
         value={query}
         placeholder={placeholder}
         style={style}
-        autoComplete="off"
+        autoComplete="new-password"
+        name={`ac-${placeholder}`}
         onChange={(e) => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onKeyDown={(e) => {
@@ -82,10 +93,10 @@ const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, st
       />
       {open && filtered.length > 0 && (
         <div style={{
-          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999,
+          position: "absolute", top: "100%", left: 0, zIndex: 999,
           background: "white", border: "1px solid #d1d5db", borderRadius: "6px",
-          boxShadow: "0 4px 16px rgba(0,0,0,0.10)", maxHeight: "200px", overflowY: "auto",
-          marginTop: "2px",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.10)", maxHeight: "350px", overflowY: "auto",
+          marginTop: "2px", minWidth: "100%", width: "100%", maxWidth: "none", minWidth: "500px",
         }}>
           {filtered.map((opt) => (
             <div
@@ -98,6 +109,215 @@ const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, st
               onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
             >
+              {opt}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Multi-select include/exclude user input ───────────────────────────────────
+const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] }) => {
+  const [mode, setMode]   = useState("include"); // "include" | "exclude"
+  const [query, setQuery] = useState("");
+  const [open, setOpen]   = useState(false);
+  const wrapRef           = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const allSelected = [...included, ...excluded];
+
+  // Domain chips already added (e.g. ".com", ".in")
+  const domainChips = [...included, ...excluded].filter((v) => !v.includes('@'));
+
+  const matchesDomainChip = (email, chip) => {
+    const emailLower = email.toLowerCase();
+    const atIdx = emailLower.indexOf('@');
+    if (atIdx === -1) return false;
+    const domain = emailLower.slice(atIdx + 1);
+    const pat = chip.startsWith('.') ? chip.slice(1).toLowerCase() : chip.toLowerCase();
+    return domain === pat || domain.endsWith(`.${pat}`);
+  };
+
+  const filtered = (query
+    ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
+    : domainChips.length > 0
+      ? options.filter((o) => domainChips.some((d) => matchesDomainChip(o, d)))
+      : options
+  ).filter((o) => !allSelected.includes(o)).slice(0, 30);
+
+  const addEntry = (val) => {
+    const v = val.trim();
+    if (!v) { setQuery(""); return; }
+
+    const isDomain = v.startsWith('.') || (!v.includes('@') && v.includes('.'));
+
+    if (isDomain) {
+      // Expand domain to all matching emails from options
+      // Pattern ".com" or "globussoft.in" → match email domain part
+      const pat = v.startsWith('.') ? v.slice(1).toLowerCase() : v.toLowerCase();
+      const matches = options.filter((o) => {
+        const emailLower = o.toLowerCase();
+        const atIdx = emailLower.indexOf('@');
+        if (atIdx === -1) return false;
+        const domain = emailLower.slice(atIdx + 1); // e.g. "globussoft.in"
+        return domain === pat || domain.endsWith(`.${pat}`);
+      }).filter((o) => !allSelected.includes(o));
+      const toAdd = matches.length > 0 ? matches : [v]; // fall back to pattern if no matches
+      if (mode === "include") onChange({ includedUsers: [...included, ...toAdd], excludedUsers: excluded });
+      else                    onChange({ includedUsers: included, excludedUsers: [...excluded, ...toAdd] });
+    } else {
+      if (allSelected.includes(v)) { setQuery(""); return; }
+      if (mode === "include") onChange({ includedUsers: [...included, v], excludedUsers: excluded });
+      else                    onChange({ includedUsers: included, excludedUsers: [...excluded, v] });
+    }
+    setQuery("");
+    setOpen(false);
+  };
+
+  const removeIncluded = (v) => onChange({ includedUsers: included.filter((x) => x !== v), excludedUsers: excluded });
+  const removeExcluded = (v) => onChange({ includedUsers: included, excludedUsers: excluded.filter((x) => x !== v) });
+
+  const inputStyle = {
+    border: "none", outline: "none", fontSize: "12px", color: "#374151",
+    background: "transparent", minWidth: "100px", flex: 1, padding: "2px 4px",
+  };
+
+  const hasAny = included.length > 0 || excluded.length > 0;
+  const showDropdown = open && (filtered.length > 0 || query.trim() || hasAny);
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", width: "100%" }}>
+      {/* Box — only mode toggle + input + summary badge */}
+      <div
+        style={{ border: "1px solid #d1d5db", borderRadius: "6px", background: "white", padding: "4px 6px", cursor: "text", display: "flex", alignItems: "center", gap: "4px", minHeight: "32px" }}
+        onClick={() => setOpen(true)}
+      >
+        {/* Mode toggle */}
+        <button
+          onMouseDown={(e) => {
+            e.preventDefault(); e.stopPropagation();
+            setMode((m) => {
+              const next = m === "include" ? "exclude" : "include";
+              const all = [...included, ...excluded];
+              if (all.length > 0) {
+                if (next === "exclude") onChange({ includedUsers: [], excludedUsers: all });
+                else                   onChange({ includedUsers: all, excludedUsers: [] });
+              }
+              return next;
+            });
+          }}
+          style={{
+            fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", border: "none",
+            cursor: "pointer", flexShrink: 0,
+            background: mode === "include" ? "#dcfce7" : "#fee2e2",
+            color:      mode === "include" ? "#15803d" : "#dc2626",
+          }}
+        >
+          {mode === "include" ? "+ Include" : "− Exclude"}
+        </button>
+
+        {/* Summary badge when chips exist */}
+        {hasAny && (
+          <span style={{ fontSize: "11px", color: "#374151", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: "4px", padding: "2px 7px", whiteSpace: "nowrap", flexShrink: 0 }}>
+            {[
+              included.length > 0 ? `+${included.length}` : null,
+              excluded.length > 0 ? `−${excluded.length}` : null,
+            ].filter(Boolean).join(" / ")}
+          </span>
+        )}
+
+        {/* Text input */}
+        <input
+          value={query}
+          autoComplete="new-password"
+          placeholder={hasAny ? "add more..." : "email or .domain..."}
+          style={inputStyle}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && query.trim()) { addEntry(query); }
+            if (e.key === "Backspace" && !query) {
+              if (excluded.length > 0) removeExcluded(excluded[excluded.length - 1]);
+              else if (included.length > 0) removeIncluded(included[included.length - 1]);
+            }
+            if (e.key === "Escape") setOpen(false);
+          }}
+        />
+      </div>
+
+      {/* Dropdown — selected chips at top, then suggestions */}
+      {showDropdown && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, zIndex: 999,
+          background: "white", border: "1px solid #d1d5db", borderRadius: "6px",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.10)", maxHeight: "300px", overflowY: "auto",
+          marginTop: "2px", minWidth: "100%", width: "max-content", maxWidth: "380px",
+        }}>
+
+          {/* Selected chips section */}
+          {hasAny && (
+            <div style={{ padding: "8px 10px", borderBottom: "1px solid #e5e7eb" }}>
+              {/* Header row with action buttons */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                <span style={{ fontSize: "10px", fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  Selected ({included.length + excluded.length})
+                </span>
+                <button
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onChange({ includedUsers: [], excludedUsers: [] }); }}
+                  style={{ fontSize: "10px", padding: "2px 8px", borderRadius: "4px", border: "1px solid #e5e7eb", background: "#f9fafb", color: "#6b7280", cursor: "pointer", whiteSpace: "nowrap" }}
+                >
+                  ✕ Clear all
+                </button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+              {included.map((v) => (
+                <span key={`inc-${v}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "#dcfce7", color: "#15803d", border: "1px solid #bbf7d0", borderRadius: "4px", fontSize: "11px", padding: "2px 6px", whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: "9px", fontWeight: 700 }}>+</span>{v}
+                  <span onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeIncluded(v); }} style={{ cursor: "pointer", marginLeft: "2px", fontSize: "10px", color: "#16a34a" }}>×</span>
+                </span>
+              ))}
+              {excluded.map((v) => (
+                <span key={`exc-${v}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "#fee2e2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "4px", fontSize: "11px", padding: "2px 6px", whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: "9px", fontWeight: 700 }}>−</span>{v}
+                  <span onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeExcluded(v); }} style={{ cursor: "pointer", marginLeft: "2px", fontSize: "10px", color: "#dc2626" }}>×</span>
+                </span>
+              ))}
+              </div>
+            </div>
+          )}
+
+          {/* "Add as include/exclude" for typed value not in list */}
+          {query.trim() && !filtered.includes(query.trim()) && (
+            <div
+              onMouseDown={(e) => { e.preventDefault(); addEntry(query); }}
+              style={{ padding: "7px 12px", fontSize: "12px", cursor: "pointer", borderBottom: "1px solid #f3f4f6",
+                color: mode === "include" ? "#15803d" : "#dc2626",
+                background: mode === "include" ? "#f0fdf4" : "#fff1f2",
+              }}
+            >
+              {mode === "include" ? "+" : "−"} {mode} "{query.trim()}"
+            </div>
+          )}
+
+          {/* Suggestions */}
+          {filtered.map((opt) => (
+            <div
+              key={opt}
+              onMouseDown={(e) => { e.preventDefault(); addEntry(opt); }}
+              style={{ padding: "7px 12px", fontSize: "12px", color: "#374151", cursor: "pointer", borderBottom: "1px solid #f3f4f6", whiteSpace: "nowrap" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
+            >
+              <span style={{ fontSize: "10px", marginRight: "6px", color: mode === "include" ? "#15803d" : "#dc2626", fontWeight: 700 }}>
+                {mode === "include" ? "+" : "−"}
+              </span>
               {opt}
             </div>
           ))}
@@ -206,6 +426,117 @@ const PlatformCell = ({ platforms }) => {
   );
 };
 
+const SummaryTag = ({ text, bg, color, border }) => (
+  <span style={{ display: "inline-block", background: bg, color, border: `1px solid ${border}`, padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap", fontWeight: 500 }}>
+    {text}
+  </span>
+);
+
+const SummaryBar = ({ summaryStats }) => {
+  const [filterTypesExpanded, setFilterTypesExpanded] = useState(false);
+
+  const platforms       = (summaryStats?.platforms ?? []).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+  const pagesVisited    = (summaryStats?.pages_visited ?? []);
+  const sortingTypes    = (summaryStats?.sort_by ?? []);
+  const searchCounts    = summaryStats?.search_counts ?? {};
+  const actionCounts    = summaryStats?.action_counts ?? {};
+  const VISIBLE_FILTERS = 5;
+
+  const SummaryCell = ({ icon, label, children }) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px 16px", borderRight: "1px solid #e5e7eb" }}>
+      <span style={{ fontSize: "10px", fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{icon} {label}</span>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "flex-start" }}>{children}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", overflow: "hidden" }}>
+        <SummaryCell icon="📡" label="Platforms Used">
+          {platforms.length > 0
+            ? platforms.map((p) => <SummaryTag key={p} text={p} bg="#e0e7ff" color="#4338ca" border="#c7d2fe" />)
+            : <span style={{ fontSize: "12px", color: "#9ca3af" }}>—</span>}
+        </SummaryCell>
+
+        <SummaryCell icon="📄" label="Pages Visited">
+          {pagesVisited.length > 0
+            ? pagesVisited.map((p) => <SummaryTag key={p.name} text={`${p.name} (${p.count})`} bg="#f0fdf4" color="#15803d" border="#bbf7d0" />)
+            : <span style={{ fontSize: "12px", color: "#9ca3af" }}>—</span>}
+        </SummaryCell>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderTop: "1px solid #e5e7eb", overflow: "hidden" }}>
+        <SummaryCell icon="🔑" label="Search Counts">
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+              <span style={{ color: "#6b7280" }}>Keywords:</span>
+              <span style={{ fontWeight: 600, color: "#111827" }}>{typeof searchCounts.keywords === 'object' ? `${searchCounts.keywords?.unique ?? 0} / ${searchCounts.keywords?.total ?? 0}` : (searchCounts.keywords ?? 0)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+              <span style={{ color: "#6b7280" }}>Advertisers:</span>
+              <span style={{ fontWeight: 600, color: "#111827" }}>{typeof searchCounts.advertisers === 'object' ? `${searchCounts.advertisers?.unique ?? 0} / ${searchCounts.advertisers?.total ?? 0}` : (searchCounts.advertisers ?? 0)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+              <span style={{ color: "#6b7280" }}>Domains:</span>
+              <span style={{ fontWeight: 600, color: "#111827" }}>{typeof searchCounts.domains === 'object' ? `${searchCounts.domains?.unique ?? 0} / ${searchCounts.domains?.total ?? 0}` : (searchCounts.domains ?? 0)}</span>
+            </div>
+          </div>
+        </SummaryCell>
+
+        <SummaryCell icon="⇅" label="Sorting Count">
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "6px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+              <span style={{ fontSize: "20px", fontWeight: 700, color: "#f59e0b", lineHeight: 1 }}>{actionCounts.sorting_total ?? 0}</span>
+              <span style={{ fontSize: "11px", color: "#6b7280" }}>doc{(actionCounts.sorting_total ?? 0) !== 1 ? "s" : ""}</span>
+            </div>
+            {(actionCounts.sorting_breakdown ?? [])
+              .slice(0, 3)
+              .map((s) => (
+                <div key={s.name} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
+                  <span style={{ color: "#6b7280" }}>{s.name}:</span>
+                  <span style={{ fontWeight: 600, color: "#111827" }}>{s.count}</span>
+                </div>
+              ))}
+          </div>
+        </SummaryCell>
+
+        <SummaryCell icon="📋" label="Other Searches Count">
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "6px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+              <span style={{ fontSize: "20px", fontWeight: 700, color: "#d97706", lineHeight: 1 }}>{actionCounts.other_actions_total ?? 0}</span>
+              <span style={{ fontSize: "11px", color: "#6b7280" }}>doc{(actionCounts.other_actions_total ?? 0) !== 1 ? "s" : ""}</span>
+            </div>
+            {Object.entries(actionCounts.other_actions_breakdown ?? {})
+              .filter(([_, count]) => count > 0)
+              .slice(0, 2)
+              .map(([key, count]) => (
+                <div key={key} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
+                  <span style={{ color: "#6b7280" }}>{key.replace(/_/g, ' ')}:</span>
+                  <span style={{ fontWeight: 600, color: "#111827" }}>{count}</span>
+                </div>
+              ))}
+          </div>
+        </SummaryCell>
+
+        <SummaryCell icon="🔍" label="Filters Count">
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "6px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+              <span style={{ fontSize: "20px", fontWeight: 700, color: "#4338ca", lineHeight: 1 }}>{actionCounts.filters_total ?? 0}</span>
+              <span style={{ fontSize: "11px", color: "#6b7280" }}>doc{(actionCounts.filters_total ?? 0) !== 1 ? "s" : ""}</span>
+            </div>
+            {(actionCounts.filters_breakdown ?? []).slice(0, 2).map((f) => (
+              <div key={f.name} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
+                <span style={{ color: "#6b7280" }}>{f.name}:</span>
+                <span style={{ fontWeight: 600, color: "#111827" }}>{f.count}</span>
+              </div>
+            ))}
+          </div>
+        </SummaryCell>
+      </div>
+    </div>
+  );
+};
+
 const AllSearches = ({ forceExpand = false, onDataReady }) => {
   // Filter option lists fetched once on mount for autocomplete
   const [filterOptions, setFilterOptions] = useState({ keywords: [], advertisers: [], domains: [], countries: [], users: [] });
@@ -216,16 +547,25 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
       .then((r) => r.json())
-      .then((j) => { if (j.code === 200) setFilterOptions(j.data); })
-      .catch(() => {});
+      .then((j) => {
+        console.log('[AllSearches] filterOptions response:', j);
+        if (j.code === 200) {
+          console.log('[AllSearches] Setting filter options:', { keywords: j.data.keywords?.length, advertisers: j.data.advertisers?.length, domains: j.data.domains?.length, users: j.data.users?.length });
+          setFilterOptions(j.data);
+        }
+      })
+      .catch((err) => { console.error('[AllSearches] filterOptions fetch error:', err); });
   }, []);
 
-  // Draft filter state (form fields — not yet applied for text inputs)
-  const [draft, setDraft] = useState({ ...EMPTY });
+  // Initialize with Last 90 days as default
+  const DEFAULT_APPLIED = { ...EMPTY, dateRange: "Last 90 days" };
 
-  // Applied state — drives the fetch
-  const [applied, setApplied] = useState({ ...EMPTY });
-  const appliedRef = useRef({ ...EMPTY });
+  // Draft filter state (form fields — not yet applied for text inputs)
+  const [draft, setDraft] = useState({ ...DEFAULT_APPLIED });
+
+  // Applied state — drives the fetch (default to Last 90 days)
+  const [applied, setApplied] = useState({ ...DEFAULT_APPLIED });
+  const appliedRef = useRef({ ...DEFAULT_APPLIED });
 
   const [page, setPage] = useState(0);
   const [fetchTick, setFetchTick] = useState(0);
@@ -237,6 +577,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   const [dateLabel, setDateLabel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [summaryStats, setSummaryStats] = useState({ platforms: [], activity_types: [], sort_by: [], pages_visited: [], total: 0, search_counts: { keywords: { unique: 0, total: 0 }, advertisers: { unique: 0, total: 0 }, domains: { unique: 0, total: 0 } }, action_counts: { sorting_total: 0, sorting_breakdown: [], other_actions_total: 0, other_actions_breakdown: {}, filters_total: 0, filters_breakdown: [] } });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -258,12 +599,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         }
         params.set("page", String(page));
         params.set("size", String(PAGE_SIZE));
-        if (f.userFilter)           params.set("user",       f.userFilter);
+        if (f.includedUsers?.length > 0) params.set("users",         f.includedUsers.join(","));
+        if (f.excludedUsers?.length > 0) params.set("exclude_users", f.excludedUsers.join(","));
         if (f.keyword)              params.set("keyword",    f.keyword);
         if (f.advertiser)           params.set("advertiser", f.advertiser);
         if (f.domain)               params.set("domain",     f.domain);
-        if (f.platform !== "Any")   params.set("platform",   f.platform.toLowerCase());
-        if (f.country)              params.set("country",    f.country);
+        if (f.platform)             params.set("platform",   f.platform);
+        if (f.activityType)         params.set("activity_type", f.activityType);
 
         const token = Cookies.get("token");
         const res = await fetch(`${NODE_API}/intelligence/all-searches?${params.toString()}`, {
@@ -281,11 +623,38 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         setTotal(json.data.total ?? 0);
         setTotalPages(json.data.total_pages ?? 1);
         setDateLabel(json.meta?.date_label ?? "");
+
+        // Fetch summary stats in parallel
+        const summaryParams = new URLSearchParams();
+        if (f.dateRange === "Custom") {
+          summaryParams.set("from_date", `${f.fromDate}T${f.fromTime}:00`);
+          summaryParams.set("to_date",   `${f.toDate}T${f.toTime}:59`);
+        } else {
+          summaryParams.set("date_range", f.dateRange);
+        }
+        if (f.includedUsers?.length > 0) summaryParams.set("users",         f.includedUsers.join(","));
+        if (f.excludedUsers?.length > 0) summaryParams.set("exclude_users", f.excludedUsers.join(","));
+        if (f.keyword)              summaryParams.set("keyword",    f.keyword);
+        if (f.advertiser)           summaryParams.set("advertiser", f.advertiser);
+        if (f.domain)               summaryParams.set("domain",     f.domain);
+        if (f.platform)             summaryParams.set("platform",   f.platform);
+        if (f.activityType)         summaryParams.set("activity_type", f.activityType);
+
+        fetch(`${NODE_API}/intelligence/summary?${summaryParams.toString()}`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        })
+          .then((r) => r.json())
+          .then((j) => { if (j.code === 200) setSummaryStats(j.data); })
+          .catch(() => {});
       } catch (err) {
         setError(err.message || "Failed to load data");
         setRows([]);
         setTotal(0);
         setTotalPages(1);
+        setSummaryStats({ platforms: [], activity_types: [], sort_by: [], pages_visited: [], total: 0, search_counts: { keywords: { unique: 0, total: 0 }, advertisers: { unique: 0, total: 0 }, domains: { unique: 0, total: 0 } }, action_counts: { sorting_total: 0, sorting_breakdown: [], other_actions_total: 0, other_actions_breakdown: {}, filters_total: 0, filters_breakdown: [] } });
       } finally {
         setLoading(false);
       }
@@ -345,23 +714,20 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   };
 
   const activeChips = [
-    { key: "dateRange",
-      label: applied.dateRange === "Custom"
-        ? `${applied.fromDate} ${applied.fromTime} → ${applied.toDate} ${applied.toTime}`
-        : applied.dateRange,
+    applied.dateRange && { key: "dateRange", label: applied.dateRange === "Custom"
+      ? `Custom: ${applied.fromDate} → ${applied.toDate}`
+      : applied.dateRange,
       clear: () => clearChip({ dateRange: "Last 90 days" }) },
-    applied.platform !== "Any" && { key: "platform", label: `Platform: ${applied.platform}`,
-      clear: () => clearChip({ platform: "Any" }) },
-    applied.userFilter   && { key: "user",       label: `User: ${applied.userFilter}`,
-      clear: () => clearChip({ userFilter: "" }) },
     applied.keyword      && { key: "keyword",    label: `Keyword: ${applied.keyword}`,
       clear: () => clearChip({ keyword: "" }) },
     applied.advertiser   && { key: "advertiser", label: `Advertiser: ${applied.advertiser}`,
       clear: () => clearChip({ advertiser: "" }) },
     applied.domain       && { key: "domain",     label: `Domain: ${applied.domain}`,
       clear: () => clearChip({ domain: "" }) },
-    applied.country      && { key: "country",    label: `Country: ${applied.country}`,
-      clear: () => clearChip({ country: "" }) },
+    applied.platform     && { key: "platform",   label: `Platform: ${applied.platform}`,
+      clear: () => clearChip({ platform: "" }) },
+    applied.activityType && { key: "activityType", label: `Activity: ${ACTIVITY_TYPES.find(a => a.key === applied.activityType)?.label || applied.activityType}`,
+      clear: () => clearChip({ activityType: "" }) },
   ].filter(Boolean);
 
   // Expose live data for native PDF export
@@ -435,17 +801,6 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               ? <FilterPillsCell pills={row.filters_applied} />
               : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
-          <td style={{ padding: "10px 12px", overflow: "hidden" }}>
-            {row.country ? (
-              <span
-                onClick={() => applyImmediate({ country: row.country })}
-                title={`Filter by ${row.country}`}
-                style={{ display: "inline-block", background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", whiteSpace: "nowrap", cursor: "pointer" }}
-              >
-                {row.country}
-              </span>
-            ) : <span style={{ color: "#9ca3af" }}>—</span>}
-          </td>
         </tr>
       );
     });
@@ -462,7 +817,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       {/* Filter row — hidden during PDF export */}
       <div style={{ display: forceExpand ? "none" : "block", background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "16px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "12px", alignItems: "end" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px", alignItems: "end" }}>
 
           {/* Date Range */}
           <div style={fieldStyle}>
@@ -484,16 +839,16 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
             </select>
           </div>
 
-          {/* User */}
+          {/* User — multi-select include/exclude */}
           <div style={fieldStyle}>
             <label style={labelStyle}>User</label>
-            <AutocompleteInput
-              value={draft.userFilter}
-              onChange={(v) => setDraft((d) => ({ ...d, userFilter: v }))}
-              onCommit={(v) => handleApply({ userFilter: v })}
-              placeholder="Search email..."
+            <UserMultiSelect
+              included={draft.includedUsers ?? []}
+              excluded={draft.excludedUsers ?? []}
               options={filterOptions.users}
-              style={inputStyle}
+              onChange={(patch) => {
+                handleApply(patch);
+              }}
             />
           </div>
 
@@ -540,30 +895,41 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           <div style={fieldStyle}>
             <label style={labelStyle}>Platform</label>
             <select
-              value={draft.platform}
+              value={draft.platform || ""}
               onChange={(e) => applyImmediate({ platform: e.target.value })}
               style={{ ...inputStyle, background: "white" }}
             >
-              {PLATFORMS.map((p) => <option key={p}>{p}</option>)}
+              {PLATFORMS.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
             </select>
           </div>
 
-          {/* Country */}
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Country</label>
-            <AutocompleteInput
-              value={draft.country}
-              onChange={(v) => setDraft((d) => ({ ...d, country: v }))}
-              onCommit={(v) => handleApply({ country: v })}
-              placeholder="Any"
-              options={filterOptions.countries}
-              style={inputStyle}
-            />
-          </div>
         </div>
 
-        {/* Custom date+time pickers — shown only when Custom range is selected */}
-        {draft.dateRange === "Custom" && (
+        {/* Activity Type Buttons */}
+        <div style={{ marginTop: "12px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "12px", fontWeight: 600, color: "#374151", marginRight: "4px" }}>Filter by Activity:</span>
+          <button
+            onClick={() => clearChip({ activityType: "" })}
+            style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: draft.activityType === "" ? "1px solid #4338ca" : "1px solid #d1d5db", cursor: "pointer", background: draft.activityType === "" ? "#4338ca" : "white", color: draft.activityType === "" ? "white" : "#374151" }}
+          >
+            All
+          </button>
+          {ACTIVITY_TYPES.map((act) => (
+            <button
+              key={act.key}
+              onClick={() => applyImmediate({ activityType: act.key })}
+              style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: draft.activityType === act.key ? "1px solid #4338ca" : "1px solid #d1d5db", cursor: "pointer", background: draft.activityType === act.key ? "#4338ca" : "white", color: draft.activityType === act.key ? "white" : "#374151" }}
+            >
+              {act.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Custom date+time pickers — shown only when Custom range is selected */}
+      {draft.dateRange === "Custom" && (
           <div style={{ marginTop: "12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", padding: "12px 14px", background: "#f8faff", border: "1px solid #c7d2fe", borderRadius: "8px" }}>
             <span style={{ fontSize: "11px", fontWeight: 600, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.05em" }}>From</span>
             <input
@@ -597,22 +963,21 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               (local time)
             </span>
           </div>
-        )}
+      )}
 
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", justifyContent: "flex-end" }}>
-          <button
-            onClick={() => handleApply()}
-            style={{ display: "flex", alignItems: "center", gap: "4px", background: "white", color: "#374151", fontSize: "12px", fontWeight: 600, padding: "6px 16px", borderRadius: "6px", border: "1px solid #d1d5db", cursor: "pointer" }}
-          >
-            ↓ Apply
-          </button>
-          <button
-            onClick={handleReset}
-            style={{ display: "flex", alignItems: "center", gap: "4px", border: "1px solid #d1d5db", color: "#374151", fontSize: "12px", fontWeight: 500, padding: "6px 12px", borderRadius: "6px", background: "white", cursor: "pointer" }}
-          >
-            ↺ Reset
-          </button>
-        </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", justifyContent: "flex-end" }}>
+        <button
+          onClick={() => handleApply()}
+          style={{ display: "flex", alignItems: "center", gap: "4px", background: "white", color: "#374151", fontSize: "12px", fontWeight: 600, padding: "6px 16px", borderRadius: "6px", border: "1px solid #d1d5db", cursor: "pointer" }}
+        >
+          ↓ Apply
+        </button>
+        <button
+          onClick={handleReset}
+          style={{ display: "flex", alignItems: "center", gap: "4px", border: "1px solid #d1d5db", color: "#374151", fontSize: "12px", fontWeight: 500, padding: "6px 12px", borderRadius: "6px", background: "white", cursor: "pointer" }}
+        >
+          ↺ Reset
+        </button>
       </div>
 
       {/* Active filter chips + result count */}
@@ -629,6 +994,9 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           {total.toLocaleString()} searches matched{dateLabel ? ` · ${dateLabel}` : ""}
         </p>
       </div>
+
+      {/* Summary bar */}
+      {summaryStats.total > 0 && !loading && <SummaryBar summaryStats={summaryStats} />}
 
       {/* Table */}
       <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
@@ -648,7 +1016,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
-                {["TIMESTAMP", "USER", "KEYWORD", "ADVERTISER", "DOMAIN", "PLATFORM", "AD COUNT", "OTHER ACTIVITY", "FILTERS APPLIED", "COUNTRY"].map((h) => (
+                {["TIMESTAMP", "USER", "KEYWORD", "ADVERTISER", "DOMAIN", "PLATFORM", "AD COUNT", "OTHER ACTIVITY", "FILTERS APPLIED"].map((h) => (
                   <th key={h} style={{ padding: h === "AD COUNT" ? "10px 6px" : "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
                     {h}
                   </th>

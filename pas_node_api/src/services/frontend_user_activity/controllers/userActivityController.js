@@ -1,5 +1,6 @@
 'use strict';
 
+const { detectCountry, getLocation, getClientIp } = require('../../../utils/geoip');
 
 const MARKET_PLATFORM_MAP = {
   'demdex.net':     'Adobe Audience Manager',
@@ -327,6 +328,9 @@ function buildGetAdsInsertData(data, network) {
       'filter.native_network':          data.nativeNetwork && data.nativeNetwork !== 'NA'
         ? (Array.isArray(data.nativeNetwork) ? data.nativeNetwork : [data.nativeNetwork])
         : 'NA',
+      'filter.ad_subPositions':         data.ad_sub_position,
+      'filter.budget':                  data.budget,
+      'filter.ctr':                     data.ctr,
     });
   }
 
@@ -357,7 +361,7 @@ const FILTER_FIELDS_BY_NETWORK = {
   Native:    ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','network','adcategory','subCategory'],
   TikTok:    ['html_content','country','lang','call_to_action','ad_position_filter','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','shares','popularity','impressions','adBudget','ctr','budget'],
   tiktok:    ['html_content','country','lang','call_to_action','ad_position_filter','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','shares','popularity','impressions','adBudget','ctr','budget'],
-  All:       ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type','type_filter','adcategory','subCategory','likes','comments','shares','popularity','impressions','view','views','adBudget','verified','meta_ads_lib_filter','size','nativeNetwork'],
+  All:       ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type','type_filter','adcategory','subCategory','likes','comments','shares','popularity','impressions','view','views','adBudget','verified','meta_ads_lib_filter','size','nativeNetwork','ad_sub_position','budget','ctr'],
 };
 
 async function indexActivity(elastic, doc) {
@@ -380,7 +384,31 @@ async function userActivity(req, elastic, logger) {
     }
 
     const userEmail = data.email || 'NA';
-    const userCurrentCountry = data.user_country || 'NA';
+    let userCurrentCountry = data.user_country || 'NA';
+
+    // If frontend sends 'auto-detect', fetch country from request headers/IP
+    if (userCurrentCountry === 'auto-detect') {
+      // Try CDN headers first (Cloudflare, etc.)
+      const cdnCountry = detectCountry(req);
+      if (cdnCountry) {
+        userCurrentCountry = cdnCountry;
+      } else {
+        // Fallback to IP lookup (slower, but works when CDN headers aren't available)
+        try {
+          const clientIp = getClientIp(req);
+          if (clientIp && clientIp !== 'localhost' && !clientIp.startsWith('127.')) {
+            const country = await getLocation(clientIp);
+            userCurrentCountry = country || 'NA';
+          } else {
+            // Local/dev IP — can't geolocate
+            userCurrentCountry = 'NA';
+          }
+        } catch (err) {
+          console.warn('[userActivityController] Failed to detect country from IP:', err.message);
+          userCurrentCountry = 'NA';
+        }
+      }
+    }
 
     // Wrap indexActivity to always include current country + email on every doc
     const indexWithMeta = (doc) => indexActivity(elastic, {

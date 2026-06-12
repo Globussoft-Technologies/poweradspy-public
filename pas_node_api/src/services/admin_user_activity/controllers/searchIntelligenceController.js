@@ -70,6 +70,9 @@ async function getIntelligenceStats(req, elastic, logger) {
     const prevToTs   = fromTs - 1;
     const prevFromTs = prevToTs - 7 * DAY_S;
 
+    // High-volume flags always use real current time (not anchored on latest doc)
+    const nowTs = Math.floor(Date.now() / 1000);
+
     const baseFilter    = (f, t) => [{ range: { dateTime: { gte: f, lte: t } } }];
     const searchFilter  = (f, t) => [
       { range: { dateTime: { gte: f, lte: t } } },
@@ -119,7 +122,7 @@ async function getIntelligenceStats(req, elastic, logger) {
         index: 'user_activities',
         body: {
           size: 0,
-          query: { bool: { filter: baseFilter(toTs - DAY_S, toTs) } },
+          query: { bool: { filter: baseFilter(nowTs - DAY_S, nowTs) } },
           aggs: {
             per_user: { terms: { field: 'user.id', size: 10000 } },
           },
@@ -234,7 +237,7 @@ async function getTopUsers(req, elastic, logger) {
     }
 
     const FLAG_THRESHOLD = 500;
-    const BUCKET_SIZE    = 500; // fetch enough users for max/2 calculation
+    const BUCKET_SIZE    = 500; // fetch enough users for max/2 calculation────────────────────────────────────────────────────────────────────
 
     // Step 1 — fetch all users + doc counts for the window (all doc types)
     // Step 2 — fetch emails from LoggedIn docs in parallel
@@ -417,8 +420,10 @@ async function getAllSearches(req, elastic, logger) {
     const {
       date_range = 'Last 90 days',
       from_date, to_date,
-      user, keyword, advertiser, domain,
+      user, users, exclude_users,
+      keyword, advertiser, domain,
       platform, ad_type, country,
+      activity_type,
       page = 0, size = 10,
     } = req.query;
 
@@ -516,39 +521,137 @@ async function getAllSearches(req, elastic, logger) {
     if (advertiser && advertiser !== '')  filters.push({ match: { 'search.advertiser': { query: advertiser, operator: 'and' } } });
     if (domain     && domain     !== '')  filters.push({ match: { 'search.domain':     { query: domain,     operator: 'and' } } });
 
-    // User filter — resolve email → user_id then filter in ES (proper pagination)
-    if (user && user.trim() !== '') {
-      const uf = user.trim().toLowerCase();
-      const userLookup = await elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-          aggs: {
-            per_user: {
-              terms: { field: 'user.id', size: 2000 },
-              aggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
-            },
-          },
-        },
-      });
-      const matchedIds = [];
-      for (const b of (getAggs(userLookup)?.per_user?.buckets ?? [])) {
-        const src   = b.email_hit?.hits?.hits?.[0]?._source ?? {};
-        const email = src['user.email'] ?? src?.user?.email ?? '';
-        if (email.toLowerCase().includes(uf)) matchedIds.push(String(b.key));
+    // Activity type filter
+    if (activity_type && activity_type !== '') {
+      if (activity_type === 'keyword') {
+        filters.push({ exists: { field: 'search.keyword' } });
+      } else if (activity_type === 'advertiser') {
+        filters.push({ exists: { field: 'search.advertiser' } });
+      } else if (activity_type === 'domain') {
+        filters.push({ exists: { field: 'search.domain' } });
+      } else if (activity_type === 'filters') {
+        filters.push({ bool: { should: [
+          { exists: { field: 'filter.country' } },
+          { exists: { field: 'filter.countries' } },
+          { exists: { field: 'filter.gender' } },
+          { exists: { field: 'filter.ad_type' } },
+          { exists: { field: 'filter.ad_categories' } },
+          { exists: { field: 'filter.ad_subCategories' } },
+          { exists: { field: 'filter.status' } },
+          { exists: { field: 'filter.sort_by' } },
+          { exists: { field: 'filter.platform' } },
+          { exists: { field: 'filter.native_network' } },
+          { exists: { field: 'filter.ctr' } },
+          { exists: { field: 'filter.budget' } },
+        ], minimum_should_match: 1 } });
+      } else if (activity_type === 'other_activity') {
+        filters.push({ bool: { should: [
+          { exists: { field: 'dashboard.exportsAds' } },
+          { exists: { field: 'favourite_ad_id' } },
+          { exists: { field: 'unfavourite_ad_id' } },
+          { exists: { field: 'download.ad_id' } },
+          { exists: { field: 'hide_ad_id' } },
+          { exists: { field: 'unhide_ad_id' } },
+          { exists: { field: 'hide_advertiser_id' } },
+          { exists: { field: 'unhide_advertiser_id' } },
+          { exists: { field: 'dashboard.show_original' } },
+          { exists: { field: 'user.language_name' } },
+          { exists: { field: 'vieworiginal.ad_id' } },
+        ], minimum_should_match: 1 } });
+      } else if (activity_type === 'sorting_filters') {
+        filters.push({ bool: { should: [
+          { exists: { field: 'dashboard.newest_sort' } },
+          { exists: { field: 'dashboard.running_longest_sort' } },
+          { exists: { field: 'dashboard.last_seen_sort' } },
+          { exists: { field: 'dashboard.domain_sort' } },
+          { exists: { field: 'dashboard.likes_sort' } },
+          { exists: { field: 'dashboard.comments_sort' } },
+          { exists: { field: 'dashboard.shares_sort' } },
+          { exists: { field: 'dashboard.popularity_sort' } },
+          { exists: { field: 'dashboard.impressions_sort' } },
+          { exists: { field: 'dashboard.views_sort' } },
+        ], minimum_should_match: 1 } });
       }
-      if (matchedIds.length === 0) {
-        const now2 = new Date(fromTs * 1000);
-        const fromLabel2 = now2.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-        const toLabel2   = new Date(toTs * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    // ── User filter (multi include/exclude) ──────────────────────────────────
+    // Accepts:
+    //   users         = comma-separated list of emails/domain patterns to include
+    //   exclude_users = comma-separated list of emails/domain patterns to exclude
+    //   user          = legacy single email (treated as include)
+
+    // Helper: given a list of email/pattern strings, resolve to user.id values
+    async function resolveUserIds(patterns) {
+      if (!patterns || patterns.length === 0) return [];
+      const ids = new Set();
+      await Promise.all(patterns.map(async (pat) => {
+        const p = pat.trim().toLowerCase();
+        if (!p) return;
+        // Domain pattern: starts with "." (e.g. ".com", ".in") or no "@" but contains "."
+        const isDomain = p.startsWith('.') || (!p.includes('@') && p.includes('.'));
+
+        if (isDomain) {
+          // Fetch all user id→email pairs, filter by domain suffix in JS
+          const suffix = (p.startsWith('.') ? p : `.${p}`).toLowerCase();
+          const lookupBody = {
+            size: 0,
+            query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
+            aggs: {
+              per_user: {
+                terms: { field: 'user.id', size: 5000 },
+                aggs:  { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
+              },
+            },
+          };
+          const res = await elastic.search({ index: 'user_activities', body: lookupBody });
+          for (const b of (getAggs(res)?.per_user?.buckets ?? [])) {
+            const src   = b.email_hit?.hits?.hits?.[0]?._source ?? {};
+            const email = (src['user.email'] ?? src?.user?.email ?? '').toLowerCase();
+            if (email.endsWith(suffix)) ids.add(b.key);
+          }
+        } else {
+          // Exact email — match_phrase for precision
+          const lookupBody = {
+            size: 1,
+            query: { bool: { filter: [{ exists: { field: 'user.email' } }],
+                             must:   [{ match_phrase: { 'user.email': p } }] } },
+            _source: ['user.id'],
+          };
+          const res = await elastic.search({ index: 'user_activities', body: lookupBody });
+          const hit = (res?.hits?.hits ?? res?.body?.hits?.hits ?? [])[0];
+          const uid = hit?._source?.['user.id'] ?? hit?._source?.user?.id ?? null;
+          if (uid != null) { ids.add(uid); ids.add(String(uid)); }
+        }
+      }));
+      return [...ids];
+    }
+
+    const includeList = [
+      ...(users        ? users.split(',').map((s) => s.trim()).filter(Boolean) : []),
+      ...(user && user.trim() ? [user.trim()] : []),  // legacy param
+    ];
+    const excludeList = exclude_users
+      ? exclude_users.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    if (includeList.length > 0 || excludeList.length > 0) {
+      const [includeIds, excludeIds] = await Promise.all([
+        resolveUserIds(includeList),
+        resolveUserIds(excludeList),
+      ]);
+
+      if (includeList.length > 0 && includeIds.length === 0) {
+        // Included users specified but none found — return empty
+        const fromLabel2 = new Date(fromTs * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        const toLabel2   = new Date(toTs   * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
         return {
           code: 200,
           data: { rows: [], total: 0, page: pageNum, page_size: pageSize, total_pages: 0 },
           meta: { from_date: new Date(fromTs * 1000).toISOString(), to_date: new Date(toTs * 1000).toISOString(), date_label: `${fromLabel2} → ${toLabel2}` },
         };
       }
-      filters.push({ terms: { 'user.id': matchedIds } });
+      if (includeIds.length > 0) filters.push({ terms: { 'user.id': includeIds } });
+      if (excludeIds.length > 0) filters.push({ bool: { must_not: [{ terms: { 'user.id': excludeIds } }] } });
     }
 
     const body = {
@@ -596,12 +699,17 @@ async function getAllSearches(req, elastic, logger) {
       }),
     ]);
 
-    // Build email map: user_id -> email
+    // Placeholder values that are not real emails
+    const INVALID_EMAILS = new Set(['na', 'n/a', 'null', 'undefined', 'unknown', '-', '']);
+
+    // Build email map: user_id -> email (skip placeholder values like "NA", "na", "N/A")
     const emailMap = {};
     for (const b of (getAggs(emailResult)?.per_user?.buckets ?? [])) {
       const src   = b.email_hit?.hits?.hits?.[0]?._source ?? {};
       const email = src['user.email'] ?? src?.user?.email ?? null;
-      if (email) emailMap[String(b.key)] = email;
+      if (email && !INVALID_EMAILS.has(String(email).trim().toLowerCase())) {
+        emailMap[String(b.key)] = email;
+      }
     }
 
     const hitsArr = result?.hits?.hits ?? result?.body?.hits?.hits ?? [];
@@ -613,7 +721,8 @@ async function getAllSearches(req, elastic, logger) {
     let rows = hitsArr.map((h) => {
       const s       = h._source ?? {};
       const uid     = s['user.id']  ?? s?.user?.id  ?? null;
-      const email   = s['user.email'] ?? s?.user?.email ?? emailMap[String(uid)] ?? null;
+      const rawEmail = s['user.email'] ?? s?.user?.email ?? emailMap[String(uid)] ?? null;
+      const email   = (rawEmail && !INVALID_EMAILS.has(String(rawEmail).trim().toLowerCase())) ? rawEmail : (emailMap[String(uid)] ?? null);
       const kw      = s['search.keyword']    ?? s?.search?.keyword    ?? null;
       const adv     = s['search.advertiser'] ?? s?.search?.advertiser ?? null;
       const dom     = s['search.domain']     ?? s?.search?.domain     ?? null;
@@ -897,6 +1006,7 @@ async function getKeywordTrends(req, elastic, logger) {
         { bool: { should: activeTypes.map((t) => ({ exists: { field: `search.${t}` } })), minimum_should_match: 1 } },
       ] } };
     }
+
 
 
     // Run current and previous period queries in parallel
@@ -1491,21 +1601,28 @@ async function getFilterOptions(req, elastic, logger) {
       },
     });
 
+    const INVALID_FO = new Set(['na', 'n/a', 'null', 'undefined', 'unknown', '-', '']);
     const users = (getAggs(emailResult)?.per_user?.buckets ?? [])
       .map((b) => {
         const src = b.email_hit?.hits?.hits?.[0]?._source ?? {};
         return src['user.email'] ?? src?.user?.email ?? null;
       })
-      .filter(Boolean)
+      .filter((e) => e && !INVALID_FO.has(String(e).trim().toLowerCase()) && String(e).includes('@'))
       .slice(0, size);
 
+    const keywords = pick(aggs.keywords?.buckets);
+    const advertisers = pick(aggs.advertisers?.buckets);
+    const domains = pick(aggs.domains?.buckets);
+    const countries = pick(aggs.countries?.buckets);
+
+ 
     const response = {
       code: 200,
       data: {
-        keywords:    pick(aggs.keywords?.buckets),
-        advertisers: pick(aggs.advertisers?.buckets),
-        domains:     pick(aggs.domains?.buckets),
-        countries:   pick(aggs.countries?.buckets),
+        keywords,
+        advertisers,
+        domains,
+        countries,
         users,
       },
     };
@@ -1519,4 +1636,465 @@ async function getFilterOptions(req, elastic, logger) {
   }
 }
 
-module.exports = { getIntelligenceStats, getTopUsers, getAllSearches, getKeywordTrends, getProjectActivity, getOtherActivities, purgeOldActivities, getFilterOptions };
+// ─── GET /intelligence/summary ───────────────────────────────────────────────
+// Returns aggregated summary stats (platforms, pages, filters) for the entire
+// filtered result set (not paginated). Same filters as getAllSearches.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getSummaryStats(req, elastic, logger) {
+  try {
+    if (!elastic) return { code: 500, message: 'Elasticsearch client not available' };
+
+    const DAY_S = 24 * 60 * 60;
+    const {
+      date_range = 'Last 90 days',
+      from_date, to_date,
+      user, users, exclude_users,
+      keyword, advertiser, domain,
+      platform, ad_type, country,
+      activity_type,
+    } = req.query;
+
+    let toTs, fromTs;
+    if (from_date && to_date) {
+      toTs   = Math.floor(new Date(to_date).getTime()   / 1000);
+      fromTs = Math.floor(new Date(from_date).getTime() / 1000);
+    } else {
+      const now = new Date();
+      toTs = Math.floor(now.getTime() / 1000);
+      if (date_range === 'Today') {
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        fromTs = Math.floor(startOfDay.getTime() / 1000);
+      } else if (date_range === 'Last 7 days') {
+        fromTs = toTs - 7  * DAY_S;
+      } else if (date_range === 'Last 30 days') {
+        fromTs = toTs - 30 * DAY_S;
+      } else {
+        fromTs = toTs - 90 * DAY_S;
+      }
+    }
+
+    const filters = [
+      { range: { dateTime: { gte: fromTs, lte: toTs } } },
+      { bool: { should: [
+        { exists: { field: 'search.keyword'          } },
+        { exists: { field: 'search.advertiser'       } },
+        { exists: { field: 'search.domain'           } },
+        { exists: { field: 'dashboard.newest_sort'          } },
+        { exists: { field: 'dashboard.running_longest_sort' } },
+        { exists: { field: 'dashboard.last_seen_sort'       } },
+        { exists: { field: 'dashboard.domain_sort'          } },
+        { exists: { field: 'dashboard.likes_sort'           } },
+        { exists: { field: 'dashboard.comments_sort'        } },
+        { exists: { field: 'dashboard.shares_sort'          } },
+        { exists: { field: 'dashboard.popularity_sort'      } },
+        { exists: { field: 'dashboard.impressions_sort'     } },
+        { exists: { field: 'dashboard.views_sort'           } },
+        { exists: { field: 'dashboard.verified'             } },
+        { exists: { field: 'dashboard.meta_ads_library'     } },
+        { exists: { field: 'dashboard.ad_seen'       } },
+        { exists: { field: 'dashboard.likes'         } },
+        { exists: { field: 'dashboard.comments'      } },
+        { exists: { field: 'dashboard.shares'        } },
+        { exists: { field: 'lander.affiliates'        } },
+        { exists: { field: 'lander.ecommerce'         } },
+        { exists: { field: 'lander.funnels'           } },
+        { exists: { field: 'lander.sources'           } },
+        { exists: { field: 'lander.marketing'         } },
+        { exists: { field: 'filter.country'          } },
+        { exists: { field: 'filter.countries'        } },
+        { exists: { field: 'filter.gender'           } },
+        { exists: { field: 'filter.ad_type'          } },
+        { exists: { field: 'filter.ad_categories'    } },
+        { exists: { field: 'filter.ad_subCategories' } },
+        { exists: { field: 'filter.status'           } },
+        { exists: { field: 'filter.sort_by'          } },
+        { exists: { field: 'filter.platform'         } },
+        { exists: { field: 'filterType'              } },
+        { exists: { field: 'favourite_ad_id'         } },
+        { exists: { field: 'unfavourite_ad_id'       } },
+        { exists: { field: 'download.ad_id'          } },
+        { exists: { field: 'hide_ad_id'              } },
+        { exists: { field: 'unhide_ad_id'            } },
+        { exists: { field: 'hide_advertiser_id'      } },
+        { exists: { field: 'unhide_advertiser_id'    } },
+        { exists: { field: 'copy.ad_id'              } },
+        { exists: { field: 'show_analytics.ad_id'   } },
+        { exists: { field: 'dashboard.show_original' } },
+        { exists: { field: 'dashboard.exportsAds'    } },
+        { exists: { field: 'dashboard.favourite'     } },
+        { exists: { field: 'dashboard.hidden'        } },
+        { exists: { field: 'user.language'           } },
+        { exists: { field: 'share.guest_page_url'    } },
+        { exists: { field: 'vieworiginal.ad_id'      } },
+        { exists: { field: 'filter.native_network'   } },
+        { exists: { field: 'filter.ctr'              } },
+        { exists: { field: 'filter.budget'           } },
+      ], minimum_should_match: 1 } },
+    ];
+
+    if (platform && platform !== 'Any')   filters.push({ term:  { 'network.keyword':           platform.toLowerCase() } });
+    if (ad_type  && ad_type  !== 'Any')   filters.push({ term:  { 'filter.ad_type.keyword':     ad_type  } });
+    if (country  && country  !== '')      filters.push({ term: { 'user.current_country.keyword': country } });
+    if (keyword    && keyword    !== '')  filters.push({ match: { 'search.keyword':    { query: keyword,    operator: 'and' } } });
+    if (advertiser && advertiser !== '')  filters.push({ match: { 'search.advertiser': { query: advertiser, operator: 'and' } } });
+    if (domain     && domain     !== '')  filters.push({ match: { 'search.domain':     { query: domain,     operator: 'and' } } });
+
+    // Activity type filter
+    if (activity_type && activity_type !== '') {
+      if (activity_type === 'keyword') {
+        filters.push({ exists: { field: 'search.keyword' } });
+      } else if (activity_type === 'advertiser') {
+        filters.push({ exists: { field: 'search.advertiser' } });
+      } else if (activity_type === 'domain') {
+        filters.push({ exists: { field: 'search.domain' } });
+      } else if (activity_type === 'filters') {
+        filters.push({ bool: { should: [
+          { exists: { field: 'filter.country' } },
+          { exists: { field: 'filter.countries' } },
+          { exists: { field: 'filter.gender' } },
+          { exists: { field: 'filter.ad_type' } },
+          { exists: { field: 'filter.ad_categories' } },
+          { exists: { field: 'filter.ad_subCategories' } },
+          { exists: { field: 'filter.status' } },
+          { exists: { field: 'filter.sort_by' } },
+          { exists: { field: 'filter.platform' } },
+          { exists: { field: 'filter.native_network' } },
+          { exists: { field: 'filter.ctr' } },
+          { exists: { field: 'filter.budget' } },
+        ], minimum_should_match: 1 } });
+      } else if (activity_type === 'other_activity') {
+        filters.push({ bool: { should: [
+          { exists: { field: 'dashboard.exportsAds' } },
+          { exists: { field: 'favourite_ad_id' } },
+          { exists: { field: 'unfavourite_ad_id' } },
+          { exists: { field: 'download.ad_id' } },
+          { exists: { field: 'hide_ad_id' } },
+          { exists: { field: 'unhide_ad_id' } },
+          { exists: { field: 'hide_advertiser_id' } },
+          { exists: { field: 'unhide_advertiser_id' } },
+          { exists: { field: 'dashboard.show_original' } },
+          { exists: { field: 'user.language_name' } },
+          { exists: { field: 'vieworiginal.ad_id' } },
+        ], minimum_should_match: 1 } });
+      } else if (activity_type === 'sorting_filters') {
+        filters.push({ bool: { should: [
+          { exists: { field: 'dashboard.newest_sort' } },
+          { exists: { field: 'dashboard.running_longest_sort' } },
+          { exists: { field: 'dashboard.last_seen_sort' } },
+          { exists: { field: 'dashboard.domain_sort' } },
+          { exists: { field: 'dashboard.likes_sort' } },
+          { exists: { field: 'dashboard.comments_sort' } },
+          { exists: { field: 'dashboard.shares_sort' } },
+          { exists: { field: 'dashboard.popularity_sort' } },
+          { exists: { field: 'dashboard.impressions_sort' } },
+          { exists: { field: 'dashboard.views_sort' } },
+        ], minimum_should_match: 1 } });
+      }
+    }
+
+    async function resolveUserIds(patterns) {
+      if (!patterns || patterns.length === 0) return [];
+      const ids = new Set();
+      await Promise.all(patterns.map(async (pat) => {
+        const p = pat.trim().toLowerCase();
+        if (!p) return;
+        const isDomain = p.startsWith('.') || (!p.includes('@') && p.includes('.'));
+        if (isDomain) {
+          const pat2 = p.startsWith('.') ? p.slice(1).toLowerCase() : p.toLowerCase();
+          const lookupBody = {
+            size: 0,
+            query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
+            aggs: {
+              per_user: {
+                terms: { field: 'user.id', size: 5000 },
+                aggs:  { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
+              },
+            },
+          };
+          const res = await elastic.search({ index: 'user_activities', body: lookupBody });
+          for (const b of (getAggs(res)?.per_user?.buckets ?? [])) {
+            const src   = b.email_hit?.hits?.hits?.[0]?._source ?? {};
+            const email = (src['user.email'] ?? src?.user?.email ?? '').toLowerCase();
+            const atIdx = email.indexOf('@');
+            if (atIdx !== -1) {
+              const emailDomain = email.slice(atIdx + 1);
+              if (emailDomain === pat2 || emailDomain.endsWith(`.${pat2}`)) ids.add(b.key);
+            }
+          }
+        } else {
+          const lookupBody = {
+            size: 1,
+            query: { bool: { filter: [{ exists: { field: 'user.email' } }],
+                             must:   [{ match_phrase: { 'user.email': p } }] } },
+            _source: ['user.id'],
+          };
+          const res = await elastic.search({ index: 'user_activities', body: lookupBody });
+          const hit = (res?.hits?.hits ?? res?.body?.hits?.hits ?? [])[0];
+          const uid = hit?._source?.['user.id'] ?? hit?._source?.user?.id ?? null;
+          if (uid != null) { ids.add(uid); ids.add(String(uid)); }
+        }
+      }));
+      return [...ids];
+    }
+
+    const includeList = [
+      ...(users        ? users.split(',').map((s) => s.trim()).filter(Boolean) : []),
+      ...(user && user.trim() ? [user.trim()] : []),
+    ];
+    const excludeList = exclude_users
+      ? exclude_users.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    if (includeList.length > 0 || excludeList.length > 0) {
+      const [includeIds, excludeIds] = await Promise.all([
+        resolveUserIds(includeList),
+        resolveUserIds(excludeList),
+      ]);
+      if (includeIds.length > 0) filters.push({ terms: { 'user.id': includeIds } });
+      if (excludeIds.length > 0) filters.push({ bool: { must_not: [{ terms: { 'user.id': excludeIds } }] } });
+    }
+
+    const body = {
+      size: 0,
+      query: { bool: { filter: filters } },
+      aggs: {
+        other_types: { terms: { field: 'filterType.keyword',  size: 20, order: { _count: 'desc' } } },
+        sort_by:     { terms: { field: 'filter.sort_by.keyword', size: 20, order: { _count: 'desc' } } },
+        keywords_agg: { filter: { exists: { field: 'search.keyword' } }, aggs: { count: { cardinality: { field: 'search.keyword.keyword' } } } },
+        advertisers_agg: { filter: { exists: { field: 'search.advertiser' } }, aggs: { count: { cardinality: { field: 'search.advertiser.keyword' } } } },
+        domains_agg: { filter: { exists: { field: 'search.domain' } }, aggs: { count: { cardinality: { field: 'search.domain.keyword' } } } },
+        dashboard_page: { filter: { exists: { field: 'dashboard.newest_sort' } } },
+        analytics_page: { filter: { exists: { field: 'show_analytics.ad_id' } } },
+        favorite_page: { filter: { exists: { field: 'dashboard.favourite' } } },
+        hidden_page: { filter: { exists: { field: 'dashboard.hidden' } } },
+        all_projects_page: { filter: { bool: { must: [{ exists: { field: 'network' } }] } } },
+        guest_page: { filter: { exists: { field: 'share.guest_page_url' } } },
+        landing_page: { filter: { exists: { field: 'copy.landing_page_url' } } },
+        sorting_count: { filter: { bool: { should: [
+          { exists: { field: 'dashboard.newest_sort' } },
+          { exists: { field: 'dashboard.impressions_sort' } },
+          { exists: { field: 'dashboard.popularity_sort' } },
+          { exists: { field: 'dashboard.running_longest_sort' } },
+          { exists: { field: 'dashboard.domain_sort' } },
+          { exists: { field: 'dashboard.last_seen_sort' } },
+          { exists: { field: 'dashboard.likes_sort' } },
+          { exists: { field: 'dashboard.comments_sort' } },
+          { exists: { field: 'dashboard.shares_sort' } },
+        ], minimum_should_match: 1 } } },
+        other_actions_count: { filter: { bool: { should: [
+          { exists: { field: 'dashboard.exportsAds' } },
+          { exists: { field: 'favourite_ad_id' } },
+          { exists: { field: 'download.ad_id' } },
+          { exists: { field: 'hide_advertiser_id' } },
+          { exists: { field: 'hide_ad_id' } },
+          { exists: { field: 'unfavourite_ad_id' } },
+          { exists: { field: 'unhide_advertiser_id' } },
+          { exists: { field: 'unhide_ad_id' } },
+          { exists: { field: 'dashboard.show_original' } },
+          { exists: { field: 'user.language' } },
+          { exists: { field: 'vieworiginal.ad_id' } },
+        ], minimum_should_match: 1 } } },
+        filters_count: { filter: { bool: { should: [
+          { exists: { field: 'filter.native_network' } },
+          { exists: { field: 'filter.gender' } },
+          { exists: { field: 'filter.ad_type' } },
+          { exists: { field: 'filter.status' } },
+          { exists: { field: 'filter.country' } },
+          { exists: { field: 'filter.platform' } },
+          { exists: { field: 'filter.sort_by' } },
+          { exists: { field: 'filter.budget' } },
+          { exists: { field: 'filter.ctr' } },
+        ], minimum_should_match: 1 } } },
+        sorting_breakdown: { filter: { bool: { should: [
+          { exists: { field: 'dashboard.newest_sort' } },
+          { exists: { field: 'dashboard.impressions_sort' } },
+          { exists: { field: 'dashboard.popularity_sort' } },
+          { exists: { field: 'dashboard.running_longest_sort' } },
+          { exists: { field: 'dashboard.domain_sort' } },
+          { exists: { field: 'dashboard.last_seen_sort' } },
+          { exists: { field: 'dashboard.likes_sort' } },
+          { exists: { field: 'dashboard.comments_sort' } },
+          { exists: { field: 'dashboard.shares_sort' } },
+        ], minimum_should_match: 1 } }, aggs: {
+          newest: { filter: { term: { 'dashboard.newest_sort.keyword': 'newest_sort' } } },
+          impressions: { filter: { term: { 'dashboard.impressions_sort.keyword': 'impressions_sort' } } },
+          popularity: { filter: { term: { 'dashboard.popularity_sort.keyword': 'popularity_sort' } } },
+          running_longest: { filter: { term: { 'dashboard.running_longest_sort.keyword': 'running_longest_sort' } } },
+          domain: { filter: { term: { 'dashboard.domain_sort.keyword': 'domain_sort' } } },
+          last_seen: { filter: { term: { 'dashboard.last_seen_sort.keyword': 'last_seen_sort' } } },
+          likes: { filter: { term: { 'dashboard.likes_sort.keyword': 'likes_sort' } } },
+          comments: { filter: { term: { 'dashboard.comments_sort.keyword': 'comments_sort' } } },
+          shares: { filter: { term: { 'dashboard.shares_sort.keyword': 'shares_sort' } } },
+        } },
+        other_breakdown: { filter: { bool: { should: [
+          { exists: { field: 'dashboard.exportsAds' } },
+          { exists: { field: 'favourite_ad_id' } },
+          { exists: { field: 'download.ad_id' } },
+          { exists: { field: 'hide_advertiser_id' } },
+          { exists: { field: 'hide_ad_id' } },
+          { exists: { field: 'unfavourite_ad_id' } },
+          { exists: { field: 'unhide_advertiser_id' } },
+          { exists: { field: 'unhide_ad_id' } },
+          { exists: { field: 'dashboard.show_original' } },
+          { exists: { field: 'user.language' } },
+          { exists: { field: 'vieworiginal.ad_id' } },
+        ], minimum_should_match: 1 } }, aggs: {
+          export_ads: { filter: { exists: { field: 'dashboard.exportsAds' } } },
+          favorite_ads: { filter: { exists: { field: 'favourite_ad_id' } } },
+          download_ads: { filter: { exists: { field: 'download.ad_id' } } },
+          hide_advertiser: { filter: { exists: { field: 'hide_advertiser_id' } } },
+          hide_ads: { filter: { exists: { field: 'hide_ad_id' } } },
+          unfavorite_ads: { filter: { exists: { field: 'unfavourite_ad_id' } } },
+          unhide_advertiser: { filter: { exists: { field: 'unhide_advertiser_id' } } },
+          unhide_ads: { filter: { exists: { field: 'unhide_ad_id' } } },
+          show_original: { filter: { exists: { field: 'dashboard.show_original' } } },
+          language_change: { filter: { exists: { field: 'user.language' } } },
+          view_original: { filter: { exists: { field: 'vieworiginal.ad_id' } } },
+        } },
+        filters_breakdown: { filter: { bool: { should: [
+          { exists: { field: 'filter.native_network' } },
+          { exists: { field: 'filter.gender' } },
+          { exists: { field: 'filter.ad_type' } },
+          { exists: { field: 'filter.status' } },
+          { exists: { field: 'filter.country' } },
+          { exists: { field: 'filter.platform' } },
+          { exists: { field: 'filter.sort_by' } },
+          { exists: { field: 'filter.budget' } },
+          { exists: { field: 'filter.ctr' } },
+        ], minimum_should_match: 1 } }, aggs: {
+          native_network: { filter: { exists: { field: 'filter.native_network' } } },
+          gender: { filter: { exists: { field: 'filter.gender' } } },
+          ad_type: { filter: { exists: { field: 'filter.ad_type' } } },
+          status: { filter: { exists: { field: 'filter.status' } } },
+          country: { filter: { exists: { field: 'filter.country' } } },
+          platform: { filter: { exists: { field: 'filter.platform' } } },
+          sort_by: { filter: { exists: { field: 'filter.sort_by' } } },
+          budget: { filter: { exists: { field: 'filter.budget' } } },
+          ctr: { filter: { exists: { field: 'filter.ctr' } } },
+        } },
+      },
+    };
+
+    const result = await elastic.search({ index: 'user_activities', body });
+    const total  = getTotal(result);
+    const aggs   = getAggs(result);
+
+    // Fetch all docs to extract unique platforms (network field can be comma-separated)
+    const allDocsBody = {
+      size: 1000,
+      query: { bool: { filter: filters } },
+      _source: ['network'],
+    };
+
+    const platformsSet = new Set();
+    let allDocsFetched = 0;
+    let fetchSize = 1000;
+
+    while (allDocsFetched < total && allDocsFetched < 10000) {
+      const docsResult = await elastic.search({
+        index: 'user_activities',
+        body: { ...allDocsBody, from: allDocsFetched, size: fetchSize },
+      });
+      const hits = docsResult?.hits?.hits ?? docsResult?.body?.hits?.hits ?? [];
+      if (hits.length === 0) break;
+      hits.forEach((h) => {
+        const network = h._source?.network ?? null;
+        if (network) {
+          String(network).split(',').forEach((p) => {
+            const platform = p.trim().toLowerCase();
+            if (platform) platformsSet.add(platform);
+          });
+        }
+      });
+      allDocsFetched += hits.length;
+    }
+
+    const otherTypesAgg = (aggs.other_types?.buckets ?? []).map((b) => b.key).filter(Boolean);
+    const sortByAgg = (aggs.sort_by?.buckets ?? []).map((b) => b.key).filter(Boolean);
+
+    const pagesVisited = [
+      aggs.dashboard_page?.doc_count > 0 && { name: "Dashboard", count: aggs.dashboard_page?.doc_count ?? 0 },
+      aggs.analytics_page?.doc_count > 0 && { name: "Analytics Model", count: aggs.analytics_page?.doc_count ?? 0 },
+      aggs.favorite_page?.doc_count > 0 && { name: "Favorite Dashboard", count: aggs.favorite_page?.doc_count ?? 0 },
+      aggs.hidden_page?.doc_count > 0 && { name: "Hidden Dashboard", count: aggs.hidden_page?.doc_count ?? 0 },
+      aggs.all_projects_page?.doc_count > 0 && { name: "All Projects Dashboard", count: aggs.all_projects_page?.doc_count ?? 0 },
+      aggs.guest_page?.doc_count > 0 && { name: "Guest Page", count: aggs.guest_page?.doc_count ?? 0 },
+      aggs.landing_page?.doc_count > 0 && { name: "Landing Page", count: aggs.landing_page?.doc_count ?? 0 },
+    ].filter(Boolean);
+
+    const sortingBreakdown = [
+      { name: 'Newest Sort', count: aggs.sorting_breakdown?.newest?.doc_count ?? 0 },
+      { name: 'Impressions Sort', count: aggs.sorting_breakdown?.impressions?.doc_count ?? 0 },
+      { name: 'Popularity Sort', count: aggs.sorting_breakdown?.popularity?.doc_count ?? 0 },
+      { name: 'Ad running days', count: aggs.sorting_breakdown?.running_longest?.doc_count ?? 0 },
+      { name: 'Domain reg date', count: aggs.sorting_breakdown?.domain?.doc_count ?? 0 },
+      { name: 'Last Seen Sort', count: aggs.sorting_breakdown?.last_seen?.doc_count ?? 0 },
+      { name: 'Likes Sort', count: aggs.sorting_breakdown?.likes?.doc_count ?? 0 },
+      { name: 'Comments Sort', count: aggs.sorting_breakdown?.comments?.doc_count ?? 0 },
+      { name: 'Shares Sort', count: aggs.sorting_breakdown?.shares?.doc_count ?? 0 },
+    ].sort((a, b) => b.count - a.count);
+    const otherActionsBreakdown = {
+      export_ads: aggs.other_breakdown?.export_ads?.doc_count ?? 0,
+      favorite_ads: aggs.other_breakdown?.favorite_ads?.doc_count ?? 0,
+      download_ads: aggs.other_breakdown?.download_ads?.doc_count ?? 0,
+      hide_advertiser: aggs.other_breakdown?.hide_advertiser?.doc_count ?? 0,
+      hide_ads: aggs.other_breakdown?.hide_ads?.doc_count ?? 0,
+      unfavorite_ads: aggs.other_breakdown?.unfavorite_ads?.doc_count ?? 0,
+      unhide_advertiser: aggs.other_breakdown?.unhide_advertiser?.doc_count ?? 0,
+      unhide_ads: aggs.other_breakdown?.unhide_ads?.doc_count ?? 0,
+      show_original: aggs.other_breakdown?.show_original?.doc_count ?? 0,
+      language_change: aggs.other_breakdown?.language_change?.doc_count ?? 0,
+      view_original: aggs.other_breakdown?.view_original?.doc_count ?? 0,
+    };
+    const filtersBreakdown = [
+      aggs.filters_breakdown?.native_network?.doc_count > 0 && { name: 'Native Network', count: aggs.filters_breakdown?.native_network?.doc_count ?? 0 },
+      aggs.filters_breakdown?.gender?.doc_count > 0 && { name: 'Gender', count: aggs.filters_breakdown?.gender?.doc_count ?? 0 },
+      aggs.filters_breakdown?.ad_type?.doc_count > 0 && { name: 'Ad Type', count: aggs.filters_breakdown?.ad_type?.doc_count ?? 0 },
+      aggs.filters_breakdown?.status?.doc_count > 0 && { name: 'Status', count: aggs.filters_breakdown?.status?.doc_count ?? 0 },
+      aggs.filters_breakdown?.country?.doc_count > 0 && { name: 'Country', count: aggs.filters_breakdown?.country?.doc_count ?? 0 },
+      aggs.filters_breakdown?.platform?.doc_count > 0 && { name: 'Platform', count: aggs.filters_breakdown?.platform?.doc_count ?? 0 },
+      aggs.filters_breakdown?.budget?.doc_count > 0 && { name: 'Budget', count: aggs.filters_breakdown?.budget?.doc_count ?? 0 },
+      aggs.filters_breakdown?.ctr?.doc_count > 0 && { name: 'CTR', count: aggs.filters_breakdown?.ctr?.doc_count ?? 0 },
+    ].filter(Boolean);
+
+    return {
+      code: 200,
+      data: {
+        total,
+        platforms: [...platformsSet],
+        activity_types: otherTypesAgg,
+        sort_by: sortByAgg,
+        pages_visited: pagesVisited,
+        search_counts: {
+          keywords: {
+            unique: aggs.keywords_agg?.count?.value ?? 0,
+            total: aggs.keywords_agg?.doc_count ?? 0,
+          },
+          advertisers: {
+            unique: aggs.advertisers_agg?.count?.value ?? 0,
+            total: aggs.advertisers_agg?.doc_count ?? 0,
+          },
+          domains: {
+            unique: aggs.domains_agg?.count?.value ?? 0,
+            total: aggs.domains_agg?.doc_count ?? 0,
+          },
+        },
+        action_counts: {
+          sorting_total: aggs.sorting_count?.doc_count ?? 0,
+          sorting_breakdown: sortingBreakdown,
+          other_actions_total: aggs.other_actions_count?.doc_count ?? 0,
+          other_actions_breakdown: otherActionsBreakdown,
+          filters_total: aggs.filters_count?.doc_count ?? 0,
+          filters_breakdown: filtersBreakdown,
+        },
+      },
+    };
+
+  } catch (err) {
+    logger?.error?.('[searchIntelligenceController] getSummaryStats error:', err);
+    return { code: 500, message: 'Internal server error', error: err.message };
+  }
+}
+
+module.exports = { getIntelligenceStats, getTopUsers, getAllSearches, getKeywordTrends, getProjectActivity, getOtherActivities, purgeOldActivities, getFilterOptions, getSummaryStats };

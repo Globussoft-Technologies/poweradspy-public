@@ -9,6 +9,30 @@ const NODE_API = (import.meta.env.VITE_NODE_USER_ACTIVITY_API ?? "").trim().repl
 
 const COLORS = ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#3b82f6","#ef4444","#14b8a6"];
 
+// Custom YAxis tick renderer with hover tooltip
+const CustomYAxisTick = ({ x, y, payload, chartData }) => {
+  const item = chartData.find((d) => d.displayTerm === payload.value);
+  if (!item) return <text x={x} y={y} textAnchor="end" fill="#374151" fontSize={11}>{payload.value}</text>;
+
+  const isTruncated = item.displayTerm !== item.term;
+
+  return (
+    <g>
+      <title>{item.term}</title>
+      <text
+        x={x}
+        y={y}
+        textAnchor="end"
+        fill="#374151"
+        fontSize={11}
+        style={{ cursor: isTruncated ? "help" : "default" }}
+      >
+        {item.displayTerm}
+      </text>
+    </g>
+  );
+};
+
 const TYPE_TABS = [
   { key: "keywords",    label: "Keywords"    },
   { key: "advertisers", label: "Advertisers" },
@@ -70,9 +94,17 @@ const KeywordTrends = ({ onDataReady }) => {
       ? (b.growth_pct ?? -Infinity) - (a.growth_pct ?? -Infinity)
       : b.count - a.count
     )
-    .slice(0, 8);
+    .slice(0, 8)
+    .map((d) => ({
+      ...d,
+      displayTerm: d.term.length > 35 ? d.term.slice(0, 35) + "..." : d.term,
+    }));
 
   const maxCount = currentList.length > 0 ? Math.max(...currentList.map((r) => r.count)) : 1;
+
+  // Calculate dynamic YAxis width based on longest label
+  const maxLabelLength = Math.max(...chartData.map((d) => d.displayTerm.length), 10);
+  const yAxisWidth = Math.max(50, Math.min(350, 15 + maxLabelLength * 6.5));
 
   const renderContent = () => {
     if (loading) return (
@@ -109,21 +141,31 @@ const KeywordTrends = ({ onDataReady }) => {
             <BarChart data={chartData} layout="vertical" barSize={18} margin={{ top: 0, right: 32, bottom: 0, left: 0 }}>
               <XAxis type="number" domain={[0, 'dataMax']} tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
               <YAxis
-                type="category" dataKey="term" width={160}
-                tick={{ fontSize: 11, fill: "#374151" }} axisLine={false} tickLine={false}
+                type="category" dataKey="displayTerm" width={yAxisWidth}
+                tick={(props) => <CustomYAxisTick {...props} chartData={chartData} />}
+                axisLine={false} tickLine={false}
               />
               <Tooltip
-                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", maxWidth: "400px", wordWrap: "break-word", whiteSpace: "normal" }}
                 formatter={(v) => [
                   sortBy === "count" ? v.toLocaleString() : `${v}%`,
                   sortBy === "count" ? "Searches" : "Growth",
                 ]}
+                labelFormatter={(label) => {
+                  const item = chartData.find((d) => d.displayTerm === label);
+                  return item?.term ?? label;
+                }}
               />
               <Bar dataKey={sortBy === "count" ? "count" : "growth_pct"} radius={[0, 4, 4, 0]}>
                 {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+
+          {/* Tooltip for full text on hover */}
+          <div style={{ marginTop: "8px", fontSize: "11px", color: "#6b7280", display: "flex", alignItems: "center", gap: "4px" }}>
+            <span>ℹ Hover over truncated labels to see full text</span>
+          </div>
         </div>
 
         {/* Table */}
@@ -155,7 +197,7 @@ const KeywordTrends = ({ onDataReady }) => {
                     onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "white")}
                   >
                     <td style={{ padding: "10px 12px", color: "#9ca3af" }}>{idx + 1}</td>
-                    <td style={{ padding: "10px 12px", fontWeight: 500, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "10px 12px", fontWeight: 500, color: "#111827", wordBreak: "break-word", whiteSpace: "normal" }}>
                       {row.term}
                     </td>
                     <td style={{ padding: "10px 12px" }}>
