@@ -39,11 +39,17 @@ jobs:
           cache-dependency-path: new-ui-react/package-lock.json
 
       - name: Install deps
-        # new-ui-react has a committed package-lock.json, so ci is the fast,
-        # reproducible path; the fallback keeps the job green if it ever drops.
+        # Prefer `npm ci` (fast, reproducible) when the lockfile exists, but if
+        # the lock has drifted out of sync with package.json, fall back to
+        # `npm install` instead of hard-failing. Best practice is still to keep
+        # package-lock.json committed and in sync (run `npm install` locally and
+        # commit it) so the fallback rarely triggers.
         run: |
           if [ -f package-lock.json ]; then
-            npm ci --no-audit --no-fund
+            npm ci --no-audit --no-fund || {
+              echo "::warning::npm ci failed (package-lock.json out of sync) — falling back to npm install. Commit an updated lockfile to restore reproducible installs."
+              npm install --no-audit --no-fund
+            }
           else
             npm install --no-audit --no-fund
           fi
