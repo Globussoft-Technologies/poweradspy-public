@@ -1843,6 +1843,19 @@ export const CompetitorAPI = {
         competitor_url: competitorUrl,
       }),
     }),
+
+  // Detach a competitor from a project (removes it in MongoDB so it stays gone
+  // after reload). Resolves by id; falls back to name on the backend.
+  deleteCompetitor: ({ userId, advertiser, competitorId, competitorName }) =>
+    competitorFetch('/delete-competitor', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        advertiser,
+        competitor_id: competitorId,
+        competitor_name: competitorName,
+      }),
+    }),
 };
 
 /**

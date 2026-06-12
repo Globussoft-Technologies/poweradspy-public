@@ -114,5 +114,6 @@ router.post("/fetch-keywords-basedOnWebsite", competitorController.fetchKeywords
 router.post("/check-competitor-process", competitorController.checkCompetitorProcess);
 router.post("/delete-project", competitorController.deleteProject);
 router.post("/add-manual-competitor", competitorController.addManualCompetitor);
+router.post("/delete-competitor", competitorController.deleteCompetitor);
 
 export default router;

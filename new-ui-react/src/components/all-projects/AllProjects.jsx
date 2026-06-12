@@ -235,6 +235,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
   const [maxCompetitors, setMaxCompetitors] = useState("15");
   const [customKeyword, setCustomKeyword] = useState("");
   const [compareCompetitor, setCompareCompetitor] = useState(null);
+  const [competitorToDelete, setCompetitorToDelete] = useState(null);
+  const [isDeletingCompetitor, setIsDeletingCompetitor] = useState(false);
 
   const [showAddCompetitorModal, setShowAddCompetitorModal] = useState(false);
   const [manualCompName, setManualCompName] = useState("");
@@ -1210,26 +1212,90 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
     }
   };
 
+  // Delete a competitor from MongoDB, then drop it from local state so it
+  // disappears immediately and does not reappear on reload.
+  const handleDeleteCompetitor = async () => {
+    if (!competitorToDelete || isDeletingCompetitor) return;
+    const { advertiser, competitor } = competitorToDelete;
+    setIsDeletingCompetitor(true);
+    try {
+      const resp = await CompetitorAPI.deleteCompetitor({
+        userId: competitorUserId,
+        advertiser,
+        competitorId: competitor.id,
+        competitorName: competitor.name,
+      });
+
+      const ok =
+        resp?.statusCode === 200 ||
+        resp?.statusCode === "200" ||
+        resp?.body?.status === "success";
+
+      if (!ok) {
+        showToast("Failed to remove competitor. Please try again.", "error");
+        return;
+      }
+
+      const sameCompetitor = (c) =>
+        (competitor.id != null && c.id === competitor.id) ||
+        (c.name || "").toLowerCase() === (competitor.name || "").toLowerCase();
+
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== selectedProjectId) return p;
+          const remaining = (p.competitors || []).filter(
+            (c) => !sameCompetitor(c),
+          );
+          const removedCount = (p.competitors || []).length - remaining.length;
+          return {
+            ...p,
+            competitors: remaining,
+            // Keep the My Projects list-card counts in sync without a reload.
+            initialCompetitorCount: Math.max(
+              0,
+              (p.initialCompetitorCount || 0) - removedCount,
+            ),
+            initialMonitoredCount: competitor.isMonitored
+              ? Math.max(0, (p.initialMonitoredCount || 0) - removedCount)
+              : p.initialMonitoredCount || 0,
+          };
+        }),
+      );
+      showToast(`"${competitor.name}" removed from this project.`);
+      trackProjectEvent("Delete-competitor", {
+        project_name: advertiser ?? "NA",
+        advertiser: competitor.name,
+      });
+      setCompetitorToDelete(null);
+    } catch (err) {
+      console.error("Failed to delete competitor:", err);
+      showToast("Failed to remove competitor. Please try again.", "error");
+    } finally {
+      setIsDeletingCompetitor(false);
+    }
+  };
+
   const [competitorSearch, setCompetitorSearch] = useState("");
-  const filteredCompetitors = activeProject
-    ? activeProject.competitors.filter((c) =>
-        (c.name || "").toLowerCase().includes(competitorSearch.toLowerCase()),
-      )
-    : [];
-  const totalMonitored = activeProject
-    ? activeProject.competitors.filter((c) => c.isMonitored).length
-    : 0;
-  const totalAds = activeProject
-    ? activeProject.competitors.reduce(
-        (sum, c) => sum + (c.isMonitored ? c.totalAds : 0),
-        0,
-      )
-    : 0;
+  const visibleCompetitors = activeProject ? activeProject.competitors : [];
+  const filteredCompetitors = visibleCompetitors.filter((c) =>
+    (c.name || "").toLowerCase().includes(competitorSearch.toLowerCase()),
+  );
+  const totalMonitored = visibleCompetitors.filter((c) => c.isMonitored).length;
+  const totalAds = visibleCompetitors.reduce(
+    (sum, c) => sum + (c.isMonitored ? c.totalAds : 0),
+    0,
+  );
   const totalPages = Math.ceil(filteredCompetitors.length / rowsPerPage);
   const paginatedCompetitors = filteredCompetitors.slice(
     (currentPage - 1) * rowsPerPage,
     currentPage * rowsPerPage,
   );
+
+  // Keep pagination valid when deletions shrink the list below the current page.
+  useEffect(() => {
+    const tp = Math.max(1, Math.ceil(filteredCompetitors.length / rowsPerPage));
+    if (currentPage > tp) setCurrentPage(tp);
+  }, [filteredCompetitors.length, currentPage]);
 
   return (
     <div className="flex-1 h-full overflow-y-auto bg-theme-bg p-8 text-theme-text custom-scrollbar">
@@ -1524,7 +1590,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                     Total Ads Tracked
                   </p>
                   <p className="text-2xl font-bold text-emerald-400">
-                    {activeProject.competitors
+                    {visibleCompetitors
                       .reduce((sum, c) => sum + c.totalAds, 0)
                       .toLocaleString()}
                   </p>
@@ -1540,7 +1606,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                     Total Budget
                   </p>
                   <p className="text-2xl font-bold text-purple-400">
-                    {calculateTotalBudget(activeProject.competitors)}
+                    {calculateTotalBudget(visibleCompetitors)}
                   </p>
                 </div>
                 <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
@@ -1554,7 +1620,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                     Competitors
                   </p>
                   <p className="text-2xl font-bold text-orange-400">
-                    {activeProject.competitors.length}
+                    {visibleCompetitors.length}
                   </p>
                 </div>
                 <div className="w-10 h-10 rounded-lg bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
@@ -1667,7 +1733,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                         </th>
                         <th className="px-5 py-4 font-semibold">Top Country</th>
                         <th className="px-5 py-4 font-semibold">Estimated Total Ad Budget($)</th>
-                        <th className="px-5 py-4 font-semibold text-right">
+                        <th className="px-5 py-4 font-semibold text-center">
                           Comparison
                         </th>
                       </tr>
@@ -1935,30 +2001,44 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                             {comp.budget}
                           </td>
 
-                          <td className="px-5 py-4 text-right">
+                          <td className="px-5 py-4">
                             {(() => {
                               const noAdsToCompare =
                                 comp.totalAds === 0 &&
                                 (activeProject?.summary?.total_ads_tracked ||
                                   0) === 0;
                               return (
-                                <button
-                                  disabled={noAdsToCompare}
-                                  onClick={() => {
-                                    if (!noAdsToCompare) {
-                                      setCompareCompetitor(comp);
-                                      setViewState(5);
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    disabled={noAdsToCompare}
+                                    onClick={() => {
+                                      if (!noAdsToCompare) {
+                                        setCompareCompetitor(comp);
+                                        setViewState(5);
+                                      }
+                                    }}
+                                    title={
+                                      noAdsToCompare
+                                        ? "No competitor or advertiser ads available to compare"
+                                        : ""
                                     }
-                                  }}
-                                  title={
-                                    noAdsToCompare
-                                      ? "No competitor or advertiser ads available to compare"
-                                      : ""
-                                  }
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap border ${noAdsToCompare ? "bg-[#3762c1]/5 border-[#3759a3]/10 text-[#6b99ff]/50 cursor-not-allowed" : "bg-[#3762c1]/10 hover:bg-[#3762c1]/20 border-[#3759a3]/20 text-[#6b99ff]"}`}
-                                >
-                                  Compare
-                                </button>
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap border ${noAdsToCompare ? "bg-[#3762c1]/5 border-[#3759a3]/10 text-[#6b99ff]/50 cursor-not-allowed" : "bg-[#3762c1]/10 hover:bg-[#3762c1]/20 border-[#3759a3]/20 text-[#6b99ff]"}`}
+                                  >
+                                    Compare
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      setCompetitorToDelete({
+                                        advertiser: activeProject.advertiser,
+                                        competitor: comp,
+                                      })
+                                    }
+                                    title="Delete competitor"
+                                    className="p-1.5 rounded-lg text-theme-text-muted hover:text-red-400 hover:bg-red-500/10 border border-theme-border hover:border-red-500/20 transition-all"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
                               );
                             })()}
                           </td>
@@ -2007,9 +2087,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                     Showing {(currentPage - 1) * rowsPerPage + 1} to{" "}
                     {Math.min(
                       currentPage * rowsPerPage,
-                      activeProject.competitors.length,
+                      filteredCompetitors.length,
                     )}{" "}
-                    of {activeProject.competitors.length}
+                    of {filteredCompetitors.length}
                   </span>
                   <div className="flex items-center gap-2">
                     <button
@@ -2086,6 +2166,72 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
               >
                 Delete
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {competitorToDelete && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-theme-card border border-theme-border rounded-2xl w-full max-w-sm flex flex-col shadow-2xl overflow-hidden shadow-red-500/10 relative">
+            {/* Soft red glow header */}
+            <div className="relative flex flex-col items-center pt-8 pb-5 px-8 bg-gradient-to-b from-red-500/10 to-transparent">
+              <button
+                onClick={() => setCompetitorToDelete(null)}
+                className="absolute top-4 right-4 text-theme-text-muted hover:text-white transition-colors p-2 hover:bg-theme-bg rounded-lg"
+              >
+                <X size={18} />
+              </button>
+              <div className="w-14 h-14 bg-red-500/10 rounded-2xl flex items-center justify-center mb-4 border border-red-500/20 ring-4 ring-red-500/5">
+                <Trash2 size={26} className="text-red-400" />
+              </div>
+              <h2 className="text-xl font-bold text-theme-text">
+                Delete Competitor?
+              </h2>
+            </div>
+
+            <div className="px-8 pb-8">
+              {/* Highlighted competitor identity block */}
+              <div className="flex items-center gap-3 bg-theme-bg border border-theme-border rounded-xl px-4 py-3 mb-5">
+                <div
+                  className={`w-9 h-9 rounded-lg border flex items-center justify-center font-bold text-sm flex-shrink-0 ${getAvatarColor(
+                    competitorToDelete.competitor?.name || "?",
+                  )}`}
+                >
+                  {getInitials(competitorToDelete.competitor?.name)}
+                </div>
+                <span className="font-bold capitalize text-theme-text truncate">
+                  {competitorToDelete.competitor?.name || "this competitor"}
+                </span>
+              </div>
+
+              <p className="text-theme-text-muted text-sm text-center mb-6 leading-relaxed">
+                This will remove it from your competitor list.
+              </p>
+
+              <div className="flex gap-3 w-full">
+                <button
+                  onClick={() => setCompetitorToDelete(null)}
+                  disabled={isDeletingCompetitor}
+                  className="flex-1 py-2.5 rounded-xl font-bold bg-theme-bg border border-theme-border text-theme-text hover:bg-theme-bg/80 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteCompetitor}
+                  disabled={isDeletingCompetitor}
+                  className="flex-1 py-2.5 rounded-xl font-bold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  {isDeletingCompetitor ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={16} /> Delete
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

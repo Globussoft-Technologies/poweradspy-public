@@ -417,6 +417,10 @@ class CompetitorController {
   async addManualCompetitor(req, res) {
     return await CompetitorService.addManualCompetitor(req, res);
   }
+
+  async deleteCompetitor(req, res) {
+    return await CompetitorService.deleteCompetitor(req, res);
+  }
 }
 
 export default new CompetitorController();

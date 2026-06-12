@@ -3513,6 +3513,91 @@ async checkDailyTokenLimit(req, res) {
       });
     }
   }
+
+  // Detach a single competitor from a project (removes the ObjectId reference
+  // from the project's `competitors` + `monitoring` arrays). The master
+  // Competitors document is left intact since it is shared across projects.
+  async deleteCompetitor(req, res) {
+    try {
+      const { user_id, advertiser, competitor_id, competitor_name } =
+        req.body || {};
+
+      if (!user_id || !advertiser || (!competitor_id && !competitor_name)) {
+        return res.status(400).json(
+          Response.validationFailResp(
+            "user_id, advertiser and competitor_id (or competitor_name) are required",
+            ""
+          )
+        );
+      }
+
+      const brand = this.normalizeAdvertiser(advertiser);
+      const userObjectId = new mongoose.Types.ObjectId(user_id);
+
+      const project = await Competitors_request.findOne({
+        user_id: userObjectId,
+        advertiser: {
+          $elemMatch: {
+            $regex: new RegExp(
+              "^" + brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
+              "i"
+            ),
+          },
+        },
+      });
+
+      if (!project) {
+        return res.status(404).json(
+          Response.messageResp("Project not found for this user")
+        );
+      }
+
+      // Resolve the competitor ObjectId — prefer the supplied id, fall back to
+      // a case-insensitive name lookup against the master Competitors collection.
+      let competitorId = null;
+      if (competitor_id && mongoose.Types.ObjectId.isValid(competitor_id)) {
+        competitorId = new mongoose.Types.ObjectId(competitor_id);
+      } else if (competitor_name) {
+        const escapedName = String(competitor_name)
+          .trim()
+          .toLowerCase()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const competitorDoc = await Competitors.findOne({
+          competitor_name: { $regex: new RegExp("^" + escapedName + "$", "i") },
+        });
+        if (competitorDoc) competitorId = competitorDoc._id;
+      }
+
+      if (!competitorId) {
+        return res.status(404).json(
+          Response.messageResp("Competitor not found")
+        );
+      }
+
+      const result = await Competitors_request.updateOne(
+        { _id: project._id },
+        {
+          $pull: {
+            competitors: competitorId,
+            monitoring: competitorId,
+          },
+        }
+      );
+
+      return res.send(
+        Response.userSuccessResp("Competitor removed successfully", {
+          competitor_id: competitorId,
+          comp_request_id: project._id,
+          removed: result.modifiedCount > 0,
+        })
+      );
+    } catch (error) {
+      logger.error("Error in deleteCompetitor", error);
+      return res.status(500).json(
+        Response.userFailResp("Error in removing competitor", error)
+      );
+    }
+  }
 }
 
 export default new CompetitorService();
