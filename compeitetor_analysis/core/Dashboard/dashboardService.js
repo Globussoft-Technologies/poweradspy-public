@@ -1115,10 +1115,15 @@ const getAdvertiserAdCount = async (advertiser) => {
           gte: moment().subtract(1, 'day').startOf('day').format(FMT),
           lte: moment().subtract(1, 'day').endOf('day').format(FMT),
         },
+        last7days: {
+          // rolling 7 calendar days, today inclusive
+          gte: moment().subtract(6, 'day').startOf('day').format(FMT),
+          lte: moment().format(FMT),
+        },
       };
 
       const blank = () => ({ facebook: 0, instagram: 0, total: 0 });
-      const stats = { allTime: blank(), today: blank(), yesterday: blank() };
+      const stats = { allTime: blank(), today: blank(), yesterday: blank(), last7days: blank() };
 
       const jobs = []; // { bucket, platform, promise }
       for (const [serverName, serverData] of Object.entries(this.esServers)) {
@@ -1332,7 +1337,10 @@ const getAdvertiserAdCount = async (advertiser) => {
                   id: c._id,
                   name: c.competitor_name,
                   url: c.competitor_url,
-                  ads: s.allTime.total,                 // all-time ad count
+                  ads: s.allTime.total,                 // all-time ad count (total)
+                  today: s.today.total,                 // ads seen today
+                  yesterday: s.yesterday.total,         // ads seen yesterday
+                  last7Days: s.last7days.total,         // ads seen in the last 7 days
                   growth: growthPct(s.today.total, s.yesterday.total), // day-over-day %
                 },
                 today: s.today, // per-platform today, for the brand/total ads-today split

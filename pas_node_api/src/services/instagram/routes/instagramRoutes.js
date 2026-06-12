@@ -25,6 +25,7 @@ const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
 const validator = require('../../../middleware/validator');
+const createInstagramLandersRoutes = require('./instagramLandersRoutes');
 
 const searchSchema = {
   body: {
@@ -214,6 +215,10 @@ function createInstagramRoutes(service) {
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
+
+  // ─── Landers Routes ────────────────────────────────────
+  const landersRouter = createInstagramLandersRoutes(service);
+  router.use('/landers', landersRouter);
 
   return router;
 }

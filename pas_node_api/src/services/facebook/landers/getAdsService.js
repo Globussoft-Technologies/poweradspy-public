@@ -45,7 +45,6 @@ async function getAdwithCountryCode(db, log) {
     }
 
     const newarr = [];
-    const a = []; // ISO accumulator — shared across ads (matches legacy PHP)
 
     for (const row of ads) {
       const id = row.id;
@@ -74,10 +73,7 @@ async function getAdwithCountryCode(db, log) {
       if (userRows.length === 0) {
         // No discoverers → derive ISO from the ad's tracked country nicenames.
         const isos = await repo.getIsoByNicenames(sql, country);
-        for (const v of isos) {
-          if (!a.includes(v)) a.push(v);
-        }
-        iso = isos; // non-null (even if empty) → PHP set $iso to the rows array here
+        iso = isos; // each ad gets ONLY its own resolved ISO codes (no cross-ad accumulator)
       } else {
         // Has discoverers → pick the most common current_country_id, resolve its ISO.
         const countryIds = [];
@@ -93,7 +89,6 @@ async function getAdwithCountryCode(db, log) {
           iso = []; // PHP: $iso = query rows (non-null) when id != 0
           const isoVal = await repo.getIsoById(sql, topCountryId);
           if (isoVal !== null && isoVal !== undefined) {
-            a.push(isoVal);
             iso.push(isoVal);
           }
         }
@@ -102,7 +97,7 @@ async function getAdwithCountryCode(db, log) {
       const resp = {
         id,
         ad_url: row.ad_url,
-        iso: iso !== null ? [...a] : '',
+        iso: iso !== null ? iso : '',
         destination_url: row.destination_url,
       };
 

@@ -255,11 +255,16 @@ export const mapAdToCard = (raw) => {
       if (typeof val === 'string' && val.trim().startsWith('[') && val.trim().endsWith(']')) {
         try { val = JSON.parse(val); } catch (e) { }
       }
-      if (Array.isArray(val)) return val.map(resolveNasUrl);
+      // Drop slides resolving to the backend's "DefaultImage" placeholder — it's
+      // a dead path that renders as "preview unavailable" and otherwise pollutes
+      // carousels that are full of valid creatives. Same marker the advertiser
+      // avatar guards against ("DefaultImage.jpg").
+      const notDefault = (u) => typeof u === 'string' && !u.includes('DefaultImage');
+      if (Array.isArray(val)) return val.map(resolveNasUrl).filter(notDefault);
       if (typeof val !== 'string' || !val) return [];
       const sep = val.includes('||,') ? '||,' : (val.includes('||') ? '||' : null);
-      if (!sep) return [resolveNasUrl(val)];
-      return val.split(sep).map(s => s.trim()).filter(Boolean).map(resolveNasUrl);
+      if (!sep) return [resolveNasUrl(val)].filter(notDefault);
+      return val.split(sep).map(s => s.trim()).filter(Boolean).map(resolveNasUrl).filter(notDefault);
     })(),
     carouselTitles: (() => {
       const val = raw.ad_title;
