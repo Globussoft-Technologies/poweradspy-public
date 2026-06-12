@@ -18,6 +18,7 @@ const {
 const { authMiddleware } = require('../../../middleware/auth');
 const validator = require('../../../middleware/validator');
 const createRedditInsertionRoutes = require('./redditInsertionRoutes');
+const createRedditLandersRoutes = require('../landers/redditLandersRoutes');
 
 const searchSchema = {
   body: {
@@ -177,6 +178,10 @@ function createRedditRoutes(service) {
   // Mount insertion routes (parallel to read routes)
   const insertionRouter = createRedditInsertionRoutes(service);
   router.use(insertionRouter);
+
+  // Mount lander routes (blackhat scraping pipeline)
+  const landerRouter = createRedditLandersRoutes(service);
+  router.use(landerRouter);
 
   return router;
 }
