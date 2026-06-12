@@ -296,7 +296,10 @@ const CompetitorTracker = () => {
   const [brandSearch, setBrandSearch] = useState(""); // filters the detail brands/competitors
   const [expandedBrands, setExpandedBrands] = useState(() => new Set()); // brand keys currently expanded (default: all collapsed)
   const [exporting, setExporting] = useState(false);
-  const detailRef = useRef(null); // the right-hand panel captured for PDF export
+  const [exportOpen, setExportOpen] = useState(false); // export-options dropdown
+  const [exportCharts, setExportCharts] = useState(false); // include ad-count charts in the PDF
+  const [exportRange, setExportRange] = useState("30d"); // chart window: 1d | 7d | 30d | all
+  const exportMenuRef = useRef(null); // export dropdown (for click-outside close)
 
   // Per-user /user-brand-stats cache for the detail panel — populated only when
   // a user is actually selected, so re-selecting them is instant. The list rows
@@ -428,6 +431,16 @@ const CompetitorTracker = () => {
     }
   }, [location.state?.resetTracker]);
 
+  // Close the export-options dropdown on any outside click.
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onDown = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) setExportOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [exportOpen]);
+
   // adsToday is a platform-split object the backend already totals; we only
   // sum the per-brand monitoring slots here.
   const monitoring = useMemo(
@@ -471,104 +484,207 @@ const CompetitorTracker = () => {
   // visible without manual expanding; otherwise honour the per-brand toggle.
   const searching = brandSearch.trim().length > 0;
 
-  // Export the detail panel (selected user, or the overview) as a PDF by
-  // rasterising it and slicing across A4 pages. Mirrors SearchIntelligence.
-  const exportPdf = async () => {
-    if (!detailRef.current || exporting) return;
+  // Build a clean, native PDF straight from the loaded `stats` — selectable text
+  // + vector tables, no DOM rasterisation, so it exports near-instantly. Charts
+  // are opt-in: when enabled we fetch ad counts for the chosen window per brand
+  // and draw them as lightweight vector bars (still no screenshotting).
+  const RANGE_LABELS = { "1d": "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" };
+  const exportPdf = async ({ charts = false, range = "30d" } = {}) => {
+    if (!selected || !stats || exporting) return;
     setExporting(true);
-    // Expand every brand for the capture so the PDF holds the full data
-    // regardless of what's collapsed on screen; restore the prior state after.
-    const prevExpanded = expandedBrands;
-    const allKeys = (stats?.brands || []).map((b, i) => brandKey(b, i));
-    if (allKeys.length) {
-      setExpandedBrands(new Set(allKeys));
-      // let React flush the expanded rows + their layout before rasterising
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    }
     try {
-      // html-to-image renders via an SVG <foreignObject> using the browser's
-      // own engine, so Tailwind v4's oklch / color-mix colours just work — no
-      // CSS colour parsing (the thing html2canvas choked on).
-      const [{ toCanvas }, { jsPDF }] = await Promise.all([
-        import("html-to-image"),
+      const [{ jsPDF }, autoTableMod] = await Promise.all([
         import("jspdf"),
+        import("jspdf-autotable"),
       ]);
+      const autoTable = autoTableMod.default;
 
-      const element = detailRef.current;
-      const prevOverflow = element.style.overflow;
-      element.style.overflow = "visible";
+      const brands = stats.brands || [];
+      const rangeLabel = RANGE_LABELS[range] || RANGE_LABELS["30d"];
 
-      const canvas = await toCanvas(element, {
-        pixelRatio: 2,
-        backgroundColor: "#ffffff",
-        cacheBust: true,
-        width: element.scrollWidth,
-        height: element.scrollHeight,
-        style: { overflow: "visible" },
-      });
+      // ── Optionally fetch one ad-count window per brand, all in parallel ──
+      const chartByBrand = {};
+      if (charts) {
+        const reqRange =
+          range === "all"
+            ? { all: true }
+            : (() => {
+                const days = { "1d": 1, "7d": 7, "30d": 30 }[range] || 30;
+                const start = new Date();
+                start.setDate(start.getDate() - (days - 1));
+                return { from: isoDay(start), to: isoDay(new Date()) };
+              })();
+        const withReq = brands.filter((b) => b.request_id && b.competitorsCount > 0);
+        const results = await Promise.all(
+          withReq.map((b) =>
+            axios
+              .post(`${COMP_API}competitor-ads-by-range`, { request_id: b.request_id, ...reqRange })
+              .then((r) => ({ id: b.request_id, comps: r?.data?.body?.data?.competitors || [] }))
+              .catch(() => ({ id: b.request_id, comps: [] }))
+          )
+        );
+        results.forEach((r) => { chartByBrand[r.id] = r.comps; });
+      }
 
-      element.style.overflow = prevOverflow;
-
-      const imgW = canvas.width;
-      const imgH = canvas.height;
-
+      // ── PDF scaffold ──
       const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
+      const MARGIN = 40;
+      const HEADER_H = 58;
+      const FOOTER_H = 26;
+      const contentW = pageW - MARGIN * 2;
+      const topY = HEADER_H + 12; // first content line on every page
+      const bottomLimit = pageH - FOOTER_H - 8;
+      const tableMargin = { top: topY, left: MARGIN, right: MARGIN, bottom: FOOTER_H + 8 };
 
-      const HEADER_H = 48;
-      const FOOTER_H = 20;
-      const MARGIN = 16;
-      const availW = pageW - MARGIN * 2;
-      const availH = pageH - HEADER_H - FOOTER_H - MARGIN;
-
-      const ratio = availW / imgW;
-      const scaledH = imgH * ratio;
-
-      const who = selected ? (selected.email || selected.name || "user") : "Overview";
+      const who = selected.email || selected.name || "user";
       const dateStr = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-      const drawHeader = (pageNum) => {
+      let cursorY = topY;
+      const ensure = (h) => { if (cursorY + h > bottomLimit) { pdf.addPage(); cursorY = topY; } };
+
+      // ── Summary row ──
+      const monitoringTotal = brands.reduce((n, b) => n + (Number(b.monitoringCount) || 0), 0);
+      const compTotal = stats.totalCompetitors || 0;
+      const ads = stats.adsToday || { facebook: 0, instagram: 0, total: 0 };
+      autoTable(pdf, {
+        startY: topY,
+        margin: tableMargin,
+        theme: "plain",
+        styles: { fontSize: 9, cellPadding: { top: 6, bottom: 6, left: 8, right: 8 } },
+        head: [["Brands", "Competitors", "Monitoring", "Ads today"]],
+        body: [[
+          fmtNum(stats.totalBrands),
+          fmtNum(compTotal),
+          `${fmtNum(monitoringTotal)}/${fmtNum(compTotal)}`,
+          `${fmtNum(ads.total)}  (FB ${fmtNum(ads.facebook)} · IG ${fmtNum(ads.instagram)})`,
+        ]],
+        headStyles: { fillColor: [238, 241, 251], textColor: [63, 81, 181], fontStyle: "bold", halign: "left" },
+        bodyStyles: { textColor: [31, 41, 106], fontStyle: "bold", fontSize: 12 },
+      });
+      cursorY = pdf.lastAutoTable.finalY + 18;
+
+      // Lightweight vector bar chart for one brand's top competitors.
+      const CHART_TOP_N = 8;
+      const drawChart = (comps) => {
+        const rows = (comps || [])
+          .map((c) => ({ name: c.name || "—", ads: Number(c.ads) || 0 }))
+          .filter((c) => c.ads > 0)
+          .sort((a, b) => b.ads - a.ads)
+          .slice(0, CHART_TOP_N);
+        if (!rows.length) return;
+        const labelW = 130;
+        const valW = 44;
+        const barAreaW = contentW - labelW - valW;
+        const rowH = 15;
+        ensure(12 + rows.length * rowH + 8);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(150, 150, 150);
+        pdf.text(`Ads by competitor · ${rangeLabel}`, MARGIN, cursorY);
+        cursorY += 10;
+        const maxAds = Math.max(...rows.map((c) => c.ads), 1);
+        rows.forEach((c) => {
+          let label = c.name;
+          pdf.setFontSize(8);
+          pdf.setTextColor(75, 85, 99);
+          while (pdf.getTextWidth(label) > labelW - 8 && label.length > 1) label = label.slice(0, -1);
+          if (label.length < c.name.length) label = label.slice(0, -1) + "…";
+          pdf.text(label, MARGIN, cursorY + 7);
+          pdf.setFillColor(238, 241, 251);
+          pdf.roundedRect(MARGIN + labelW, cursorY + 1, barAreaW, 8, 2, 2, "F");
+          pdf.setFillColor(63, 81, 181);
+          pdf.roundedRect(MARGIN + labelW, cursorY + 1, Math.max((c.ads / maxAds) * barAreaW, 3), 8, 2, 2, "F");
+          pdf.setTextColor(55, 65, 81);
+          pdf.text(fmtNum(c.ads), pageW - MARGIN, cursorY + 7, { align: "right" });
+          cursorY += rowH;
+        });
+        cursorY += 8;
+      };
+
+      // ── Per-brand: heading → optional chart → competitor table ──
+      brands.forEach((b) => {
+        const brandName = brandNameOf(b.brands) || b.project_name || "Untitled brand";
+        const comps = b.competitors || [];
+
+        ensure(26);
+        pdf.setFontSize(12);
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(31, 41, 106);
+        pdf.text(brandName, MARGIN, cursorY + 6);
+        pdf.setFontSize(8.5);
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(120, 120, 120);
+        pdf.text(`${b.competitorsCount} competitor${b.competitorsCount === 1 ? "" : "s"}`, pageW - MARGIN, cursorY + 6, { align: "right" });
+        cursorY += 22;
+
+        if (charts) drawChart(chartByBrand[b.request_id]);
+
+        if (!comps.length) {
+          ensure(20);
+          pdf.setFontSize(9);
+          pdf.setFont("helvetica", "normal");
+          pdf.setTextColor(150, 150, 150);
+          pdf.text("No competitors", MARGIN, cursorY + 6);
+          cursorY += 24;
+          return;
+        }
+
+        autoTable(pdf, {
+          startY: cursorY,
+          margin: tableMargin,
+          theme: "striped",
+          styles: { fontSize: 8.5, cellPadding: 5, overflow: "ellipsize", valign: "middle" },
+          headStyles: { fillColor: [244, 246, 252], textColor: [107, 114, 128], fontStyle: "bold", fontSize: 8 },
+          alternateRowStyles: { fillColor: [250, 251, 255] },
+          columnStyles: {
+            0: { cellWidth: 175 },
+            1: { halign: "right", cellWidth: 58 },
+            2: { halign: "right", cellWidth: 52 },
+            3: { halign: "right", cellWidth: 66 },
+            4: { halign: "right", cellWidth: 54 },
+            5: { halign: "right" },
+          },
+          head: [["Competitor", "Total", "Today", "Yesterday", "7 Days", "Growth"]],
+          body: comps.map((c) => [
+            c.url ? `${c.name || "—"}\n${c.url.replace(/^https?:\/\//, "")}` : c.name || "—",
+            fmtNum(c.ads),
+            fmtNum(c.today),
+            fmtNum(c.yesterday),
+            fmtNum(c.last7Days),
+            `${Number(c.growth) >= 0 ? "+" : ""}${Number(c.growth) || 0}%`,
+          ]),
+          didParseCell: (d) => {
+            if (d.section === "body" && d.column.index === 5) {
+              d.cell.styles.textColor = (Number(comps[d.row.index]?.growth) || 0) >= 0 ? [22, 163, 74] : [225, 29, 72];
+              d.cell.styles.fontStyle = "bold";
+            }
+          },
+        });
+        cursorY = pdf.lastAutoTable.finalY + 18;
+      });
+
+      // ── Header + footer on every page (drawn last, when the count is final) ──
+      const pageCount = pdf.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        pdf.setPage(i);
         pdf.setFillColor(255, 255, 255);
         pdf.rect(0, 0, pageW, HEADER_H, "F");
         pdf.setDrawColor(229, 231, 235);
         pdf.line(0, HEADER_H, pageW, HEADER_H);
-        pdf.setFontSize(13);
+        pdf.setFontSize(14);
         pdf.setFont("helvetica", "bold");
         pdf.setTextColor(31, 41, 106);
-        pdf.text("Competitor Tracker", MARGIN, 22);
+        pdf.text("Competitor Tracker", MARGIN, 26);
         pdf.setFontSize(9);
         pdf.setFont("helvetica", "normal");
         pdf.setTextColor(107, 114, 128);
-        pdf.text(`${who}  ·  ${dateStr}${pageNum > 1 ? `  ·  Page ${pageNum}` : ""}`, MARGIN, 38);
-      };
-
-      const drawFooter = () => {
+        pdf.text(`${who}${stats.planName ? `  ·  ${stats.planName} plan` : ""}  ·  ${dateStr}`, MARGIN, 44);
         pdf.setFontSize(8);
         pdf.setTextColor(156, 163, 175);
-        pdf.text("PowerAdSpy Admin  ·  Competitor Tracker Export", pageW / 2, pageH - 6, { align: "center" });
-      };
-
-      let yDrawn = 0;
-      let pageNum = 1;
-      while (yDrawn < scaledH) {
-        if (pageNum > 1) pdf.addPage();
-        drawHeader(pageNum);
-
-        const sliceScaledH = Math.min(availH, scaledH - yDrawn);
-        const sliceSrcH = sliceScaledH / ratio;
-        const sliceSrcY = yDrawn / ratio;
-
-        const tmp = document.createElement("canvas");
-        tmp.width = imgW;
-        tmp.height = Math.ceil(sliceSrcH);
-        tmp.getContext("2d").drawImage(canvas, 0, sliceSrcY, imgW, Math.ceil(sliceSrcH), 0, 0, imgW, Math.ceil(sliceSrcH));
-
-        pdf.addImage(tmp.toDataURL("image/png"), "PNG", MARGIN, HEADER_H + 4, availW, sliceScaledH);
-        drawFooter();
-
-        yDrawn += availH;
-        pageNum++;
+        pdf.text("PowerAdSpy Admin  ·  Competitor Tracker Export", MARGIN, pageH - 10);
+        pdf.text(`Page ${i} of ${pageCount}`, pageW - MARGIN, pageH - 10, { align: "right" });
       }
 
       const safe = who.replace(/[^a-z0-9]+/gi, "_").toLowerCase();
@@ -577,7 +693,6 @@ const CompetitorTracker = () => {
       console.error("[Export] failed:", err);
       toast.error(`Export failed: ${err.message}`);
     } finally {
-      if (allKeys.length) setExpandedBrands(prevExpanded); // restore on-screen collapse state
       setExporting(false);
     }
   };
@@ -597,9 +712,73 @@ const CompetitorTracker = () => {
             <FiRefreshCw className={`w-4 h-4 text-gray-600 ${loading ? "animate-spin" : ""}`} />
           </button>
           {selected && (
-            <button onClick={exportPdf} disabled={exporting} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-lg text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" title="Export this user's detail as PDF">
-              <FiDownload className={`w-4 h-4 ${exporting ? "animate-pulse" : ""}`} /> {exporting ? "Exporting…" : "Export PDF"}
-            </button>
+            <div className="relative" ref={exportMenuRef}>
+              <button
+                onClick={() => setExportOpen((o) => !o)}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-lg text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Export this user's detail as PDF"
+              >
+                <FiDownload className={`w-4 h-4 ${exporting ? "animate-pulse" : ""}`} />
+                {exporting ? "Exporting…" : "Export PDF"}
+                {!exporting && <FiChevronDown className={`w-3.5 h-3.5 transition-transform ${exportOpen ? "rotate-180" : ""}`} />}
+              </button>
+
+              {exportOpen && !exporting && (
+                <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-lg z-30 p-3.5">
+                  <p className="text-[11px] font-semibold tracking-wider text-gray-400 mb-2.5">EXPORT OPTIONS</p>
+
+                  {/* include charts toggle */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] text-gray-700 font-medium">Include charts</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={exportCharts}
+                      onClick={() => setExportCharts((v) => !v)}
+                      className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${exportCharts ? "bg-[#3F51B5]" : "bg-gray-300"}`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${exportCharts ? "translate-x-4" : ""}`} />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">Per-brand “ads by competitor” bars.</p>
+
+                  {/* chart window */}
+                  <div className={`mt-3 transition-opacity ${exportCharts ? "opacity-100" : "opacity-40 pointer-events-none"}`}>
+                    <p className="text-[11px] font-semibold text-gray-500 mb-1.5">Chart period</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { k: "1d", l: "1d" },
+                        { k: "7d", l: "7d" },
+                        { k: "30d", l: "30d" },
+                        { k: "all", l: "All time" },
+                      ].map((r) => (
+                        <button
+                          key={r.k}
+                          type="button"
+                          onClick={() => setExportRange(r.k)}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors ${
+                            exportRange === r.k
+                              ? "bg-[#eef1fb] text-[#3F51B5] border-[#c7d2fe]"
+                              : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                          }`}
+                        >
+                          {r.l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => { setExportOpen(false); exportPdf({ charts: exportCharts, range: exportRange }); }}
+                    className="mt-3.5 w-full py-2 rounded-lg bg-[#3F51B5] text-white text-[13px] font-semibold hover:bg-[#36469c] transition-colors"
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -714,7 +893,7 @@ const CompetitorTracker = () => {
         </div>
 
         {/* ── Right: detail (user) or overview (no selection) ── */}
-        <div ref={detailRef} className="flex-1 min-w-0 bg-white rounded-xl border border-gray-100 overflow-auto">
+        <div className="flex-1 min-w-0 bg-white rounded-xl border border-gray-100 overflow-auto">
           {!selected ? (
             /* ===== Overview from get-comp-users-count ===== */
             <div className="p-6">
