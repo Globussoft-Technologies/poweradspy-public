@@ -17,7 +17,7 @@ import {
   guestSearchAds,
   publicSearchAds,
   fetchPlanAccess,
-  saveDailyKeywordRequest,
+  saveKeywordSearch,
   trackEvent,
 } from "./services/api";
 import { useGuest } from "./hooks/useGuest";
@@ -1006,15 +1006,14 @@ const App = () => {
 
         // Fire daily keyword request only when triggered by an explicit search submit (ref set in handleSearch)
         if (page === 0 && lastDailyKeywordRef.current) {
-          const { query, si, userEmail, userCountry } = lastDailyKeywordRef.current;
+          const { query, si, userEmail, network } = lastDailyKeywordRef.current;
           lastDailyKeywordRef.current = null; // clear immediately so filter changes don't re-trigger
           const adsCount = data?.meta?.total?.facebook ?? data?.ads?.filter(a => a.network === 'facebook')?.length ?? 0;
           const adsFound = adsCount > 0;
-          saveDailyKeywordRequest({
-            keyword:    si === 'keyword'    ? query : 'NA',
-            advertiser: si === 'advertiser' ? query : 'NA',
-            domain:     si === 'domain'     ? query : 'NA',
-            country: userCountry,
+          saveKeywordSearch({
+            value: query,
+            type: si,        // 'keyword' | 'advertiser' | 'domain'
+            network,         // 'all' or array of platform slugs
             email: userEmail,
             ads_count: adsCount,
           }).then((res) => {
@@ -1183,15 +1182,16 @@ const App = () => {
       dispatch(setSpecificPlatforms([platform]));
     }
 
-    // Daily keyword request — only on explicit search submit, Facebook platform only
-    const activePlatform = sdui.effectivePlatforms[0] || 'facebook';
-    if (query && activePlatform.toLowerCase() === 'facebook' && !guest?.isGuest) {
+    // Keyword-search store — only on explicit search submit, AUTHENTICATED users only
+    // (never guest / public). Stores the searched network(s): 'all' or the selected slugs.
+    if (query && isAuthenticated && !guest?.isGuest && !_isPublicRoute) {
       const si = type || ui.searchIn || 'keyword';
       const userEmail = user?.email || '';
-      const userCountry = sdui.filterValues?.country || sdui.filterValues?.country_filter || '';
-      lastDailyKeywordRef.current = { query, si, userEmail, userCountry };
+      const selected = (platform ? [platform] : ui.specificPlatforms) || [];
+      const network = selected.length === 0 ? 'all' : selected.map((p) => String(p).toLowerCase());
+      lastDailyKeywordRef.current = { query, si, userEmail, network };
     }
-  }, [guestGuard, dispatch, ui.searchIn, sdui, user, guest]);
+  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

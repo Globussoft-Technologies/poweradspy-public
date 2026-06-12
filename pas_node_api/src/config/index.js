@@ -257,6 +257,31 @@ const config = {
     realTimeStore: getVal(fileConfig.dailyKeyword?.realTimeStore, 'REAL_TIME_STORE') || 'on',
   },
 
+  // ─── NEW keyword-search store (MongoDB) — additive, see docs/KEYWORD_SEARCH_REVAMP_MANIFEST.md ───
+  keywordSearch: {
+    enabled: getVal(fileConfig.keywordSearch?.enabled, 'KEYWORD_SEARCH_ENABLED', toBool) !== false,
+    mongoSlug: getVal(fileConfig.keywordSearch?.mongoSlug, 'KEYWORD_SEARCH_MONGO_SLUG') || 'facebook',
+    database: getVal(fileConfig.keywordSearch?.database, 'KEYWORD_SEARCH_DATABASE') || '',
+    collection: getVal(fileConfig.keywordSearch?.collection, 'KEYWORD_SEARCH_COLLECTION') || 'keyword_searches',
+    networks: (() => {
+      const val = getVal(fileConfig.keywordSearch?.networks, 'KEYWORD_SEARCH_NETWORKS');
+      const def = ['facebook', 'instagram', 'gdn', 'youtube', 'google', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'tiktok'];
+      if (!val) return def;
+      try { return (Array.isArray(val) ? val : JSON.parse(val)).map(s => String(s).trim().toLowerCase()).filter(Boolean); } catch { return def; }
+    })(),
+    allToken: (getVal(fileConfig.keywordSearch?.allToken, 'KEYWORD_SEARCH_ALL_TOKEN') || 'all').toLowerCase(),
+    defaultClaimSize: getVal(fileConfig.keywordSearch?.defaultClaimSize, 'KEYWORD_SEARCH_DEFAULT_SIZE', toInt) || 1,
+    maxClaimSize: getVal(fileConfig.keywordSearch?.maxClaimSize, 'KEYWORD_SEARCH_MAX_SIZE', toInt) || 100,
+    searchDatesCap: getVal(fileConfig.keywordSearch?.searchDatesCap, 'KEYWORD_SEARCH_DATES_CAP', toInt) || 30,
+    staleClaimMinutes: getVal(fileConfig.keywordSearch?.staleClaimMinutes, 'KEYWORD_SEARCH_STALE_MINUTES', toInt) || 30,
+    prioritySortDir: (getVal(fileConfig.keywordSearch?.prioritySortDir, 'KEYWORD_SEARCH_PRIORITY_SORT') || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc',
+    applyPlanGate: getVal(fileConfig.keywordSearch?.applyPlanGate, 'KEYWORD_SEARCH_APPLY_PLAN_GATE', toBool) === true,
+    scraperHeader: (getVal(fileConfig.keywordSearch?.scraperHeader, 'KEYWORD_SEARCH_SCRAPER_HEADER') || 'x-scraper-name').toLowerCase(),
+    autoRecoverStale: getVal(fileConfig.keywordSearch?.autoRecoverStale, 'KEYWORD_SEARCH_AUTO_RECOVER_STALE', toBool) !== false,
+    staleSweepIntervalSec: getVal(fileConfig.keywordSearch?.staleSweepIntervalSec, 'KEYWORD_SEARCH_STALE_SWEEP_SEC', toInt) || 120,
+    staleSweepBatch: getVal(fileConfig.keywordSearch?.staleSweepBatch, 'KEYWORD_SEARCH_STALE_SWEEP_BATCH', toInt) || 100,
+  },
+
   sendgrid: {
     enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
     apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),

@@ -5,22 +5,31 @@ import { getSubscribedUserEmails, getSubscribedUsers } from "./amemberService.js
 import { getContactsBreakdown } from "./sendgridContactsService.js";
 
 /**
- * Ramp + priority config reader (manifest §17). All three keys are optional:
+ * Ramp + priority config reader (manifest §17). All keys are optional:
  *   daily_report_ramp_start  — IST date "YYYY-MM-DD" of day 1, or null
- *   daily_report_ramp_cap    — integer per-day increment (compounds: day N → N × cap)
+ *   daily_report_ramp_cap    — integer base for day 1's recipient count
+ *   daily_report_ramp_factor — daily growth multiplier (integer ≥ 1, default 1):
+ *                                1 → linear   (day N → N × cap)            [current behaviour]
+ *                                2 → doubles  (day N → cap × 2^(N-1))
+ *                                3 → triples  (day N → cap × 3^(N-1)), etc.
  *   daily_report_priority    — array like ["active"], ["new_user"],
  *                              or ["active","new_user"] (primary, secondary, …)
- * Returns { start, cap, priority } with safe null defaults.
+ * Returns { start, cap, factor, priority } with safe defaults.
  */
 function rampConfig() {
-  let start = null, cap = null, priority = null;
+  let start = null, cap = null, factor = null, priority = null;
   try { start = config.get("daily_report_ramp_start"); } catch { /* unset */ }
   try { cap = config.get("daily_report_ramp_cap"); } catch { /* unset */ }
+  try { factor = config.get("daily_report_ramp_factor"); } catch { /* unset */ }
   try { priority = config.get("daily_report_priority"); } catch { /* unset */ }
   const capNum = Number(cap);
+  const factorNum = Number(factor);
   return {
     start: start ? String(start).slice(0, 10) : null,
     cap: Number.isFinite(capNum) && capNum > 0 ? Math.floor(capNum) : null,
+    // Growth multiplier. Missing / invalid / < 1 → 1 (linear, the historical
+    // behaviour). 2 = double daily, 3 = triple daily, and so on.
+    factor: Number.isFinite(factorNum) && factorNum >= 1 ? Math.floor(factorNum) : 1,
     priority: Array.isArray(priority)
       ? priority.map((p) => String(p || "").trim().toLowerCase()).filter(Boolean)
       : (typeof priority === "string" && priority.trim()
@@ -91,13 +100,18 @@ export function applyRampAndPriority(users) {
     return {
       users: [],
       ramp: {
-        applied: true, day: 0, cap_per_day: cfg.cap, limit: 0,
+        applied: true, day: 0, cap_per_day: cfg.cap, factor: cfg.factor, limit: 0,
         priority: cfg.priority || [], eligible: users.length, selected: 0,
         note: "today is before daily_report_ramp_start — no recipients today",
       },
     };
   }
-  const limit = dayN * cfg.cap;
+  // Daily limit. factor === 1 → linear N × cap (historical behaviour).
+  // factor ≥ 2 → geometric: each day is `factor` times the previous, i.e.
+  // cap × factor^(N-1) (day 1 = cap, day 2 = cap×factor, day 3 = cap×factor², …).
+  const limit = cfg.factor <= 1
+    ? dayN * cfg.cap
+    : Math.floor(cfg.cap * Math.pow(cfg.factor, dayN - 1));
   const sorted = sortByPriority(users, cfg.priority);
   const capped = sorted.slice(0, limit);
   return {
@@ -106,6 +120,7 @@ export function applyRampAndPriority(users) {
       applied: true,
       day: dayN,
       cap_per_day: cfg.cap,
+      factor: cfg.factor,
       limit,
       priority: cfg.priority || [],
       eligible: users.length,
@@ -175,7 +190,7 @@ export async function getReportRecipients({ applySuppressions = true } = {}) {
 
     const { users: chosen, ramp } = applyRampAndPriority(eligible);
 
-    logger.info(`[recipients] ramp ON · day=${ramp?.day} cap=${ramp?.cap_per_day} limit=${ramp?.limit} eligible=${ramp?.eligible} selected=${ramp?.selected} priority=${(ramp?.priority || []).join("|") || "(none)"}`);
+    logger.info(`[recipients] ramp ON · day=${ramp?.day} cap=${ramp?.cap_per_day} factor=${ramp?.factor} limit=${ramp?.limit} eligible=${ramp?.eligible} selected=${ramp?.selected} priority=${(ramp?.priority || []).join("|") || "(none)"}`);
 
     return {
       recipients: chosen.map((u) => u.email),

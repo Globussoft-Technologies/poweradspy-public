@@ -22,6 +22,7 @@ const { syncCategory, syncAllCategories } = require('../controllers/categoryCont
 const { getDescriptionDetails, newCatInsertion } = require('../controllers/addCategoryController');
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
+const { storeKeywordSearch, scraperWork } = require('../controllers/keywordSearchController');
 const { getNotifications, markNotificationsRead } = require('../controllers/notificationController');
 const {
   registerToken,
@@ -170,6 +171,22 @@ router.post(
 router.get(
   '/get-priority-requests/:platform/:limit',
   asyncHandler(getPriorityRequests)
+);
+
+// ─── NEW keyword-search store (MongoDB) — 2 APIs, additive. See KEYWORD_SEARCH_REVAMP_MANIFEST.md ───
+// API 1 — POST /api/v1/common/keyword-search — frontend stores a search (dedup upsert)
+router.post(
+  '/keyword-search',
+  authMiddleware,
+  asyncHandler(storeKeywordSearch)
+);
+
+// API 2 — POST /api/v1/common/keyword-search/work — the SINGLE scraper endpoint.
+// One call submits finished results AND claims the next batch. Scraper identifies
+// itself via the configured header (x-scraper-name). priority is a body flag.
+router.post(
+  '/keyword-search/work',
+  asyncHandler(scraperWork)
 );
 
 // GET /api/v1/common/notifications — Fetch scraping notifications for current user

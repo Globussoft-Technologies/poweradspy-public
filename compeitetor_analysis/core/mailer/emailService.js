@@ -560,6 +560,14 @@ class emailService {
       html,
       // custom_args echo back on SendGrid webhook events → correlate to this log row.
       customArgs: { send_id, mail_type: "competitorUpdate" },
+      // Enable click + open tracking PER MESSAGE so SendGrid rewrites the
+      // <a href> links into tracking redirects and fires `click` events
+      // (otherwise no clicks are ever generated, regardless of the webhook
+      // subscription). Independent of the account-level default.
+      trackingSettings: {
+        clickTracking: { enable: true, enableText: false },
+        openTracking: { enable: true },
+      },
     };
 
     // Audit base — full brand/competitor snapshot taken AT SEND TIME, stored in
@@ -779,6 +787,14 @@ class emailService {
         subject,
         html,
         customArgs: { send_id, mail_type: "competitorUpdate" },
+        // Enable click + open tracking PER MESSAGE so SendGrid rewrites the
+        // <a href> links into tracking redirects and fires `click` events
+        // (otherwise no clicks are ever generated, regardless of the webhook
+        // subscription). Independent of the account-level default.
+        trackingSettings: {
+          clickTracking: { enable: true, enableText: false },
+          openTracking: { enable: true },
+        },
       };
 
       // Audit base — capture WHO added this member and ALL brands they were

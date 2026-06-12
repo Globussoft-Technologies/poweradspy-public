@@ -1,0 +1,133 @@
+{
+  "info": {
+    "name": "PAS — Keyword Search API",
+    "description": "Two endpoints. (1) Store a search (frontend, JWT). (2) The single scraper 'work' endpoint — the scraper just hits it in a loop with x-scraper-name; the server auto-closes the previous term (by name) and gives the next. No docId/scrapeId, no adsCount. Set baseUrl, token, scraperName before running.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "token", "value": "" },
+    { "key": "scraperName", "value": "fb-keyword-plugin-01" }
+  ],
+  "item": [
+    {
+      "name": "1. Store keyword (all networks)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"value\": \"Nike\",\n  \"type\": 1,\n  \"network\": \"all\",\n  \"email\": \"me@example.com\"\n}"
+        },
+        "description": "type: 1=keyword, 2=advertiser, 3=domain. network: a slug, comma list, or 'all'. Requires JWT in {{token}}. Re-run → status 'existing' (no duplicate)."
+      }
+    },
+    {
+      "name": "2. Store advertiser (facebook,instagram)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"value\": \"Adidas\",\n  \"type\": 2,\n  \"network\": \"facebook,instagram\",\n  \"email\": \"me@example.com\"\n}"
+        }
+      }
+    },
+    {
+      "name": "3. Work: facebook (hit 1 — get first term)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-scraper-name", "value": "{{scraperName}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/work",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "work"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"facebook\"\n}"
+        },
+        "description": "First hit: completed=0 (nothing to close yet), returns one keyword in data[]."
+      }
+    },
+    {
+      "name": "4. Work: facebook (hit 2+ — auto-close prev, get next)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-scraper-name", "value": "{{scraperName}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/work",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "work"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"facebook\"\n}"
+        },
+        "description": "Same body as request 3. The server auto-closes the previous term by x-scraper-name (completed=1) and hands the next. Keep re-sending to loop. To mark the previous as no-ads, add: \"status\": \"no_ads_found\"."
+      }
+    },
+    {
+      "name": "5. Work: instagram — per-network independence",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-scraper-name", "value": "ig-keyword-plugin-01" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/work",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "work"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"instagram\"\n}"
+        },
+        "description": "Even if facebook already scraped 'Nike' today, instagram still gets it (state is per-network)."
+      }
+    },
+    {
+      "name": "6. Work: facebook priority",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-scraper-name", "value": "{{scraperName}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/work",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "work"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"facebook\",\n  \"priority\": true\n}"
+        },
+        "description": "Same auto-close behaviour, priority mode: only hands out freshly re-searched terms. Empty unless you store again first."
+      }
+    }
+  ]
+}

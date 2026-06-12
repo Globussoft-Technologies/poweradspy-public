@@ -336,16 +336,16 @@ describe("api > fetchNotifications + markNotificationsRead", () => {
   });
 });
 
-describe("api > saveDailyKeywordRequest", () => {
+describe("api > saveKeywordSearch", () => {
   it("happy → json", async () => {
     globalThis.fetch.mockResolvedValueOnce({
       ok: true, status: 200, json: async () => ({ ok: 1 }),
     });
-    expect(await api.saveDailyKeywordRequest({ keyword: "k", email: "e" })).toEqual({ ok: 1 });
+    expect(await api.saveKeywordSearch({ value: "k", type: "keyword", network: "all", email: "e" })).toEqual({ ok: 1 });
   });
   it("non-ok → null", async () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
-    expect(await api.saveDailyKeywordRequest({})).toBeNull();
+    expect(await api.saveKeywordSearch({ value: "k", type: "keyword", network: "all" })).toBeNull();
   });
 });
 

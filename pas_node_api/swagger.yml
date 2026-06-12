@@ -934,6 +934,12 @@ tags:
     description: Pinterest ad intelligence endpoints
   - name: Common
     description: Cross-network search (searches Facebook, Instagram & YouTube simultaneously)
+  - name: Keyword Search
+    description: |
+      NEW MongoDB keyword/advertiser/domain search-tracking store. One deduplicated
+      document per (type, value); accumulates the users who searched it and tracks
+      scraping status PER NETWORK (facebook scraped ≠ instagram scraped). Fully
+      controlled by config.keywordSearch. See docs/KEYWORD_SEARCH_REVAMP_MANIFEST.md.
   - name: SDUI
     description: Server-Driven UI config, filters, and version endpoints
   - name: Health
@@ -8841,6 +8847,207 @@ paths:
           description: Server error
         '503':
           description: ES not available
+
+  # ─── Keyword Search (NEW, MongoDB, per-network) ──────────────────────────────
+  /api/v1/common/keyword-search:
+    post:
+      tags:
+        - Keyword Search
+      summary: Store a frontend search (deduplicated upsert, per-network)
+      description: |
+        Records a keyword/advertiser/domain search. Idempotent per term: one document
+        per `(type, valueNorm)` — the same term is never duplicated. Each call also:
+        - adds the user's email to `users` (unique) and bumps `searchCount`,
+        - re-activates the term for the searched networks (re-enters the priority queue),
+        - unions the searched network(s) into `networks` and marks
+          `networkState.<net>.isActive = true`.
+
+        `network` may be a single slug, a comma list, or `all` (expands to the full
+        configured `config.keywordSearch.networks` list).
+
+        Gated by `config.keywordSearch.enabled`, the legacy `realTimeStore` rule, and
+        (optionally) the plan gate. Requires a valid JWT.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value:
+                  type: string
+                  example: Nike
+                  description: The search term. Alternatively send keyword/advertiser/domain.
+                type:
+                  oneOf:
+                    - type: integer
+                    - type: string
+                  example: 1
+                  description: "1=keyword, 2=advertiser, 3=domain (numbers or the words)."
+                keyword:
+                  type: string
+                  description: Legacy alternative to value+type (type inferred = 1).
+                advertiser:
+                  type: string
+                  description: Legacy alternative (type inferred = 2).
+                domain:
+                  type: string
+                  description: Legacy alternative (type inferred = 3).
+                network:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+                  example: all
+                  description: "Single slug, comma list, or 'all'. Validated against config.keywordSearch.networks."
+                email:
+                  type: string
+                  example: user@example.com
+                ads_count:
+                  type: integer
+                  description: Used by the realTimeStore numeric threshold gate.
+      responses:
+        '200':
+          description: Stored (or skipped by a gate). `data.status` = new | existing | skip.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: keyword search stored }
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: new }
+                      type: { type: integer, example: 1 }
+                      value: { type: string, example: Nike }
+                      networks:
+                        type: array
+                        items: { type: string }
+                        example: [facebook, instagram]
+        '500':
+          description: Server error
+        '503':
+          description: Feature disabled or Mongo unavailable
+
+  /api/v1/common/keyword-search/work:
+    post:
+      tags:
+        - Keyword Search
+      summary: Single scraper endpoint — auto-close previous + claim next (atomic, per-network)
+      description: |
+        The ONE endpoint a scraper/plugin calls in a loop. On each hit the server:
+        1. **auto-closes the term this scraper finished last** — matched by the
+           `x-scraper-name` header, NOT by id. The scraper sends no `docId`/`scrapeId`
+           and no `adsCount`; only an optional `status` (default `completed`). Sets
+           `endTime` + `status` on that session, and
+        2. **claims the next** term for one `type` + one concrete `network`.
+
+        Same behaviour for daily and priority — only `priority: true` differs.
+
+        Modes (body `priority`):
+        - **priority=true**: pool = terms with `networkState.<net>.isActive=true`;
+          claiming flips it false so it isn't handed out again until re-searched.
+        - **daily** (default): gate = `networkState.<net>.dailyClaimDate != today`, so a
+          term is handed out at most once per day **per network** (facebook done ≠
+          instagram done).
+
+        Each claim is an atomic `findOneAndUpdate`, so concurrent scrapers always get
+        distinct terms. All state is in MongoDB, so a server/scraper restart never breaks
+        the flow; sessions stuck in `scrapping` past `staleClaimMinutes` are auto-recovered.
+
+        **The scraper MUST identify itself** via the `x-scraper-name` header
+        (configurable: `config.keywordSearch.scraperHeader`). No JWT (scraper-facing).
+      parameters:
+        - in: header
+          name: x-scraper-name
+          required: true
+          schema: { type: string }
+          description: The plugin's own unique name (recorded as session owner).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, network]
+              properties:
+                type:
+                  oneOf: [{ type: integer }, { type: string }]
+                  example: keyword
+                  description: "keyword | advertiser | domain (or 1 | 2 | 3)."
+                network:
+                  type: string
+                  example: facebook
+                  description: A single network slug (never 'all').
+                priority:
+                  type: boolean
+                  example: false
+                  description: true → priority mode; omit/false → daily mode.
+                size:
+                  type: integer
+                  default: 1
+                  description: How many terms to claim (clamped to maxClaimSize).
+                status:
+                  type: string
+                  enum: [completed, no_ads_found, failed]
+                  example: completed
+                  description: >-
+                    Outcome of the term this scraper finished last (auto-closed by name).
+                    Omit = completed. No adsCount/ids needed for the normal size-1 loop.
+                results:
+                  type: array
+                  description: >-
+                    ADVANCED (size>1 only). Explicitly close specific sessions by id when
+                    one auto-close can't map to several terms. Items: { docId, scrapeId, status }.
+                  items:
+                    type: object
+                    properties:
+                      docId: { type: string, example: 665f1f77bcf86cd799439002 }
+                      scrapeId: { type: string, example: 665f200abcf86cd799439010 }
+                      status:
+                        type: string
+                        enum: [completed, no_ads_found, failed]
+                        example: completed
+      responses:
+        '200':
+          description: Results acknowledged + next terms claimed (data may be empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: claimed }
+                  scraper: { type: string, example: fb-keyword-plugin-01 }
+                  mode: { type: string, example: daily }
+                  network: { type: string, example: facebook }
+                  completed: { type: integer, example: 1, description: How many submitted results were closed. }
+                  completionErrors:
+                    type: array
+                    items: { type: object }
+                  count: { type: integer, example: 1 }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        docId: { type: string, example: 665f1f77bcf86cd799439002 }
+                        type: { type: integer, example: 1 }
+                        value: { type: string, example: Nike }
+                        network: { type: string, example: facebook }
+                        scrapeId: { type: string, example: 665f200abcf86cd799439010 }
+                        mode: { type: string, example: daily }
+        '400':
+          description: Missing scraper header, or invalid `type` / `network`
+        '500':
+          description: Server error
+        '503':
+          description: Feature disabled or Mongo unavailable
 
   # ─── Admin User Activity ─────────────────────────────────────────────────────
   /api/v1/admin_user_activity/get-users-count:

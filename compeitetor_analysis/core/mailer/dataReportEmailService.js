@@ -294,6 +294,14 @@ class DataReportEmailService {
       html,
       // custom_args travel back on SendGrid webhook events → correlate to this log row.
       customArgs: { send_id, mail_type: "dataReport" },
+      // Enable click + open tracking PER MESSAGE so SendGrid rewrites the
+      // <a href> links into tracking redirects and fires `click` events
+      // (otherwise no clicks are ever generated, regardless of the webhook
+      // subscription). Independent of the account-level default.
+      trackingSettings: {
+        clickTracking: { enable: true, enableText: false },
+        openTracking: { enable: true },
+      },
     };
     const base = {
       send_id,

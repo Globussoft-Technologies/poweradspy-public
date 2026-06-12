@@ -2063,15 +2063,20 @@ export const publicSearchAds = async (skip = 0, network = 'all') => {
   };
 };
 
-// ─── Daily Keyword Request ────────────────────────────────────────────────────
-export const saveDailyKeywordRequest = async ({ keyword, advertiser, domain, country, email, ads_count }) => {
-  const res = await fetch(`${PAS_API_BASE}/api/v1/common/daily-keyword-request`, {
+// ─── Keyword Search store (MongoDB, per-network) ──────────────────────────────
+// Stores a frontend search into the new keyword_searches collection.
+// Authenticated users ONLY (no guest / public). type: 'keyword' | 'advertiser' | 'domain'.
+// network: 'all' or an array/comma-list of platform slugs.
+export const saveKeywordSearch = async ({ value, type, network, email, ads_count }) => {
+  const token = getPASToken();
+  if (!token) return null; // authenticated users only
+  const res = await fetch(`${PAS_API_BASE}/api/v1/common/keyword-search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+      Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ keyword, advertiser, domain, country, email, ads_count }),
+    body: JSON.stringify({ value, type, network, email, ads_count }),
   });
   await checkFor401(res);
   if (!res.ok) return null;
@@ -2172,7 +2177,7 @@ export default {
   createDashboardShare,
   fetchDashboardState,
   guestSearchAds,
-  saveDailyKeywordRequest,
+  saveKeywordSearch,
   fetchFreshTikTokVideoUrl,
   fetchNotifications,
   markNotificationsRead,
