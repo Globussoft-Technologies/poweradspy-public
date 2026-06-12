@@ -43,14 +43,12 @@ async function getGoogleAdsWithCountry(db, log) {
     await repo.updateMetaMultiple(sql, ads.map((a) => a.id), { redirect_status: FOUND });
 
     const newarr = [];
-    const a = []; // ISO accumulator — shared across ads (matches legacy PHP)
 
     for (const row of ads) {
+      // Each ad gets ONLY its own resolved ISO codes (no cross-ad accumulator — the
+      // legacy shared-accumulator inflated every ad's `iso` with earlier ads' countries).
       const names = String(row.country || '').split(',').filter(Boolean);
       const isos = await repo.getIsoByNicenames(sql, names);
-      for (const v of isos) {
-        if (!a.includes(v)) a.push(v);
-      }
 
       let hits = [];
       try {
@@ -65,7 +63,7 @@ async function getGoogleAdsWithCountry(db, log) {
       }
 
       if (hits.length) {
-        newarr.push({ id: row.id, iso: [...a], destination_url: row.destination_url });
+        newarr.push({ id: row.id, iso: isos, destination_url: row.destination_url });
       }
     }
 

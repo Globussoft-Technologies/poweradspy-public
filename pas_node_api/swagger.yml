@@ -908,6 +908,14 @@ tags:
     description: LinkedIn ad intelligence endpoints
   - name: LinkedIn Insertion
     description: LinkedIn ad insertion endpoints (lnAdsData, delete) — one endpoint for normal LinkedIn (platform 10) AND ads library (platform 15). Signature-authenticated (x-signature) or platform-12 bypass.
+  - name: LinkedIn Landers
+    description: LinkedIn destination-lander scraping pipeline (get-ads-for-blackhat, upload_file_to-server, insert_html_lander). Scraper-facing; unauthenticated (like the PHP). Writes lander tables + patches linkedin_ads_data ES.
+  - name: YouTube Landers
+    description: YouTube destination-lander scraping pipeline (get_youtubeid_for_lander, upload_blackhat_image_zip, insert_html_content_lander). Scraper-facing; unauthenticated. Patches youtube_ads_data ES.
+  - name: Facebook Landers
+    description: Facebook destination-lander scraping pipeline (getAdwithCountryCode, uploadFileToServer, insertHtmlRedirectCountry). Scraper-facing; unauthenticated. Patches search_mix ES.
+  - name: Google Landers
+    description: Google (gtext) destination-lander scraping pipeline (get_ads_for_blackhat, upload_gtext_blackhat, insert_html_content). Scraper-facing; unauthenticated. Patches google_ads_data ES.
   - name: Reddit
     description: Reddit ad intelligence endpoints
   - name: GDN
@@ -2067,6 +2075,400 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ═══════════════════════════════════════════
+  # LINKEDIN LANDERS  (destination-lander scraping pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/linkedin/landers/get-ads-for-blackhat:
+    get:
+      tags: [LinkedIn Landers]
+      summary: Fetch a batch of LinkedIn ads queued for lander scraping
+      description: >
+        Returns up to 100 ads whose `redirect_status = 0`, claims them (`redirect_status = 2`),
+        and resolves each ad's country nicename to an ISO code. No body, no auth.
+      responses:
+        '200':
+          description: Ads fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Fetched ads for linkedin }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: "233063" }
+                        ad_url: { type: string }
+                        destination_url: { type: string, example: https://www.example.com/landing }
+                        iso: { type: array, items: { type: string }, example: ["US"] }
+        '404':
+          description: No ads available
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 404 }
+                  message: { type: string, example: 'Could not fetch ad :(' }
+
+  /api/v1/linkedin/landers/upload_file_to-server:
+    post:
+      tags: [LinkedIn Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: >
+        Accepts a screenshot (`media`) and/or an HTML zip (`zip`) plus `ad_id`, `country`, `status`.
+        status `1` → BLACKHAT folder, `2` → WHITEHAT folder. Uploads via the shared NAS client and
+        returns the stored paths. At least one file is required.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                ad_id: { type: string, example: "233063" }
+                country: { type: string, example: US }
+                status: { type: string, enum: ['1', '2'], example: '2' }
+                media: { type: string, format: binary, description: screenshot image (optional) }
+                zip: { type: string, format: binary, description: HTML zip (optional) }
+      responses:
+        '200':
+          description: Files stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: files are stored successfully }
+                  image_path: { type: string }
+                  html_path: { type: string }
+        '404':
+          description: No file provided
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 404 }
+                  message: { type: string, example: no file found }
+
+  /api/v1/linkedin/landers/insert_html_lander:
+    post:
+      tags: [LinkedIn Landers]
+      summary: Persist scraped lander data across DB tables + ES
+      description: >
+        Accepts a JSON ARRAY of scraped lander objects. Validates the ad exists in
+        `linkedin_ads_data`, then writes linkedin_ad_domains / linkedin_ad_outgoing_links /
+        linkedin_ad_url / linkedin_ad_html_lander_content / linkedin_ad_lander / linkedin_ad_meta_data,
+        updates `linkedin_ad.domain_id`, and patches the ES doc. `status` 3 = no-response (only bumps
+        redirect_status). crawled_by `.net` → {1 done, 3 no-resp}; `python` → {4 done, 6 no-resp}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required: [ad_id, country_iso, destinations, html_path, screen_shot, html_content, status, domain_registered_date, crawled_by]
+                properties:
+                  ad_id: { type: string, example: "233063" }
+                  country_iso: { type: array, items: { type: string }, example: ["US"] }
+                  destinations: { type: string, example: https://example.com/landing }
+                  html_path: { type: string, example: /pas-dev/stream/linkedin/whiteHatAd/202506/233063.jpg }
+                  screen_shot: { type: string }
+                  html_content: { type: string }
+                  status: { type: integer, enum: [1, 2, 3], example: 2 }
+                  domain_registered_date: { type: string, nullable: true, example: '2022-01-15' }
+                  crawled_by: { type: string, enum: ['.net', python], example: python }
+                  domain_age: { type: integer, example: 1 }
+                  redirects: { type: array, items: { type: string } }
+                  ad_category: { type: array, items: { type: string } }
+                  outgoing_url:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        start_url: { type: string }
+                        redirect_urls: { type: array, items: { type: string } }
+                        destination_url: { type: string }
+      responses:
+        '200':
+          description: Lander stored / status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Destination Lander updated successfully }
+                  exe_time: { type: number, example: 1.23 }
+        '400':
+          description: Ad not found, validation failed, or not updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 400 }
+                  message: { type: string, example: ad not found }
+
+  # ═══════════════════════════════════════════
+  # YOUTUBE LANDERS
+  # ═══════════════════════════════════════════
+
+  /api/v1/youtube/landers/get_youtubeid_for_lander:
+    get:
+      tags: [YouTube Landers]
+      summary: Fetch YouTube ads queued for lander scraping
+      description: Up to 100 ads at redirect_status=0 present in youtube_ads_data; each ad returns ONLY its own ISO country codes. Marks missing ads redirect_status=5. No auth.
+      responses:
+        '200':
+          description: Ads fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        iso: { type: array, items: { type: string }, example: ["IN"] }
+                        destination_url: { type: string }
+                        ad_url: { type: string }
+
+  /api/v1/youtube/landers/upload_blackhat_image_zip:
+    post:
+      tags: [YouTube Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: status 1 → BLACKHAT, 2 → WHITEHAT. Returns the stored NAS paths.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                ad_id: { type: string }
+                country: { type: string, example: US }
+                status: { type: string, enum: ['1', '2'] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200':
+          description: Files stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  image_path: { type: string }
+                  html_path: { type: string }
+
+  /api/v1/youtube/landers/insert_html_content_lander:
+    post:
+      tags: [YouTube Landers]
+      summary: Persist scraped lander data + patch ES
+      description: 'Body: { ad_id, insertData }. The ad must exist in youtube_ads_data. status 1=blackhat, 2=whitehat, 3=no-response; crawled_by .net|python.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id, insertData]
+              properties:
+                ad_id: { type: string }
+                insertData:
+                  type: object
+                  properties:
+                    ad_id: { type: string }
+                    country_iso: { type: array, items: { type: string } }
+                    destinations: { type: string }
+                    html_path: { type: string }
+                    screen_shot: { type: string }
+                    html_content: { type: string }
+                    status: { type: integer, enum: [1, 2, 3] }
+                    domain_registered_date: { type: string, nullable: true }
+                    crawled_by: { type: string, enum: ['.net', python] }
+                    domain_age: { type: integer }
+                    redirects: { type: array, items: { type: string } }
+                    ad_category: { type: array, items: { type: string } }
+                    outgoing_url: { type: array, items: { type: object } }
+      responses:
+        '200':
+          description: Lander stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Destination Lander updated successfully }
+                  exe_time: { type: number }
+        '400': { description: Ad not found / validation failed / not updated }
+
+  # ═══════════════════════════════════════════
+  # FACEBOOK LANDERS
+  # ═══════════════════════════════════════════
+
+  /api/v1/facebook/landers/getAdwithCountryCode:
+    get:
+      tags: [Facebook Landers]
+      summary: Fetch Facebook ads queued for lander scraping
+      description: Up to 50 ads at redirect_status=0 present in search_mix; each ad returns ONLY its own ISO codes (resolved from discoverers' countries or the ad's tracked countries). Present → redirect_status=2, absent → 5. No auth.
+      responses:
+        '200':
+          description: Ads fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        ad_url: { type: string }
+                        iso: { type: array, items: { type: string } }
+                        destination_url: { type: string }
+
+  /api/v1/facebook/landers/uploadFileToServer:
+    post:
+      tags: [Facebook Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: status 1 → BLACKHAT, 2 → WHITEHAT. Returns the stored NAS paths.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                ad_id: { type: string }
+                country: { type: string }
+                status: { type: string, enum: ['1', '2'] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200':
+          description: Files stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  image_path: { type: string }
+                  html_path: { type: string }
+
+  /api/v1/facebook/landers/insertHtmlRedirectCountry:
+    post:
+      tags: [Facebook Landers]
+      summary: Persist scraped lander data + patch ES
+      description: 'Body: { ad_id, insertData }. The ad must exist in search_mix.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id, insertData]
+              properties:
+                ad_id: { type: string }
+                insertData: { type: object }
+      responses:
+        '200': { description: Lander stored }
+        '400': { description: Ad not found / validation failed }
+
+  # ═══════════════════════════════════════════
+  # GOOGLE LANDERS
+  # ═══════════════════════════════════════════
+
+  /api/v1/google/landers/get_ads_for_blackhat:
+    get:
+      tags: [Google Landers]
+      summary: Fetch Google (gtext) ads queued for lander scraping
+      description: Up to 50 ads at redirect_status=0 present in google_ads_data; each ad returns ONLY its own ISO codes. Bulk-sets redirect_status=2. No auth.
+      responses:
+        '200':
+          description: Ads fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        iso: { type: array, items: { type: string } }
+                        destination_url: { type: string }
+
+  /api/v1/google/landers/upload_gtext_blackhat:
+    post:
+      tags: [Google Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: status 1 → BLACKHAT, 2 → WHITEHAT. Returns the stored NAS paths.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                ad_id: { type: string }
+                country: { type: string }
+                status: { type: string, enum: ['1', '2'] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200':
+          description: Files stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  image_path: { type: string }
+                  html_path: { type: string }
+
+  /api/v1/google/landers/insert_html_content:
+    post:
+      tags: [Google Landers]
+      summary: Persist scraped lander data + patch ES
+      description: 'Body: { ad_id, insertData }. The ad must exist in google_ads_data.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id, insertData]
+              properties:
+                ad_id: { type: string }
+                insertData: { type: object }
+      responses:
+        '200': { description: Lander stored }
+        '400': { description: Ad not found / validation failed }
 
   # ═══════════════════════════════════════════
   # YOUTUBE INSERTION
