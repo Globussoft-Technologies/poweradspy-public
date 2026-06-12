@@ -56,8 +56,7 @@ export default defineConfig({
         "src/components/Pas/Chart/CountryCrawlerChartMap.jsx",
         "src/components/Pas/Chart/GraphCrawlerChart.jsx",
         "src/components/Pas/Chart/AdsFunnelDistributedColumnChart.jsx",
-        // "src/components/Pas/CrawlerInsight/Scroller.jsx" not enrolled:
-        // unreachable defensive guard at line 31 blocks 100% — see #250.
+        "src/components/Pas/CrawlerInsight/Scroller.jsx",
         "src/components/AdCopySlide.jsx",
         "src/components/CreativeSlide.jsx",
         // "src/components/Pas/Chart/AffiliateNetworksStackedChart.jsx" not enrolled:

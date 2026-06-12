@@ -28,9 +28,6 @@ const TabSlider = ({tabs,handleSetTabActive,systemDetails,loadingSystemData}) =>
 
   const scroll = direction => {
     const container = scrollRef.current;
-    /* v8 ignore next -- defensive guard; chevrons only render when ref is non-null */
-    if (!container) return;
-
     const scrollAmount = 200;
     const newPosition =
       direction === 'left'
