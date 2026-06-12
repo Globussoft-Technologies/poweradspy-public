@@ -15,6 +15,7 @@ const {
 } = require('../controllers/adInsightsController');
 const { authMiddleware } = require('../../../middleware/auth');
 const validator = require('../../../middleware/validator');
+const createPinterestLandersRoutes = require('../landers/pinterestLandersRoutes');
 
 const searchSchema = {
   body: {
@@ -147,6 +148,10 @@ function createPinterestRoutes(service) {
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
+
+  // Mount lander routes (blackhat scraping pipeline)
+  const landerRouter = createPinterestLandersRoutes(service);
+  router.use(landerRouter);
 
   return router;
 }
