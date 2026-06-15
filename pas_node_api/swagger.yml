@@ -2570,6 +2570,277 @@ paths:
         '200': { description: Destination Lander updated successfully }
         '400': { description: Ad not found / validation failed / no changes }
 
+  # REDDIT LANDERS (destination-lander scraping pipeline)
+  /api/v1/reddit/landers/get_ads_for_blackhat:
+    get:
+      tags: [Reddit Landers]
+      summary: Fetch a batch of Reddit ads queued for lander scraping
+      description: Fetches up to 100 ads with redirect_status=0, validates each in reddit_search_mix (dotted reddit_ad.id), updates status to 2, returns {id, iso, destination_url}.
+      responses:
+        '200': { description: Ads fetched successfully, data contains {id, iso, country_names, destination_url} }
+        '400': { description: No more ads found }
+
+  /api/v1/reddit/landers/upload_reddit_blackhat:
+    post:
+      tags: [Reddit Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: Accepts multipart (media, zip, ad_id, country, status). Uploads to NAS (BLACKHAT if status=1, WHITEHAT if status=2). Returns {code, image_path, html_path}.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ad_id, country, status]
+              properties:
+                ad_id: { type: integer }
+                country: { type: string }
+                status: { type: integer, enum: [1, 2] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200': { description: Files stored successfully }
+        '404': { description: No file found }
+
+  /api/v1/reddit/landers/insert_reddit_blackhat_html:
+    post:
+      tags: [Reddit Landers]
+      summary: Persist scraped lander data across DB tables + ES
+      description: 'Body is a JSON ARRAY of insert objects. Validates ad exists in reddit_search_mix (dotted reddit_ad.id). status 1=blackhat, 2=whitehat, 3=no-response. Updates reddit_ad_* tables + ES reddit_search_mix.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required: [ad_id, country_iso, destinations, html_path, screen_shot, html_content, status, crawled_by]
+                properties:
+                  ad_id: { type: integer }
+                  country_iso: { type: string }
+                  destinations: { type: string }
+                  html_path: { type: string }
+                  screen_shot: { type: string }
+                  html_content: { type: string }
+                  status: { type: integer, enum: [1, 2, 3] }
+                  domain_registered_date: { type: string }
+                  crawled_by: { type: string, enum: ['.net', 'python'] }
+                  redirects: { type: array, items: { type: string } }
+                  outgoing_url: { type: array, items: { type: object } }
+      responses:
+        '200': { description: Destination Lander updated successfully }
+        '400': { description: Ad not found / validation failed }
+
+  # PINTEREST LANDERS (destination-lander scraping pipeline)
+  /api/v1/pinterest/landers/get-ads-for-blackhat:
+    get:
+      tags: [Pinterest Landers]
+      summary: Fetch a batch of Pinterest ads queued for lander scraping
+      description: Fetches up to 100 ads with redirect_status=0, validates each in pinterest_search_mix (dotted pinterest_ad.id), updates status to 2, returns {id, iso, country_names, destination_url}.
+      responses:
+        '200': { description: Ads fetched successfully, data contains {id, iso, country_names, destination_url} }
+        '400': { description: No more ads found }
+
+  /api/v1/pinterest/landers/upload-pinterest-blackhat:
+    post:
+      tags: [Pinterest Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: Accepts multipart (media, zip, ad_id, country, status). Uploads to NAS (BLACKHAT if status=1, WHITEHAT if status=2). Returns {code, image_path, html_path}.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ad_id, country, status]
+              properties:
+                ad_id: { type: integer }
+                country: { type: string }
+                status: { type: integer, enum: [1, 2] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200': { description: Files stored successfully }
+        '404': { description: No file found }
+
+  /api/v1/pinterest/landers/insert-html-content:
+    post:
+      tags: [Pinterest Landers]
+      summary: Persist scraped lander data across DB tables + ES
+      description: 'Body is a JSON ARRAY of insert objects. Validates ad exists in pinterest_search_mix (dotted pinterest_ad.id). status 1=blackhat, 2=whitehat, 3=no-response. Updates pinterest_ad_* tables + ES pinterest_search_mix.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required: [ad_id, country_iso, destinations, html_path, screen_shot, html_content, status, crawled_by, domain_registered_date]
+                properties:
+                  ad_id: { type: integer }
+                  country_iso: { type: string }
+                  destinations: { type: string }
+                  html_path: { type: string }
+                  screen_shot: { type: string }
+                  html_content: { type: string }
+                  status: { type: integer, enum: [1, 2, 3] }
+                  domain_registered_date: { type: string }
+                  crawled_by: { type: string, enum: ['.net', 'python'] }
+                  redirects: { type: array, items: { type: string } }
+                  outgoing_url: { type: array, items: { type: object } }
+      responses:
+        '200': { description: Destination Lander updated successfully }
+        '400': { description: Ad not found / validation failed }
+
+  # QUORA LANDERS (destination-lander scraping pipeline)
+  /api/v1/quora/landers/get-ads-for-lander:
+    get:
+      tags: [Quora Landers]
+      summary: Fetch a batch of Quora ads queued for lander scraping
+      description: Fetches ads with redirect_status=0, validates each in Elasticsearch, updates status to 2, returns {id, iso, destination_url}.
+      responses:
+        '200': { description: Ads fetched successfully }
+        '400': { description: No ads found }
+
+  /api/v1/quora/landers/upload-lander-image-zip:
+    post:
+      tags: [Quora Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: Accepts multipart (media, zip, ad_id, country, status). Uploads to NAS.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ad_id, country, status]
+              properties:
+                ad_id: { type: integer }
+                country: { type: string }
+                status: { type: integer, enum: [1, 2] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200': { description: Files uploaded successfully }
+        '404': { description: No file found }
+
+  /api/v1/quora/landers/insert-lander-details-todb:
+    post:
+      tags: [Quora Landers]
+      summary: Persist scraped lander data across DB tables + ES
+      description: Body is a JSON ARRAY of insert objects. Validates and updates quora_ad_* tables + Elasticsearch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+      responses:
+        '200': { description: Destination Lander updated successfully }
+        '400': { description: Ad not found / validation failed }
+
+  # INSTAGRAM LANDERS (destination-lander scraping pipeline)
+  /api/v1/instagram/landers/get-ads-for-blackhat:
+    get:
+      tags: [Instagram Landers]
+      summary: Fetch a batch of Instagram ads queued for lander scraping
+      description: Fetches ads with redirect_status=0, validates in Elasticsearch, returns {id, iso, country, destination_url}.
+      responses:
+        '200': { description: Ads fetched successfully }
+        '400': { description: No ads found }
+
+  /api/v1/instagram/landers/upload_file_to-server:
+    post:
+      tags: [Instagram Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: Accepts multipart (media, zip, ad_id, country, status). Uploads to NAS.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ad_id, country, status]
+              properties:
+                ad_id: { type: integer }
+                country: { type: string }
+                status: { type: integer, enum: [1, 2] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200': { description: Files uploaded successfully }
+        '404': { description: No file found }
+
+  /api/v1/instagram/landers/insert_html_lander:
+    post:
+      tags: [Instagram Landers]
+      summary: Persist scraped lander data across DB tables + ES
+      description: Body is a JSON ARRAY of insert objects. Updates instagram_ad_* tables + Elasticsearch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+      responses:
+        '200': { description: Destination Lander updated successfully }
+        '400': { description: Ad not found / validation failed }
+
+  # NATIVE LANDERS (destination-lander scraping pipeline)
+  /api/v1/native/landers/get_ads_for_blackhat:
+    get:
+      tags: [Native Landers]
+      summary: Fetch a batch of Native ads queued for lander scraping
+      description: Fetches ads with redirect_status=0, validates in Elasticsearch, returns {id, iso, destination_url}.
+      responses:
+        '200': { description: Ads fetched successfully }
+        '400': { description: No ads found }
+
+  /api/v1/native/landers/upload_native_blackhat:
+    post:
+      tags: [Native Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: Accepts multipart (media, zip, ad_id, country, status). Uploads to NAS.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ad_id, country, status]
+              properties:
+                ad_id: { type: integer }
+                country: { type: string }
+                status: { type: integer, enum: [1, 2] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200': { description: Files uploaded successfully }
+        '404': { description: No file found }
+
+  /api/v1/native/landers/insert_html_content:
+    post:
+      tags: [Native Landers]
+      summary: Persist scraped lander data across DB tables + ES
+      description: Body is a JSON ARRAY of insert objects. Updates native_ad_* tables + Elasticsearch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+      responses:
+        '200': { description: Destination Lander updated successfully }
+        '400': { description: Ad not found / validation failed }
+
   # ═══════════════════════════════════════════
   # YOUTUBE INSERTION
   # ═══════════════════════════════════════════
