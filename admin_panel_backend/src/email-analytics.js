@@ -42,6 +42,27 @@ function windowFrom(days) {
   d.setHours(0, 0, 0, 0);
   return { from: d, days: n };
 }
+// Resolve the createdAt match window for the overview aggregations. An explicit
+// [startDate, endDate] range (from the calendar / date-picker selection) takes
+// precedence; otherwise the relative `days` window is used. `key` is folded into
+// the cache key so a range view and a days view never collide in the cache.
+// Mirrors the date-handling already used by /log (date-only end → whole day).
+function resolveWindow(req) {
+  const { startDate, endDate } = req.query;
+  if (startDate || endDate) {
+    const createdAt = {};
+    if (startDate) createdAt.$gte = new Date(startDate);
+    if (endDate) {
+      const e = new Date(endDate);
+      if (!String(endDate).includes("T")) e.setHours(23, 59, 59, 999);
+      createdAt.$lte = e;
+    }
+    return { createdAt, key: `r:${startDate || ""}~${endDate || ""}` };
+  }
+  const days = parseInt(req.query.days, 10) || 30;
+  const { from } = windowFrom(days);
+  return { createdAt: { $gte: from }, key: `d:${days}`, days };
+}
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -61,11 +82,10 @@ function withRates(o) {
 /** GET /summary?mail_type=&days=30 — headline tiles + rates, per type + total. */
 async function summary(req, res) {
   try {
-    const days = parseInt(req.query.days, 10) || 30;
     const mt = TYPES.includes(req.query.mail_type) ? req.query.mail_type : "";
-    const body = await cached(`summary:${mt}:${days}`, async () => {
-      const { from } = windowFrom(days);
-      const match = { createdAt: { $gte: from } };
+    const w = resolveWindow(req);
+    const body = await cached(`summary:${mt}:${w.key}`, async () => {
+      const match = { createdAt: w.createdAt };
       if (mt) match.mail_type = mt;
 
       const rows = await db().collection(LOG).aggregate([
@@ -83,7 +103,7 @@ async function summary(req, res) {
       withRates(byType.competitorUpdate);
       withRates(byType.dataReport);
       withRates(total);
-      return { window: { days, from }, byType, total };
+      return { window: w, byType, total };
     }, String(req.query.fresh) === "true");
 
     return res.status(200).json({ statusCode: 200, body });
@@ -180,12 +200,11 @@ async function calendar(req, res) {
 /** GET /breakdown?mail_type=&days=30 — top failure/bounce/skip reasons ("kyun nahi gaya"). */
 async function breakdown(req, res) {
   try {
-    const days = parseInt(req.query.days, 10) || 30;
     const mt = TYPES.includes(req.query.mail_type) ? req.query.mail_type : "";
-    const body = await cached(`breakdown:${mt}:${days}`, async () => {
-      const { from } = windowFrom(days);
+    const w = resolveWindow(req);
+    const body = await cached(`breakdown:${mt}:${w.key}`, async () => {
       const match = {
-        createdAt: { $gte: from },
+        createdAt: w.createdAt,
         status: { $in: ["failed", "bounced", "skipped"] },
         failure_reason: { $ne: null },
       };
@@ -198,7 +217,7 @@ async function breakdown(req, res) {
         { $limit: 50 },
       ]).toArray();
 
-      return { days, reasons: rows.map((r) => ({ status: r._id.status, reason: r._id.reason, count: r.c })) };
+      return { window: w, reasons: rows.map((r) => ({ status: r._id.status, reason: r._id.reason, count: r.c })) };
     }, String(req.query.fresh) === "true");
     return res.status(200).json({ statusCode: 200, body });
   } catch (e) {

@@ -11,7 +11,11 @@ const DB_DATA = {
         accountFields: { name: 'u.name', id: 'u.facebook_id' },
         platformFilterField: 'a.platform',
         systemField: 'u.system_id',
-        activitiesTable: 'facebook_accounts_activities'
+        activitiesTable: 'facebook_accounts_activities',
+        // Geo enrichment (System-Info table). country on the user table; IP in
+        // the user_meta table keyed by the user PK.
+        countryField: 'current_country',
+        ipConfig: { metaTable: 'user_meta', metaKey: 'user_id', metaIpCol: 'ip' }
     },
     youtube: {
         createdAt: "created_date",
@@ -35,7 +39,10 @@ const DB_DATA = {
         metaJoin: { table: 'linkedin_ad_meta_data', on: 'a.id = m.linkedin_ad_id' },
         platformFilterField: 'm.platform',
         systemField: 'u.system_id',
-        activitiesTable: 'linkedin_account_activities'
+        activitiesTable: 'linkedin_account_activities',
+        // country on the user table; no IP column stored for linkedin.
+        countryField: 'current_country',
+        ipConfig: null
     },
     instagram: {
         createdAt: "created_date",
@@ -48,7 +55,10 @@ const DB_DATA = {
         metaJoin: { table: 'instagram_ad_meta_data', on: 'a.id = m.instagram_ad_id' },
         platformFilterField: 'm.platform',
         systemField: 'u.system_id',
-        activitiesTable: 'instagram_accounts_activities'
+        activitiesTable: 'instagram_accounts_activities',
+        // country on the user table; no IP column stored for instagram.
+        countryField: 'country',
+        ipConfig: null
     },
     gtext: {
         createdAt: "created_date",
@@ -72,7 +82,10 @@ const DB_DATA = {
         metaJoin: { table: 'reddit_ad_meta_data', on: 'a.id = m.reddit_ad_id' },
         platformFilterField: 'm.platform',
         systemField: 'a.System_id',
-        activitiesTable: 'reddit_accounts_activities'
+        activitiesTable: 'reddit_accounts_activities',
+        // country + IP both on the user table directly (reddit_user.ip_address).
+        countryField: 'current_country',
+        ipConfig: { col: 'ip_address' }
     },
     quora: {
         createdAt: "created_date",
@@ -84,7 +97,10 @@ const DB_DATA = {
         metaJoin: { table: 'quora_ad_meta_data', on: 'a.id = m.quora_ad_id' },
         platformFilterField: 'm.platform',
         systemField: 'a.System_id',
-        activitiesTable: 'quora_accounts_activities'
+        activitiesTable: 'quora_accounts_activities',
+        // country on the user table; IP in quora_user_meta keyed by the user PK.
+        countryField: 'current_country',
+        ipConfig: { metaTable: 'quora_user_meta', metaKey: 'user_id', metaIpCol: 'ip' }
     },
     gdn: {
         createdAt: "created_date",
@@ -469,4 +485,62 @@ async function getDomainMetrics(network, range) {
     }
 }
 
-module.exports = { adCountAcrossSelectedNetworks,getDomainMetrics };
+// Per-account Country + IP enrichment for the System-Info "Account Wise
+// Performance" table. Pulled SEPARATELY from the ad-count aggregation on
+// purpose: for some networks the IP lives in a 1-to-many *_user_meta table,
+// and LEFT JOINing that into the COUNT(*) ad query would multiply the ad
+// totals. Keeping it standalone leaves the counts untouched.
+//
+//   country → per-network user table (current_country / country)
+//   ip      → a column on the user table (reddit) or a meta table keyed by the
+//             user PK (facebook/quora). Networks with neither return country-only.
+//
+// Always GROUP BY the account id so exactly one row comes back per account
+// (user tables can hold duplicate rows for the same external account id).
+const fetchAccountGeo = async (network, accountIds) => {
+    const cfg = DB_DATA[network];
+    if (!cfg?.userTable || !cfg.countryField || !cfg.accountFields?.id) return new Map();
+
+    const ids = [...new Set((accountIds || []).map(String).filter(Boolean))];
+    if (!ids.length) return new Map();
+
+    const idCol = cfg.accountFields.id.replace(/^u\./, '');
+    const ph = ids.map(() => '?').join(',');
+    const ipCfg = cfg.ipConfig;
+
+    let sql;
+    if (ipCfg?.col) {
+        // IP is a column on the user table itself (e.g. reddit_user.ip_address).
+        sql = `SELECT \`${idCol}\` AS account_id, MAX(\`${cfg.countryField}\`) AS country, MAX(\`${ipCfg.col}\`) AS ip
+               FROM \`${cfg.userTable}\` WHERE \`${idCol}\` IN (${ph}) GROUP BY \`${idCol}\``;
+    } else if (ipCfg?.metaTable) {
+        // IP lives in a meta table keyed by the user PK (e.g. user_meta.ip).
+        sql = `SELECT u.\`${idCol}\` AS account_id, MAX(u.\`${cfg.countryField}\`) AS country, MAX(m.\`${ipCfg.metaIpCol}\`) AS ip
+               FROM \`${cfg.userTable}\` u
+               LEFT JOIN \`${ipCfg.metaTable}\` m ON m.\`${ipCfg.metaKey}\` = u.id
+               WHERE u.\`${idCol}\` IN (${ph}) GROUP BY u.\`${idCol}\``;
+    } else {
+        // No IP source for this network — country only.
+        sql = `SELECT \`${idCol}\` AS account_id, MAX(\`${cfg.countryField}\`) AS country, NULL AS ip
+               FROM \`${cfg.userTable}\` WHERE \`${idCol}\` IN (${ph}) GROUP BY \`${idCol}\``;
+    }
+
+    try {
+        const rows = await queryDatabase(cfg.db_id, cfg.index, sql, ids);
+        const clean = (v) => {
+            const s = (v ?? '').toString().trim();
+            // Some user rows carry literal junk like "undefined"/"null".
+            return s && !['undefined', 'null', 'n/a'].includes(s.toLowerCase()) ? s : null;
+        };
+        const map = new Map();
+        for (const r of rows) {
+            map.set(String(r.account_id), { country: clean(r.country), ip: clean(r.ip) });
+        }
+        return map;
+    } catch (err) {
+        console.error(`fetchAccountGeo(${network}) failed:`, err.message);
+        return new Map();
+    }
+};
+
+module.exports = { adCountAcrossSelectedNetworks,getDomainMetrics, fetchAccountGeo };

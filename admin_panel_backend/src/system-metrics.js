@@ -4,7 +4,7 @@ const dayjs = require('dayjs');
 const dayjsTz = require('dayjs/plugin/timezone');
 const dayjsUtc = require('dayjs/plugin/utc');
 const PROMETHEUS_URL = `${process.env.PROMETHEUS_URL}/api/v1/query_range`;
-const {adCountAcrossSelectedNetworks, getDomainMetrics} = require('../utils/db-query-metrics')
+const {adCountAcrossSelectedNetworks, getDomainMetrics, fetchAccountGeo} = require('../utils/db-query-metrics')
 const cache = require("../utils/cache")
 
 dayjs.extend(dayjsTz);
@@ -652,6 +652,34 @@ async function accountsMetrics(req, res) {
         alert
       };
     }).filter(item => item !== null);
+
+    // ── Country + IP enrichment (System-Info table columns) ──────────────────
+    // IP is sourced only from the DB (per the schema); country prefers the
+    // Prometheus `country` label (cleaner + consistent, e.g. "United States")
+    // and falls back to the DB user-table value for accounts not currently
+    // emitting the metric. Looked up per network, keyed by account_id. Failures
+    // are swallowed inside fetchAccountGeo so the table still renders without geo.
+    const promCountryMap = new Map();
+    accountsData.forEach(({ metric }) => {
+      const id = metric.account_id?.toString();
+      if (id && metric.country && !promCountryMap.has(id)) promCountryMap.set(id, metric.country);
+    });
+    const idsByNetwork = {};
+    for (const r of response) {
+      const net = (r.network || '').toLowerCase();
+      if (!net || !r.account_id) continue;
+      (idsByNetwork[net] ||= new Set()).add(String(r.account_id));
+    }
+    const geoEntries = await Promise.all(
+      Object.entries(idsByNetwork).map(async ([net, set]) => [net, await fetchAccountGeo(net, [...set])])
+    );
+    const geoByNetwork = Object.fromEntries(geoEntries);
+    for (const r of response) {
+      const net = (r.network || '').toLowerCase();
+      const g = geoByNetwork[net]?.get(String(r.account_id));
+      r.country = promCountryMap.get(String(r.account_id)) || g?.country || null;
+      r.ip_address = g?.ip || null;
+    }
 
     cache.set(cacheKey, response);
     return res.json(response);

@@ -69,10 +69,10 @@ describe("src/range-counts-analytics > rangeCountsFilter", () => {
     const [db_id2, , sql2, params2] = queryDatabaseSpy.mock.calls[1];
     expect(db_id1).toBe(0);
     expect(db_id2).toBe(0);
-    expect(sql1).toMatch(/COUNT\(id\) AS cnt FROM facebook_ad WHERE first_seen BETWEEN \? AND \?/);
-    expect(params1).toEqual(["2025-01-01 00:00:00", "2025-01-31 23:59:59"]);
-    expect(sql2).toMatch(/COUNT\(id\) AS cnt FROM facebook_ad WHERE last_seen >= \?$/);
-    expect(params2).toEqual(["2025-01-01 00:00:00"]);
+    expect(sql1).toMatch(/COUNT\(id\) AS cnt FROM facebook_ad WHERE first_seen >= \? AND first_seen < \?/);
+    expect(params1).toEqual(["2025-01-01 00:00:00", "2025-02-01 00:00:00"]);
+    expect(sql2).toMatch(/COUNT\(id\) AS cnt FROM facebook_ad WHERE last_seen >= \? AND last_seen < \?$/);
+    expect(params2).toEqual(["2025-01-01 00:00:00", "2025-02-01 00:00:00"]);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       code: 200,
@@ -91,7 +91,7 @@ describe("src/range-counts-analytics > rangeCountsFilter", () => {
     );
     const [, , sql2, params2] = queryDatabaseSpy.mock.calls[1];
     expect(sql2).toMatch(/WHERE last_seen >= \? AND first_seen < \?$/);
-    expect(params2).toEqual(["2025-01-01 00:00:00", "2025-01-31 23:59:59"]);
+    expect(params2).toEqual(["2025-01-01 00:00:00", "2025-02-01 00:00:00"]);
   });
 
   it("pinterest uses created_date as firstSeenCol", async () => {
@@ -103,7 +103,7 @@ describe("src/range-counts-analytics > rangeCountsFilter", () => {
       res,
     );
     const [, , sql1] = queryDatabaseSpy.mock.calls[0];
-    expect(sql1).toMatch(/WHERE created_date BETWEEN/);
+    expect(sql1).toMatch(/WHERE created_date >= \? AND created_date < \?/);
   });
 
   it("youtube uses created_date as firstSeenCol", async () => {
@@ -115,7 +115,7 @@ describe("src/range-counts-analytics > rangeCountsFilter", () => {
       res,
     );
     const [, , sql1] = queryDatabaseSpy.mock.calls[0];
-    expect(sql1).toMatch(/WHERE created_date BETWEEN/);
+    expect(sql1).toMatch(/WHERE created_date >= \? AND created_date < \?/);
   });
 
   it("rows null or [{cnt:null}] → counts default to 0", async () => {

@@ -330,12 +330,22 @@ function EmailDateRange({ initialStart, initialEnd, onApply, onClear, onOpenChan
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
-  // If the parent clears its range (outer Clear button nulls rangeStart/End),
-  // mirror that in the picker — the button label flips to "—— ——" without
-  // the user having to also open the picker and hit its Clear.
+  // Keep the picker mirrored to the parent's range so the two controls stay in
+  // sync both ways. Clearing it (outer/calendar Clear nulls rangeStart/End)
+  // flips the label to "—— ——"; a range set elsewhere (a calendar click)
+  // adopts that window so the button shows it too. Skipped while the popover is
+  // open so an in-progress edit is never yanked out from under the user.
   useEffect(() => {
-    if (!initialStart || !initialEnd) setHasApplied(false);
-  }, [initialStart, initialEnd]);
+    if (!initialStart || !initialEnd) { setHasApplied(false); return; }
+    if (open) return;
+    const next = [{ startDate: initialStart, endDate: initialEnd, key: "selection" }];
+    setCommitted(next);
+    setTemp(next);
+    setStartT(to12(initialStart, "AM"));
+    setEndT(to12(initialEnd, "PM"));
+    setShownDate(initialEnd);
+    setHasApplied(true);
+  }, [initialStart, initialEnd, open]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -555,7 +565,22 @@ const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // Renders the daily-volume window as a Mon–Sun calendar grid, each day cell
 // coloured by its delivery health. Driven purely by the existing `calendar`
 // state — no extra data fetching.
-function DeliveryCalendar({ calendar }) {
+//
+// Click-to-filter: a first click anchors a single-day selection; a second
+// click completes a range (order-independent); a further click starts over.
+// `onSelectRange(start, end)` receives Date objects stamped to the day's
+// 00:00 → 23:59:59.999 bounds, which the parent funnels into the SAME
+// rangeStart/rangeEnd that the date-picker uses — so the whole page (tiles,
+// reasons, send log) reflects the selection and the picker stays in sync.
+// Future days carry no sends and are non-interactive (parity with the picker).
+function DeliveryCalendar({ calendar, selStart, selEnd, onSelectRange }) {
+  // Pending range anchor (first click). Reset whenever the parent clears the
+  // selection so a stale anchor can't silently extend a fresh pick.
+  const [anchor, setAnchor] = useState(null);
+  useEffect(() => { if (!selStart || !selEnd) setAnchor(null); }, [selStart, selEnd]);
+
+  const todayYmd = localYmd(new Date());
+
   const weeks = useMemo(() => {
     const byDate = new Map(calendar.map((d) => [d.date, d]));
     // Show a single month — the one running today (e.g. June). Every date in
@@ -573,7 +598,7 @@ function DeliveryCalendar({ calendar }) {
       const week = [];
       for (let i = 0; i < 7; i++) {
         const ymd = localYmd(cur);
-        week.push({ ymd, day: cur.getDate(), inRange: cur >= start && cur <= end, data: byDate.get(ymd) || null });
+        week.push({ ymd, day: cur.getDate(), date: new Date(cur), inRange: cur >= start && cur <= end, data: byDate.get(ymd) || null });
         cur.setDate(cur.getDate() + 1);
       }
       out.push(week);
@@ -584,6 +609,26 @@ function DeliveryCalendar({ calendar }) {
   if (!calendar.length) {
     return <p className="text-gray-400 text-sm py-6 text-center">No sends in this window yet.</p>;
   }
+
+  const selS = selStart ? localYmd(selStart) : null;
+  const selE = selEnd ? localYmd(selEnd) : null;
+
+  const handleDayClick = (cell) => {
+    if (cell.ymd > todayYmd) return; // can't filter to a future day
+    const commit = (a, b) => {
+      const [lo, hi] = a.ymd <= b.ymd ? [a, b] : [b, a];
+      const s = new Date(lo.date); s.setHours(0, 0, 0, 0);
+      const e = new Date(hi.date); e.setHours(23, 59, 59, 999);
+      onSelectRange(s, e);
+    };
+    if (!anchor) {
+      setAnchor(cell);
+      commit(cell, cell); // single day until the next click
+    } else {
+      commit(anchor, cell);
+      setAnchor(null);
+    }
+  };
 
   const legendItem = (key, label) => (
     <span className="flex items-center gap-1.5">
@@ -602,20 +647,28 @@ function DeliveryCalendar({ calendar }) {
       <div className="space-y-1.5">
         {weeks.map((week, wi) => (
           <div key={wi} className="grid grid-cols-7 gap-1.5">
-            {week.map((cell) =>
-              !cell.inRange ? (
-                <div key={cell.ymd} className="h-11 rounded-lg" />
-              ) : (
+            {week.map((cell) => {
+              if (!cell.inRange) return <div key={cell.ymd} className="h-11 rounded-lg" />;
+              const isFuture = cell.ymd > todayYmd;
+              const inSel = selS && selE && cell.ymd >= selS && cell.ymd <= selE;
+              const isEdge = cell.ymd === selS || cell.ymd === selE;
+              const selStyle = isEdge
+                ? { boxShadow: "inset 0 0 0 2px #1540a4" }
+                : inSel
+                ? { boxShadow: "inset 0 0 0 1px rgba(21,64,164,0.45)" }
+                : null;
+              return (
                 <div
                   key={cell.ymd}
-                  title={`${cell.ymd}\nTotal ${cell.data?.total || 0} · delivered ${cell.data?.delivered || 0} · bounced ${cell.data?.bounced || 0} · failed ${cell.data?.failed || 0} · skipped ${cell.data?.skipped || 0} · spam ${cell.data?.spam || 0}`}
-                  className="h-11 rounded-lg border flex items-center justify-center text-[13px] font-semibold cursor-default"
-                  style={DAY_STYLE[dayStatus(cell.data)]}
+                  onClick={isFuture ? undefined : () => handleDayClick(cell)}
+                  title={`${cell.ymd}\nTotal ${cell.data?.total || 0} · delivered ${cell.data?.delivered || 0} · bounced ${cell.data?.bounced || 0} · failed ${cell.data?.failed || 0} · skipped ${cell.data?.skipped || 0} · spam ${cell.data?.spam || 0}${isFuture ? "" : "\n\nClick to filter the page by this day · click again for a range"}`}
+                  className={`h-11 rounded-lg border flex items-center justify-center text-[13px] font-semibold transition-shadow ${isFuture ? "cursor-default" : "cursor-pointer hover:brightness-95"}`}
+                  style={{ ...DAY_STYLE[dayStatus(cell.data)], ...selStyle }}
                 >
                   {cell.day}
                 </div>
-              )
-            )}
+              );
+            })}
           </div>
         ))}
       </div>
@@ -863,10 +916,18 @@ const EmailDetails = () => {
     try {
       // fresh=true bypasses the backend cache (user-initiated loads want live data).
       const qs = `?mail_type=${mailType}&days=${days}${fresh ? "&fresh=true" : ""}`;
+      // When a date range is selected (calendar click or the date picker), the
+      // summary tiles + failure reasons reflect THAT window. `+` in the
+      // IST-tagged string must be encoded or the server reads it as a space.
+      const rangeQs = (dateFrom || dateTo)
+        ? `${dateFrom ? `&startDate=${encodeURIComponent(dateFrom)}` : ""}${dateTo ? `&endDate=${encodeURIComponent(dateTo)}` : ""}`
+        : "";
+      // The calendar grid itself stays on the days window — it's the stable
+      // surface the user clicks to build the selection, so we never narrow it.
       const [s, c, b] = await Promise.all([
-        axios.get(`${API}/summary${qs}`),
+        axios.get(`${API}/summary${qs}${rangeQs}`),
         axios.get(`${API}/calendar${qs}`),
-        axios.get(`${API}/breakdown${qs}`),
+        axios.get(`${API}/breakdown${qs}${rangeQs}`),
       ]);
       setSummary(s.data?.body || null);
       setCalendar(c.data?.body?.daysData || []);
@@ -876,7 +937,7 @@ const EmailDetails = () => {
     } finally {
       setOverviewLoading(false);
     }
-  }, [mailType, days]);
+  }, [mailType, days, dateFrom, dateTo]);
 
   const fetchRunStatus = useCallback(async () => {
     try {
@@ -1091,10 +1152,31 @@ const EmailDetails = () => {
       {/* Heatmap + reasons */}
       <div className="px-6 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-white rounded-xl border border-gray-100 p-4">
-          <p className="text-[#1f296a] font-semibold text-[15px] mb-3">
-            Delivery Calender — {new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })} (All Users)
-          </p>
-          <DeliveryCalendar calendar={calendar} />
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <p className="text-[#1f296a] font-semibold text-[15px]">
+              Delivery Calender — {new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })} (All Users)
+            </p>
+            {(rangeStart && rangeEnd) && (
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] font-medium text-[#1540a4] bg-[#eef2fb] px-2 py-1 rounded-md whitespace-nowrap">
+                  {fmtBtnDate(rangeStart)}{fmtBtnDate(rangeStart) !== fmtBtnDate(rangeEnd) ? ` – ${fmtBtnDate(rangeEnd)}` : ""}
+                </span>
+                <button
+                  onClick={() => { setRangeStart(null); setRangeEnd(null); }}
+                  className="flex items-center gap-1 text-[11px] font-medium text-gray-500 border border-gray-200 rounded-md px-2 py-1 hover:bg-gray-50"
+                  title="Clear the date selection and reset the page"
+                >
+                  <FiX className="w-3 h-3" /> Clear
+                </button>
+              </div>
+            )}
+          </div>
+          <DeliveryCalendar
+            calendar={calendar}
+            selStart={rangeStart}
+            selEnd={rangeEnd}
+            onSelectRange={(s, e) => { setRangeStart(s); setRangeEnd(e); }}
+          />
         </div>
 
         <div className="bg-white rounded-xl border border-gray-100 p-4 overflow-y-auto">

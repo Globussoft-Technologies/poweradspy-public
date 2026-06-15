@@ -517,6 +517,39 @@ const {loadingSystemInfo,SystemInfo,SystemInsitesAdsCount,loadingStatusSystemInf
       )
     },
     {
+      accessorKey: "country",
+      enableSorting: true,
+      header: ({ column }) => (
+        <div className="flex items-center gap-1">
+          <span>Country</span>
+          <div className="flex flex-col">
+            <FaAngleUp
+              className={`h-5 w-6 cursor-pointer mb-[-3px] ${column.getIsSorted() === "asc" ? "text-[#1f296a]" : "text-gray-400"}`}
+              onClick={() => column?.toggleSorting(false)}
+            />
+            <FaAngleDown
+              className={`h-5 w-6 cursor-pointer mt-[-3px] ${column.getIsSorted() === "desc" ? "text-[#1f296a]" : "text-gray-400"}`}
+              onClick={() => column?.toggleSorting(true)}
+            />
+          </div>
+        </div>
+      ),
+      cell: ({ row }) => (
+        <span className="whitespace-nowrap">{row?.original?.country || "---"}</span>
+      ),
+    },
+    // IP Address column — hidden until a populated data source is wired up.
+    // The backend already returns `ip_address` per row (currently null for the
+    // enabled networks); re-enable this block once real IPs are available.
+    // {
+    //   accessorKey: "ip_address",
+    //   enableSorting: false,
+    //   header: "IP Address",
+    //   cell: ({ row }) => (
+    //     <span className="tabular-nums whitespace-nowrap">{row?.original?.ip_address || "---"}</span>
+    //   ),
+    // },
+    {
       header: "Performance",
       accessorKey: "performance",
       cell: ({ row }) => <SparklineChart data={row?.original?.performance} />,

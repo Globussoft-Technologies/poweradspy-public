@@ -284,6 +284,54 @@ describe("services/google/controllers/getTopAdsController > result paths", () =>
     expect(out.data[2].id).toBe("9");
   });
 
+  it("SQL overlay: esHit missing _source → keys off _id, src defaults to {}", async () => {
+    const search = vi.fn(async () => ({
+      hits: { hits: [{ _id: "1" }], total: 1 }, // no _source at all
+    }));
+    const sqlQuery = vi.fn(async () => [{ ad_id: 1 }]); // matches String(_id)
+    const db = { elastic: { indexName: "idx", search }, sql: { query: sqlQuery } };
+    const out = await getTopAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.code).toBe(200);
+    expect(out.data[0]).toEqual({ ad_id: 1 }); // src {} → no overlay applied
+  });
+
+  it("SQL throw: hit missing _source → ES fallback defaults src to {}", async () => {
+    const search = vi.fn(async () => ({
+      hits: { hits: [{ _id: "5" }], total: 1 }, // no _source
+    }));
+    const sqlQuery = vi.fn(async () => { throw new Error("sql-down"); });
+    const db = { elastic: { indexName: "idx", search }, sql: { query: sqlQuery } };
+    const out = await getTopAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.code).toBe(200);
+    expect(out.data[0].id).toBe("5");
+    expect(out.data[0].ad_id).toBe("5");
+    expect(fakeLogger.warn).toHaveBeenCalled();
+  });
+
+  it("no db.sql: hit missing _source → src defaults to {}, uses _id", async () => {
+    const search = vi.fn(async () => ({
+      hits: { hits: [{ _id: "42" }], total: 1 }, // no _source
+    }));
+    const db = { elastic: { indexName: "idx", search } };
+    const out = await getTopAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].id).toBe("42");
+    expect(out.data[0].ad_id).toBe("42");
+  });
+
+  it("hits.hits missing → defaults to [] (No ads found)", async () => {
+    const search = vi.fn(async () => ({ hits: { total: 0 } })); // no .hits array
+    const db = { elastic: { indexName: "idx", search } };
+    const out = await getTopAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out).toEqual({ code: 200, data: [], total: 0, message: "No ads found" });
+  });
+
+  it("db.elastic without indexName → lander index falls back to default", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [], total: 0 } }));
+    const db = { elastic: { search } }; // no indexName → '' falls back to 'google_ads_data'
+    const out = await getTopAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.code).toBe(200);
+  });
+
   it("500 on ES throw", async () => {
     const search = vi.fn(async () => { throw new Error("es-down"); });
     const db = { elastic: { indexName: "idx", search } };

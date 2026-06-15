@@ -70,6 +70,21 @@ const handleFBSystemInfo = (e) => {
   e.preventDefault()
   navigate('/pas/system-info')
 }
+
+// Active-state helpers for sidebar nav highlighting.
+// `exact` matches the path exactly (used for index routes like /adsgpt that
+// are a prefix of their own children); otherwise we match by prefix so nested
+// routes (e.g. /pas/crawler-insights/youtube) keep their parent highlighted.
+const isActive = (path, exact = false) =>
+  exact ? location.pathname === path : location.pathname.startsWith(path);
+
+const navItemClass = (active) =>
+  `flex gap-[16px] items-center cursor-pointer rounded-[10px] px-[12px] py-[10px] -ml-[12px] mr-[16px] transition-colors ${
+    active ? "bg-[#e8ebff]" : "hover:bg-[#f1f3ff]"
+  }`;
+
+const navLabelClass = (active) =>
+  `font-[400] text-[18px] ${active ? "text-[#3F51B5]" : "text-[#1f296a]"}`;
   return (
     <>
       {sidebarOpen && (
@@ -119,41 +134,41 @@ const handleFBSystemInfo = (e) => {
           </div>
 
           <div className="pl-[28px] w-full">
-            <ul className="flex flex-col gap-4">
+            <ul className="flex flex-col gap-1">
               {isOn && (
                 <>
-                   <Link> 
-                   <li className="flex gap-[16px] items-center cursor-pointer" onClick={handleFBSystemInfo}>
+                   <Link className="block">
+                   <li className={navItemClass(isActive("/pas/system-info"))} onClick={handleFBSystemInfo}>
                      <img
                        src={systeminfo}
                        alt=""
                        className="w-[22px] h-[22px]"
                      />
-                     <span className="font-[400] text-[18px] text-[#1f296a]">
+                     <span className={navLabelClass(isActive("/pas/system-info"))}>
                      System Info
                      </span>
-                   </li> 
-                  </Link> 
-                <Link to={"/pas/crawler-insights"}>
-                  <li className="flex gap-[16px] items-center">
+                   </li>
+                  </Link>
+                <Link to={"/pas/crawler-insights"} className="block">
+                  <li className={navItemClass(isActive("/pas/crawler-insights"))}>
                     <img
                       src="https://i.ibb.co/99W27LGb/vaadin-pie-bar-chart.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/pas/crawler-insights"))}>
                       Crawler Insights
                     </span>
                   </li>
                 </Link>
-                <Link to={"/pas/search-intelligence"}>
-                  <li className={`flex gap-[16px] items-center ${location.pathname === "/pas/search-intelligence" ? "opacity-100" : "opacity-80 hover:opacity-100"}`}>
+                <Link to={"/pas/search-intelligence"} className="block">
+                  <li className={navItemClass(isActive("/pas/search-intelligence"))}>
                     <img
                       src="https://i.ibb.co/99W27LGb/vaadin-pie-bar-chart.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/pas/search-intelligence"))}>
                       Intelligence
                     </span>
                   </li>
@@ -186,42 +201,42 @@ const handleFBSystemInfo = (e) => {
                  </>
               )}
                 {isOn && (
-                <Link to={"/pas/competitor-details"}>
-                  <li className="flex gap-[16px] items-center">
+                <Link to={"/pas/competitor-details"} className="block">
+                  <li className={navItemClass(isActive("/pas/competitor-details"))}>
                     <img
                       src="https://i.ibb.co/hJRQHK70/Vector.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/pas/competitor-details"))}>
                      Competitors Details
                     </span>
                   </li>
                 </Link>
               )}
               {isOn && (
-                <Link to={"/pas/daily-keyword-details"}>
-                  <li className="flex gap-[16px] items-center">
+                <Link to={"/pas/daily-keyword-details"} className="block">
+                  <li className={navItemClass(isActive("/pas/daily-keyword-details"))}>
                     <img
                       src="https://i.ibb.co/hJRQHK70/Vector.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/pas/daily-keyword-details"))}>
                      Daily Keywords Details
                     </span>
                   </li>
                 </Link>
               )}
               {isOn && (
-                <Link to={"/pas/email-details"}>
-                  <li className="flex gap-[16px] items-center">
+                <Link to={"/pas/email-details"} className="block">
+                  <li className={navItemClass(isActive("/pas/email-details"))}>
                     <img
                       src="https://i.ibb.co/hJRQHK70/Vector.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/pas/email-details"))}>
                      Email Details
                     </span>
                   </li>
@@ -229,7 +244,7 @@ const handleFBSystemInfo = (e) => {
               )}
               {isOn && (
                 <li
-                  className="flex gap-[16px] items-center cursor-pointer"
+                  className={navItemClass(isActive("/pas/competitor-tracker"))}
                   onClick={() =>
                     navigate("/pas/competitor-tracker", {
                       state: { resetTracker: Date.now() },
@@ -241,48 +256,48 @@ const handleFBSystemInfo = (e) => {
                     alt=""
                     className="w-[22px] h-[22px]"
                   />
-                  <span className="font-[400] text-[18px] text-[#1f296a]">
+                  <span className={navLabelClass(isActive("/pas/competitor-tracker"))}>
                    Competitor Tracker
                   </span>
                 </li>
               )}
               {!isOn && (
                 <>
-                <Link to={"/adsgpt/generated-media"}>
-                  <li className="flex gap-[16px] items-center mt-4">
+                <Link to={"/adsgpt/generated-media"} className="block">
+                  <li className={navItemClass(isActive("/adsgpt/generated-media"))}>
                     <img
                       src="https://i.ibb.co/hJRQHK70/Vector.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                       style={{ filter: "hue-rotate(180deg)" }}
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/adsgpt/generated-media"))}>
                      Generated Media
                     </span>
                   </li>
                 </Link>
-                <Link to={"/adsgpt"}>
-                  <li className="flex gap-[16px] items-center mt-4">
+                <Link to={"/adsgpt"} className="block">
+                  <li className={navItemClass(isActive("/adsgpt", true))}>
                     <img
                       src="https://i.ibb.co/hJRQHK70/Vector.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                       style={{ filter: "hue-rotate(180deg)" }}
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/adsgpt", true))}>
                      Interaction Data
                     </span>
                   </li>
                 </Link>
-                <Link to={"/adsgpt/calculation"}>
-                  <li className="flex gap-[16px] items-center mt-4">
+                <Link to={"/adsgpt/calculation"} className="block">
+                  <li className={navItemClass(isActive("/adsgpt/calculation"))}>
                     <img
                       src="https://i.ibb.co/hJRQHK70/Vector.png"
                       alt=""
                       className="w-[22px] h-[22px]"
                       style={{ filter: "hue-rotate(180deg)" }}
                     />
-                    <span className="font-[400] text-[18px] text-[#1f296a]">
+                    <span className={navLabelClass(isActive("/adsgpt/calculation"))}>
                      Calculation Tool
                     </span>
                   </li>
