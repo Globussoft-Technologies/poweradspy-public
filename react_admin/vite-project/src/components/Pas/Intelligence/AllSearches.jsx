@@ -434,105 +434,120 @@ const SummaryTag = ({ text, bg, color, border }) => (
 );
 
 const SummaryBar = ({ summaryStats }) => {
-  const [filterTypesExpanded, setFilterTypesExpanded] = useState(false);
-
   const platforms       = (summaryStats?.platforms ?? []).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
   const pagesVisited    = (summaryStats?.pages_visited ?? []);
-  const sortingTypes    = (summaryStats?.sort_by ?? []);
   const searchCounts    = summaryStats?.search_counts ?? {};
   const actionCounts    = summaryStats?.action_counts ?? {};
-  const VISIBLE_FILTERS = 5;
 
-  const SummaryCell = ({ icon, label, children }) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px 16px", borderRight: "1px solid #e5e7eb" }}>
-      <span style={{ fontSize: "10px", fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{icon} {label}</span>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "flex-start" }}>{children}</div>
+  const SummarySection = ({ icon, label, children }) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "16px", borderRight: "1px solid #e5e7eb" }}>
+      <span style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>{icon} {label}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>{children}</div>
     </div>
   );
 
   return (
     <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", overflow: "hidden" }}>
-        <SummaryCell icon="📡" label="Platforms Used">
-          {platforms.length > 0
-            ? platforms.map((p) => <SummaryTag key={p} text={p} bg="#e0e7ff" color="#4338ca" border="#c7d2fe" />)
-            : <span style={{ fontSize: "12px", color: "#9ca3af" }}>—</span>}
-        </SummaryCell>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", overflow: "hidden" }}>
 
-        <SummaryCell icon="📄" label="Pages Visited">
-          {pagesVisited.length > 0
-            ? pagesVisited.map((p) => <SummaryTag key={p.name} text={`${p.name} (${p.count})`} bg="#f0fdf4" color="#15803d" border="#bbf7d0" />)
-            : <span style={{ fontSize: "12px", color: "#9ca3af" }}>—</span>}
-        </SummaryCell>
-      </div>
+        {/* Section 1: Platforms Used */}
+        <SummarySection icon="📡" label="Platforms Used">
+          {platforms.length > 0 ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+              {platforms.map((p) => (
+                <span key={p} style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", padding: "4px 10px", borderRadius: "4px", fontSize: "12px", fontWeight: 500, border: "1px solid #c7d2fe" }}>
+                  {p}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span style={{ fontSize: "12px", color: "#9ca3af" }}>—</span>
+          )}
+        </SummarySection>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderTop: "1px solid #e5e7eb", overflow: "hidden" }}>
-        <SummaryCell icon="🔑" label="Search Counts">
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "4px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-              <span style={{ color: "#6b7280" }}>Keywords:</span>
-              <span style={{ fontWeight: 600, color: "#111827" }}>{typeof searchCounts.keywords === 'object' ? `${searchCounts.keywords?.unique ?? 0} / ${searchCounts.keywords?.total ?? 0}` : (searchCounts.keywords ?? 0)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-              <span style={{ color: "#6b7280" }}>Advertisers:</span>
-              <span style={{ fontWeight: 600, color: "#111827" }}>{typeof searchCounts.advertisers === 'object' ? `${searchCounts.advertisers?.unique ?? 0} / ${searchCounts.advertisers?.total ?? 0}` : (searchCounts.advertisers ?? 0)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-              <span style={{ color: "#6b7280" }}>Domains:</span>
-              <span style={{ fontWeight: 600, color: "#111827" }}>{typeof searchCounts.domains === 'object' ? `${searchCounts.domains?.unique ?? 0} / ${searchCounts.domains?.total ?? 0}` : (searchCounts.domains ?? 0)}</span>
-            </div>
-          </div>
-        </SummaryCell>
-
-        <SummaryCell icon="⇅" label="Sorting Count">
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "6px" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-              <span style={{ fontSize: "20px", fontWeight: 700, color: "#f59e0b", lineHeight: 1 }}>{actionCounts.sorting_total ?? 0}</span>
-              <span style={{ fontSize: "11px", color: "#6b7280" }}>doc{(actionCounts.sorting_total ?? 0) !== 1 ? "s" : ""}</span>
-            </div>
-            {(actionCounts.sorting_breakdown ?? [])
-              .slice(0, 3)
-              .map((s) => (
-                <div key={s.name} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                  <span style={{ color: "#6b7280" }}>{s.name}:</span>
-                  <span style={{ fontWeight: 600, color: "#111827" }}>{s.count}</span>
+        {/* Section 2: Pages Visited */}
+        <SummarySection icon="📄" label="Pages Visited">
+          {pagesVisited.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {pagesVisited.map((p) => (
+                <div key={p.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
+                  <span style={{ color: "#6b7280" }}>{p.name}</span>
+                  <span style={{ fontWeight: 600, color: "#111827", background: "#f0fdf4", padding: "2px 8px", borderRadius: "4px" }}>({p.count})</span>
                 </div>
               ))}
-          </div>
-        </SummaryCell>
-
-        <SummaryCell icon="📋" label="Other Searches Count">
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "6px" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-              <span style={{ fontSize: "20px", fontWeight: 700, color: "#d97706", lineHeight: 1 }}>{actionCounts.other_actions_total ?? 0}</span>
-              <span style={{ fontSize: "11px", color: "#6b7280" }}>doc{(actionCounts.other_actions_total ?? 0) !== 1 ? "s" : ""}</span>
             </div>
-            {Object.entries(actionCounts.other_actions_breakdown ?? {})
-              .filter(([_, count]) => count > 0)
-              .slice(0, 2)
-              .map(([key, count]) => (
-                <div key={key} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                  <span style={{ color: "#6b7280" }}>{key.replace(/_/g, ' ')}:</span>
-                  <span style={{ fontWeight: 600, color: "#111827" }}>{count}</span>
-                </div>
-              ))}
-          </div>
-        </SummaryCell>
+          ) : (
+            <span style={{ fontSize: "12px", color: "#9ca3af" }}>—</span>
+          )}
+        </SummarySection>
 
-        <SummaryCell icon="🔍" label="Filters Count">
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "6px" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-              <span style={{ fontSize: "20px", fontWeight: 700, color: "#4338ca", lineHeight: 1 }}>{actionCounts.filters_total ?? 0}</span>
-              <span style={{ fontSize: "11px", color: "#6b7280" }}>doc{(actionCounts.filters_total ?? 0) !== 1 ? "s" : ""}</span>
-            </div>
-            {(actionCounts.filters_breakdown ?? []).slice(0, 2).map((f) => (
-              <div key={f.name} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                <span style={{ color: "#6b7280" }}>{f.name}:</span>
-                <span style={{ fontWeight: 600, color: "#111827" }}>{f.count}</span>
+        {/* Section 3: Searches */}
+        <SummarySection icon="🔑" label="Searches">
+          <div style={{ display: "flex", gap: "20px", alignItems: "flex-start", width: "100%" }}>
+
+            {/* Searched Keywords */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: 1 }}>
+              <div style={{ fontSize: "10px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>Searched Keywords</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "11px", color: "#6b7280" }}>Unique:</span>
+                <span style={{ fontSize: "16px", fontWeight: 700, color: "#4338ca" }}>{typeof searchCounts.keywords === 'object' ? (searchCounts.keywords?.unique ?? 0) : (searchCounts.keywords ?? 0)}</span>
               </div>
-            ))}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "11px", color: "#6b7280" }}>Total:</span>
+                <span style={{ fontSize: "16px", fontWeight: 700, color: "#6b7280" }}>{typeof searchCounts.keywords === 'object' ? (searchCounts.keywords?.total ?? 0) : (searchCounts.keywords ?? 0)}</span>
+              </div>
+            </div>
+
+            <div style={{ width: "1px", background: "#f3f4f6", height: "100%" }} />
+
+            {/* Searched Domains */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: 1 }}>
+              <div style={{ fontSize: "10px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>Searched Domains</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "11px", color: "#6b7280" }}>Unique:</span>
+                <span style={{ fontSize: "16px", fontWeight: 700, color: "#059669" }}>{typeof searchCounts.domains === 'object' ? (searchCounts.domains?.unique ?? 0) : (searchCounts.domains ?? 0)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "11px", color: "#6b7280" }}>Total:</span>
+                <span style={{ fontSize: "16px", fontWeight: 700, color: "#6b7280" }}>{typeof searchCounts.domains === 'object' ? (searchCounts.domains?.total ?? 0) : (searchCounts.domains ?? 0)}</span>
+              </div>
+            </div>
+
+            <div style={{ width: "1px", background: "#f3f4f6", height: "100%" }} />
+
+            {/* Searched Advertisers */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: 1 }}>
+              <div style={{ fontSize: "10px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>Searched Advertisers</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "11px", color: "#6b7280" }}>Unique:</span>
+                <span style={{ fontSize: "16px", fontWeight: 700, color: "#d97706" }}>{typeof searchCounts.advertisers === 'object' ? (searchCounts.advertisers?.unique ?? 0) : (searchCounts.advertisers ?? 0)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "11px", color: "#6b7280" }}>Total:</span>
+                <span style={{ fontSize: "16px", fontWeight: 700, color: "#6b7280" }}>{typeof searchCounts.advertisers === 'object' ? (searchCounts.advertisers?.total ?? 0) : (searchCounts.advertisers ?? 0)}</span>
+              </div>
+            </div>
+
           </div>
-        </SummaryCell>
+        </SummarySection>
+
+        {/* Section 4: Activity Counts */}
+        <SummarySection icon="📊" label="Activity Counts">
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "11px", color: "#6b7280" }}>Sorting:</span>
+              <span style={{ fontSize: "18px", fontWeight: 700, color: "#f59e0b" }}>{actionCounts.sorting_total ?? 0}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "11px", color: "#6b7280" }}>Other Actions:</span>
+              <span style={{ fontSize: "18px", fontWeight: 700, color: "#d97706" }}>{actionCounts.other_actions_total ?? 0}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "11px", color: "#6b7280" }}>Filters:</span>
+              <span style={{ fontSize: "18px", fontWeight: 700, color: "#4338ca" }}>{actionCounts.filters_total ?? 0}</span>
+            </div>
+          </div>
+        </SummarySection>
       </div>
     </div>
   );

@@ -72,7 +72,7 @@ function transformAdCountry(raw) {
   let hasAll = false;
   for (const item of raw) {
     const nameUpper = (item.country || '').toUpperCase();
-    const iso = item.iso || NAME_TO_ISO[nameUpper] || '';
+    let iso = item.iso || NAME_TO_ISO[nameUpper] || '';
     const name = item.country || '';
 
     if (!iso && nameUpper === 'ALL') {
@@ -83,9 +83,10 @@ function transformAdCountry(raw) {
       continue;
     }
 
+    // If we found an ISO code, use it as the id (deduplicates SG vs Singapore, etc)
     if (iso) {
       if (!map[iso]) {
-        map[iso] = { id: iso, name: name || COUNTRY_NAMES[iso] || iso, count: 0 };
+        map[iso] = { id: iso, name: COUNTRY_NAMES[iso] || name || iso, count: 0 };
         results.push(map[iso]);
       }
       map[iso].count += 1;

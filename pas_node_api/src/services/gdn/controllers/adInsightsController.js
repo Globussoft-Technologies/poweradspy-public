@@ -44,10 +44,46 @@ async function getGdnAdCountry(req, db, logger) {
         return { code: 401, message: 'Something Went Wrong' };
       }
 
-      const data = rows.map(row => ({
-        country: row.country ? row.country.replace(/\b\w/g, c => c.toUpperCase()) : row.country,
-        iso:     fixCountryIso(row.country, row.iso),
-      }));
+      // Batch lookup all countries to resolve ISO codes
+      const allCountryNames = rows.map(row => row.country).filter(Boolean);
+      const isoMap = await batchCountryLookup(db, allCountryNames);
+
+      const dedupMap = new Map(); // Deduplicate by ISO code or country name
+      const data = [];
+
+      for (const row of rows) {
+        let country = row.country || '';
+        let iso = fixCountryIso(country, row.iso);
+
+        // If we have a lookup, use the full country name
+        const lookup = isoMap.get(country);
+        if (lookup) {
+          country = lookup.country || country;
+          iso = lookup.iso || iso;
+        }
+
+        // If country is just an ISO code (like "SG"), try to look it up
+        if (!country || country.length === 2) {
+          const isoLookup = isoMap.get(country);
+          if (isoLookup) {
+            country = isoLookup.country;
+            iso = isoLookup.iso;
+          }
+        }
+
+        if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
+
+        // Deduplicate by ISO code or country name
+        const dedupKey = iso || country.toUpperCase();
+        if (dedupMap.has(dedupKey)) {
+          // Already have this country, skip duplicate
+          continue;
+        }
+
+        const entry = { country: country || row.country, iso };
+        dedupMap.set(dedupKey, entry);
+        data.push(entry);
+      }
 
       return { code: 200, message: 'gdn country data fetched.', data };
     } catch (err) {
@@ -77,10 +113,32 @@ async function getGdnAdCountry(req, db, logger) {
     if (!countryData) return { code: 401, message: 'Something Went Wrong' };
     if (!Array.isArray(countryData)) countryData = [countryData];
 
-    const data = countryData.map(name => ({
-      country: name ? name.replace(/\b\w/g, c => c.toUpperCase()) : name,
-      iso:     fixCountryIso(name, null),
-    }));
+    // Batch lookup all countries
+    const isoMap = await batchCountryLookup(db, countryData);
+    const dedupMap = new Map();
+    const data = [];
+
+    for (const name of countryData) {
+      if (!name) continue;
+
+      let country = name;
+      let iso = fixCountryIso(name, null);
+
+      const lookup = isoMap.get(name);
+      if (lookup) {
+        country = lookup.country || country;
+        iso = lookup.iso || iso;
+      }
+
+      if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
+
+      const dedupKey = iso || country.toUpperCase();
+      if (dedupMap.has(dedupKey)) continue;
+
+      const entry = { country, iso };
+      dedupMap.set(dedupKey, entry);
+      data.push(entry);
+    }
 
     return { code: 200, message: 'gdn country data fetched.', data };
   } catch (err) {
@@ -214,6 +272,7 @@ async function aggregateCountryData(db, hits) {
   const isoMap = await batchCountryLookup(db, allCountryNames);
 
   const result = [];
+  const dedupMap = new Map(); // Deduplicate by ISO code to prevent duplicates like SG/SINGAPORE
   const countryEntries = Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size);
 
   for (const [name, idSet] of countryEntries) {
@@ -225,7 +284,23 @@ async function aggregateCountryData(db, hits) {
     iso = fixCountryIso(country, iso);
     if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
 
-    result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });
+    // Create dedup key: prefer ISO code, fallback to normalized country name
+    const dedupKey = iso || country.toUpperCase();
+
+    // If we already have this entry (by ISO or country name), merge the ad IDs
+    if (dedupMap.has(dedupKey)) {
+      const existing = dedupMap.get(dedupKey);
+      existing.ad_ids.push(...adIds);
+      existing.ad_count = existing.ad_ids.length;
+      // Update country/iso with the lookup version if this has better data
+      if (iso && !existing.iso) existing.iso = iso;
+      if (country && !existing.country) existing.country = country;
+      continue;
+    }
+
+    const entry = { country, iso, ad_ids: adIds, ad_count: adIds.length };
+    dedupMap.set(dedupKey, entry);
+    result.push(entry);
   }
   return result;
 }
@@ -235,13 +310,19 @@ async function batchCountryLookup(db, names) {
   const uniqueNames = [...new Set(names)];
   const placeholders = uniqueNames.map(() => '?').join(',');
   try {
+    // Query both nicename and iso columns to handle cases where input is ISO code (e.g., "SG")
     const rows = await db.sql.query(
-      `SELECT nicename, name AS country, iso FROM country_data WHERE nicename IN (${placeholders})`,
-      uniqueNames
+      `SELECT nicename, name AS country, iso FROM country_data
+       WHERE nicename IN (${placeholders}) OR iso IN (${placeholders})`,
+      [...uniqueNames, ...uniqueNames]
     );
     const map = new Map();
     if (rows) {
-      for (const row of rows) map.set(row.nicename, { country: row.country, iso: row.iso });
+      for (const row of rows) {
+        // Map both nicename and iso to the full record so "Singapore" and "SG" both resolve
+        map.set(row.nicename, { country: row.country, iso: row.iso });
+        if (row.iso) map.set(row.iso, { country: row.country, iso: row.iso });
+      }
     }
     return map;
   } catch {

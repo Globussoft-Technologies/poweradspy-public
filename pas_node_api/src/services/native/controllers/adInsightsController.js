@@ -35,11 +35,38 @@ async function getNativeAdCountry(req, db, logger) {
     const rows = await db.sql.query(COUNTRY_SQL, [parseInt(p.native_ad_id, 10)]);
     if (!rows || rows.length === 0) return { code: 400, message: 'No data found.' };
 
-    const resArray = rows.map(row => ({
-      country: row.country ? row.country.replace(/\b\w/g, c => c.toUpperCase()) : row.country,
-      iso: fixCountryIso(row.country, row.iso),
-      count: row.count,
-    }));
+    // Collect all country names for batch lookup
+    const allCountryNames = rows.map(row => row.country).filter(Boolean);
+    const isoMap = await batchCountryLookup(db, allCountryNames);
+
+    const resArray = rows.map(row => {
+      let country = row.country || '';
+      let iso = fixCountryIso(country, row.iso);
+
+      // If we have an ISO lookup, use the full country name from there
+      const lookup = isoMap.get(country);
+      if (lookup) {
+        country = lookup.country || country;
+        iso = lookup.iso || iso;
+      }
+
+      // If country is just an ISO code (like "DE"), try to look it up
+      if (!country || country.length === 2) {
+        const isoLookup = isoMap.get(country);
+        if (isoLookup) {
+          country = isoLookup.country;
+          iso = isoLookup.iso;
+        }
+      }
+
+      if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
+
+      return {
+        country: country || row.country,
+        iso,
+        count: row.count,
+      };
+    });
 
     return { code: 200, message: 'Native country data fetched.', data: resArray };
   } catch (err) {
@@ -273,6 +300,7 @@ async function aggregateCountryData(db, hits) {
   const isoMap = await batchCountryLookup(db, allCountryNames);
 
   const result = [];
+  const dedupMap = new Map(); // Deduplicate by ISO code first, then by normalized country name
   const countryEntries = Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size);
 
   for (const [name, idSet] of countryEntries) {
@@ -284,7 +312,23 @@ async function aggregateCountryData(db, hits) {
     iso = fixCountryIso(country, iso);
     if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
 
-    result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });
+    // Create dedup key: prefer ISO code, fallback to normalized country name
+    const dedupKey = iso || country.toUpperCase();
+
+    // If we already have this entry (by ISO or country name), merge the ad IDs
+    if (dedupMap.has(dedupKey)) {
+      const existing = dedupMap.get(dedupKey);
+      existing.ad_ids.push(...adIds);
+      existing.ad_count = existing.ad_ids.length;
+      // Update country/iso with the lookup version if this has better data
+      if (iso && !existing.iso) existing.iso = iso;
+      if (country && !existing.country) existing.country = country;
+      continue;
+    }
+
+    const entry = { country, iso, ad_ids: adIds, ad_count: adIds.length };
+    dedupMap.set(dedupKey, entry);
+    result.push(entry);
   }
   return result;
 }
@@ -294,13 +338,19 @@ async function batchCountryLookup(db, names) {
   const uniqueNames = [...new Set(names)];
   const placeholders = uniqueNames.map(() => '?').join(',');
   try {
+    // Query both nicename and iso columns to handle cases where input is ISO code (e.g., "DE")
     const rows = await db.sql.query(
-      `SELECT nicename, name AS country, iso FROM country_data WHERE nicename IN (${placeholders})`,
-      uniqueNames
+      `SELECT nicename, name AS country, iso FROM country_data
+       WHERE nicename IN (${placeholders}) OR iso IN (${placeholders})`,
+      [...uniqueNames, ...uniqueNames]
     );
     const map = new Map();
     if (rows) {
-      for (const row of rows) map.set(row.nicename, { country: row.country, iso: row.iso });
+      for (const row of rows) {
+        // Map both nicename and iso to the full record so "Germany" and "DE" both resolve
+        map.set(row.nicename, { country: row.country, iso: row.iso });
+        if (row.iso) map.set(row.iso, { country: row.country, iso: row.iso });
+      }
     }
     return map;
   } catch {

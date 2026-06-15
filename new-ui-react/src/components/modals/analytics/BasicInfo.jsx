@@ -62,18 +62,20 @@ const BasicInfo = ({
       || sanitizeUrl(mpUrls?.url_destination)
       || sanitizeUrl(mpUrls?.source_url)
       || sanitizeUrl(String(ad?.destinationUrl ?? ""));
-  let redirectUrl = isTikTok
-    ? ""
-    : sanitizeUrl(adDetails?.url)
-      || sanitizeUrl(adDetails?.redirect_url)
-      || sanitizeUrl(mpUrls?.redirect_url)
-      || sanitizeUrl(mpUrls?.final_url);
+  // Get raw redirect_url preserving || separator (don't use sanitizeUrl with OR operator)
+  let redirectUrl = "";
+  if (!isTikTok) {
+    const url1 = (adDetails?.url ?? "").trim();
+    const url2 = (adDetails?.redirect_url ?? "").trim();
+    const url3 = (mpUrls?.redirect_url ?? "").trim();
+    const url4 = (mpUrls?.final_url ?? "").trim();
 
-  // Debug log to check what we're getting
-  if (adDetails?.redirect_url) {
-    console.log('[BasicInfo] redirect_url raw:', adDetails.redirect_url);
-    console.log('[BasicInfo] redirect_url includes ||:', adDetails.redirect_url.includes('||'));
-    console.log('[BasicInfo] redirectUrl final:', redirectUrl);
+    redirectUrl = url1 || url2 || url3 || url4;
+
+    // Only remove literal "null"/"undefined" strings
+    if (redirectUrl === "null" || redirectUrl === "undefined") {
+      redirectUrl = "";
+    }
   }
   const fbPostLink = isTikTok ? sanitizeUrl(tt.library_url) : sanitizeUrl(adDetails?.ad_url) || sanitizeUrl(ad?.adUrl);
   // Native: placement_url instead of fb_post_url
