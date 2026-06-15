@@ -196,8 +196,14 @@ async function systemsAnalytics(req, res) {
     if (adCounts.length === 0) {
       return res.json([]);
     }
+    // account_id -> system_id, so CPU/RAM (keyed by hostname in Prometheus) can be
+    // mapped back onto the DB system.
+    const acctToSystem = new Map();
+    for (const a of adCounts) {
+      if (a.account_id && a.account_id !== 'N/A') acctToSystem.set(String(a.account_id), a.system_name);
+    }
     if (Array.isArray(prometheusResults)) {
-      processPrometheusData(prometheusResults, systemMetrics);
+      processPrometheusData(prometheusResults, systemMetrics, acctToSystem);
     }
 
     const { summary, detailedBySystem } = generateSummaryAndDetails(adCounts, systemMetrics, knownNetworks, query3Results);
@@ -248,7 +254,7 @@ async function fetchPrometheusData(from, to, step) {
   }
 }
 
-function processPrometheusData(results = [], systemMetrics = {}) {
+function processPrometheusData(results = [], systemMetrics = {}, acctToSystem = new Map()) {
   try {
     if (!Array.isArray(results)) {
       console.error('Prometheus results is not an array:', results);
@@ -262,20 +268,31 @@ function processPrometheusData(results = [], systemMetrics = {}) {
 
     systemMetrics.accounts = accountsData;
 
- 
+    // Prometheus keys CPU/RAM by machine HOSTNAME, but systemMetrics is keyed by
+    // DB system_id. Bridge hostname -> system_id via the account_id present on the
+    // ads counter (accountsData) so CPU/RAM land on the correct system. Falls back
+    // to the raw hostname when no account bridge exists.
+    const hostToSystem = new Map();
+    for (const entry of accountsData) {
+      const host = entry?.metric?.server_name;
+      const acct = entry?.metric?.account_id != null ? String(entry.metric.account_id) : '';
+      const sys = acctToSystem.get(acct);
+      if (host && sys && !hostToSystem.has(host)) hostToSystem.set(host, sys);
+    }
+
     for (const entry of cpuData) {
       if (!entry?.metric?.server_name) continue;
-      
-      const serverName = entry.metric.server_name;
+
+      const serverName = hostToSystem.get(entry.metric.server_name) || entry.metric.server_name;
       if (!systemMetrics[serverName]) {
-        systemMetrics[serverName] = { 
-          ram: [], 
-          cpu: [], 
-          performance: [], 
-          adsByDay: {} 
+        systemMetrics[serverName] = {
+          ram: [],
+          cpu: [],
+          performance: [],
+          adsByDay: {}
         };
       }
-      
+
       systemMetrics[serverName].cpu = (entry.values || []).map(([ts, val]) => ({
         date: parseInt(ts),
         value: parseFloat(val)
@@ -284,17 +301,17 @@ function processPrometheusData(results = [], systemMetrics = {}) {
 
     for (const entry of ramData) {
       if (!entry?.metric?.server_name) continue;
-      
-      const serverName = entry.metric.server_name;
+
+      const serverName = hostToSystem.get(entry.metric.server_name) || entry.metric.server_name;
       if (!systemMetrics[serverName]) {
-        systemMetrics[serverName] = { 
-          ram: [], 
-          cpu: [], 
-          performance: [], 
-          adsByDay: {} 
+        systemMetrics[serverName] = {
+          ram: [],
+          cpu: [],
+          performance: [],
+          adsByDay: {}
         };
       }
-      
+
       systemMetrics[serverName].ram = (entry.values || []).map(([ts, val]) => ({
         date: parseInt(ts),
         value: parseFloat(val)
@@ -391,7 +408,25 @@ function generateSummaryAndDetails(adCounts, systemMetrics, knownNetworks) {
     networkSystems[net] = new Set();
   }
 
- 
+  // account_id -> DB system_id, and hostname -> system_id. Prometheus accounts are
+  // labelled by machine hostname (e.g. "GBSBHL1012-PC"); without this bridge they
+  // get counted as a SEPARATE system from their DB id ("PAS1012"), double-counting
+  // the same machine and inflating the system/account totals.
+  const acctToSystem = new Map();
+  for (const a of adCounts) {
+    if (a.account_id && a.account_id !== 'N/A' && a.system_name) acctToSystem.set(String(a.account_id), a.system_name);
+  }
+  const hostToSystem = new Map();
+  const systemToHost = new Map();
+  for (const entry of (systemMetrics.accounts || [])) {
+    const host = entry?.metric?.server_name;
+    const acct = entry?.metric?.account_id != null ? String(entry.metric.account_id) : '';
+    const sys = acctToSystem.get(acct);
+    if (host && sys && !hostToSystem.has(host)) hostToSystem.set(host, sys);
+    if (host && sys && !systemToHost.has(sys)) systemToHost.set(sys, host); // system_id -> machine hostname (for display)
+  }
+
+
   for (const { system_name, account_name, network, total_ads, updated_ads, account_id, unqiue_ads } of adCounts) {
     const normNetwork = knownNetworks.includes(network) ? network : 'native';
     const systemKey = system_name || 'NULL_SYSTEM';
@@ -461,12 +496,15 @@ function generateSummaryAndDetails(adCounts, systemMetrics, knownNetworks) {
       continue;
     }
 
-    const systemKey = server_name || 'NULL_SYSTEM';
+    // Collapse the machine hostname onto its DB system_id so the same machine is
+    // never shown twice (e.g. "PAS1012" with accounts + a phantom empty
+    // "GBSBHL1012-PC"). Only genuinely DB-unknown machines keep their hostname.
+    const systemKey = hostToSystem.get(server_name) || server_name || 'NULL_SYSTEM';
 
-  
+
     if (!detailedBySystem[systemKey]) {
       detailedBySystem[systemKey] = {
-        systemName: server_name,
+        systemName: systemKey,
         ...Object.fromEntries(knownNetworks.map(n => [n, 0])),
         ram: [],
         cpu: [],
@@ -510,6 +548,10 @@ function generateSummaryAndDetails(adCounts, systemMetrics, knownNetworks) {
     data.performance = metrics.performance || [];
     data.cpu = metrics.cpu || [];
     data.ram = metrics.ram || [];
+    // Machine hostname for this system_id (null when it's the same as the name or
+    // unknown) so the UI can show "PAS1012 — GBSBHL1012-PC".
+    const host = systemToHost.get(sys) || null;
+    data.hostname = host && host !== data.systemName ? host : null;
   }
 
 
@@ -517,6 +559,7 @@ function generateSummaryAndDetails(adCounts, systemMetrics, knownNetworks) {
     networkAccounts[net].size > 0 || networkSystems[net].size > 0
   );
 
+  const detailArr = Object.values(detailedBySystem);
   const summary = {
     totalNetworks: networksWithData.length,
     totalSystems: uniqueSystems.size,
@@ -526,7 +569,10 @@ function generateSummaryAndDetails(adCounts, systemMetrics, knownNetworks) {
   for (const net of knownNetworks) {
     summary[net] = {
       accounts: networkAccounts[net].size,
-      systems: networkSystems[net].size
+      // Count systems that actually produced ads in this network (matches the
+      // system-active list = 79), not systems that merely have a monitored,
+      // zero-ad account (which inflated this to 95).
+      systems: detailArr.filter(d => (d[net] || 0) > 0).length
     };
   }
 
@@ -580,17 +626,35 @@ async function accountsMetrics(req, res) {
     const { adsData, cpuData, heartbeatData, accountsData } = prometheusData;
     const cpuMap = createCpuMap(cpuData);
     const heartbeatMap = createHeartbeatMap(heartbeatData);
+
+    // Bridge machine hostname <-> DB system_id so Prometheus-only accounts are
+    // attributed to the real system (e.g. "PAS1012") instead of the bare hostname,
+    // and so each account can also carry its machine hostname for display.
+    const acctToSystem = new Map();
+    for (const [id, acc] of allAccounts) {
+      if (acc.system_name && acc.system_name !== 'Unknown') acctToSystem.set(id, acc.system_name);
+    }
+    const hostToSystem = new Map();
+    const systemToHost = new Map();
+    for (const { metric } of accountsData) {
+      const host = metric?.server_name;
+      const acct = metric?.account_id != null ? String(metric.account_id) : '';
+      const sys = acctToSystem.get(acct);
+      if (host && sys && !hostToSystem.has(host)) hostToSystem.set(host, sys);
+      if (host && sys && !systemToHost.has(sys)) systemToHost.set(sys, host);
+    }
+
     accountsData.forEach(({ metric }) => {
       const accountId = metric.account_id?.toString();
       if (!accountId || !validNetworks.includes(metric.network?.toLowerCase())) return;
-      
+
       const compositeKey = `${accountId}_${metric.server_name || 'Unknown'}`;
       if (!allAccounts.has(accountId)) {
         allAccounts.set(accountId, {
           account_name: metric.account_name || null,
           account_id: accountId,
           network: metric.network.toLowerCase(),
-          system_name: metric.server_name || 'Unknown',
+          system_name: hostToSystem.get(metric.server_name) || metric.server_name || 'Unknown',
           unique_ads: 0,
           total_ads: 0,
           updated_ads: 0,
@@ -602,32 +666,27 @@ async function accountsMetrics(req, res) {
   
 
     const defaultPerformance = generateDefaultPerformance(from, to, step);
-    // const accountMetrics = processMetricsWithFallback(adsData, cpuMap, new Map([...allAccounts].map(([_, acc]) => [`${acc.account_name || 'Unknown'}_${acc.network}_${acc.system_name}`, acc])), defaultPerformance, heartbeatMap);
+    // Everything is keyed by account_id — the only identifier shared across the DB
+    // rows, the ads counter, and the account heartbeat.
     const accountMetrics = processMetricsWithFallback(
-      adsData, 
-      cpuMap, 
-      new Map([...allAccounts].map(([_, acc]) => [
-        `${acc.account_name || 'Unknown'}_${acc.network}_${acc.system_name}`, 
-        acc
-      ])), 
-      defaultPerformance, 
+      adsData,
+      cpuMap,
+      allAccounts,
+      defaultPerformance,
       heartbeatMap
     );
     const response = [...allAccounts.values()].map(account => {
-      const metricsKey = `${account.account_name || 'Unknown'}_${account.network}_${account.system_name}`;
-    const heartbeatKey = account.compositeKey || `${account.account_id}_${account.system_name}`;
-    
-      // const key = `${account.account_name || 'Unknown'}_${account.network}_${account.system_name}`;
-      // const metrics = accountMetrics.get(key) || { performance: defaultPerformance, rawAdsByDay: {}, heartbeatStatus: [], isActive: false };
-      const metrics = accountMetrics.get(metricsKey) || { 
-        performance: defaultPerformance, 
-        rawAdsByDay: {}, 
-        heartbeatStatus: [], 
-        isActive: false 
+      const metricsKey = String(account.account_id);
+
+      const metrics = accountMetrics.get(metricsKey) || {
+        performance: defaultPerformance,
+        rawAdsByDay: {},
+        heartbeatStatus: [],
+        isActive: false
       };
-      const heartbeatInfo = heartbeatMap.get(heartbeatKey) || { 
-        statusData: [], 
-        isAlert: true 
+      const heartbeatInfo = heartbeatMap.get(metricsKey) || {
+        statusData: [],
+        isAlert: true
       };
       metrics.heartbeatStatus = heartbeatInfo.statusData;
       metrics.isActive = !heartbeatInfo.isAlert;
@@ -638,10 +697,12 @@ async function accountsMetrics(req, res) {
       const isInactive = !lastHeartbeat || (currentTime - lastHeartbeat.timestamp) > 1800 || !lastHeartbeat.active;
       let alert = { isActive: metrics.isActive, lastHeartbeat: metrics.heartbeatStatus[0]?.timestamp || null, message: null, color: null };
       if (account.total_ads === 0 && metrics.isActive) { alert.message = 'Account is active but has no ads'; alert.color = 'yellow'; } else if (isInactive) { alert.message = 'Account is inactive'; alert.color = 'red'; }
+      const acctHost = systemToHost.get(account.system_name) || null;
       return {
         account_id: account.account_id,
         account: account.account_name,
         system: account.system_name,
+        hostname: acctHost && acctHost !== account.system_name ? acctHost : null,
         network: account.network.charAt(0).toUpperCase() + account.network.slice(1),
         ads: account.total_ads,
         unique_ads: account.unique_ads,
@@ -694,14 +755,14 @@ function createHeartbeatMap(heartbeatData) {
   const currentTime = Math.floor(Date.now() / 1000);
   const alertThreshold = 300; // 5 minutes in seconds
 
+  // account_active_hb_total has a reliable account_id but a messy/inconsistent
+  // server_name (sometimes a hostname, sometimes a code, sometimes blank), so key
+  // purely by account_id. An account may report on several systems; keep the most
+  // recent heartbeat across them.
   heartbeatData.forEach(({ metric, values = [] }) => {
-    const accountId = metric.account_id;
-    const systemName = metric.server_name;
-    if (!accountId || !systemName) return;
+    const accountId = metric.account_id != null ? String(metric.account_id) : '';
+    if (!accountId || accountId === '-') return;
 
-    // Key combines account_id and system_name to handle multiple systems per account
-    const compositeKey = `${accountId}_${systemName}`;
-    
     // Find the most recent heartbeat in the last 5 minutes
     const latestHeartbeat = values.reduce((latest, [timestamp, value]) => {
       const ts = parseInt(timestamp, 10);
@@ -709,9 +770,12 @@ function createHeartbeatMap(heartbeatData) {
       return (ts > latest.timestamp) ? { timestamp: ts, active: isActive } : latest;
     }, { timestamp: 0, active: false });
 
+    const existing = heartbeatMap.get(accountId);
+    if (existing && (existing.statusData[0]?.timestamp || 0) >= latestHeartbeat.timestamp) return;
+
     const isActive = latestHeartbeat.active && (currentTime - latestHeartbeat.timestamp) <= alertThreshold;
-    
-    heartbeatMap.set(compositeKey, {
+
+    heartbeatMap.set(accountId, {
       statusData: [{
         timestamp: latestHeartbeat.timestamp,
         active: isActive,
@@ -737,17 +801,17 @@ function generateDefaultPerformance(from, to, step) {
 
 function processMetricsWithFallback(adsData, cpuMap, validKeys, defaultPerformance, heartbeatMap) {
   const accountMetrics = new Map();
-  validKeys.forEach((account, key) => {
-    const heartbeatInfo = heartbeatMap.get(account.account_id) || { statusData: [], isAlert: true };
-    accountMetrics.set(key, { performance: JSON.parse(JSON.stringify(defaultPerformance)), rawAdsByDay: {}, heartbeatStatus: heartbeatInfo.statusData, isActive: !heartbeatInfo.isAlert });
+  validKeys.forEach((account, accountId) => {
+    const heartbeatInfo = heartbeatMap.get(accountId) || { statusData: [], isAlert: true };
+    accountMetrics.set(accountId, { performance: JSON.parse(JSON.stringify(defaultPerformance)), rawAdsByDay: {}, heartbeatStatus: heartbeatInfo.statusData, isActive: !heartbeatInfo.isAlert });
   });
   for (const { metric, values = [] } of adsData) {
-    if (metric.server_name === null) continue;
-    const normNetwork = metric.network.toLowerCase();
-    const key = `${metric.account_name || 'Unknown'}_${normNetwork}_${metric.server_name}`;
-    if (!validKeys.has(key)) continue;
+    // Match by account_id — the ads counter's server_name is a hostname while our
+    // accounts are keyed by DB system_id, so a name-based key never lines up.
+    const accountId = metric.account_id != null ? String(metric.account_id) : '';
+    if (!accountId || !validKeys.has(accountId)) continue;
     const cpuSeries = cpuMap[metric.server_name] || [];
-    const metricEntry = accountMetrics.get(key);
+    const metricEntry = accountMetrics.get(accountId);
     for (let idx = 0; idx < values.length; idx++) {
       const [ts, val] = values[idx];
       const adsCount = parseFloat(val);
@@ -767,7 +831,7 @@ function processMetricsWithFallback(adsData, cpuMap, validKeys, defaultPerforman
 
 async function fetchPrometheusMetrics(from, to, step) {
   const queries = [
-    ['ads', `max by (account_name, network, server_name) (increase(scroll_plugin_counter_total{mode="prod"}[${step}]))`],
+    ['ads', `max by (account_id, account_name, network, server_name) (increase(scroll_plugin_counter_total{mode="prod"}[${step}]))`],
     ['cpu', `max_over_time(cpu_utilization[${step}])`],
     ['heartbeat', `increase(account_active_hb_total[100s]) > 0`],
     ['accounts', `scroll_plugin_counter_total{mode="prod"}`]
@@ -862,7 +926,14 @@ async function systemsDetails(req, res) {
       return res.json(cachedResult);
     }
 
-    const detailsQuery = `system_details{server_name="${system}"}`;
+    // Resolve the DB system_id to the machine hostname Prometheus actually labels
+    // its series with (e.g. "GLB193" -> "GLB-193-PC"). Every metric below is keyed
+    // by that hostname, so querying the raw system_id returns N/A for everything.
+    const hostMap = await getSystemHostMap(range);
+    const hosts = (hostMap[system] && hostMap[system].length) ? hostMap[system] : [system];
+    const hostSel = `server_name=~"${hosts.map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|')}"`;
+
+    const detailsQuery = `system_details{${hostSel}}`;
     const detailsResp = await instantQuery(detailsQuery);
     
     const defaultDetails = {
@@ -901,7 +972,7 @@ async function systemsDetails(req, res) {
 
     const getMetricStats = async (metricName) => {
       try {
-        const query = `${metricName}{server_name="${system}"}`;
+        const query = `${metricName}{${hostSel}}`;
         const resp = await queryRange(query, from, to, `${steps}h`);
         
         if (!resp.data.result?.length) return null;
@@ -931,20 +1002,47 @@ async function systemsDetails(req, res) {
 
     const checkSystemStatus = async () => {
       try {
-        const hbQuery = `irate(system_active_hb_total{server_name="${system}"}[90s])`;
+        const hbQuery = `irate(system_active_hb_total{${hostSel}}[90s])`;
         const recentStart = dayjs().subtract(1, 'hour').toISOString();
         const recentEnd = dayjs().toISOString();
-        
+
         const hbResp = await queryRange(hbQuery, recentStart, recentEnd, '90s');
         const values = hbResp.data.result?.[0]?.values || [];
-        
-        const isActive = values.some(v => parseFloat(v[1]) > 0);
-        const lastActive = values.filter(v => parseFloat(v[1]) > 0).pop();
-        
+
+        let isActive = values.some(v => parseFloat(v[1]) > 0);
+        let lastActiveTs = (values.filter(v => parseFloat(v[1]) > 0).pop() || [])[0];
+
+        // Fallback: some machines keep working (CPU live, accounts scraping) while
+        // their system_active_hb_total counter is flat/stuck. Treat the system as
+        // active if any of its accounts is currently beating. account_active_hb's
+        // server_name is often the system_id itself, so match that and the hostname.
+        if (!isActive) {
+          const acctScope = [...new Set([system, ...hosts])]
+            .map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|');
+          const acctResp = await instantQuery(`increase(account_active_hb_total{server_name=~"${acctScope}"}[100s]) > 0`);
+          const acctSeries = acctResp.data.result || [];
+          if (acctSeries.length) {
+            isActive = true;
+            lastActiveTs = Math.max(...acctSeries.map(s => parseInt(s.value?.[0] || 0)));
+          }
+        }
+
+        // Real uptime comes from the dedicated `system_uptime` gauge (seconds since
+        // boot). The old `now - lastHeartbeat` formula was always ~0 for an active
+        // system, so "Up Time" never showed anything useful.
+        let uptimeSec = 0;
+        try {
+          const upResp = await instantQuery(`system_uptime{${hostSel}}`);
+          const ups = (upResp.data.result || []).map(s => parseFloat(s.value?.[1] || 0)).filter(v => !isNaN(v));
+          if (ups.length) uptimeSec = Math.max(...ups);
+        } catch (e) {
+          console.warn('system_uptime query failed:', e.message);
+        }
+
         return {
           status: isActive ? 'active' : 'inactive',
-          lastActive: lastActive ? parseInt(lastActive[0]) : null,
-          uptime: isActive ? dayjs().diff(dayjs(lastActive[0] * 1000), 'second') : 0
+          lastActive: lastActiveTs ? parseInt(lastActiveTs) : null,
+          uptime: Math.round(uptimeSec)
         };
       } catch (err) {
         console.warn('Heartbeat query failed:', err.message);
@@ -958,7 +1056,7 @@ async function systemsDetails(req, res) {
 
     const getNetworkUsage = async () => {
       try {
-        const query = `network_usage_total{server_name="${system}"}`;
+        const query = `network_usage_total{${hostSel}}`;
         const resp = await queryRange(query, dayjs().subtract(1, 'hour').toISOString(), dayjs().toISOString(), '1m');
         
         if (!resp.data.result?.length) return 0;
@@ -1178,7 +1276,7 @@ class ActiveResponse {
 
 // Get system active details
 async function systemActive(req, res) {
-  const { range, network, mode, platform } = req.body;
+  const { range, network, platform } = req.body;
 
   if (!range?.from || !range?.to || !network) {
     return res.status(400).json({ error: 'Missing required fields in request body' });
@@ -1192,61 +1290,117 @@ async function systemActive(req, res) {
   }
 
   try {
-    const [systemsFromAds, pluginResult] = await Promise.all([
-      adCountAcrossSelectedNetworks(range, [network], "systemActive",platform),
+    // DB `system_name` is the logical system_id (e.g. "PAS1105"), but Prometheus
+    // labels every series by the machine HOSTNAME (e.g. "GBSBHL1105-PC"). The two
+    // never match directly, so we bridge through account_id — the only key shared
+    // by both sides — to map each system_id to its hostname(s), then read the
+    // hostname's heartbeat. (mode is forced to the env-derived value; the frontend
+    // used to send mode:"test" which has no data in prod.)
+    const [dbRows, pluginResult] = await Promise.all([
+      adCountAcrossSelectedNetworks(range, [network], null, platform),
       queryRange(`scroll_plugin_counter_total{network="${network}",mode="${mode}"}`, from, to)
         .catch(err => {
           console.error('Plugin query failed:', err);
           return { data: { result: [] } };
         })
     ]);
-    const pluginSystems = new Set(
-      pluginResult.data.result
-        .map(res => res.metric.server_name)
-        .filter(Boolean)
-    );
 
-    const allSystemsToCheck = [...new Set([...systemsFromAds, ...pluginSystems])];
+    // system_id -> itself (set of all systems) and account_id -> system_id
+    const allSystems = new Set();
+    const acctToSystem = new Map();
+    for (const row of dbRows || []) {
+      if (!row?.system_name) continue;
+      allSystems.add(row.system_name);
+      const acct = row.account_id != null ? String(row.account_id) : '';
+      if (acct && acct !== 'N/A') acctToSystem.set(acct, row.system_name);
+    }
 
-    const recentStart = dayjs().subtract(30, 'minute').toISOString();
-    const recentEnd = dayjs().toISOString();
-    const hbQuery = `irate(system_active_hb_total{server_name=~"${allSystemsToCheck.join('|')}"}[90s])`;
-    
-    const hbResult = await queryRange(hbQuery, recentStart, recentEnd, '90s')
-      .catch(err => {
-        console.error('Heartbeat query failed:', err);
-        return { data: { result: [] } };
-      });
+    // system_id -> Set(hostname), resolved via the account_id on each plugin series.
+    // Fallback: for account-less networks (gdn/gtext/youtube/native) the system_id
+    // may itself be the hostname, so match directly when no account bridge exists.
+    const systemToHosts = new Map();
+    for (const series of pluginResult.data.result) {
+      const host = series.metric.server_name;
+      if (!host) continue;
+      const acct = series.metric.account_id != null ? String(series.metric.account_id) : '';
+      const target = acctToSystem.get(acct) || (allSystems.has(host) ? host : null);
+      if (!target) continue;
+      if (!systemToHosts.has(target)) systemToHosts.set(target, new Set());
+      systemToHosts.get(target).add(host);
+    }
 
-    const activeSystems = new Set(
-      hbResult.data.result
-        .filter(res => res.values?.some(v => parseFloat(v[1]) > 0))
-        .map(res => res.metric.server_name)
-    );
+    const allHosts = [...new Set([...systemToHosts.values()].flatMap(s => [...s]))];
 
+    let activeHosts = new Set();
+    if (allHosts.length) {
+      const recentStart = dayjs().subtract(30, 'minute').toISOString();
+      const recentEnd = dayjs().toISOString();
+      const escaped = allHosts.map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|');
+      const hbQuery = `irate(system_active_hb_total{server_name=~"${escaped}"}[90s])`;
+
+      const hbResult = await queryRange(hbQuery, recentStart, recentEnd, '90s')
+        .catch(err => {
+          console.error('Heartbeat query failed:', err);
+          return { data: { result: [] } };
+        });
+
+      activeHosts = new Set(
+        hbResult.data.result
+          .filter(res => res.values?.some(v => parseFloat(v[1]) > 0))
+          .map(res => res.metric.server_name)
+      );
+    }
+
+    // Some machines emit ONLY account heartbeats (no system_active_hb_total and no
+    // ads counter), so the hostname bridge above can't see them at all. Treat a
+    // system as active when any of its accounts is currently beating. account_id is
+    // the reliable bridge; account_active_hb_total's server_name is often the
+    // system_id itself (e.g. "PAS1086"), so match that too.
+    const activeAccountSystems = new Set();
+    try {
+      const acctHb = await instantQuery(`increase(account_active_hb_total[100s]) > 0`);
+      for (const s of (acctHb.data.result || [])) {
+        const acct = s.metric.account_id != null ? String(s.metric.account_id) : '';
+        const sys = acctToSystem.get(acct) || (allSystems.has(s.metric.server_name) ? s.metric.server_name : null);
+        if (sys) activeAccountSystems.add(sys);
+      }
+    } catch (err) {
+      console.error('Account heartbeat query failed:', err.message);
+    }
+
+    const isSystemActive = (sys) => {
+      const hosts = systemToHosts.get(sys);
+      if (hosts && [...hosts].some(h => activeHosts.has(h))) return true;
+      return activeAccountSystems.has(sys);
+    };
+
+    const systemsList = [...allSystems];
     const allStatus = Object.fromEntries(
-      allSystemsToCheck.map(system => [
+      systemsList.map(system => [
         system,
-        new SystemStatus(
-          false,
-          false,
-          false,
-          activeSystems.has(system) ? 'running' : 'stopped'
-        )
+        new SystemStatus(false, false, false, isSystemActive(system) ? 'running' : 'stopped')
       ])
     );
 
-    const finalActive = systemsFromAds.filter(s => activeSystems.has(s)).sort();
-    const finalInactive = systemsFromAds.filter(s => !activeSystems.has(s)).sort();
+    const finalActive = systemsList.filter(isSystemActive).sort();
+    const finalInactive = systemsList.filter(s => !isSystemActive(s)).sort();
+
+    // system_id -> machine hostname, so the UI can label each system "PAS1012 — GBSBHL1012-PC".
+    const hostnames = {};
+    for (const [sys, hostSet] of systemToHosts) {
+      const h = [...hostSet][0];
+      if (h && h !== sys) hostnames[sys] = h;
+    }
 
     const response = new ActiveResponse(
-      from, 
-      to, 
-      mode, 
-      finalActive, 
-      finalInactive, 
+      from,
+      to,
+      mode,
+      finalActive,
+      finalInactive,
       allStatus
     );
+    response.hostnames = hostnames;
 
     cache.set(cacheKey, {
       response,
@@ -1268,6 +1422,52 @@ function formatDuration(seconds) {
   return `${h}:${m}:${s}`;
 }
 
+// Build a system_id -> [hostname] map by bridging DB account_id to the hostname
+// Prometheus reports on. The UI shows DB system_ids (e.g. "PAS1105") but every
+// heartbeat/metric series is labelled by the machine hostname (e.g.
+// "GBSBHL1105-PC"), so any query keyed by system_id returns nothing. Cached per
+// range (default 3 min TTL) and reused across timeline requests.
+async function getSystemHostMap(range) {
+  const { from, to } = getInitialAndFinalTimestamps(range);
+  const cacheKey = `systemHostMap_${from}_${to}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  const dbResults = await Promise.all(
+    Qnetworks.map(nw => adCountAcrossSelectedNetworks(range, [nw], null, null).catch(() => []))
+  );
+  const acctToSystem = new Map();
+  for (const rows of dbResults) {
+    for (const r of (rows || [])) {
+      if (r?.system_name && r.account_id && r.account_id !== 'N/A') {
+        acctToSystem.set(String(r.account_id), r.system_name);
+      }
+    }
+  }
+
+  let pcResult = { data: { result: [] } };
+  try {
+    pcResult = await instantQuery(`scroll_plugin_counter_total{mode="${mode}"}`);
+  } catch (e) {
+    console.error('getSystemHostMap plugin query failed:', e.message);
+  }
+
+  const sysToHosts = {};
+  for (const s of (pcResult.data.result || [])) {
+    const host = s.metric.server_name;
+    const acct = s.metric.account_id != null ? String(s.metric.account_id) : '';
+    const sys = acctToSystem.get(acct);
+    if (!host || !sys) continue;
+    if (!sysToHosts[sys]) sysToHosts[sys] = new Set();
+    sysToHosts[sys].add(host);
+  }
+  const obj = {};
+  for (const k of Object.keys(sysToHosts)) obj[k] = [...sysToHosts[k]];
+
+  cache.set(cacheKey, obj);
+  return obj;
+}
+
 const systemStateChart = async (req, res) => {
   try {
     const { range, systemName } = req.body;
@@ -1275,9 +1475,16 @@ const systemStateChart = async (req, res) => {
       return res.status(400).json({ error: "Missing required fields in request body" });
     }
     const { from, to } = getInitialAndFinalTimestamps(range);
-    const step = 135; 
+    const step = 135;
 
-    const prometheusQuery = `increase(system_active_hb_total{server_name="${systemName}"}[135s])`;
+    // Resolve the system_id to its machine hostname(s); fall back to the raw value
+    // for systems whose id is already a hostname (e.g. DESKTOP-*/GLB-*).
+    const hostMap = await getSystemHostMap(range);
+    const hosts = (hostMap[systemName] && hostMap[systemName].length) ? hostMap[systemName] : [systemName];
+    const escaped = hosts.map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|');
+
+    // sum() collapses multiple hostnames for one system into a single series.
+    const prometheusQuery = `sum(increase(system_active_hb_total{server_name=~"${escaped}"}[135s]))`;
 
     const response = await axios.get(PROMETHEUS_URL, {
       params: {
@@ -1288,7 +1495,23 @@ const systemStateChart = async (req, res) => {
       },
     });
 
-    const result = response.data.data.result[0];
+    let result = response.data.data.result[0];
+    if (!result || !result.values || result.values.length === 0) {
+      // Machines that emit only account heartbeats (no system_active_hb_total) have
+      // no system timeline — fall back to a "busy" timeline derived from any account
+      // heartbeat for this system (account hb server_name is often the system_id).
+      const acctScope = [...new Set([systemName, ...hosts])]
+        .map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|');
+      const acctResp = await axios.get(PROMETHEUS_URL, {
+        params: {
+          query: `sum(increase(account_active_hb_total{server_name=~"${acctScope}"}[135s]))`,
+          start: from,
+          end: to,
+          step,
+        },
+      });
+      result = acctResp.data.data.result[0];
+    }
     if (!result || !result.values || result.values.length === 0) {
       return res.status(404).json({ error: "No data found for the given system" });
     }
@@ -1306,7 +1529,7 @@ const systemStateChart = async (req, res) => {
       const newState = parseFloat(valStr) > 0;
 
       if (newState !== currentState) {
-        const periodEnd = timestamp - 1; 
+        const periodEnd = timestamp - 1;
         const duration = periodEnd - periodStart + 1;
 
         if (currentState) totalActive += duration;

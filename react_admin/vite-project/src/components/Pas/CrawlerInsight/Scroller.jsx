@@ -114,6 +114,9 @@ const TabSlider = ({tabs,handleSetTabActive,systemDetails,loadingSystemData}) =>
                           onClick={() => handleSetTabActive(tab)}
                       >
                           <div>{tab.name}</div>
+                          {tab.hostname && (
+                              <div className="text-[10px] opacity-60 leading-tight">{tab.hostname}</div>
+                          )}
                       </button>
                   ))}
               </div>

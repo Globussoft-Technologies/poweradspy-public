@@ -16,6 +16,13 @@ import DashboardValidation from "./dashboardValidation.js";
 import moment from "moment";
 import mongoose from "mongoose";
 
+// "Now" anchored to IST (+05:30). ES `last_seen` strings are written in IST,
+// but the server may run in UTC — plain moment() there keeps "today" on the
+// previous date until 05:30 IST (e.g. at 1 AM IST on the 13th, UTC is still
+// the 12th evening), so today's bucket silently served yesterday's data.
+// Every today/yesterday/last-N range below must be derived from this.
+const nowIST = () => moment.utc().utcOffset("+05:30");
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ES query alignment with pas_node_api search builders.
 //
@@ -29,18 +36,20 @@ import mongoose from "mongoose";
 // getCompetitorsCount and getCompetitorsCountNew.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Mirrors the Facebook search builder's EXTRA_CONDITION exactly (exists-based,
+// no `*PowerAdspy*` wildcard). The wildcard was stricter than the actual search
+// and excluded ads whose NAS path doesn't contain "PowerAdspy" → undercounted
+// advertisers (e.g. "T Bank"). Now the count == what search returns.
 const FB_NAS_FILTER = {
   bool: {
     should: [
       { bool: { filter: [
-        { term:     { 'facebook_ad.type.keyword': 'IMAGE' } },
-        { exists:   { field: 'new_nas_image_url' } },
-        { wildcard: { 'new_nas_image_url.keyword': '*PowerAdspy*' } },
+        { term:   { 'facebook_ad.type.keyword': 'IMAGE' } },
+        { exists: { field: 'new_nas_image_url' } },
       ]}},
       { bool: { filter: [
-        { term:     { 'facebook_ad.type.keyword': 'VIDEO' } },
-        { exists:   { field: 'Thumbnail' } },
-        { wildcard: { 'Thumbnail.keyword': '*PowerAdspy*' } },
+        { term:   { 'facebook_ad.type.keyword': 'VIDEO' } },
+        { exists: { field: 'Thumbnail' } },
       ]}},
       { bool: { must_not: [
         { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
@@ -50,18 +59,18 @@ const FB_NAS_FILTER = {
   },
 };
 
+// Mirrors the Instagram search builder's EXTRA_CONDITION exactly (exists-based,
+// no `*PowerAdspy*` wildcard) — same undercount fix as Facebook above.
 const IG_NAS_FILTER = {
   bool: {
     should: [
       { bool: { filter: [
-        { terms:    { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
-        { exists:   { field: 'new_nas_image_url' } },
-        { wildcard: { 'new_nas_image_url.keyword': '*PowerAdspy*' } },
+        { terms:  { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
+        { exists: { field: 'new_nas_image_url' } },
       ]}},
       { bool: { filter: [
-        { term:     { 'instagram_ad.type.keyword': 'VIDEO' } },
-        { exists:   { field: 'thumbnail' } },
-        { wildcard: { 'thumbnail.keyword': '*PowerAdspy*' } },
+        { term:   { 'instagram_ad.type.keyword': 'VIDEO' } },
+        { exists: { field: 'thumbnail' } },
       ]}},
       { bool: { must_not: [
         { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
@@ -802,17 +811,17 @@ const getAdvertiserAdCount = async (advertiser) => {
         const getRange = (duration) => {
           let start, end;
           if (duration === 'yesterday') {
-            start = moment().subtract(1, 'day').startOf('day');
-            end = moment().subtract(1, 'day').endOf('day');
+            start = nowIST().subtract(1, 'day').startOf('day');
+            end = nowIST().subtract(1, 'day').endOf('day');
           } else if (duration === 'today') {
-            start = moment().startOf('day');
-            end = moment();
+            start = nowIST().startOf('day');
+            end = nowIST();
           } else if (duration === 'week') {
-            start = moment().subtract(7, 'days').startOf('day');
-            end = moment().subtract(1, 'day').endOf('day');
+            start = nowIST().subtract(7, 'days').startOf('day');
+            end = nowIST().subtract(1, 'day').endOf('day');
           } else {
-            start = moment().subtract(1, duration).startOf(duration);
-            end = moment().subtract(1, duration).endOf(duration);
+            start = nowIST().subtract(1, duration).startOf(duration);
+            end = nowIST().subtract(1, duration).endOf(duration);
           }
           return {
             isoStart: start.format("YYYY-MM-DD HH:mm:ss"),
@@ -927,8 +936,9 @@ const getAdvertiserAdCount = async (advertiser) => {
     
        
         for (const [serverName, serverData] of Object.entries(this.esServers)) {
+         try {
           const client = this.esClient[serverName];
-    
+
           const relevantAdv = advertiserIndexConfigs.filter(c => serverData.indexes.includes(c.index));
           const relevantDate = Object.entries(dateFieldMap).filter(([i]) => serverData.indexes.includes(i));
           const relevantCntry = countryIndexConfigs.filter(c => serverData.indexes.includes(c.index));
@@ -1049,6 +1059,12 @@ const getAdvertiserAdCount = async (advertiser) => {
             );
             googleStats = { ...gg };
           }
+         } catch (serverErr) {
+            // One ES cluster (network) is down/slow → skip it and keep the data
+            // from the others. Better partial counts than a failed request.
+            logger.error(`[getCompetitorsCount] server "${serverName}" failed — skipping, returning partial result: ${serverErr.message}`);
+            continue;
+          }
         }
 
 
@@ -1108,17 +1124,17 @@ const getAdvertiserAdCount = async (advertiser) => {
       const FMT = "YYYY-MM-DD HH:mm:ss";
       const ranges = {
         today: {
-          gte: moment().startOf('day').format(FMT),
-          lte: moment().format(FMT),
+          gte: nowIST().startOf('day').format(FMT),
+          lte: nowIST().format(FMT),
         },
         yesterday: {
-          gte: moment().subtract(1, 'day').startOf('day').format(FMT),
-          lte: moment().subtract(1, 'day').endOf('day').format(FMT),
+          gte: nowIST().subtract(1, 'day').startOf('day').format(FMT),
+          lte: nowIST().subtract(1, 'day').endOf('day').format(FMT),
         },
         last7days: {
           // rolling 7 calendar days, today inclusive
-          gte: moment().subtract(6, 'day').startOf('day').format(FMT),
-          lte: moment().format(FMT),
+          gte: nowIST().subtract(6, 'day').startOf('day').format(FMT),
+          lte: nowIST().format(FMT),
         },
       };
 
@@ -1218,9 +1234,9 @@ const getAdvertiserAdCount = async (advertiser) => {
 
         const allTime = all === true || all === "true";
         const FMT = "YYYY-MM-DD HH:mm:ss";
-        const gte = allTime ? null : (from ? moment(from, "YYYY-MM-DD", true) : moment().subtract(30, "days"))
+        const gte = allTime ? null : (from ? moment(from, "YYYY-MM-DD", true) : nowIST().subtract(30, "days"))
           .startOf("day").format(FMT);
-        const lte = allTime ? null : (to ? moment(to, "YYYY-MM-DD", true) : moment())
+        const lte = allTime ? null : (to ? moment(to, "YYYY-MM-DD", true) : nowIST())
           .endOf("day").format(FMT);
 
         const reqDoc = await Competitors_request.findById(request_id, { competitors: 1 }).lean();
@@ -1982,17 +1998,17 @@ async insertpaidSearch(req,res){
       const getRange = (duration) => {
         let start, end;
         if (duration === 'yesterday') {
-          start = moment().subtract(1, 'day').startOf('day');
-          end = moment().subtract(1, 'day').endOf('day');
+          start = nowIST().subtract(1, 'day').startOf('day');
+          end = nowIST().subtract(1, 'day').endOf('day');
         } else if (duration === 'today') {
-          start = moment().startOf('day');
-          end = moment();
+          start = nowIST().startOf('day');
+          end = nowIST();
         } else if (duration === 'week') {
-          start = moment().subtract(7, 'days').startOf('day');
-          end = moment().subtract(1, 'day').endOf('day');
+          start = nowIST().subtract(7, 'days').startOf('day');
+          end = nowIST().subtract(1, 'day').endOf('day');
         } else {
-          start = moment().subtract(1, duration).startOf(duration);
-          end = moment().subtract(1, duration).endOf(duration);
+          start = nowIST().subtract(1, duration).startOf(duration);
+          end = nowIST().subtract(1, duration).endOf(duration);
         }
         return {
           isoStart: start.format("YYYY-MM-DD HH:mm:ss"),

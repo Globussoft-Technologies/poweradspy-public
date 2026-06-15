@@ -49,6 +49,13 @@ import AccountWiseAdsTable from "../AccountWiseAdsTable";
 import Title from "./Title";
 import SystemDetailsShimmer from "./SystemDetailsShimmer";
 
+// Env-controlled visibility for the Crawler-Insights network-ad sections.
+// HIDDEN by default — set the matching VITE_ flag to "true" to show a section.
+// (Operator asked to hide these everywhere unless explicitly re-enabled.)
+const SHOW_AFFILIATE_ADS = import.meta.env.VITE_SHOW_AFFILIATE_ADS === "true";
+const SHOW_FUNNEL_ADS    = import.meta.env.VITE_SHOW_FUNNEL_ADS === "true";
+const SHOW_ECOMMERCE_ADS = import.meta.env.VITE_SHOW_ECOMMERCE_ADS === "true";
+
 const GlobalUiComponent = ({ network }) => {
   const [label,setLabel]=useState("Today`s Ads")
   const [dateRangeLabel,setDateRangeLabel]=useState("")
@@ -437,16 +444,19 @@ function calculateDaysInclusive(fromDate, toDate) {
 
 
   useEffect(()=>{
+    const hostnames = systemDetails?.data?.hostnames || {};
     setTabs([
       // Handle active systems (with empty array fallback)
       ...(systemDetails?.data?.active_systems || []).map((name,index) => ({
         name,
+        hostname: hostnames[name] || null,
         status:"Active",
         isActive: index===0
       })),
       // Handle inactive systems (with empty array fallback)
       ...(systemDetails?.data?.inactive_systems || []).map(name => ({
         name,
+        hostname: hostnames[name] || null,
         status:"inActive",
         isActive: false
       }))
@@ -1287,6 +1297,7 @@ function calculateDaysInclusive(fromDate, toDate) {
         </div>
         {network !== "tiktok" && (
           <div className="crawler_insights_container flex flex-col gap-[25px] ">
+            {SHOW_AFFILIATE_ADS && (
             <div className="common_chart_container common_box_shadow rounded-2xl bg-white">
               <div className=" flex justify-between border-b-[0.75px] border-[#e5e5ef] px-[24px] items-center">
               <Title className={" text-[15px] font-[700] text-[#264688]  pt-[18px] pb-[10px] flex justify-normal items-center"} title={"Ads from Affiliate Networks"} tooltipText={tooltipTextData("Ads from Affiliate Networks")}/>
@@ -1321,6 +1332,8 @@ function calculateDaysInclusive(fromDate, toDate) {
                 </div>
               )}
             </div>
+            )}
+            {SHOW_FUNNEL_ADS && (
             <div className="common_chart_container common_box_shadow rounded-[20px] bg-white">
               <div className="heading_s border-b-[0.75px] border-[#e5e5ef] px-[24px] pb-[10px] pt-[18px] flex justify-between items-center">
               <Title className={"text-[15px] font-[700] text-[#264688] flex justify-normal items-center"} title={"Ads from Funnel"} tooltipText={tooltipTextData("Ads from Funnel")}/>
@@ -1352,10 +1365,11 @@ function calculateDaysInclusive(fromDate, toDate) {
                 </div>
               )}
             </div>
+            )}
           </div>
         )}
 
-        {network !== "tiktok" && (
+        {network !== "tiktok" && SHOW_ECOMMERCE_ADS && (
           <div className="w-full">
             <div className="bg-white rounded-[20px] shadow-md w-full">
               <div className="border-b-[0.75px] border-[#e5e5ef]  px-[24px] pt-[18px] pb-[10px] flex justify-between items-center">

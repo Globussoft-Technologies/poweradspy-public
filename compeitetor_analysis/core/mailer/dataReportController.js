@@ -4,6 +4,38 @@ import { getSubscribedContacts, getContactsBreakdown } from "./sendgridContactsS
 import { resolveDailyRecipients } from "./reportRecipientsService.js";
 import logger from "../../resources/logs/logger.log.js";
 
+// In-memory cache for the SendGrid suppression breakdown. The call is heavy
+// (5 paged suppression lists + contact count), so the admin dashboard would
+// otherwise hammer SendGrid on every load / poll. TTL ~10 min; pass
+// ?fresh=true to bypass and refresh. Survives only while the process runs.
+const CONTACTS_CACHE_TTL_MS = 10 * 60 * 1000;
+let _contactsCache = { at: 0, data: null };
+
+// SendGrid suppression `created` is a Unix epoch in SECONDS. Convert to an
+// IST "YYYY-MM-DD" so the daily grouping matches the rest of the dashboard.
+function istDateKeyFromCreated(created) {
+  if (created == null) return "unknown";
+  const ms = Number(created) < 1e12 ? Number(created) * 1000 : Number(created);
+  if (!Number.isFinite(ms)) return "unknown";
+  return new Date(ms + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// Flatten every suppression list into a single per-day "excluded emails"
+// view: { date → { count, emails:[{email,type,reason,created}] } }, newest day
+// first. `type` is the suppression list the email came from.
+function buildDailyExcluded(suppressions) {
+  const byDay = {};
+  for (const type of Object.keys(suppressions || {})) {
+    for (const r of suppressions[type]?.emails || []) {
+      const date = istDateKeyFromCreated(r.created);
+      if (!byDay[date]) byDay[date] = { date, count: 0, emails: [] };
+      byDay[date].count += 1;
+      byDay[date].emails.push({ email: r.email, type, reason: r.reason || null, created: r.created ?? null });
+    }
+  }
+  return Object.values(byDay).sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+
 /**
  * Data-report endpoints (NEW, standalone).
  *
@@ -87,8 +119,44 @@ class DataReportController {
   async contacts(req, res) {
     try {
       const includeEmails = String(req.query?.emails ?? "true") !== "false";
-      const data = await getContactsBreakdown({ includeEmails });
-      return res.status(200).json({ message: "Contacts breakdown", ...data });
+      const fresh = String(req.query?.fresh) === "true";
+
+      // Serve from cache when warm (and the caller didn't ask for fresh). The
+      // cache always stores the WITH-emails breakdown; a counts-only request
+      // just omits the emails before returning.
+      const now = Date.now();
+      let full = null;
+      let cached = false;
+      if (!fresh && _contactsCache.data && now - _contactsCache.at < CONTACTS_CACHE_TTL_MS) {
+        full = _contactsCache.data;
+        cached = true;
+      } else {
+        full = await getContactsBreakdown({ includeEmails: true });
+        _contactsCache = { at: now, data: full };
+      }
+
+      // Per-day excluded view (grouped by suppression `created` date, IST).
+      const daily = buildDailyExcluded(full.suppressions);
+
+      // Shape the response. When emails aren't requested, strip the per-list
+      // and per-day email arrays so the payload stays small (counts only).
+      const suppressions = {};
+      for (const k of Object.keys(full.suppressions || {})) {
+        const s = full.suppressions[k];
+        suppressions[k] = includeEmails ? s : { count: s.count, ...(s.error ? { error: s.error } : {}) };
+      }
+      const dailyOut = includeEmails ? daily : daily.map(({ date, count }) => ({ date, count }));
+
+      return res.status(200).json({
+        message: "Contacts breakdown",
+        cached,
+        cachedAt: cached ? new Date(_contactsCache.at).toISOString() : null,
+        totalContacts: full.totalContacts,
+        subscribedCount: full.subscribedCount,
+        suppressed: full.suppressed,
+        suppressions,
+        daily: dailyOut,
+      });
     } catch (error) {
       logger.error(`dataReport contacts failed: ${error.message}`);
       return res.status(500).json({ message: "Failed to fetch contacts breakdown", error: error.message });

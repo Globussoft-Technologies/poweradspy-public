@@ -415,6 +415,9 @@ const {loadingSystemInfo,SystemInfo,SystemInsitesAdsCount,loadingStatusSystemInf
           >
             {row?.original?.system}
           </span>
+          {row?.original?.hostname && (
+            <span className="text-[11px] text-gray-400 px-2">{row.original.hostname}</span>
+          )}
           <Tooltip
             id="instagram-tooltip"
             place="top"
@@ -604,18 +607,21 @@ const {loadingSystemInfo,SystemInfo,SystemInsitesAdsCount,loadingStatusSystemInf
         />
       )}
       
-      {/* System Name with Status Tooltip */}
+      {/* System Name (+ machine hostname) with Status Tooltip */}
       <span
         data-tooltip-id="status-tooltip"
         data-tooltip-content="Click to check System Status"
-        className="cursor-pointer"
+        className="cursor-pointer flex flex-col leading-tight"
         onClick={(e) => {
           e.stopPropagation();
           row?.original?.systemName !== null && setIsStatusModalOpen(true);
           setSystemName(row?.original?.systemName);
         }}
       >
-        {row?.original?.systemName !== null ? row?.original?.systemName : "---"}
+        <span>{row?.original?.systemName !== null ? row?.original?.systemName : "---"}</span>
+        {row?.original?.hostname && (
+          <span className="text-[11px] text-gray-400">{row.original.hostname}</span>
+        )}
       </span>
       
       {/* Tooltip for remote control icon */}

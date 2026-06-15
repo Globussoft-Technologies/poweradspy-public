@@ -11,6 +11,7 @@ import "react-date-range/dist/styles.css";
 import "react-date-range/dist/theme/default.css";
 import Loader from "./Loader";
 import MemberOverview from "./MemberOverview";
+import SuppressionPanel from "./SuppressionPanel";
 import {
   Table,
   TableHeader,
@@ -75,9 +76,14 @@ function NetworkChip({ net }) {
   return <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${m.cls}`} title={net}>{m.label}</span>;
 }
 
-function Tile({ title, value, sub, accent }) {
+function Tile({ title, value, sub, accent, onClick, active }) {
+  const clickable = typeof onClick === "function";
   return (
-    <div className="p-4 rounded-xl shadow-sm border border-gray-100 bg-white flex flex-col justify-between min-h-[92px]">
+    <div
+      onClick={onClick}
+      title={clickable ? `Show ${title} in the send log below` : undefined}
+      className={`p-4 rounded-xl shadow-sm border bg-white flex flex-col justify-between min-h-[92px] ${active ? "border-[#1540a4] ring-2 ring-[#1540a4]/30" : "border-gray-100"} ${clickable ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}
+    >
       <p className="text-gray-500 text-[13px] font-medium">{title}</p>
       <h2 className={`text-[26px] font-bold leading-tight ${accent || "text-[#1540a4]"}`}>{value}</h2>
       {sub != null && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}
@@ -1031,6 +1037,15 @@ const EmailDetails = () => {
 
   const totalPages = Math.max(1, Math.ceil(totalRecords / limit));
 
+  // Tile → Send-log filter. Status tiles set statusFilter; the Clicks tile sets
+  // the click filter. Each clears the other so the log shows exactly that slice,
+  // then scrolls down to the Send log. The log toolbar's "Clear" button
+  // (already present) resets these.
+  const logRef = useRef(null);
+  const scrollToLog = () => { try { logRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch { /* noop */ } };
+  const filterByStatus = (s) => { setStatusFilter(s); setClicksFilter(""); scrollToLog(); };
+  const filterByClicks = () => { setClicksFilter("yes"); setStatusFilter(""); scrollToLog(); };
+
   return (
     <div className="bg-[#f7f8fb] rounded-[10px] w-full h-[calc(100%-120px)] overflow-auto">
       {/* Header */}
@@ -1137,15 +1152,16 @@ const EmailDetails = () => {
       )}
 
       {/* Summary tiles */}
-      <div className="px-6 grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-9">
+      <div className="px-6 grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-10">
         <Tile title="Accepted" value={overviewLoading ? "…" : fmtNum(activeSummary?.accepted)} sub="handed to SendGrid" />
-        <Tile title="Delivered" value={overviewLoading ? "…" : fmtNum(activeSummary?.delivered)} accent="text-green-600" />
-        <Tile title="Opened" value={overviewLoading ? "…" : fmtNum(activeSummary?.opened)} accent="text-teal-600" />
-        <Tile title="Bounced" value={overviewLoading ? "…" : fmtNum(activeSummary?.bounced)} accent="text-red-600" />
-        <Tile title="Spam" value={overviewLoading ? "…" : fmtNum(activeSummary?.spam)} accent="text-orange-600" />
-        <Tile title="Unsubscribed" value={overviewLoading ? "…" : fmtNum(activeSummary?.unsubscribed)} accent="text-purple-600" />
-        <Tile title="Failed" value={overviewLoading ? "…" : fmtNum(activeSummary?.failed)} accent="text-rose-600" />
-        <Tile title="Skipped" value={overviewLoading ? "…" : fmtNum(activeSummary?.skipped)} accent="text-gray-500" />
+        <Tile title="Delivered" value={overviewLoading ? "…" : fmtNum(activeSummary?.delivered)} accent="text-green-600" onClick={() => filterByStatus("delivered")} active={statusFilter === "delivered"} />
+        <Tile title="Opened" value={overviewLoading ? "…" : fmtNum(activeSummary?.opened)} accent="text-teal-600" onClick={() => filterByStatus("opened")} active={statusFilter === "opened"} />
+        <Tile title="Clicks" value={overviewLoading ? "…" : fmtNum(activeSummary?.clicks)} sub={`${fmtNum(activeSummary?.clicked)} emails`} accent="text-blue-600" onClick={filterByClicks} active={clicksFilter === "yes"} />
+        <Tile title="Bounced" value={overviewLoading ? "…" : fmtNum(activeSummary?.bounced)} accent="text-red-600" onClick={() => filterByStatus("bounced")} active={statusFilter === "bounced"} />
+        <Tile title="Spam" value={overviewLoading ? "…" : fmtNum(activeSummary?.spam)} accent="text-orange-600" onClick={() => filterByStatus("spam")} active={statusFilter === "spam"} />
+        <Tile title="Unsubscribed" value={overviewLoading ? "…" : fmtNum(activeSummary?.unsubscribed)} accent="text-purple-600" onClick={() => filterByStatus("unsubscribed")} active={statusFilter === "unsubscribed"} />
+        <Tile title="Failed" value={overviewLoading ? "…" : fmtNum(activeSummary?.failed)} accent="text-rose-600" onClick={() => filterByStatus("failed")} active={statusFilter === "failed"} />
+        <Tile title="Skipped" value={overviewLoading ? "…" : fmtNum(activeSummary?.skipped)} accent="text-gray-500" onClick={() => filterByStatus("skipped")} active={statusFilter === "skipped"} />
         <Tile title="Delivery rate" value={overviewLoading ? "…" : `${activeSummary?.deliveryRate ?? 0}%`} sub={`bounce ${activeSummary?.bounceRate ?? 0}%`} accent="text-[#1540a4]" />
       </div>
 
@@ -1199,8 +1215,13 @@ const EmailDetails = () => {
         </div>
       </div>
 
+      {/* Suppression / Excluded — live SendGrid suppression lists (count + list
+          + reason + daily excluded). Self-contained; reads compeitetor_analysis
+          /data-report/contacts via MANUAL_SEND_API. */}
+      <SuppressionPanel apiBase={MANUAL_SEND_API} selStart={rangeStart} selEnd={rangeEnd} />
+
       {/* Log table */}
-      <div className="px-6 mt-5 pb-8">
+      <div ref={logRef} className="px-6 mt-5 pb-8">
         <div className="bg-white rounded-xl border border-gray-100">
           <div className="flex flex-wrap gap-2 items-center justify-between p-4 border-b border-gray-100">
             <p className="text-[#1f296a] font-semibold text-[15px]">Send log</p>

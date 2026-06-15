@@ -1193,6 +1193,90 @@ const App = () => {
     }
   }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
 
+  // Recent Activity ("Today / Yesterday / Last Week / Last Month") click on the
+  // competitor analytics table → land on the ads library searching that
+  // advertiser, with the matching seen-date range and the advertiser's
+  // platforms pre-selected.
+  //   last_7  → the 7 days ending one day before today (today-7 … yesterday)
+  //   last_30 → the 30 days ending one day before today (today-30 … yesterday)
+  const handleRecentActivityClick = useCallback((advertiserName, period, platforms) => {
+    if (guestGuard("Please login to search", {})) return;
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfYesterday = new Date(startOfToday);
+    endOfYesterday.setDate(endOfYesterday.getDate() - 1);
+    endOfYesterday.setHours(23, 59, 59);
+
+    let range;
+    switch (period) {
+      case "today":
+        range = [startOfToday, now];
+        break;
+      case "yesterday": {
+        const yStart = new Date(startOfToday);
+        yStart.setDate(yStart.getDate() - 1);
+        range = [yStart, endOfYesterday];
+        break;
+      }
+      case "last_7": {
+        const start = new Date(startOfToday);
+        start.setDate(start.getDate() - 7);
+        range = [start, endOfYesterday];
+        break;
+      }
+      case "last_30": {
+        // Exactly one month before yesterday → yesterday (e.g. 11/05 → 11/06).
+        const start = new Date(endOfYesterday);
+        start.setMonth(start.getMonth() - 1);
+        range = [start, endOfYesterday];
+        break;
+      }
+      default:
+        range = null;
+    }
+
+    const pls = (platforms || [])
+      .map((p) => String(p).toLowerCase())
+      .filter(Boolean);
+    if (pls.length) {
+      sdui.setActivePlatforms(pls);
+      dispatch(setSpecificPlatforms(pls));
+    }
+
+    handleSearch(advertiserName, "advertiser");
+    if (range) handleDateChange("ad_seen", range);
+    dispatch(setActivePage("ads"));
+  }, [guestGuard, dispatch, sdui, handleSearch]);
+
+  // Top Country click on the competitor analytics table → land on the ads
+  // library searching that advertiser with ONLY the country filter applied —
+  // any other active filter (date, CTA, category, …) is cleared — and the
+  // advertiser's platforms pre-selected.
+  //   countries: a single code ("US") or the competitor's full list (= "All").
+  const handleCountryClick = useCallback((advertiserName, countries, platforms) => {
+    if (guestGuard("Please login to search", {})) return;
+
+    const list = (Array.isArray(countries) ? countries : [countries])
+      .map((c) => String(c || "").trim().toUpperCase())
+      .filter(Boolean);
+
+    const pls = (platforms || [])
+      .map((p) => String(p).toLowerCase())
+      .filter(Boolean);
+    if (pls.length) {
+      sdui.setActivePlatforms(pls);
+      dispatch(setSpecificPlatforms(pls));
+    }
+
+    // Replace the whole filter state — wipes every previously applied filter
+    // and leaves only the clicked country/countries.
+    sdui.setAllFilters(list.length ? { country_filter: list } : {});
+
+    handleSearch(advertiserName, "advertiser");
+    dispatch(setActivePage("ads"));
+  }, [guestGuard, dispatch, sdui, handleSearch]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
     const params = new URLSearchParams(window.location.search);
@@ -1403,6 +1487,8 @@ const App = () => {
           <AllProjects
             onSearch={handleSearch}
             onNavigateToAds={() => dispatch(setActivePage("ads"))}
+            onRecentActivityClick={handleRecentActivityClick}
+            onCountryClick={handleCountryClick}
             setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}
           />
         ) : ui.showSavedAdsPage ? (

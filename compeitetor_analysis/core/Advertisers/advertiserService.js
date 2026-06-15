@@ -1923,7 +1923,38 @@ class AdvertiserService {
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
       ];
-  
+
+      // Media gate — same EXTRA_CONDITION the search builders apply, so the
+      // monthly counts match what users actually SEE (no-media / placeholder
+      // ads and Google organic results are excluded). Exists-based, no
+      // `*PowerAdspy*` wildcard — mirrors the builders / fixed dashboardService.
+      const mediaFilterFor = (index) => {
+        if (index === "search_mix") {
+          return { filter: [{ bool: { should: [
+            { bool: { filter: [{ term: { "facebook_ad.type.keyword": "IMAGE" } }, { exists: { field: "new_nas_image_url" } }] } },
+            { bool: { filter: [{ term: { "facebook_ad.type.keyword": "VIDEO" } }, { exists: { field: "Thumbnail" } }] } },
+            { bool: { must_not: [{ terms: { "facebook_ad.type.keyword": ["IMAGE", "VIDEO"] } }] } },
+          ], minimum_should_match: 1 } }], mustNot: [] };
+        }
+        if (index === "instagram_search_mix") {
+          return { filter: [{ bool: { should: [
+            { bool: { filter: [{ terms: { "instagram_ad.type.keyword": ["IMAGE", "STORIES"] } }, { exists: { field: "new_nas_image_url" } }] } },
+            { bool: { filter: [{ term: { "instagram_ad.type.keyword": "VIDEO" } }, { exists: { field: "thumbnail" } }] } },
+            { bool: { must_not: [{ terms: { "instagram_ad.type.keyword": ["IMAGE", "VIDEO", "STORIES"] } }] } },
+          ], minimum_should_match: 1 } }], mustNot: [] };
+        }
+        if (index === "google_ads_data") {
+          return { filter: [], mustNot: [
+            { bool: { filter: [{ term: { type: "IMAGE" } }, { bool: { should: [
+              { bool: { must_not: [{ exists: { field: "new_nas_image_url" } }] } },
+              { term: { "new_nas_image_url.keyword": "" } },
+            ], minimum_should_match: 1 } }] } },
+            { match_phrase: { type: "ORGANIC SEARCH" } },
+          ] };
+        }
+        return { filter: [], mustNot: [] };
+      };
+
       for (const [serverName, serverData] of Object.entries(this.esServers)) {
         const client = this.esClient[serverName];
   
@@ -1938,6 +1969,8 @@ class AdvertiserService {
               .map(f => `doc['${f}'].size()!=0 ? doc['${f}'].value : null`)
               .join(" ?: ");
   
+            const media = mediaFilterFor(index);
+
             // Elasticsearch query
             const body = {
               size: 0,
@@ -1953,7 +1986,9 @@ class AdvertiserService {
                         auto_generate_synonyms_phrase_query: false
                       }
                     }
-                  ]
+                  ],
+                  ...(media.filter.length  && { filter:   media.filter }),
+                  ...(media.mustNot.length && { must_not: media.mustNot }),
                 }
               },
               aggs: {

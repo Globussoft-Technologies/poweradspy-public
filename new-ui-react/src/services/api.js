@@ -1825,6 +1825,18 @@ export const CompetitorAPI = {
       body: JSON.stringify({ competitors: competitor }),
     }),
 
+  // Rename a project's brand/advertiser name. Backend expects the OLD name
+  // wrapped in an array (it patches advertiser.$ inside competitors_request).
+  renameAdvertiser: (userId, oldName, newName) =>
+    competitorFetch('/update-advertiser', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        user_id: userId,
+        advertiser: [oldName],
+        newadvertiser: newName,
+      }),
+    }),
+
   // Delete a project (competitors_request doc) by user_id + advertiser name
   deleteProject: (userId, advertiser) =>
     competitorFetch('/delete-project', {

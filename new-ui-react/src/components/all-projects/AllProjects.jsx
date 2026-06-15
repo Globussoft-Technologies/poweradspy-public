@@ -8,7 +8,6 @@ import {
   Search,
   Filter,
   MoreVertical,
-  Edit2,
   Trash2,
   ChevronRight,
   X,
@@ -32,6 +31,7 @@ import {
   CircleDollarSign,
   Download,
   Edit,
+  Edit2,
   AlertTriangle,
   Megaphone,
   Copy,
@@ -134,6 +134,47 @@ const getAvatarColor = (name) => {
   return colors[Math.abs(hash) % colors.length];
 };
 
+// ── Loading shimmer helpers (Competitor Analytics table) ────────────────────
+// Reuses the theme-aware `media-shimmer` sweep from index.css. A cell shows a
+// shimmer block ONLY while its data is genuinely in-flight; the moment the API
+// answers (even with 0) the real value is rendered.
+const CellShimmer = ({ className = "h-3.5 w-16" }) => (
+  <span
+    className={`media-shimmer inline-block rounded-md align-middle ${className}`}
+    aria-hidden="true"
+  />
+);
+
+// Full-row skeleton used while the competitor list itself is loading — mirrors
+// the real table's 10 columns so nothing jumps when data arrives.
+const CompetitorRowSkeleton = () => (
+  <tr className="border-b border-theme-border">
+    <td className="px-6 py-4">
+      <div className="flex items-center gap-3">
+        <CellShimmer className="w-8 h-8 rounded" />
+        <CellShimmer className="h-3.5 w-32" />
+      </div>
+    </td>
+    <td className="px-4 py-4 text-center">
+      <CellShimmer className="w-7 h-7 rounded-lg" />
+    </td>
+    <td className="px-5 py-4"><CellShimmer className="h-3.5 w-14" /></td>
+    <td className="px-5 py-4"><CellShimmer className="h-6 w-24" /></td>
+    <td className="px-5 py-4"><CellShimmer className="h-3.5 w-12" /></td>
+    <td className="px-3 py-4"><CellShimmer className="h-3.5 w-20" /></td>
+    <td className="px-5 py-4">
+      <div className="flex gap-1.5">
+        <CellShimmer className="w-5 h-5 rounded-full" />
+        <CellShimmer className="w-5 h-5 rounded-full" />
+        <CellShimmer className="w-5 h-5 rounded-full" />
+      </div>
+    </td>
+    <td className="px-5 py-4"><CellShimmer className="h-5 w-16" /></td>
+    <td className="px-5 py-4"><CellShimmer className="h-3.5 w-20" /></td>
+    <td className="px-5 py-4 text-center"><CellShimmer className="h-7 w-28 rounded-lg" /></td>
+  </tr>
+);
+
 const generateDummyCompetitors = (count, startId, monitoredCount) => {
   return Array.from({ length: count }).map((_, i) => {
     const isMonitored = i < monitoredCount;
@@ -190,7 +231,7 @@ const KEYWORDS_SUGGESTIONS = [
   "ad research",
 ];
 
-const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
+const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCountryClick, setProjectContext }) => {
   const { user: authUser, token: authToken } = useAuth();
   const [competitorUserId, setCompetitorUserId] = useState(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
@@ -242,6 +283,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
   const [manualCompName, setManualCompName] = useState("");
   const [manualCompUrl, setManualCompUrl] = useState("");
   const [isAddingCompetitor, setIsAddingCompetitor] = useState(false);
+
+  // Rename brand modal (PATCH /update-advertiser)
+  const [showRenameBrandModal, setShowRenameBrandModal] = useState(false);
+  const [renameBrandValue, setRenameBrandValue] = useState("");
+  const [isRenamingBrand, setIsRenamingBrand] = useState(false);
 
   // Auto-initialize connection to Node DB
   useEffect(() => {
@@ -879,7 +925,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
 
           const remoteCompetitors = remoteDetails.map(
             ([compName, details], idx) => {
-              // Default placeholders before /get-competitor-count finishes
+              // Default placeholders before /get-competitor-count finishes.
+              // statsLoaded:false → per-cell shimmer until the stats API answers.
               return {
                 id: details.id, // mongo _id of competitor
                 requestId: details.comp_request_id,
@@ -895,6 +942,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                 platforms: [],
                 budget: "...",
                 isMonitored: details.monitoring,
+                statsLoaded: false,
               };
             },
           );
@@ -957,16 +1005,21 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                           budget: budgetFmt,
                           countries: pData.uniqueCountries || [],
                           platforms: platforms,
+                          statsLoaded: true, // API answered — shimmer off
                         };
                       });
                       return { ...p, competitors: updatedCompetitors };
                     }),
                   );
+                } else {
+                  // Empty response — still stop the shimmer, show zeros.
+                  markCompetitorStatsLoaded(id, comp.id);
                 }
               })
-              .catch((e) =>
-                console.error("Could not fetch stats for", comp.name, e),
-              );
+              .catch((e) => {
+                console.error("Could not fetch stats for", comp.name, e);
+                markCompetitorStatsLoaded(id, comp.id);
+              });
           });
         }
       } catch (err) {
@@ -975,6 +1028,30 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
         setIsProjectLoading(false);
       }
     }
+  };
+
+  // Stop the per-cell shimmer for a row whose stats call failed / returned
+  // nothing — zeros are shown instead of an endless shimmer.
+  const markCompetitorStatsLoaded = (projectId, compId) => {
+    setProjects((prev) =>
+      prev.map((p) => {
+        if (p.id !== projectId) return p;
+        return {
+          ...p,
+          competitors: (p.competitors || []).map((c) =>
+            c.id === compId && c.statsLoaded === false
+              ? {
+                  ...c,
+                  statsLoaded: true,
+                  impressions: "0",
+                  popularity: "Low (0%)",
+                  budget: "$0",
+                }
+              : c,
+          ),
+        };
+      }),
+    );
   };
 
   const toggleMonitoringStatus = async (project, competitor) => {
@@ -1061,6 +1138,63 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
     setShowAddCompetitorModal(true);
   };
 
+  // ── Rename brand ──────────────────────────────────────────────────────
+  const openRenameBrandModal = () => {
+    setRenameBrandValue(activeProject?.advertiser || "");
+    setShowRenameBrandModal(true);
+  };
+
+  const closeRenameBrandModal = () => {
+    if (isRenamingBrand) return;
+    setShowRenameBrandModal(false);
+    setRenameBrandValue("");
+  };
+
+  const handleRenameBrand = async (e) => {
+    if (e) e.preventDefault();
+    if (!activeProject) return;
+    const oldName = activeProject.advertiser;
+    // Brands are stored lowercased (same normalization as project creation).
+    const newName = renameBrandValue.trim().toLowerCase();
+    if (!newName || newName === (oldName || "").toLowerCase()) {
+      closeRenameBrandModal();
+      return;
+    }
+    const duplicate = projects.some(
+      (p) => p.id !== activeProject.id && (p.advertiser || "").toLowerCase() === newName,
+    );
+    if (duplicate) {
+      showToast(`A project named "${newName}" already exists.`, "error");
+      return;
+    }
+
+    setIsRenamingBrand(true);
+    try {
+      const resp = await CompetitorAPI.renameAdvertiser(
+        competitorUserId,
+        oldName,
+        newName,
+      );
+      if (resp?.body?.status === "success") {
+        setProjects((prev) =>
+          prev.map((p) =>
+            p.id === activeProject.id ? { ...p, advertiser: newName } : p,
+          ),
+        );
+        showToast("Brand renamed successfully.");
+        setShowRenameBrandModal(false);
+        setRenameBrandValue("");
+      } else {
+        showToast(resp?.body?.message || "Failed to rename brand.", "error");
+      }
+    } catch (err) {
+      console.error("Failed to rename brand", err);
+      showToast("Failed to rename brand. Please try again.", "error");
+    } finally {
+      setIsRenamingBrand(false);
+    }
+  };
+
   const closeAddCompetitorModal = () => {
     if (isAddingCompetitor) return;
     setShowAddCompetitorModal(false);
@@ -1112,6 +1246,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
         platforms: [],
         budget: "...",
         isMonitored: false,
+        statsLoaded: false, // per-cell shimmer until stats arrive
       };
 
       setProjects((prev) =>
@@ -1139,7 +1274,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
       CompetitorAPI.getCompetitorCount(newCompetitor.name)
         .then((statsResp) => {
           const pData = statsResp?.body?.data || statsResp?.data;
-          if (!pData) return;
+          if (!pData) {
+            // Empty response — stop the shimmer, show zeros.
+            markCompetitorStatsLoaded(activeProject.id, newCompetitor.id);
+            return;
+          }
           setProjects((prev) =>
             prev.map((p) => {
               if (p.id !== activeProject.id) return p;
@@ -1175,15 +1314,17 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                   budget: budgetFmt,
                   countries: pData.uniqueCountries || [],
                   platforms,
+                  statsLoaded: true, // API answered — shimmer off
                 };
               });
               return { ...p, competitors: updatedCompetitors };
             }),
           );
         })
-        .catch((err) =>
-          console.error("Could not fetch stats for new competitor", err),
-        );
+        .catch((err) => {
+          console.error("Could not fetch stats for new competitor", err);
+          markCompetitorStatsLoaded(activeProject.id, newCompetitor.id);
+        });
     } catch (err) {
       console.error("Failed to add manual competitor", err);
       showToast("Failed to add competitor. Please try again.", "error");
@@ -1542,7 +1683,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
           >
             <ChevronLeft size={18} /> All Projects
           </button>
-          <div className="max-w-7xl mx-auto space-y-6 pb-20">
+          <div className="max-w-[1600px] mx-auto space-y-6 pb-20">
             <div className="flex items-end justify-between border-b border-theme-border pb-6">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-theme-card border border-theme-border rounded-lg">
@@ -1552,11 +1693,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                   {activeProject.advertiser}
                 </h1>
                 <button
-                  onClick={openAddCompetitorModal}
-                  className="p-2 rounded-lg text-theme-text-muted hover:text-[#6b99ff] hover:bg-[#3762c1]/10 border border-transparent hover:border-[#3759a3]/30 transition-all"
-                  title="Add a competitor manually"
+                  onClick={openRenameBrandModal}
+                  title={`Rename brand "${activeProject.advertiser}"`}
+                  className="p-2 rounded-lg text-theme-text-muted hover:text-[#6b99ff] hover:bg-[#3762c1]/10 border border-theme-border hover:border-[#3759a3]/40 transition-all"
                 >
-                  <Edit2 size={18} />
+                  <Edit2 size={16} />
                 </button>
               </div>
               <div className="flex items-center gap-2">
@@ -1656,6 +1797,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                   </div>
                 </div>
                 <button
+                  onClick={openAddCompetitorModal}
+                  title={`Manually add a competitor to "${activeProject?.advertiser}"`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-[#335296] hover:bg-[#3762c1] text-white transition-all shadow-sm whitespace-nowrap"
+                >
+                  <Plus size={13} /> Add Competitor
+                </button>
+                <button
                   onClick={() => {
                     const comps = activeProject?.competitors || [];
                     if (!comps.length) return;
@@ -1710,8 +1858,36 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                 )}
 
               {isProjectLoading ? (
-                <div className="flex items-center justify-center p-20 min-h-[400px]">
-                  <Loader2 className="w-10 h-10 text-[#3759a3] animate-spin" />
+                /* Skeleton table — same 10 columns as the real one, so the
+                   layout doesn't jump when data lands. */
+                <div className="overflow-x-auto min-h-[400px]">
+                  <table className="w-full text-left border-collapse min-w-[1050px]">
+                    <thead>
+                      <tr className="border-b border-theme-border text-[13px] tracking-wide text-theme-text-muted bg-theme-bg/20">
+                        <th className="px-6 py-4 font-semibold">Competitors</th>
+                        <th className="px-4 py-4 font-semibold text-center">
+                          Monitoring Status
+                        </th>
+                        <th className="px-5 py-4 font-semibold">Avg Impression</th>
+                        <th className="px-5 py-4 font-semibold">Popularity %</th>
+                        <th className="px-5 py-4 font-semibold">Total Ads</th>
+                        <th className="px-3 py-4 font-semibold">
+                          Recent Activity
+                        </th>
+                        <th className="px-5 py-4 font-semibold">Platforms</th>
+                        <th className="px-5 py-4 font-semibold">Top Country</th>
+                        <th className="px-5 py-4 font-semibold">Estimated Total Ad Budget($)</th>
+                        <th className="px-5 py-4 font-semibold text-center">
+                          Comparison
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Array.from({ length: 6 }).map((_, i) => (
+                        <CompetitorRowSkeleton key={i} />
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
                 <div className="overflow-x-auto min-h-[400px]">
@@ -1800,24 +1976,39 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                           </td>
 
                           <td className="px-5 py-4">
-                            <div className="flex items-center gap-1.5 font-bold text-white">
-                              <Activity size={14} className="text-[#6b99ff]" />
-                              {comp.impressions}
-                            </div>
+                            {comp.statsLoaded === false ? (
+                              <CellShimmer className="h-3.5 w-14" />
+                            ) : (
+                              <div className="flex items-center gap-1.5 font-bold text-white">
+                                <Activity size={14} className="text-[#6b99ff]" />
+                                {comp.impressions}
+                              </div>
+                            )}
                           </td>
                           <td className="px-5 py-4">
-                            <span className="whitespace-nowrap inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              {comp.popularity.split(" ")[0]}{" "}
-                              <span className="opacity-70">
-                                {comp.popularity.split(" ")[1]}
+                            {comp.statsLoaded === false ? (
+                              <CellShimmer className="h-6 w-24" />
+                            ) : (
+                              <span className="whitespace-nowrap inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                {comp.popularity.split(" ")[0]}{" "}
+                                <span className="opacity-70">
+                                  {comp.popularity.split(" ")[1]}
+                                </span>
                               </span>
-                            </span>
+                            )}
                           </td>
                           <td className="px-5 py-4 font-semibold text-white">
-                            {comp.totalAds.toLocaleString()}
+                            {comp.statsLoaded === false ? (
+                              <CellShimmer className="h-3.5 w-12" />
+                            ) : (
+                              comp.totalAds.toLocaleString()
+                            )}
                           </td>
 
                           <td className="px-3 py-4 text-sm font-semibold">
+                            {comp.statsLoaded === false ? (
+                              <CellShimmer className="h-3.5 w-20" />
+                            ) : (
                             <div className="relative">
                               <button
                                 className="dropdown-trigger flex items-center gap-1.5 hover:text-[#7899e0] transition-colors py-1 text-[#6b99ff] whitespace-nowrap"
@@ -1849,29 +2040,42 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                                   style={{ zIndex: 9999, top: dropdownPos.top, left: dropdownPos.left }}
                                   className="dropdown-portal fixed w-44 bg-theme-bg border border-theme-border rounded-xl shadow-2xl overflow-hidden text-xs font-semibold animate-in fade-in zoom-in-95 duration-200"
                                 >
-                                  <div className="px-4 py-2.5 border-b border-theme-border flex justify-between">
-                                    <span className="text-theme-text-muted">Today:</span>{" "}
-                                    <span className="text-white text-sm">{comp.todayAds}</span>
-                                  </div>
-                                  <div className="px-4 py-2.5 border-b border-theme-border flex justify-between">
-                                    <span className="text-theme-text-muted">Yesterday:</span>{" "}
-                                    <span className="text-white text-sm">{comp.yesterdayAds}</span>
-                                  </div>
-                                  <div className="px-4 py-2.5 border-b border-theme-border flex justify-between">
-                                    <span className="text-theme-text-muted">Last Week:</span>{" "}
-                                    <span className="text-white text-sm">{comp.lastWeekAds}</span>
-                                  </div>
-                                  <div className="px-4 py-2.5 flex justify-between">
-                                    <span className="text-theme-text-muted">Last Month:</span>{" "}
-                                    <span className="text-white text-sm">{comp.lastMonthAds}</span>
-                                  </div>
+                                  {[
+                                    { label: "Today:",      period: "today",     value: comp.todayAds,     border: true },
+                                    { label: "Yesterday:",  period: "yesterday", value: comp.yesterdayAds, border: true },
+                                    { label: "Last Week:",  period: "last_7",    value: comp.lastWeekAds,  border: true },
+                                    { label: "Last Month:", period: "last_30",   value: comp.lastMonthAds, border: false },
+                                  ].map((row) => (
+                                    <button
+                                      key={row.period}
+                                      type="button"
+                                      title={`View ${comp.name} ads for ${row.label.replace(":", "")}`}
+                                      className={`w-full px-4 py-2.5 flex justify-between items-center text-left hover:bg-white/5 transition-colors ${row.border ? "border-b border-theme-border" : ""}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenDropdownId(null);
+                                        onRecentActivityClick?.(comp.name, row.period, comp.platforms);
+                                      }}
+                                    >
+                                      <span className="text-theme-text-muted">{row.label}</span>{" "}
+                                      <span className="text-[#6b99ff] text-sm">{row.value}</span>
+                                    </button>
+                                  ))}
                                 </div>,
                                 document.body
                               )}
                             </div>
+                            )}
                           </td>
 
                           <td className="px-5 py-4 text-xs font-semibold">
+                            {comp.statsLoaded === false ? (
+                              <div className="flex gap-1.5">
+                                <CellShimmer className="w-5 h-5 rounded-full" />
+                                <CellShimmer className="w-5 h-5 rounded-full" />
+                                <CellShimmer className="w-5 h-5 rounded-full" />
+                              </div>
+                            ) : (
                             <div className="flex flex-wrap gap-1.5">
                               {comp.platforms.map((p) =>
                                 PLATFORM_ICONS[p] ? (
@@ -1912,9 +2116,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                                 ),
                               )}
                             </div>
+                            )}
                           </td>
 
                           <td className="px-5 py-4 text-xs font-semibold">
+                            {comp.statsLoaded === false ? (
+                              <CellShimmer className="h-5 w-16" />
+                            ) : (
                             <div className="flex items-center gap-1.5 whitespace-nowrap relative">
                               <div
                                 className="dropdown-trigger flex -space-x-1.5 cursor-pointer"
@@ -1929,9 +2137,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                                   return (
                                     <div
                                       key={c}
-                                      className="w-5 h-5 rounded-full border border-theme-border overflow-hidden bg-theme-bg shadow-sm"
+                                      className="w-5 h-5 rounded-full border border-theme-border overflow-hidden bg-theme-bg shadow-sm hover:scale-110 hover:ring-2 hover:ring-[#6b99ff]/50 transition-transform"
                                       style={{ zIndex: 10 - idx }}
-                                      title={info.n}
+                                      title={`View ${comp.name} ads in ${info.n}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenGeoId(null);
+                                        onCountryClick?.(comp.name, c, comp.platforms);
+                                      }}
                                     >
                                       <img
                                         src={`https://flagcdn.com/w20/${info.f}.png`}
@@ -1971,12 +2184,36 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                                     className="dropdown-portal fixed w-48 bg-theme-bg border border-theme-border rounded-xl shadow-xl overflow-hidden font-semibold animate-in fade-in zoom-in-95 duration-200 text-left"
                                   >
                                     <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                                      {/* All countries → ads library with every
+                                          country of this competitor as filter */}
+                                      <button
+                                        type="button"
+                                        title={`View ${comp.name} ads in all ${comp.countries.length} countries`}
+                                        className="w-full px-4 py-2.5 border-b border-theme-border flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setOpenGeoId(null);
+                                          onCountryClick?.(comp.name, comp.countries, comp.platforms);
+                                        }}
+                                      >
+                                        <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
+                                        <span className="text-[#6b99ff] text-sm font-bold">
+                                          All Countries ({comp.countries.length})
+                                        </span>
+                                      </button>
                                       {comp.countries.map((c) => {
                                         const info = getCountryInfo(c);
                                         return (
-                                          <div
+                                          <button
+                                            type="button"
                                             key={c}
-                                            className="px-4 py-2.5 border-b border-theme-border flex items-center gap-3 hover:bg-white/5 cursor-default transition-colors"
+                                            title={`View ${comp.name} ads in ${info.n}`}
+                                            className="w-full px-4 py-2.5 border-b border-theme-border flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setOpenGeoId(null);
+                                              onCountryClick?.(comp.name, c, comp.platforms);
+                                            }}
                                           >
                                             <div className="w-5 rounded-[2px] overflow-hidden shadow-sm">
                                               <img
@@ -1986,7 +2223,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                                               />
                                             </div>
                                             <span className="text-white text-sm">{info.n}</span>
-                                          </div>
+                                          </button>
                                         );
                                       })}
                                     </div>
@@ -1995,10 +2232,15 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                               )}
                               </button>}
                             </div>
+                            )}
                           </td>
 
                           <td className="px-5 py-4 font-semibold text-white">
-                            {comp.budget}
+                            {comp.statsLoaded === false ? (
+                              <CellShimmer className="h-3.5 w-16" />
+                            ) : (
+                              comp.budget
+                            )}
                           </td>
 
                           <td className="px-5 py-4">
@@ -2247,23 +2489,32 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
               <X size={18} />
             </button>
             <div className="p-8">
-              <div className="w-14 h-14 bg-[#3762c1]/10 rounded-2xl flex items-center justify-center mb-5 border border-[#3759a3]/20">
-                <Plus className="text-[#6b99ff]" size={26} />
+              <div className="flex items-center gap-4 mb-5">
+                <div className="w-14 h-14 bg-[#3762c1]/10 rounded-2xl flex items-center justify-center border border-[#3759a3]/20 flex-shrink-0">
+                  <Plus className="text-[#6b99ff]" size={26} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-theme-text">
+                    Add Competitor Manually
+                  </h2>
+                  <p className="text-theme-text-muted text-sm">
+                    Track a competitor of your choice for this brand.
+                  </p>
+                </div>
               </div>
-              <h2 className="text-2xl font-bold text-white mb-1">
-                Add Competitor
-              </h2>
-              <p className="text-theme-text-muted text-sm mb-6">
-                Manually add a competitor to{" "}
-                <span className="text-white font-semibold capitalize">
+
+              {/* Target brand — makes it obvious WHERE the competitor goes */}
+              <div className="flex items-center gap-3 bg-theme-bg border border-theme-border rounded-xl px-4 py-3 mb-6">
+                <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
+                <span className="text-xs text-theme-text-muted">Adding to brand:</span>
+                <span className="font-bold capitalize text-theme-text truncate">
                   {activeProject?.advertiser}
                 </span>
-                .
-              </p>
+              </div>
 
               <form onSubmit={handleAddManualCompetitor} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold text-theme-text-secondary mb-2">
+                  <label className="block text-sm font-semibold text-theme-text mb-2">
                     Company Name
                   </label>
                   <input
@@ -2278,8 +2529,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-theme-text-secondary mb-2">
-                    Company Website URL
+                  <label className="block text-sm font-semibold text-theme-text mb-2">
+                    Company Website URL{" "}
+                    <span className="font-normal text-theme-text-muted">(optional)</span>
                   </label>
                   <div className="relative">
                     <Globe
@@ -2302,7 +2554,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                     type="button"
                     onClick={closeAddCompetitorModal}
                     disabled={isAddingCompetitor}
-                    className="flex-1 py-2.5 rounded-xl font-bold bg-theme-bg border border-theme-border text-white hover:bg-theme-bg/80 transition-colors disabled:opacity-50"
+                    className="flex-1 py-2.5 rounded-xl font-bold bg-theme-bg border border-theme-border text-theme-text hover:bg-theme-bg/80 transition-colors disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -2322,6 +2574,99 @@ const AllProjects = ({ onSearch, onNavigateToAds, setProjectContext }) => {
                     ) : (
                       <>
                         <Plus size={16} /> Add
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Rename Brand modal ── */}
+      {showRenameBrandModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-theme-card border border-theme-border rounded-2xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden relative">
+            <button
+              onClick={closeRenameBrandModal}
+              disabled={isRenamingBrand}
+              className="absolute top-4 right-4 text-theme-text-muted hover:text-white transition-colors p-2 hover:bg-theme-bg rounded-lg disabled:opacity-50"
+            >
+              <X size={18} />
+            </button>
+            <div className="p-8">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="w-14 h-14 bg-[#3762c1]/10 rounded-2xl flex items-center justify-center border border-[#3759a3]/20 flex-shrink-0">
+                  <Edit2 className="text-[#6b99ff]" size={24} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-theme-text">
+                    Rename Brand
+                  </h2>
+                  <p className="text-theme-text-muted text-sm">
+                    Competitors and tracked data stay attached to this brand.
+                  </p>
+                </div>
+              </div>
+
+              {/* Current name — so the user always sees what they're renaming */}
+              <div className="flex items-center gap-3 bg-theme-bg border border-theme-border rounded-xl px-4 py-3 mb-6">
+                <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
+                <span className="text-xs text-theme-text-muted">Current name:</span>
+                <span className="font-bold capitalize text-theme-text truncate">
+                  {activeProject?.advertiser}
+                </span>
+              </div>
+
+              <form onSubmit={handleRenameBrand} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-theme-text mb-2">
+                    New Brand Name
+                  </label>
+                  <input
+                    type="text"
+                    value={renameBrandValue}
+                    onChange={(e) => setRenameBrandValue(e.target.value)}
+                    placeholder="e.g. walmart"
+                    autoFocus
+                    disabled={isRenamingBrand}
+                    className="w-full bg-theme-bg border border-theme-border rounded-xl py-3 px-4 text-theme-text focus:outline-none focus:border-[#3759a3] focus:ring-1 focus:ring-[#3759a3]/50 transition-all font-medium disabled:opacity-50"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeRenameBrandModal}
+                    disabled={isRenamingBrand}
+                    className="flex-1 py-2.5 rounded-xl font-bold bg-theme-bg border border-theme-border text-theme-text hover:bg-theme-bg/80 transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      !renameBrandValue.trim() ||
+                      renameBrandValue.trim().toLowerCase() ===
+                        (activeProject?.advertiser || "").toLowerCase() ||
+                      isRenamingBrand
+                    }
+                    className={`flex-1 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                      renameBrandValue.trim() &&
+                      renameBrandValue.trim().toLowerCase() !==
+                        (activeProject?.advertiser || "").toLowerCase() &&
+                      !isRenamingBrand
+                        ? "bg-[#335296] hover:bg-[#3762c1] text-white shadow-[#3759a3]/25"
+                        : "bg-theme-border text-theme-text-muted cursor-not-allowed"
+                    }`}
+                  >
+                    {isRenamingBrand ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" /> Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Check size={16} /> Save
                       </>
                     )}
                   </button>

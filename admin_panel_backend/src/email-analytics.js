@@ -100,6 +100,33 @@ async function summary(req, res) {
         if (byType[t] && st in byType[t]) byType[t][st] += c;
         if (st in total) total[st] += c;
       }
+
+      // Unsubscribes are captured by the raw event stream, not a terminal log
+      // status (a global / group unsubscribe rarely maps back to a single send
+      // row, so email_send_log.status="unsubscribed" stays ~0). They're a GLOBAL
+      // signal — the events carry mail_type=null — so we count them the same on
+      // every mail-type tab, matching the log's unsubscribed view (which also
+      // ignores mail_type). Counted within the same date window.
+      const unsubCount = await db().collection(EVT).countDocuments({
+        createdAt: w.createdAt,
+        event_type: { $in: ["unsubscribe", "group_unsubscribe"] },
+      });
+      byType.competitorUpdate.unsubscribed = unsubCount;
+      byType.dataReport.unsubscribed = unsubCount;
+      total.unsubscribed = unsubCount;
+
+      // Click metrics (same window). `clicked` = emails with ≥1 tracked click
+      // (matches the log's hasClicks filter); `clicks` = total clicks summed.
+      for (const o of [byType.competitorUpdate, byType.dataReport, total]) { o.clicked = 0; o.clicks = 0; }
+      const clickRows = await db().collection(LOG).aggregate([
+        { $match: { ...match, click_count: { $gt: 0 } } },
+        { $group: { _id: "$mail_type", emails: { $sum: 1 }, clicks: { $sum: "$click_count" } } },
+      ]).toArray();
+      for (const r of clickRows) {
+        if (byType[r._id]) { byType[r._id].clicked += r.emails; byType[r._id].clicks += r.clicks; }
+        total.clicked += r.emails; total.clicks += r.clicks;
+      }
+
       withRates(byType.competitorUpdate);
       withRates(byType.dataReport);
       withRates(total);
@@ -120,10 +147,56 @@ async function log(req, res) {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const skip = (page - 1) * limit;
 
+    // Unsubscribes live in the event stream, not as a terminal log status (a
+    // global / group unsubscribe rarely maps back to a single send row, so
+    // email_send_log.status="unsubscribed" stays ~0). When the operator filters
+    // by "unsubscribed", serve the matching events instead — shaped like log
+    // rows — so the Unsubscribed tile count and this list agree.
+    if (req.query.status === "unsubscribed") {
+      const eq = { event_type: { $in: ["unsubscribe", "group_unsubscribe"] } };
+      // NOTE: unsubscribe / group_unsubscribe events usually carry mail_type=null
+      // (a global / ASM-group unsubscribe isn't tied to one mail type), so we do
+      // NOT filter by mail_type here — otherwise they'd vanish on every tab
+      // except "All mails". Search + date window still apply.
+      if (req.query.search && req.query.search.trim()) eq.email = new RegExp(escapeRegex(req.query.search.trim()), "i");
+      if (req.query.startDate || req.query.endDate) {
+        eq.createdAt = {};
+        if (req.query.startDate) eq.createdAt.$gte = new Date(req.query.startDate);
+        if (req.query.endDate) {
+          const e = new Date(req.query.endDate);
+          if (!String(req.query.endDate).includes("T")) e.setHours(23, 59, 59, 999);
+          eq.createdAt.$lte = e;
+        }
+      }
+      const ecol = db().collection(EVT);
+      const [edata, etotal] = await Promise.all([
+        ecol.find(eq).sort({ event_ts: -1 }).skip(skip).limit(limit).toArray(),
+        ecol.countDocuments(eq),
+      ]);
+      const data = edata.map((e) => ({
+        send_id: e.send_id || e.event_id,
+        to: e.email,
+        mail_type: e.mail_type,
+        status: "unsubscribed",
+        sent_at: e.event_ts,
+        createdAt: e.createdAt,
+        failure_reason: e.reason || (e.event_type === "group_unsubscribe" ? "group unsubscribe" : "unsubscribe"),
+        sendgrid_message_id: e.sg_message_id || null,
+      }));
+      return res.status(200).json({ statusCode: 200, body: { data, totalRecords: etotal, page, limit } });
+    }
+
     const q = {};
     if (TYPES.includes(req.query.mail_type)) q.mail_type = req.query.mail_type;
     if (req.query.status && STATUS_KEYS.includes(req.query.status)) q.status = req.query.status;
     if (req.query.search && req.query.search.trim()) q.to = new RegExp(escapeRegex(req.query.search.trim()), "i");
+    // hasClicks: "true" → only rows with at least one tracked click (click_count > 0);
+    // "false" → only rows with no clicks (field missing / null / 0). `click_count`
+    // is maintained by the SendGrid webhook handler. Applied to BOTH the find and
+    // the count below, so pagination/totalRecords stay correct (the frontend's
+    // page-only fallback can't do that).
+    if (req.query.hasClicks === "true") q.click_count = { $gt: 0 };
+    else if (req.query.hasClicks === "false") q.click_count = { $not: { $gt: 0 } };
     if (req.query.startDate || req.query.endDate) {
       q.createdAt = {};
       if (req.query.startDate) q.createdAt.$gte = new Date(req.query.startDate);

@@ -9,6 +9,14 @@ import AdFilterBar from "./AdFilterBar";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
 
+// Env kill-switch for the "Total Ads: X" count shown next to the filter chips
+// on every search. Set VITE_SHOW_TOTAL_ADS_COUNT=false to hide it; any other
+// value (or leaving it unset) keeps the count visible.
+const SHOW_TOTAL_ADS_COUNT =
+  String(import.meta.env.VITE_SHOW_TOTAL_ADS_COUNT ?? "true")
+    .trim()
+    .toLowerCase() !== "false";
+
 /**
  * AdGrid — SDUI-driven ad display with platform tabs, sort tabs, and active filter chips.
  *
@@ -838,7 +846,7 @@ const AdGrid = ({
             </div> */}
         <div className="flex flex-wrap items-start justify-between mt-3 gap-1 mb-2 px-3">
           <div className="px-3 py-1 flex flex-wrap items-center gap-2 max-w-full lg:max-w-[40%] xl:max-w-[50%] 2xl:max-w-[55%] max-h-[120px] 2xl:max-h-[150px] overflow-y-auto">
-            {adsCount && (
+            {SHOW_TOTAL_ADS_COUNT && adsCount && (
               <span className="text-[14px] font-bold whitespace-nowrap text-theme-text capitalize tracking-widest mr-1">
                 {isAllActive || specificPlatforms.length > 1 ? "Total Ads" : activePlatformLabel}
                 {`: ${adsCount}`}
