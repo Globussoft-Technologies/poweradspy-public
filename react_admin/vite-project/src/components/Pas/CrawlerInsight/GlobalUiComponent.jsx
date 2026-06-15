@@ -175,6 +175,7 @@ const GlobalUiComponent = ({ network }) => {
   useSelector((state) => state.poweradspy);
 
 const [tabs, setTabs] = useState([]);
+const [systemStatusFilter, setSystemStatusFilter] = useState('all'); // all | active | inactive (System Analytics tiles)
 const [searchTerm, setSearchTerm] = useState('');
 function getHoursBetweenDates(startDate, endDate) {
   // Ensure both inputs are Date objects
@@ -445,6 +446,7 @@ function calculateDaysInclusive(fromDate, toDate) {
 
   useEffect(()=>{
     const hostnames = systemDetails?.data?.hostnames || {};
+    setSystemStatusFilter('all'); // reset tile filter whenever the system list reloads
     setTabs([
       // Handle active systems (with empty array fallback)
       ...(systemDetails?.data?.active_systems || []).map((name,index) => ({
@@ -471,6 +473,20 @@ function calculateDaysInclusive(fromDate, toDate) {
       }))
     );
   };
+
+  // Total / Active / Inactive tiles → filter the system tab list and select the
+  // first matching system so the detail panel below follows the selection.
+  const applySystemFilter = (filter) => {
+    setSystemStatusFilter(filter);
+    setTabs(prev => {
+      const matches = t => filter === 'all' || (filter === 'active' ? t.status === 'Active' : t.status === 'inActive');
+      const firstVisible = prev.find(matches);
+      return prev.map(t => ({ ...t, isActive: firstVisible ? t.name === firstVisible.name : false }));
+    });
+  };
+  const visibleTabs = tabs.filter(t =>
+    systemStatusFilter === 'all' || (systemStatusFilter === 'active' ? t.status === 'Active' : t.status === 'inActive')
+  );
 
 
   useEffect(() => {
@@ -944,8 +960,11 @@ function calculateDaysInclusive(fromDate, toDate) {
           </p>
           <div className="flex xl:items-center xl:justify-between w-full xl:flex-row flex-col gap-[24px] xl:gap-0">
             <div className="flex gap-[14px] xl:w-[60%] sm:flex-row flex-col">
-              <div className="h-[68px] w-[283px] xl:w-[calc(60%-7px)] bg-[#fff6d9] px-[24px] flex justify-between items-center !rounded-[10px]">
-             
+              <div
+                onClick={() => applySystemFilter('all')}
+                className={`h-[68px] w-[283px] xl:w-[calc(60%-7px)] bg-[#fff6d9] px-[24px] flex justify-between items-center !rounded-[10px] cursor-pointer transition-shadow ${systemStatusFilter === 'all' ? 'ring-2 ring-[#3F51B5]' : 'hover:shadow-md'}`}
+              >
+
                 <span className="font-[600] text-[17px] text-[#1e1b39]">
                   Total Systems
                 </span>
@@ -958,7 +977,10 @@ function calculateDaysInclusive(fromDate, toDate) {
                }
                 
               </div>
-                <div className="h-[68px] w-[283px] xl:w-[calc(60%-7px)] bg-[#d6fdaf] px-[24px] flex justify-between items-center !rounded-[10px]">
+                <div
+                  onClick={() => applySystemFilter('active')}
+                  className={`h-[68px] w-[283px] xl:w-[calc(60%-7px)] bg-[#d6fdaf] px-[24px] flex justify-between items-center !rounded-[10px] cursor-pointer transition-shadow ${systemStatusFilter === 'active' ? 'ring-2 ring-[#3F51B5]' : 'hover:shadow-md'}`}
+                >
                   <span className="font-[600] text-[17px] text-[#1e1b39]">
                     Active Systems
                   </span>
@@ -966,7 +988,10 @@ function calculateDaysInclusive(fromDate, toDate) {
                     {systemDetails?.data?.active_systems?.length}
                   </span>
                 </div>
-                <div className="h-[68px] w-[283px] xl:w-[calc(60%-7px)] bg-[#feb999] px-[24px] flex justify-between items-center !rounded-[10px]">
+                <div
+                  onClick={() => applySystemFilter('inactive')}
+                  className={`h-[68px] w-[283px] xl:w-[calc(60%-7px)] bg-[#feb999] px-[24px] flex justify-between items-center !rounded-[10px] cursor-pointer transition-shadow ${systemStatusFilter === 'inactive' ? 'ring-2 ring-[#3F51B5]' : 'hover:shadow-md'}`}
+                >
                   <span className="font-[600] text-[17px] text-[#1e1b39]">
                     Inactive Systems
                   </span>
@@ -1003,7 +1028,7 @@ function calculateDaysInclusive(fromDate, toDate) {
 
           <div className="w-full xl:h-[100%] bg-white rounded-[20px]">
             <div className="w-full h-[98px] border-b-[2px] border-[#e8e8e8] px-[32px]">
-              <TabSlider tabs={tabs} handleSetTabActive={handleSetTabActive} systemDetails={systemDetails} loadingSystemData={loadingSystemData}/>     
+              <TabSlider tabs={visibleTabs} handleSetTabActive={handleSetTabActive} systemDetails={systemDetails} loadingSystemData={loadingSystemData}/>
             </div>
             {loadingAccoutData?<SystemDetailsShimmer/>: 
             <div className="h-[calc(100%-98px)] w-full sm:px-[36px] py-[24px] flex flex-col px-[16px]">

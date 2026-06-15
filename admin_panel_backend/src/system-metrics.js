@@ -715,31 +715,35 @@ async function accountsMetrics(req, res) {
     }).filter(item => item !== null);
 
     // ── Country + IP enrichment (System-Info table columns) ──────────────────
-    // IP is sourced only from the DB (per the schema); country prefers the
-    // Prometheus `country` label (cleaner + consistent, e.g. "United States")
-    // and falls back to the DB user-table value for accounts not currently
-    // emitting the metric. Looked up per network, keyed by account_id. Failures
-    // are swallowed inside fetchAccountGeo so the table still renders without geo.
-    const promCountryMap = new Map();
-    accountsData.forEach(({ metric }) => {
-      const id = metric.account_id?.toString();
-      if (id && metric.country && !promCountryMap.has(id)) promCountryMap.set(id, metric.country);
-    });
-    const idsByNetwork = {};
-    for (const r of response) {
-      const net = (r.network || '').toLowerCase();
-      if (!net || !r.account_id) continue;
-      (idsByNetwork[net] ||= new Set()).add(String(r.account_id));
-    }
-    const geoEntries = await Promise.all(
-      Object.entries(idsByNetwork).map(async ([net, set]) => [net, await fetchAccountGeo(net, [...set])])
-    );
-    const geoByNetwork = Object.fromEntries(geoEntries);
-    for (const r of response) {
-      const net = (r.network || '').toLowerCase();
-      const g = geoByNetwork[net]?.get(String(r.account_id));
-      r.country = promCountryMap.get(String(r.account_id)) || g?.country || null;
-      r.ip_address = g?.ip || null;
+    // Country prefers the Prometheus `country` label (clean + consistent); IP and
+    // the country fallback come from the DB user-table via fetchAccountGeo, looked
+    // up per network keyed by account_id. Wrapped so geo lookup can NEVER 500 the
+    // endpoint — on any failure the accounts table still renders (country/ip null).
+    try {
+      const promCountryMap = new Map();
+      accountsData.forEach(({ metric }) => {
+        const id = metric.account_id?.toString();
+        if (id && metric.country && !promCountryMap.has(id)) promCountryMap.set(id, metric.country);
+      });
+      const idsByNetwork = {};
+      for (const r of response) {
+        const net = (r.network || '').toLowerCase();
+        if (!net || !r.account_id) continue;
+        (idsByNetwork[net] ||= new Set()).add(String(r.account_id));
+      }
+      const geoEntries = await Promise.all(
+        Object.entries(idsByNetwork).map(async ([net, set]) => [net, await fetchAccountGeo(net, [...set])])
+      );
+      const geoByNetwork = Object.fromEntries(geoEntries);
+      for (const r of response) {
+        const net = (r.network || '').toLowerCase();
+        const g = geoByNetwork[net]?.get(String(r.account_id));
+        r.country = promCountryMap.get(String(r.account_id)) || g?.country || null;
+        r.ip_address = g?.ip || null;
+      }
+    } catch (geoErr) {
+      console.error('accountsMetrics country/IP enrichment failed (non-fatal):', geoErr.message);
+      for (const r of response) { r.country = r.country ?? null; r.ip_address = r.ip_address ?? null; }
     }
 
     cache.set(cacheKey, response);
@@ -1483,40 +1487,35 @@ const systemStateChart = async (req, res) => {
     const hosts = (hostMap[systemName] && hostMap[systemName].length) ? hostMap[systemName] : [systemName];
     const escaped = hosts.map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|');
 
-    // sum() collapses multiple hostnames for one system into a single series.
-    const prometheusQuery = `sum(increase(system_active_hb_total{server_name=~"${escaped}"}[135s]))`;
+    // A system is "busy" at any step when its system heartbeat OR any of its account
+    // heartbeats advanced. system_active_hb alone isn't enough: some machines emit
+    // ONLY account heartbeats (no system_active_hb_total at all, e.g. PAS1250), and
+    // some have a stuck/flat system counter while their scrapers keep running — both
+    // must read as Active. So fetch both and merge per-timestamp (active if either).
+    const acctScope = [...new Set([systemName, ...hosts])]
+      .map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|');
 
-    const response = await axios.get(PROMETHEUS_URL, {
-      params: {
-        query: prometheusQuery,
-        start: from,
-        end: to,
-        step,
-      },
-    });
+    const [sysResp, acctResp] = await Promise.all([
+      axios.get(PROMETHEUS_URL, { params: { query: `sum(increase(system_active_hb_total{server_name=~"${escaped}"}[135s]))`, start: from, end: to, step } }),
+      axios.get(PROMETHEUS_URL, { params: { query: `sum(increase(account_active_hb_total{server_name=~"${acctScope}"}[135s]))`, start: from, end: to, step } }),
+    ]);
 
-    let result = response.data.data.result[0];
-    if (!result || !result.values || result.values.length === 0) {
-      // Machines that emit only account heartbeats (no system_active_hb_total) have
-      // no system timeline — fall back to a "busy" timeline derived from any account
-      // heartbeat for this system (account hb server_name is often the system_id).
-      const acctScope = [...new Set([systemName, ...hosts])]
-        .map(h => h.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')).join('|');
-      const acctResp = await axios.get(PROMETHEUS_URL, {
-        params: {
-          query: `sum(increase(account_active_hb_total{server_name=~"${acctScope}"}[135s]))`,
-          start: from,
-          end: to,
-          step,
-        },
-      });
-      result = acctResp.data.data.result[0];
+    const sysVals = sysResp.data.data.result[0]?.values || [];
+    const acctVals = acctResp.data.data.result[0]?.values || [];
+
+    const merged = new Map();
+    for (const [ts, v] of sysVals) merged.set(parseInt(ts), parseFloat(v) > 0);
+    for (const [ts, v] of acctVals) {
+      const t = parseInt(ts);
+      if (parseFloat(v) > 0) merged.set(t, true);
+      else if (!merged.has(t)) merged.set(t, false);
     }
-    if (!result || !result.values || result.values.length === 0) {
+
+    // Back into the [ts, "1"/"0"] shape the timeline builder below expects.
+    const values = [...merged.entries()].sort((a, b) => a[0] - b[0]).map(([ts, active]) => [ts, active ? '1' : '0']);
+    if (!values.length) {
       return res.status(404).json({ error: "No data found for the given system" });
     }
-
-    const values = result.values;
     let timeline = [];
     let totalActive = 0;
     let totalInactive = 0;
