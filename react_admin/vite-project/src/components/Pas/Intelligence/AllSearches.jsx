@@ -35,7 +35,7 @@ const EMPTY = {
   dateRange: "Last 90 days",
   fromDate: todayStr(), fromTime: "00:00",
   toDate: todayStr(),   toTime: "23:59",
-  includedUsers: [], excludedUsers: [],
+  includedUsers: [], excludedUsers: [],  // Will be populated with globussoft.in emails after filterOptions load
   keyword: "", advertiser: "", domain: "",
   platform: "", activityType: "",
 };
@@ -96,7 +96,7 @@ const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, st
           position: "absolute", top: "100%", left: 0, zIndex: 999,
           background: "white", border: "1px solid #d1d5db", borderRadius: "6px",
           boxShadow: "0 4px 16px rgba(0,0,0,0.10)", maxHeight: "350px", overflowY: "auto",
-          marginTop: "2px", minWidth: "100%", width: "100%", maxWidth: "none", minWidth: "500px",
+          marginTop: "2px", width: "100%", minWidth: "500px", maxWidth: "none",
         }}>
           {filtered.map((opt) => (
             <div
@@ -120,7 +120,9 @@ const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, st
 
 // ── Multi-select include/exclude user input ───────────────────────────────────
 const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] }) => {
-  const [mode, setMode]   = useState("include"); // "include" | "exclude"
+  // Determine initial mode based on whether there are excluded or included users
+  const initialMode = excluded.length > 0 ? "exclude" : (included.length > 0 ? "include" : "exclude");
+  const [mode, setMode]   = useState(initialMode);
   const [query, setQuery] = useState("");
   const [open, setOpen]   = useState(false);
   const wrapRef           = useRef(null);
@@ -145,11 +147,10 @@ const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] 
     return domain === pat || domain.endsWith(`.${pat}`);
   };
 
+  // Show suggestions: all options EXCEPT those already selected (excluded/included)
   const filtered = (query
     ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
-    : domainChips.length > 0
-      ? options.filter((o) => domainChips.some((d) => matchesDomainChip(o, d)))
-      : options
+    : options
   ).filter((o) => !allSelected.includes(o)).slice(0, 30);
 
   const addEntry = (val) => {
@@ -567,6 +568,47 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   const [applied, setApplied] = useState({ ...DEFAULT_APPLIED });
   const appliedRef = useRef({ ...DEFAULT_APPLIED });
 
+  // Store default excluded users (globussoft.in emails) for reset
+  const [defaultExcludedUsers, setDefaultExcludedUsers] = useState([]);
+
+  // Track whether initial filter setup is complete
+  const [filtersInitialized, setFiltersInitialized] = useState(false);
+
+  // Expand domain pattern to individual emails when filterOptions are loaded
+  useEffect(() => {
+    if (filterOptions.users && filterOptions.users.length > 0) {
+      console.log('[AllSearches] filterOptions.users loaded:', filterOptions.users);
+
+      // Find all emails matching .globussoft.in domain
+      const globussoftEmails = filterOptions.users.filter((email) => {
+        const emailLower = email.toLowerCase();
+        const atIdx = emailLower.indexOf('@');
+        if (atIdx === -1) return false;
+        const domain = emailLower.slice(atIdx + 1);
+        return domain === "globussoft.in" || domain.endsWith(".globussoft.in");
+      });
+
+      console.log('[AllSearches] Found globussoft.in emails:', globussoftEmails);
+
+      // Store as default excluded users (for reset) — always do this even if empty
+      setDefaultExcludedUsers(globussoftEmails);
+
+      // Update draft state
+      setDraft((prevDraft) => ({
+        ...prevDraft,
+        excludedUsers: globussoftEmails,
+      }));
+
+      // Update applied state and trigger fetch
+      const newApplied = { ...DEFAULT_APPLIED, excludedUsers: globussoftEmails };
+      setApplied(newApplied);
+      appliedRef.current = newApplied;
+
+      // Mark filters as initialized — this will trigger the data fetch
+      setFiltersInitialized(true);
+    }
+  }, [filterOptions.users]);
+
   const [page, setPage] = useState(0);
   const [fetchTick, setFetchTick] = useState(0);
 
@@ -585,29 +627,11 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   const [statusHistory, setStatusHistory] = useState([]);
   const [statusHistoryLoading, setStatusHistoryLoading] = useState(false);
 
-  const generateSampleData = () => {
-    const sampleData = [];
-    for (let i = 29; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toLocaleDateString();
-      const adsCount = Math.floor(Math.random() * 500) + 100;
-      sampleData.push({
-        date: dateStr,
-        adsCount: adsCount,
-        status: 'success',
-      });
-    }
-    return sampleData;
-  };
-
   const openStatusModal = async (rowData) => {
     setStatusModalData({ ...rowData, platform: rowData.platform || [] });
     setStatusModalOpen(true);
     setStatusHistoryLoading(true);
-
-    // Set sample data immediately as fallback
-    setStatusHistory(generateSampleData());
+    setStatusHistory([]);
 
     try {
       const params = new URLSearchParams();
@@ -644,13 +668,18 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       if (response.ok) {
         const data = await response.json();
         console.log("[openStatusModal] API response:", data);
+        console.log("[openStatusModal] Searched date from API:", data.data?.searchedDate);
         if (data.data?.history && data.data.history.length > 0) {
-          setStatusHistory(data.data.history);
+          // Sort history by date descending (newest first)
+          const sortedHistory = [...data.data.history].sort((a, b) => new Date(b.date) - new Date(a.date));
+          setStatusHistory(sortedHistory);
         }
-        // Update modal data with platform from API response
-        if (data.data?.platform) {
-          setStatusModalData(prev => ({ ...prev, platform: data.data.platform }));
-        }
+        // Update modal data with platform and searched date from API response
+        setStatusModalData(prev => ({
+          ...prev,
+          platform: data.data?.platform || prev.platform,
+          searchedDate: data.data?.searchedDate
+        }));
       } else {
         const errText = await response.text();
         console.error("Failed to fetch scraping history:", response.status, errText);
@@ -668,38 +697,61 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         setError("API URL not configured (VITE_NODE_USER_ACTIVITY_API)");
         return;
       }
+      // Don't fetch until filters are initialized with default exclusions
+      if (!filtersInitialized) {
+        console.log('[AllSearches] Skipping fetch, filters not yet initialized');
+        return;
+      }
       setLoading(true);
       setError(null);
       const f = appliedRef.current;
       try {
-        const params = new URLSearchParams();
-        if (f.dateRange === "Custom") {
-          // Build ISO datetime strings from date + time parts
-          params.set("from_date", `${f.fromDate}T${f.fromTime}:00`);
-          params.set("to_date",   `${f.toDate}T${f.toTime}:59`);
-        } else {
-          params.set("date_range", f.dateRange);
-        }
-        params.set("page", String(page));
-        params.set("size", String(PAGE_SIZE));
-        if (f.includedUsers?.length > 0) params.set("users",         f.includedUsers.join(","));
-        if (f.excludedUsers?.length > 0) params.set("exclude_users", f.excludedUsers.join(","));
-        if (f.keyword)              params.set("keyword",    f.keyword);
-        if (f.advertiser)           params.set("advertiser", f.advertiser);
-        if (f.domain)               params.set("domain",     f.domain);
-        if (f.platform)             params.set("platform",   f.platform);
-        if (f.activityType)         params.set("activity_type", f.activityType);
+        // Build parameters for both main search and summary
+        const buildParams = (includePageSize = true) => {
+          const params = new URLSearchParams();
+          if (f.dateRange === "Custom") {
+            params.set("from_date", `${f.fromDate}T${f.fromTime}:00`);
+            params.set("to_date",   `${f.toDate}T${f.toTime}:59`);
+          } else {
+            params.set("date_range", f.dateRange);
+          }
+          if (includePageSize) {
+            params.set("page", String(page));
+            params.set("size", String(PAGE_SIZE));
+          }
+          if (f.includedUsers?.length > 0) params.set("users",         f.includedUsers.join(","));
+          if (f.excludedUsers?.length > 0) params.set("exclude_users", f.excludedUsers.join(","));
+          if (f.keyword)              params.set("keyword",    f.keyword);
+          if (f.advertiser)           params.set("advertiser", f.advertiser);
+          if (f.domain)               params.set("domain",     f.domain);
+          if (f.platform)             params.set("platform",   f.platform);
+          if (f.activityType)         params.set("activity_type", f.activityType);
+          return params;
+        };
+
+        const params = buildParams(true);
+        const summaryParams = buildParams(false);
 
         const token = Cookies.get("token");
-        const res = await fetch(`${NODE_API}/intelligence/all-searches?${params.toString()}`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
 
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
-        const json = await res.json();
+        // Fetch both in parallel
+        const [mainRes, summaryRes] = await Promise.all([
+          fetch(`${NODE_API}/intelligence/all-searches?${params.toString()}`, {
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          }),
+          fetch(`${NODE_API}/intelligence/summary?${summaryParams.toString()}`, {
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          })
+        ]);
+
+        if (!mainRes.ok) throw new Error(`Server error: ${mainRes.status}`);
+        const json = await mainRes.json();
         if (json.code !== 200) throw new Error(json.message || "Unexpected response");
 
         setRows(json.data.rows ?? []);
@@ -707,31 +759,11 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         setTotalPages(json.data.total_pages ?? 1);
         setDateLabel(json.meta?.date_label ?? "");
 
-        // Fetch summary stats in parallel
-        const summaryParams = new URLSearchParams();
-        if (f.dateRange === "Custom") {
-          summaryParams.set("from_date", `${f.fromDate}T${f.fromTime}:00`);
-          summaryParams.set("to_date",   `${f.toDate}T${f.toTime}:59`);
-        } else {
-          summaryParams.set("date_range", f.dateRange);
+        // Handle summary response
+        if (summaryRes.ok) {
+          const summaryJson = await summaryRes.json();
+          if (summaryJson.code === 200) setSummaryStats(summaryJson.data);
         }
-        if (f.includedUsers?.length > 0) summaryParams.set("users",         f.includedUsers.join(","));
-        if (f.excludedUsers?.length > 0) summaryParams.set("exclude_users", f.excludedUsers.join(","));
-        if (f.keyword)              summaryParams.set("keyword",    f.keyword);
-        if (f.advertiser)           summaryParams.set("advertiser", f.advertiser);
-        if (f.domain)               summaryParams.set("domain",     f.domain);
-        if (f.platform)             summaryParams.set("platform",   f.platform);
-        if (f.activityType)         summaryParams.set("activity_type", f.activityType);
-
-        fetch(`${NODE_API}/intelligence/summary?${summaryParams.toString()}`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        })
-          .then((r) => r.json())
-          .then((j) => { if (j.code === 200) setSummaryStats(j.data); })
-          .catch(() => {});
       } catch (err) {
         setError(err.message || "Failed to load data");
         setRows([]);
@@ -744,7 +776,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
     };
     fetchData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchTick, page]);
+  }, [fetchTick, page, filtersInitialized]);
 
   // Auto-apply for dropdown fields (date range, platform)
   const applyImmediate = (patch) => {
@@ -779,7 +811,15 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   }, []);
 
   const handleReset = () => {
-    const fresh = { ...EMPTY, fromDate: todayStr(), toDate: todayStr() };
+    // Reset to defaults: Last 90 days + exclude globussoft.in emails
+    const fresh = {
+      ...EMPTY,
+      fromDate: todayStr(),
+      toDate: todayStr(),
+      dateRange: "Last 90 days",
+      excludedUsers: defaultExcludedUsers && defaultExcludedUsers.length > 0 ? defaultExcludedUsers : []
+    };
+    console.log('[handleReset] Reset to fresh state:', { excludedUsers: fresh.excludedUsers, defaultExcludedUsers });
     appliedRef.current = fresh;
     setApplied(fresh);
     setDraft(fresh);
@@ -801,6 +841,10 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       ? `Custom: ${applied.fromDate} → ${applied.toDate}`
       : applied.dateRange,
       clear: () => clearChip({ dateRange: "Last 90 days" }) },
+    applied.includedUsers && applied.includedUsers.length > 0 && { key: "includedUsers", label: `Include: ${applied.includedUsers.length} user${applied.includedUsers.length > 1 ? "s" : ""}`,
+      clear: () => clearChip({ includedUsers: [] }) },
+    (applied.excludedUsers && applied.excludedUsers.length > 0) && { key: "excludedUsers", label: `Exclude: ${applied.excludedUsers.length} user${applied.excludedUsers.length > 1 ? "s" : ""}`,
+      clear: () => { console.log('[activeChips] Clearing excluded users, resetting to default:', defaultExcludedUsers); clearChip({ excludedUsers: defaultExcludedUsers }); } },
     applied.keyword      && { key: "keyword",    label: `Keyword: ${applied.keyword}`,
       clear: () => clearChip({ keyword: "" }) },
     applied.advertiser   && { key: "advertiser", label: `Advertiser: ${applied.advertiser}`,
@@ -874,12 +918,12 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           </td>
           <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", textAlign: "center", whiteSpace: "nowrap" }}>
             {(row.keyword || row.advertiser || row.domain) ? (
-              <span
+              <button
                 onClick={() => openStatusModal(row)}
-                style={{ display: "inline-block", background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                style={{ display: "inline-block", background: "#dbeafe", color: "#1e40af", border: "1px solid #93c5fd", padding: "4px 10px", borderRadius: "4px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textDecoration: "none" }}
               >
-                ✓
-              </span>
+                Check Status
+              </button>
             ) : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
           <td style={{ padding: "10px 12px" }}>
@@ -1185,8 +1229,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                   </p>
                 )}
                 {Array.isArray(statusModalData.platform) && statusModalData.platform.length > 0 && (
-                  <p style={{ margin: "0", fontSize: "12px", color: "#6b7280" }}>
+                  <p style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#6b7280" }}>
                     <strong>Platform:</strong> {statusModalData.platform.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(", ")}
+                  </p>
+                )}
+                {statusModalData.searchedDate && (
+                  <p style={{ margin: "0", fontSize: "12px", color: "#6b7280" }}>
+                    <strong>Searched Date:</strong> {statusModalData.searchedDate}
                   </p>
                 )}
               </div>
@@ -1194,24 +1243,35 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
 
             {statusHistoryLoading ? (
               <div style={{ textAlign: "center", padding: "40px 20px", color: "#9ca3af" }}>Loading...</div>
+            ) : statusHistory.length === 0 ? (
+              <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "8px", padding: "20px", textAlign: "center" }}>
+                <p style={{ fontSize: "14px", color: "#0369a1", margin: "0 0 8px 0", fontWeight: 600 }}>
+                  📋 No Scraping History Found
+                </p>
+                <p style={{ fontSize: "12px", color: "#0369a1", margin: 0 }}>
+                  This {statusModalData?.keyword ? "keyword" : statusModalData?.advertiser ? "advertiser" : "domain"} has not been scheduled for scraping yet.
+                </p>
+              </div>
             ) : (
               <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "90px 140px 140px 80px 90px", gap: "10px", marginBottom: "12px", paddingBottom: "8px", borderBottom: "1px solid #e5e7eb", textAlign: "center" }}>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Date</strong>
+                  <div style={{ display: "grid", gridTemplateColumns: "110px 110px 130px 130px 80px 80px 100px", gap: "10px", marginBottom: "12px", paddingBottom: "8px", borderBottom: "1px solid #e5e7eb", textAlign: "center" }}>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Scraping Date</strong>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Network</strong>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>Start Time</strong>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>End Time</strong>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>Ads Count</strong>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>Status</strong>
                   </div>
-                  {statusHistory.map((item, idx) => {
+                  {statusHistory
+                    .map((item, idx) => {
                     let statusColor, statusBg, statusText;
                     if (item.status === 'success' || item.status === 'completed') {
                       statusBg = "#d1fae5";
                       statusColor = "#065f46";
                       statusText = "✓ OK";
                     } else if (item.status === 'no_ads_found') {
-                      statusBg = "#fecaca";
+                      statusBg = "#fee2e2";
                       statusColor = "#991b1b";
                       statusText = "✗ No Ads";
                     } else if (item.status === 'scrapping') {
@@ -1219,19 +1279,24 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                       statusColor = "#92400e";
                       statusText = "⟳ Scrapping";
                     } else {
-                      statusBg = "#f3f4f6";
-                      statusColor = "#6b7280";
-                      statusText = "- N/A";
+                      statusBg = "#fee2e2";
+                      statusColor = "#dc2626";
+                      statusText = "✗ Failed";
                     }
                     const startTime = item.startTime ? new Date(item.startTime).toLocaleTimeString() : "-";
                     const endTime = item.endTime ? new Date(item.endTime).toLocaleTimeString() : "-";
+                    const isFailed = !item.status || item.status === 'no_ads_found' || item.status === 'failed' || item.status === 'error';
+                    const rowBg = isFailed ? "#fff5f5" : "white";
+                    const rowBorder = isFailed ? "3px solid #dc2626" : "1px solid #f3f4f6";
+
                     return (
-                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "90px 140px 140px 80px 90px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", textAlign: "center" }}>
+                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "110px 110px 130px 130px 80px 80px 100px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", borderLeft: rowBorder, backgroundColor: rowBg, textAlign: "center" }}>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{item.date}</span>
+                        <span style={{ fontSize: "11px", color: "#374151", textTransform: "capitalize" }}>{item.network || "-"}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{startTime}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{endTime}</span>
                         <span style={{ fontSize: "11px", color: "#374151", fontWeight: 500 }}>{item.adsCount ?? "-"}</span>
-                        <span style={{ fontSize: "10px", padding: "2px 4px", borderRadius: "3px", background: statusBg, color: statusColor, fontWeight: 600 }}>
+                        <span style={{ fontSize: "10px", padding: "4px 8px", borderRadius: "4px", background: statusBg, color: statusColor, fontWeight: 600, border: "1px solid #fca5a5" }}>
                           {statusText}
                         </span>
                       </div>

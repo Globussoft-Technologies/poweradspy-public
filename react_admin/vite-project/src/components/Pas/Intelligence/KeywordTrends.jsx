@@ -54,7 +54,7 @@ const KeywordTrends = ({ onDataReady }) => {
       setError(null);
       try {
         const token = Cookies.get("token");
-        const params = new URLSearchParams({ type: "all", sort_by: sortBy, size: "20" });
+        const params = new URLSearchParams({ type: "all", sort_by: sortBy });
         const res = await fetch(`${NODE_API}/intelligence/keyword-trends?${params}`, {
           headers: {
             "Content-Type": "application/json",

@@ -1,5 +1,9 @@
 'use strict';
 
+const databaseManager = require('../../../database/DatabaseManager');
+const config = require('../../../config');
+const { MongoClient } = require('mongodb');
+
 // Cache: { value, expiresAt }
 const _cache = new Map();
 
@@ -241,49 +245,53 @@ async function getTopUsers(req, elastic, logger) {
 
     // Step 1 — fetch all users + doc counts for the window (all doc types)
     // Step 2 — fetch emails from LoggedIn docs in parallel
+    const allUsersBody = {
+      size: 0,
+      query: { bool: { filter: [{ range: { dateTime: { gte: fromTs, lte: toTs } } }] } },
+      aggs: {
+        per_user: {
+          terms: { field: 'user.id', size: BUCKET_SIZE, order: { _count: 'desc' } },
+          aggs: {
+            top_keyword:      { terms: { field: 'search.keyword.keyword',              size: 1 } },
+            top_advertiser:   { terms: { field: 'search.advertiser.keyword',           size: 1 } },
+            top_domain:       { terms: { field: 'search.domain.keyword',               size: 1 } },
+            top_platform:     { terms: { field: 'network.keyword',                     size: 1 } },
+            top_country:      { terms: { field: 'filter.country.keyword',              size: 1 } },
+            top_countries:    { terms: { field: 'filter.countries.keyword',            size: 3 } },
+            top_adtype:       { terms: { field: 'filter.ad_type.keyword',              size: 1 } },
+            top_gender:       { terms: { field: 'filter.gender.keyword',               size: 1 } },
+            top_status:       { terms: { field: 'filter.status.keyword',               size: 1 } },
+            top_sort_by:      { terms: { field: 'filter.sort_by.keyword',              size: 1 } },
+            top_category:     { terms: { field: 'filter.ad_categories.keyword',        size: 2 } },
+            top_subcategory:  { terms: { field: 'filter.ad_subCategories.keyword',     size: 2 } },
+            top_language:     { terms: { field: 'filter.languages.keyword',            size: 1 } },
+            top_cta:          { terms: { field: 'filter.call_to_actions.keyword',      size: 1 } },
+          },
+        },
+      },
+    };
+
+    const emailUsersBody = {
+      size: 0,
+      query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
+      aggs: {
+        per_user: {
+          terms: { field: 'user.id', size: BUCKET_SIZE },
+          aggs: {
+            email_hit: { top_hits: { size: 1, _source: ['user.email', 'user.username'] } },
+          },
+        },
+      },
+    };
+
     const [allUsersResult, emailResult] = await Promise.all([
       elastic.search({
         index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: [{ range: { dateTime: { gte: fromTs, lte: toTs } } }] } },
-          aggs: {
-            per_user: {
-              terms: { field: 'user.id', size: BUCKET_SIZE, order: { _count: 'desc' } },
-              aggs: {
-                top_keyword:      { terms: { field: 'search.keyword.keyword',              size: 1 } },
-                top_advertiser:   { terms: { field: 'search.advertiser.keyword',           size: 1 } },
-                top_domain:       { terms: { field: 'search.domain.keyword',               size: 1 } },
-                top_platform:     { terms: { field: 'network.keyword',                     size: 1 } },
-                top_country:      { terms: { field: 'filter.country.keyword',              size: 1 } },
-                top_countries:    { terms: { field: 'filter.countries.keyword',            size: 3 } },
-                top_adtype:       { terms: { field: 'filter.ad_type.keyword',              size: 1 } },
-                top_gender:       { terms: { field: 'filter.gender.keyword',               size: 1 } },
-                top_status:       { terms: { field: 'filter.status.keyword',               size: 1 } },
-                top_sort_by:      { terms: { field: 'filter.sort_by.keyword',              size: 1 } },
-                top_category:     { terms: { field: 'filter.ad_categories.keyword',        size: 2 } },
-                top_subcategory:  { terms: { field: 'filter.ad_subCategories.keyword',     size: 2 } },
-                top_language:     { terms: { field: 'filter.languages.keyword',            size: 1 } },
-                top_cta:          { terms: { field: 'filter.call_to_actions.keyword',      size: 1 } },
-              },
-            },
-          },
-        },
+        body: allUsersBody,
       }),
       elastic.search({
         index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-          aggs: {
-            per_user: {
-              terms: { field: 'user.id', size: BUCKET_SIZE },
-              aggs: {
-                email_hit: { top_hits: { size: 1, _source: ['user.email', 'user.username'] } },
-              },
-            },
-          },
-        },
+        body: emailUsersBody,
       }),
     ]);
 
@@ -681,6 +689,8 @@ async function getAllSearches(req, elastic, logger) {
       ],
     };
 
+ 
+
     const [result, emailResult] = await Promise.all([
       elastic.search({ index: 'user_activities', body }),
       // Fetch emails from LoggedIn docs — email not present in filter_only/search docs
@@ -969,8 +979,8 @@ async function getKeywordTrends(req, elastic, logger) {
   try {
     if (!elastic) return { code: 500, message: 'Elasticsearch client not available' };
 
-    const { type = 'all', sort_by = 'count', size = 20 } = req.query;
-    const termSize = Math.min(100, Math.max(1, Number(size)));
+    const { type = 'all', sort_by = 'count', size } = req.query;
+    const termSize = size ? Number(size) : 10000; // Default to 10000 to fetch all unique keywords
     const DAY_S = 24 * 60 * 60;
 
     // Current period: last 45 days; previous period: 45 days before that
@@ -991,11 +1001,17 @@ async function getKeywordTrends(req, elastic, logger) {
       ? ['keyword', 'advertiser', 'domain']
       : [type].filter((t) => FIELDS[t]);
 
-    // Build aggs for a given time window
-    function buildAggs(types, termSz) {
+    // Build aggs for a given time window - fetch all unique values
+    function buildAggs(types) {
       const aggs = {};
       for (const t of types) {
-        aggs[`top_${t}`] = { terms: { field: FIELDS[t], size: termSz } };
+        aggs[`top_${t}`] = {
+          terms: {
+            field: FIELDS[t],
+            size: 10000,  // Fetch up to 10k unique values
+            collect_mode: 'breadth_first'
+          }
+        };
       }
       return aggs;
     }
@@ -1009,21 +1025,24 @@ async function getKeywordTrends(req, elastic, logger) {
 
 
 
+    // Build query bodies for logging
+    const currQueryBody = { size: 0, query: rangeFilter(currFrom, currTo), aggs: buildAggs(activeTypes) };
+    const prevQueryBody = { size: 0, query: rangeFilter(prevFrom, prevTo), aggs: buildAggs(activeTypes) };
+
     // Run current and previous period queries in parallel
     const [currResult, prevResult] = await Promise.all([
       elastic.search({
         index: 'user_activities',
-        body: { size: 0, query: rangeFilter(currFrom, currTo), aggs: buildAggs(activeTypes, termSize) },
+        body: currQueryBody,
       }),
       elastic.search({
         index: 'user_activities',
-        body: { size: 0, query: rangeFilter(prevFrom, prevTo), aggs: buildAggs(activeTypes, termSize) },
+        body: prevQueryBody,
       }),
     ]);
 
     const currAggs = getAggs(currResult);
     const prevAggs = getAggs(prevResult);
-
     function computeGrowth(curr, prev) {
       if (!prev || prev === 0) return null; // no previous data
       return Math.round(((curr - prev) / prev) * 100);
@@ -1044,6 +1063,15 @@ async function getKeywordTrends(req, elastic, logger) {
         prev_count:  prevMap[b.key] ?? 0,
         growth_pct:  computeGrowth(b.doc_count, prevMap[b.key] ?? 0),
       }));
+
+
+      terms.slice(0, 5).forEach((t) => {
+        const calc = t.prev_count > 0
+          ? `(${t.count} - ${t.prev_count}) / ${t.prev_count} × 100 = ${t.growth_pct}%`
+          : `No previous data (new item)`;
+       
+      });
+ 
 
       // Sort
       if (sort_by === 'growth') {
@@ -1555,50 +1583,57 @@ async function getFilterOptions(req, elastic, logger) {
     const fromTs = now - 90 * DAY_S;
     const size   = Math.min(200, Math.max(1, Number(req.query.size ?? 100)));
 
-    const result = await elastic.search({
-      index: 'user_activities',
-      body: {
-        size: 0,
-        query: {
-          bool: {
-            filter: [
-              { range: { dateTime: { gte: fromTs } } },
-              { bool: { should: [
-                { exists: { field: 'search.keyword'    } },
-                { exists: { field: 'search.advertiser' } },
-                { exists: { field: 'search.domain'     } },
-              ], minimum_should_match: 1 } },
-            ],
-          },
-        },
-        aggs: {
-          keywords:    { terms: { field: 'search.keyword.keyword',    size, order: { _count: 'desc' } } },
-          advertisers: { terms: { field: 'search.advertiser.keyword', size, order: { _count: 'desc' } } },
-          domains:     { terms: { field: 'search.domain.keyword',     size, order: { _count: 'desc' } } },
-          countries:   { terms: { field: 'filter.country.keyword',    size, order: { _count: 'desc' } } },
+    const dropdownBody = {
+      size: 0,
+      query: {
+        bool: {
+          filter: [
+            { range: { dateTime: { gte: fromTs } } },
+            { bool: { should: [
+              { exists: { field: 'search.keyword'    } },
+              { exists: { field: 'search.advertiser' } },
+              { exists: { field: 'search.domain'     } },
+            ], minimum_should_match: 1 } },
+          ],
         },
       },
+      aggs: {
+        keywords:    { terms: { field: 'search.keyword.keyword',    size, order: { _count: 'desc' } } },
+        advertisers: { terms: { field: 'search.advertiser.keyword', size, order: { _count: 'desc' } } },
+        domains:     { terms: { field: 'search.domain.keyword',     size, order: { _count: 'desc' } } },
+        countries:   { terms: { field: 'filter.country.keyword',    size, order: { _count: 'desc' } } },
+      },
+    };
+
+
+
+    const result = await elastic.search({
+      index: 'user_activities',
+      body: dropdownBody,
     });
 
     const aggs = getAggs(result);
     const pick = (buckets) => (buckets ?? []).map((b) => b.key).filter(Boolean);
 
     // Also fetch unique user emails via email_hit trick
-    const emailResult = await elastic.search({
-      index: 'user_activities',
-      body: {
-        size: 0,
-        query: { bool: { filter: [
-          { range: { dateTime: { gte: fromTs } } },
-          { exists: { field: 'user.email' } },
-        ] } },
-        aggs: {
-          per_user: {
-            terms: { field: 'user.id', size: 200, order: { _count: 'desc' } },
-            aggs:  { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
-          },
+    const emailBody = {
+      size: 0,
+      query: { bool: { filter: [
+        { range: { dateTime: { gte: fromTs } } },
+        { exists: { field: 'user.email' } },
+      ] } },
+      aggs: {
+        per_user: {
+          terms: { field: 'user.id', size: 200, order: { _count: 'desc' } },
+          aggs:  { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
         },
       },
+    };
+
+
+    const emailResult = await elastic.search({
+      index: 'user_activities',
+      body: emailBody,
     });
 
     const INVALID_FO = new Set(['na', 'n/a', 'null', 'undefined', 'unknown', '-', '']);
@@ -1892,19 +1927,12 @@ async function getSummaryStats(req, elastic, logger) {
           { exists: { field: 'unhide_advertiser_id' } },
           { exists: { field: 'unhide_ad_id' } },
           { exists: { field: 'dashboard.show_original' } },
-          { exists: { field: 'user.language' } },
+          { exists: { field: 'user.language_name' } },
           { exists: { field: 'vieworiginal.ad_id' } },
         ], minimum_should_match: 1 } } },
         filters_count: { filter: { bool: { should: [
-          { exists: { field: 'filter.native_network' } },
-          { exists: { field: 'filter.gender' } },
-          { exists: { field: 'filter.ad_type' } },
-          { exists: { field: 'filter.status' } },
-          { exists: { field: 'filter.country' } },
-          { exists: { field: 'filter.platform' } },
-          { exists: { field: 'filter.sort_by' } },
-          { exists: { field: 'filter.budget' } },
-          { exists: { field: 'filter.ctr' } },
+          { exists: { field: 'filter' } },
+          { term: { 'filterType.keyword': 'filter_only' } },
         ], minimum_should_match: 1 } } },
         sorting_breakdown: { filter: { bool: { should: [
           { exists: { field: 'dashboard.newest_sort' } },
@@ -1975,6 +2003,8 @@ async function getSummaryStats(req, elastic, logger) {
         } },
       },
     };
+
+
 
     const result = await elastic.search({ index: 'user_activities', body });
     const total  = getTotal(result);
@@ -2362,6 +2392,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
         continue;
       }
 
+
       const esResult = await elastic.search({
         index: indexName,
         body: {
@@ -2388,39 +2419,94 @@ async function getKeywordScrapingHistory(req, elastic, logger) {
   try {
     const { keyword, advertiser, domain, type } = req.query;
     logger?.info?.('[getKeywordScrapingHistory] Query:', { keyword, advertiser, domain, type });
+  
 
     if (!keyword && !advertiser && !domain) {
       return { code: 400, message: 'At least one of keyword, advertiser, or domain is required' };
     }
 
-    // Read from sample data file
-    let sampleData = [];
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const sampleFilePath = path.join(__dirname, '..', 'sample_scraping_history.json');
-      logger?.info?.('[getKeywordScrapingHistory] Reading from:', sampleFilePath);
-      const fileContent = fs.readFileSync(sampleFilePath, 'utf8');
-      sampleData = JSON.parse(fileContent);
-      logger?.info?.('[getKeywordScrapingHistory] Loaded sample data with', sampleData.length, 'entries');
-    } catch (fileErr) {
-      logger?.error?.('[getKeywordScrapingHistory] Could not load sample file:', fileErr.message);
-      return { code: 400, message: 'Sample data file not found: ' + fileErr.message };
+    // Determine search type and value
+    let searchType = parseInt(type) || null;
+    let searchValue = keyword || advertiser || domain;
+
+    if (!searchType) {
+      if (keyword) searchType = 1;
+      else if (advertiser) searchType = 2;
+      else if (domain) searchType = 3;
     }
 
-    // Find matching entry based on type and value
     let matchedEntry = null;
-    if (type === '1' && keyword) {
-      matchedEntry = sampleData.find(item => item.type === 1 && item.value.toLowerCase() === keyword.toLowerCase());
-    } else if (type === '2' && advertiser) {
-      matchedEntry = sampleData.find(item => item.type === 2 && item.value.toLowerCase() === advertiser.toLowerCase());
-    } else if (type === '3' && domain) {
-      matchedEntry = sampleData.find(item => item.type === 3 && item.value.toLowerCase() === domain.toLowerCase());
-    } else {
-      matchedEntry = sampleData.find(item =>
-        item.value.toLowerCase() === (keyword || advertiser || domain).toLowerCase()
-      );
+
+    // Try to fetch from MongoDB using direct connection
+    const mongoUri = config.databases?.mongo?.uri;
+    let mongoDatabase = config.databases?.mongo?.database;
+
+    // Extract database name from URI if present (e.g., mongodb://...@host:port/database)
+    let dbFromUri = null;
+    if (mongoUri) {
+      const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
+      if (match) {
+        dbFromUri = match[1];
+      }
     }
+
+    // Use database from URI if it exists, otherwise use configured database
+    const finalDatabase = dbFromUri || mongoDatabase;
+
+
+    if (mongoUri && finalDatabase) {
+      try {
+        const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
+        await client.connect();
+
+        const db = client.db(finalDatabase);
+        const collection = db.collection('keyword_searches');
+        const normalizedValue = searchValue.toLowerCase();
+
+        logger?.info?.('[getKeywordScrapingHistory] Querying MongoDB for:', { searchType, searchValue, normalizedValue });
+      
+
+        // Try simple query first with type and normalized value
+        matchedEntry = await collection.findOne({
+          type: searchType,
+          valueNorm: normalizedValue
+        });
+
+        // If not found, try with exact value match
+        if (!matchedEntry) {
+      
+          matchedEntry = await collection.findOne({
+            type: searchType,
+            value: searchValue
+          });
+        }
+
+        // If still not found, try case-insensitive regex
+        if (!matchedEntry) {
+        
+          matchedEntry = await collection.findOne({
+            type: searchType,
+            value: { $regex: '^' + searchValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' }
+          });
+        }
+
+    
+        if (matchedEntry) {
+          logger?.info?.('[getKeywordScrapingHistory] Found entry in MongoDB');
+
+        }
+
+        await client.close();
+      } catch (mongoErr) {
+        logger?.warn?.('[getKeywordScrapingHistory] MongoDB query failed:', mongoErr.message);
+        console.error('[getKeywordScrapingHistory] MongoDB error:', mongoErr.message);
+        console.error('[getKeywordScrapingHistory] Error stack:', mongoErr.stack);
+      }
+    } else {
+      console.warn('[getKeywordScrapingHistory] MongoDB not configured');
+      logger?.warn?.('[getKeywordScrapingHistory] MongoDB not configured', { mongoUri: !!mongoUri, finalDatabase });
+    }
+
 
     if (!matchedEntry) {
       logger?.warn?.('[getKeywordScrapingHistory] No matching entry found for', { keyword, advertiser, domain, type });
@@ -2428,20 +2514,30 @@ async function getKeywordScrapingHistory(req, elastic, logger) {
     }
 
     // Convert scrapping_status to history format
-    let history = (matchedEntry.scrapping_status || []).map(run => ({
-      date: run.date,
-      status: run.status,
-      startTime: run.startTime,
-      endTime: run.endTime,
-    }));
+    let history = (matchedEntry.scrapping_status || []).map(run => {
+      const startTime = run.startTime?.$date || run.startTime;
+      const endTime = run.endTime?.$date || run.endTime;
+      return {
+        date: run.date,
+        status: run.status,
+        startTime: startTime,
+        endTime: endTime,
+        network: run.network,
+      };
+    });
+
+
 
     // Fetch ads count from Elasticsearch for each date and platform
-    if (elastic && matchedEntry.platform && Array.isArray(matchedEntry.platform)) {
-      const searchValue = keyword || advertiser || domain;
+    const platforms = matchedEntry.networks || matchedEntry.platform || matchedEntry.scrapping_status?.map(s => s.network).filter(Boolean) || [];
+    const uniquePlatforms = [...new Set(platforms)];
+
+
+    if (elastic && uniquePlatforms.length > 0) {
       for (let i = 0; i < history.length; i++) {
         const run = history[i];
         try {
-          const adsCount = await fetchAdsCountByPlatform(elastic, matchedEntry.platform, run.date, searchValue, type, logger);
+          const adsCount = await fetchAdsCountByPlatform(elastic, uniquePlatforms, run.date, searchValue, type, logger);
           run.adsCount = adsCount;
           logger?.info?.('[getKeywordScrapingHistory] Fetched ads count for', { date: run.date, adsCount });
         } catch (err) {
@@ -2450,17 +2546,27 @@ async function getKeywordScrapingHistory(req, elastic, logger) {
       }
     }
 
-    return {
+    // Get the first searched date from the MongoDB document
+    const rawSearchedDate = matchedEntry.searchDates?.[0]?.$date || matchedEntry.searchDates?.[0] || matchedEntry.createdAt?.$date || matchedEntry.createdAt || null;
+    const searchedDate = rawSearchedDate ? new Date(rawSearchedDate).toLocaleDateString() : null;
+
+   
+
+    const response = {
       code: 200,
       message: 'Scraping history fetched successfully',
       data: {
-        keyword: type === '1' ? keyword : null,
-        advertiser: type === '2' ? advertiser : null,
-        domain: type === '3' ? domain : null,
-        platform: matchedEntry.platform || [],
+        keyword: searchType === 1 ? searchValue : null,
+        advertiser: searchType === 2 ? searchValue : null,
+        domain: searchType === 3 ? searchValue : null,
+        platform: uniquePlatforms,
+        searchedDate,
         history,
       },
     };
+
+
+    return response;
   } catch (err) {
     logger?.error?.('[searchIntelligenceController] getKeywordScrapingHistory error:', err);
     return { code: 500, message: 'Internal server error', error: err.message };

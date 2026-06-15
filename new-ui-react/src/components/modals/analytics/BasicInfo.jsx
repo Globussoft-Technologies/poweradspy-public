@@ -46,6 +46,12 @@ const BasicInfo = ({
     return s === "null" || s === "undefined" ? "" : s;
   };
 
+  // Split URLs by || separator if present
+  const splitUrls = (url) => {
+    if (!url) return [];
+    return url.split('||').map(u => u.trim()).filter(Boolean);
+  };
+
   // market_platform_urls fallback (present in Pinterest, Native, etc.)
   const mpUrls = adDetails?.market_platform_urls || {};
 
@@ -56,11 +62,19 @@ const BasicInfo = ({
       || sanitizeUrl(mpUrls?.url_destination)
       || sanitizeUrl(mpUrls?.source_url)
       || sanitizeUrl(String(ad?.destinationUrl ?? ""));
-  const redirectUrl = isTikTok
+  let redirectUrl = isTikTok
     ? ""
     : sanitizeUrl(adDetails?.url)
+      || sanitizeUrl(adDetails?.redirect_url)
       || sanitizeUrl(mpUrls?.redirect_url)
       || sanitizeUrl(mpUrls?.final_url);
+
+  // Debug log to check what we're getting
+  if (adDetails?.redirect_url) {
+    console.log('[BasicInfo] redirect_url raw:', adDetails.redirect_url);
+    console.log('[BasicInfo] redirect_url includes ||:', adDetails.redirect_url.includes('||'));
+    console.log('[BasicInfo] redirectUrl final:', redirectUrl);
+  }
   const fbPostLink = isTikTok ? sanitizeUrl(tt.library_url) : sanitizeUrl(adDetails?.ad_url) || sanitizeUrl(ad?.adUrl);
   // Native: placement_url instead of fb_post_url
   const placementUrl = sanitizeUrl(adDetails?.placement_url || ad?.placement_url);
@@ -218,44 +232,97 @@ const BasicInfo = ({
         <div
           className={`rounded-xl overflow-hidden border border-l-2 border-l-[#3759a3]/40 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
         >
-          {basicRows.map((url, i, arr) => (
-            <div
-              key={i}
-              className={`flex items-center gap-3 px-4 py-3 transition-all group ${i < arr.length - 1 ? (isLight ? "border-b border-gray-200" : "border-b border-white/5") : ""} ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
-            >
-              <div className="flex items-center gap-2 shrink-0 w-44">
-                {url.icon && (
-                  <url.icon
-                    size={13}
-                    className="text-[#9f9f9f] opacity-70 shrink-0"
-                  />
-                )}
-                <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
-                  {url.label}
-                </span>
-              </div>
-              {/* <span className={`text-[14px] truncate flex-1 min-w-0 ${isLight ? 'text-gray-800' : 'text-white/80'}`}>{url.value || '—'}</span> */}
-              <span
-                className={`text-[14px] truncate max-w-[60%] text-right ${isLight ? "font-bold text-gray-900" : "font-semibold text-white/85"}`}
-              >
-                {url.value || "—"}
-              </span>
+          {basicRows.map((url, i, arr) => {
+            const urlList = splitUrls(url.value);
+            const isMultiUrl = urlList.length > 1;
 
-              <div className="flex items-center shrink-0">
-                {url.href !== null && url.value && <CopyBtn text={url.value} />}
-                {url.href && (
-                  <a
-                    href={url.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`p-1.5 rounded-md transition-colors ${isLight ? "text-gray-400 hover:text-gray-500 hover:bg-gray-100" : `text-white/30 ${url.hoverColor} hover:bg-white/10`}`}
+            return (
+              <div key={i}>
+                {isMultiUrl ? (
+                  // Multiple URLs — show label once, then each URL on its own row
+                  <>
+                    <div
+                      className={`flex items-center gap-3 px-4 py-3 transition-all group ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
+                    >
+                      <div className="flex items-center gap-2 shrink-0 w-44">
+                        {url.icon && (
+                          <url.icon
+                            size={13}
+                            className="text-[#9f9f9f] opacity-70 shrink-0"
+                          />
+                        )}
+                        <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
+                          {url.label} ({urlList.length})
+                        </span>
+                      </div>
+                    </div>
+                    {urlList.map((singleUrl, j) => (
+                      <div
+                        key={j}
+                        className={`flex items-center gap-3 px-4 py-2 pl-12 transition-all group ${isLight ? "bg-gray-50/30 border-t border-gray-100 hover:bg-black/[0.01]" : "bg-white/[0.01] border-t border-white/3 hover:bg-white/[0.02]"}`}
+                      >
+                        <span
+                          className={`text-[13px] truncate max-w-[60%] text-right ${isLight ? "font-semibold text-gray-800" : "font-medium text-white/80"}`}
+                          title={singleUrl}
+                        >
+                          {singleUrl}
+                        </span>
+                        <div className="flex items-center shrink-0">
+                          {singleUrl && <CopyBtn text={singleUrl} />}
+                          {singleUrl && (
+                            <a
+                              href={singleUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`p-1.5 rounded-md transition-colors ${isLight ? "text-gray-400 hover:text-gray-500 hover:bg-gray-100" : `text-white/30 ${url.hoverColor} hover:bg-white/10`}`}
+                            >
+                              <ExternalLink size={14} />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  // Single URL — original display logic
+                  <div
+                    className={`flex items-center gap-3 px-4 py-3 transition-all group ${i < arr.length - 1 ? (isLight ? "border-b border-gray-200" : "border-b border-white/5") : ""} ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
                   >
-                    <ExternalLink size={14} />
-                  </a>
+                    <div className="flex items-center gap-2 shrink-0 w-44">
+                      {url.icon && (
+                        <url.icon
+                          size={13}
+                          className="text-[#9f9f9f] opacity-70 shrink-0"
+                        />
+                      )}
+                      <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
+                        {url.label}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[14px] truncate max-w-[60%] text-right ${isLight ? "font-bold text-gray-900" : "font-semibold text-white/85"}`}
+                    >
+                      {url.value || "—"}
+                    </span>
+
+                    <div className="flex items-center shrink-0">
+                      {url.href !== null && url.value && <CopyBtn text={url.value} />}
+                      {url.href && (
+                        <a
+                          href={url.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`p-1.5 rounded-md transition-colors ${isLight ? "text-gray-400 hover:text-gray-500 hover:bg-gray-100" : `text-white/30 ${url.hoverColor} hover:bg-white/10`}`}
+                        >
+                          <ExternalLink size={14} />
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
