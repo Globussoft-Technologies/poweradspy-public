@@ -1,5 +1,5 @@
 'use strict';
-
+ 
 const { Router } = require('express');
 const axios = require('axios');
 const dns = require('dns').promises;
@@ -24,7 +24,7 @@ const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = r
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
 const { storeKeywordSearch, scraperWork } = require('../controllers/keywordSearchController');
 const { getNotifications, markNotificationsRead } = require('../controllers/notificationController');
-const {
+const { 
   registerToken,
   sendPushNotification,
   getPendingNotifications: getPushNotifications,
@@ -34,6 +34,7 @@ const {
 } = require('../controllers/pushNotificationController');
 const { sendMailDailyUpdate } = require('../controllers/dailyMailUpdateController');
 const { getTotalAdCount } = require('../controllers/totalAdCountController');
+const { getRecentAds } = require('../controllers/recentAdsController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware } = require('../../../middleware/planAccess');
@@ -314,5 +315,13 @@ router.post('/reset-daily-keyword-status', asyncHandler(resetDailyKeywordStatus)
 // reports so both numbers stay in sync. No auth (internal network only).
 router.get('/total-ad-count',  asyncHandler(getTotalAdCount));
 router.post('/total-ad-count', asyncHandler(getTotalAdCount));
+
+// GET /api/v1/common/recent-ads
+// Returns the most recently-seen ads across ALL networks (facebook, instagram,
+// google, gdn, youtube, pinterest, …) in one fan-out call. "Recent" = ads whose
+// last_seen is within the last `days` days (default 1). Pass `days` to widen the
+// window (e.g. days=2, days=3), `network` to restrict platforms, and `limit` to
+// cap ads per network. Sorted newest-first across networks.
+router.get('/recent-ads', authMiddleware, asyncHandler(getRecentAds));
 
 module.exports = router;

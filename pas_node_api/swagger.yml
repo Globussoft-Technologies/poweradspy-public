@@ -697,6 +697,101 @@ components:
               type: boolean
               example: true
 
+    RecentAdsResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Recent ads fetched successfully
+        data:
+          type: array
+          description: |
+            Merged ads from every queried network, sorted by `last_seen` descending
+            (newest first). Each item is a **full, frontend-ready ad** — the same
+            hydrated/cleaned shape `/api/v1/common/ads/search` returns (images, text,
+            title, advertiser, URLs) — plus a `network` field identifying its platform.
+            Exact fields vary per network; common ones are shown below.
+          items:
+            type: object
+            properties:
+              network:
+                type: string
+                description: Platform the ad belongs to
+                example: facebook
+              id:
+                type: integer
+                example: 12345
+              ad_id:
+                type: integer
+                example: 12345
+              ad_title:
+                type: string
+                example: "Summer Sale — 50% Off"
+              ad_text:
+                type: string
+              image_video_url:
+                type: string
+                description: CDN-resolved image/thumbnail URL
+              post_owner:
+                type: string
+                description: Advertiser / page name
+              last_seen:
+                type: string
+                format: date-time
+            additionalProperties: true
+        meta:
+          type: object
+          properties:
+            days:
+              type: integer
+              description: Applied look-back window in days
+              example: 1
+            limit:
+              type: integer
+              description: Max ads returned per network
+              example: 20
+            from:
+              type: string
+              description: Start of the window (yyyy-MM-dd HH:mm:ss)
+              example: "2026-06-14 09:00:00"
+            to:
+              type: string
+              description: End of the window — now (yyyy-MM-dd HH:mm:ss)
+              example: "2026-06-15 09:00:00"
+            total:
+              type: object
+              description: Per-network Elasticsearch match count for the window (all queried networks)
+              additionalProperties:
+                type: integer
+              example: { facebook: 1243, instagram: 880, google: 0 }
+            returned:
+              type: object
+              description: Per-network number of ads actually included in `data` (capped by `limit`)
+              additionalProperties:
+                type: integer
+              example: { facebook: 20, instagram: 20, google: 0 }
+            networks:
+              type: array
+              description: Networks that were queried
+              items:
+                type: string
+              example: ["facebook", "instagram", "google"]
+            ignoredNetworks:
+              type: array
+              description: Present only when unknown network names were passed and skipped
+              items:
+                type: string
+              example: ["myspace"]
+            errors:
+              type: object
+              description: Present only when one or more networks failed or timed out
+              additionalProperties:
+                type: string
+              example: { quora: "Timeout" }
+
     AdDetailRequest:
       type: object
       required: [ad_id]
@@ -7435,6 +7530,64 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SearchResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/common/recent-ads:
+    get:
+      tags: [Common]
+      summary: Recent ads across all networks
+      description: |
+        Returns the most recently-seen ads across **all networks**
+        (facebook, instagram, google, gdn, youtube, pinterest, native, linkedin,
+        reddit, quora, tiktok) in one fan-out call, merged and sorted newest-first.
+
+        **"Recent"** = ads whose `last_seen` falls within the last `days` days.
+        Default window is **1 day** (ads seen in the last 24h); pass `days` to widen it.
+
+        Each network runs through its own `searchAds` pipeline — the same one
+        `/api/v1/common/ads/search` uses — so every ad comes back **fully hydrated**
+        (images, text, title, advertiser, URLs), not just raw Elasticsearch fields.
+        Results are merged and sorted newest-first across networks. Per-network
+        failures/timeouts are isolated and surfaced in `meta.errors` without failing
+        the whole response.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, default: 1, minimum: 1, maximum: 90 }
+          description: Look-back window in days. Default 1, max 90.
+        - name: network
+          in: query
+          required: false
+          schema: { type: string, default: all }
+          description: |
+            `all` (default), a single network, or a comma-separated subset
+            (e.g. `facebook,google`). Unknown names are ignored and echoed back
+            in `meta.ignoredNetworks`.
+          example: facebook,google
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+          description: Max ads returned **per network**. Default 20, max 100.
+      responses:
+        '200':
+          description: Merged recent ads, newest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecentAdsResponse'
+        '400':
+          description: No valid network requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
           content:
