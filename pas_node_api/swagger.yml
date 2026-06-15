@@ -2577,7 +2577,7 @@ paths:
       summary: Fetch a batch of Reddit ads queued for lander scraping
       description: Fetches up to 100 ads with redirect_status=0, validates each in reddit_search_mix (dotted reddit_ad.id), updates status to 2, returns {id, iso, destination_url}.
       responses:
-        '200': { description: Ads fetched successfully, data contains {id, iso, country_names, destination_url} }
+        '200': { description: "Ads fetched successfully, data contains {id, iso, country_names, destination_url}" }
         '400': { description: No more ads found }
 
   /api/v1/reddit/landers/upload_reddit_blackhat:
@@ -2639,7 +2639,7 @@ paths:
       summary: Fetch a batch of Pinterest ads queued for lander scraping
       description: Fetches up to 100 ads with redirect_status=0, validates each in pinterest_search_mix (dotted pinterest_ad.id), updates status to 2, returns {id, iso, country_names, destination_url}.
       responses:
-        '200': { description: Ads fetched successfully, data contains {id, iso, country_names, destination_url} }
+        '200': { description: "Ads fetched successfully, data contains {id, iso, country_names, destination_url}" }
         '400': { description: No more ads found }
 
   /api/v1/pinterest/landers/upload-pinterest-blackhat:
