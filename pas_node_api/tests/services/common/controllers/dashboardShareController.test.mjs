@@ -159,6 +159,7 @@ describe("dashboardShareController > guestSearch", () => {
     expect(res.statusCode).toBe(400);
   });
   it("non-offset path: limit reached when skip >= 11", async () => {
+    serviceRegistry.getService.mockReturnValue(mkFbService());
     const { guestSearch } = freshSut();
     const res = mkRes();
     await guestSearch({ body: { token: "tk", skip: 11 } }, res);
@@ -166,6 +167,7 @@ describe("dashboardShareController > guestSearch", () => {
     expect(res.body.meta.guestLimitReached).toBe(true);
   });
   it("offset (>20) path: limit reached when skip >= 99", async () => {
+    serviceRegistry.getService.mockReturnValue(mkFbService());
     const { guestSearch } = freshSut();
     const res = mkRes();
     await guestSearch({ body: { token: "tk", skip: 99 } }, res);
@@ -202,7 +204,7 @@ describe("dashboardShareController > guestSearch", () => {
     await guestSearch({ body: { token: "tk", skip: 0 } }, res);
     expect(searchAllNetworks).toHaveBeenCalled();
     expect(res.body.meta.guestLimitReached).toBe(false);
-    expect(res.body.meta.guestMaxAds).toBe(100);
+    expect(res.body.meta.guestMaxAds).toBe(35);
   });
   it("user_id defaults to 281 when stored payload + created_by both missing", async () => {
     mockCollection.findOne.mockResolvedValue({

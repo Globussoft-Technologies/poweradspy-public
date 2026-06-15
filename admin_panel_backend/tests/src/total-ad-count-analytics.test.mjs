@@ -10,6 +10,7 @@ require.cache[esConnPath] = {
 };
 
 const { totalAdsCountFilter } = require("../../src/total-ad-count-analytics");
+const { getDisplayableMediaFilter } = require("../../utils/displayable-media-filters");
 
 function mockRes() {
   const res = {};
@@ -47,7 +48,9 @@ describe("src/total-ad-count-analytics > totalAdsCountFilter", () => {
     // in tests, so undefined — that's fine, we only care about positional shape).
     expect(searchAllInstancesSpy).toHaveBeenCalledTimes(1);
     const args = searchAllInstancesSpy.mock.calls[0];
-    expect(args[1]).toEqual({ query: { match_all: {} } });
+    // facebook has a displayable-media filter, so the query is a bool.filter
+    // built from that filter (not a bare match_all).
+    expect(args[1]).toEqual({ query: { bool: { filter: getDisplayableMediaFilter("facebook") } } });
     expect(args[2]).toBe(0); // facebook es_id
     expect(args[3]).toBe("count");
     expect(res.status).toHaveBeenCalledWith(200);

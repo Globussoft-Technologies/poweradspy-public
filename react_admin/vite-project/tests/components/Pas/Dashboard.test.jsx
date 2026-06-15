@@ -40,23 +40,29 @@ vi.mock("@tanstack/react-table", () => ({
   getPaginationRowModel: () => () => ({}),
 }));
 
+// Search sub-components now take no props; the Dashboard sources its stat
+// counts from the get-search-counts API instead of child callbacks.
 vi.mock("../../../src/components/Pas/KeywordSearches", () => ({
-  default: ({ setKeywordStatis }) => (
-    <div data-testid="kw-searches" onClick={() => setKeywordStatis({ totalCount: 100 })}>kw</div>
-  ),
+  default: () => <div data-testid="kw-searches">kw</div>,
 }));
 vi.mock("../../../src/components/Pas/AdvertiserSearches", () => ({
-  default: ({ setStatis }) => (
-    <div data-testid="adv-searches" onClick={() => setStatis({ totalCount: 200 })}>adv</div>
-  ),
+  default: () => <div data-testid="adv-searches">adv</div>,
 }));
 vi.mock("../../../src/components/Pas/DomainSearches", () => ({
-  default: ({ setDoaminStatis }) => (
-    <div data-testid="dom-searches" onClick={() => setDoaminStatis({ totalCount: 50 })}>dom</div>
-  ),
+  default: () => <div data-testid="dom-searches">dom</div>,
+}));
+vi.mock("../../../src/components/Pas/ProjectSearches", () => ({
+  default: () => <div data-testid="project-searches">project</div>,
 }));
 vi.mock("../../../src/components/Pas/OtherSearches", () => ({
   default: () => <div data-testid="other-searches">other</div>,
+}));
+
+const { postApiCallWithBodyMock } = vi.hoisted(() => ({
+  postApiCallWithBodyMock: vi.fn(),
+}));
+vi.mock("../../../src/components/Pas/ApiResponse", () => ({
+  postApiCallWithBody: (...a) => postApiCallWithBodyMock(...a),
 }));
 
 import AdminContext from "../../../src/Context/Context.jsx";
@@ -75,6 +81,8 @@ const renderWithCtx = () => {
 
 beforeEach(() => {
   navigateMock.mockReset();
+  postApiCallWithBodyMock.mockReset();
+  postApiCallWithBodyMock.mockResolvedValue({ code: 200 });
   localStorage.clear();
   localStorage.setItem("userNameS", "TestUser");
   localStorage.setItem("userId", "uid-42");
@@ -101,7 +109,7 @@ describe("Dashboard", () => {
   it("View Details on each stat triggers setsearchdataFilterTable(index)", () => {
     const { getAllByText, ctx } = renderWithCtx();
     const buttons = getAllByText("View Details");
-    expect(buttons.length).toBe(3);
+    expect(buttons.length).toBe(4); // Keyword, Advertiser, Domain, Competitor
     fireEvent.click(buttons[0]);
     expect(ctx.setsearchdataFilterTable).toHaveBeenCalledWith(0);
     fireEvent.click(buttons[1]);
@@ -119,26 +127,20 @@ describe("Dashboard", () => {
     fireEvent.click(getAllByTestId("copy-ic")[1]);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("uid-42");
   });
-  it("KeywordSearches sets keywordStatis → Keyword Searched shows 100", () => {
-    const { getByTestId, getByText } = renderWithCtx();
-    act(() => {
-      fireEvent.click(getByTestId("kw-searches"));
-    });
-    expect(getByText("100")).toBeInTheDocument();
+  it("get-search-counts populates Keyword Searched count", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, keywordCount: 100, advertiserCount: 200, domainCount: 50 });
+    const { findByText } = renderWithCtx();
+    expect(await findByText("100")).toBeInTheDocument();
   });
-  it("AdvertiserSearches sets statics → Advertiser Searched shows 200", () => {
-    const { getByTestId, getByText } = renderWithCtx();
-    act(() => {
-      fireEvent.click(getByTestId("adv-searches"));
-    });
-    expect(getByText("200")).toBeInTheDocument();
+  it("get-search-counts populates Advertiser Searched count", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, keywordCount: 100, advertiserCount: 200, domainCount: 50 });
+    const { findByText } = renderWithCtx();
+    expect(await findByText("200")).toBeInTheDocument();
   });
-  it("DomainSearches sets domainStatics → Domain Searched shows 50", () => {
-    const { getByTestId, getByText } = renderWithCtx();
-    act(() => {
-      fireEvent.click(getByTestId("dom-searches"));
-    });
-    expect(getByText("50")).toBeInTheDocument();
+  it("get-search-counts populates Domain Searched count", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, keywordCount: 100, advertiserCount: 200, domainCount: 50 });
+    const { findByText } = renderWithCtx();
+    expect(await findByText("50")).toBeInTheDocument();
   });
   it("all 4 search sub-components rendered", () => {
     const { getByTestId } = renderWithCtx();

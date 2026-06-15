@@ -73,7 +73,7 @@ describe("api > checkFor401 → handle401", () => {
   it("401 outside guest path → throws + redirects", async () => {
     globalThis.fetch.mockResolvedValueOnce({ status: 401, ok: false });
     await expect(api.fetchPlanAccess()).rejects.toThrow(/Unauthorized/);
-    expect(window.location.href).toBe("/logout");
+    expect(window.location.href).toBe("http://localhost:3000/logout");
     expect(clearSessionSpy).toHaveBeenCalled();
     expect(localStorage.getItem("authToken")).toBeNull();
   });
@@ -209,17 +209,27 @@ describe("api > fetchGemini (no-retry only — see issue #246)", () => {
     });
     expect(await api.fetchGemini("q")).toBeUndefined();
   });
-  it("429 retry: triggers undefined `delay()` source bug (lines 502-506) — see issue #246", async () => {
-    globalThis.fetch.mockResolvedValueOnce({
-      ok: false, status: 429, json: async () => ({}),
-    });
-    // delay() is not defined → ReferenceError propagates through outer catch
-    // then through the second `await delay(...)` at line 512 too.
-    await expect(api.fetchGemini("q")).rejects.toThrow(/delay/);
+  it("429 → retries with exponential backoff, then 'Failed to connect' after max retries", async () => {
+    vi.useFakeTimers();
+    // Every call returns 429 so it exhausts all 5 retries (delay() is a real
+    // backoff timer, so we drive it with fake timers instead of waiting ~31s).
+    globalThis.fetch.mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
+    const p = api.fetchGemini("q");
+    p.catch(() => {});
+    await vi.runAllTimersAsync();
+    await expect(p).rejects.toThrow(/Failed to connect to AI service/);
+    globalThis.fetch.mockReset();
+    vi.useRealTimers();
   });
-  it("fetch rejection: triggers outer catch with undefined `delay()` (lines 510-515)", async () => {
-    globalThis.fetch.mockRejectedValueOnce(new Error("net-down"));
-    await expect(api.fetchGemini("q")).rejects.toThrow(/delay/);
+  it("fetch rejection → retries via outer catch, then rethrows the original error", async () => {
+    vi.useFakeTimers();
+    globalThis.fetch.mockRejectedValue(new Error("net-down"));
+    const p = api.fetchGemini("q");
+    p.catch(() => {});
+    await vi.runAllTimersAsync();
+    await expect(p).rejects.toThrow(/net-down/);
+    globalThis.fetch.mockReset();
+    vi.useRealTimers();
   });
   it("retryCount=5 + 429 → 'Failed to connect to AI service' (line 506)", async () => {
     globalThis.fetch.mockResolvedValueOnce({

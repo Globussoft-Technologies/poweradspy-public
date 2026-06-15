@@ -33,13 +33,15 @@ describe("services/tiktok/controllers/hideAdsController > hideAds", () => {
     let call = 0;
     const db = mkDb(async () => {
       call++;
-      return call === 1 ? [{ id: 77 }] : { insertId: 999 };
+      // type=2 runs a DELETE (call 1) before the dedup SELECT (call 2),
+      // so the existing record must be returned on the 2nd query.
+      return call === 2 ? [{ id: 77 }] : { insertId: 999 };
     });
     const out = await hideAds(
       { body: { user_id: "u", ad_id: "a", type: 2 } }, db, fakeLogger
     );
     expect(out).toEqual({ code: 200, message: "data inserted successfully", data: 77 });
-    expect(db.sql.query).toHaveBeenCalledTimes(1); // insert never reached
+    expect(db.sql.query).toHaveBeenCalledTimes(2); // DELETE + SELECT; insert never reached
   });
 
   it("inserts and returns 200 with insertId when no existing record", async () => {

@@ -104,7 +104,9 @@ beforeEach(() => {
   vi.stubEnv("VITE_COMPETITORS_API", "https://comp.example.com/");
   vi.stubEnv("VITE_FACEBOOK_API", "https://fb.example.com/");
   vi.stubEnv("VITE_INSTAGRAM_API", "https://ig.example.com/");
-  globalThis.fetch = vi.fn();
+  // The FB/IG enrichment does fetch(...).then(res => res.json()), so the mock
+  // must resolve to a Response-like object for every call.
+  globalThis.fetch = vi.fn(() => Promise.resolve({ json: () => Promise.resolve([]) }));
 });
 
 const competitorResp = (data = [], totalCount = data.length) => ({
@@ -165,7 +167,15 @@ describe("CompetitorDetails", () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/"));
   });
   it("axios.get error → toast.error", async () => {
-    axiosGetMock.mockRejectedValue(new Error("network down"));
+    // Only the main competitor fetch fails; the separate get-comp-users-count
+    // effect has no try/catch in the source, so let it resolve to avoid an
+    // unrelated unhandled rejection.
+    axiosGetMock.mockImplementation((url) => {
+      if (url.includes("get-comp-users-count")) {
+        return Promise.resolve({ data: { statusCode: 200, body: { data: {} } } });
+      }
+      return Promise.reject(new Error("network down"));
+    });
     renderWith();
     await waitFor(() => expect(toastMock.error).toHaveBeenCalled());
   });

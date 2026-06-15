@@ -66,7 +66,7 @@ describe("pages/authentication/Login", () => {
 
   it("handleLogin success (code 200): sets token cookie, clears error, navigates", async () => {
     axiosPostSpy.mockResolvedValueOnce({
-      data: { code: 200, token: "Bearer THE_TOKEN" },
+      data: { code: 200, data: { token: "THE_TOKEN" } },
     });
     render(<Login />);
     fireEvent.change(document.getElementById("amember-login"), { target: { value: "u@e.com" } });
@@ -74,7 +74,7 @@ describe("pages/authentication/Login", () => {
     fireEvent.click(screen.getByDisplayValue("Login"));
     await waitFor(() => expect(axiosPostSpy).toHaveBeenCalled());
     const [url, body] = axiosPostSpy.mock.calls[0];
-    expect(url).toMatch(/Login$/);
+    expect(url).toMatch(/login$/);
     expect(body).toEqual({ username: "u@e.com", password: "pw" });
     await waitFor(() => expect(cookieSetSpy).toHaveBeenCalledWith("token", "THE_TOKEN"));
     expect(navigateSpy).toHaveBeenCalledWith("/pas/system-info");

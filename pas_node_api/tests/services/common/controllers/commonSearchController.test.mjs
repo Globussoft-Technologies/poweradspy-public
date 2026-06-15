@@ -110,12 +110,12 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(fakeGeoip.detectCountry).not.toHaveBeenCalled();
   });
 
-  it("country='NA' is treated as no-country → geoip runs", async () => {
+  it("country='NA' is treated as no-country → geoip detection is disabled (commented out in source)", async () => {
     registryReturns({ facebook: svc("fb") });
     fakeGeoip.detectCountry.mockReturnValue("US");
     const res = mockRes();
     await searchAllNetworks({ body: { country: "NA" }, query: {} }, res);
-    expect(fakeGeoip.detectCountry).toHaveBeenCalled();
+    expect(fakeGeoip.detectCountry).not.toHaveBeenCalled();
   });
 
   it("country provided via query (not body) → still treated as user-sent (line 69 right-operand branch)", async () => {
@@ -128,25 +128,25 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(fakeGeoip.detectCountry).not.toHaveBeenCalled();
   });
 
-  it("detectCountry returns value → skips getLocation", async () => {
+  it("geoip detection disabled → ipcountry null, ipCountryActive false (detectCountry not called)", async () => {
     registryReturns({ facebook: svc("fb") });
     fakeGeoip.detectCountry.mockReturnValue("US");
     const res = mockRes();
     await searchAllNetworks({ body: {}, query: {} }, res);
     expect(fakeGeoip.getLocation).not.toHaveBeenCalled();
     const r = res.json.mock.calls[0][0];
-    expect(r.meta.ipcountry).toBe("US");
-    expect(r.meta.ipCountryActive).toBe(true);
+    expect(r.meta.ipcountry).toBeNull();
+    expect(r.meta.ipCountryActive).toBe(false);
   });
 
-  it("detectCountry empty → getLocation provides ipcountry", async () => {
+  it("geoip detection disabled → getLocation never consulted, ipcountry stays null", async () => {
     registryReturns({ facebook: svc("fb") });
     fakeGeoip.detectCountry.mockReturnValue(null);
     fakeGeoip.getLocation.mockResolvedValue("DE");
     const res = mockRes();
     await searchAllNetworks({ body: {}, query: {} }, res);
-    expect(fakeGeoip.getLocation).toHaveBeenCalledWith("1.2.3.4");
-    expect(res.json.mock.calls[0][0].meta.ipcountry).toBe("DE");
+    expect(fakeGeoip.getLocation).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].meta.ipcountry).toBeNull();
   });
 
   it("network specified as comma string → split and lowercased", async () => {
@@ -558,13 +558,13 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(calledReq.body?.ipBasedCountry).toBeUndefined();
   });
 
-  it("non-google networks receive ipBasedCountry when detected", async () => {
+  it("non-google networks: ipBasedCountry stays unset while geoip detection is disabled", async () => {
     registryReturns({ facebook: svc("fb") });
     fakeGeoip.detectCountry.mockReturnValue("US");
     const res = mockRes();
     await searchAllNetworks({ body: {}, query: {} }, res);
     const calledReq = searchAds.facebook.mock.calls[0][0];
-    expect(calledReq.body.ipBasedCountry).toBe("US");
+    expect(calledReq.body.ipBasedCountry).toBeUndefined();
   });
 });
 

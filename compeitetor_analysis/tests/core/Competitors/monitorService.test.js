@@ -91,6 +91,24 @@ vi.mock("../../../core/mailer/emailService.js", () => ({
 }));
 vi.mock("config", () => ({ default: { get: configGetSpy } }));
 vi.mock("p-limit", () => ({ default: pLimitFn }));
+// brandCcMember/member/emailAudit/bounceGuard pull in real mongoose models whose
+// `.find().lean()` calls buffer forever without a DB connection (causing the test
+// timeouts / worker OOM). Stub them — an empty brand_cc_members result triggers the
+// early-return in _runMemberBrandPass.
+vi.mock("../../../models/brandCcMember.js", () => ({
+  default: { find: () => ({ lean: () => Promise.resolve([]) }) },
+}));
+vi.mock("../../../models/member.js", () => ({
+  default: { find: () => ({ lean: () => Promise.resolve([]) }) },
+}));
+vi.mock("../../../core/mailer/emailAudit.js", () => ({
+  newSendId: () => "sid",
+  logSend: vi.fn(),
+}));
+vi.mock("../../../core/mailer/bounceGuard.js", () => ({
+  isBlacklisted: () => false,
+  BLACKLISTED_SKIP_REASON: "blacklisted",
+}));
 
 let svc;
 

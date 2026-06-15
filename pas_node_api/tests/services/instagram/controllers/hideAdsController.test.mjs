@@ -43,7 +43,7 @@ describe("services/instagram/controllers/hideAdsController > hideAds", () => {
       { body: { user_id: "u", post_owner_id: "po", ad_id: "a", type: 1 } }, db, fakeLogger
     );
     expect(out).toEqual({ code: 200, message: "data inserted successfully", data: 42 });
-    expect(db.sql.query.mock.calls[0][1]).toEqual(["u", "po", "a", 1]);
+    expect(db.sql.query.mock.calls[2][1]).toEqual(["u", "po", "a", 1]);
   });
   it("type=3 with ad_id: pre-fetch query executed (lcs_status=1 branch)", async () => {
     let call = 0;

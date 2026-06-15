@@ -12,23 +12,23 @@ describe("hooks/useTheme > THEMES export", () => {
 });
 
 describe("hooks/useTheme > ThemeProvider + useTheme", () => {
-  it("default theme is 'dark'", () => {
+  it("default theme is 'light'", () => {
     const wrapper = ({ children }) => React.createElement(ThemeProvider, null, children);
     const { result } = renderHook(() => useTheme(), { wrapper });
-    expect(result.current.theme).toBe("dark");
-    expect(result.current.colors).toEqual(THEMES.dark);
+    expect(result.current.theme).toBe("light");
+    expect(result.current.colors).toEqual(THEMES.light);
   });
   it("ThemeProvider applies CSS variables on mount", () => {
     const wrapper = ({ children }) => React.createElement(ThemeProvider, null, children);
     renderHook(() => useTheme(), { wrapper });
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    expect(document.documentElement.style.getPropertyValue("--color-bg")).toBe(THEMES.dark.bg);
-    expect(document.documentElement.style.getPropertyValue("--color-accent")).toBe(THEMES.dark.accent);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(document.documentElement.style.getPropertyValue("--color-bg")).toBe(THEMES.light.bg);
+    expect(document.documentElement.style.getPropertyValue("--color-accent")).toBe(THEMES.light.accent);
   });
-  it("setTheme is a no-op stub (theme remains dark)", () => {
+  it("setTheme switches the active theme", () => {
     const wrapper = ({ children }) => React.createElement(ThemeProvider, null, children);
     const { result } = renderHook(() => useTheme(), { wrapper });
-    result.current.setTheme("light");
+    act(() => { result.current.setTheme("dark"); });
     expect(result.current.theme).toBe("dark");
   });
   it("cycleTheme is a no-op stub", () => {
@@ -49,8 +49,10 @@ describe("hooks/useTheme > ThemeProvider + useTheme", () => {
   it("setTheme with unknown key is a no-op (line 91 early return)", () => {
     const wrapper = ({ children }) => React.createElement(ThemeProvider, null, children);
     const { result } = renderHook(() => useTheme(), { wrapper });
+    // Establish a known state first (localStorage can leak across tests).
+    act(() => { result.current.setTheme("light"); });
     act(() => { result.current.setTheme("does-not-exist"); });
-    expect(result.current.theme).toBe("dark");
+    expect(result.current.theme).toBe("light");
   });
   it("setTheme('light') then toggleTheme flips back to dark (line 99 left branch)", () => {
     const wrapper = ({ children }) => React.createElement(ThemeProvider, null, children);

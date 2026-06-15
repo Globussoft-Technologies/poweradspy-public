@@ -9,7 +9,7 @@ vi.mock("js-cookie", () => ({
   default: { get: (k) => (k === "token" ? "MYTOKEN" : undefined) },
 }));
 
-import { postApiCall, getApiCall, storeApiCall } from "../../../src/components/Pas/ApiResponse.jsx";
+import { postApiCall, getApiCall, storeApiCall, getApiCallWithParams, postApiCallWithBody } from "../../../src/components/Pas/ApiResponse.jsx";
 
 beforeEach(() => {
   postMock.mockReset();
@@ -124,5 +124,59 @@ describe("ApiResponse.storeApiCall", () => {
     postMock.mockRejectedValue({ message: "post offline" });
     const result = await storeApiCall({});
     expect(result).toEqual({ success: false, message: "post offline" });
+  });
+});
+
+describe("ApiResponse.getApiCallWithParams", () => {
+  it("gets the URL with nodeToken auth, params + credentials, returns data", async () => {
+    getMock.mockResolvedValue({ data: { rows: [1, 2] } });
+    const result = await getApiCallWithParams("https://x.com/list", { page: 2 });
+    expect(getMock).toHaveBeenCalledWith(
+      "https://x.com/list",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: expect.stringContaining("Bearer") }),
+        params: { page: 2 },
+        withCredentials: true,
+      }),
+    );
+    expect(result).toEqual({ rows: [1, 2] });
+  });
+  it("on error with response → returns error.response.data", async () => {
+    getMock.mockRejectedValue({ response: { data: "forbidden" } });
+    const result = await getApiCallWithParams("u");
+    expect(result).toEqual({ success: false, message: "forbidden" });
+  });
+  it("on error without response → returns error.message", async () => {
+    getMock.mockRejectedValue({ message: "offline" });
+    const result = await getApiCallWithParams("u");
+    expect(result).toEqual({ success: false, message: "offline" });
+  });
+});
+
+describe("ApiResponse.postApiCallWithBody", () => {
+  it("posts the body with nodeToken auth header, returns data", async () => {
+    postMock.mockResolvedValue({ data: { ok: 1 } });
+    const result = await postApiCallWithBody("https://x.com/do", { a: 1 });
+    expect(postMock).toHaveBeenCalledWith(
+      "https://x.com/do",
+      { a: 1 },
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          Authorization: expect.stringContaining("Bearer"),
+        }),
+      }),
+    );
+    expect(result).toEqual({ ok: 1 });
+  });
+  it("on error with response → returns error.response.data", async () => {
+    postMock.mockRejectedValue({ response: { data: "bad body" } });
+    const result = await postApiCallWithBody("u", {});
+    expect(result).toEqual({ success: false, message: "bad body" });
+  });
+  it("on error without response → returns error.message", async () => {
+    postMock.mockRejectedValue({ message: "timeout" });
+    const result = await postApiCallWithBody("u", {});
+    expect(result).toEqual({ success: false, message: "timeout" });
   });
 });

@@ -408,9 +408,9 @@ describe("buildSearchPayload > lang + size", () => {
     const p = buildSearchPayload({ activePlatforms: ["facebook"] });
     expect(p.language).toBe("en");
   });
-  it("size from array → first element", () => {
+  it("size from array → joined with commas", () => {
     const p = buildSearchPayload({ image_size: ["LARGE", "MEDIUM"], activePlatforms: ["gdn"] });
-    expect(p.size).toBe("LARGE");
+    expect(p.size).toBe("LARGE,MEDIUM");
   });
   it("size scalar", () => {
     const p = buildSearchPayload({ image_size: "MEDIUM", activePlatforms: ["gdn"] });

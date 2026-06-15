@@ -9,12 +9,15 @@ vi.mock("react-icons/ci", () => ({
   CiFilter: () => <i data-testid="filter-ic" />,
 }));
 
-vi.mock("react-datepicker/dist/react-datepicker.css", () => ({}));
 const dpPropsCapture = [];
-vi.mock("react-datepicker", () => ({
+vi.mock("../../../src/components/Pas/DateRangePickerCustom", () => ({
   default: (props) => {
     dpPropsCapture.push(props);
-    return <div data-testid="dp">{props.customInput}</div>;
+    return (
+      <div data-testid="drp">
+        <button onClick={() => props.onChange(null, null)}>Clear Date</button>
+      </div>
+    );
   },
 }));
 
@@ -121,7 +124,7 @@ describe("OtherSearches", () => {
   it("code 404 → empty table → 'No teams available'", async () => {
     axiosPostMock.mockResolvedValue({ data: { code: 404 } });
     const { findByText } = render(<OtherSearches />);
-    expect(await findByText("No teams available")).toBeInTheDocument();
+    expect(await findByText("No data found")).toBeInTheDocument();
   });
   it("code 401 → navigates to root", async () => {
     axiosPostMock.mockResolvedValue({ data: { code: 401 } });
@@ -132,9 +135,9 @@ describe("OtherSearches", () => {
     axiosPostMock.mockResolvedValue(successResp());
     render(<OtherSearches />);
     await waitFor(() => expect(axiosPostMock).toHaveBeenCalledTimes(1));
-    // Trigger date change via captured props
+    // Trigger date change via captured props (onChange(start, end))
     const { onChange } = dpPropsCapture.at(-1);
-    act(() => { onChange(new Date(2025, 5, 15)); });
+    act(() => { onChange(new Date(2025, 5, 15), new Date(2025, 5, 15)); });
     await waitFor(() => expect(axiosPostMock).toHaveBeenCalledTimes(2));
     const [, payload2] = axiosPostMock.mock.calls[1];
     expect(payload2.from_date).toBe("2025-06-15 00:00:00");
@@ -145,7 +148,7 @@ describe("OtherSearches", () => {
     const { getByText } = render(<OtherSearches />);
     await waitFor(() => expect(axiosPostMock).toHaveBeenCalledTimes(1));
     const { onChange } = dpPropsCapture.at(-1);
-    act(() => { onChange(new Date(2025, 5, 15)); });
+    act(() => { onChange(new Date(2025, 5, 15), new Date(2025, 5, 15)); });
     await waitFor(() => expect(axiosPostMock).toHaveBeenCalledTimes(2));
     fireEvent.click(getByText("Clear Date"));
     await waitFor(() => expect(axiosPostMock).toHaveBeenCalledTimes(3));

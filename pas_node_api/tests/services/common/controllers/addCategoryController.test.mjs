@@ -217,7 +217,7 @@ describe("addCategoryController > newCatInsertion > validation", () => {
   });
   it("400 when sub_category too short", async () => {
     const res = mkRes();
-    await newCatInsertion(valReq({ sub_category: "abc", subcategory_id: "12345678" }), res);
+    await newCatInsertion(valReq({ sub_category: "a", subcategory_id: "12345678" }), res);
     expect(res.statusCode).toBe(400);
   });
   it("400 when subcategory_id wrong length", async () => {

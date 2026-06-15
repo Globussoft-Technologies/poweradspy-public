@@ -66,23 +66,23 @@ const userListResp = (data = []) => ({
 });
 
 describe("UserDetailsPas", () => {
-  it("renders 4 stat cards + Users Data heading", async () => {
+  it("renders stat cards + Users Data heading", async () => {
     axiosGetMock.mockResolvedValue(userListResp());
     const { getByText, getAllByText } = render(<UserDetailsPas />);
     expect(getByText("Users Data")).toBeInTheDocument();
     expect(getAllByText("Active Users").length).toBeGreaterThan(0);
     expect(getByText("Expired Users")).toBeInTheDocument();
     expect(getByText("Pending Users")).toBeInTheDocument();
-    expect(getByText("Category Users")).toBeInTheDocument();
+    expect(getByText("Overall User Activity")).toBeInTheDocument();
+    expect(getByText("Overall Top Users")).toBeInTheDocument();
   });
-  it("fetches active users on mount + counts endpoints", async () => {
+  it("fetches active users + users-count endpoints on mount", async () => {
     axiosGetMock.mockResolvedValue(userListResp());
     render(<UserDetailsPas />);
     await waitFor(() => expect(axiosGetMock).toHaveBeenCalled());
     const calls = axiosGetMock.mock.calls.map((c) => c[0]);
     expect(calls.some(u => u.includes("get-active-users"))).toBe(true);
     expect(calls.some(u => u.includes("get-users-count"))).toBe(true);
-    expect(calls.some(u => u.includes("category-user-count"))).toBe(true);
   });
   it("renders user rows from response", async () => {
     axiosGetMock.mockResolvedValue(userListResp([
@@ -112,16 +112,12 @@ describe("UserDetailsPas", () => {
       if (url.includes("get-users-count")) {
         return Promise.resolve({ data: { code: 200, activeUsersCount: 10, expireUsersCount: 5, pendingUserCount: 3 } });
       }
-      if (url.includes("category-user-count")) {
-        return Promise.resolve({ data: { code: 200, unique_user_count: 7 } });
-      }
       return Promise.resolve(userListResp());
     });
     const { findByText } = render(<UserDetailsPas />);
     expect(await findByText("10")).toBeInTheDocument();
     expect(await findByText("5")).toBeInTheDocument();
     expect(await findByText("3")).toBeInTheDocument();
-    expect(await findByText("7")).toBeInTheDocument();
   });
   it("getUsersCount 401 → navigate", async () => {
     axiosGetMock.mockImplementation((url) => {
@@ -133,10 +129,10 @@ describe("UserDetailsPas", () => {
     render(<UserDetailsPas />);
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/"));
   });
-  it("getCategoryUsersCount 401 → navigate", async () => {
+  it("get-active-users list 401 → navigate", async () => {
     axiosGetMock.mockImplementation((url) => {
-      if (url.includes("category-user-count")) {
-        return Promise.resolve({ code: 401, data: { code: 401 } });
+      if (url.includes("get-active-users")) {
+        return Promise.resolve({ data: { code: 401 } });
       }
       return Promise.resolve(userListResp());
     });
@@ -157,7 +153,7 @@ describe("UserDetailsPas", () => {
   it("dropdown toggle reveals 3 category options", async () => {
     axiosGetMock.mockResolvedValue(userListResp());
     const { container } = render(<UserDetailsPas />);
-    const toggleBtn = container.querySelector("button.bg-blue-600");
+    const toggleBtn = container.querySelector('[data-testid="arrow-down-ic"]').closest("button");
     fireEvent.click(toggleBtn);
     const menuItems = Array.from(container.querySelectorAll("li")).map(li => li.textContent);
     expect(menuItems).toContain("Active Users");
@@ -169,7 +165,7 @@ describe("UserDetailsPas", () => {
     const { container, getByText } = render(<UserDetailsPas />);
     await waitFor(() => expect(axiosGetMock).toHaveBeenCalled());
     // Open dropdown via the toggle button (it has the "Active Users" label initially)
-    const toggleBtn = container.querySelector("button.bg-blue-600");
+    const toggleBtn = container.querySelector('[data-testid="arrow-down-ic"]').closest("button");
     fireEvent.click(toggleBtn);
     axiosGetMock.mockClear();
     // Click the dropdown item "Expired Users" — there are two ("Expired Users" appears as stat card and as menu item)
@@ -183,7 +179,7 @@ describe("UserDetailsPas", () => {
     axiosGetMock.mockResolvedValue(userListResp());
     const { container } = render(<UserDetailsPas />);
     await waitFor(() => expect(axiosGetMock).toHaveBeenCalled());
-    const toggleBtn = container.querySelector("button.bg-blue-600");
+    const toggleBtn = container.querySelector('[data-testid="arrow-down-ic"]').closest("button");
     fireEvent.click(toggleBtn);
     axiosGetMock.mockClear();
     const pendingItem = Array.from(container.querySelectorAll("li")).find(li => li.textContent === "Pending Users");
@@ -214,7 +210,7 @@ describe("UserDetailsPas", () => {
   it("clicking outside dropdown closes it", async () => {
     axiosGetMock.mockResolvedValue(userListResp());
     const { container } = render(<UserDetailsPas />);
-    const toggleBtn = container.querySelector("button.bg-blue-600");
+    const toggleBtn = container.querySelector('[data-testid="arrow-down-ic"]').closest("button");
     fireEvent.click(toggleBtn);
     expect(container.querySelectorAll("li").length).toBeGreaterThan(0);
     fireEvent.mouseDown(document.body);
@@ -223,7 +219,7 @@ describe("UserDetailsPas", () => {
   it("clicking inside dropdown does NOT close it (mouseDown on menu item)", async () => {
     axiosGetMock.mockResolvedValue(userListResp());
     const { container } = render(<UserDetailsPas />);
-    const toggleBtn = container.querySelector("button.bg-blue-600");
+    const toggleBtn = container.querySelector('[data-testid="arrow-down-ic"]').closest("button");
     fireEvent.click(toggleBtn);
     const pendingItem = Array.from(container.querySelectorAll("li")).find(li => li.textContent === "Pending Users");
     fireEvent.mouseDown(pendingItem);

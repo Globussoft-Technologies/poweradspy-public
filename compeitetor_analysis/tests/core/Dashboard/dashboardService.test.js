@@ -131,6 +131,9 @@ vi.mock("mongoose", () => ({
   default: {
     Types: { ObjectId: spies.ObjectIdStub },
     isValidObjectId: spies.isValidObjectIdSpy,
+    // user_details.js (pulled in transitively) defines a Schema/model at load.
+    Schema: function () {},
+    model: () => ({}),
   },
 }));
 

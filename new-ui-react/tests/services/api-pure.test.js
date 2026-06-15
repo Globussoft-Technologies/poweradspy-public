@@ -16,7 +16,6 @@ const {
   buildAuditPrompt,
   buildCampaignPrompt,
   getYoutubeEmbedUrl,
-  getFacebookEmbedUrl,
   getVideoEmbedUrl,
 } = await import("../../src/services/api.js");
 
@@ -253,13 +252,16 @@ describe("api > mapAdToCard", () => {
     expect(mapAdToCard({ popularity: 42 }).popularity).toBe(42);
     expect(mapAdToCard({ popularity: 0 }).popularity).toBeNull(); // Number(0)||null=null
   });
-  it("videoUrl: nas_video_url is prefixed with NAS_VIDEO base", () => {
-    const out = mapAdToCard({ nas_video_url: "/stream/foo.mp4" });
+  it("videoUrl: /stream/ video_url is returned (NAS_VIDEO base unset)", () => {
+    // nas_video_url is only used when NAS_VIDEO_BASE_URL is configured (it is
+    // unset in tests), so the fallback chain resolves video_url. resolveNasUrl
+    // prefixes a '/stream/' path with the (empty) base, returning it verbatim.
+    const out = mapAdToCard({ video_url: "/stream/foo.mp4" });
     expect(out.videoUrl).toContain("/stream/foo.mp4");
   });
-  it("videoUrl: nas_video_url without leading slash", () => {
-    const out = mapAdToCard({ nas_video_url: "stream/foo.mp4" });
-    expect(out.videoUrl).toContain("/stream/foo.mp4");
+  it("videoUrl: non-/stream/ video_url passes through unchanged", () => {
+    const out = mapAdToCard({ video_url: "stream/foo.mp4" });
+    expect(out.videoUrl).toBe("stream/foo.mp4");
   });
   it("videoUrl: quora prefers image_url_original over video_url", () => {
     const out = mapAdToCard({
@@ -347,36 +349,35 @@ describe("api > getYoutubeEmbedUrl", () => {
   });
 });
 
-describe("api > getFacebookEmbedUrl", () => {
+// Facebook embedding was removed from the source — getVideoEmbedUrl now
+// delegates only to the YouTube resolver, so every Facebook/non-YouTube URL
+// resolves to null (the actual playable media for FB/IG ads is carried in
+// image_url_original, which mapAdToCard routes into ad.videoUrl directly).
+describe("api > Facebook URLs no longer embed (getVideoEmbedUrl → null)", () => {
   it("falsy / non-string → null", () => {
-    expect(getFacebookEmbedUrl(null)).toBeNull();
-    expect(getFacebookEmbedUrl(123)).toBeNull();
+    expect(getVideoEmbedUrl(null)).toBeNull();
+    expect(getVideoEmbedUrl(123)).toBeNull();
   });
   it("non-FB host → null", () => {
-    expect(getFacebookEmbedUrl("https://twitter.com/x/videos/1")).toBeNull();
+    expect(getVideoEmbedUrl("https://twitter.com/x/videos/1")).toBeNull();
   });
   it("FB host but no video segment → null", () => {
-    expect(getFacebookEmbedUrl("https://facebook.com/profile/100")).toBeNull();
+    expect(getVideoEmbedUrl("https://facebook.com/profile/100")).toBeNull();
   });
-  it("/videos/ form → wraps in plugin URL", () => {
-    expect(getFacebookEmbedUrl("https://facebook.com/x/videos/1"))
-      .toMatch(/plugins\/video\.php\?href=/);
+  it("/videos/ form → null (no FB embed)", () => {
+    expect(getVideoEmbedUrl("https://facebook.com/x/videos/1")).toBeNull();
   });
-  it("/reels/ form → embed", () => {
-    expect(getFacebookEmbedUrl("https://facebook.com/x/reels/abc"))
-      .toMatch(/plugins\/video\.php/);
+  it("/reels/ form → null", () => {
+    expect(getVideoEmbedUrl("https://facebook.com/x/reels/abc")).toBeNull();
   });
-  it("/watch?... form → embed", () => {
-    expect(getFacebookEmbedUrl("https://facebook.com/watch?v=1"))
-      .toMatch(/plugins\/video\.php/);
+  it("/watch?... form → null", () => {
+    expect(getVideoEmbedUrl("https://facebook.com/watch?v=1")).toBeNull();
   });
-  it("fb.watch short link → embed", () => {
-    expect(getFacebookEmbedUrl("https://fb.watch/abc/"))
-      .toMatch(/plugins\/video\.php/);
+  it("fb.watch short link → null", () => {
+    expect(getVideoEmbedUrl("https://fb.watch/abc/")).toBeNull();
   });
-  it("/video.php? legacy form → embed", () => {
-    expect(getFacebookEmbedUrl("https://facebook.com/video.php?v=1"))
-      .toMatch(/plugins\/video\.php/);
+  it("/video.php? legacy form → null", () => {
+    expect(getVideoEmbedUrl("https://facebook.com/video.php?v=1")).toBeNull();
   });
 });
 
@@ -385,9 +386,8 @@ describe("api > getVideoEmbedUrl dispatcher", () => {
     expect(getVideoEmbedUrl("https://youtu.be/abc999"))
       .toMatch(/youtube\.com\/embed/);
   });
-  it("falls through to FB when not YT", () => {
-    expect(getVideoEmbedUrl("https://facebook.com/x/videos/1"))
-      .toMatch(/plugins\/video\.php/);
+  it("returns null when not YT (FB no longer embeds)", () => {
+    expect(getVideoEmbedUrl("https://facebook.com/x/videos/1")).toBeNull();
   });
   it("returns null for unsupported host", () => {
     expect(getVideoEmbedUrl("https://example.com/x")).toBeNull();

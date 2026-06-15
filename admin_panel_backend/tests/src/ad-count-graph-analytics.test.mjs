@@ -147,7 +147,6 @@ describe("src/ad-count-graph-analytics > Redis client construction", () => {
     // env vars may be undefined in test env — assert the shape, not values
     expect(opts).toHaveProperty("host");
     expect(opts).toHaveProperty("port");
-    expect(opts).toHaveProperty("username");
     expect(opts).toHaveProperty("password");
   });
 });

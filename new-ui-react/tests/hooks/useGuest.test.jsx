@@ -55,7 +55,7 @@ describe("useGuest > guestToken mode", () => {
     fetchDashSpy.mockResolvedValue({ expired: true });
     renderHook(() => useGuest(), { wrapper: wrap({ guestToken: "gT" }) });
     await act(async () => { await Promise.resolve(); });
-    expect(window.location.href).toMatch(/poweradspy.com\/amember\/member|VITE_AMEMBER_LOGIN_URL/);
+    expect(window.location.href).toMatch(/poweradspy\.com\/amember\/login/);
   });
 
   it("err.status=410 → redirect", async () => {
@@ -155,14 +155,15 @@ describe("useGuest > showGuestWarning", () => {
     expect(result.current.toastMessage).toBeNull();
   });
 
-  it("isLoggedIn=false → shows toast for 3s then clears", () => {
+  it("isLoggedIn=false → shows toast (persists, no auto-clear)", () => {
     const { result } = renderHook(() => useGuest(), { wrapper: wrap({}) });
     let out;
     act(() => { out = result.current.showGuestWarning("Login!"); });
     expect(out).toBe(true);
     expect(result.current.toastMessage).toBe("Login!");
+    // Toast no longer auto-clears after 3s — it persists until dismissed.
     act(() => { vi.advanceTimersByTime(3000); });
-    expect(result.current.toastMessage).toBeNull();
+    expect(result.current.toastMessage).toBe("Login!");
   });
 
   it("default message used when none provided", () => {

@@ -64,7 +64,7 @@ describe("competitorFetch", () => {
       ok: false, status: 401, json: async () => ({}),
     });
     await expect(api.competitorFetch("/foo")).rejects.toThrow(/Unauthorized/);
-    expect(window.location.href).toBe("/logout");
+    expect(window.location.href).toBe("http://localhost:3000/logout");
   });
   it("non-ok non-401 → throws with path + status", async () => {
     globalThis.fetch.mockResolvedValueOnce({

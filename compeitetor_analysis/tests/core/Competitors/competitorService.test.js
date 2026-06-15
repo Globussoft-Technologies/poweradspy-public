@@ -84,6 +84,7 @@ vi.mock("../../../models/competitors.js", () => ({
     findOne: spies.competitorsFindOneSpy,
     aggregate: spies.competitorsAggregateSpy,
     countDocuments: spies.competitorsCountDocsSpy,
+    estimatedDocumentCount: vi.fn(() => Promise.resolve(0)),
     bulkWrite: vi.fn(),
     insertMany: vi.fn(),
   },
@@ -103,6 +104,7 @@ vi.mock("../../../models/existing_competitors.js", () => ({
   default: {
     findOne: spies.existingCompFindOneSpy,
     updateOne: spies.existingCompUpdateOneSpy,
+    estimatedDocumentCount: vi.fn(() => Promise.resolve(0)),
   },
 }));
 vi.mock("../../../models/user_daily_tokens.model.js", () => ({
@@ -117,7 +119,7 @@ vi.mock("../../../models/jobTokenState.js", () => ({
     updateOne: spies.tokenSyncUpdateOneSpy,
   },
 }));
-vi.mock("config", () => ({ default: { get: spies.configGetSpy } }));
+vi.mock("config", () => ({ default: { get: spies.configGetSpy, has: () => false } }));
 vi.mock("@google/genai", () => ({
   GoogleGenAI: vi.fn(function () {
     this.models = { generateContent: spies.geminiGenerateSpy };
@@ -1782,16 +1784,17 @@ describe("competitorService > updateMonitoring", () => {
     expect(res.send.mock.calls[0][0].body.message).toContain("Validation failed");
   });
 
-  // Source bug (https://github.com/Globussoft-Technologies/poweradspy/issues/208):
-  // status=0 fails the inner `status && status!=""` validation (because 0 is
-  // falsy), so the 'monitoring ON' code path is actually unreachable through
-  // this endpoint. Documenting via the 'validation failed' assertion instead.
-  it("status=0 hits Validation failed (source bug — falsy status)", async () => {
+  // Issue #208 is fixed: the inner validation is now
+  // `status !== undefined && status !== ""`, so a numeric status=0 passes and
+  // reaches the 'monitoring will be ON' branch (no longer a falsy-status bug).
+  it("status=0 → 'already on' when monitoringCheck has hits", async () => {
+    spies.competitorsReqFindSpy.mockResolvedValueOnce([{ _id: "r1" }]);
     const res = mockRes();
     await svc.updateMonitoring({
       body: { competitor_request_id: "r1", competitor_id: "c1", status: 0 },
     }, res);
-    expect(res.send.mock.calls[0][0].body.message).toContain("Validation failed");
+    expect(res.json.mock.calls[0][0].statusCode).toBe(201);
+    expect(res.json.mock.calls[0][0].body.message).toContain("already on");
   });
 
   // status="0" (string) bypasses the falsy-validation bug above because the
@@ -2193,24 +2196,29 @@ describe("competitorService > getStoreProcessCompetitors", () => {
     expect(res.send).toHaveBeenCalled();
   });
 
-  it("target=1 + one row → status: 'completed' branch fires (line 2539 truthy side)", async () => {
+  it("target=1 + one row → status: 'completed' branch fires", async () => {
+    // generateCompetitorsInBackground is fire-and-forget and runs a while(true)
+    // polling loop — stub it so it doesn't run unbounded (and OOM) after the
+    // assertion. This test only verifies the synchronous response.
+    vi.spyOn(svc, "generateCompetitorsInBackground").mockResolvedValue(undefined);
     spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
     spies.configGetSpy.mockImplementation((k) => k === "MAXIMUM_TOKEN_COUNt" ? 20000 : "cfg:" + k);
-    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
-    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ competitors: [] });
-    spies.axiosGetSpy.mockResolvedValueOnce({ data: { data: { competitors: [{ tool_name: "c1", domain: "c.com" }] } } });
-    spies.existingCompFindOneSpy.mockResolvedValueOnce(null);
-    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
-    spies.competitorsFindSpy.mockResolvedValueOnce([]);
-    const mod = await import("../../../models/competitors.js");
-    mod.default.insertMany = vi.fn().mockResolvedValueOnce([{ _id: "n1" }]);
-    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
-    spies.competitorsReqFindOneSpy.mockReturnValueOnce({
-      lean: () => Promise.resolve({ _id: "p1", competitors: ["n1"], monitoring: [] }),
-    });
-    spies.competitorsFindSpy.mockReturnValueOnce({
+    spies.competitorsReqUpdateOneSpy.mockResolvedValue({});
+    spies.axiosGetSpy.mockResolvedValue({ data: { data: { competitors: [{ tool_name: "c1", domain: "c.com" }] } } });
+    spies.existingCompFindOneSpy.mockResolvedValue(null);
+    spies.existingCompUpdateOneSpy.mockResolvedValue({});
+    // findOne is consumed both directly (`await findOne(...)` → reqDoc) and via
+    // `.lean()` inside getCompetitorTableRows (now also called from
+    // attachCompetitorsCappedToTarget), so return a shape valid for both. With
+    // competitors already attached, the project is at target → "completed".
+    const projectDoc = { _id: "p1", competitors: ["n1"], monitoring: [] };
+    spies.competitorsReqFindOneSpy.mockImplementation(() => ({
+      ...projectDoc,
+      lean: () => Promise.resolve(projectDoc),
+    }));
+    spies.competitorsFindSpy.mockImplementation(() => ({
       sort: () => ({ lean: () => Promise.resolve([{ _id: "n1", competitor_name: "C1", competitor_url: "c.com" }]) }),
-    });
+    }));
     const res = mockRes();
     await svc.getStoreProcessCompetitors({
       body: { advertiser: "Acme", content_ref_id: "c", user_id: "u", target: 1 },
@@ -2561,10 +2569,15 @@ describe("competitorService > generateCompetitorsInBackground", () => {
     const saveSpy = vi.spyOn(svc, "saveUniqueCompetitors").mockResolvedValue(2);
     const getIdsSpy = vi.spyOn(svc, "getCompetitorIdsFromMaster").mockResolvedValue(["id1", "id2"]);
     const attachSpy = vi.spyOn(svc, "attachCompetitorsToUserRequest").mockResolvedValue(undefined);
-    const tableSpy = vi.spyOn(svc, "getCompetitorTableRows").mockResolvedValue([
-      { name: "C1", countries: ["IN"], platforms: ["Other"] },
-      { name: "C2", countries: [], platforms: [] },
-    ]);
+    // attachCompetitorsCappedToTarget calls getCompetitorTableRows first for the
+    // already-attached set (return [] so the incoming C1/C2 aren't deduped away),
+    // then the NEW DATA branch calls it again for the rows to enrich + emit.
+    const tableSpy = vi.spyOn(svc, "getCompetitorTableRows")
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        { name: "C1", countries: ["IN"], platforms: ["Other"] },
+        { name: "C2", countries: [], platforms: [] },
+      ]);
     // DashboardService.getCompetitorsCountNewInternal returns stats so the enrichment .map runs
     spies.dashboardCountInternalSpy.mockResolvedValueOnce({
       C1: {
@@ -2701,7 +2714,7 @@ describe("competitorService > generateCompetitorsInBackground", () => {
 
     spies.axiosGetSpy.mockImplementation(async (url, opts) => {
       if (opts?.params?.skip === 0) {
-        // Empty competitors + processing
+        // Empty competitors + still processing → loop exits via MAX_PROCESSING_RETRIES
         return { data: { data: { competitors: [], total_items: 10, completed_items: 5 } } };
       }
       return { data: { data: { token_usage: {} } } };

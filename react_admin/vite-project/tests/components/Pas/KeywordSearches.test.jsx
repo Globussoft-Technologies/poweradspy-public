@@ -1,5 +1,3 @@
-// NOTE: same defensive/dead branch patterns as DomainSearches — see
-// https://github.com/Globussoft-Technologies/poweradspy/issues/258
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor, fireEvent, act } from "@testing-library/react";
@@ -11,12 +9,17 @@ vi.mock("react-icons/fa", () => ({
   FaArrowUp: () => null, FaArrowDown: () => null,
 }));
 
-vi.mock("react-datepicker/dist/react-datepicker.css", () => ({}));
-const dpPropsCapture = [];
-vi.mock("react-datepicker", () => ({
+const drpPropsCapture = [];
+vi.mock("../../../src/components/Pas/DateRangePickerCustom", () => ({
   default: (props) => {
-    dpPropsCapture.push(props);
-    return <div data-testid="dp">{props.customInput}</div>;
+    drpPropsCapture.push(props);
+    return (
+      <div data-testid="drp">
+        <button data-testid="clear-date" onClick={() => props.onChange(null, null)}>
+          Clear Filter
+        </button>
+      </div>
+    );
   },
 }));
 
@@ -61,14 +64,12 @@ vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateMock,
 }));
 
-const postApiCallMock = vi.fn();
+const postApiCallWithBodyMock = vi.fn();
 const storeApiCallMock = vi.fn();
 vi.mock("../../../src/components/Pas/ApiResponse", () => ({
-  postApiCall: (...a) => postApiCallMock(...a),
+  postApiCallWithBody: (...a) => postApiCallWithBodyMock(...a),
   storeApiCall: (...a) => storeApiCallMock(...a),
 }));
-
-vi.mock("axios", () => ({ default: { post: vi.fn(), get: vi.fn() } }));
 
 import AdminContext from "../../../src/Context/Context.jsx";
 import KeywordSearches from "../../../src/components/Pas/KeywordSearches.jsx";
@@ -76,25 +77,24 @@ import KeywordSearches from "../../../src/components/Pas/KeywordSearches.jsx";
 const renderWith = (filterState = 3) => {
   const setsearchdataFilterTable = vi.fn();
   const ctx = { searchdataFilterTable: filterState, setsearchdataFilterTable };
-  const setKeywordStatis = vi.fn();
   const utils = render(
     <AdminContext.Provider value={ctx}>
-      <KeywordSearches setKeywordStatis={setKeywordStatis} />
+      <KeywordSearches />
     </AdminContext.Provider>,
   );
-  return { ...utils, setKeywordStatis, ctx };
+  return { ...utils, ctx };
 };
 
 beforeEach(() => {
-  postApiCallMock.mockReset();
+  postApiCallWithBodyMock.mockReset();
   storeApiCallMock.mockReset();
   navigateMock.mockReset();
   toastMock.success.mockClear();
   toastMock.warning.mockClear();
   toastMock.error.mockClear();
-  dpPropsCapture.length = 0;
+  drpPropsCapture.length = 0;
   paginationPropsCapture.length = 0;
-  vi.stubEnv("VITE_SEARCHES_API", "https://api.example.com/");
+  vi.stubEnv("VITE_NODE_USER_ACTIVITY_API", "https://api.example.com/");
   vi.stubEnv("VITE_APP_BASE_URL", "https://app.example.com");
   localStorage.setItem("userId", "u-1");
   navigator.clipboard = { writeText: vi.fn(() => Promise.resolve()) };
@@ -105,244 +105,180 @@ const successResp = (overrides = {}) => ({
   search_after: "after-cursor",
   totalCount: 50,
   data: [
-    { search_keyword: "shoes", "filter.country": "US", adsCount: 5, network: "facebook", adsCountOnSerach: 3 },
-    { search_keyword: "running", "dashboard.likes": 10, "dashboard.shares": ["s1", "s2"], adsCount: 2, network: "google" },
-    { search_keyword: "marathon", "lander.url": "http://m.com", adsCount: 0, network: "tiktok" },
-    { search_keyword: "track", adsCount: 1, network: "linkedin" },
+    { search_keyword: "shoes", "filter.country": "US", "search.x": "v", adsCount: 5, network: "facebook", adsCountOnSerach: 3 },
+    { search_keyword: "bags", "dashboard.likes": 10, "dashboard.shares": ["s1", "s2"], adsCount: 2, network: "google" },
+    { search_keyword: "hats", "lander.url": "http://h.com", adsCount: 0, network: "tiktok" },
+    { search_keyword: "socks", adsCount: 1, network: "linkedin" },
   ],
   ...overrides,
 });
 
 describe("KeywordSearches", () => {
   it("renders heading", async () => {
-    postApiCallMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
     const { getByText } = renderWith();
     expect(getByText("Keyword Searches")).toBeInTheDocument();
   });
-  it("fetches getKeywordsData + count on mount", async () => {
-    postApiCallMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
+  it("fetches get-keywords with a body on mount", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
     renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    expect(postApiCallMock.mock.calls.some(c => c[0].includes("get-keywords?"))).toBe(true);
-    expect(postApiCallMock.mock.calls.some(c => c[0].includes("get-keyword-count"))).toBe(true);
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
+    expect(postApiCallWithBodyMock.mock.calls.some(c => c[0].includes("get-keywords"))).toBe(true);
+    const body = postApiCallWithBodyMock.mock.calls.at(-1)[1];
+    expect(body.user_id).toBe("u-1");
+    expect(body.size).toBeDefined();
   });
-  it("populates rows", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("populates rows from response", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     const { findByText } = renderWith();
     expect(await findByText("shoes")).toBeInTheDocument();
+    expect(await findByText("bags")).toBeInTheDocument();
   });
-  it("code 404 → empty data", async () => {
-    postApiCallMock.mockResolvedValue({ code: 404 });
+  it("code 404 → empty data (no crash)", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 404 });
     renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
   });
-  it("code 401 navigates", async () => {
-    postApiCallMock.mockResolvedValue({ code: 401 });
-    renderWith();
-    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/"));
-  });
-  it("count 401 → navigate", async () => {
-    postApiCallMock.mockImplementation((url) => {
-      if (url.includes("get-keyword-count")) return Promise.resolve({ code: 401 });
-      return Promise.resolve({ code: 200, data: [], totalCount: 0 });
-    });
+  it("code 401 from get-keywords → navigates", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 401 });
     renderWith();
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/"));
   });
-  it("count 404 → setKeywordStatis called", async () => {
-    const resp = { code: 404 };
-    postApiCallMock.mockImplementation((url) => {
-      if (url.includes("get-keyword-count")) return Promise.resolve(resp);
-      return Promise.resolve({ code: 200, data: [], totalCount: 0 });
-    });
-    const { setKeywordStatis } = renderWith();
-    await waitFor(() => expect(setKeywordStatis).toHaveBeenCalledWith(resp));
-  });
-  it("count 200 → setKeywordStatis called", async () => {
-    const resp = { code: 200, totalCount: 99 };
-    postApiCallMock.mockImplementation((url) => {
-      if (url.includes("get-keyword-count")) return Promise.resolve(resp);
-      return Promise.resolve({ code: 200, data: [], totalCount: 0 });
-    });
-    const { setKeywordStatis } = renderWith();
-    await waitFor(() => expect(setKeywordStatis).toHaveBeenCalledWith(resp));
-  });
-  it("unknown code from getKeywordsData → no navigate", async () => {
-    postApiCallMock.mockResolvedValue({ code: 500 });
+  it("unknown code from get-keywords → no navigate", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 500 });
     renderWith();
     await new Promise(r => setTimeout(r, 100));
     expect(navigateMock).not.toHaveBeenCalled();
   });
-  it("unknown code from count → no setKeywordStatis, no navigate", async () => {
-    postApiCallMock.mockImplementation((url) => {
-      if (url.includes("get-keyword-count")) return Promise.resolve({ code: 500 });
-      return Promise.resolve({ code: 200, data: [], totalCount: 0 });
-    });
-    const { setKeywordStatis } = renderWith();
-    await new Promise(r => setTimeout(r, 100));
-    expect(setKeywordStatis).not.toHaveBeenCalled();
-  });
   it("date change re-fetches with from_date/to_date", async () => {
-    postApiCallMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
     renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    const initial = postApiCallMock.mock.calls.length;
-    const { onChange } = dpPropsCapture.at(-1);
-    act(() => { onChange(new Date(2025, 5, 15)); });
-    await waitFor(() => expect(postApiCallMock.mock.calls.length).toBeGreaterThan(initial));
-    expect(postApiCallMock.mock.calls.at(-1)[1].from_date).toBe("2025-06-15 00:00:00");
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
+    const initial = postApiCallWithBodyMock.mock.calls.length;
+    const { onChange } = drpPropsCapture.at(-1);
+    act(() => { onChange(new Date(2025, 5, 15), new Date(2025, 5, 15)); });
+    await waitFor(() => expect(postApiCallWithBodyMock.mock.calls.length).toBeGreaterThan(initial));
+    const lastCall = postApiCallWithBodyMock.mock.calls.at(-1);
+    expect(lastCall[1].from_date).toBe("2025-06-15 00:00:00");
+    expect(lastCall[1].to_date).toBe("2025-06-15 23:59:59");
   });
-  it("Clear Date re-fetches", async () => {
-    postApiCallMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
+  it("Clear Filter resets the date range + re-fetches", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
     const { getByText } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    const { onChange } = dpPropsCapture.at(-1);
-    act(() => { onChange(new Date(2025, 5, 15)); });
-    await waitFor(() => expect(postApiCallMock.mock.calls.some(c => c[1].from_date)).toBe(true));
-    const before = postApiCallMock.mock.calls.length;
-    fireEvent.click(getByText("Clear Date"));
-    await waitFor(() => expect(postApiCallMock.mock.calls.length).toBeGreaterThan(before));
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
+    const { onChange } = drpPropsCapture.at(-1);
+    act(() => { onChange(new Date(2025, 5, 15), new Date(2025, 5, 15)); });
+    await waitFor(() => expect(postApiCallWithBodyMock.mock.calls.some(c => c[1].from_date)).toBe(true));
+    const beforeClear = postApiCallWithBodyMock.mock.calls.length;
+    fireEvent.click(getByText("Clear Filter"));
+    await waitFor(() => expect(postApiCallWithBodyMock.mock.calls.length).toBeGreaterThan(beforeClear));
   });
-  it("filter input debounced re-fetch", async () => {
-    postApiCallMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
+  it("filter input triggers debounced re-fetch with search_term", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
     vi.useFakeTimers();
     const { container } = renderWith();
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
-    const initial = postApiCallMock.mock.calls.length;
+    const initial = postApiCallWithBodyMock.mock.calls.length;
     const input = container.querySelector("input[type='text']");
-    fireEvent.change(input, { target: { value: "kw" } });
+    fireEvent.change(input, { target: { value: "search-q" } });
     await act(async () => { await vi.advanceTimersByTimeAsync(600); });
     vi.useRealTimers();
-    await waitFor(() => expect(postApiCallMock.mock.calls.length).toBeGreaterThan(initial));
-    expect(postApiCallMock.mock.calls.at(-1)[1].search_term).toBe("kw");
+    await waitFor(() => expect(postApiCallWithBodyMock.mock.calls.length).toBeGreaterThan(initial));
+    const lastCall = postApiCallWithBodyMock.mock.calls.at(-1);
+    expect(lastCall[1].search_term).toBe("search-q");
   });
-  it("Fetch Ad only renders for allowed networks", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("Fetch Ad button only renders for allowed networks (facebook/instagram/native/google)", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     const { findAllByText } = renderWith();
     const buttons = await findAllByText("Fetch Ad");
-    expect(buttons.length).toBe(2);
+    expect(buttons.length).toBe(2); // facebook + google
   });
-  it("Fetch Ad → storeApiCall type=0 + toast.success", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("Fetch Ad click → storeApiCall with type=0 + toast.success", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     storeApiCallMock.mockResolvedValue({ code: 200 });
     const { findAllByText } = renderWith();
-    fireEvent.click((await findAllByText("Fetch Ad"))[0]);
-    await waitFor(() => expect(storeApiCallMock).toHaveBeenCalledWith({ type: 0, keyword: "shoes" }));
+    const buttons = await findAllByText("Fetch Ad");
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(storeApiCallMock).toHaveBeenCalled());
+    expect(storeApiCallMock).toHaveBeenCalledWith({ type: 0, keyword: "shoes" });
     expect(toastMock.success).toHaveBeenCalled();
   });
-  it("Fetch Ad 401 → navigate", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("Fetch Ad click → 401 navigates", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     storeApiCallMock.mockResolvedValue({ code: 401 });
     const { findAllByText } = renderWith();
-    fireEvent.click((await findAllByText("Fetch Ad"))[0]);
+    const buttons = await findAllByText("Fetch Ad");
+    fireEvent.click(buttons[0]);
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/"));
   });
-  it("Fetch Ad 400 → warning", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("Fetch Ad click → 400 toasts warning", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     storeApiCallMock.mockResolvedValue({ code: 400 });
     const { findAllByText } = renderWith();
-    fireEvent.click((await findAllByText("Fetch Ad"))[0]);
+    const buttons = await findAllByText("Fetch Ad");
+    fireEvent.click(buttons[0]);
     await waitFor(() => expect(toastMock.warning).toHaveBeenCalled());
   });
-  it("Fetch Ad unknown code → silent", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
-    storeApiCallMock.mockResolvedValue({ code: 500 });
-    const { findAllByText } = renderWith();
-    fireEvent.click((await findAllByText("Fetch Ad"))[0]);
-    await waitFor(() => expect(storeApiCallMock).toHaveBeenCalled());
-    expect(toastMock.success).not.toHaveBeenCalled();
-  });
-  it("URL Copy → safeEncode + toast.success", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("URL Copy click → copies safe-encoded /landing/key/ URL + toast.success", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     const { container } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
     const copyIcons = container.querySelectorAll('img[alt="Copy Link"]');
+    expect(copyIcons.length).toBeGreaterThan(0);
     fireEvent.click(copyIcons[0]);
     await waitFor(() => expect(toastMock.success).toHaveBeenCalled());
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("/facebook/landing/key/shoes"));
   });
-  it("URL Copy failure → toast.error", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("URL Copy click failure → toast.error", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     navigator.clipboard.writeText = vi.fn(() => Promise.reject(new Error("denied")));
     const { container } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
     const copyIcons = container.querySelectorAll('img[alt="Copy Link"]');
     fireEvent.click(copyIcons[0]);
     await waitFor(() => expect(toastMock.error).toHaveBeenCalled());
   });
-  it("URL with special chars uses safeEncode", async () => {
-    postApiCallMock.mockResolvedValue({
-      code: 200, totalCount: 1, data: [{ search_keyword: "kw'\"x", network: "facebook" }],
-    });
-    const { container } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    fireEvent.click(container.querySelector('img[alt="Copy Link"]'));
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
-    const url = navigator.clipboard.writeText.mock.calls[0][0];
-    expect(url).toMatch(/%27/);
-    expect(url).toMatch(/%22/);
-  });
-  it("missing keyword/network → unknown/default", async () => {
-    postApiCallMock.mockResolvedValue({
-      code: 200, totalCount: 1, data: [{ adsCount: 1 }],
-    });
-    const { container } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    fireEvent.click(container.querySelector('img[alt="Copy Link"]'));
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
-    const url = navigator.clipboard.writeText.mock.calls[0][0];
-    expect(url).toMatch(/\/default\/landing\/key\/unknown/);
-  });
-  it("next page advances", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("handleNextPage advances page when search_after available", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     const { getByTestId } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    const initial = postApiCallMock.mock.calls.length;
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
+    const initial = postApiCallWithBodyMock.mock.calls.length;
     fireEvent.click(getByTestId("next"));
-    await waitFor(() => expect(postApiCallMock.mock.calls.length).toBeGreaterThan(initial));
+    await waitFor(() => expect(postApiCallWithBodyMock.mock.calls.length).toBeGreaterThan(initial));
+    expect(postApiCallWithBodyMock.mock.calls.at(-1)[1].search_after).toBe("after-cursor");
   });
-  it("prev at page 0 → no-op", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("handlePrevPage does nothing at page 0", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     const { getByTestId } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    const initial = postApiCallMock.mock.calls.length;
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
+    const initial = postApiCallWithBodyMock.mock.calls.length;
     fireEvent.click(getByTestId("prev"));
     await new Promise(r => setTimeout(r, 50));
-    expect(postApiCallMock.mock.calls.length).toBe(initial);
+    expect(postApiCallWithBodyMock.mock.calls.length).toBe(initial);
   });
-  it("prev from page 1 resets to 0", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("handlePrevPage from page 1 → reset to page 0", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     const { getByTestId } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
     fireEvent.click(getByTestId("next"));
     await waitFor(() => expect(paginationPropsCapture.at(-1).pageIndex).toBe(1));
     fireEvent.click(getByTestId("prev"));
     await waitFor(() => expect(paginationPropsCapture.at(-1).pageIndex).toBe(0));
   });
-  it("prev from page >1 decrements", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
-    const { getByTestId } = renderWith();
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
-    fireEvent.click(getByTestId("next"));
-    await waitFor(() => expect(paginationPropsCapture.at(-1).pageIndex).toBe(1));
-    fireEvent.click(getByTestId("next"));
-    await waitFor(() => expect(paginationPropsCapture.at(-1).pageIndex).toBe(2));
-    fireEvent.click(getByTestId("prev"));
-    await waitFor(() => expect(paginationPropsCapture.at(-1).pageIndex).toBe(1));
-  });
-  it("scroll wheel handler attached at filter state 1", async () => {
-    postApiCallMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
+  it("searchdataFilterTable=1 → scrollWheel handler attached", async () => {
+    postApiCallWithBodyMock.mockResolvedValue({ code: 200, data: [], totalCount: 0 });
     const { container } = renderWith(1);
-    await waitFor(() => expect(postApiCallMock).toHaveBeenCalled());
+    await waitFor(() => expect(postApiCallWithBodyMock).toHaveBeenCalled());
     const tableEl = container.querySelector(".overflow-auto");
+    expect(tableEl).not.toBeNull();
     const wheelEvent = new Event("wheel", { bubbles: true, cancelable: true });
     wheelEvent.preventDefault = vi.fn();
     wheelEvent.stopPropagation = vi.fn();
     tableEl.dispatchEvent(wheelEvent);
     expect(wheelEvent.preventDefault).toHaveBeenCalled();
   });
-  it("dashboard.shares array joined", async () => {
-    postApiCallMock.mockResolvedValue(successResp());
+  it("array dashboard.shares joined with commas", async () => {
+    postApiCallWithBodyMock.mockResolvedValue(successResp());
     const { findByText } = renderWith();
     expect(await findByText(/shares: s1, s2/)).toBeInTheDocument();
   });

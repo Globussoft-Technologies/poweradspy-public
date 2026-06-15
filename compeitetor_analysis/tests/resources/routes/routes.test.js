@@ -20,6 +20,20 @@ vi.mock("../../../utils/authentication.js", () => ({
   verifyToken: vi.fn(),
   SwaggerAuth: vi.fn(),
 }));
+// Elasticsearch.js reads config.get("SEARCH_HOSTS") at module load, which throws
+// when no config directory is present in the test env. Stub it (and config) so the
+// route/controller import chain loads without touching real ES/config.
+vi.mock("../../../utils/Elasticsearch.js", () => ({
+  esClient: {},
+  esServers: [],
+  checkElasticsearchHealth: vi.fn(),
+  closeClients: vi.fn(),
+}));
+// Return a benign string for every config key so module-load reads (e.g.
+// SENDGRID_API_KEY, assets_base_url) resolve without a real config directory.
+vi.mock("config", () => ({
+  default: { get: vi.fn(() => "test") },
+}));
 
 const router = (await import("../../../resources/routes/routes.js")).default;
 

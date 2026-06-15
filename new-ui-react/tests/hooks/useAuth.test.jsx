@@ -2,12 +2,14 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, render } from "@testing-library/react";
 
-const { fetchPlanAccessSpy } = vi.hoisted(() => ({
+const { fetchPlanAccessSpy, trackEventSpy } = vi.hoisted(() => ({
   fetchPlanAccessSpy: vi.fn(),
+  trackEventSpy: vi.fn(),
 }));
 
 vi.mock("../../src/services/api", () => ({
   fetchPlanAccess: fetchPlanAccessSpy,
+  trackEvent: trackEventSpy,
 }));
 
 // Helper: build a JWT with payload + optional expiration

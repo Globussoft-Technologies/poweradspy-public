@@ -9,6 +9,7 @@ function FakeRouter() {
     routes: { get: {}, post: {} },
     get: vi.fn((path, ...rest) => { r.routes.get[path] = rest; }),
     post: vi.fn((path, ...rest) => { r.routes.post[path] = rest; }),
+    use: vi.fn(),
   };
   routerInstances.push(r);
   return r;

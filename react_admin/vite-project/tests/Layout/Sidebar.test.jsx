@@ -62,10 +62,9 @@ describe("Sidebar", () => {
     expect(container.querySelector("img[alt='AdsGPT']").getAttribute("src"))
       .toMatch(/Change-Tagline/);
   });
-  it("default state shows PowerAdSpy nav items (Crawler/User/Competitor/Daily Keywords)", () => {
+  it("default state shows PowerAdSpy nav items (Crawler/Competitor/Daily Keywords/System Info)", () => {
     const { getByText } = renderWithCtx();
     expect(getByText("Crawler Insights")).toBeInTheDocument();
-    expect(getByText("User Details")).toBeInTheDocument();
     expect(getByText("Competitors Details")).toBeInTheDocument();
     expect(getByText("Daily Keywords Details")).toBeInTheDocument();
     expect(getByText("System Info")).toBeInTheDocument();

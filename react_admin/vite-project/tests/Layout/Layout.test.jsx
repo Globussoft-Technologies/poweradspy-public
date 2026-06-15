@@ -121,6 +121,14 @@ describe("Layout", () => {
     fireEvent.mouseDown(getByText("Logout"));
     expect(getByText("Logout")).toBeInTheDocument();
   });
+  it("shows the Back button on the /pas dashboard route and navigates on click", () => {
+    pathnameMock = "/pas";
+    const { getByText } = renderWithCtx();
+    const backBtn = getByText("Back");
+    expect(backBtn).toBeInTheDocument();
+    fireEvent.click(backBtn);
+    expect(navigateMock).toHaveBeenCalledWith("/pas/user-details");
+  });
   it("Monitoring toggle visible on /pas/system-info path", () => {
     pathnameMock = "/pas/system-info";
     const { getByText } = renderWithCtx();

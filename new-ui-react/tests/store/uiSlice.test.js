@@ -21,7 +21,7 @@ describe("store/uiSlice > initial state", () => {
       searchQuery: "",
       searchIn: "keyword",
       exactSearch: false,
-      activeTab: "Newest",
+      activeTab: "",
       previewMode: false,
       specificPlatforms: [],
       savedAdsTab: "favourites",

@@ -222,7 +222,7 @@ describe("api > fetchAds error paths", () => {
       ok: true, status: 200, json: async () => ({ code: 401 }),
     });
     await expect(api.fetchAds()).rejects.toThrow(/Unauthorized/);
-    expect(window.location.href).toBe("/logout");
+    expect(window.location.href).toBe("http://localhost:3000/logout");
   });
   it("body message contains 'token expired' → handle401 + throws", async () => {
     globalThis.fetch.mockResolvedValueOnce({
@@ -243,7 +243,7 @@ describe("api > fetchAds trackUserActivity side effect", () => {
       { ok: true, status: 200, json: async () => ({}) }, // user_activity
     ];
     globalThis.fetch = vi.fn((url) => {
-      if (url.includes("/user_activity")) return Promise.resolve(responses[1]);
+      if (url.includes("user-activity")) return Promise.resolve(responses[1]);
       return Promise.resolve(responses[0]);
     });
     await api.fetchAds({});
@@ -262,14 +262,16 @@ describe("api > fetchAds trackUserActivity side effect", () => {
     expect(globalThis.fetch.mock.calls.every(c => !c[0].includes("user_activity"))).toBe(true);
     vi.unstubAllEnvs();
   });
-  it("no USER_ACTIVITY_URL → silently skipped", async () => {
+  it("fires trackUserActivity via the PAS API base (no USER_ACTIVITY_URL needed)", async () => {
+    // The activity endpoint is now ${PAS_API_BASE}/api/v1/frontend_user_activity/user-activity,
+    // so it no longer depends on VITE_USER_ACTIVITY_URL being set.
     localStorage.setItem("authUser", JSON.stringify({ user_id: 7 }));
-    globalThis.fetch.mockResolvedValueOnce({
-      ok: true, status: 200, json: async () => ({ data: [] }),
+    globalThis.fetch = vi.fn((url) => {
+      if (url.includes("user-activity")) return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) });
     });
     await api.fetchAds({});
-    // No second fetch attempted
-    expect(globalThis.fetch.mock.calls.length).toBe(1);
+    expect(globalThis.fetch.mock.calls.some(c => c[0].includes("user-activity"))).toBe(true);
   });
   it("no authUser in localStorage → trackUserActivity skipped", async () => {
     vi.stubEnv("VITE_USER_ACTIVITY_URL", "https://ua.example.com/");
@@ -301,7 +303,7 @@ describe("api > fetchAds trackUserActivity side effect", () => {
     localStorage.setItem("authUser", JSON.stringify({ user_id: 7 }));
     let activityBody;
     globalThis.fetch = vi.fn((url, opts) => {
-      if (url.includes("/user_activity")) {
+      if (url.includes("user-activity")) {
         activityBody = opts.body;
         return Promise.resolve({ ok: true });
       }
@@ -334,7 +336,7 @@ describe("api > fetchAds trackUserActivity side effect", () => {
       localStorage.setItem("authUser", JSON.stringify({ user_id: 7, email: "a@b.com", name: "A" }));
       let activityBody;
       globalThis.fetch = vi.fn((url, opts) => {
-        if (url.includes("/user_activity")) {
+        if (url.includes("user-activity")) {
           activityBody = opts.body;
           return Promise.resolve({ ok: true });
         }
@@ -353,7 +355,7 @@ describe("api > fetchAds trackUserActivity side effect", () => {
     api = await import("../../src/services/api.js");
     localStorage.setItem("authUser", JSON.stringify({ user_id: 7 }));
     globalThis.fetch = vi.fn((url) => {
-      if (url.includes("/user_activity")) return Promise.reject(new Error("fail"));
+      if (url.includes("user-activity")) return Promise.reject(new Error("fail"));
       return Promise.resolve({
         ok: true, status: 200, json: async () => ({ data: [] }),
       });

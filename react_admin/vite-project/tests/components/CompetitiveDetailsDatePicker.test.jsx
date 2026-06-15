@@ -27,14 +27,14 @@ beforeEach(() => {
 });
 
 describe("CompetitiveDetailsDatePicker", () => {
-  it("renders filter button + calendar trigger", () => {
+  it("renders the calendar trigger", () => {
     const { getByTestId } = render(
       <CustomDateRangePicker
         setSelectedSystem={() => {}}
         setShowFilterModal={() => {}}
       />,
     );
-    expect(getByTestId("filter-ic")).toBeInTheDocument();
+    // The clear/filter icon was removed; only the calendar trigger renders.
     expect(getByTestId("cal-ic")).toBeInTheDocument();
   });
   it("trigger initially shows empty label (no isInitialLoad)", () => {
@@ -115,36 +115,36 @@ describe("CompetitiveDetailsDatePicker", () => {
     const { onChange } = dateRangePropsCapture.at(-1);
     expect(() => onChange({ selection: { startDate: new Date(), endDate: new Date(), key: "selection" } })).not.toThrow();
   });
-  it("handleClearDate after apply resets range and notifies", () => {
+  it("Cancel closes the picker without notifying onDateChange", () => {
     const onDateChange = vi.fn();
-    const { container, getByTestId, getByText } = render(
+    const { getByTestId, getByText, queryByTestId } = render(
       <CustomDateRangePicker
         onDateChange={onDateChange}
         setSelectedSystem={() => {}}
         setShowFilterModal={() => {}}
       />,
     );
-    // First Apply to set isInitialLoad=true
     fireEvent.click(getByTestId("cal-ic").closest("button"));
-    fireEvent.click(getByText("Apply"));
-    onDateChange.mockClear();
-    // Now click filter (clear) button
-    fireEvent.click(getByTestId("filter-ic").closest("button"));
-    expect(onDateChange).toHaveBeenCalledWith(null, null);
-    // Label is back to empty
-    const span = container.querySelector("span.text-xs");
-    expect(span.textContent.trim()).toBe("");
+    expect(queryByTestId("date-range")).not.toBeNull();
+    fireEvent.click(getByText("Cancel"));
+    expect(queryByTestId("date-range")).toBeNull();
+    expect(onDateChange).not.toHaveBeenCalled();
   });
-  it("handleClearDate is a no-op when isInitialLoad=false", () => {
+  it("Cancel after a temp date change discards it (no onDateChange)", () => {
     const onDateChange = vi.fn();
-    const { getByTestId } = render(
+    const { getByTestId, getByText } = render(
       <CustomDateRangePicker
         onDateChange={onDateChange}
         setSelectedSystem={() => {}}
         setShowFilterModal={() => {}}
       />,
     );
-    fireEvent.click(getByTestId("filter-ic").closest("button"));
+    fireEvent.click(getByTestId("cal-ic").closest("button"));
+    const { onChange } = dateRangePropsCapture.at(-1);
+    act(() => {
+      onChange({ selection: { startDate: new Date(2025, 5, 10), endDate: new Date(2025, 5, 20), key: "selection" } });
+    });
+    fireEvent.click(getByText("Cancel"));
     expect(onDateChange).not.toHaveBeenCalled();
   });
   it("clicking outside closes the picker", () => {

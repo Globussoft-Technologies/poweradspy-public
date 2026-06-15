@@ -197,14 +197,18 @@ describe("AutocompleteFilter > GET source word suggestions", () => {
     expect(url).toContain("query=shoes");
     expect(url).toContain("limit=5");
   });
-  it("missing env var → skips that source", async () => {
+  it("missing env var → falls back to the default suggest endpoint", async () => {
     vi.unstubAllEnvs();
     const { getByPlaceholderText } = render(
       <AutocompleteFilter onChange={() => {}} suggestionSources={[WORD_SOURCE]} />,
     );
     fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "abc" } });
     await act(async () => { await Promise.resolve(); });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    // The source no longer gates on the env var — it uses a hardcoded default.
+    expect(globalThis.fetch).toHaveBeenCalled();
+    const url = globalThis.fetch.mock.calls[0][0];
+    expect(url).toContain("https://search-suggest.poweradspy.ai/suggest");
+    expect(url).toContain("query=abc");
   });
   it("non-ok response → continues to next source", async () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 500 });

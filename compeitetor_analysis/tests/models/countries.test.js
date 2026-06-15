@@ -21,11 +21,10 @@ describe("models/countries > getAllCountries", () => {
     expect(executeSpy).toHaveBeenCalledWith(expect.stringContaining("SELECT id,name FROM countries"));
   });
 
-  it("on db error, logs and throws (latent bug: logger not imported)", async () => {
+  it("on db error, logs and rethrows the original error", async () => {
     executeSpy.mockRejectedValueOnce(new Error("connection-lost"));
-    // The SUT's catch tries to call `logger.error(...)` but does not import
-    // `logger`, so it actually throws ReferenceError. Issue:
-    // https://github.com/Globussoft-Technologies/poweradspy/issues/207
-    await expect(getAllCountries()).rejects.toThrow(/logger is not defined/);
+    // Issue #207 is fixed: the SUT now imports `logger`, logs the error, and
+    // rethrows the original error (no more ReferenceError).
+    await expect(getAllCountries()).rejects.toThrow(/connection-lost/);
   });
 });

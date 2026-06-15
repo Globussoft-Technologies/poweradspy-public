@@ -36,7 +36,7 @@ describe("services/youtube/controllers/hideAdsController > hideAds", () => {
     );
     expect(out).toEqual({ code: 200, message: "data inserted successfully", data: 42 });
     expect(db.sql.query.mock.calls[0][0]).toContain("youtube_hidden_ads");
-    expect(db.sql.query.mock.calls[0][1]).toEqual(["u", "po", "a", 1]);
+    expect(db.sql.query.mock.calls[1][1]).toEqual(["u", "po", "a", 1]);
   });
 
   it("400 when insertId is 0", async () => {

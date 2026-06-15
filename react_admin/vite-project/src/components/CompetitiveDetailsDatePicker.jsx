@@ -65,29 +65,6 @@ const CustomDateRangePicker = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [range]);
 
-  
-const handleClearDate = () => { 
-    if(isInitialLoad) {
-setTempRange([
-        {
-            startDate: new Date(),
-            endDate: new Date(),
-            key: "selection",
-        },
-        ]);
-        setRange([
-        {
-            startDate: new Date(),
-            endDate: new Date(),
-            key: "selection",
-        },
-        ]);
-        setIsInitialLoad(false);
-        onDateChange(null, null)
-    }
-}
-  
-
   return (
     <div className="flex gap-[10px] items-center" ref={ref}>
     <div className="relative inline-block" ref={ref}>

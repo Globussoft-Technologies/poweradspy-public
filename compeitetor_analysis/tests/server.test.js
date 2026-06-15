@@ -69,6 +69,9 @@ vi.mock("../resources/database/mongodb.js", () => ({ connectDB: connectDBSpy }))
 vi.mock("config", () => ({ default: { get: configGetSpy } }));
 vi.mock("node:http", () => ({ default: httpFake }));
 vi.mock("../utils/socket.js", () => ({ initSocket: initSocketSpy }));
+// dataReportCron pulls in node-cron, which throws on load in this env and kills
+// the worker fork — stub it so importing server.js performs no real cron setup.
+vi.mock("../core/mailer/dataReportCron.js", () => ({ initDataReportCron: vi.fn() }));
 
 let readFileSyncSpy, exitSpy;
 

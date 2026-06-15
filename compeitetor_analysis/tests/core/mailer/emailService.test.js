@@ -16,6 +16,16 @@ vi.mock("config", () => ({ default: { get: configGetSpy } }));
 vi.mock("../../../resources/logs/logger.log.js", () => ({
   default: { info: loggerInfoSpy, error: loggerErrorSpy, warn: vi.fn() },
 }));
+// emailAudit/bounceGuard pull in mongoose models at load — stub them so the
+// SUT imports cleanly without a real mongoose/DB connection.
+vi.mock("../../../core/mailer/emailAudit.js", () => ({
+  newSendId: () => "sid",
+  logSend: vi.fn(),
+}));
+vi.mock("../../../core/mailer/bounceGuard.js", () => ({
+  isBlacklisted: () => false,
+  BLACKLISTED_SKIP_REASON: "blacklisted",
+}));
 
 let svc;
 let readFileSyncSpy;
@@ -215,7 +225,7 @@ describe("core/mailer/emailService > renderTemplate", () => {
 });
 
 describe("core/mailer/emailService > sendCompetitorUpdateEmail", () => {
-  it("sends mail via sgMail.send with cc support@poweradspy.com", async () => {
+  it("sends mail via sgMail.send (CC to support@ removed)", async () => {
     sgSendSpy.mockResolvedValueOnce(undefined);
     await svc.sendCompetitorUpdateEmail({
       to: "x@y.com", name: "Alice",
@@ -223,7 +233,6 @@ describe("core/mailer/emailService > sendCompetitorUpdateEmail", () => {
     });
     expect(sgSendSpy).toHaveBeenCalledWith(expect.objectContaining({
       to: "x@y.com",
-      cc: "support@poweradspy.com",
       subject: expect.stringContaining("Daily Competitor Pulse"),
     }));
     expect(loggerInfoSpy).toHaveBeenCalledWith(expect.stringContaining("email sent successfully"));

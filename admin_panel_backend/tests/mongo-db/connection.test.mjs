@@ -42,23 +42,27 @@ describe("mongo-db/connection > connectToMongo", () => {
     expect(mongoose.connect).not.toHaveBeenCalled();
   });
 
-  it("calls mongoose.connect with cloud URI in non-PROD", async () => {
-    process.env.ENVIRONMENT = "DEV";
-    process.env.MONGO_USERNAME = "u";
-    process.env.MONGO_PASS = "p";
+  it("calls mongoose.connect with mongodb+srv URI for ADSGPT", async () => {
+    process.env.MONGO_DB = "ADSGPT";
+    process.env.ADSGPT_MONGO_HOST = "atlas-host";
+    process.env.ADSGPT_MONGO_USERNAME = "u";
+    process.env.ADSGPT_MONGO_PASS = "p";
+    process.env.ADSGPT_MONGO_DATABASE = "adsGPT";
     mongoose.connect.mockResolvedValueOnce(undefined);
     await connectToMongo();
-    expect(mongoose.connect.mock.calls[0][0]).toContain("mongodb+srv://u:p@");
+    expect(mongoose.connect.mock.calls[0][0]).toContain("mongodb+srv://u:p@atlas-host/adsGPT");
   });
 
-  it("calls mongoose.connect with prod URI when ENVIRONMENT=PROD", async () => {
-    process.env.ENVIRONMENT = "PROD";
-    process.env.MONGO_USERNAME = "u";
-    process.env.MONGO_PASS = "p";
-    process.env.MONGO_HOST = "internal-mongo";
+  it("calls mongoose.connect with direct mongodb URI for PAS with credentials", async () => {
+    process.env.MONGO_DB = "PAS";
+    process.env.PAS_MONGO_HOST = "internal-mongo";
+    process.env.PAS_MONGO_PORT = "27017";
+    process.env.PAS_MONGO_DATABASE = "pasdev_competitor";
+    process.env.PAS_MONGO_USERNAME = "u";
+    process.env.PAS_MONGO_PASS = "p";
     mongoose.connect.mockResolvedValueOnce(undefined);
     await connectToMongo();
-    expect(mongoose.connect.mock.calls[0][0]).toContain("internal-mongo:27017/adsGPT");
+    expect(mongoose.connect.mock.calls[0][0]).toContain("mongodb://u:p@internal-mongo:27017/pasdev_competitor");
   });
 
   it("returns in-flight promise when isConnecting", async () => {

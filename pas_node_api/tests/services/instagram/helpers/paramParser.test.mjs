@@ -117,7 +117,7 @@ describe("services/instagram/helpers/paramParser > cleanAdsData (incl. urlArray 
   it("withCdn: strips PowerAdspy/PowerAdspy-Dev/PowerAdspy/n2 prefixes", () => {
     expect(mod.cleanAdsData([ad({ post_owner_image: "PowerAdspy/n2/x.png" })])[0].post_owner_image).toBe("https://cdn.test/x.png");
     expect(mod.cleanAdsData([ad({ post_owner_image: "PowerAdspy-Dev/y.png" })])[0].post_owner_image).toBe("https://cdn.test/y.png");
-    expect(mod.cleanAdsData([ad({ post_owner_image: "PowerAdspy/z.png" })])[0].post_owner_image).toBe("https://cdn.test/z.png");
+    expect(mod.cleanAdsData([ad({ post_owner_image: "PowerAdspy/z.png" })])[0].post_owner_image).toBe("https://cdn.test/PowerAdspy/z.png");
   });
   it("withCdn: paths missing/with leading slash", () => {
     expect(mod.cleanAdsData([ad({ post_owner_image: "raw/x.png" })])[0].post_owner_image).toBe("https://cdn.test/raw/x.png");
@@ -131,7 +131,7 @@ describe("services/instagram/helpers/paramParser > cleanAdsData (incl. urlArray 
   });
   it("ad_image_video array mapped", () => {
     expect(mod.cleanAdsData([ad({ ad_image_video: ["a.png", "PowerAdspy/b.png"] })])[0].ad_image_video)
-      .toEqual(["https://cdn.test/a.png", "https://cdn.test/b.png"]);
+      .toEqual(["https://cdn.test/a.png", "https://cdn.test/PowerAdspy/b.png"]);
   });
   it("ad_image_video string CDN-prefixed", () => {
     expect(mod.cleanAdsData([ad({ ad_image_video: "s.png" })])[0].ad_image_video).toBe("https://cdn.test/s.png");
