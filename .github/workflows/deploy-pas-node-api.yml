@@ -45,13 +45,13 @@ jobs:
             npm install --no-audit --no-fund
           fi
 
-      # - name: Test
-      #   # Hard-fail: a failing test fails the ci job, and `deploy` has
-      #   # `needs: ci`, so deploy is skipped unless tests pass. These are
-      #   # vitest unit tests (tests/**/*.test.mjs) — if any one needs a live
-      #   # DB/Redis the runner doesn't have, flip this to `npm run test || true`
-      #   # or add a service container.
-      #   run: npm run test
+      - name: Test
+        # Hard-fail: a failing test fails the ci job, and `deploy` has
+        # `needs: ci`, so deploy is skipped unless tests pass. These are
+        # vitest unit tests (tests/**/*.test.mjs) — if any one needs a live
+        # DB/Redis the runner doesn't have, flip this to `npm run test || true`
+        # or add a service container.
+        run: npm run test
 
       # No build step: pas_node_api is a plain Node server (`node src/server.js`),
       # nothing to compile.
