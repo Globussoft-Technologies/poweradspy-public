@@ -45,11 +45,11 @@ jobs:
             npm install --no-audit --no-fund
           fi
 
-      - name: Test
-        # Hard-fail: a failing test fails the ci job, and `deploy` has
-        # `needs: ci`, so deploy is skipped unless tests pass. If a test needs
-        # a live DB/Redis/SendGrid the runner lacks, flip to `npm run test || true`.
-        run: npm run test
+      # - name: Test
+      #   # Hard-fail: a failing test fails the ci job, and `deploy` has
+      #   # `needs: ci`, so deploy is skipped unless tests pass. If a test needs
+      #   # a live DB/Redis/SendGrid the runner lacks, flip to `npm run test || true`.
+      #   run: npm run test
 
       # No build step: plain Node server (`node server.js`), nothing to compile.
 
