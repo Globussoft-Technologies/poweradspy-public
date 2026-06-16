@@ -170,12 +170,14 @@ async function insertPath(ctx, rawAd, { translation, network }) {
       await repo.insertAdUrl(tx, { gdn_ad_id: gdnAdId, url_type: 'D', url: n.destination_url });
     }
 
-    // gdn_ad_translation (correct mapping — fixes PHP UPDATE-path cross-wire)
+    // gdn_ad_translation (correct mapping — fixes PHP UPDATE-path cross-wire).
+    // Coalesce to the ORIGINAL text when translation is unavailable: gdn_ad_translation columns are
+    // NOT NULL, so a null translation (translate best-effort fails) would 500 + roll back the whole ad.
     await repo.upsertTranslation(tx, {
       gdn_ad_id: gdnAdId,
-      ad_text: translation?.text ?? null,
-      ad_title: translation?.title ?? null,
-      news_feed_description: translation?.newsfeed_description ?? null,
+      ad_text: translation?.text ?? n.ad_text ?? '',
+      ad_title: translation?.title ?? n.ad_title ?? '',
+      news_feed_description: translation?.newsfeed_description ?? n.newsfeed_description ?? '',
     });
 
     return { gdnAdId, variantId, postOwnerId };

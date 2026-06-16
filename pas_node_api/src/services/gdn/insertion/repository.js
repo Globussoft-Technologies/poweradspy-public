@@ -315,17 +315,22 @@ async function insertAdUrl(exec, d) {
 }
 
 // ── gdn_ad_translation (upsert on gdn_ad_id) ────────────────────────────────────
+// ad_text / ad_title / news_feed_description are NOT NULL in the DB; coalesce to '' so a null from a
+// caller can never raise "Column 'ad_text' cannot be null" and roll back the ad (defensive guard).
 async function upsertTranslation(exec, d) {
+  const txt = d.ad_text ?? '';
+  const ttl = d.ad_title ?? '';
+  const nfd = d.news_feed_description ?? '';
   const existing = rows(await exec.query('SELECT gdn_ad_id FROM gdn_ad_translation WHERE gdn_ad_id = ? LIMIT 1', [d.gdn_ad_id]));
   if (existing.length) {
     await exec.query(
       'UPDATE gdn_ad_translation SET ad_text = ?, ad_title = ?, news_feed_description = ? WHERE gdn_ad_id = ?',
-      [d.ad_text ?? null, d.ad_title ?? null, d.news_feed_description ?? null, d.gdn_ad_id]
+      [txt, ttl, nfd, d.gdn_ad_id]
     );
   } else {
     await exec.query(
       'INSERT INTO gdn_ad_translation (gdn_ad_id, ad_text, ad_title, news_feed_description) VALUES (?,?,?,?)',
-      [d.gdn_ad_id, d.ad_text ?? null, d.ad_title ?? null, d.news_feed_description ?? null]
+      [d.gdn_ad_id, txt, ttl, nfd]
     );
   }
   return true;
