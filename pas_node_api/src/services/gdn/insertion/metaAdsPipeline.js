@@ -32,6 +32,10 @@ const { ok, updated, rejected, serverError } = require('../../../insertion/helpe
 
 const ES_INDEX = 'gdn_search_mix';
 const DEFAULT_AD_IMAGE = '/bydefault_ads.jpg';
+// Near-duplicate guard: a new creative whose perceptual hash (dhash, stored in gdn_ad.phash) is within
+// NEAR_HAM bits of one this SAME advertiser already has is a render/animation variant of the same ad ->
+// update it instead of inserting a dupe. ad_id stays the exact (SHA-256) identity; phash catches re-renders.
+const NEAR_HAM = Number(process.env.GDN_NEAR_HAM || 4);
 
 async function processMetaAd(ad, ctx) {
   const { db, log } = ctx;
@@ -68,6 +72,15 @@ async function processMetaAd(ad, ctx) {
 
   try {
     if (existing.code === 400) {
+      // exact ad_id (SHA-256) is new -> check for a perceptual near-variant from the SAME advertiser
+      // (a re-render the exact-hash dedup misses: same ad, dhash within NEAR_HAM bits). Found -> update it.
+      let near = { code: 400 };
+      try {
+        if (ad.post_owner && ad.phash) near = await repo.getNearHashAd(sql, ad.post_owner, ad.phash, NEAR_HAM);
+      } catch (e) { near = { code: 400 }; }   // never block an insert on the dedup probe
+      if (near.code === 200 && near.data && near.data[0]) {
+        return await updatePath(ctx, ad, { translation: translationData, existingId: near.data[0].id, network });
+      }
       return await insertPath(ctx, ad, { translation: translationData, network });
     }
     return await updatePath(ctx, ad, { translation: translationData, existingId: existing.data[0].id, network });
@@ -362,6 +375,7 @@ function buildGdnAdRow(n, ids) {
     target_site_id: ids.targetSiteId ?? null,
   };
   if (String(n.platform) === '12' && n.system_id) row.system_id = n.system_id;
+  if (n.phash) row.phash = String(BigInt('0x' + n.phash));   // 16-hex dhash -> BIGINT UNSIGNED (decimal string)
   return row;
 }
 

@@ -44,6 +44,21 @@ const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]
 async function getAdByAdId(exec, adId) {
   return found(await exec.query('SELECT id FROM gdn_ad WHERE ad_id = ? LIMIT 1', [adId]));
 }
+// Near-duplicate dedup on the perceptual hash. Does THIS advertiser already have a creative whose dhash
+// is within `maxHam` bits of the new one? Exact ad_id (SHA-256) dedup misses re-renders of the same ad;
+// hamming-match the 64-bit dhash stored in gdn_ad.phash, scoped to one post_owner so distinct advertisers
+// never collapse. `phashHex` is the new ad's 16-hex dhash; converted to the BIGINT the column stores.
+async function getNearHashAd(exec, postOwnerName, phashHex, maxHam) {
+  const lower = String(postOwnerName || '').toLowerCase().trim();
+  if (!lower || !/^[0-9a-f]{16}$/i.test(String(phashHex || ''))) return { code: 400, data: null };
+  const po = rows(await exec.query('SELECT id FROM gdn_ad_post_owners WHERE LOWER(post_owner_name) = ? LIMIT 1', [lower]));
+  if (!po.length) return { code: 400, data: null };   // new advertiser -> no possible dupe
+  const phashDec = BigInt('0x' + phashHex).toString();
+  return found(await exec.query(
+    'SELECT id FROM gdn_ad WHERE post_owner_id = ? AND phash IS NOT NULL ' +
+    'AND BIT_COUNT(phash ^ ?) <= ? LIMIT 1',
+    [po[0].id, phashDec, maxHam]));
+}
 async function insertGdnAd(exec, data) {
   const clean = stripNulls(data);
   const cols = Object.keys(clean);
@@ -366,7 +381,7 @@ async function getLanguageId(exec, iso) {
 
 module.exports = {
   withTransaction,
-  getAdByAdId, insertGdnAd, updateGdnAd, getJoinedAd, deleteAdCascade,
+  getAdByAdId, getNearHashAd, insertGdnAd, updateGdnAd, getJoinedAd, deleteAdCascade,
   getPostOwner, insertPostOwner, updatePostOwner,
   getCountryOnly, insertCountryOnly,
   getCountry, insertCountry,

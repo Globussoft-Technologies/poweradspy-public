@@ -90,6 +90,11 @@ function normalizeGdnAd(ad) {
   // redirect_url: trim "" → null
   out.redirect_url = (out.redirect_url !== undefined && String(out.redirect_url).trim() !== '') ? out.redirect_url : null;
 
+  // perceptual hash (dhash) for near-dup detection — keep only a clean 16-hex string, else null
+  out.phash = (typeof out.phash === 'string' && /^[0-9a-f]{16}$/i.test(out.phash.trim()))
+    ? out.phash.trim().toLowerCase()
+    : null;
+
   return out;
 }
 
