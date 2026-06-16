@@ -17,8 +17,6 @@ const PRESET_RANGES = [
   { label: "Last 7 days",  days: 7  },
   { label: "Last 14 days", days: 14 },
   { label: "Last 30 days", days: 30 },
-  { label: "Last 60 days", days: 60 },
-  { label: "Last 90 days", days: 90 },
 ];
 
 function toISO(date) { return date.toISOString().slice(0, 10); }
@@ -150,6 +148,14 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
   // Auto-calculate Previous Period based on Current Period
   useEffect(() => {
+    const daysMap = {
+      "Last 7 days": 7,
+      "Last 14 days": 14,
+      "Last 30 days": 30,
+    };
+
+    let prevFromISO, prevToISO;
+
     if (currentPeriod === "Custom" && currentCustomFrom && currentCustomTo) {
       // Calculate previous period with same duration
       const currentFromDate = new Date(currentCustomFrom);
@@ -162,14 +168,31 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
       const prevFromDate = new Date(prevToDate);
       prevFromDate.setDate(prevFromDate.getDate() - (durationDays - 1));
 
-      setPreviousCustomFrom(toISO(prevFromDate));
-      setPreviousCustomTo(toISO(prevToDate));
+      prevFromISO = toISO(prevFromDate);
+      prevToISO = toISO(prevToDate);
+    } else if (daysMap[currentPeriod]) {
+      // For preset periods, calculate previous period with same duration
+      const durationDays = daysMap[currentPeriod];
+      const today = new Date();
+      const currentToDate = new Date(today);
+      const currentFromDate = new Date(today);
+      currentFromDate.setDate(currentFromDate.getDate() - durationDays);
+
+      const prevToDate = new Date(currentFromDate);
+      prevToDate.setDate(prevToDate.getDate() - 1);
+
+      const prevFromDate = new Date(prevToDate);
+      prevFromDate.setDate(prevFromDate.getDate() - (durationDays - 1));
+
+      prevFromISO = toISO(prevFromDate);
+      prevToISO = toISO(prevToDate);
+    }
+
+    // Always set to Custom and set the calculated dates
+    if (prevFromISO && prevToISO) {
       setPreviousPeriod("Custom");
-    } else if (currentPeriod !== "Custom") {
-      // For preset periods, switch Previous Period to same preset
-      setPreviousPeriod(currentPeriod);
-      setPreviousCustomFrom("");
-      setPreviousCustomTo("");
+      setPreviousCustomFrom(prevFromISO);
+      setPreviousCustomTo(prevToISO);
     }
   }, [currentPeriod, currentCustomFrom, currentCustomTo]);
 
@@ -448,7 +471,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
           )}
         </div>
 
-        {/* Previous Period Selector */}
+        {/* Previous Period Selector (Auto-calculated, read-only) */}
         <div ref={previousDatePickerRef} style={{ position: "relative" }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: "#6b7280", display: "block", marginBottom: "4px" }}>Previous Period</label>
           <button
@@ -456,86 +479,114 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
             style={{
               display: "flex", alignItems: "center", gap: "6px",
               border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 12px",
-              fontSize: "12px", fontWeight: 500, color: "#374151", background: "white",
-              outline: "none", cursor: "pointer", minWidth: "140px",
-              ...(previousDatePickerOpen ? { borderColor: "#6366f1", color: "#6366f1" } : {}),
+              fontSize: "12px", fontWeight: 500, color: "#6b7280", background: "#f9fafb",
+              outline: "none", cursor: "default", minWidth: "140px",
             }}
           >
-            {previousPeriod === "Custom" && previousCustomFrom && previousCustomTo
+            {previousCustomFrom && previousCustomTo
               ? `${previousCustomFrom} → ${previousCustomTo}`
-              : previousPeriod}
+              : "Auto-calculated"}
           </button>
 
           {previousDatePickerOpen && (
             <div style={{
               position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 50,
               background: "white", border: "1px solid #e5e7eb", borderRadius: "8px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.10)", padding: "12px", minWidth: "240px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.10)", padding: "12px", minWidth: "280px",
             }}>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {PRESET_RANGES.map((r) => (
-                  <button
-                    key={r.label}
-                    onClick={() => { setPreviousPeriod(r.label); setPreviousDatePickerOpen(false); setPreviousCustomFrom(""); setPreviousCustomTo(""); }}
-                    style={{
-                      padding: "6px 10px", borderRadius: "4px", fontSize: "12px", fontWeight: 500,
-                      cursor: "pointer", border: "1px solid",
-                      background: previousPeriod === r.label && !previousCustomFrom ? "#e0e7ff" : "transparent",
-                      color: previousPeriod === r.label && !previousCustomFrom ? "#4338ca" : "#374151",
-                      borderColor: previousPeriod === r.label && !previousCustomFrom ? "#c7d2fe" : "#e5e7eb",
-                      textAlign: "left",
-                    }}
-                  >
-                    {r.label}
-                  </button>
-                ))}
+                <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", margin: "0 0 6px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  Auto-calculated from Current Period
+                </p>
+                <div style={{ background: "#f9fafb", padding: "10px", borderRadius: "4px", border: "1px solid #e5e7eb" }}>
+                  {previousCustomFrom && previousCustomTo ? (
+                    <p style={{ fontSize: "12px", color: "#374151", margin: 0, fontWeight: 500 }}>
+                      {previousCustomFrom} → {previousCustomTo}
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: "12px", color: "#9ca3af", margin: 0, fontStyle: "italic" }}>
+                      Waiting for current period selection…
+                    </p>
+                  )}
+                </div>
                 <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: "8px", marginTop: "4px" }}>
-                  <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", margin: "0 0 6px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Custom Range</p>
+                  <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", margin: "0 0 6px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Override with Custom Range
+                  </p>
                   <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                    <input
-                      type="date"
-                      value={previousCustomFrom}
-                      onChange={(e) => setPreviousCustomFrom(e.target.value)}
-                      min={getMinDate()}
-                      max={previousCustomTo || (currentCustomFrom ? new Date(new Date(currentCustomFrom).getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) : getTodayISO())}
-                      style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box", color: "#374151" }}
-                      placeholder="From"
-                      title="Select dates within last 90 days, before current period"
-                    />
-                    <input
-                      type="date"
-                      value={previousCustomTo}
-                      onChange={(e) => setPreviousCustomTo(e.target.value)}
-                      min={previousCustomFrom || getMinDate()}
-                      max={currentCustomFrom ? new Date(new Date(currentCustomFrom).getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) : getTodayISO()}
-                      style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box", color: "#374151" }}
-                      placeholder="To"
-                      title="Select dates within last 90 days, before current period"
-                    />
+                    {(() => {
+                      let currentPeriodFromDate;
+                      if (currentPeriod === "Custom" && currentCustomFrom) {
+                        currentPeriodFromDate = currentCustomFrom;
+                      } else if (currentPeriod !== "Custom") {
+                        const daysMap = {
+                          "Last 7 days": 7,
+                          "Last 14 days": 14,
+                          "Last 30 days": 30,
+                        };
+                        const days = daysMap[currentPeriod] || 7;
+                        const today = new Date();
+                        const fromDate = new Date(today);
+                        fromDate.setDate(fromDate.getDate() - days);
+                        currentPeriodFromDate = toISO(fromDate);
+                      }
+                      const maxForPrevious = currentPeriodFromDate
+                        ? toISO(new Date(new Date(currentPeriodFromDate).getTime() - 24 * 60 * 60 * 1000))
+                        : getTodayISO();
+                      const minFor90Days = toISO(new Date(new Date().getTime() - 90 * 24 * 60 * 60 * 1000));
+                      return (
+                        <>
+                          <input
+                            type="date"
+                            value={previousCustomFrom}
+                            onChange={(e) => {
+                              const newVal = e.target.value;
+                              if (newVal >= minFor90Days && newVal <= maxForPrevious) {
+                                setPreviousCustomFrom(newVal);
+                              }
+                            }}
+                            min={minFor90Days}
+                            max={maxForPrevious}
+                            style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box", color: "#374151" }}
+                            placeholder="From"
+                            title={`Select dates within last 90 days before ${currentPeriodFromDate}`}
+                          />
+                          <input
+                            type="date"
+                            value={previousCustomTo}
+                            onChange={(e) => {
+                              const newVal = e.target.value;
+                              if (newVal >= minFor90Days && newVal <= maxForPrevious) {
+                                setPreviousCustomTo(newVal);
+                              }
+                            }}
+                            min={minFor90Days}
+                            max={maxForPrevious}
+                            style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box", color: "#374151" }}
+                            placeholder="To"
+                            title={`Cannot exceed ${maxForPrevious}`}
+                          />
+                        </>
+                      );
+                    })()}
                     <button
                       onClick={() => {
                         if (previousCustomFrom && previousCustomTo) {
-                          setPreviousPeriod("Custom");
                           setPreviousDatePickerOpen(false);
                         }
                       }}
-                      disabled={!previousCustomFrom || !previousCustomTo}
                       style={{
                         padding: "6px 10px", borderRadius: "4px", fontSize: "12px", fontWeight: 500,
-                        cursor: previousCustomFrom && previousCustomTo ? "pointer" : "not-allowed",
+                        cursor: "pointer",
                         border: "1px solid",
-                        background: previousCustomFrom && previousCustomTo ? "#e0e7ff" : "#f3f4f6",
-                        color: previousCustomFrom && previousCustomTo ? "#4338ca" : "#9ca3af",
-                        borderColor: previousCustomFrom && previousCustomTo ? "#c7d2fe" : "#e5e7eb",
+                        background: "#e0e7ff",
+                        color: "#4338ca",
+                        borderColor: "#c7d2fe",
                         textAlign: "center",
-                        opacity: previousCustomFrom && previousCustomTo ? 1 : 0.5,
                       }}
                     >
-                      Apply Custom
+                      Apply Override
                     </button>
-                    <p style={{ fontSize: "11px", color: "#9ca3af", margin: "4px 0", fontStyle: "italic" }}>
-                      {currentPeriod === "Custom" ? `Last 90 days, before ${currentCustomFrom}` : "Set current period custom dates first"}
-                    </p>
                   </div>
                 </div>
               </div>
