@@ -190,29 +190,41 @@ function BrandAdsChart({ requestId }) {
   );
   const totalWithAds = useMemo(() => (data || []).filter((c) => (Number(c.ads) || 0) > 0).length, [data]);
 
-  const chart = useMemo(
-    () => ({
+  const chart = useMemo(() => {
+    // Bars are scaled against the largest competitor, so low-count ones would
+    // otherwise render as an invisible hairline. Floor each bar to a small
+    // fraction of the longest one so every competitor stays noticeable. Only the
+    // bar *length* is floored — the data label and tooltip still read the real
+    // ad count back from `top` by data-point index, so the numbers stay honest.
+    const maxAds = Math.max(...top.map((c) => Number(c.ads) || 0), 1);
+    const MIN_BAR = maxAds * 0.06; // shortest bar ≈ 6% of the longest
+    const realAds = (i) => Number(top[i]?.ads) || 0;
+    return {
       options: {
         chart: { type: "bar", toolbar: { show: false }, fontFamily: "inherit", animations: { speed: 400 } },
         plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "62%" } },
         colors: ["#3F51B5"],
-        dataLabels: { enabled: true, style: { fontSize: "11px", fontWeight: 600, colors: ["#fff"] }, offsetX: 0 },
+        dataLabels: {
+          enabled: true,
+          style: { fontSize: "11px", fontWeight: 600, colors: ["#fff"] },
+          offsetX: 0,
+          formatter: (_v, opts) => fmtNum(realAds(opts?.dataPointIndex)),
+        },
         grid: { borderColor: "#eef1f6", strokeDashArray: 3 },
         xaxis: { categories: top.map((c) => c.name), labels: { style: { colors: "#9ca3af", fontSize: "11px" } } },
         yaxis: { labels: { style: { colors: "#374151", fontSize: "12px" }, maxWidth: 170 } },
         tooltip: {
           y: {
-            formatter: (v, opts) => {
+            formatter: (_v, opts) => {
               const c = top[opts?.dataPointIndex] || {};
-              return `${v} ads  (FB ${fmtNum(c.facebook)} · IG ${fmtNum(c.instagram)})`;
+              return `${fmtNum(c.ads)} ads  (FB ${fmtNum(c.facebook)} · IG ${fmtNum(c.instagram)} · G ${fmtNum(c.google)})`;
             },
           },
         },
       },
-      series: [{ name: "Ads", data: top.map((c) => Number(c.ads) || 0) }],
-    }),
-    [top]
-  );
+      series: [{ name: "Ads", data: top.map((c) => Math.max(Number(c.ads) || 0, MIN_BAR)) }],
+    };
+  }, [top]);
 
   const presetBtn = (active) =>
     `px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors ${
@@ -566,7 +578,7 @@ const CompetitorTracker = () => {
       // ── Summary row ──
       const monitoringTotal = brands.reduce((n, b) => n + (Number(b.monitoringCount) || 0), 0);
       const compTotal = stats.totalCompetitors || 0;
-      const ads = stats.adsToday || { facebook: 0, instagram: 0, total: 0 };
+      const ads = stats.adsToday || { facebook: 0, instagram: 0, google: 0, total: 0 };
       autoTable(pdf, {
         startY: topY,
         margin: tableMargin,
@@ -577,7 +589,7 @@ const CompetitorTracker = () => {
           fmtNum(stats.totalBrands),
           fmtNum(compTotal),
           `${fmtNum(monitoringTotal)}/${fmtNum(compTotal)}`,
-          `${fmtNum(ads.total)}  (FB ${fmtNum(ads.facebook)} · IG ${fmtNum(ads.instagram)})`,
+          `${fmtNum(ads.total)}  (FB ${fmtNum(ads.facebook)} · IG ${fmtNum(ads.instagram)} · G ${fmtNum(ads.google)})`,
         ]],
         headStyles: { fillColor: [238, 241, 251], textColor: [63, 81, 181], fontStyle: "bold", halign: "left" },
         bodyStyles: { textColor: [31, 41, 106], fontStyle: "bold", fontSize: 12 },
@@ -756,7 +768,9 @@ const CompetitorTracker = () => {
   const totalCompetitors = stats?.totalCompetitors || 0;
 
   return (
-    <div className="bg-[#f7f8fb] rounded-[10px] w-full h-[calc(100%-120px)] overflow-hidden flex flex-col">
+    // Below lg: grow with content so the page (Layout's scroll container) scrolls.
+    // lg+: lock to one viewport and scroll the panels internally.
+    <div className="bg-[#f7f8fb] rounded-[10px] w-full min-h-[calc(100%-120px)] lg:h-[calc(100%-120px)] overflow-visible lg:overflow-hidden flex flex-col">
       {/* Header */}
       <div className="px-6 pt-5 pb-3 flex flex-wrap gap-3 items-center justify-between">
         <div>
@@ -839,10 +853,10 @@ const CompetitorTracker = () => {
         </div>
       </div>
 
-      {/* Body: master / detail */}
-      <div className="flex-1 min-h-0 px-6 pb-6 flex gap-4">
+      {/* Body: master / detail — stacks vertically below lg, side-by-side at lg+ */}
+      <div className="flex-1 min-h-0 px-6 pb-6 flex flex-col lg:flex-row gap-4">
         {/* ── Left: user list ── */}
-        <div className="w-[340px] flex-shrink-0 bg-white rounded-xl border border-gray-100 flex flex-col overflow-hidden">
+        <div className="w-full lg:w-[340px] flex-shrink-0 max-h-[55vh] lg:max-h-none bg-white rounded-xl border border-gray-100 flex flex-col overflow-hidden">
           <div className="p-3 border-b border-gray-100">
             <div className="relative">
               <CiSearch className="h-5 w-5 text-gray-400 absolute left-2.5 top-2.5" />
@@ -949,7 +963,9 @@ const CompetitorTracker = () => {
         </div>
 
         {/* ── Right: detail (user) or overview (no selection) ── */}
-        <div className="flex-1 min-w-0 bg-white rounded-xl border border-gray-100 overflow-auto">
+        {/* @container: inner grids size to THIS panel's width, not the viewport.
+            Below lg the panel expands and the page scrolls; at lg+ it scrolls internally. */}
+        <div className="@container flex-1 min-w-0 min-h-0 bg-white rounded-xl border border-gray-100 overflow-visible lg:overflow-auto">
           {!selected ? (
             /* ===== Overview from get-comp-users-count ===== */
             <div className="p-6">
@@ -958,7 +974,7 @@ const CompetitorTracker = () => {
               {loading || !summary ? (
                 <Loader />
               ) : (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 @sm:grid-cols-2 @lg:grid-cols-3 gap-4">
                   {[
                     { label: "Total Users", value: summary.totalUsers, accent: "text-[#3F51B5]", ring: "from-[#eef1fb]" },
                     { label: "Active Users", value: summary.activeUsers, accent: "text-[#e04e8e]", ring: "from-pink-50" },
@@ -1000,14 +1016,14 @@ const CompetitorTracker = () => {
               ) : (
                 <>
                   {/* summary tiles */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 mt-5">
+                  <div className="grid grid-cols-2 @lg:grid-cols-4 gap-3.5 mt-5">
                     {[
                       { label: "BRANDS", value: fmtNum(stats?.totalBrands), accent: "text-[#3F51B5]", ring: "from-[#eef1fb] to-white" },
                       { label: "COMPETITORS", value: fmtNum(totalCompetitors), accent: "text-rose-500", ring: "from-rose-50 to-white" },
                       { label: "MONITORING", value: `${fmtNum(monitoring)}/${fmtNum(totalCompetitors)}`, accent: "text-amber-500", ring: "from-amber-50 to-white" },
                       {
                         label: "ADS TODAY", value: fmtNum(adsToday.total), accent: "text-green-600", ring: "from-green-50 to-white",
-                        sub: `FB ${fmtNum(adsToday.facebook)} · IG ${fmtNum(adsToday.instagram)}`,
+                        sub: `FB ${fmtNum(adsToday.facebook)} · IG ${fmtNum(adsToday.instagram)} · G ${fmtNum(adsToday.google)}`,
                       },
                     ].map((t) => (
                       <div key={t.label} className={`p-4 rounded-2xl border border-gray-100 bg-gradient-to-b ${t.ring} shadow-[0_1px_2px_rgba(16,24,40,0.04)]`}>
@@ -1093,7 +1109,8 @@ const CompetitorTracker = () => {
                                 {(!competitors || competitors.length === 0) ? (
                                   <p className="px-4 py-4 text-[12px] text-gray-400">No competitors</p>
                                 ) : (
-                                  <>
+                                  <div className="overflow-x-auto">
+                                   <div className="min-w-[680px]">
                                     {/* column header for the per-competitor ad metrics */}
                                     <div className="flex items-center gap-3 px-4 py-2 border-t border-gray-100 bg-gray-50/60">
                                       <span className="w-8 flex-shrink-0" aria-hidden="true" />
@@ -1133,7 +1150,8 @@ const CompetitorTracker = () => {
                                         <span className="w-14 text-right flex-shrink-0"><Growth pct={c.growth} /></span>
                                       </div>
                                     ))}
-                                  </>
+                                   </div>
+                                  </div>
                                 )}
                               </>
                             )}

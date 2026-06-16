@@ -195,6 +195,17 @@ async function dedupCount(client, index, boolQuery) {
   }
 }
 
+// competitor_url is stored bare (e.g. "searchmetrics.com"), so the frontend
+// treats it as a relative path and the link goes nowhere. Prepend https:// when
+// no scheme is present so it resolves as an absolute external URL.
+function normalizeUrl(url) {
+  if (!url) return url;
+  const trimmed = String(url).trim();
+  if (!trimmed) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed.replace(/^\/+/, "")}`;
+}
+
 class DashboardService {
       constructor() {
        this.esClient = esClient;
@@ -1113,13 +1124,17 @@ const getAdvertiserAdCount = async (advertiser) => {
     // All ES queries for the name are fired in parallel.
     // Returns { allTime:{facebook,instagram,total}, today:{...}, yesterday:{...} }.
     async getCompetitorAdStats(name) {
+      // Mirror getCompetitorsCount: count facebook + instagram + google so the
+      // all-time `ads` total here equals that API's `competitorsCount`.
       const indexPlatform = {
         search_mix: 'facebook',
         instagram_search_mix: 'instagram',
+        google_ads_data: 'google',
       };
       const dateField = {
         search_mix: 'facebook_ad.last_seen',
         instagram_search_mix: 'instagram_ad.last_seen',
+        google_ads_data: 'last_seen',
       };
       const FMT = "YYYY-MM-DD HH:mm:ss";
       const ranges = {
@@ -1132,13 +1147,15 @@ const getAdvertiserAdCount = async (advertiser) => {
           lte: nowIST().subtract(1, 'day').endOf('day').format(FMT),
         },
         last7days: {
-          // rolling 7 calendar days, today inclusive
-          gte: nowIST().subtract(6, 'day').startOf('day').format(FMT),
-          lte: nowIST().format(FMT),
+          // "Last week": the previous 7 full days ending yesterday (today
+          // excluded) — mirrors getCompetitorsCount's getRange("week") that
+          // powers lastWeekAdsCount.
+          gte: nowIST().subtract(7, 'days').startOf('day').format(FMT),
+          lte: nowIST().subtract(1, 'day').endOf('day').format(FMT),
         },
       };
 
-      const blank = () => ({ facebook: 0, instagram: 0, total: 0 });
+      const blank = () => ({ facebook: 0, instagram: 0, google: 0, total: 0 });
       const stats = { allTime: blank(), today: blank(), yesterday: blank(), last7days: blank() };
 
       const jobs = []; // { bucket, platform, promise }
@@ -1187,8 +1204,10 @@ const getAdvertiserAdCount = async (advertiser) => {
     // date filter. gte/lte are "YYYY-MM-DD HH:mm:ss" strings; pass both as
     // null/empty for all-time (owner match only, no date filter).
     async getCompetitorAdCountForRange(name, gte, lte) {
-      const indexPlatform = { search_mix: 'facebook', instagram_search_mix: 'instagram' };
-      const dateField = { search_mix: 'facebook_ad.last_seen', instagram_search_mix: 'instagram_ad.last_seen' };
+      // Mirror getCompetitorsCount: include google so the chart's ad counts
+      // match (facebook + instagram + google).
+      const indexPlatform = { search_mix: 'facebook', instagram_search_mix: 'instagram', google_ads_data: 'google' };
+      const dateField = { search_mix: 'facebook_ad.last_seen', instagram_search_mix: 'instagram_ad.last_seen', google_ads_data: 'last_seen' };
       const hasRange = Boolean(gte && lte);
 
       const jobs = []; // { platform, promise }
@@ -1213,7 +1232,7 @@ const getAdvertiserAdCount = async (advertiser) => {
       }
 
       const results = await Promise.all(jobs.map(j => j.promise));
-      const out = { facebook: 0, instagram: 0, total: 0 };
+      const out = { facebook: 0, instagram: 0, google: 0, total: 0 };
       results.forEach((cnt, i) => {
         out[jobs[i].platform] += cnt;
         out.total += cnt;
@@ -1262,6 +1281,7 @@ const getAdvertiserAdCount = async (advertiser) => {
               ads: s.total,
               facebook: s.facebook,
               instagram: s.instagram,
+              google: s.google,
             };
           })
         );
@@ -1320,12 +1340,13 @@ const getAdvertiserAdCount = async (advertiser) => {
         const addPlatforms = (target, src) => {
           target.facebook += src.facebook;
           target.instagram += src.instagram;
+          target.google += src.google;
           target.total += src.total;
         };
 
         const brandNameSet = new Set();   // distinct brand names across the user's projects
         const competitorIdSet = new Set(); // distinct competitors across the user's projects
-        const totalAdsToday = { facebook: 0, instagram: 0, total: 0 };
+        const totalAdsToday = { facebook: 0, instagram: 0, google: 0, total: 0 };
         const list = [];
 
         for (const r of requests) {
@@ -1352,7 +1373,7 @@ const getAdvertiserAdCount = async (advertiser) => {
                 competitor: {
                   id: c._id,
                   name: c.competitor_name,
-                  url: c.competitor_url,
+                  url: normalizeUrl(c.competitor_url),  // ensure absolute (https://) so the link is clickable
                   ads: s.allTime.total,                 // all-time ad count (total)
                   today: s.today.total,                 // ads seen today
                   yesterday: s.yesterday.total,         // ads seen yesterday
@@ -1373,7 +1394,7 @@ const getAdvertiserAdCount = async (advertiser) => {
           );
 
           // Brand-level "ads today" split by platform = sum of its competitors'.
-          const brandAdsToday = { facebook: 0, instagram: 0, total: 0 };
+          const brandAdsToday = { facebook: 0, instagram: 0, google: 0, total: 0 };
           enriched.forEach(e => addPlatforms(brandAdsToday, e.today));
           addPlatforms(totalAdsToday, brandAdsToday);
 
