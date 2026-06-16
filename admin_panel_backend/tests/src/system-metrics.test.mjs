@@ -15,9 +15,10 @@ require.cache[axiosPath] = { id: axiosPath, filename: axiosPath, loaded: true, e
 const dbMetricsPath = require.resolve("../../utils/db-query-metrics");
 const adCountAcrossSelectedNetworks = vi.fn();
 const getDomainMetrics = vi.fn();
+const fetchAccountGeo = vi.fn();
 require.cache[dbMetricsPath] = {
   id: dbMetricsPath, filename: dbMetricsPath, loaded: true,
-  exports: { adCountAcrossSelectedNetworks, getDomainMetrics },
+  exports: { adCountAcrossSelectedNetworks, getDomainMetrics, fetchAccountGeo },
 };
 
 const cachePath = require.resolve("../../utils/cache");
@@ -51,6 +52,7 @@ beforeEach(() => {
   // by default. Per-test mockResolvedValueOnce still overrides this.
   adCountAcrossSelectedNetworks.mockReset().mockResolvedValue([]);
   getDomainMetrics.mockReset();
+  fetchAccountGeo.mockReset().mockResolvedValue(new Map());
   cache.get.mockReset();
   cache.set.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -195,6 +197,49 @@ describe("system-metrics > systemsAnalytics", () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
+  it("full pipeline: ads + cpu/ram + prometheus accounts (active/inactive/excluded/host-bridge)", async () => {
+    cache.get.mockReturnValueOnce(undefined);
+    const TS = "1735689600"; // 2025-01-01 UTC
+    adCountAcrossSelectedNetworks.mockImplementation((r, [nw]) => {
+      if (nw !== "facebook") return Promise.resolve([]);
+      return Promise.resolve([{
+        network: "facebook",
+        query: [
+          { system_name: "S1", account_id: "A1", account_name: "Alice", unqiue_ads: 10 },
+          { system_name: null, account_id: "N/A", account_name: null, unqiue_ads: 3 }, // NULL_SYSTEM + N/A account
+        ],
+        query2: [{ system_name: "S1", ad_date: "2025-01-01", ads_count: 7 }],
+        query3: [{ account_id: "A1", total_ads: 15 }, { system_id: "S1", total_ads: 2 }],
+      }]);
+    });
+    // fetchPrometheusData → 3 axios calls in order: cpu, ram, accounts
+    axios.get
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { server_name: "H1" }, values: [[TS, "50"]] }, // H1 bridges → S1 (exists)
+        { metric: { server_name: "H2" }, values: [[TS, "20"]] }, // H2 no bridge → new system (line 287 true)
+        { metric: {} }, // no server_name → skipped (line 284)
+      ] } } })
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { server_name: "H1" }, values: [[TS, "30"]] },
+      ] } } })
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { server_name: "H1", account_id: "A1", network: "facebook", account_name: "Alice" } }, // dup → skip
+        { metric: { server_name: "H3", account_id: "A2", network: "facebook", account_name: "Bob" } },    // prom-only → Inactive
+        { metric: { server_name: "H4", account_id: "A3", network: "youtube" } },                          // excluded network → continue
+      ] } } });
+    const res = mockRes();
+    await systemsAnalytics({ body: { range: RANGE, steps: 1, platform: 10 } }, res);
+    expect(cache.set).toHaveBeenCalled();
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.summary.totalSystems).toBeGreaterThan(0);
+    const s1 = payload.detailsData.find((d) => d.systemName === "S1");
+    expect(s1).toBeTruthy();
+    expect(s1.hostname).toBe("H1"); // systemToHost bridge (lines 553-554)
+    // prom-only A2 added as an Inactive account on its (host) system
+    const hasInactive = payload.detailsData.some((d) => d.accounts.some((a) => a.system === "Inactive"));
+    expect(hasInactive).toBe(true);
+  });
+
   it("fetchPrometheusData inner catch fires when axios.get rejects (lines 237-238)", async () => {
     cache.get.mockReturnValueOnce(undefined);
     adCountAcrossSelectedNetworks.mockImplementation(() =>
@@ -264,6 +309,64 @@ describe("system-metrics > accountsMetrics", () => {
     const res = mockRes();
     await accountsMetrics({ body: { range: RANGE, steps: 1 } }, res);
     expect(res.status).toHaveBeenCalledWith(500);
+  });
+
+  it("prom-only account + heartbeat + geo enrichment + alerts", async () => {
+    cache.get.mockReturnValueOnce(undefined);
+    const recentTs = String(Math.floor(Date.now() / 1000) - 60); // within heartbeat thresholds
+    adCountAcrossSelectedNetworks.mockResolvedValue([{
+      network: "facebook",
+      query: [{ account_id: "A1", account_name: "Alice", system_name: "S1", unqiue_ads: 5 }],
+      query3: [{ account_id: "A1", total_ads: 10 }],
+    }]);
+    axios.get
+      // ads (processMetricsWithFallback: A1 matches validKeys → perf/adsByDay)
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { account_id: "A1", account_name: "Alice", network: "facebook", server_name: "H1" }, values: [[recentTs, "4"]] },
+      ] } } })
+      // cpu
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { server_name: "H1" }, values: [[recentTs, "2"]] },
+      ] } } })
+      // heartbeat (A1 active recently)
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { account_id: "A1" }, values: [[recentTs, "1"]] },
+      ] } } })
+      // accounts: A1 (with country) + A2 (prom-only → line 652) + a junk row (no account_id)
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { account_id: "A1", server_name: "H1", network: "facebook", country: "US" } },
+        { metric: { account_id: "A2", server_name: "H2", network: "facebook", account_name: "Bob" } },
+        { metric: { network: "facebook" } }, // no account_id → skipped
+      ] } } });
+    // geo success path (lines 734-743): map both ids
+    fetchAccountGeo.mockResolvedValue(new Map([
+      ["A1", { country: null, ip: "1.1.1.1" }],
+      ["A2", { country: "IN", ip: "2.2.2.2" }],
+    ]));
+    const res = mockRes();
+    await accountsMetrics({ body: { range: RANGE, steps: 1, platform: 10 } }, res);
+    expect(cache.set).toHaveBeenCalled();
+    const payload = res.json.mock.calls[0][0];
+    const a1 = payload.find((p) => p.account_id === "A1");
+    const a2 = payload.find((p) => p.account_id === "A2");
+    expect(a1.country).toBe("US");        // prom country label preferred
+    expect(a1.ip_address).toBe("1.1.1.1"); // ip from geo
+    expect(a2).toBeTruthy();               // prom-only account included (line 652)
+    expect(a2.country).toBe("IN");         // geo country fallback
+  });
+
+  it("geo enrichment failure is non-fatal (catch sets country/ip null)", async () => {
+    cache.get.mockReturnValueOnce(undefined);
+    adCountAcrossSelectedNetworks.mockResolvedValue([{
+      network: "facebook",
+      query: [{ account_id: "A1", account_name: "Alice", system_name: "S1", unqiue_ads: 5 }],
+      query3: [{ account_id: "A1", total_ads: 0 }],
+    }]);
+    axios.get.mockResolvedValue({ data: { data: { result: [] } } });
+    fetchAccountGeo.mockRejectedValue(new Error("geo-down"));
+    const res = mockRes();
+    await accountsMetrics({ body: { range: RANGE, steps: 1, platform: 10 } }, res);
+    expect(res.json).toHaveBeenCalled();
   });
 });
 
@@ -367,6 +470,43 @@ describe("system-metrics > systemsDetails", () => {
     const res = mockRes();
     await systemsDetails({ body: { range: RANGE, system: "S1", steps: 1 } }, res);
     expect(res.status).toHaveBeenCalledWith(500);
+  });
+
+  it("inactive system → account-hb fallback marks active + uptime gauge (1023-1041)", async () => {
+    cache.get.mockReturnValueOnce(undefined);
+    axios.get
+      .mockResolvedValueOnce({ data: { data: { result: [] } } }) // #1 getSystemHostMap instantQuery
+      .mockResolvedValueOnce({ data: { data: { result: [{ metric: { hostname: "h" } }] } } }) // #2 details
+      .mockResolvedValueOnce({ data: { data: { result: [{ values: [["1", "10"], ["2", "20"]] }] } } }) // #3 cpu
+      .mockResolvedValueOnce({ data: { data: { result: [{ values: [["1", "30"]] }] } } }) // #4 ram
+      .mockResolvedValueOnce({ data: { data: { result: [{ values: [["1", "0"], ["2", "0"]] }] } } }) // #5 system hb → inactive
+      .mockResolvedValueOnce({ data: { data: { result: [{ values: [["1", "5"]] }] } } }) // #6 network usage
+      .mockResolvedValueOnce({ data: { data: { result: [{ value: ["123", "1"] }] } } }) // #7 account hb → active (fallback)
+      .mockResolvedValueOnce({ data: { data: { result: [{ value: ["1", "3600"] }] } } }); // #8 system_uptime gauge
+    const res = mockRes();
+    await systemsDetails({ body: { range: RANGE, system: "S1", steps: 1, network: "facebook", mode: "prod" } }, res);
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.metrics.uptime.status).toBe("active"); // via account-hb fallback
+    expect(payload.metrics.uptime.last).toBe(3600);        // uptime gauge value
+    expect(payload.metrics.network.max).toBe(5);
+  });
+
+  it("checkSystemStatus inner queries fail → status inactive, uptime 0 (catch paths)", async () => {
+    cache.get.mockReturnValueOnce(undefined);
+    axios.get
+      .mockResolvedValueOnce({ data: { data: { result: [] } } }) // hostmap
+      .mockResolvedValueOnce({ data: { data: { result: [] } } }) // details
+      .mockResolvedValueOnce({ data: { data: { result: [] } } }) // cpu (empty → getMetricStats null)
+      .mockResolvedValueOnce({ data: { data: { result: [] } } }) // ram
+      .mockResolvedValueOnce({ data: { data: { result: [{ values: [["1", "0"]] }] } } }) // hb inactive
+      .mockResolvedValueOnce({ data: { data: { result: [] } } }) // net empty → 0
+      .mockResolvedValueOnce({ data: { data: { result: [] } } }) // account hb empty → still inactive
+      .mockRejectedValueOnce(new Error("uptime-down")); // system_uptime throws → caught, uptime 0
+    const res = mockRes();
+    await systemsDetails({ body: { range: RANGE, system: "S1", steps: 1 } }, res);
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.metrics.uptime.status).toBe("inactive");
+    expect(payload.metrics.uptime.last).toBe(0);
   });
 });
 

@@ -9,7 +9,7 @@ require.cache[dbConnPath] = {
   exports: queryDatabaseSpy,
 };
 
-const { adCountAcrossSelectedNetworks, getDomainMetrics } = require("../../utils/db-query-metrics");
+const { adCountAcrossSelectedNetworks, getDomainMetrics, fetchAccountGeo } = require("../../utils/db-query-metrics");
 
 beforeEach(() => {
   queryDatabaseSpy.mockReset();
@@ -205,5 +205,60 @@ describe("utils/db-query-metrics > getDomainMetrics", () => {
     queryDatabaseSpy.mockRejectedValueOnce(new Error("db-down"));
     const out = await getDomainMetrics("linkedin", RANGE);
     expect(out).toBeNull();
+  });
+});
+
+describe("utils/db-query-metrics > fetchAccountGeo", () => {
+  it("network with no userTable config → empty Map", async () => {
+    const out = await fetchAccountGeo("youtube", ["a1"]);
+    expect(out instanceof Map).toBe(true);
+    expect(out.size).toBe(0);
+    expect(queryDatabaseSpy).not.toHaveBeenCalled();
+  });
+
+  it("no account ids (after dedupe/filter) → empty Map", async () => {
+    const out = await fetchAccountGeo("facebook", ["", ""]); // only empty strings → filtered out
+    expect(out.size).toBe(0);
+    expect(queryDatabaseSpy).not.toHaveBeenCalled();
+  });
+
+  it("metaTable ipConfig (facebook) → JOINs meta table; cleans junk values", async () => {
+    queryDatabaseSpy.mockResolvedValueOnce([
+      { account_id: "a1", country: "US", ip: "1.2.3.4" },
+      { account_id: "a2", country: "undefined", ip: null }, // junk → null
+    ]);
+    const out = await fetchAccountGeo("facebook", ["a1", "a1", "a2"]); // dup removed
+    const sql = queryDatabaseSpy.mock.calls[0][2];
+    expect(sql).toContain("LEFT JOIN `user_meta`");
+    expect(out.get("a1")).toEqual({ country: "US", ip: "1.2.3.4" });
+    expect(out.get("a2")).toEqual({ country: null, ip: null });
+  });
+
+  it("col ipConfig (reddit) → IP column on user table", async () => {
+    queryDatabaseSpy.mockResolvedValueOnce([{ account_id: "r1", country: "IN", ip: "9.9.9.9" }]);
+    const out = await fetchAccountGeo("reddit", ["r1"]);
+    const sql = queryDatabaseSpy.mock.calls[0][2];
+    expect(sql).toContain("`ip_address`");
+    expect(out.get("r1")).toEqual({ country: "IN", ip: "9.9.9.9" });
+  });
+
+  it("no ipConfig (linkedin) → country-only SQL (NULL ip)", async () => {
+    queryDatabaseSpy.mockResolvedValueOnce([{ account_id: "l1", country: "n/a", ip: null }]);
+    const out = await fetchAccountGeo("linkedin", ["l1"]);
+    const sql = queryDatabaseSpy.mock.calls[0][2];
+    expect(sql).toContain("NULL AS ip");
+    expect(out.get("l1")).toEqual({ country: null, ip: null }); // "n/a" → null
+  });
+
+  it("queryDatabase rejection → empty Map (caught)", async () => {
+    queryDatabaseSpy.mockRejectedValueOnce(new Error("db boom"));
+    const out = await fetchAccountGeo("facebook", ["a1"]);
+    expect(out.size).toBe(0);
+  });
+});
+
+describe("utils/db-query-metrics > getDomainMetrics unsupported network", () => {
+  it("throws for an unknown network (line 460)", async () => {
+    await expect(getDomainMetrics("totally-unknown-network", RANGE)).rejects.toThrow(/Unsupported network/);
   });
 });
