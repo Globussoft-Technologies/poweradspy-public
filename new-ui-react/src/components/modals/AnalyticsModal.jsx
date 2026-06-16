@@ -519,18 +519,29 @@ const NAS_BASE_URL = import.meta.env.VITE_NAS_BASE_URL;
 
 // ─── Creative Preview: thumbnail + video playback ─────────────────────
 const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActiveIndex }) => {
-  // Only treat an ad as a carousel when it actually has multiple *images*.
-  // Some ads (e.g. certain Instagram ads) carry multiple `carouselTitles` but a
-  // single image — paging those just swapped the title while the image stayed
-  // put, which reads as a broken carousel. Arrows now appear only when there's
-  // more than one slide to navigate. (MasonryCard/AdDetailModal already gate on
-  // image count via carouselImages.length.)
-  const hasCarousel = ad?.carouselMedia?.length > 1;
+  // Backend splits carousel ads across two fields: the cover image lands in
+  // `thumbnail` (image_video_url) and the remaining slides in `carouselMedia`
+  // (ad_image_video). A 2-image ad therefore arrives with a single entry in
+  // `carouselMedia` plus the cover in `thumbnail`. MasonryCard/AdDetailModal
+  // prepend the cover into `carouselImages` and gate on its length — mirror that
+  // here, otherwise gating on `carouselMedia.length > 1` (== 1 for such ads) hid
+  // the arrows and showed only one image while the card/detail views paged fine.
+  const carouselImages = useMemo(() => {
+    const media = ad?.carouselMedia || [];
+    // `carouselMedia` is already DefaultImage-filtered in mapAdToCard; also skip
+    // the cover when it's the placeholder so a broken first slide doesn't render.
+    const coverOk = ad?.thumbnail && !ad.thumbnail.includes('DefaultImage');
+    if (coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
+      return [ad.thumbnail, ...media];
+    }
+    return media;
+  }, [ad?.thumbnail, ad?.carouselMedia]);
+  const hasCarousel = carouselImages.length > 1;
   const isVideo = isTikTok || ctx.adType.includes('video') || d?.type?.toLowerCase() === 'video';
   const isTextImageAd = ctx.adType === 'text-image';
 
   // If carousel exists, use its media. Otherwise use single thumbnail/video logic.
-  const currentMedia = hasCarousel ? ad.carouselMedia[activeIndex] : null;
+  const currentMedia = hasCarousel ? carouselImages[activeIndex] : null;
   // Prefer `ad.thumbnail` (already-cached grid image) over SSE-arriving URLs to
   // avoid a visible re-fetch when adDetails resolves a few hundred ms after open.
   const computedThumbnailSrc = resolveNasUrl(currentMedia) || ad?.thumbnail || resolveNasUrl(d?.image_video_url) || resolveNasUrl(d?.image_url) || resolveNasUrl(d?.video_cover) || null;
@@ -858,8 +869,7 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
           <button
             onClick={(e) => {
               e.stopPropagation();
-              const maxLen = Math.max(ad?.carouselMedia?.length || 0, ad?.carouselTitles?.length || 0);
-              setActiveIndex((prev) => (prev > 0 ? prev - 1 : maxLen - 1));
+              setActiveIndex((prev) => (prev > 0 ? prev - 1 : carouselImages.length - 1));
             }}
             className={`absolute left-2 top-1/2 -translate-y-1/2 z-20 p-1.5 rounded-full backdrop-blur-md border shadow-lg transition-all hover:scale-110 active:scale-95 ${isLight ? 'bg-white/80 border-black/10 text-black' : 'bg-black/40 border-white/20 text-white'}`}
           >
@@ -868,8 +878,7 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
           <button
             onClick={(e) => {
               e.stopPropagation();
-              const maxLen = Math.max(ad?.carouselMedia?.length || 0, ad?.carouselTitles?.length || 0);
-              setActiveIndex((prev) => (prev < maxLen - 1 ? prev + 1 : 0));
+              setActiveIndex((prev) => (prev < carouselImages.length - 1 ? prev + 1 : 0));
             }}
             className={`absolute right-2 top-1/2 -translate-y-1/2 z-20 p-1.5 rounded-full backdrop-blur-md border shadow-lg transition-all hover:scale-110 active:scale-95 ${isLight ? 'bg-white/80 border-black/10 text-black' : 'bg-black/40 border-white/20 text-white'}`}
           >
@@ -878,7 +887,7 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
 
           {/* Indicators */}
           <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20 px-4 flex-wrap">
-            {ad.carouselMedia.map((_, idx) => (
+            {carouselImages.map((_, idx) => (
               <div
                 key={idx}
                 onClick={(e) => { e.stopPropagation(); setActiveIndex(idx); }}

@@ -74,7 +74,9 @@ const CrawlerInsight = () => {
 
     // Initialize state with saved dates or defaults
     const [selectedDates, setSelectedDates] = useState(loadSelectedDates());
-  
+    // Draft dates the picker edits; only committed to selectedDates on Apply
+    const [draftDates, setDraftDates] = useState(selectedDates);
+
     // Save to localStorage whenever selectedDates changes
     useEffect(() => {
       localStorage.setItem('selectedDates', JSON.stringify({
@@ -86,19 +88,34 @@ const CrawlerInsight = () => {
   const isOpenRef = useRef(isOpen); // Store isOpen reference to prevent unnecessary re-renders
   const pickerRef = useRef(null);
   const toggleDatePicker = () => {
-    setIsOpen((prev) => !prev);
+    setIsOpen((prev) => {
+      const next = !prev;
+      // When opening, start the draft from the currently applied dates
+      if (next) setDraftDates(selectedDates);
+      return next;
+    });
     isOpenRef.current = !isOpenRef.current; // Update the ref manually
   };
 
 
   const handleDateChange = useCallback((ranges) => {
-
-    // setIsApply(false);
-    setSelectedDates({
+    // Only update the draft; nothing is applied until the user hits Apply
+    setDraftDates({
       startDate: ranges.selection.startDate,
       endDate: ranges.selection.endDate,
     });
   }, []);
+
+  const handleApply = useCallback(() => {
+    setSelectedDates(draftDates); // commit the draft -> triggers refetch
+    setIsApply(true);
+    setIsOpen(false);
+  }, [draftDates]);
+
+  const handleCancel = useCallback(() => {
+    setDraftDates(selectedDates); // discard the draft, restore applied dates
+    setIsOpen(false);
+  }, [selectedDates]);
     // Detect clicks outside the DatePicker and close it
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -164,12 +181,12 @@ const CrawlerInsight = () => {
         
               {/* Pass props to DatePicker */}
               {isOpen && (
-                <RangeDatePicker  
+                <RangeDatePicker
                   isOpen={isOpen}
-                  setIsOpen={setIsOpen}
-                  selectedDates={selectedDates}
+                  selectedDates={draftDates}
                   onDateChange={handleDateChange}
-                  setIsApply={setIsApply} // Prevents re-renders from closing
+                  onApply={handleApply}
+                  onCancel={handleCancel}
                 />
               )}
         </div>

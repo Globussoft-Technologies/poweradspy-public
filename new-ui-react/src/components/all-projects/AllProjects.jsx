@@ -236,6 +236,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const [competitorUserId, setCompetitorUserId] = useState(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isProjectLoading, setIsProjectLoading] = useState(false);
+  // True from the moment "Generate Competitors" is clicked until the initial
+  // rows have been fetched + ES-enriched. Decoupled from `isGenerating` because
+  // the socket "completed" event can flip isGenerating off while the (slow, in
+  // production) HTTP enrichment is still in flight — which would otherwise show
+  // a false "No competitors available" message during that gap.
+  const [isPreparingCompetitors, setIsPreparingCompetitors] = useState(false);
   const [progressStatus, setProgressStatus] = useState("");
   const socketRef = useRef(null);
 
@@ -712,6 +718,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const handleSubmitData = async () => {
     if (!websiteLink || selectedKeywords.length === 0) return;
     setViewState(3); // Loading screen
+    setIsPreparingCompetitors(true); // keep the buffer up through fetch + ES enrich
 
     // 1. Normalize specifically for matching existing projects/labels in our local state
     const normalizedAdvertiser = websiteLink
@@ -878,10 +885,16 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       console.error("Failed to generate competitors", e);
       showToast("Error generating competitors. Please try again.", "error");
       setViewState(1); // Go back to start on error
+    } finally {
+      // Initial rows are fetched + enriched (or we errored out) — let the empty
+      // state resolve to its real value. Any further rows arrive via socket.
+      setIsPreparingCompetitors(false);
     }
   };
 
   const openProject = async (id, advertiserName) => {
+    // Switching to another project ends any in-progress generate buffer.
+    setIsPreparingCompetitors(false);
     setSelectedProjectId(id);
     setCurrentPage(1);
     setOpenDropdownId(null);
@@ -2290,7 +2303,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   </table>
                   {paginatedCompetitors.length === 0 && (
                     <div className="p-24 text-center">
-                      {activeProject?.isGenerating ? (
+                      {activeProject?.isGenerating || isPreparingCompetitors ? (
                         <div className="flex flex-col items-center gap-6">
                           <div className="relative">
                             <div className="w-20 h-20 border-4 border-[#3759a3]/10 rounded-full animate-pulse"></div>

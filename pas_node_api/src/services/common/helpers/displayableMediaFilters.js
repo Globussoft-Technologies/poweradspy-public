@@ -75,19 +75,27 @@ const LINKEDIN = [
   {
     bool: {
       should: [
-        { bool: { filter: [
-          { term:   { 'ad_type.keyword': 'IMAGE' } },
-          { exists: { field: 'new_nas_image_url' } },
-        ] } },
+        { bool: {
+          filter: [
+            { term:   { 'ad_type.keyword': 'IMAGE' } },
+            { exists: { field: 'new_nas_image_url' } },
+          ],
+          must_not: [
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*pasimage*' } } },
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*bydefault*' } } },
+          ],
+        } },
         { bool: {
           filter: [
             { term:   { 'ad_type.keyword': 'VIDEO' } },
             { exists: { field: 'ad_video' } },
           ],
           must_not: [
-            { wildcard: { ad_video: { value: '*pasvideo*' } } },
-            { wildcard: { ad_video: { value: '*pasimage*' } } },
-            { wildcard: { ad_video: { value: '*bydefault*' } } },
+            { wildcard: { 'ad_video.keyword': { value: '*pasvideo*' } } },
+            { wildcard: { 'ad_video.keyword': { value: '*pasimage*' } } },
+            { wildcard: { 'ad_video.keyword': { value: '*bydefault*' } } },
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
           ],
         } },
         { bool: { must_not: [
@@ -113,9 +121,10 @@ const YOUTUBE = [
             { exists: { field: 'thumbnail_url' } },
           ],
           must_not: [
-            { wildcard: { thumbnail_url: { value: '*pasvideo*' } } },
-            { wildcard: { thumbnail_url: { value: '*pasimage*' } } },
-            { wildcard: { thumbnail_url: { value: '*bydefault*' } } },
+            { wildcard: { 'thumbnail_url.keyword': { value: '*pasvideo*' } } },
+            { wildcard: { 'thumbnail_url.keyword': { value: '*pasimage*' } } },
+            { wildcard: { 'thumbnail_url.keyword': { value: '*bydefault*' } } },
+            { wildcard: { 'thumbnail_url.keyword': { value: '*DefaultImage*' } } },
           ],
         } },
         { bool: {
@@ -124,9 +133,9 @@ const YOUTUBE = [
           ],
           must_not: [
             { terms:    { 'ad_type.keyword': ['VIDEO', 'DISCOVERY'] } },
-            { wildcard: { new_nas_image_url: { value: '*pasvideo*' } } },
-            { wildcard: { new_nas_image_url: { value: '*pasimage*' } } },
-            { wildcard: { new_nas_image_url: { value: '*bydefault*' } } },
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*pasvideo*' } } },
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*pasimage*' } } },
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*bydefault*' } } },
           ],
         } },
       ],
@@ -257,9 +266,9 @@ const REDDIT = [
             { exists: { field: 'Thumbnail' } },
           ],
           must_not: [
-            { wildcard: { Thumbnail: { value: '*pasvideo*' } } },
-            { wildcard: { Thumbnail: { value: '*pasimage*' } } },
-            { wildcard: { Thumbnail: { value: '*bydefault*' } } },
+            { wildcard: { 'Thumbnail.keyword': { value: '*pasvideo*' } } },
+            { wildcard: { 'Thumbnail.keyword': { value: '*pasimage*' } } },
+            { wildcard: { 'Thumbnail.keyword': { value: '*bydefault*' } } },
           ],
         } },
         { bool: { must_not: [
@@ -297,9 +306,9 @@ const TIKTOK = [
     bool: {
       filter: [{ exists: { field: 'video_cover' } }],
       must_not: [
-        { wildcard: { video_cover: { value: '*pasvideo*' } } },
-        { wildcard: { video_cover: { value: '*pasimage*' } } },
-        { wildcard: { video_cover: { value: '*bydefault*' } } },
+        { wildcard: { 'video_cover.keyword': { value: '*pasvideo*' } } },
+        { wildcard: { 'video_cover.keyword': { value: '*pasimage*' } } },
+        { wildcard: { 'video_cover.keyword': { value: '*bydefault*' } } },
         { wildcard: { video_url:   { value: '*pasvideo*' } } },
         { wildcard: { video_url:   { value: '*pasimage*' } } },
         { wildcard: { video_url:   { value: '*bydefault*' } } },

@@ -125,7 +125,7 @@ describe("pages/user/CrawlerInsight", () => {
     expect(screen.getByTestId("tri-down")).toBeInTheDocument();
   });
 
-  it("handleDateChange via RangeDatePicker onDateChange updates selectedDates", async () => {
+  it("onDateChange updates the draft only; Apply commits it to selectedDates", async () => {
     await renderInsight();
     fireEvent.click(screen.getByTestId("calendar-icon"));
     expect(rangeProps.current).not.toBeNull();
@@ -137,7 +137,31 @@ describe("pages/user/CrawlerInsight", () => {
         },
       });
     });
+    // Draft only — not yet committed to the applied dates / localStorage.
+    expect(localStorage.getItem("selectedDates")).not.toMatch(/2026-04/);
+    // Apply commits the draft → selectedDates → persisted via useEffect.
+    act(() => {
+      rangeProps.current.onApply();
+    });
     expect(localStorage.getItem("selectedDates")).toMatch(/2026-04/);
+  });
+
+  it("Cancel discards the draft (selectedDates / localStorage unchanged)", async () => {
+    await renderInsight();
+    fireEvent.click(screen.getByTestId("calendar-icon"));
+    act(() => {
+      rangeProps.current.onDateChange({
+        selection: {
+          startDate: new Date("2026-04-01T00:00:00.000Z"),
+          endDate: new Date("2026-04-30T00:00:00.000Z"),
+        },
+      });
+    });
+    act(() => {
+      rangeProps.current.onCancel();
+    });
+    // Draft was never applied → persisted value must not reflect the draft.
+    expect(localStorage.getItem("selectedDates")).not.toMatch(/2026-04/);
   });
 
   it("useLocation parsing: pathname endsWith 'crawler-insights' branch (facebook fallback for selectedPlatform)", async () => {

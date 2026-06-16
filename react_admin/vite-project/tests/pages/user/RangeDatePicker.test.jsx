@@ -25,13 +25,11 @@ beforeEach(() => {
 
 describe("pages/user/RangeDatePicker", () => {
   it("passes selectedDates → ranges and forwards onDateChange", () => {
-    const setIsOpen = vi.fn();
-    const setIsApply = vi.fn();
     const onDateChange = vi.fn();
     render(
       <RangeDatePicker
-        setIsOpen={setIsOpen}
-        setIsApply={setIsApply}
+        onApply={vi.fn()}
+        onCancel={vi.fn()}
         onDateChange={onDateChange}
         selectedDates={{ startDate: new Date(2026, 4, 1), endDate: new Date(2026, 4, 7) }}
       />
@@ -41,35 +39,35 @@ describe("pages/user/RangeDatePicker", () => {
     expect(onDateChange).toHaveBeenCalled();
   });
 
-  it("Apply: sets isApply=true, isOpen=false (and stopPropagation)", () => {
-    const setIsOpen = vi.fn();
-    const setIsApply = vi.fn();
+  it("Apply: invokes onApply (and not onCancel)", () => {
+    const onApply = vi.fn();
+    const onCancel = vi.fn();
     render(
       <RangeDatePicker
-        setIsOpen={setIsOpen}
-        setIsApply={setIsApply}
+        onApply={onApply}
+        onCancel={onCancel}
         onDateChange={vi.fn()}
         selectedDates={{ startDate: new Date(), endDate: new Date() }}
       />
     );
     fireEvent.click(screen.getByText("Apply"));
-    expect(setIsApply).toHaveBeenCalledWith(true);
-    expect(setIsOpen).toHaveBeenCalledWith(false);
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("Cancel: sets isApply=false, isOpen=false", () => {
-    const setIsOpen = vi.fn();
-    const setIsApply = vi.fn();
+  it("Cancel: invokes onCancel (and not onApply)", () => {
+    const onApply = vi.fn();
+    const onCancel = vi.fn();
     render(
       <RangeDatePicker
-        setIsOpen={setIsOpen}
-        setIsApply={setIsApply}
+        onApply={onApply}
+        onCancel={onCancel}
         onDateChange={vi.fn()}
         selectedDates={{ startDate: new Date(), endDate: new Date() }}
       />
     );
     fireEvent.click(screen.getByText("Cancel"));
-    expect(setIsApply).toHaveBeenCalledWith(false);
-    expect(setIsOpen).toHaveBeenCalledWith(false);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onApply).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,11 @@ const { getDisplayableMediaFilter } = require('../utils/displayable-media-filter
 const ES_DATA = {
     facebook:  { es_id: 0, index: process.env.FB_INDEX },
     instagram: { es_id: 3, index: process.env.INSTA_INDEX },
-    google:    { es_id: 4, index: process.env.GT_INDEX },
+    // "Google" reads the FLAT google_ads_data index (same as the live site),
+    // NOT the legacy nested google_text_search_mix. Running the flat
+    // displayable-media filter against the nested index made it a no-op and
+    // over-counted ~15x.
+    google:    { es_id: 4, index: process.env.GT_INDEX || 'google_ads_data' },
     quora:     { es_id: 2, index: process.env.QUORA_INDEX },
     native:    { es_id: 1, index: process.env.NATIVE_INDEX },
     gdn:       { es_id: 2, index: process.env.GDN_INDEX },

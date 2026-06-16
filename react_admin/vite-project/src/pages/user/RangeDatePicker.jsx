@@ -3,7 +3,7 @@ import { DateRangePicker } from "react-date-range";
 import "react-date-range/dist/styles.css";
 import "react-date-range/dist/theme/default.css";
 
-const RangeDatePicker = ({  setIsOpen,selectedDates, onDateChange ,setIsApply }) => {
+const RangeDatePicker = ({ selectedDates, onDateChange, onApply, onCancel }) => {
 
   return (
     <div
@@ -15,13 +15,10 @@ const RangeDatePicker = ({  setIsOpen,selectedDates, onDateChange ,setIsApply })
           onChange={onDateChange }
         />
         <div className="!flex !h-9 !justify-end !space-x-2 ">
-        {/* <button className="px-4 flex items-center"
-        onClick={(e)=>{e.stopPropagation(); setIsOpen(false);setIsApply(false)}}>
-         <FcClearFilters className="mr-2"onClick={(e)=>{e.stopPropagation();setIsApply(false)}}/>  Clear Filter</button> */}
         <button className="!px-4 !flex !items-center"
-        onClick={(e)=>{e.stopPropagation();setIsApply(true);setIsOpen(false)}} >Apply</button>
+        onClick={(e)=>{e.stopPropagation(); onApply();}} >Apply</button>
         <button className="!px-4 !flex !items-center"
-        onClick={(e)=>{e.stopPropagation();setIsApply(false);setIsOpen(false)}}>Cancel</button>
+        onClick={(e)=>{e.stopPropagation(); onCancel();}}>Cancel</button>
         </div>
       </div>
     </div>

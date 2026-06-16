@@ -90,70 +90,21 @@ const GlobalUiComponent = ({ network }) => {
     const today = normalize(now);
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
-  
-    const startOfThisWeek = new Date(today);
-    startOfThisWeek.setDate(today.getDate() - today.getDay());
-    const endOfThisWeek = new Date(startOfThisWeek);
-    endOfThisWeek.setDate(endOfThisWeek.getDate() + 6);
-  
-    const startOfLastWeek = new Date(startOfThisWeek);
-    startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
-    const endOfLastWeek = new Date(startOfLastWeek);
-    endOfLastWeek.setDate(endOfLastWeek.getDate() + 6);
-  
-    const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endOfThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-  
-    const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-    const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-  
-    const startOfThisYear = new Date(today.getFullYear(), 0, 1);
-    const endOfThisYear = new Date(today.getFullYear(), 11, 31);
-  
-    const startOfLastYear = new Date(today.getFullYear() - 1, 0, 1);
-    const endOfLastYear = new Date(today.getFullYear() - 1, 11, 31);
-  
+
     const fromNorm = normalize(fromDate);
     const toNorm = normalize(toDate);
-    const daysDiff = (toNorm - fromNorm) / (1000 * 60 * 60 * 24);
-  
+
     if (fromNorm.getTime() === today.getTime() && toNorm.getTime() === today.getTime()) {
       return "Today`s Ads";
     }
-  
+
     if (fromNorm.getTime() === yesterday.getTime() && toNorm.getTime() === yesterday.getTime()) {
       return "Yesterday`s Ads";
     }
-  
-    if (fromNorm >= startOfThisWeek && toNorm <= endOfThisWeek) {
-      return "This Week`s Ads";
-    }
-  
-    if (fromNorm >= startOfLastWeek && toNorm <= endOfLastWeek) {
-      return "Last Week`s Ads";
-    }
-  
-    if (fromNorm >= startOfThisMonth && toNorm <= endOfThisMonth) {
-      return "This Month`s Ads";
-    }
-  
-    if (fromNorm >= startOfLastMonth && toNorm <= endOfLastMonth) {
-      return "Last Month`s Ads";
-    }
-  
-    if (fromNorm >= startOfThisYear && toNorm <= endOfThisYear) {
-      return "This Year`s Ads";
-    }
-  
-    if (fromNorm >= startOfLastYear && toNorm <= endOfLastYear) {
-      return "Last Year`s Ads";
-    }
-  
-    if (daysDiff === 6 || daysDiff === 7) {
-      return "Last 7 Days Ads";
-    }
-  
-    return "Older Ads";
+
+    // For any other date / date-range, use a generic label. The actual
+    // selected date or range is shown beneath the label in each card.
+    return "Ads";
   }
  
   const { sidebarOpen } = useContext(AdminContext);
@@ -673,11 +624,11 @@ function calculateDaysInclusive(fromDate, toDate) {
                   <div className="bg-yellow-100 px-[8px] pt-[16px] pb-[28px] flex flex-col justify-between sm:col-span-1 col-span-2 rounded-xl text-center">
                     <div className="w-full flex justify-around items-center">
                       <p className="text-[14px] font-[500] text-[#ff8800]">
-                        {label.replace(/ Ads$/, " Unique Ads")}
+                        {label.replace(/Ads$/, "Unique Ads")}
                       </p>
                     </div>
                     <div className="w-full flex justify-around items-center">
-                      <p className="text-[10px] font-[400] text-[#575757]">
+                      <p className="text-[11px] font-[400] text-[#575757]">
                         {dateRangeLabel.from === dateRangeLabel.to
                           ? formatDate(dateRangeLabel.from)
                           : `${formatDate(dateRangeLabel.from)} ~ ${formatDate(
@@ -698,11 +649,11 @@ function calculateDaysInclusive(fromDate, toDate) {
                 <div className="bg-yellow-100 px-[8px] pt-[16px] pb-[28px] flex flex-col justify-between sm:col-span-1 col-span-2 rounded-xl text-center">
                   <div className="w-full flex justify-around items-center">
                     <p className="text-[14px] font-[500] text-[#ff8800]">
-                      {label.replace(/ Ads$/, " Unique Ads")}
+                      {label.replace(/Ads$/, "Unique Ads")}
                     </p>
                   </div>
                   <div className="w-full flex justify-around items-center">
-                    <p className="text-[10px] font-[400] text-[#575757]">
+                    <p className="text-[11px] font-[400] text-[#575757]">
                       {dateRangeLabel.from === dateRangeLabel.to
                         ? formatDate(dateRangeLabel.from)
                         : `${formatDate(dateRangeLabel.from)} ~ ${formatDate(
@@ -906,11 +857,11 @@ function calculateDaysInclusive(fromDate, toDate) {
                   <div className="bg-purple-100 px-[8px] pt-[16px] pb-[28px] flex flex-col justify-between sm:col-span-1 col-span-2 rounded-xl text-center">
                     <div className="w-full flex justify-around items-center">
                       <p className="text-[14px] font-[500] text-purple-600">
-                        {label.replace(/ Ads$/, " Total Ads")}
+                        {label.replace(/Ads$/, "Total Ads")}
                       </p>
                     </div>
                     <div className="w-full flex justify-around items-center">
-                      <p className="text-[10px] font-[400] text-[#575757]">
+                      <p className="text-[11px] font-[400] text-[#575757]">
                         {dateRangeLabel.from === dateRangeLabel.to
                           ? formatDate(dateRangeLabel.from)
                           : `${formatDate(dateRangeLabel.from)} ~ ${formatDate(
