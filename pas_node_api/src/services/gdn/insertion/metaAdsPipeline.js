@@ -390,6 +390,7 @@ function buildMetaRow(n, gdnAdId) {
     version: n.version ?? null,
     destination_url: (n.destination_url && String(n.destination_url).trim() !== '') ? n.destination_url : null,
     redirect_url: n.redirect_url ?? null,
+    ad_url: (n.ad_url && String(n.ad_url).trim() !== '') ? n.ad_url : null,   // initial ad-click URL (Google/native ad-server)
     screenshot_url: '/processing.gif',
   };
 }

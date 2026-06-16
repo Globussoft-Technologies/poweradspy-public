@@ -23,6 +23,7 @@ const NATIVE_INSERT_COLUMNS = [
   'native_ad_post_owners.post_owner_image',
   'native_ad_meta_data.destination_url',
   'native_ad_meta_data.redirect_url',
+  'native_ad_meta_data.ad_url',
   'native_ad_meta_data.firstSeenOnDesktop',
   'native_ad_meta_data.built_with',
   'native_ad_meta_data.affiliate_data',
