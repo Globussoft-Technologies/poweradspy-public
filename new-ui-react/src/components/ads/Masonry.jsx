@@ -30,6 +30,7 @@ const useMeasure = () => {
     const [size, setSize] = useState({ width: 0, height: 0 });
 
     useLayoutEffect(() => {
+        /* v8 ignore next -- defensive: ref is attached before this layout effect runs */
         if (!ref.current) return;
         const ro = new ResizeObserver(([entry]) => {
             const { width, height } = entry.contentRect;
@@ -51,6 +52,7 @@ const AutoHeightItem = ({ id, children, onMeasure }) => {
 
     useLayoutEffect(() => {
         const el = innerRef.current;
+        /* v8 ignore next -- defensive: innerRef is attached before this layout effect runs */
         if (!el) return;
         const ro = new ResizeObserver(([entry]) => {
             const h = entry.contentRect.height;
@@ -170,6 +172,7 @@ const Masonry = ({
 
     const remeasureDomBottom = () => {
       const containerEl = containerRef.current;
+      /* v8 ignore next -- defensive: containerRef is attached when remeasureDomBottom runs */
       if (!containerEl) return;
       const containerTop = containerEl.getBoundingClientRect().top;
       let measuredMax = 0;
@@ -302,6 +305,7 @@ const Masonry = ({
     // visually overlapped by the still-growing cards.
     useEffect(() => {
       const containerEl = containerRef.current;
+      /* v8 ignore next -- defensive: containerRef is attached when this effect runs */
       if (!containerEl) return;
       const itemEls = containerEl.querySelectorAll('[data-masonry-key]');
       if (itemEls.length === 0) return;

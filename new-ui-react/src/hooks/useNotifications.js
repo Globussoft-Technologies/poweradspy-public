@@ -81,6 +81,7 @@ export function useNotifications() {
     intervalRef.current = setInterval(poll, POLL_INTERVAL);
 
     return () => {
+      /* v8 ignore next -- intervalRef is always set earlier in this effect, so the guard's else is defensive */
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [user, poll]);

@@ -719,6 +719,19 @@ describe("AdFilterBar > original preview toggle", () => {
     fireEvent.click(getByText("Show Original"));
     expect(setPreviewMode).toHaveBeenCalledWith(false);
   });
+  it("single active platform → network is that platform (line 428 length===1 branch)", () => {
+    const setPreviewMode = vi.fn();
+    const { getByText } = render(
+      <AdFilterBar
+        {...baseProps}
+        setPreviewMode={setPreviewMode}
+        sdui={{ ...baseSdui, activePlatforms: ["facebook"] }}
+        activePlatforms={["facebook"]}
+      />,
+    );
+    fireEvent.click(getByText("Show Original"));
+    expect(setPreviewMode).toHaveBeenCalledWith(true);
+  });
   it("showOriginalOnMobile=false adds hidden md:flex", () => {
     const { container } = render(
       <AdFilterBar {...baseProps} showOriginalOnMobile={false} />,

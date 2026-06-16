@@ -55,6 +55,7 @@ const STORAGE_KEY = 'pas-theme';
 // so it can sit inside startViewTransition's flushSync without missing the
 // snapshot.
 const applyThemeToDOM = (themeKey) => {
+  /* v8 ignore next -- callers (setTheme guard + readInitialTheme validation) only pass valid keys; the `|| THEMES.light` fallback is defensive */
   const t = THEMES[themeKey] || THEMES.light;
   const root = document.documentElement;
   root.setAttribute('data-theme', themeKey);

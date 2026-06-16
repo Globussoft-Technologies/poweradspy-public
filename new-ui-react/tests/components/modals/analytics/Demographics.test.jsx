@@ -121,6 +121,26 @@ describe("Demographics > renders demographics with advertiser data", () => {
     );
     expect(container.innerHTML).toMatch(/No data found for this range|Loading/);
   });
+  it("isFiltering during a pending fetch → 'Fetching demographics...' (line 150 isFiltering branch)", () => {
+    getInsightsSpy.mockReturnValue(new Promise(() => {})); // never resolves → isFiltering stays true
+    const zeros = { ageData: {}, genderData: {}, relationshipData: {} };
+    const { container } = render(
+      <Demographics adUserData={null} advertiserUserData={zeros} platform="facebook" />,
+    );
+    act(() => {
+      dateRangeApplyRef.current({ fromDate: "2025-01-01", toDate: "2025-01-31" });
+    });
+    expect(container.innerHTML).toMatch(/Fetching demographics/);
+  });
+  it("AD LEVEL toggle with adUserData=null → level==='ad' branch of line 150", () => {
+    const zeros = { ageData: {}, genderData: {}, relationshipData: {} };
+    const { container, getByText } = render(
+      <Demographics adUserData={null} advertiserUserData={zeros} platform="facebook" />,
+    );
+    act(() => { fireEvent.click(getByText("AD LEVEL")); });
+    // level==='ad' → (level==='ad' ? adUserData : ...) === null → 'Loading...'
+    expect(container.innerHTML).toMatch(/Loading|No data found/);
+  });
   it("genderData only (no ageData) → ageData side of || {} branch (line 25)", () => {
     const data = { genderData: { male: 50, female: 50 }, relationshipData: { single: 100 } };
     const { container } = render(

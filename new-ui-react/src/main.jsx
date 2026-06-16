@@ -11,6 +11,7 @@ import ReactDOM from 'react-dom/client'
     // because GT needs them to initialise and process language changes.
     document.querySelectorAll('[class*="VIpgJd"], #goog-gt-tt')
       .forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
+    /* v8 ignore next -- document.body is always present when this runs; the guard is defensive */
     if (document.body) document.body.style.setProperty('top', '0', 'important');
   }
   const obs = new MutationObserver(hide);

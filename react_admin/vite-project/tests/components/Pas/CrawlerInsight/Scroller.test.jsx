@@ -62,6 +62,13 @@ describe("Scroller", () => {
     fireEvent.click(getByText("GLB-3"));
     expect(handleSetTabActive).toHaveBeenCalledWith(baseTabs[2]);
   });
+  it("renders tab hostname when present", () => {
+    const tabsWithHost = [{ name: "GLB-9", value: 4000, status: "Active", hostname: "HOST-9" }];
+    const { getByText } = render(
+      <Scroller tabs={tabsWithHost} systemDetails={systemDetails} handleSetTabActive={() => {}} />,
+    );
+    expect(getByText("HOST-9")).toBeInTheDocument();
+  });
   it("active tab gets 'active' class", () => {
     const { getByText } = render(
       <Scroller tabs={baseTabs} systemDetails={systemDetails} handleSetTabActive={() => {}} />,

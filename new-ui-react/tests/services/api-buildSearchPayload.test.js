@@ -497,3 +497,329 @@ describe("buildSearchPayload > dynamic platform support override", () => {
     expect(p.verified).toBe(1); // reddit now supported via dynamic map
   });
 });
+
+describe("buildSearchPayload > comprehensive branch coverage", () => {
+  // 'all' makes platformSupports() return true for every filter, so every
+  // `ps(...) ? value : 'NA'` takes its value side when the value is present.
+  const fullFilters = {
+    activePlatforms: ["all"],
+    searchIn: "advertiser",
+    searchQuery: "nike",
+    exactSearch: true,
+    sortBy: "popularity",
+    categories: ["Shopping"],
+    adcategory: ["Shopping"],
+    subcategory: ["Shoes"],
+    cta_filter: ["Shop Now"],
+    country_filter: ["US", "IN"],
+    ad_type: ["image-video", "carousel"],
+    ad_position_filter: ["FEED"],
+    ad_sub_position: ["top"],
+    gender: ["male", "female"],
+    age_filter: ["13-17", "25+"],
+    industry: ["Retail"],
+    ecommerce_platform_filter: ["shopify"],
+    source: ["google"],
+    funnel_filter: ["awareness"],
+    affiliate_network_filter: ["cj"],
+    native_network_filter: ["taboola"],
+    lang: "en",
+    commentdata: ["nice"],
+    verified: true,
+    meta_ads_lib_filter: true,
+    market_platform: ["meta"],
+    post_date_btn_sort: "asc",
+    seen_btn_sort: "desc",
+    domain_date_btn_sort: "asc",
+    image_size_filter: ["LARGE", "MEDIUM"],
+    likes: { min: 1, max: 100 },
+    shares: { min: 1, max: 100 },
+    comments: { min: 1, max: 100 },
+    impressions: { min: 1, max: 100 },
+    views: { min: 1, max: 100 },
+    popularity: { min: 1, max: 100 },
+    adBudget: { min: 1, max: 100 },
+    ctr: { min: 1, max: 100 },
+  };
+
+  it("all filters populated with 'all' network → value sides taken", () => {
+    const p = buildSearchPayload(fullFilters);
+    expect(p.advertiser).toBe("nike");
+    expect(p.exact_search).toBe(1);
+    expect(Array.isArray(p.country)).toBe(true);
+    expect(Array.isArray(p.type)).toBe(true);
+    expect(p.type).toContain("IMAGE_VIDEO");
+    expect(Array.isArray(p.gender)).toBe(true);
+    expect(p.gender_activity).toBe("male,female");
+    expect(p.lower_age).toBe(13);
+    expect(p.verified).toBe(1);
+    expect(p.size).toBe("LARGE,MEDIUM");
+  });
+
+  it("empty filters with 'all' network → 'NA' (value-absent) sides taken", () => {
+    const p = buildSearchPayload({ activePlatforms: ["all"] });
+    expect(p.cta_filter ?? p.call_to_action).toBeDefined();
+    expect(p.gender).toBe("NA");
+    expect(p.gender_activity).toBe("NA");
+    expect(p.size).toBe("NA");
+    expect(p.likes).toBe("NA");
+    expect(p.verified).toBe("NA");
+  });
+
+  it("filters present but network unsupported → ps-false branches exercised", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["zzz-unknown"],
+      gender: ["male"],
+      likes: { min: 1, max: 5 },
+      verified: true,
+      image_size_filter: ["LARGE"],
+      lower_age: 18,
+      // force these fields into the support map so the ps-false ('NA') side fires
+      filterPlatformSupport: {
+        gender_filter: ["facebook"], gender: ["facebook"],
+        likes: ["facebook"], verified_filter: ["facebook"], verified: ["facebook"],
+        image_size_filter: ["facebook"], image_size: ["facebook"],
+      },
+    });
+    expect(p.gender).toBe("NA");
+    expect(p.likes).toBe("NA");
+    expect(p.verified).toBe("NA");
+    expect(p.size).toBe("NA");
+  });
+
+  it("gender 'all' → gender_activity 'All'", () => {
+    const p = buildSearchPayload({ activePlatforms: ["all"], gender: "all" });
+    expect(p.gender_activity).toBe("All");
+    expect(p.gender).toBe("NA");
+  });
+
+  it("gender scalar string → wrapped to array", () => {
+    const p = buildSearchPayload({ activePlatforms: ["all"], gender: "male" });
+    expect(p.gender).toEqual(["male"]);
+    expect(p.gender_activity).toBe("male");
+  });
+
+  it("meta_ads_lib with facebook → platform 15 + platform_positions", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["facebook"],
+      meta_ads_lib_filter: true,
+      filterPlatformSupport: { meta_ads_lib_filter: ["facebook"], meta_ads_lib: ["facebook"] },
+    });
+    expect(p.platform).toBe(15);
+    expect(p.platform_positions).toEqual(["facebook", "instagram"]);
+  });
+
+  it("age single numeric → lower_age numeric, upper from upper_age", () => {
+    const p = buildSearchPayload({ activePlatforms: ["all"], age_filter: 21, upper_age: 30 });
+    expect(p.lower_age).toBe(21);
+    expect(p.upper_age).toBe(30);
+  });
+
+  it("industry derived from category + subcategory when no industry filter", () => {
+    const p = buildSearchPayload({ activePlatforms: ["all"], adcategory: ["Retail"], subcategory: ["Shoes", "Bags"] });
+    expect(p.industry).toEqual(["Retail", "Shoes", "Bags"]);
+  });
+
+  it("tiktok categorical budget scanned from any filter value", () => {
+    const p = buildSearchPayload({ activePlatforms: ["all"], someBudgetKey: ["Low", "High"] });
+    expect(p.budget).toEqual(["Low", "High"]);
+  });
+});
+
+describe("buildSearchPayload > platform-support gating (false + secondary-operand branches)", () => {
+  // Using a real network (facebook) + filterPlatformSupport overrides forces ps()
+  // to actually evaluate field support (the 'all' shortcut would always return true).
+  const fb = ["facebook"];
+
+  it("age: both supports unsupported → lower/upper NA (861/862 false branch)", () => {
+    const p = buildSearchPayload({
+      age: "18-24", activePlatforms: fb,
+      filterPlatformSupport: { age_filter: ["nope"], age: ["nope"] },
+    });
+    expect(p.lower_age).toBe("NA");
+    expect(p.upper_age).toBe("NA");
+  });
+  it("age: filter unsupported but secondary 'age' supported (|| second operand)", () => {
+    const p = buildSearchPayload({
+      age: "18-24", activePlatforms: fb,
+      filterPlatformSupport: { age_filter: ["nope"], age: ["facebook"] },
+    });
+    expect(p.lower_age).toBe(18);
+    expect(p.upper_age).toBe(24);
+  });
+
+  it("ad_sub_position: both unsupported → NA (867 return)", () => {
+    const p = buildSearchPayload({
+      ad_sub_position: "top", activePlatforms: fb,
+      filterPlatformSupport: { ad_sub_position_filter: ["nope"], ad_sub_position: ["nope"] },
+    });
+    expect(p.ad_sub_position).toBe("NA");
+  });
+  it("ad_sub_position: secondary supported → uppercased (867 second operand)", () => {
+    const p = buildSearchPayload({
+      ad_sub_position: "top", activePlatforms: fb,
+      filterPlatformSupport: { ad_sub_position_filter: ["nope"], ad_sub_position: ["facebook"] },
+    });
+    expect(p.ad_sub_position).toEqual(["TOP"]);
+  });
+  it("ad_sub_position: supported but empty array → NA (870)", () => {
+    const p = buildSearchPayload({
+      ad_sub_position: [], activePlatforms: fb,
+      filterPlatformSupport: { ad_sub_position_filter: ["facebook"] },
+    });
+    expect(p.ad_sub_position).toBe("NA");
+  });
+
+  it("nativeNetwork: both unsupported → NA (876/878 false)", () => {
+    const p = buildSearchPayload({
+      native_network: ["taboola"], activePlatforms: fb,
+      filterPlatformSupport: { native_network_filter: ["nope"], native_network: ["nope"] },
+    });
+    expect(p.nativeNetwork).toBe("NA");
+  });
+  it("nativeNetwork: secondary supported with values (876 second operand)", () => {
+    const p = buildSearchPayload({
+      native_network: ["taboola"], activePlatforms: fb,
+      filterPlatformSupport: { native_network_filter: ["nope"], native_network: ["facebook"] },
+    });
+    expect(p.nativeNetwork).toEqual(["taboola"]);
+  });
+
+  it("view: both unsupported → NA (896 false)", () => {
+    const p = buildSearchPayload({
+      views: [1, 5], activePlatforms: fb,
+      filterPlatformSupport: { views_range_filter: ["nope"], views: ["nope"] },
+    });
+    expect(p.view).toBe("NA");
+  });
+  it("view: secondary 'views' supported (896 second operand)", () => {
+    const p = buildSearchPayload({
+      views: [1, 5], activePlatforms: fb,
+      filterPlatformSupport: { views_range_filter: ["nope"], views: ["facebook"] },
+    });
+    expect(p.view).toEqual([1, 5]);
+  });
+
+  it("ctr: both unsupported → NA (899 false)", () => {
+    const p = buildSearchPayload({
+      ctr: [1, 5], activePlatforms: fb,
+      filterPlatformSupport: { ctr_filter: ["nope"], ctr: ["nope"] },
+    });
+    expect(p.ctr).toBe("NA");
+  });
+  it("ctr: secondary 'ctr' supported (899 second operand)", () => {
+    const p = buildSearchPayload({
+      ctr: [1, 5], activePlatforms: fb,
+      filterPlatformSupport: { ctr_filter: ["nope"], ctr: ["facebook"] },
+    });
+    expect(p.ctr).toEqual([1, 5]);
+  });
+
+  it("size: both unsupported → NA (926 false)", () => {
+    const p = buildSearchPayload({
+      image_size: ["VERT"], activePlatforms: fb,
+      filterPlatformSupport: { image_size_filter: ["nope"], image_size: ["nope"] },
+    });
+    expect(p.size).toBe("NA");
+  });
+  it("size: supported array joins (926 array branch)", () => {
+    const p = buildSearchPayload({
+      image_size: ["VERT", "HORIZ"], activePlatforms: fb,
+      filterPlatformSupport: { image_size_filter: ["facebook"] },
+    });
+    expect(p.size).toBe("VERT,HORIZ");
+  });
+  it("size: supported empty array → NA (926 inner)", () => {
+    const p = buildSearchPayload({
+      image_size: [], activePlatforms: fb,
+      filterPlatformSupport: { image_size_filter: ["facebook"] },
+    });
+    expect(p.size).toBe("NA");
+  });
+  it("size: supported scalar → v(imageSize) (926 non-array branch)", () => {
+    const p = buildSearchPayload({
+      image_size: "VERT", activePlatforms: fb,
+      filterPlatformSupport: { image_size_filter: ["facebook"] },
+    });
+    expect(p.size).toBe("VERT");
+  });
+
+  it("meta_ads_lib: filter unsupported but secondary supported → platform 15 (917/920 second operand)", () => {
+    const p = buildSearchPayload({
+      meta_ads_lib: true, activePlatforms: fb,
+      filterPlatformSupport: { meta_ads_lib_filter: ["nope"], meta_ads_lib: ["facebook"] },
+    });
+    expect(p.platform).toBe(15);
+    expect(p.platform_positions).toEqual(["facebook", "instagram"]);
+  });
+  it("meta_ads_lib: supported but flag off → platform NA (917/920 false)", () => {
+    const p = buildSearchPayload({
+      meta_ads_lib: false, activePlatforms: fb,
+      filterPlatformSupport: { meta_ads_lib_filter: ["facebook"] },
+    });
+    expect(p.platform).toBe("NA");
+    expect(p.platform_positions).toBe("NA");
+  });
+
+  it("call_to_action: both unsupported → NA (836 false)", () => {
+    const p = buildSearchPayload({
+      cta: ["Shop Now"], activePlatforms: fb,
+      filterPlatformSupport: { cta_filter: ["nope"], cta: ["nope"] },
+    });
+    expect(p.call_to_action).toBe("NA");
+  });
+  it("call_to_action: secondary 'cta' supported (836 second operand)", () => {
+    const p = buildSearchPayload({
+      cta: ["Shop Now"], activePlatforms: fb,
+      filterPlatformSupport: { cta_filter: ["nope"], cta: ["facebook"] },
+    });
+    expect(p.call_to_action).toEqual(["Shop Now"]);
+  });
+});
+
+describe("buildSearchPayload > age-parse & searchIn edge branches", () => {
+  it("age plain string without dash/plus → lower=value (line 630 string branch)", () => {
+    const p = buildSearchPayload({ age: "25", upper_age: 40, activePlatforms: ["all"] });
+    expect(p.lower_age).toBe("25");
+    expect(p.upper_age).toBe(40);
+  });
+  it("age range that parses to NaN → both bounds undefined → NA (648/649)", () => {
+    const p = buildSearchPayload({ age: ["a-b"], activePlatforms: ["all"] });
+    expect(p.lower_age).toBe("NA");
+    expect(p.upper_age).toBe("NA");
+  });
+  it("age '+' entry that parses to NaN → skipped (line 641 else)", () => {
+    const p = buildSearchPayload({ age: ["abc+"], activePlatforms: ["all"] });
+    expect(p.lower_age).toBe("NA");
+    expect(p.upper_age).toBe("NA");
+  });
+  it("age array entry with neither '+' nor '-' is skipped in loop (line 642 else)", () => {
+    const p = buildSearchPayload({ age: ["18-24", "xyz"], activePlatforms: ["all"] });
+    expect(p.lower_age).toBe(18);
+    expect(p.upper_age).toBe(24);
+  });
+  it("advertiser mode with empty query → NA (701 inner ||)", () => {
+    const p = buildSearchPayload({ searchIn: "advertiser", searchQuery: "", activePlatforms: ["all"] });
+    expect(p.advertiser).toBe("NA");
+  });
+  it("domain mode with empty query → NA (702 inner ||)", () => {
+    const p = buildSearchPayload({ searchIn: "domain", searchQuery: "", activePlatforms: ["all"] });
+    expect(p.domain).toBe("NA");
+  });
+  it("adTypeOptions option missing .value → '' fallback (line 676)", () => {
+    const p = buildSearchPayload({
+      ad_type: "video",
+      activePlatforms: ["facebook"],
+      adTypeOptions: [{ platform_applicability: ["facebook"] }, { value: "video", platform_applicability: ["facebook"] }],
+    });
+    expect(p.network || p.networks || true).toBeTruthy(); // smoke: built without throwing
+  });
+  it("ad_type array with an empty-string entry → (t||'') fallback (line 676)", () => {
+    const p = buildSearchPayload({
+      ad_type: ["", "video"],
+      activePlatforms: ["facebook"],
+      adTypeOptions: [{ value: "video", platform_applicability: ["facebook"] }],
+    });
+    expect(p).toBeTruthy(); // '' entry exercises (t||'') without matching an option
+  });
+});

@@ -459,4 +459,89 @@ describe("Masonry > remeasureDomBottom + effectiveHeight", () => {
     expect(container.querySelectorAll(".masonry-item").length).toBe(3);
     if (original) Object.defineProperty(window, "devicePixelRatio", original);
   });
+
+  it("autoHeight=true → omits fixed height in gsap positioning (line 228/247 {} branch)", () => {
+    setMq("(min-width:1280px)", true);
+    const { container } = render(
+      <Masonry
+        items={sampleItems}
+        renderItem={(i) => <div>{i.id}</div>}
+        autoHeight
+        measuredHeights={{ 1: 120, 2: 220, 3: 160 }}
+      />,
+    );
+    act(() => {
+      roInstances[0].trigger([{ contentRect: { width: 800, height: 600 } }]);
+    });
+    expect(container.querySelectorAll(".masonry-item").length).toBe(3);
+  });
+
+  it("appended items after mount use the infinite-scroll fromTo branch (line 247)", () => {
+    setMq("(min-width:1280px)", true);
+    const { container, rerender } = render(
+      <Masonry items={sampleItems} renderItem={(i) => <div>{i.id}</div>} />,
+    );
+    act(() => {
+      roInstances[0].trigger([{ contentRect: { width: 800, height: 600 } }]);
+    });
+    // Second render appends new items → hasMounted.current is true → else-branch fromTo
+    act(() => {
+      rerender(
+        <Masonry
+          items={[...sampleItems, { id: 4, height: 90 }, { id: 5, height: 130 }]}
+          renderItem={(i) => <div>{i.id}</div>}
+        />,
+      );
+    });
+    expect(container.querySelectorAll(".masonry-item").length).toBe(5);
+  });
+
+  it("appended items with autoHeight → omits height in infinite-scroll branch (247 {} side)", () => {
+    setMq("(min-width:1280px)", true);
+    const { container, rerender } = render(
+      <Masonry items={sampleItems} renderItem={(i) => <div>{i.id}</div>} autoHeight
+        measuredHeights={{ 1: 120, 2: 220, 3: 160 }} />,
+    );
+    act(() => {
+      roInstances[0].trigger([{ contentRect: { width: 800, height: 600 } }]);
+    });
+    act(() => {
+      rerender(
+        <Masonry
+          items={[...sampleItems, { id: 6, height: 90 }]}
+          renderItem={(i) => <div>{i.id}</div>}
+          autoHeight
+          measuredHeights={{ 1: 120, 2: 220, 3: 160, 6: 100 }}
+        />,
+      );
+    });
+    expect(container.querySelectorAll(".masonry-item").length).toBe(4);
+  });
+
+  it("remeasureDomBottom updates domMaxBottom when item bottoms exceed it (lines 180/182)", () => {
+    setMq("(min-width:1280px)", true);
+    const { container } = render(
+      <Masonry items={sampleItems} renderItem={(i) => <div>{i.id}</div>} />,
+    );
+    act(() => {
+      roInstances[0].trigger([{ contentRect: { width: 800, height: 600 } }]);
+    });
+    // Give the item elements a measurable bottom so remeasureDomBottom's
+    // `bottom > measuredMax` is true and setDomMaxBottom commits a new value.
+    const origBCR = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () {
+      if (this.hasAttribute && this.hasAttribute("data-masonry-key")) {
+        return { top: 0, bottom: 500, left: 0, right: 0, width: 0, height: 500 };
+      }
+      return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 };
+    };
+    // The item-observing ResizeObserver (created in the effect at src line ~308)
+    // calls remeasureDomBottom when triggered.
+    const itemRO = roInstances.find((ro) => ro.targets.some((t) => t.hasAttribute?.("data-masonry-key")));
+    act(() => {
+      itemRO.trigger([]);
+    });
+    Element.prototype.getBoundingClientRect = origBCR;
+    expect(container.querySelectorAll(".masonry-item").length).toBe(3);
+  });
 });

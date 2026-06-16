@@ -179,6 +179,128 @@ describe("api > fetchAds frontend safety-net sort", () => {
   });
 });
 
+describe("api > fetchAds payload-flag double-map else-ifs (1388-1394)", () => {
+  // These sortBy values are recognised by buildSearchPayload's SORT_MAP (so the
+  // payload._sort flag is set) but are NOT in fetchAds' SORT_BY_FIELD_MAP, so the
+  // first `if` misses and execution falls into the payload-flag else-if chain.
+  function makeRes(ads) { return { ok: true, status: 200, json: async () => ({ data: ads }) }; }
+
+  it("'ad_running_days' → running_longest_sort else-if (1388)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, days_running: 5 }, { ad_id: 2, days_running: 50 },
+    ]));
+    expect((await api.fetchAds({ sortBy: "ad_running_days" })).ads[0].id).toBe(2);
+  });
+  it("'sort_likes' → likes_sort else-if (1389)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, likes: 5 }, { ad_id: 2, likes: 50 },
+    ]));
+    expect((await api.fetchAds({ sortBy: "sort_likes" })).ads[0].id).toBe(2);
+  });
+  it("'comments_sort' → comments_sort else-if (1390)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, comment: 5 }, { ad_id: 2, comment: 50 },
+    ]));
+    expect((await api.fetchAds({ sortBy: "comments_sort" })).ads[0].id).toBe(2);
+  });
+  it("'shares_sort' → shares_sort else-if (1391)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, share: 5 }, { ad_id: 2, share: 50 },
+    ]));
+    expect((await api.fetchAds({ sortBy: "shares_sort" })).ads[0].id).toBe(2);
+  });
+  it("'impressions_sort' → impression_sort else-if (1392)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, impression: 5 }, { ad_id: 2, impression: 50 },
+    ]));
+    expect((await api.fetchAds({ sortBy: "impressions_sort" })).ads[0].id).toBe(2);
+  });
+  it("popularity_range filter (no sortBy) → popularity_sort else-if (1393)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, popularity: 5 }, { ad_id: 2, popularity: 50 },
+    ]));
+    const out = await api.fetchAds({ popularity_range: [10, 90], activePlatforms: ["all"] });
+    expect(out.ads[0].id).toBe(2);
+  });
+  it("adBudget range filter (no sortBy) → adBudget_sort else-if (1394)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, ad_budget: 5 }, { ad_id: 2, ad_budget: 50 },
+    ]));
+    const out = await api.fetchAds({ adBudget: [10, 90], activePlatforms: ["all"] });
+    expect(out.ads[0].id).toBe(2);
+  });
+  it("MAPPED_NUMERIC popularity sort with a null value sinks last (1419/1445/1446)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, popularity: null }, { ad_id: 2, popularity: 50 },
+    ]));
+    const out = await api.fetchAds({ sortBy: "popularity" });
+    expect(out.ads[0].id).toBe(2); // non-null first, null sinks
+  });
+  it("json without data key → empty ads (1358 `|| []`)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ meta: {} }) });
+    const out = await api.fetchAds();
+    expect(out.ads).toEqual([]);
+  });
+  it("date sort: ad missing the field → toTs returns 0 (line 1399 !v)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1 }, { ad_id: 2, last_seen: "2026-01-01" },
+    ]));
+    const out = await api.fetchAds();
+    expect(out.ads[0].id).toBe(2); // missing-date ad → 0 → sinks
+  });
+  it("date sort: numeric ms timestamp (>=1e10) not multiplied (line 1400)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, last_seen: 1700000000000 },
+      { ad_id: 2, last_seen: 1800000000000 },
+    ]));
+    const out = await api.fetchAds();
+    expect(out.ads[0].id).toBe(2);
+  });
+  it("RAW numeric sort: non-numeric string → null via Number(NaN) (line 1433)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, likes: "abc" }, { ad_id: 2, likes: 50 },
+    ]));
+    const out = await api.fetchAds({ sortBy: "likes" });
+    expect(out.ads[0].id).toBe(2);
+  });
+  it("MAPPED days_running sort with a null runningDays sinks last (1445 null branch)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, first_seen: "bad", last_seen: "bad" }, // runningDays → null
+      { ad_id: 2, days_running: 30 },
+    ]));
+    const out = await api.fetchAds({ sortBy: "running_longest" });
+    expect(out.ads[0].id).toBe(2);
+  });
+  it("MAPPED popularity sort with nulls in both positions (1419 both null directions)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, popularity: 50 },
+      { ad_id: 2, popularity: null },
+      { ad_id: 3, popularity: 10 },
+      { ad_id: 4, popularity: null },
+    ]));
+    const out = await api.fetchAds({ sortBy: "popularity" });
+    // non-null (50,10) first, nulls sink to the end
+    expect(out.ads.slice(0, 2).map(a => a.id)).toEqual([1, 3]);
+  });
+  it("sortBy='domain_sort' → no sort-chain flag matches → default last_seen (1399 else)", async () => {
+    // domain_sort sets payload.domain_sort (not in fetchAds' flag chain) and is not in
+    // SORT_BY_FIELD_MAP, so execution falls through every else-if to the default.
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, last_seen: "2025-01-01" },
+      { ad_id: 2, last_seen: "2026-01-01" },
+    ]));
+    const out = await api.fetchAds({ sortBy: "domain_sort" });
+    expect(out.ads[0].id).toBe(2); // default last_seen desc
+  });
+  it("accepts an AbortSignal as 2nd arg (line 1316 signal)", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([{ ad_id: 1 }]));
+    const ctrl = new AbortController();
+    const out = await api.fetchAds({}, { signal: ctrl.signal });
+    expect(out.ads.length).toBe(1);
+    expect(globalThis.fetch.mock.calls[0][1].signal).toBe(ctrl.signal);
+  });
+});
+
 describe("api > fetchAds error paths", () => {
   it("non-ok → throws", async () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 500 });

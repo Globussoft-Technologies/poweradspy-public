@@ -111,6 +111,7 @@ export const AnimatedThemeToggler = ({
 
   const handleClick = useCallback(() => {
     const button = buttonRef.current
+    /* v8 ignore next -- defensive: buttonRef is attached whenever the click handler can fire */
     if (!button) return
 
     const viewportWidth = window.visualViewport?.width ?? window.innerWidth

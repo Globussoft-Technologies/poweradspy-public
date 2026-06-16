@@ -68,6 +68,18 @@ describe("CategorySearchFilter", () => {
     expect(await findByText("Tech > AI")).toBeInTheDocument();
     expect(await findByText("Tech > Cloud")).toBeInTheDocument();
   });
+  it("VITE_PAS_API_BASE_URL unset → pasBase '' fallback (line 23)", async () => {
+    vi.stubEnv("VITE_PAS_API_BASE_URL", "");
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ matches: [] }) });
+    const { getByPlaceholderText } = render(
+      <CategorySearchFilter options={[]} selected={[]} onChange={() => {}} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search categories..."), { target: { value: "tech" } });
+    await act(async () => { await Promise.resolve(); });
+    // pasBase resolved to "" → request path is the relative /api/v1/common/catsearch
+    expect(String(globalThis.fetch.mock.calls[0][0])).toMatch(/^\/api\/v1\/common\/catsearch/);
+    vi.unstubAllEnvs();
+  });
   it("empty matches array → 'No matches found.'", async () => {
     globalThis.fetch.mockResolvedValueOnce({
       ok: true, json: async () => ({ matches: [] }),

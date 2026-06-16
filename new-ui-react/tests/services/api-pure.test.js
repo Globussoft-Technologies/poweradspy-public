@@ -159,6 +159,10 @@ describe("api > mapAdToCard", () => {
   it("runningDays: invalid dates → null", () => {
     expect(mapAdToCard({ first_seen: "bad", last_seen: "bad" }).runningDays).toBeNull();
   });
+  it("runningDays: days_running=0 falls through to date calc (line 330 else)", () => {
+    const out = mapAdToCard({ days_running: 0, first_seen: "2025-01-01", last_seen: "2025-01-05" });
+    expect(out.runningDays).toBe(4);
+  });
   it("runningDays: only first_seen set → null", () => {
     expect(mapAdToCard({ first_seen: "2025-01-01" }).runningDays).toBeNull();
   });
@@ -295,6 +299,44 @@ describe("api > mapAdToCard", () => {
   it("formatDate: unix timestamp (seconds) converted", () => {
     const out = mapAdToCard({ post_date: 1700000000 });
     expect(out.date).toMatch(/\d{4}/);
+  });
+  it("advertiserImage uses post_owner_image when present (line 229)", () => {
+    expect(mapAdToCard({ post_owner_image: "http://x/p.jpg" }).advertiserImage).toBe("http://x/p.jpg");
+  });
+  it("popularity object with non-positive value → null (line 309)", () => {
+    expect(mapAdToCard({ popularity: { current: 0 } }).popularity).toBeNull();
+    expect(mapAdToCard({ popularity: { current: "abc" } }).popularity).toBeNull();
+  });
+  it("popularity JSON string with non-positive value → null (line 317)", () => {
+    expect(mapAdToCard({ popularity: '{"current":0}' }).popularity).toBeNull();
+    expect(mapAdToCard({ popularity: '{"current":-5}' }).popularity).toBeNull();
+  });
+  it("calcEngPerDay: perDay rounds to 0 → null (line 220)", () => {
+    // total=1 over 10 days → round(0.1)=0 → perDay not >0 → null
+    expect(mapAdToCard({ likes: 1, days_running: 10 }).engPerDay).toBeNull();
+  });
+  it("videoUrl: quora with only video_url falls to second resolveNasUrl operand (line 242)", () => {
+    const out = mapAdToCard({ network: "quora", video_url: "/pasvideos/v.mp4" });
+    expect(out.videoUrl).toContain("v.mp4");
+  });
+  it("videoUrlFallback: non-quora → '' (line 245)", () => {
+    const out = mapAdToCard({ video_url: "/pasvideos/v.mp4" });
+    expect(out.videoUrlFallback).toBe("");
+  });
+  it("videoUrl: quora with neither image nor video → '' (242 video||'' right)", () => {
+    const out = mapAdToCard({ network: "quora" });
+    expect(out.videoUrl).toBe("");
+  });
+  it("videoUrlFallback: quora with image but no video → resolveNasUrl('') (245 video||'' right)", () => {
+    const out = mapAdToCard({ network: "quora", image_url_original: "/pasimages/i.jpg" });
+    expect(out.videoUrlFallback).toBe("");
+  });
+});
+
+describe("api > resolveNasUrl /stream non-leading-slash (line 75)", () => {
+  it("inserts '/' when /stream/ url does not start with '/'", () => {
+    // NAS_VIDEO_BASE_URL is '' in tests → result is '/' + url
+    expect(resolveNasUrl("vid/stream/y.mp4")).toBe("/vid/stream/y.mp4");
   });
 });
 

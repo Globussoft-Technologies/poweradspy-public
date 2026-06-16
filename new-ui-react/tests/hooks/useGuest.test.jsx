@@ -2,14 +2,16 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 
-const { fetchDashSpy, fetchSharedSpy } = vi.hoisted(() => ({
+const { fetchDashSpy, fetchSharedSpy, trackEventSpy } = vi.hoisted(() => ({
   fetchDashSpy: vi.fn(),
   fetchSharedSpy: vi.fn(),
+  trackEventSpy: vi.fn(),
 }));
 
 vi.mock("../../src/services/api", () => ({
   fetchDashboardState: fetchDashSpy,
   fetchSharedAd: fetchSharedSpy,
+  trackEvent: trackEventSpy,
 }));
 
 let GuestProvider, useGuest;
@@ -106,6 +108,13 @@ describe("useGuest > shareToken mode", () => {
     expect(result.current.uiState.activePlatforms).toEqual(["facebook"]);
   });
 
+  it("ad.adId present → trackEvent ad_id uses adId (line 107 first ?? operand)", async () => {
+    fetchSharedSpy.mockResolvedValue({ expired: false, ad: { adId: 99, network: "facebook" } });
+    renderHook(() => useGuest(), { wrapper: wrap({ shareToken: "sT" }) });
+    await act(async () => { await Promise.resolve(); });
+    expect(trackEventSpy).toHaveBeenCalledWith("guestView", expect.objectContaining({ ad_id: 99 }));
+  });
+
   it("expired → redirect", async () => {
     fetchSharedSpy.mockResolvedValue({ expired: true });
     renderHook(() => useGuest(), { wrapper: wrap({ shareToken: "sT" }) });
@@ -180,6 +189,48 @@ describe("useGuest > showGuestWarning", () => {
     const { result } = renderHook(() => useGuest(), { wrapper: wrap({}) });
     expect(result.current.isLoggedIn).toBe(false);
     vi.unstubAllEnvs();
+  });
+});
+
+describe("useGuest > publicLanding mode (line 41)", () => {
+  it("publicLanding → sets all-platforms uiState immediately, no fetch, loading false", () => {
+    const { result } = renderHook(() => useGuest(), { wrapper: wrap({ publicLanding: true }) });
+    expect(result.current.isPublicLanding).toBe(true);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.uiState).toBeTruthy();
+    expect(fetchDashSpy).not.toHaveBeenCalled();
+    expect(fetchSharedSpy).not.toHaveBeenCalled();
+  });
+  it("non-publicLanding effect early-returns (41 else)", () => {
+    // guestToken mode → publicLanding falsy → effect returns at line 41 without setting uiState
+    fetchDashSpy.mockResolvedValue({ expired: false, uiState: { activePlatforms: ["facebook"] } });
+    const { result } = renderHook(() => useGuest(), { wrapper: wrap({ guestToken: "gT" }) });
+    expect(result.current.isPublicLanding).toBe(false);
+  });
+});
+
+describe("useGuest > LOGIN_URL module-load default (line 8)", () => {
+  it("VITE_AMEMBER_LOGIN_URL unset → falls back to default URL", async () => {
+    vi.stubEnv("VITE_AMEMBER_LOGIN_URL", "");
+    vi.resetModules();
+    ({ GuestProvider, useGuest } = await import("../../src/hooks/useGuest.jsx"));
+    // expired guest token → redirect uses the (defaulted) LOGIN_URL
+    fetchDashSpy.mockResolvedValue({ expired: true });
+    renderHook(() => useGuest(), { wrapper: wrap({ guestToken: "gT" }) });
+    await act(async () => { await Promise.resolve(); });
+    expect(window.location.href).toContain("/amember/login");
+    vi.unstubAllEnvs();
+  });
+});
+
+describe("useGuest > closeLoginPopup (lines 129-130)", () => {
+  it("hides the login popup and clears the toast", () => {
+    const { result } = renderHook(() => useGuest(), { wrapper: wrap({}) });
+    act(() => { result.current.showGuestWarning("msg"); });
+    expect(result.current.toastMessage).toBe("msg");
+    act(() => { result.current.closeLoginPopup(); });
+    expect(result.current.showLoginPopup).toBe(false);
+    expect(result.current.toastMessage).toBeNull();
   });
 });
 

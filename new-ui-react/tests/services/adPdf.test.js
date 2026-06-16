@@ -340,6 +340,15 @@ describe("adPdf > unicode + long-word wrapping (lines 88-100, 104-105, 202-220)"
     expect(mockDoc.addImage).toHaveBeenCalled();
   });
 
+  it("ad.subtitle renders a body text block (line 300 subtitle branch)", async () => {
+    await downloadAdAsPdf({ advertiser: "Brand", network: "facebook", subtitle: "A subtitle body" });
+    expect(mockDoc.addImage).toHaveBeenCalled();
+  });
+  it("ad.adText (no subtitle) renders body block (line 300 adText branch)", async () => {
+    await downloadAdAsPdf({ advertiser: "Brand", network: "facebook", adText: "Some ad copy" });
+    expect(mockDoc.addImage).toHaveBeenCalled();
+  });
+
   it("multi-word unicode that exceeds widthPx wraps to multiple lines (104-105)", async () => {
     // mid-range measurement: small tokens fit, accumulated cur eventually overflows
     let calls = 0;

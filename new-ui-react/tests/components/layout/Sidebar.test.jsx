@@ -255,4 +255,24 @@ describe("Sidebar > guest restriction", () => {
     expect(showGuestWarning).toHaveBeenCalled();
     expect(clearAll).not.toHaveBeenCalled();
   });
+  it("filter change in guest mode with onRestricted calls it (line 50 onRestricted branch)", () => {
+    const onRestricted = vi.fn();
+    const showGuestWarning = vi.fn();
+    const guest = { isRestricted: true, showGuestWarning };
+    const sdui = { ...baseSdui, config: { sidebar: [{ _id: "d1", title: "T" }] }, setFilter: vi.fn() };
+    const { getByTestId } = render(<Sidebar {...build({ sdui, guest, onRestricted })} />);
+    fireEvent.click(getByTestId("schema-trigger-d1"));
+    expect(onRestricted).toHaveBeenCalled();
+    expect(showGuestWarning).not.toHaveBeenCalled();
+  });
+  it("clear in guest mode with onRestricted calls it (line 54 onRestricted branch)", () => {
+    const onRestricted = vi.fn();
+    const showGuestWarning = vi.fn();
+    const guest = { isRestricted: true, showGuestWarning };
+    const sdui = { ...baseSdui, totalActiveFilters: 1, clearAll: vi.fn() };
+    const { getByText } = render(<Sidebar {...build({ sdui, guest, onRestricted })} />);
+    fireEvent.click(getByText("clear_x_filters:1"));
+    expect(onRestricted).toHaveBeenCalled();
+    expect(showGuestWarning).not.toHaveBeenCalled();
+  });
 });

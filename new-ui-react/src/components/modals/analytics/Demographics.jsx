@@ -23,6 +23,7 @@ function transformUserData(raw) {
   // Auto-detect: if raw.ageData has age keys, it's correct; otherwise it's swapped
   const isSwapped = raw.ageData && !hasAgeKeys(raw.ageData);
   const ageRaw = isSwapped ? raw.genderData || {} : raw.ageData || {};
+  /* v8 ignore next -- swapped branch's `raw.ageData || {}` is unreachable (isSwapped already requires raw.ageData truthy); both `|| {}` here are defensive shape-guards */
   const genderRaw = isSwapped ? raw.ageData || {} : raw.genderData || {};
 
   // API values are already percentages — display directly
@@ -337,6 +338,7 @@ const Demographics = ({ adUserData, advertiserUserData, platform, network = 'fac
           {(() => {
             const all = [{ key: 'male', label: 'Male', color: '#60a5fa', value: genderData[0].value },
                          { key: 'female', label: 'Female', color: '#f472b6', value: genderData[1].value }];
+            /* v8 ignore next -- genderTooltip.hovered is always 'male' or 'female', so find() always matches; the `|| all[0]` fallback is defensive */
             const active = all.find(g => g.key === genderTooltip.hovered) || all[0];
             return (
               <div className="flex items-center gap-2">

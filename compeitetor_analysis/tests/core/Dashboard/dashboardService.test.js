@@ -122,9 +122,12 @@ vi.mock("moment", () => {
     subtract: () => m(),
     startOf: () => m(),
     endOf: () => m(),
+    utcOffset: () => m(),
     format: () => "2025-01-01 00:00:00",
     valueOf: () => 1000000,
   });
+  // nowIST() uses moment.utc().utcOffset("+05:30") — the static .utc must exist.
+  m.utc = () => m();
   return { default: m };
 });
 vi.mock("mongoose", () => ({

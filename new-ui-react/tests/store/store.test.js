@@ -48,6 +48,23 @@ describe("store/store > URL-strip behavior at import time", () => {
   });
 });
 
+describe("store/store > one-time activeTab cleanup at import time", () => {
+  it("strips stale activeTab from persist:root (lines 28-30)", async () => {
+    await loadStoreWithLocation(
+      "",
+      JSON.stringify({ activeTab: '"Newest"', activePage: '"ads"' }),
+    );
+    const after = JSON.parse(localStorage.getItem("persist:root"));
+    expect("activeTab" in after).toBe(false);
+    expect(after.activePage).toBe('"ads"');
+  });
+  it("no activeTab present → persist:root untouched (28 else)", async () => {
+    await loadStoreWithLocation("", JSON.stringify({ activePage: '"ads"' }));
+    const after = JSON.parse(localStorage.getItem("persist:root"));
+    expect(after).toEqual({ activePage: '"ads"' });
+  });
+});
+
 describe("store/store > exports", () => {
   it("exports store with ui reducer + dispatch/getState", async () => {
     const mod = await loadStoreWithLocation("");

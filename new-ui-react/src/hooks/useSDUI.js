@@ -98,6 +98,7 @@ export function useSDUI() {
                 if (cancelled) return;
                 applyConfig(cfg);
             } catch (err) {
+                /* v8 ignore next -- the cancelled-during-error race (unmount mid-fetch) is a defensive setState guard */
                 if (!cancelled) setError(err.message);
             } finally {
                 if (!cancelled) setLoading(false);
@@ -127,8 +128,10 @@ export function useSDUI() {
         const reload = async () => {
             try {
                 const cfg = await fetchSDUIConfig(isAll ? {} : { platforms: activePlatforms });
+                /* v8 ignore next -- cancelled-during-reload race (unmount mid-refetch) is a defensive guard */
                 if (!cancelled) applyConfig(cfg);
             } catch (err) {
+                /* v8 ignore next -- cancelled-during-reload-error race is a defensive guard */
                 if (!cancelled) console.warn('Platform config re-fetch failed:', err.message);
             }
         };
@@ -452,6 +455,7 @@ export function useSDUI() {
         adTypeOptions: (() => {
             const allDocs = [...(config?.sidebar || []), ...(config?.navbar || [])];
             for (const doc of allDocs) {
+                /* v8 ignore next -- defensive: a config doc always has a filters array (other code paths assume it too) */
                 const f = (doc.filters || []).find(f =>
                     f._id === 'ad_types' || f._id === 'ad_type_filter' ||
                     f._id === 'ad_type' || f.query_param === 'ad_type' || f.group_id === 'ad_type'

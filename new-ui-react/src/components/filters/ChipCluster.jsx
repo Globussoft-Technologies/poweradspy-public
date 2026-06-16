@@ -37,6 +37,7 @@ const ChipCluster = ({
   const POPOVER_MAX_W = 320;
   const reposition = useCallback(() => {
     const el = anchorRef.current;
+    /* v8 ignore next -- defensive: anchorRef is always attached when reposition runs */
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const left = Math.max(

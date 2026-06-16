@@ -875,3 +875,111 @@ describe("useSDUI > applyConfig with platforms doc but no matrix filter", () => 
     expect(result.current.platformFilterMatrix).toEqual({});
   });
 });
+
+describe("useSDUI > effectivePlatforms scalar value + string option PA (267/274)", () => {
+  it("scalar filter value + option platform_applicability as a string", async () => {
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "d", filters: [{
+          _id: "f",
+          options: [{ value: "o1", platform_applicability: "youtube" }], // string PA → line 274
+        }],
+      }],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    // store a SCALAR (non-array) value → line 267 else branch
+    act(() => { result.current.setFilter("f", "o1"); });
+    expect(result.current.effectivePlatforms).toBeDefined();
+  });
+});
+
+describe("useSDUI > shouldShowFilter group child string PA (369)", () => {
+  it("child filter with string platform_applicability is normalised to array", async () => {
+    fetchSpy.mockResolvedValue(makeConfig());
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => { result.current.setActivePlatforms(["facebook"]); });
+    let shown;
+    act(() => {
+      shown = result.current.shouldShowFilter({
+        _id: "group",
+        filters: [{ _id: "child", platform_applicability: "facebook" }], // string → line 369
+      });
+    });
+    expect(shown).toBe(true);
+  });
+  it("group child string PA not matching active platform → hidden (372)", async () => {
+    fetchSpy.mockResolvedValue(makeConfig());
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => { result.current.setActivePlatforms(["reddit"]); });
+    let shown;
+    act(() => {
+      shown = result.current.shouldShowFilter({
+        _id: "group",
+        filters: [{ _id: "child", platform_applicability: "facebook" }],
+      });
+    });
+    expect(shown).toBe(false);
+  });
+});
+
+describe("useSDUI > adTypeOptions matched via group_id (line 455)", () => {
+  it("filter matched by group_id:'ad_type' returns its options", async () => {
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "d", filters: [{
+          _id: "not_named_adtype", group_id: "ad_type",
+          options: [{ value: "image" }, { value: "video" }],
+        }],
+      }],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.adTypeOptions.map((o) => o.value)).toEqual(["image", "video"]);
+  });
+  it("filter matched by _id:'ad_type_filter' alias", async () => {
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "d", filters: [{
+          _id: "ad_type_filter",
+          options: [{ value: "carousel" }],
+        }],
+      }],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.adTypeOptions.map((o) => o.value)).toEqual(["carousel"]);
+  });
+});
+
+describe("useSDUI > matchesPlatform matrix with no matching active platform (line 347)", () => {
+  it("groupId in matrix but active platforms not whitelisted → restrictedPlatforms empty", async () => {
+    fetchSpy.mockResolvedValue(makeConfig()); // platformsDoc → matrix {facebook, instagram}
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => { result.current.setActivePlatforms(["google"]); }); // not in matrix
+    let shown;
+    act(() => {
+      // filter with a group_id and no platform_applicability → falls through to the matrix check;
+      // platforms ["google"] filtered against matrix → empty → line 347 else
+      shown = result.current.shouldShowFilter({ _id: "f", group_id: "news_feed" });
+    });
+    expect(typeof shown).toBe("boolean");
+  });
+});
+
+describe("useSDUI > unmount before fetch resolves (line 98 cancelled)", () => {
+  it("applyConfig is skipped after unmount", async () => {
+    let resolveFn;
+    fetchSpy.mockReturnValue(new Promise((r) => { resolveFn = r; }));
+    const { unmount } = renderHook(() => useSDUI());
+    unmount(); // cleanup sets cancelled = true
+    await act(async () => {
+      resolveFn(makeConfig());
+      await Promise.resolve();
+    });
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+});

@@ -46,7 +46,10 @@ function mockRes() {
 
 beforeEach(() => {
   axios.get.mockReset();
-  adCountAcrossSelectedNetworks.mockReset();
+  // getSystemHostMap (now called by systemsDetails/systemActive/systemStateChart)
+  // does adCountAcrossSelectedNetworks(...).catch(...), so it must return a promise
+  // by default. Per-test mockResolvedValueOnce still overrides this.
+  adCountAcrossSelectedNetworks.mockReset().mockResolvedValue([]);
   getDomainMetrics.mockReset();
   cache.get.mockReset();
   cache.set.mockReset();
@@ -316,6 +319,8 @@ describe("system-metrics > systemsDetails", () => {
 
   it("returns details with full prom payloads (cpu, ram, heartbeat, network)", async () => {
     cache.get.mockReturnValueOnce(undefined);
+    // getSystemHostMap → instantQuery (empty so host falls back to system name)
+    axios.get.mockResolvedValueOnce({ data: { data: { result: [] } } });
     // instantQuery details
     axios.get.mockResolvedValueOnce({ data: { data: { result: [{ metric: { hostname: "h", os: "linux", platform: "x", cpu_model: "c", cpu_cores: "8", total_storage_gb: "200", total_ram_gb: "16", is_cpu_usage_high: "True", is_ram_usage_high: "False", is_disk_usage_high: "True" } }] } } });
     // queryRange cpu
@@ -336,11 +341,8 @@ describe("system-metrics > systemsDetails", () => {
 
   it("handles empty results / falls back to defaults / status inactive", async () => {
     cache.get.mockReturnValueOnce(undefined);
-    axios.get.mockResolvedValueOnce({ data: { data: { result: [] } } }); // details
-    axios.get.mockResolvedValueOnce({ data: { data: { result: [] } } }); // cpu
-    axios.get.mockResolvedValueOnce({ data: { data: { result: [] } } }); // ram
-    axios.get.mockResolvedValueOnce({ data: { data: { result: [] } } }); // hb
-    axios.get.mockResolvedValueOnce({ data: { data: { result: [] } } }); // net
+    // All queries empty (getSystemHostMap instantQuery + details + cpu/ram/hb/net)
+    axios.get.mockResolvedValue({ data: { data: { result: [] } } });
     const res = mockRes();
     await systemsDetails({ body: { range: RANGE, system: "S1", steps: 1 } }, res);
     const payload = res.json.mock.calls[0][0];
@@ -430,13 +432,24 @@ describe("system-metrics > systemActive", () => {
 
   it("computes active vs inactive split from heartbeat", async () => {
     cache.get.mockReturnValueOnce(undefined);
-    adCountAcrossSelectedNetworks.mockResolvedValueOnce(["S1", "S2"]);
+    // Source now expects DB rows ({system_name, account_id}) and bridges system_id →
+    // hostname via account_id on the plugin series, then reads the hostname heartbeat.
+    adCountAcrossSelectedNetworks.mockResolvedValueOnce([
+      { system_name: "S1", account_id: "a1" },
+      { system_name: "S2", account_id: "a2" },
+    ]);
     axios.get
-      .mockResolvedValueOnce({ data: { data: { result: [{ metric: { server_name: "S3" } }] } } }) // plugin
+      // plugin: map hosts H1/H2 to accounts a1/a2 → systems S1/S2
       .mockResolvedValueOnce({ data: { data: { result: [
-        { metric: { server_name: "S1" }, values: [["1", "1"]] },
-        { metric: { server_name: "S2" }, values: [["1", "0"]] },
-      ] } } });
+        { metric: { server_name: "H1", account_id: "a1" } },
+        { metric: { server_name: "H2", account_id: "a2" } },
+      ] } } })
+      // system heartbeat: H1 active, H2 not present → S1 active, S2 inactive
+      .mockResolvedValueOnce({ data: { data: { result: [
+        { metric: { server_name: "H1" }, values: [["1", "1"]] },
+      ] } } })
+      // account heartbeat instantQuery: none active
+      .mockResolvedValueOnce({ data: { data: { result: [] } } });
     const res = mockRes();
     await systemActive({ body: { range: RANGE, network: "facebook", mode: "prod" } }, res);
     const payload = res.json.mock.calls[0][0];
@@ -471,16 +484,24 @@ describe("system-metrics > systemStateChart", () => {
   });
 
   it("404 when no data", async () => {
-    axios.get.mockResolvedValueOnce({ data: { data: { result: [] } } });
+    // systemStateChart now makes 3 axios calls: getSystemHostMap's instantQuery,
+    // then the system + account heartbeat queries. All empty → no data → 404.
+    axios.get.mockResolvedValue({ data: { data: { result: [] } } });
     const res = mockRes();
     await systemStateChart({ body: { range: RANGE, systemName: "S1" } }, res);
     expect(res.status).toHaveBeenCalledWith(404);
   });
 
   it("computes timeline with active/inactive periods", async () => {
-    axios.get.mockResolvedValueOnce({ data: { data: { result: [{ values: [
-      ["100", "1"], ["200", "1"], ["300", "0"], ["400", "1"],
-    ] }] } } });
+    axios.get
+      // getSystemHostMap → instantQuery (empty so host falls back to systemName)
+      .mockResolvedValueOnce({ data: { data: { result: [] } } })
+      // system heartbeat values
+      .mockResolvedValueOnce({ data: { data: { result: [{ values: [
+        ["100", "1"], ["200", "1"], ["300", "0"], ["400", "1"],
+      ] }] } } })
+      // account heartbeat (empty)
+      .mockResolvedValueOnce({ data: { data: { result: [] } } });
     const res = mockRes();
     await systemStateChart({ body: { range: RANGE, systemName: "S1" } }, res);
     const payload = res.json.mock.calls[0][0];

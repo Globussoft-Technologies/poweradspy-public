@@ -122,7 +122,7 @@ describe("services/gdn/controllers/adInsightsController > getGdnAdCountry", () =
     expect(out.data[0].country).toBe("Japan");
   });
 
-  it("ES fallback: null country in array preserved", async () => {
+  it("ES fallback: null country in array is filtered out", async () => {
     const db = {
       sql: null,
       elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
@@ -132,7 +132,8 @@ describe("services/gdn/controllers/adInsightsController > getGdnAdCountry", () =
     const out = await getGdnAdCountry(
       { body: { gdn_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     );
-    expect(out.data[0].country).toBeNull();
+    // null entries are skipped (if (!name) continue), so data is empty
+    expect(out.data).toEqual([]);
   });
 
   it("ES fallback: 0 hits → 401", async () => {
@@ -190,7 +191,7 @@ describe("services/gdn/controllers/adInsightsController > getGdnAdCountry", () =
     expect(db.elastic.search.mock.calls[0][0].index).toBe("gdn_search_mix");
   });
 
-  it("fixCountryIso: DR Congo + lower 'democratic republic of the congo' → CD", async () => {
+  it("fixCountryIso: DR Congo + lower 'democratic republic of the congo' → CD (deduped by ISO)", async () => {
     const db = { sql: { query: vi.fn(async () => [
       { country: "DR Congo", iso: "ZZ" },
       { country: "Democratic Republic of the Congo", iso: "ZZ" },
@@ -198,8 +199,9 @@ describe("services/gdn/controllers/adInsightsController > getGdnAdCountry", () =
     const out = await getGdnAdCountry(
       { body: { gdn_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     );
+    // both variants resolve to CD and are deduplicated by ISO → a single entry
+    expect(out.data.length).toBe(1);
     expect(out.data[0].iso).toBe("CD");
-    expect(out.data[1].iso).toBe("CD");
   });
 });
 

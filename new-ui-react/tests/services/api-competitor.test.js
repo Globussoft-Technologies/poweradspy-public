@@ -260,6 +260,54 @@ describe("CompetitorAPI > simple wrappers", () => {
       competitor_name: "C", competitor_url: "https://c.com",
     });
   });
+  it("listMembers", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.listMembers("u1");
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/members/list");
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({ user_id: "u1" });
+  });
+  it("addMember", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.addMember("u1", "Name", "e@x.com");
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/members/add");
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({ user_id: "u1", name: "Name", email: "e@x.com" });
+  });
+  it("updateMember spreads patch", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.updateMember("u1", "m1", { name: "New" });
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/members/update");
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({ user_id: "u1", member_id: "m1", name: "New" });
+  });
+  it("deleteMember", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.deleteMember("u1", "m1");
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/members/delete");
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({ user_id: "u1", member_id: "m1" });
+  });
+  it("getBrandCc", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.getBrandCc("u1", "p1");
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/brand-cc/get");
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({ user_id: "u1", project_id: "p1" });
+  });
+  it("setBrandCc", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.setBrandCc("u1", "p1", ["m1", "m2"]);
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/brand-cc/set");
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({ user_id: "u1", project_id: "p1", member_ids: ["m1", "m2"] });
+  });
+  it("renameAdvertiser (PATCH, wraps old name in array)", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.renameAdvertiser("u1", "Old", "New");
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/update-advertiser");
+    expect(globalThis.fetch.mock.calls[0][1].method).toBe("PATCH");
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({ user_id: "u1", advertiser: ["Old"], newadvertiser: "New" });
+  });
+  it("deleteCompetitor", async () => {
+    mockFetchResponse({ ok: true });
+    await api.CompetitorAPI.deleteCompetitor({ userId: "u1", advertiser: "adv", competitorId: "c1", competitorName: "C" });
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/delete-competitor");
+  });
 });
 
 describe("api > default export", () => {

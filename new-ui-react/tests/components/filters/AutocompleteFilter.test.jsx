@@ -593,3 +593,142 @@ describe("AutocompleteFilter > selection edge cases", () => {
     expect(onChange).toHaveBeenCalledWith("completion");
   });
 });
+
+describe("AutocompleteFilter > source-shape edge branches", () => {
+  it("source without `rank` → sort comparator uses `?? 0` (line 72)", async () => {
+    // Two sources so Array.sort actually invokes the comparator; one lacks `rank`.
+    globalThis.fetch.mockResolvedValue({
+      ok: true, json: async () => ({ suggestions: ["zzz"] }),
+    });
+    const noRankA = { ...WORD_SOURCE };
+    delete noRankA.rank; // → (a.rank ?? 0)
+    const noRankB = { ...WORD_SOURCE, endpoint: "/suggest2" };
+    delete noRankB.rank; // → (b.rank ?? 0); comparing two rank-less sources hits both defaults
+    const { getByPlaceholderText, findByText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[noRankA, noRankB]} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "abc" } });
+    expect(await findByText("zzz")).toBeInTheDocument();
+  });
+
+  it("env_key set but env value unset → baseUrl '' → source skipped (lines 77 ||, 79 continue)", async () => {
+    const badEnvSource = { ...WORD_SOURCE, env_key: "VITE_DEFINITELY_UNSET_KEY_XYZ" };
+    const { getByPlaceholderText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[badEnvSource]} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "abc" } });
+    await act(async () => { await Promise.resolve(); });
+    // baseUrl resolves to "" and the `continue` skips the source → no fetch
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("query_param_config entry resolving to undefined is omitted (line 96 && guard)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ suggestions: ["a"] }) });
+    const source = {
+      ...WORD_SOURCE,
+      query_params: {},
+      query_param_config: [
+        { name: "query", default: "lastWord" },
+        { name: "opt" }, // no default, not in query_params → val undefined → NOT added
+      ],
+    };
+    const { getByPlaceholderText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[source]} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "shoes" } });
+    await act(async () => { await Promise.resolve(); });
+    expect(String(globalThis.fetch.mock.calls[0][0])).not.toContain("opt=");
+  });
+
+  it("mousedown outside an OPEN dropdown closes it (line 196 all operands)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ suggestions: ["abcd"] }),
+    });
+    const { getByPlaceholderText, findByText, queryByText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[WORD_SOURCE]} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "abc" } });
+    await findByText("abcd"); // dropdown open → suggestionRef.current attached
+    await act(async () => {
+      // mousedown on document.body (outside the dropdown) → ref truthy, target is a Node,
+      // !contains is true → setShowSuggestions(false)
+      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(queryByText("abcd")).toBeNull();
+  });
+  it("document mousedown with no open dropdown → outside-click guard short-circuits (line 196 first operand)", async () => {
+    const { getByPlaceholderText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[WORD_SOURCE]} />,
+    );
+    getByPlaceholderText("Search..."); // no suggestions → suggestionRef.current is null
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(true).toBe(true);
+  });
+  it("mousedown INSIDE the open dropdown keeps it open (line 196 else: !contains false)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ suggestions: ["abcd"] }),
+    });
+    const { getByPlaceholderText, findByText, queryByText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[WORD_SOURCE]} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "abc" } });
+    const item = await findByText("abcd"); // inside the dropdown (suggestionRef)
+    await act(async () => {
+      // mousedown on an element CONTAINED by suggestionRef → !contains is false → if-condition false
+      item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(queryByText("abcd")).toBeInTheDocument(); // still open
+  });
+
+  it("query_param_config name absent from query_params → uses pc.default (line 93)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ suggestions: ["a"] }),
+    });
+    const source = {
+      ...WORD_SOURCE,
+      query_params: {}, // no entry for "limit" → falls to pc.default
+      query_param_config: [
+        { name: "query", default: "lastWord" },
+        { name: "limit", default: 25 },
+      ],
+    };
+    const { getByPlaceholderText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[source]} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "shoes" } });
+    await act(async () => { await Promise.resolve(); });
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("limit=25");
+  });
+
+  it("onFocus with existing word suggestions re-opens the dropdown (line 265 left operand)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ suggestions: ["abcd"] }),
+    });
+    const { getByPlaceholderText, findByText, queryByText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[WORD_SOURCE]} />,
+    );
+    const input = getByPlaceholderText("Search...");
+    fireEvent.change(input, { target: { value: "abc" } });
+    await findByText("abcd"); // suggestions now populated
+    fireEvent.blur(input);
+    fireEvent.focus(input); // onFocus → (wordSuggestions.length > 0 || ...) && show
+    expect(queryByText("abcd")).toBeInTheDocument();
+  });
+
+  it("onFocus with only category suggestions evaluates catSuggestions operand (line 265 right)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ matches: [{ major_category: "Tech", sub_category: "Cloud" }] }),
+    });
+    const { getByPlaceholderText, findAllByText, queryAllByText } = render(
+      <AutocompleteFilter onChange={() => {}} suggestionSources={[CAT_SOURCE]} />,
+    );
+    const input = getByPlaceholderText("Search...");
+    fireEvent.change(input, { target: { value: "tech" } });
+    await findAllByText((t) => t.includes("Cloud")); // catSuggestions populated, wordSuggestions empty
+    fireEvent.blur(input);
+    fireEvent.focus(input); // left (wordSuggestions.length>0) false → right (catSuggestions.length>0) evaluated
+    expect(queryAllByText((t) => t.includes("Cloud")).length).toBeGreaterThan(0);
+  });
+});

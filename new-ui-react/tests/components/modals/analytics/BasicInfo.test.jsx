@@ -256,3 +256,31 @@ describe("BasicInfo > theme styling", () => {
     expect(container.innerHTML).toMatch(/bg-gray-50/);
   });
 });
+
+describe("BasicInfo > multi-URL rows + redirect sanitize", () => {
+  it("a field with '||' renders the multi-URL block with a count (lines 245-279)", () => {
+    const { getByText, container } = render(
+      <BasicInfo platform="facebook"
+        adDetails={{ destination_url: "http://a.com||http://b.com", ad_url: "http://fb.com/post" }} />,
+    );
+    expect(getByText(/\(2\)/)).toBeInTheDocument();
+    expect(container.innerHTML).toContain("http://a.com");
+    expect(container.innerHTML).toContain("http://b.com");
+  });
+  it("multi-URL block in light theme (line 264 isLight branch)", () => {
+    useThemeMock.mockReturnValue({ theme: "light" });
+    const { getByText } = render(
+      <BasicInfo platform="facebook"
+        adDetails={{ destination_url: "http://a.com||http://b.com" }} />,
+    );
+    expect(getByText(/\(2\)/)).toBeInTheDocument();
+    useThemeMock.mockReturnValue({ theme: "dark" });
+  });
+  it("literal 'null' redirect string is blanked out (lines 76-77)", () => {
+    const { container } = render(
+      <BasicInfo platform="facebook"
+        adDetails={{ destination_url: "http://x.com", url: "null", ad_url: "http://fb.com/post" }} />,
+    );
+    expect(container.innerHTML).not.toContain(">null<");
+  });
+});

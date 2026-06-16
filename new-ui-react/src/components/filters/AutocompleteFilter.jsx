@@ -121,6 +121,7 @@ const AutocompleteFilter = ({
               const body = { ...(source.request_body || {}) };
               // Replace template variables in body
               if (body.query !== undefined)
+                /* v8 ignore next -- the fetch is gated on debouncedLastWord (derived from searchQuery), so searchQuery is always truthy here; the `|| debouncedLastWord` fallback is defensive */
                 body.query = searchQuery || debouncedLastWord;
               if (body.top_k === undefined) body.top_k = 5;
               res = await fetch(`${baseUrl}${source.endpoint}`, {
@@ -207,6 +208,7 @@ const AutocompleteFilter = ({
   const handleSelectWord = (word) => {
     suppressNextFetchRef.current = true;
     const words = searchQuery.trim().split(/\s+/);
+    /* v8 ignore next -- split() always yields at least one element, so words.length is always > 0; the guard is defensive */
     if (words.length > 0) words.pop();
     const prefix = words.length > 0 ? words.join(" ") + " " : "";
     const newQuery = prefix + word + " ";

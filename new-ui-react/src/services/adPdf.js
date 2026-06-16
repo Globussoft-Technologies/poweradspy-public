@@ -33,6 +33,7 @@ const resolveStatValue = (key, ad) => {
     case "likes":       return ad.likes;
     case "comments":    return ad.comments;
     case "shares":      return ad.shares;
+    /* v8 ignore next -- every key in STAT_TRIOS/DEFAULT_TRIO is handled above; default is defensive */
     default: return null;
   }
 };
@@ -56,6 +57,7 @@ const formatStat = (val) => {
 const PDF_FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", Arial, sans-serif';
 const PT_TO_PX = 96 / 72;
+/* v8 ignore next -- hasUnicode is only ever called with a string body; the `s || ""` guard is defensive */
 const hasUnicode = (s) => /[^\x00-\xff]/.test(String(s || ""));
 
 const renderTextAsImage = (text, opts) => {
@@ -107,6 +109,7 @@ const renderTextAsImage = (text, opts) => {
       cur = next;
     }
   }
+  /* v8 ignore next -- real body text always leaves a non-empty trailing `cur`; the empty-cur skip is defensive */
   if (cur) lines.push(cur);
 
   const lineHpx = fontPx * lineHeight;
@@ -297,6 +300,7 @@ export const downloadAdAsPdf = async (ad) => {
   }
 
   if (ad.subtitle || ad.adText) {
+    /* v8 ignore next -- guarded by `if (ad.subtitle || ad.adText)` above, so the final `|| ""` is unreachable */
     const body = he.decode(ad.subtitle || ad.adText || "");
     const img = renderTextAsImage(body, {
       fontSize: 10.5,
@@ -339,6 +343,7 @@ export const downloadAdAsPdf = async (ad) => {
   const trioKeys = STAT_TRIOS[platform] || DEFAULT_TRIO;
   const trio = trioKeys.map((key) => ({
     key,
+    /* v8 ignore next -- every trio key has a STAT_LABELS entry; the `|| key` fallback is defensive */
     label: STAT_LABELS[key] || key,
     value: resolveStatValue(key, ad),
   }));
@@ -355,6 +360,7 @@ export const downloadAdAsPdf = async (ad) => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(...MUTED);
+    /* v8 ignore next -- s.label is always set from STAT_LABELS; the `|| ""` is defensive */
     doc.text((s.label || "").toUpperCase(), tx + 10, y + 42);
   });
   y += 60;

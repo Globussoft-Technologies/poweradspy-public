@@ -1,6 +1,6 @@
 // Tests for the small fetch-based exports of src/services/api.js.
 // fetchGemini retry path skipped — undefined `delay()` source bug, see issue #246.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { getAuthTokenSpy, clearSessionSpy } = vi.hoisted(() => ({
   getAuthTokenSpy: vi.fn(() => "tk"),
@@ -94,6 +94,15 @@ describe("api > checkFor401 → handle401", () => {
     globalThis.fetch.mockResolvedValueOnce({ status: 401, ok: false, json: async () => ({}) });
     expect(await api.fetchPlanAccess()).toBeNull();
   });
+  it("401 on /guest-landing → silently ignored (line 18 third condition)", async () => {
+    Object.defineProperty(window, "location", {
+      writable: true, configurable: true,
+      value: { ...window.location, pathname: "/guest-landing", href: "" },
+    });
+    globalThis.fetch.mockResolvedValueOnce({ status: 401, ok: false, json: async () => ({}) });
+    expect(await api.fetchPlanAccess()).toBeNull();
+    expect(window.location.href).toBe("");
+  });
   it("_loggingOut guard prevents double redirect", async () => {
     globalThis.fetch
       .mockResolvedValueOnce({ status: 401, ok: false })
@@ -119,6 +128,30 @@ describe("api > fetchImageAsDataUrl", () => {
   it("non-ok → throws", async () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
     await expect(api.fetchImageAsDataUrl("http://x/img.png")).rejects.toThrow(/image-proxy 500/);
+  });
+  it("FileReader error → rejects (line 121)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, status: 200, blob: async () => new Blob(["x"]),
+    });
+    const OrigFR = global.FileReader;
+    class FailingFR {
+      readAsDataURL() { this.error = new Error("read fail"); this.onerror && this.onerror(); }
+    }
+    global.FileReader = FailingFR;
+    await expect(api.fetchImageAsDataUrl("http://x/img.png")).rejects.toThrow("read fail");
+    global.FileReader = OrigFR;
+  });
+  it("FileReader error with no .error → default message", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, status: 200, blob: async () => new Blob(["x"]),
+    });
+    const OrigFR = global.FileReader;
+    class FailingFR {
+      readAsDataURL() { this.onerror && this.onerror(); }
+    }
+    global.FileReader = FailingFR;
+    await expect(api.fetchImageAsDataUrl("http://x/img.png")).rejects.toThrow("FileReader failed");
+    global.FileReader = OrigFR;
   });
 });
 
@@ -158,6 +191,11 @@ describe("api > unHideAds", () => {
     await api.unHideAds({ network: "twitter", adId: 1, type: 2 });
     expect(globalThis.fetch.mock.calls[0][0]).toContain("/facebook/ads/un-hide");
   });
+  it("undefined network → facebook (line 425 `|| 'facebook'`)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
+    await api.unHideAds({ adId: 1, type: 2 });
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/facebook/ads/un-hide");
+  });
   it("non-ok → throws", async () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
     await expect(api.unHideAds({ network: "facebook", adId: 1, type: 2 })).rejects.toThrow(/un-hide failed/);
@@ -187,6 +225,11 @@ describe("api > fetchHiddenAndFavourites", () => {
   it("default network = facebook", async () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
     await api.fetchHiddenAndFavourites();
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/facebook/ads/getHiddenPostOwners");
+  });
+  it("unknown network → facebook route (line 454)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
+    await api.fetchHiddenAndFavourites("twitter");
     expect(globalThis.fetch.mock.calls[0][0]).toContain("/facebook/ads/getHiddenPostOwners");
   });
   it("thrown error → empty arrays", async () => {
@@ -357,6 +400,15 @@ describe("api > saveKeywordSearch", () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
     expect(await api.saveKeywordSearch({ value: "k", type: "keyword", network: "all" })).toBeNull();
   });
+  it("no token → returns null without fetching (line 2087)", async () => {
+    getAuthTokenSpy.mockReturnValue("");
+    vi.stubEnv("VITE_PAS_API_TOKEN", "");
+    globalThis.fetch.mockClear();
+    const out = await api.saveKeywordSearch({ value: "k", type: "keyword", network: "all" });
+    expect(out).toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
 });
 
 describe("api > createShareLink", () => {
@@ -398,6 +450,14 @@ describe("api > fetchSharedAd", () => {
     });
     const out = await api.fetchSharedAd("tok");
     expect(out).toEqual({ expired: true, ad: null, expiresAt: null });
+  });
+  it("json.network absent → falls back to ad.network (line 1963 ||)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => ({ ad: { ad_id: 5, network: "instagram" }, expires_at: "2025-12-31" }),
+    });
+    const out = await api.fetchSharedAd("tok");
+    expect(out.ad.id).toBe(5);
   });
   it("410 → throws with .expired+.status set", async () => {
     globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 410 });
@@ -485,6 +545,18 @@ describe("api > guestSearchAds", () => {
     expect(out.meta).toEqual({});
     expect(out.availableNetworks).toEqual([]);
   });
+  it("guestLimitReached:true propagated (line 2046)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ data: [{ ad_id: 1 }], meta: { guestLimitReached: true } }),
+    });
+    expect((await api.guestSearchAds("tok")).guestLimitReached).toBe(true);
+  });
+  it("json without data key → rawAds [] (line 2046 `|| []`)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ meta: {} }) });
+    const out = await api.guestSearchAds("tok");
+    expect(out.ads).toEqual([]);
+    expect(out.noDataMessage).toBe("No ads found");
+  });
   it("non-ok with message → throws message", async () => {
     globalThis.fetch.mockResolvedValueOnce({
       ok: false, status: 500, json: async () => ({ message: "guest-fail" }),
@@ -516,6 +588,16 @@ describe("api > getAdvertiserInsightsByDateRange", () => {
     });
     await api.getAdvertiserInsightsByDateRange({});
     expect(globalThis.fetch.mock.calls[0][0]).toContain("/facebook/ads/getAdvertiserInsightsByDateRange");
+  });
+  it("empty-string network → facebook via (network||'facebook') (line 1887)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    await api.getAdvertiserInsightsByDateRange({ network: "" });
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/facebook/ads/");
+  });
+  it("unknown network → facebook route fallback (line 1887)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    await api.getAdvertiserInsightsByDateRange({ network: "twitter" });
+    expect(globalThis.fetch.mock.calls[0][0]).toContain("/facebook/ads/");
   });
   it("status=400 → returns the parsed body (not thrown)", async () => {
     globalThis.fetch.mockResolvedValueOnce({
@@ -555,5 +637,63 @@ describe("api > fetchFreshTikTokVideoUrl", () => {
   it("error → null", async () => {
     globalThis.fetch.mockRejectedValueOnce(new Error("net"));
     expect(await api.fetchFreshTikTokVideoUrl("lib")).toBeNull();
+  });
+});
+
+describe("api > no-token branch: Authorization header omitted when getPASToken() falsy", () => {
+  beforeEach(() => {
+    // getPASToken() = getAuthToken() || VITE_PAS_API_TOKEN; both falsy → no auth header
+    getAuthTokenSpy.mockReturnValue("");
+    vi.stubEnv("VITE_PAS_API_TOKEN", "");
+  });
+  afterEach(() => { vi.unstubAllEnvs(); });
+  const noAuth = (callIdx = 0) => {
+    const h = globalThis.fetch.mock.calls[callIdx][1].headers || {};
+    expect(h.Authorization).toBeUndefined();
+  };
+
+  it("fetchImageAsDataUrl omits Authorization (line 113)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true, status: 200, blob: async () => new Blob(["x"]),
+    });
+    // FileReader in jsdom resolves; we only need the fetch headers asserted
+    await api.fetchImageAsDataUrl("http://x/y.jpg").catch(() => {});
+    noAuth();
+  });
+
+  it("fetchAds omits Authorization (lines 1316/1329)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [] }) });
+    await api.fetchAds({});
+    noAuth();
+  });
+
+  it("fetchAdsForExport omits Authorization (line 1493)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [] }) });
+    await api.fetchAdsForExport({});
+    noAuth();
+  });
+
+  it("fetchLandingAd omits Authorization (line 1515)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [] }) });
+    await api.fetchLandingAd("facebook", 1);
+    noAuth();
+  });
+
+  it("createShareLink omits Authorization (line 1915)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: { token: "t" } }) });
+    await api.createShareLink({ adId: 1, network: "facebook" });
+    noAuth();
+  });
+
+  it("createDashboardShare omits Authorization (line 1978)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: { token: "t" } }) });
+    await api.createDashboardShare({ uiState: {}, searchPayload: {} });
+    noAuth();
+  });
+
+  it("fetchFreshTikTokVideoUrl omits Authorization (line 2119)", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: { video_url: "v" } }) });
+    await api.fetchFreshTikTokVideoUrl("lib");
+    noAuth();
   });
 });
