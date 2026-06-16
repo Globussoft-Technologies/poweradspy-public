@@ -175,9 +175,10 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
 }
 
 /**
- * Resolve a stored (relative) NAS media path into an absolute servable URL,
- * using the SAME base (config.insertion.nas.mediaUrl) these files were uploaded to.
- * Already-absolute URLs (http/https) are returned unchanged. Empty/falsy → returned as-is.
+ * Resolve a stored (relative) NAS media path into an absolute servable URL, using the
+ * SAME base (config.insertion.nas.mediaUrl) these files were uploaded to. Additive helper
+ * consumed by the OCR/OCB lease endpoints. Already-absolute URLs (http/https) are returned
+ * unchanged. Empty/falsy → returned as-is.
  *
  * @param {string} storedPath - relative path stored in the DB (e.g. '/pas-dev/.../x.jpg')
  * @returns {string} absolute URL, or the input unchanged when it can't/needn't be resolved

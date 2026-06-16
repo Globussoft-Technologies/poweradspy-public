@@ -1009,6 +1009,8 @@ tags:
     description: YouTube destination-lander scraping pipeline (get_youtubeid_for_lander, upload_blackhat_image_zip, insert_html_content_lander). Scraper-facing; unauthenticated. Patches youtube_ads_data ES.
   - name: Facebook Landers
     description: Facebook destination-lander scraping pipeline (getAdwithCountryCode, uploadFileToServer, insertHtmlRedirectCountry). Scraper-facing; unauthenticated. Patches search_mix ES.
+  - name: Facebook OCR
+    description: Facebook image OCB (object/celebrity/brand) and OCR (text) pipeline (getFBImageUrl, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes facebook_ad_variants + patches search_mix ES. Every response is HTTP 200 — outcome is in the body code.
   - name: Google Landers
     description: Google (gtext) destination-lander scraping pipeline (get_ads_for_blackhat, upload_gtext_blackhat, insert_html_content). Scraper-facing; unauthenticated. Patches google_ads_data ES.
   - name: GDN Landers
@@ -2497,6 +2499,93 @@ paths:
       responses:
         '200': { description: Lander stored }
         '400': { description: Ad not found / validation failed }
+
+  # ═══════════════════════════════════════════
+  # FACEBOOK OCR / OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/facebook/ocr/getFBImageUrl:
+    get:
+      tags: [Facebook OCR]
+      summary: Lease a batch of Facebook image ads queued for OCB/OCR
+      description: >-
+        Hands out up to 20 IMAGE ads (seen in the last 10 days, newest first), resolves each
+        image_url to an absolute NAS URL, and flips the batch to image_url_status=2 (in-progress)
+        so the next call does not return the same ads. status=0 → OCB queue (object/celebrity/brand);
+        status=4 → OCR queue (text), which also returns the existing image_ocr. The legacy `field`
+        param is accepted but ignored (status drives the queue). No auth. HTTP is always 200 — the
+        real outcome is the body `code`.
+      parameters:
+        - in: query
+          name: status
+          required: true
+          schema: { type: integer, enum: [0, 4], example: 0 }
+          description: 0 = OCB queue, 4 = OCR queue
+        - in: query
+          name: field
+          required: false
+          schema: { type: string, example: object }
+          description: Legacy param — accepted but not used.
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty/validation, 401 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Url fetched successfully }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 130931 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/fb/adImage/202606/101886.jpg" }
+                        image_ocr: { type: string, nullable: true, description: Only present when status=4 }
+                  exe_time: { type: number, example: 0.01 }
+
+  /api/v1/facebook/ocr/update-image-info:
+    post:
+      tags: [Facebook OCR]
+      summary: Persist OCB/OCR results back to MySQL + Elasticsearch
+      description: >-
+        Writes scraper output to facebook_ad_variants (keyed by facebook_ad_id) and mirrors it into
+        search_mix. status=1 (OCB done) writes object/celebrity/brand (+ _ru/_fr/_sp/_exactly) and
+        stamps object_update_date; status=4 (OCR done) additionally writes the image_ocr family and
+        stamps ocr_updated_date; status=2 re-queues (image_url_status → 3 if any column is null, else 1).
+        ⚠ Overwrite, not append — object/celebrity/brand_logo are replaced every call (omitting one sets
+        it to NULL); ocr is the exception (kept if omitted). SQL and ES writes are independent. No auth;
+        HTTP always 200 (outcome in body `code`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id]
+              properties:
+                ad_id: { type: integer, example: 130955, description: internal facebook_ad.id }
+                status: { type: integer, enum: [1, 2, 4], example: 4, description: 1=OCB done, 4=OCR done, 2=re-queue/partial }
+                object: { type: string, nullable: true, example: "shoe||bottle", description: "||-delimited; overwrite" }
+                celebrity: { type: string, nullable: true, example: "", description: "||-delimited; overwrite" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "||-delimited; overwrite" }
+                ocr: { type: string, nullable: true, example: "Limited offer||Buy now", description: "||-delimited; kept if omitted" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Data Updated Successfully }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
+                invalidAd: { summary: No variant row, value: { code: 400, message: Please enter valid ad_id } }
+                notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: ad not found } }
 
   # ═══════════════════════════════════════════
   # GOOGLE LANDERS
