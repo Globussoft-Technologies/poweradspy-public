@@ -102,6 +102,9 @@ async function createApp() {
   // Common cross-network API
   app.use('/api/v1/common', require('./services/common/routes/commonRoutes'));
 
+  // Email service — unsubscribe / resubscribe (public; aMember + SendGrid global suppression)
+  app.use('/api/v1/email', require('./services/email/routes/emailRoutes'));
+
 
   // SDUI Service (ported from Go SDUI-Backend — kept on /api, no versioning yet)
   app.use('/api', createSduiRouter());

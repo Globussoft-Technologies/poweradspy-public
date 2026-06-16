@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import config from "config";
 import logger from "../../resources/logs/logger.log.js";
-import { applyWebhookEvent } from "./emailAudit.js";
+import { applyWebhookEvent, recordCustomUnsubscribe } from "./emailAudit.js";
 
 /**
  * SendGrid Event Webhook receiver (NEW — Feature 2, Phase 3).
@@ -72,4 +72,17 @@ export async function handleSendgridWebhook(req, res) {
   logger.info(`[sgWebhook] processed ${events.length} event(s)${verdict.skipped ? " (unverified)" : ""}`);
 }
 
-export default { handleSendgridWebhook };
+/**
+ * Record a custom unsubscribe (from the platform's own unsubscribe endpoint) as
+ * an `email_send_events` row so the admin dashboard's Unsubscribed tile counts
+ * it. Called server-to-server by pas_node_api's email service. Public.
+ * Body/query: { email, mail_type? }
+ */
+export async function recordUnsubscribeEvent(req, res) {
+  const email = req.body?.email || req.query?.email || null;
+  if (!email) return res.status(400).json({ message: "email is required" });
+  const r = await recordCustomUnsubscribe({ email, mail_type: req.body?.mail_type || null });
+  return res.status(r.ok ? 200 : 500).json({ message: r.ok ? "recorded" : "failed to record", ...r });
+}
+
+export default { handleSendgridWebhook, recordUnsubscribeEvent };

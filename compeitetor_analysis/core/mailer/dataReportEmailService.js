@@ -6,6 +6,7 @@ import logger from "../../resources/logs/logger.log.js";
 import { getDataReportStats } from "./dataReportStatsService.js";
 import { newSendId, logSend } from "./emailAudit.js";
 import { isBlacklisted, BLACKLISTED_SKIP_REASON } from "./bounceGuard.js";
+import { unsubscribeToken } from "./unsubscribeToken.js";
 
 /**
  * Data-report email (NEW, standalone).
@@ -223,7 +224,7 @@ class DataReportEmailService {
     // back here after authenticating.
     const createProjectUrl = appUrl ? `${appUrl}projects` : "#";
     const unsubscribeLink = appUrl
-      ? `${appUrl}facebook/unsubscribe-page?email=${encodeURIComponent(variables.email || "")}&page=dataReport`
+      ? `${appUrl}facebook/unsubscribe-page?email=${encodeURIComponent(variables.email || "")}&sig=${unsubscribeToken(variables.email)}&page=dataReport`
       : "#";
 
     // Hero "Active platforms" must match the number of network ROWS actually

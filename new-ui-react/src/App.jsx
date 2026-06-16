@@ -43,6 +43,7 @@ import AllProjects from "./components/all-projects/AllProjects";
 import SavedAdsPage from "./components/ads/SavedAdsPage";
 import ChatbotWidget from "./components/shared/ChatbotWidget";
 import NotificationPermissionPrompt from "./components/layout/NotificationPermissionPrompt";
+import UnsubscribePage from "./components/UnsubscribePage";
 
 const USE_SAMPLE_DATA = false;
 
@@ -118,6 +119,17 @@ const isSafeDeepLink = (p) =>
   DEEP_LINK_SAFE_PATHS.has(p.split('?')[0]);
 
 const AppWrapper = () => {
+  // Standalone public unsubscribe page (linked from every report email's footer:
+  // /facebook/unsubscribe-page?email=...). Handled FIRST — before any dashboard
+  // or /{network}/{adId} analytics routing — so it never gets parsed as an ad URL.
+  if (/\/unsubscribe-page\/?$/.test(window.location.pathname)) {
+    const _p = new URLSearchParams(window.location.search);
+    // NOTE: the signed token rides as `sig`, NOT `token` — `token` collides with
+    // the auth bootstrap (useAuth) which treats ?token= as a login JWT and strips
+    // the query on load, wiping the email.
+    return <UnsubscribePage email={_p.get("email") || ""} token={_p.get("sig") || ""} page={_p.get("page") || ""} />;
+  }
+
   // /guest or /share without token → redirect to login
   if (routeToken?.type === "invalid") {
     window.location.href = AMEMBER_LOGIN_REDIRECT;

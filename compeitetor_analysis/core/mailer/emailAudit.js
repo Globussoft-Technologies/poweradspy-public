@@ -32,6 +32,45 @@ export function dataReportSendId(date, email) {
 }
 
 /**
+ * Record an unsubscribe that happened through OUR custom unsubscribe endpoint
+ * (not a SendGrid webhook). Writes an `email_send_events` row so the admin
+ * dashboard's "Unsubscribed" tile — which counts unsubscribe/group_unsubscribe
+ * events — reflects it too (the SendGrid suppression-list panel already does).
+ * Best-effort; never throws.
+ * @param {{ email: string, mail_type?: string|null }} args
+ */
+export async function recordCustomUnsubscribe({ email, mail_type = null } = {}) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e.includes("@")) return { ok: false, error: "invalid email" };
+  try {
+    // Idempotent: one unsubscribe event per email. The unsubscribe page
+    // auto-fires on every load/refresh, so without this guard each refresh would
+    // add another row and inflate the dashboard's Unsubscribed tile.
+    const existing = await EmailSendEvent.findOne({
+      email: e,
+      event_type: { $in: ["unsubscribe", "group_unsubscribe"] },
+    }).select("_id").lean();
+    if (existing) return { ok: true, deduped: true };
+
+    await EmailSendEvent.create({
+      event_id: newSendId(),
+      send_id: null,
+      mail_type,
+      email: e,
+      event_type: "unsubscribe",
+      event_ts: new Date(),
+      reason: "custom unsubscribe",
+      sg_message_id: null,
+      raw: { source: "custom-unsubscribe" },
+    });
+    return { ok: true };
+  } catch (err) {
+    logger.error(`[emailAudit] recordCustomUnsubscribe failed: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
  * Pre-create `queued` (processing) rows for every recipient of a run. Bulk +
  * resume-safe (duplicate send_ids on a resumed run are ignored). Best-effort —
  * never throws.

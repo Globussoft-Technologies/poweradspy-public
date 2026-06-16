@@ -1055,9 +1055,94 @@ tags:
     description: Server health check
   - name: Admin User Activity
     description: Admin-level user counts from aMember and Elasticsearch activity index
+  - name: Email
+    description: Email unsubscribe / resubscribe (aMember unsubscribed flag + SendGrid global suppression)
 
 # ─── Paths ──────────────────────────────────────────────────
 paths:
+
+  # ═══════════════════════════════════════════
+  # EMAIL — unsubscribe / resubscribe
+  # ═══════════════════════════════════════════
+  /api/v1/email/unsubscribe:
+    post:
+      tags: [Email]
+      summary: Unsubscribe an email address
+      description: |
+        Opts an address out of ALL PowerAdSpy mailings. Runs two steps in parallel:
+        adds the address to SendGrid's **global unsubscribe suppression** (stops
+        delivery from every sender) and sets **aMember `unsubscribed = 1`** (so the
+        daily data-report cron skips it). Public — no auth — so the unsubscribe link
+        in an email works without a logged-in session. Best-effort: if one step
+        fails the other still applies; per-step status is returned.
+      security: []
+      parameters:
+        - in: query
+          name: email
+          required: false
+          schema: { type: string, format: email }
+          description: Alternative to the JSON body (direct-link friendly).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email, example: user@example.com }
+      responses:
+        '200':
+          description: Unsubscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: You have been unsubscribed }
+                  email: { type: string, example: user@example.com }
+                  amember: { type: object, example: { ok: true, user_id: 281 } }
+                  sendgrid: { type: object, example: { ok: true } }
+        '400':
+          description: Missing email
+        '502':
+          description: Both aMember and SendGrid steps failed
+    get:
+      tags: [Email]
+      summary: Unsubscribe via direct link (?email=)
+      description: Same as POST but reads `?email=` from the query — for the unsubscribe link in mail.
+      security: []
+      parameters:
+        - in: query
+          name: email
+          required: true
+          schema: { type: string, format: email }
+      responses:
+        '200': { description: Unsubscribed }
+        '400': { description: Missing email }
+
+  /api/v1/email/resubscribe:
+    post:
+      tags: [Email]
+      summary: Resubscribe an email address
+      description: |
+        Reverses an unsubscribe — removes the address from SendGrid's global
+        unsubscribe list and sets aMember `unsubscribed = 0`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email, example: user@example.com }
+      responses:
+        '200': { description: Resubscribed }
+        '400': { description: Missing email }
+        '502': { description: Both steps failed }
 
   # ═══════════════════════════════════════════
   # FACEBOOK INSERTION

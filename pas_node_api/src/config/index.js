@@ -289,6 +289,22 @@ const config = {
     fromName: getVal(fileConfig.sendgrid?.fromName, 'SENDGRID_FROM_NAME') || 'PowerAdSpy',
   },
 
+  // compeitetor_analysis API base (e.g. https://competitor.poweradspy.com/api). Used
+  // by the unsubscribe flow to record an email_send_events row there so the admin
+  // dashboard's Unsubscribed tile reflects it. Optional — empty disables that step.
+  competitorAnalysis: {
+    apiUrl: getVal(fileConfig.competitorAnalysis?.apiUrl, 'COMPETITOR_ANALYSIS_API_URL') || '',
+  },
+
+  // Shared secret to verify signed email-unsubscribe links (HMAC-SHA256 of the
+  // email). MUST equal the value compeitetor_analysis signs with (config
+  // `unsubscribe_secret` / env UNSUBSCRIBE_SECRET) so a token minted in the mail
+  // verifies here. When set, the unsubscribe API rejects requests without a valid
+  // token — so the page works ONLY from a real mail link, not a guessed URL.
+  unsubscribe: {
+    secret: getVal(fileConfig.unsubscribe?.secret, 'UNSUBSCRIBE_SECRET') || '',
+  },
+
   firebase: {
     enabled: getVal(fileConfig.firebase?.enabled, 'FIREBASE_ENABLED', toBool),
     projectId: getVal(fileConfig.firebase?.projectId, 'FIREBASE_PROJECT_ID'),

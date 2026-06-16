@@ -5,6 +5,7 @@ import config from "config";
 import logger from "../../resources/logs/logger.log.js";
 import { newSendId, logSend } from "./emailAudit.js";
 import { isBlacklisted, BLACKLISTED_SKIP_REASON } from "./bounceGuard.js";
+import { unsubscribeToken } from "./unsubscribeToken.js";
 
 // Diagnostic logging gate — toggled via MAIL_DEBUG_LOG in config. Errors
 // (lines containing "❌" or "FAILED") still print even when the flag is
@@ -487,7 +488,7 @@ class emailService {
     const brandsHtml = visibleBrands.map((b) => buildBrandCard(b, appUrl)).join("");
     const ctaUrl = `${appUrl}project`;
     const manageUrl = `${appUrl}`;
-    const unsubscribeLink = `${appUrl}facebook/unsubscribe-page?email=${encodeURIComponent(variables.email || "")}&page=competitor`;
+    const unsubscribeLink = `${appUrl}facebook/unsubscribe-page?email=${encodeURIComponent(variables.email || "")}&sig=${unsubscribeToken(variables.email)}&page=competitor`;
     const dateLabel = variables.dateLabel || todayLabel();
 
     const replacements = {
@@ -695,7 +696,7 @@ class emailService {
       ? (visibleBrands[0].brand_name || "this brand")
       : `${visibleBrands.length} brands`;
     const brandsHtml = visibleBrands.map((b) => buildBrandCard(b, appUrl)).join("");
-    const unsubscribeLink = `${appUrl}facebook/unsubscribe-page?email=${encodeURIComponent(variables.email || "")}&page=competitor`;
+    const unsubscribeLink = `${appUrl}facebook/unsubscribe-page?email=${encodeURIComponent(variables.email || "")}&sig=${unsubscribeToken(variables.email)}&page=competitor`;
     const manageUrl = `${appUrl}`;
     const dateLabel = variables.dateLabel || todayLabel();
 

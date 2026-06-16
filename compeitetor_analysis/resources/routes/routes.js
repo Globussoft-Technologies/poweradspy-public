@@ -5,7 +5,7 @@ import dashboardController from "../../core/Dashboard/dashboardController.js";
 import monitorController from "../../core/Competitors/monitorController.js"
 import emailController from "../../core/mailer/emailController.js";
 import dataReportController from "../../core/mailer/dataReportController.js";
-import { handleSendgridWebhook } from "../../core/mailer/sendgridWebhookController.js";
+import { handleSendgridWebhook, recordUnsubscribeEvent } from "../../core/mailer/sendgridWebhookController.js";
 import advertiserController from "../../core/Advertisers/advertiserController.js";
 import memberController from "../../core/Members/memberController.js";
 import manualSendController from "../../core/mailer/manualSendController.js";
@@ -29,6 +29,10 @@ router.get("/data-report/recipients", dataReportController.recipients);
 
 // SendGrid Event Webhook (public — no auth; SendGrid posts delivery events here)
 router.post("/webhooks/sendgrid", handleSendgridWebhook);
+
+// Record a custom (platform) unsubscribe as an email_send_events row so the
+// admin dashboard's Unsubscribed tile reflects it. Public; called by pas_node_api.
+router.post("/email-events/unsubscribe", recordUnsubscribeEvent);
 
 // ── Admin-triggered single-recipient send (NEW, additive — never touches
 //    the existing /active-competitor-contacts or /data-report/send paths).

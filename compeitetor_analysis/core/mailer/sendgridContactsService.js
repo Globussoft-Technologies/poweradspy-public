@@ -188,3 +188,48 @@ export async function getSubscribedContacts(opts = {}) {
     unsubscribed: allEmails.length - subscribed.length,
   };
 }
+
+/**
+ * Add address(es) to the GLOBAL unsubscribe suppression list on THIS SendGrid
+ * account — the same account that SENDS the report mails. Once here SendGrid
+ * refuses delivery to them from every send path, and they show in the
+ * suppression panel. Must run with the SENDER's key (this service's key), not a
+ * different app's key, or the suppression lands on the wrong account.
+ * Idempotent. @param {string|string[]} emails
+ */
+export async function addGlobalUnsubscribe(emails) {
+  const list = (Array.isArray(emails) ? emails : [emails])
+    .map((e) => String(e || "").trim().toLowerCase())
+    .filter((e) => e.includes("@"));
+  if (!list.length) return { ok: false, added: 0, error: "no valid email" };
+  try {
+    await sgClient.request({
+      method: "POST",
+      url: "/v3/asm/suppressions/global",
+      body: { recipient_emails: list },
+    });
+    return { ok: true, added: list.length };
+  } catch (e) {
+    const msg = e?.response?.body ? JSON.stringify(e.response.body) : e.message;
+    logger.error(`addGlobalUnsubscribe failed: ${msg}`);
+    return { ok: false, added: 0, error: msg };
+  }
+}
+
+/** Remove an address from the global unsubscribe list (resubscribe). 404 = ok. */
+export async function removeGlobalUnsubscribe(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e.includes("@")) return { ok: false, error: "no valid email" };
+  try {
+    await sgClient.request({
+      method: "DELETE",
+      url: `/v3/asm/suppressions/global/${encodeURIComponent(e)}`,
+    });
+    return { ok: true };
+  } catch (err) {
+    if (err?.code === 404 || err?.response?.statusCode === 404) return { ok: true };
+    const msg = err?.response?.body ? JSON.stringify(err.response.body) : err.message;
+    logger.error(`removeGlobalUnsubscribe failed: ${msg}`);
+    return { ok: false, error: msg };
+  }
+}
