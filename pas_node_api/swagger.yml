@@ -1013,6 +1013,16 @@ tags:
     description: Facebook image OCB (object/celebrity/brand) and OCR (text) pipeline (getFBImageUrl, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes facebook_ad_variants + patches search_mix ES. Every response is HTTP 200 — outcome is in the body code.
   - name: GDN OCR
     description: GDN image OCB (object/celebrity/brand) and OCR (text) pipeline (getGDNImageUrl, insert-GDN-imageUrl-data). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report patches gdn_search_mix ES FIRST (normalized ||-joined strings) then writes gdn_ad_variants. Every response is HTTP 200 — outcome is in the body code.
+  - name: Native OCR
+    description: Native image OCB (object/celebrity/brand) and OCR (text) pipeline (getNativeImageUrl, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes native_ad_variants + patches native_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
+  - name: Quora OCR
+    description: Quora image OCB (object/celebrity/brand) and OCR (text) pipeline (getQuoraImageUrl, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes quora_ad_variants + patches quora_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
+  - name: Reddit OCR
+    description: Reddit image OCB (object/celebrity/brand) and OCR (text) pipeline (getImageUrl, updateImageDetails). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes reddit_ad_variants + patches reddit_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
+  - name: Pinterest OCR
+    description: Pinterest image OCB (object/celebrity/brand) and OCR (text) pipeline (get-pinterest-image-url, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes pinterest_ad_variants + patches pinterest_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
+  - name: Instagram OCR
+    description: Instagram image OCB (object/celebrity/brand) and OCR (text) pipeline (getImageUrl, updateImageDetails). Scraper-facing; unauthenticated. Lease returns IMAGE/STORIES ads seen in the last 10 days and drives off image_url_status (0=OCB, 4=OCR); report writes instagram_ad_variants + patches instagram_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
   - name: Google Landers
     description: Google (gtext) destination-lander scraping pipeline (get_ads_for_blackhat, upload_gtext_blackhat, insert_html_content). Scraper-facing; unauthenticated. Patches google_ads_data ES.
   - name: GDN Landers
@@ -2673,6 +2683,396 @@ paths:
                 updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
                 noVariant: { summary: No variant row, value: { code: 400, message: gdn_ad_id not present in gdn_ad_variants table } }
                 notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: Ad not found } }
+
+  # ═══════════════════════════════════════════
+  # NATIVE OCR / OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/native/ocr/getNativeImageUrl:
+    get:
+      tags: [Native OCR]
+      summary: Lease a batch of Native image ads queued for OCB/OCR
+      description: >-
+        Hands out up to 20 IMAGE ads (newest first), resolves each image_url to an absolute NAS URL,
+        and flips the batch to image_url_status=2 (in-progress) so the next call does not return the
+        same ads. status=0 → OCB queue; status=4 → OCR queue (also returns image_ocr). No auth.
+        HTTP is always 200 — the real outcome is the body `code`.
+      parameters:
+        - in: query
+          name: status
+          required: true
+          schema: { type: integer, enum: [0, 4], example: 0 }
+          description: 0 = OCB queue, 4 = OCR queue
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty/validation, 401 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Url fetched successfully }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 265633 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/native/adImage/202606/265633.jpg" }
+                        image_ocr: { type: string, nullable: true, description: Only present when status=4 }
+                  exe_time: { type: number, example: 0.01 }
+
+  /api/v1/native/ocr/update-image-info:
+    post:
+      tags: [Native OCR]
+      summary: Persist OCB/OCR results back to MySQL + Elasticsearch
+      description: >-
+        Writes scraper output to native_ad_variants (keyed by native_ad_id) and mirrors it into
+        native_search_mix. status=1 (OCB done) stamps object_update_date; status=4 (OCR done) writes the
+        image_ocr family and stamps ocr_updated_date; status=2 re-queues (image_url_status → 3 if any
+        column is null, else 1). ⚠ Overwrite, not append — object/celebrity/brand_logo are replaced every
+        call (omitting one sets it to NULL); ocr is kept if omitted. SQL and ES writes are independent.
+        No auth; HTTP always 200 (outcome in body `code`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id]
+              properties:
+                ad_id: { type: integer, example: 265633, description: internal native_ad.id }
+                status: { type: integer, enum: [1, 2, 4], example: 4, description: 1=OCB done, 4=OCR done, 2=re-queue/partial }
+                object: { type: string, nullable: true, example: "shoe||bottle", description: "||-delimited; overwrite" }
+                celebrity: { type: string, nullable: true, example: "", description: "||-delimited; overwrite" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "||-delimited; overwrite" }
+                ocr: { type: string, nullable: true, example: "Limited offer||Buy now", description: "||-delimited; kept if omitted" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Data Updated Successfully }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
+                invalidAd: { summary: No variant row, value: { code: 400, message: Please enter valid ad_id } }
+                notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: ad not found } }
+
+  # ═══════════════════════════════════════════
+  # QUORA OCR / OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/quora/ocr/getQuoraImageUrl:
+    get:
+      tags: [Quora OCR]
+      summary: Lease a batch of Quora image ads queued for OCB/OCR
+      description: >-
+        Hands out up to 20 IMAGE ads (newest first), resolves each image_url to an absolute NAS URL,
+        and flips the batch to image_url_status=2 (in-progress). status=0 → OCB queue; status=4 → OCR
+        queue (also returns image_ocr). No auth. HTTP is always 200 — outcome is the body `code`.
+      parameters:
+        - in: query
+          name: status
+          required: true
+          schema: { type: integer, enum: [0, 4], example: 0 }
+          description: 0 = OCB queue, 4 = OCR queue
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty/validation, 401 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Url fetched successfully }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 8509 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/quora/adImage/202606/8509.jpg" }
+                        image_ocr: { type: string, nullable: true, description: Only present when status=4 }
+                  exe_time: { type: number, example: 0.01 }
+
+  /api/v1/quora/ocr/update-image-info:
+    post:
+      tags: [Quora OCR]
+      summary: Persist OCB/OCR results back to MySQL + Elasticsearch
+      description: >-
+        Writes scraper output to quora_ad_variants (keyed by quora_ad_id) and mirrors it into
+        quora_search_mix. status=1 (OCB done) stamps object_update_date; status=4 (OCR done) writes the
+        image_ocr family and stamps ocr_updated_date; status=2 re-queues (image_url_status → 3 if any
+        column is null, else 1). ⚠ Overwrite, not append — object/celebrity/brand_logo are replaced every
+        call; ocr is kept if omitted. SQL and ES writes are independent. No auth; HTTP always 200.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id]
+              properties:
+                ad_id: { type: integer, example: 8509, description: internal quora_ad.id }
+                status: { type: integer, enum: [1, 2, 4], example: 4, description: 1=OCB done, 4=OCR done, 2=re-queue/partial }
+                object: { type: string, nullable: true, example: "shoe||bottle", description: "||-delimited; overwrite" }
+                celebrity: { type: string, nullable: true, example: "", description: "||-delimited; overwrite" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "||-delimited; overwrite" }
+                ocr: { type: string, nullable: true, example: "Limited offer||Buy now", description: "||-delimited; kept if omitted" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Data Updated Successfully }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
+                invalidAd: { summary: No variant row, value: { code: 400, message: Please enter valid ad_id } }
+                notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: ad not found } }
+
+  # ═══════════════════════════════════════════
+  # REDDIT OCR / OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/reddit/ocr/getImageUrl:
+    get:
+      tags: [Reddit OCR]
+      summary: Lease a batch of Reddit image ads queued for OCB/OCR
+      description: >-
+        Hands out up to 20 IMAGE ads (newest first), resolves each image_url to an absolute NAS URL,
+        and flips the batch to image_url_status=2 (in-progress). status=0 → OCB queue; status=4 → OCR
+        queue (also returns image_ocr). No auth. HTTP is always 200 — outcome is the body `code`.
+      parameters:
+        - in: query
+          name: status
+          required: true
+          schema: { type: integer, enum: [0, 4], example: 0 }
+          description: 0 = OCB queue, 4 = OCR queue
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty/validation, 401 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Url fetched successfully }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 30437 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/reddit/adImage/202606/30437.jpg" }
+                        image_ocr: { type: string, nullable: true, description: Only present when status=4 }
+                  exe_time: { type: number, example: 0.01 }
+
+  /api/v1/reddit/ocr/updateImageDetails:
+    post:
+      tags: [Reddit OCR]
+      summary: Persist OCB/OCR results back to MySQL + Elasticsearch
+      description: >-
+        Writes scraper output to reddit_ad_variants (keyed by reddit_ad_id) and mirrors it into
+        reddit_search_mix. status=1 (OCB done) stamps object_update_date; status=4 (OCR done) writes the
+        image_ocr family and stamps ocr_updated_date; any other status leaves image_url_status=0.
+        ⚠ Overwrite, not append — object/celebrity/brand_logo are replaced every call; ocr is kept if
+        omitted. SQL and ES writes are independent. No auth; HTTP always 200 (outcome in body `code`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id]
+              properties:
+                ad_id: { type: integer, example: 30437, description: internal reddit_ad.id }
+                status: { type: integer, enum: [1, 4], example: 4, description: 1=OCB done, 4=OCR done }
+                object: { type: string, nullable: true, example: "shoe||bottle", description: "||-delimited; overwrite" }
+                celebrity: { type: string, nullable: true, example: "", description: "||-delimited; overwrite" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "||-delimited; overwrite" }
+                ocr: { type: string, nullable: true, example: "Limited offer||Buy now", description: "||-delimited; kept if omitted" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: " Image Data Updated Successfully" }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: " Image Data Updated Successfully" } }
+                missingAdId: { summary: Validation, value: { code: 400, message: ad_id is not available } }
+                noVariant: { summary: No variant row, value: { code: 400, message: Some Error occured } }
+                notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: ad not found } }
+
+  # ═══════════════════════════════════════════
+  # PINTEREST OCR / OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/pinterest/ocr/get-pinterest-image-url:
+    get:
+      tags: [Pinterest OCR]
+      summary: Lease a batch of Pinterest image ads queued for OCB/OCR
+      description: >-
+        Hands out up to 20 IMAGE ads (newest first), resolves each image_url to an absolute NAS URL,
+        and flips the batch to image_url_status=2 (in-progress). status=0 → OCB queue; status=4 → OCR
+        queue (also returns image_ocr). No auth. HTTP is always 200 — outcome is the body `code`.
+      parameters:
+        - in: query
+          name: status
+          required: true
+          schema: { type: integer, enum: [0, 4], example: 0 }
+          description: 0 = OCB queue, 4 = OCR queue
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty/validation, 401 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Url fetched successfully }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 107149 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/pint/adImage/202606/107149.jpg" }
+                        image_ocr: { type: string, nullable: true, description: Only present when status=4 }
+                  exe_time: { type: number, example: 0.01 }
+
+  /api/v1/pinterest/ocr/update-image-info:
+    post:
+      tags: [Pinterest OCR]
+      summary: Persist OCB/OCR results back to MySQL + Elasticsearch
+      description: >-
+        Writes scraper output to pinterest_ad_variants (keyed by pinterest_ad_id) and mirrors it into
+        pinterest_search_mix. status=1 (OCB done) stamps object_update_date; status=4 (OCR done) writes the
+        image_ocr family and stamps ocr_updated_date; status=2 re-queues (image_url_status → 3 if any
+        column is null, else 1). ⚠ Overwrite, not append — object/celebrity/brand_logo are replaced every
+        call; ocr is kept if omitted. SQL and ES writes are independent. No auth; HTTP always 200.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id]
+              properties:
+                ad_id: { type: integer, example: 107149, description: internal pinterest_ad.id }
+                status: { type: integer, enum: [1, 2, 4], example: 4, description: 1=OCB done, 4=OCR done, 2=re-queue/partial }
+                object: { type: string, nullable: true, example: "shoe||bottle", description: "||-delimited; overwrite" }
+                celebrity: { type: string, nullable: true, example: "", description: "||-delimited; overwrite" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "||-delimited; overwrite" }
+                ocr: { type: string, nullable: true, example: "Limited offer||Buy now", description: "||-delimited; kept if omitted" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Data Updated Successfully }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
+                invalidAd: { summary: No variant row, value: { code: 400, message: Please enter valid ad_id } }
+                notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: ad not found } }
+
+  # ═══════════════════════════════════════════
+  # INSTAGRAM OCR / OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/instagram/ocr/getImageUrl:
+    get:
+      tags: [Instagram OCR]
+      summary: Lease a batch of Instagram image ads queued for OCB/OCR
+      description: >-
+        Hands out up to 20 IMAGE/STORIES ads seen in the last 10 days (newest first), resolves each
+        image_url to an absolute NAS URL, and flips the batch to image_url_status=2 (in-progress).
+        status=0 → OCB queue; status=4 → OCR queue (also returns image_ocr). No auth. HTTP is always
+        200 — the real outcome is the body `code`.
+      parameters:
+        - in: query
+          name: status
+          required: true
+          schema: { type: integer, enum: [0, 4], example: 0 }
+          description: 0 = OCB queue, 4 = OCR queue
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty/validation, 401 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Url fetched successfully }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 147399 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/insta/adImage/202606/147399.jpg" }
+                        image_ocr: { type: string, nullable: true, description: Only present when status=4 }
+
+  /api/v1/instagram/ocr/updateImageDetails:
+    post:
+      tags: [Instagram OCR]
+      summary: Persist OCB/OCR results back to MySQL + Elasticsearch
+      description: >-
+        Writes scraper output to instagram_ad_variants (keyed by instagram_ad_id) and mirrors it into
+        instagram_search_mix. status=1 (OCB done) stamps object_update_date; status=4 (OCR done) writes the
+        image_ocr family and stamps ocr_updated_date; any other status resets image_url_status to 0.
+        Multi-value fields are normalized (||,/|| → |) and stored as JSON-array strings — the same value is
+        written to MySQL and every ES field (incl. _ru/_fr/_sp/_exactly). ⚠ Overwrite, not append —
+        object/celebrity/brand_logo are replaced every call; ocr is kept if omitted. SQL and ES writes are
+        independent. No auth; HTTP always 200 (outcome in body `code`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id]
+              properties:
+                ad_id: { type: integer, example: 147399, description: internal instagram_ad.id }
+                status: { type: integer, enum: [1, 4], example: 4, description: 1=OCB done, 4=OCR done }
+                object: { type: string, nullable: true, example: "car||sunglasses", description: "||-delimited; overwrite" }
+                celebrity: { type: string, nullable: true, example: "John Doe", description: "||-delimited; overwrite" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "||-delimited; overwrite" }
+                ocr: { type: string, nullable: true, example: "Buy now||Limited offer", description: "||-delimited; kept if omitted" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: " Image Data Updated Successfully" }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: " Image Data Updated Successfully" } }
+                noVariant: { summary: No variant row / missing ad_id, value: { code: 400, message: Some Error occurred } }
+                notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: ad not found } }
 
   # ═══════════════════════════════════════════
   # GOOGLE LANDERS
