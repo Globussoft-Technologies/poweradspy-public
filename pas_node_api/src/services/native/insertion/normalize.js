@@ -85,6 +85,11 @@ function normalizeNativeAd(ad) {
     out.ad_image = out.image_url_original ?? null;
   }
 
+  // phash: keep only a clean 16-hex perceptual dhash (lowercased); otherwise null
+  out.phash = (typeof out.phash === 'string' && /^[0-9a-f]{16}$/i.test(out.phash.trim()))
+    ? out.phash.trim().toLowerCase()
+    : null;
+
   return out;
 }
 

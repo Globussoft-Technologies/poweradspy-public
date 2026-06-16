@@ -152,6 +152,27 @@ async function updatePostOwner(exec, data, id) {
   ));
 }
 
+// Perceptual near-duplicate lookup: does THIS post owner already have a creative whose dhash is within
+// `maxHam` bits of phashHex? native_ad.phash stores the 64-bit dhash as BIGINT UNSIGNED; hamming = BIT_COUNT(XOR).
+// Scoped to one post_owner so distinct advertisers' similar creatives never collapse. Native ad_id stays MD5.
+async function getNearHashAd(exec, postOwnerName, phashHex, maxHam) {
+  const owner = typeof postOwnerName === 'string' ? postOwnerName.trim().toLowerCase() : '';
+  if (!owner) return { code: 400, data: null };
+  if (typeof phashHex !== 'string' || !/^[0-9a-f]{16}$/i.test(phashHex.trim())) return { code: 400, data: null };
+  const phashDec = BigInt('0x' + phashHex.trim().toLowerCase()).toString();
+  const ham = Number.isInteger(maxHam) ? maxHam : 4;
+  const po = found(await exec.query(
+    'SELECT id FROM native_ad_post_owners WHERE post_owner_lower = ? OR post_owner_name = ? LIMIT 1',
+    [owner, owner]
+  ));
+  if (po.code !== 200 || !po.data || !po.data[0]) return { code: 400, data: null };
+  const ownerId = po.data[0].id;
+  return found(await exec.query(
+    'SELECT id FROM native_ad WHERE post_owner_id = ? AND phash IS NOT NULL AND BIT_COUNT(phash ^ ?) <= ? LIMIT 1',
+    [ownerId, phashDec, ham]
+  ));
+}
+
 // ── native_country_only ────────────────────────────────────────────────────────
 
 async function getCountryOnly(exec, country) {
@@ -355,7 +376,7 @@ async function upsertNativeTranslation(exec, d) {
        ad_text = VALUES(ad_text),
        news_feed_description = VALUES(news_feed_description),
        ad_title = VALUES(ad_title)`,
-    [d.native_ad_id, d.ad_text ?? null, d.news_feed_description ?? null, d.ad_title ?? null]
+    [d.native_ad_id, d.ad_text ?? '', d.news_feed_description ?? '', d.ad_title ?? '']
   ));
 }
 
@@ -435,7 +456,7 @@ async function getPlacementUrlsList(exec, adId) {
 module.exports = {
   withTransaction,
   getAdByAdId, insertNativeAd, updateNativeAd, getJoinedAd, deleteAdCascade,
-  getPostOwner, insertPostOwner, updatePostOwner,
+  getPostOwner, insertPostOwner, updatePostOwner, getNearHashAd,
   getCountryOnly, insertCountryOnly,
   getCountry, insertCountry,
   getDomain, insertDomain,

@@ -27,6 +27,10 @@ const TRANSLATION_TIMEOUT_MS = 3000; // cap translation wait at 3s
 
 const ES_INDEX = 'native_search_mix';
 
+// Perceptual near-duplicate threshold: max Hamming distance between dhashes
+// for two ads (same post owner) to be treated as the same creative.
+const NEAR_HAM = Number(process.env.NATIVE_NEAR_HAM || 4);
+
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 async function processNativeAd(ad, ctx) {
@@ -66,6 +70,19 @@ async function processNativeAd(ad, ctx) {
 
   try {
     if (existing.code === 400) {
+      // Perceptual near-duplicate guard: the exact ad_id is new, but a visually
+      // identical creative from the same post owner may already exist (re-encoded
+      // image / different ad_id). If so, route to the UPDATE path on the match
+      // instead of inserting a duplicate.
+      let near = { code: 400 };
+      try {
+        if (n.post_owner && n.phash) near = await repo.getNearHashAd(sql, n.post_owner, n.phash, NEAR_HAM);
+      } catch (e) {
+        near = { code: 400 };
+      }
+      if (near.code === 200 && near.data && near.data[0]) {
+        return await updatePath(ctx, n, { translation, existingId: near.data[0].id, network });
+      }
       return await insertPath(ctx, n, { translation, network });
     }
     return await updatePath(ctx, n, { translation, existingId: existing.data[0].id, network });
@@ -186,6 +203,7 @@ async function insertPath(ctx, n, { translation, network }) {
       target_site_id:     targetSiteId,
     };
     if (String(n.platform) === '12' && n.system_id) adRow.system_id = n.system_id;
+    if (n.phash) adRow.phash = String(BigInt('0x' + n.phash));
 
     const nativeAdId = await repo.insertNativeAd(tx, adRow);
     if (!nativeAdId) {
