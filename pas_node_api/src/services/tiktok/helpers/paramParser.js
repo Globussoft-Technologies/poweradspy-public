@@ -121,6 +121,7 @@ function cleanAdsData(ads = []) {
       cleaned[key] = value;
     }
     if (cleaned.video_cover) cleaned.video_cover = withCdn(cleaned.video_cover);
+    if (cleaned.image_url) cleaned.image_url = withCdn(cleaned.image_url);
     // Convert CTR from ratio (0.0–1.0) to percentage (0–100) for frontend display
     if (cleaned.ctr != null && typeof cleaned.ctr === 'number') {
       cleaned.ctr = Math.round(cleaned.ctr * 100 * 100) / 100;

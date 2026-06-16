@@ -400,12 +400,13 @@ const FilterPillsCell = ({ pills }) => {
   );
 };
 
-const MAX_PLATFORMS = 2;
+const MAX_PLATFORMS_UI = 2;  // Show 2 platforms by default in UI
 
-const PlatformCell = ({ platforms }) => {
+const PlatformCell = ({ platforms, isExport = false }) => {
   const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? platforms : platforms.slice(0, MAX_PLATFORMS);
-  const hidden  = platforms.length - MAX_PLATFORMS;
+  const maxDisplay = isExport ? Infinity : MAX_PLATFORMS_UI;
+  const visible = expanded || isExport ? platforms : platforms.slice(0, maxDisplay);
+  const hidden  = Math.max(0, platforms.length - maxDisplay);
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: "3px", alignItems: "center" }}>
       {visible.map((p, i) => (
@@ -413,12 +414,12 @@ const PlatformCell = ({ platforms }) => {
           {p}
         </span>
       ))}
-      {!expanded && hidden > 0 && (
+      {!isExport && !expanded && hidden > 0 && (
         <button onClick={() => setExpanded(true)} style={{ background: "#e0e7ff", border: "1px solid #c7d2fe", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>
           +{hidden} more
         </button>
       )}
-      {expanded && hidden > 0 && (
+      {!isExport && expanded && hidden > 0 && (
         <button onClick={() => setExpanded(false)} style={{ background: "#f3f4f6", border: "1px solid #e5e7eb", color: "#6b7280", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", whiteSpace: "nowrap" }}>
           show less
         </button>
@@ -435,7 +436,7 @@ const SummaryTag = ({ text, bg, color, border }) => (
 
 const SummaryBar = ({ summaryStats }) => {
   const platforms       = (summaryStats?.platforms ?? []).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
-  const pagesVisited    = (summaryStats?.pages_visited ?? []);
+  const pagesVisited    = (summaryStats?.pages_visited ?? []).filter((p) => p.name !== "All Projects Dashboard");
   const searchCounts    = summaryStats?.search_counts ?? {};
   const actionCounts    = summaryStats?.action_counts ?? {};
 
@@ -923,9 +924,9 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {row.domain ?? "—"}
           </td>
-          <td style={{ padding: "10px 12px", overflow: "hidden" }}>
+          <td style={{ padding: "10px 12px", overflow: forceExpand ? "visible" : "hidden" }}>
             {row.platform ? (
-              <PlatformCell platforms={String(row.platform).split(',').map(p => p.trim()).filter(Boolean)} />
+              <PlatformCell platforms={String(row.platform).split(',').map(p => p.trim()).filter(Boolean)} isExport={forceExpand} />
             ) : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
           <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", textAlign: "left", whiteSpace: "nowrap" }}>
@@ -1160,7 +1161,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               <col style={{ minWidth: "100px" }} />
               <col style={{ minWidth: "100px" }} />
               <col style={{ minWidth: "90px" }} />
-              <col style={{ minWidth: "100px" }} />
+              <col style={{ minWidth: forceExpand ? "600px" : "200px" }} />
               <col style={{ minWidth: "70px" }} />
               <col style={{ minWidth: "120px" }} />
               <col style={{ minWidth: "280px" }} />

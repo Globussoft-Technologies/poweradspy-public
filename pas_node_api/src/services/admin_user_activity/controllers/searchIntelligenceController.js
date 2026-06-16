@@ -34,12 +34,13 @@ async function getIntelligenceStats(req, elastic, logger) {
       return { code: 500, message: 'Elasticsearch client not available' };
     }
 
-    const { from_date, to_date } = req.query;
+    const { from_date, to_date, prev_from_date, prev_to_date } = req.query;
 
     const DAY_S = 24 * 60 * 60;
 
-    let toTs, fromTs;
+    let toTs, fromTs, prevToTs, prevFromTs;
 
+    // Current period
     if (to_date && from_date) {
       toTs   = Math.floor(new Date(to_date).getTime()   / 1000);
       fromTs = Math.floor(new Date(from_date).getTime() / 1000);
@@ -66,13 +67,19 @@ async function getIntelligenceStats(req, elastic, logger) {
       fromTs = toTs - 7 * DAY_S;
     }
 
-    const cacheKey = `intelligence_stats_${fromTs}_${toTs}`;
+    // Previous period
+    if (prev_to_date && prev_from_date) {
+      prevToTs   = Math.floor(new Date(prev_to_date).getTime()   / 1000);
+      prevFromTs = Math.floor(new Date(prev_from_date).getTime() / 1000);
+    } else {
+      // Default: same duration as current, shifted back by one window
+      prevToTs   = fromTs - 1;
+      prevFromTs = prevToTs - (toTs - fromTs);
+    }
+
+    const cacheKey = `intelligence_stats_${fromTs}_${toTs}_${prevFromTs}_${prevToTs}`;
     const cached = getCache(cacheKey);
     if (cached) return cached;
-
-    // Previous window — same 7-day duration, shifted back by one window
-    const prevToTs   = fromTs - 1;
-    const prevFromTs = prevToTs - 7 * DAY_S;
 
     // High-volume flags always use real current time (not anchored on latest doc)
     const nowTs = Math.floor(Date.now() / 1000);
@@ -87,51 +94,49 @@ async function getIntelligenceStats(req, elastic, logger) {
       ], minimum_should_match: 1 } },
     ];
 
+    const currentPeriodQuery = {
+      index: 'user_activities',
+      body: {
+        size: 0,
+        query: { bool: { filter: baseFilter(fromTs, toTs) } },
+        aggs: {
+          active_users: { cardinality: { field: 'user.id' } },
+          unique_kw:   { cardinality: { field: 'search.keyword.keyword'    } },
+          unique_adv:  { cardinality: { field: 'search.advertiser.keyword' } },
+          unique_dom:  { cardinality: { field: 'search.domain.keyword'     } },
+        },
+      },
+    };
+
+    const previousPeriodQuery = {
+      index: 'user_activities',
+      body: {
+        size: 0,
+        query: { bool: { filter: baseFilter(prevFromTs, prevToTs) } },
+        aggs: {
+          active_users: { cardinality: { field: 'user.id' } },
+          unique_kw:   { cardinality: { field: 'search.keyword.keyword'    } },
+          unique_adv:  { cardinality: { field: 'search.advertiser.keyword' } },
+          unique_dom:  { cardinality: { field: 'search.domain.keyword'     } },
+        },
+      },
+    };
+
+    const highVolumeFlagsQuery = {
+      index: 'user_activities',
+      body: {
+        size: 0,
+        query: { bool: { filter: baseFilter(nowTs - DAY_S, nowTs) } },
+        aggs: {
+          per_user: { terms: { field: 'user.id', size: 10000 } },
+        },
+      },
+    };
+
     const [currResult, prevResult, flagResult] = await Promise.all([
-
-      // Current 7-day window
-      elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: baseFilter(fromTs, toTs) } },
-          aggs: {
-            // Total docs = total searches (all activity)
-            active_users: { cardinality: { field: 'user.id' } },
-            // Unique keywords from search.keyword + search.advertiser + search.domain
-            unique_kw:   { cardinality: { field: 'search.keyword.keyword'    } },
-            unique_adv:  { cardinality: { field: 'search.advertiser.keyword' } },
-            unique_dom:  { cardinality: { field: 'search.domain.keyword'     } },
-          },
-        },
-      }),
-
-      // Previous 7-day window — same shape
-      elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: baseFilter(prevFromTs, prevToTs) } },
-          aggs: {
-            active_users: { cardinality: { field: 'user.id' } },
-            unique_kw:   { cardinality: { field: 'search.keyword.keyword'    } },
-            unique_adv:  { cardinality: { field: 'search.advertiser.keyword' } },
-            unique_dom:  { cardinality: { field: 'search.domain.keyword'     } },
-          },
-        },
-      }),
-
-      // High-volume flags — users with > 500 docs in last 24h (any activity)
-      elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: baseFilter(nowTs - DAY_S, nowTs) } },
-          aggs: {
-            per_user: { terms: { field: 'user.id', size: 10000 } },
-          },
-        },
-      }),
+      elastic.search(currentPeriodQuery),
+      elastic.search(previousPeriodQuery),
+      elastic.search(highVolumeFlagsQuery),
     ]);
 
     const currAggs = getAggs(currResult);
@@ -428,6 +433,7 @@ async function getAllSearches(req, elastic, logger) {
     const {
       date_range = 'Last 90 days',
       from_date, to_date,
+      from_time, to_time,
       user, users, exclude_users,
       keyword, advertiser, domain,
       platform, ad_type, country,
@@ -441,8 +447,26 @@ async function getAllSearches(req, elastic, logger) {
     // Resolve time window
     let toTs, fromTs;
     if (from_date && to_date) {
-      toTs   = Math.floor(new Date(to_date).getTime()   / 1000);
-      fromTs = Math.floor(new Date(from_date).getTime() / 1000);
+      let fromDate, toDate;
+
+      // Check if from_date/to_date are ISO format (2026-03-18T15:00:00) or separate date+time
+      if (from_date.includes('T')) {
+        // ISO format: 2026-03-18T15:00:00 (sent as local time, parse without Z)
+        fromDate = new Date(from_date);
+        toDate = new Date(to_date);
+      } else {
+        // Separate date and time: from_date=2026-03-18, from_time=15:00:00
+        const fromTimeStr = from_time || '00:00:00';
+        const toTimeStr = to_time || '23:59:59';
+        fromDate = new Date(from_date + 'T' + fromTimeStr);
+        toDate = new Date(to_date + 'T' + toTimeStr);
+      }
+
+      fromTs = Math.floor(fromDate.getTime() / 1000);
+      toTs   = Math.floor(toDate.getTime()   / 1000);
+
+      const tzOffset = new Date().getTimezoneOffset() * 60;
+
     } else {
       const now = new Date();
       toTs = Math.floor(now.getTime() / 1000); // real current time (server clock)
@@ -935,7 +959,7 @@ async function getAllSearches(req, elastic, logger) {
         platform:        network,
         country,
         filter_type:     s['filterType'] ?? null,
-        ads_count:       s['adsCountOnSerach'] ?? null,
+        ads_count:       s['adsCountOnSerach'] ?? 0,
         filters_applied: [...new Set(filterPills)],
         other_activity,
       };
@@ -1533,27 +1557,103 @@ async function purgeOldActivities(req, elastic, logger) {
       };
     }
 
-    // Delete by query
-    const deleteResult = await elastic.deleteByQuery({
-      index: 'user_activities',
-      body: { query: rangeQuery },
-      conflicts: 'proceed',
-      refresh: true,
+    // Start deletion in background (non-blocking)
+    // Return immediately with a message that deletion has started
+    const deleteInBackground = async () => {
+      let deleted = 0;
+      let failures = 0;
+
+      try {
+        // Try ES 7.x+ API first
+        if (typeof elastic.deleteByQuery === 'function') {
+          const deleteResult = await elastic.deleteByQuery({
+            index: 'user_activities',
+            body: { query: rangeQuery },
+            conflicts: 'proceed',
+            refresh: true,
+          });
+          deleted = deleteResult?.deleted ?? deleteResult?.body?.deleted ?? 0;
+          failures = (deleteResult?.failures ?? deleteResult?.body?.failures ?? []).length;
+        } else {
+          // Fallback for ES 6.x: Use direct delete operation in batches
+          let from = 0;
+          const batchSize = 1000;
+          let continueDeleting = true;
+
+          while (continueDeleting) {
+            // Search for matching documents
+            const searchResult = await elastic.search({
+              index: 'user_activities',
+              body: {
+                query: rangeQuery,
+                size: batchSize,
+                from: from,
+                sort: [{ dateTime: 'asc' }]
+              },
+            });
+
+            const hits = searchResult.hits?.hits || searchResult.body?.hits?.hits || [];
+            if (hits.length === 0) {
+              continueDeleting = false;
+              break;
+            }
+
+            // Build bulk delete request with _type for ES 6.x compatibility
+            const bulkBody = [];
+            for (const hit of hits) {
+              bulkBody.push({
+                delete: {
+                  _index: 'user_activities',
+                  _type: hit._type || '_doc',
+                  _id: hit._id
+                }
+              });
+            }
+
+            // Execute bulk delete
+            if (bulkBody.length > 0) {
+              const bulkResult = await elastic.bulk({ body: bulkBody });
+              deleted += hits.length;
+              if (bulkResult.errors || (bulkResult.body && bulkResult.body.errors)) {
+                const items = bulkResult.items || bulkResult.body?.items || [];
+                failures += items.filter(item => item.delete?.error).length;
+              }
+            }
+
+            // If we got fewer docs than batch size, we're done
+            if (hits.length < batchSize) {
+              continueDeleting = false;
+            }
+          }
+
+          // Refresh index
+          try {
+            await elastic.indices.refresh({ index: 'user_activities' });
+          } catch (refreshErr) {
+            logger?.warn?.('Index refresh failed:', refreshErr.message);
+          }
+        }
+
+        logger?.info?.(`[purgeOldActivities] Background deletion completed: ${deleted} docs deleted, ${failures} failures`);
+      } catch (deleteErr) {
+        logger?.error?.('[purgeOldActivities] Background deletion failed:', deleteErr.message);
+      }
+    };
+
+    // Start the background deletion without waiting
+    deleteInBackground().catch(err => {
+      logger?.error?.('[purgeOldActivities] Uncaught error in background deletion:', err.message);
     });
 
-    const deleted = deleteResult?.deleted ?? deleteResult?.body?.deleted ?? 0;
-    const failures = (deleteResult?.failures ?? deleteResult?.body?.failures ?? []).length;
-
-    logger?.info?.(`[purgeOldActivities] Deleted ${deleted} docs older than ${DAYS} days. Failures: ${failures}`);
-
+    // Return immediately
     return {
-      code: 200,
-      message: `Deleted ${deleted} document(s) older than ${DAYS} days.`,
+      code: 202,
+      message: `Deletion started in background. Will delete ${cutoffTs} documents older than ${DAYS} days.`,
       data: {
+        status: 'DELETING',
         cutoff_timestamp: cutoffTs,
         cutoff_date: new Date(cutoffTs * 1000).toISOString(),
-        deleted,
-        failures,
+        message: 'Check server logs or query the index later to verify completion',
       },
     };
   } catch (err) {
@@ -2294,29 +2394,32 @@ const PLATFORM_FIELD_MAPPINGS = {
 };
 
 // Helper: Fetch ads count from platform-specific indices
-async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue, searchType, logger) {
+// startTime/endTime can be ISO strings or timestamps (in ms). If only dateStr provided, uses full day.
+async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue, searchType, logger, startTime = null, endTime = null) {
+
+
   if (!elastic || !platforms || platforms.length === 0) {
+    console.log('[fetchAdsCountByPlatform] Early return: elastic=' + !!elastic + ', platforms=' + (platforms ? platforms.length : 0));
     return 0;
   }
 
-  const dayStart = new Date(`${dateStr}T00:00:00Z`).getTime();
-  const dayEnd = new Date(`${dateStr}T23:59:59Z`).getTime();
+  
 
   let totalCount = 0;
 
   // Map platform names to their Elasticsearch index names
   const platformIndexMap = {
     facebook: 'search_mix',
-    instagram: 'search_mix',
-    google: 'search_mix',
-    gdn: 'search_mix',
+    instagram: 'instagram_search_mix',
+    google: 'google_ads_data',
+    gdn: 'gdn_search_mix',
     tiktok: 'tiktok_ads',
-    linkedin: 'search_mix',
-    youtube: 'search_mix',
-    reddit: 'search_mix',
-    pinterest: 'search_mix',
-    quora: 'search_mix',
-    native: 'search_mix',
+    linkedin: 'linkedin_ads_data',
+    youtube: 'youtube_ads_data',
+    reddit: 'reddit_search_mix',
+    pinterest: 'pinterest_search_mix',
+    quora: 'quora_search_mix',
+    native: 'native_search_mix',
   };
 
   // Query each platform's data
@@ -2330,19 +2433,59 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
         continue;
       }
 
+      // Determine the timestamp field based on platform
+      const platformName = platform.toLowerCase();
+      let timestampField = 'post_date'; // default for most platforms
+
+      // Platform-specific last_seen or similar fields
+      const timestampFieldMap = {
+        facebook: 'facebook_ad.last_seen',
+        instagram: 'instagram_ad.last_seen',
+        google: 'google_ad.last_seen',
+        gdn: 'gdn_ad.last_seen',
+        youtube: 'last_seen',
+        linkedin: 'linkedin_ad.last_seen',
+        reddit: 'reddit_ad.last_seen',
+        pinterest: 'pinterest_ad.last_seen',
+        quora: 'quora_ad.last_seen',
+        native: 'native_ad.last_seen',
+        tiktok: 'last_seen',
+      };
+
+      timestampField = timestampFieldMap[platformName] ;
+
+      // Convert milliseconds to string format for string-based range query
+      // Format: "YYYY-MM-DD HH:MM:SS"
+      // Since ms is already adjusted to local time, use getUTC* methods to get local values
+      const formatTimestampString = (input) => {
+        try{
+          return String(input).replace(/"/g, '').slice(0, 19).replace('T', ' ');
+        }catch(e){
+          console.log(e)
+        }
+        
+      };
+      // Convert timestamps to ISO string format if they're numbers
+   
+      const startStr = formatTimestampString(JSON.stringify(startTime));
+      const endStr = formatTimestampString(JSON.stringify(endTime));
+
+
       // Build query based on search type
       const baseQuery = {
         bool: {
           filter: [
-            { range: { post_date: { gte: dayStart, lte: dayEnd } } },
-            { term: { 'platform': platform.toLowerCase() } }
+            { range: { [timestampField]: { gte: startStr, lte: endStr } } }
           ],
           must: []
         }
       };
 
+      // Convert searchType to string to ensure proper comparison
+      const searchTypeStr = String(searchType);
+
       // Add search-specific query based on type
-      if (searchType === '1') {
+      if (searchTypeStr === '1') {
         // Keyword search
         const keywordFields = platformConfig.keyword;
         if (keywordFields && keywordFields.length > 0) {
@@ -2354,7 +2497,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
             }
           });
         }
-      } else if (searchType === '2') {
+      } else if (searchTypeStr === '2') {
         // Advertiser search
         const advertiserFields = platformConfig.advertiser;
         if (advertiserFields && advertiserFields.length > 0) {
@@ -2365,8 +2508,9 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
               fields: advertiserFields
             }
           });
+       
         }
-      } else if (searchType === '3') {
+      } else if (searchTypeStr === '3') {
         // Domain search - use wildcard
         const domainField = platformConfig.domain;
         if (domainField) {
@@ -2392,20 +2536,26 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
         continue;
       }
 
-
-      const esResult = await elastic.search({
+      // Log the Elasticsearch query being built
+      const esQuery = {
         index: indexName,
         body: {
           size: 0,
           query: baseQuery
         }
-      });
+      };
+
+
+      logger?.info?.('[fetchAdsCountByPlatform] Building ES query for platform:', { platform, index: indexName, searchType, searchValue, dateStr });
+
+      const esResult = await elastic.search(esQuery);
 
       const hits = esResult.hits || esResult.body?.hits;
       const count = typeof hits.total === 'object' ? hits.total.value : hits.total;
       totalCount += (count || 0);
 
-      logger?.info?.('[fetchAdsCountByPlatform]', { platform, date: dateStr, searchType, count: count || 0 });
+  
+      logger?.info?.('[fetchAdsCountByPlatform] Results:', { platform, date: dateStr, searchType, searchValue, count: count || 0 });
     } catch (err) {
       logger?.warn?.('[fetchAdsCountByPlatform] Failed for platform:', platform, 'Error:', err.message);
       // Continue with other platforms if one fails
@@ -2537,13 +2687,27 @@ async function getKeywordScrapingHistory(req, elastic, logger) {
       for (let i = 0; i < history.length; i++) {
         const run = history[i];
         try {
-          const adsCount = await fetchAdsCountByPlatform(elastic, uniquePlatforms, run.date, searchValue, type, logger);
+
+          // Use only the current run's platform(s) for this query
+          const runPlatforms = run.network ? [run.network] : uniquePlatforms;
+
+          let startTimeLocalMs = run.startTime;
+          let endtime = run.endTime
+            ? new Date(run.endTime).toISOString()
+            : new Date().toISOString().split('T')[0] + 'T23:59:59.000Z';
+          const adsCount = await fetchAdsCountByPlatform(elastic, runPlatforms, null, searchValue, searchType, logger, startTimeLocalMs, endtime);
+
+ 
           run.adsCount = adsCount;
-          logger?.info?.('[getKeywordScrapingHistory] Fetched ads count for', { date: run.date, adsCount });
+
+          logger?.info?.('[getKeywordScrapingHistory] Fetched ads count for', { startTime: run.startTime, endTime: run.endTime || 'now', adsCount, searchValue, searchType });
         } catch (err) {
-          logger?.warn?.('[getKeywordScrapingHistory] Failed to fetch ads count for date:', run.date, err.message);
+          
+          logger?.warn?.('[getKeywordScrapingHistory] Failed to fetch ads count for time range:', run.startTime, '-', run.endTime, err.message);
         }
       }
+    } else {
+      console.log('[getKeywordScrapingHistory] Skipping ads count fetch. Elastic:', !!elastic, 'Platforms:', uniquePlatforms.length);
     }
 
     // Get the first searched date from the MongoDB document

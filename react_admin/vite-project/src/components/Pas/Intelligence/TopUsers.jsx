@@ -106,6 +106,19 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
   const [appliedTo, setAppliedTo]         = useState("");
   const datePickerRef                     = useRef(null);
 
+  // Period selection for stats cards (independent from Top Users table)
+  const [currentPeriod, setCurrentPeriod]   = useState("Last 7 days");
+  const [previousPeriod, setPreviousPeriod] = useState("Last 7 days");
+  const [currentDatePickerOpen, setCurrentDatePickerOpen] = useState(false);
+  const [previousDatePickerOpen, setPreviousDatePickerOpen] = useState(false);
+  const [currentCustomFrom, setCurrentCustomFrom] = useState("");
+  const [currentCustomTo, setCurrentCustomTo] = useState("");
+  const [previousCustomFrom, setPreviousCustomFrom] = useState("");
+  const [previousCustomTo, setPreviousCustomTo] = useState("");
+  const [previousCalendarMonth, setPreviousCalendarMonth] = useState(new Date());
+  const currentDatePickerRef = useRef(null);
+  const previousDatePickerRef = useRef(null);
+
   const [stats, setStats]               = useState(null);
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -113,11 +126,64 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError]     = useState(null);
 
-  // Close date picker on outside click
+  // Helper: Convert period label to date range
+  const getPeriodDates = (period, customFrom, customTo) => {
+    const today = new Date();
+    let from, to = new Date(today);
+    const daysMap = {
+      "Last 7 days": 7,
+      "Last 14 days": 14,
+      "Last 30 days": 30,
+      "Last 60 days": 60,
+      "Last 90 days": 90,
+    };
+    if (period === "Custom" && customFrom && customTo) {
+      return { from: customFrom, to: customTo };
+    } else if (daysMap[period]) {
+      from = new Date(to);
+      from.setDate(from.getDate() - daysMap[period]);
+    } else {
+      from = to; // Fallback
+    }
+    return { from: toISO(from), to: toISO(to) };
+  };
+
+  // Auto-calculate Previous Period based on Current Period
+  useEffect(() => {
+    if (currentPeriod === "Custom" && currentCustomFrom && currentCustomTo) {
+      // Calculate previous period with same duration
+      const currentFromDate = new Date(currentCustomFrom);
+      const currentToDate = new Date(currentCustomTo);
+      const durationDays = Math.floor((currentToDate - currentFromDate) / (1000 * 60 * 60 * 24)) + 1;
+
+      const prevToDate = new Date(currentFromDate);
+      prevToDate.setDate(prevToDate.getDate() - 1);
+
+      const prevFromDate = new Date(prevToDate);
+      prevFromDate.setDate(prevFromDate.getDate() - (durationDays - 1));
+
+      setPreviousCustomFrom(toISO(prevFromDate));
+      setPreviousCustomTo(toISO(prevToDate));
+      setPreviousPeriod("Custom");
+    } else if (currentPeriod !== "Custom") {
+      // For preset periods, switch Previous Period to same preset
+      setPreviousPeriod(currentPeriod);
+      setPreviousCustomFrom("");
+      setPreviousCustomTo("");
+    }
+  }, [currentPeriod, currentCustomFrom, currentCustomTo]);
+
+  // Close date pickers on outside click
   useEffect(() => {
     const handler = (e) => {
       if (datePickerRef.current && !datePickerRef.current.contains(e.target)) {
         setDatePickerOpen(false);
+      }
+      if (currentDatePickerRef.current && !currentDatePickerRef.current.contains(e.target)) {
+        setCurrentDatePickerOpen(false);
+      }
+      if (previousDatePickerRef.current && !previousDatePickerRef.current.contains(e.target)) {
+        setPreviousDatePickerOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -128,7 +194,19 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
     const controller = new AbortController();
     const token = Cookies.get("token");
     setStatsLoading(true);
-    fetch(`${NODE_API}/intelligence/stats`, {
+
+    // Get current and previous period dates
+    const currentDates = getPeriodDates(currentPeriod, currentCustomFrom, currentCustomTo);
+    const previousDates = getPeriodDates(previousPeriod, previousCustomFrom, previousCustomTo);
+
+    const params = new URLSearchParams({
+      from_date: currentDates.from,
+      to_date: currentDates.to,
+      prev_from_date: previousDates.from,
+      prev_to_date: previousDates.to,
+    });
+
+    fetch(`${NODE_API}/intelligence/stats?${params}`, {
       signal: controller.signal,
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -137,7 +215,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
       .catch(() => {})
       .finally(() => setStatsLoading(false));
     return () => controller.abort();
-  }, []);
+  }, [currentPeriod, previousPeriod, currentCustomFrom, currentCustomTo, previousCustomFrom, previousCustomTo]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -278,6 +356,194 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {/* Period selectors for stats cards */}
+      <div style={{ display: forceExpand ? "none" : "flex", alignItems: "center", gap: "20px", marginBottom: "16px", flexWrap: "wrap" }}>
+        {/* Current Period Selector */}
+        <div ref={currentDatePickerRef} style={{ position: "relative" }}>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#6b7280", display: "block", marginBottom: "4px" }}>Current Period</label>
+          <button
+            onClick={() => setCurrentDatePickerOpen((v) => !v)}
+            style={{
+              display: "flex", alignItems: "center", gap: "6px",
+              border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 12px",
+              fontSize: "12px", fontWeight: 500, color: "#374151", background: "white",
+              outline: "none", cursor: "pointer", minWidth: "140px",
+              ...(currentDatePickerOpen ? { borderColor: "#6366f1", color: "#6366f1" } : {}),
+            }}
+          >
+            {currentPeriod === "Custom" && currentCustomFrom && currentCustomTo
+              ? `${currentCustomFrom} → ${currentCustomTo}`
+              : currentPeriod}
+          </button>
+
+          {currentDatePickerOpen && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 50,
+              background: "white", border: "1px solid #e5e7eb", borderRadius: "8px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.10)", padding: "12px", minWidth: "240px",
+            }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {PRESET_RANGES.map((r) => (
+                  <button
+                    key={r.label}
+                    onClick={() => { setCurrentPeriod(r.label); setCurrentDatePickerOpen(false); setCurrentCustomFrom(""); setCurrentCustomTo(""); }}
+                    style={{
+                      padding: "6px 10px", borderRadius: "4px", fontSize: "12px", fontWeight: 500,
+                      cursor: "pointer", border: "1px solid",
+                      background: currentPeriod === r.label && !currentCustomFrom ? "#e0e7ff" : "transparent",
+                      color: currentPeriod === r.label && !currentCustomFrom ? "#4338ca" : "#374151",
+                      borderColor: currentPeriod === r.label && !currentCustomFrom ? "#c7d2fe" : "#e5e7eb",
+                      textAlign: "left",
+                    }}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+                <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: "8px", marginTop: "4px" }}>
+                  <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", margin: "0 0 6px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Custom Range</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <input
+                      type="date"
+                      value={currentCustomFrom}
+                      onChange={(e) => setCurrentCustomFrom(e.target.value)}
+                      min={getMinDate()}
+                      max={currentCustomTo || getTodayISO()}
+                      style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box" }}
+                      placeholder="From"
+                    />
+                    <input
+                      type="date"
+                      value={currentCustomTo}
+                      onChange={(e) => setCurrentCustomTo(e.target.value)}
+                      min={currentCustomFrom || getMinDate()}
+                      max={getTodayISO()}
+                      style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box" }}
+                      placeholder="To"
+                    />
+                    <button
+                      onClick={() => {
+                        if (currentCustomFrom && currentCustomTo) {
+                          setCurrentPeriod("Custom");
+                          setCurrentDatePickerOpen(false);
+                        }
+                      }}
+                      disabled={!currentCustomFrom || !currentCustomTo}
+                      style={{
+                        padding: "6px 10px", borderRadius: "4px", fontSize: "12px", fontWeight: 500,
+                        cursor: currentCustomFrom && currentCustomTo ? "pointer" : "not-allowed",
+                        border: "1px solid",
+                        background: currentCustomFrom && currentCustomTo ? "#e0e7ff" : "#f3f4f6",
+                        color: currentCustomFrom && currentCustomTo ? "#4338ca" : "#9ca3af",
+                        borderColor: currentCustomFrom && currentCustomTo ? "#c7d2fe" : "#e5e7eb",
+                        textAlign: "center",
+                        opacity: currentCustomFrom && currentCustomTo ? 1 : 0.5,
+                      }}
+                    >
+                      Apply Custom
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Previous Period Selector */}
+        <div ref={previousDatePickerRef} style={{ position: "relative" }}>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#6b7280", display: "block", marginBottom: "4px" }}>Previous Period</label>
+          <button
+            onClick={() => setPreviousDatePickerOpen((v) => !v)}
+            style={{
+              display: "flex", alignItems: "center", gap: "6px",
+              border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 12px",
+              fontSize: "12px", fontWeight: 500, color: "#374151", background: "white",
+              outline: "none", cursor: "pointer", minWidth: "140px",
+              ...(previousDatePickerOpen ? { borderColor: "#6366f1", color: "#6366f1" } : {}),
+            }}
+          >
+            {previousPeriod === "Custom" && previousCustomFrom && previousCustomTo
+              ? `${previousCustomFrom} → ${previousCustomTo}`
+              : previousPeriod}
+          </button>
+
+          {previousDatePickerOpen && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 50,
+              background: "white", border: "1px solid #e5e7eb", borderRadius: "8px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.10)", padding: "12px", minWidth: "240px",
+            }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {PRESET_RANGES.map((r) => (
+                  <button
+                    key={r.label}
+                    onClick={() => { setPreviousPeriod(r.label); setPreviousDatePickerOpen(false); setPreviousCustomFrom(""); setPreviousCustomTo(""); }}
+                    style={{
+                      padding: "6px 10px", borderRadius: "4px", fontSize: "12px", fontWeight: 500,
+                      cursor: "pointer", border: "1px solid",
+                      background: previousPeriod === r.label && !previousCustomFrom ? "#e0e7ff" : "transparent",
+                      color: previousPeriod === r.label && !previousCustomFrom ? "#4338ca" : "#374151",
+                      borderColor: previousPeriod === r.label && !previousCustomFrom ? "#c7d2fe" : "#e5e7eb",
+                      textAlign: "left",
+                    }}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+                <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: "8px", marginTop: "4px" }}>
+                  <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", margin: "0 0 6px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Custom Range</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <input
+                      type="date"
+                      value={previousCustomFrom}
+                      onChange={(e) => setPreviousCustomFrom(e.target.value)}
+                      min={getMinDate()}
+                      max={previousCustomTo || (currentCustomFrom ? new Date(new Date(currentCustomFrom).getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) : getTodayISO())}
+                      style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box", color: "#374151" }}
+                      placeholder="From"
+                      title="Select dates within last 90 days, before current period"
+                    />
+                    <input
+                      type="date"
+                      value={previousCustomTo}
+                      onChange={(e) => setPreviousCustomTo(e.target.value)}
+                      min={previousCustomFrom || getMinDate()}
+                      max={currentCustomFrom ? new Date(new Date(currentCustomFrom).getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) : getTodayISO()}
+                      style={{ padding: "6px 8px", borderRadius: "4px", border: "1px solid #d1d5db", fontSize: "12px", width: "100%", boxSizing: "border-box", color: "#374151" }}
+                      placeholder="To"
+                      title="Select dates within last 90 days, before current period"
+                    />
+                    <button
+                      onClick={() => {
+                        if (previousCustomFrom && previousCustomTo) {
+                          setPreviousPeriod("Custom");
+                          setPreviousDatePickerOpen(false);
+                        }
+                      }}
+                      disabled={!previousCustomFrom || !previousCustomTo}
+                      style={{
+                        padding: "6px 10px", borderRadius: "4px", fontSize: "12px", fontWeight: 500,
+                        cursor: previousCustomFrom && previousCustomTo ? "pointer" : "not-allowed",
+                        border: "1px solid",
+                        background: previousCustomFrom && previousCustomTo ? "#e0e7ff" : "#f3f4f6",
+                        color: previousCustomFrom && previousCustomTo ? "#4338ca" : "#9ca3af",
+                        borderColor: previousCustomFrom && previousCustomTo ? "#c7d2fe" : "#e5e7eb",
+                        textAlign: "center",
+                        opacity: previousCustomFrom && previousCustomTo ? 1 : 0.5,
+                      }}
+                    >
+                      Apply Custom
+                    </button>
+                    <p style={{ fontSize: "11px", color: "#9ca3af", margin: "4px 0", fontStyle: "italic" }}>
+                      {currentPeriod === "Custom" ? `Last 90 days, before ${currentCustomFrom}` : "Set current period custom dates first"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
         {statCards.map((s) => (

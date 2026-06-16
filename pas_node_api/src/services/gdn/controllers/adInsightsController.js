@@ -55,22 +55,19 @@ async function getGdnAdCountry(req, db, logger) {
         let country = row.country || '';
         let iso = fixCountryIso(country, row.iso);
 
-        // If we have a lookup, use the full country name
-        const lookup = isoMap.get(country);
+        // Try multiple lookup strategies
+        let lookup = isoMap.get(country);
+        if (!lookup && country) {
+          // Try case-insensitive lookup
+          lookup = isoMap.get(country.toLowerCase()) || isoMap.get(country.toUpperCase());
+        }
+
         if (lookup) {
-          country = lookup.country || country;
-          iso = lookup.iso || iso;
+          country = lookup.country;
+          iso = lookup.iso;
         }
 
-        // If country is just an ISO code (like "SG"), try to look it up
-        if (!country || country.length === 2) {
-          const isoLookup = isoMap.get(country);
-          if (isoLookup) {
-            country = isoLookup.country;
-            iso = isoLookup.iso;
-          }
-        }
-
+        // Capitalize country name
         if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
 
         // Deduplicate by ISO code or country name
@@ -310,18 +307,30 @@ async function batchCountryLookup(db, names) {
   const uniqueNames = [...new Set(names)];
   const placeholders = uniqueNames.map(() => '?').join(',');
   try {
-    // Query both nicename and iso columns to handle cases where input is ISO code (e.g., "SG")
+    // Query both nicename and iso columns to handle cases where input is ISO code
+    // Also search in lowercase for case-insensitive matching
     const rows = await db.sql.query(
       `SELECT nicename, name AS country, iso FROM country_data
-       WHERE nicename IN (${placeholders}) OR iso IN (${placeholders})`,
-      [...uniqueNames, ...uniqueNames]
+       WHERE nicename IN (${placeholders})
+          OR iso IN (${placeholders})
+          OR LOWER(iso) IN (${placeholders.split(',').map(() => 'LOWER(?)').join(',')})`,
+      [...uniqueNames, ...uniqueNames, ...uniqueNames]
     );
     const map = new Map();
     if (rows) {
       for (const row of rows) {
-        // Map both nicename and iso to the full record so "Singapore" and "SG" both resolve
+        // Map nicename, iso (both cases), and country name variants
         map.set(row.nicename, { country: row.country, iso: row.iso });
-        if (row.iso) map.set(row.iso, { country: row.country, iso: row.iso });
+        if (row.iso) {
+          map.set(row.iso, { country: row.country, iso: row.iso });
+          map.set(row.iso.toLowerCase(), { country: row.country, iso: row.iso });
+          map.set(row.iso.toUpperCase(), { country: row.country, iso: row.iso });
+        }
+        // Also map the country name itself
+        if (row.country) {
+          map.set(row.country.toLowerCase(), { country: row.country, iso: row.iso });
+          map.set(row.country.toUpperCase(), { country: row.country, iso: row.iso });
+        }
       }
     }
     return map;

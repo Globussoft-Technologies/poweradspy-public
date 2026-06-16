@@ -18,9 +18,9 @@ const TagList = ({ items, bg, border, color, forceExpand = false }) => {
   const visible = isExpanded ? items : items.slice(0, MAX_TAGS);
   const hidden = items.length - MAX_TAGS;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+    <div style={{ display: "flex", flexWrap: forceExpand ? "wrap" : "wrap", gap: "4px", flexDirection: forceExpand ? "column" : "row", alignItems: forceExpand ? "flex-start" : "center" }}>
       {visible.map((item, i) => (
-        <span key={i} style={{ background: bg, border: `1px solid ${border}`, color, padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap" }}>
+        <span key={i} style={{ background: bg, border: `1px solid ${border}`, color, padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: forceExpand ? "normal" : "nowrap", wordBreak: forceExpand ? "break-word" : "normal" }}>
           {item}
         </span>
       ))}
@@ -214,10 +214,10 @@ const Projects = ({ forceExpand = false, onDataReady }) => {
                 : typeInfo.label}
             </span>
           </td>
-          <td style={{ padding: "10px 12px", verticalAlign: "middle" }}>
+          <td style={{ padding: "10px 12px", verticalAlign: forceExpand ? "top" : "middle", overflow: forceExpand ? "visible" : "hidden" }}>
             <TagList items={row.brands ? row.brands.split(', ') : []} bg="#f3f4f6" border="#e5e7eb" color="#374151" forceExpand={forceExpand} />
           </td>
-          <td style={{ padding: "10px 12px", verticalAlign: "middle" }}>
+          <td style={{ padding: "10px 12px", verticalAlign: forceExpand ? "top" : "middle", overflow: forceExpand ? "visible" : "hidden" }}>
             <TagList items={row.competitors ? row.competitors.split(', ') : []} bg="#e0e7ff" border="#c7d2fe" color="#4338ca" forceExpand={forceExpand} />
           </td>
         </tr>
@@ -287,14 +287,14 @@ const Projects = ({ forceExpand = false, onDataReady }) => {
 
       {/* Table */}
       <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", tableLayout: "fixed", fontSize: "13px", borderCollapse: "collapse" }}>
+        <div style={{ overflowX: forceExpand ? "visible" : "auto" }}>
+          <table style={{ width: "100%", tableLayout: forceExpand ? "auto" : "fixed", fontSize: "13px", borderCollapse: "collapse" }}>
             <colgroup>
               <col style={{ width: "110px" }} />
               <col style={{ width: "200px" }} />
               <col style={{ width: "110px" }} />
-              <col style={{ width: "220px" }} />
-              <col style={{ width: "220px" }} />
+              <col style={{ width: forceExpand ? "400px" : "220px" }} />
+              <col style={{ width: forceExpand ? "400px" : "220px" }} />
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid #e5e7eb" }}>

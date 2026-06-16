@@ -191,7 +191,7 @@ function createAdmin_user_activityRoutes(service) {
     '/intelligence/scraping-history',
     authMiddleware,
     asyncHandler(async (req, res) => {
-      const result = await getKeywordScrapingHistory(req, getElastic(service.db), null, service.log);
+      const result = await getKeywordScrapingHistory(req, getElastic(service.db), service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

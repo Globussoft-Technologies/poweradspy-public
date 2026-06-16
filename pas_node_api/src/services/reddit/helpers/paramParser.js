@@ -109,6 +109,7 @@ function cleanAdsData(ads = []) {
       }
       if (cleaned.post_owner_image) cleaned.post_owner_image = withCdn(cleaned.post_owner_image);
       if (cleaned.image_video_url)   cleaned.image_video_url  = withCdn(cleaned.image_video_url);
+      if (cleaned.image_url)         cleaned.image_url        = withCdn(cleaned.image_url);
       if (Array.isArray(cleaned.ad_image_video)) {
         cleaned.ad_image_video = cleaned.ad_image_video.map(withCdn);
       } else if (typeof cleaned.ad_image_video === 'string' && cleaned.ad_image_video) {
