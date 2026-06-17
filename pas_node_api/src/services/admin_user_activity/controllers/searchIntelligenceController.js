@@ -462,10 +462,9 @@ async function getAllSearches(req, elastic, logger) {
         toDate = new Date(to_date + 'T' + toTimeStr);
       }
 
-      fromTs = Math.floor(fromDate.getTime() / 1000);
-      toTs   = Math.floor(toDate.getTime()   / 1000);
-
       const tzOffset = new Date().getTimezoneOffset() * 60;
+      fromTs = Math.floor(fromDate.getTime() / 1000) - tzOffset;
+      toTs   = Math.floor(toDate.getTime()   / 1000) - tzOffset;
 
     } else {
       const now = new Date();
@@ -2174,7 +2173,7 @@ async function getSummaryStats(req, elastic, logger) {
     const sortByAgg = (aggs.sort_by?.buckets ?? []).map((b) => b.key).filter(Boolean);
 
     const pagesVisited = [
-      aggs.dashboard_page?.doc_count > 0 && { name: "Dashboard", count: aggs.dashboard_page?.doc_count ?? 0 },
+      aggs.dashboard_page?.doc_count > 0 && { name: "Ads Library", count: aggs.dashboard_page?.doc_count ?? 0 },
       aggs.analytics_page?.doc_count > 0 && { name: "Analytics Model", count: aggs.analytics_page?.doc_count ?? 0 },
       aggs.favorite_page?.doc_count > 0 && { name: "Favorite Dashboard", count: aggs.favorite_page?.doc_count ?? 0 },
       aggs.hidden_page?.doc_count > 0 && { name: "Hidden Dashboard", count: aggs.hidden_page?.doc_count ?? 0 },

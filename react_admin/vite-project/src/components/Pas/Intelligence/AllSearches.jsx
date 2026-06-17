@@ -491,12 +491,34 @@ const SummaryBar = ({ summaryStats }) => {
         <SummarySection icon="📄" label="Pages Visited">
           {pagesVisited.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              {pagesVisited.map((p) => (
-                <div key={p.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
-                  <span style={{ color: "#6b7280" }}>{p.name}</span>
-                  <span style={{ fontWeight: 600, color: "#111827", background: "#f0fdf4", padding: "2px 8px", borderRadius: "4px" }}>({p.count})</span>
-                </div>
-              ))}
+              {pagesVisited.map((p) => {
+                const isAdsLibrary = p.name === "Ads Library";
+                let displayCount = p.count;
+
+                if (isAdsLibrary) {
+                  const keywordsTotal = typeof searchCounts.keywords === 'object' ? (searchCounts.keywords?.total ?? 0) : (searchCounts.keywords ?? 0);
+                  const domainsTotal = typeof searchCounts.domains === 'object' ? (searchCounts.domains?.total ?? 0) : (searchCounts.domains ?? 0);
+                  const advertisersTotal = typeof searchCounts.advertisers === 'object' ? (searchCounts.advertisers?.total ?? 0) : (searchCounts.advertisers ?? 0);
+                  const filtersTotal = actionCounts.filters_total ?? 0;
+                  const sortingTotal = actionCounts.sorting_total ?? 0;
+                  displayCount = keywordsTotal + domainsTotal + advertisersTotal + filtersTotal + sortingTotal;
+                }
+
+                return (
+                  <div
+                    key={p.name}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <span style={{ color: "#6b7280" }}>{p.name}</span>
+                    <span style={{ fontWeight: 600, color: "#111827" }}>({displayCount})</span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <span style={{ fontSize: "12px", color: "#9ca3af" }}>—</span>
