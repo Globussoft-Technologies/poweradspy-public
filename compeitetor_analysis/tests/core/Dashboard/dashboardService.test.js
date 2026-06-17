@@ -16,7 +16,10 @@ const spies = vi.hoisted(() => {
     axiosPostSpy: vi.fn(),
     competitorsReqFindSpy: vi.fn(),
     competitorsReqFindOneSpy: vi.fn(),
+    competitorsReqFindByIdSpy: vi.fn(),
     competitorsReqAggregateSpy: vi.fn(),
+    userDetailsFindByIdSpy: vi.fn(),
+    planGroupsFindOneSpy: vi.fn(),
     backlinkFindOneSpy: vi.fn(),
     backlinkCreateSpy: vi.fn(),
     backlinkFindByIdAndUpdateSpy: vi.fn(),
@@ -55,7 +58,13 @@ vi.mock("../../../models/competitors_request.js", () => ({
   default: {
     find: spies.competitorsReqFindSpy,
     findOne: spies.competitorsReqFindOneSpy,
+    findById: spies.competitorsReqFindByIdSpy,
     aggregate: spies.competitorsReqAggregateSpy,
+  },
+}));
+vi.mock("../../../models/user_details.js", () => ({
+  default: {
+    findById: spies.userDetailsFindByIdSpy,
   },
 }));
 vi.mock("../../../models/backlink.js", () => ({
@@ -137,6 +146,7 @@ vi.mock("mongoose", () => ({
     // user_details.js (pulled in transitively) defines a Schema/model at load.
     Schema: function () {},
     model: () => ({}),
+    connection: { collection: () => ({ findOne: (...a) => spies.planGroupsFindOneSpy(...a) }) },
   },
 }));
 
@@ -906,6 +916,18 @@ describe("dashboardService > getCompetitorsCount", () => {
     expect(res.send).toHaveBeenCalled();
   });
 
+  it("outer catch fires when finalize throws → 'Internal server error' (L1110-1112)", async () => {
+    Object.values(spies.esClient).forEach((c) => {
+      c.search.mockResolvedValue({ hits: { total: { value: 0 } }, aggregations: {} });
+      c.count.mockResolvedValue({ count: 0 });
+    });
+    const res = mockRes();
+    res.send.mockImplementationOnce(() => { throw new Error("send-boom"); }); // success send throws → outer catch
+    await svc.getCompetitorsCount({ body: { competitors: "Acme" } }, res);
+    expect(res.send).toHaveBeenCalledTimes(2);
+    expect(res.send.mock.calls[1][0].body.msg).toContain("Internal server error");
+  });
+
   it("happy with array input: unwraps to single competitor", async () => {
     Object.values(spies.esClient).forEach((c) => {
       c.search.mockResolvedValue({ hits: { total: { value: 0 } }, aggregations: {} });
@@ -1279,5 +1301,225 @@ describe("dashboardService > projectcompeitetorClientNew", () => {
       res
     );
     expect(res.send).toHaveBeenCalled();
+  });
+});
+
+describe("dashboardService > getCompetitorAdStats / getCompetitorAdCountForRange", () => {
+  it("getCompetitorAdStats aggregates fb (server1) + ig (server2) across buckets", async () => {
+    spies.esClient.server1.search.mockResolvedValue({ aggregations: { unique_ads: { value: 3 } } });
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: { unique_ads: { value: 2 } } });
+    const stats = await svc.getCompetitorAdStats("Acme");
+    expect(stats.allTime.facebook).toBe(3);
+    expect(stats.allTime.instagram).toBe(2);
+    expect(stats.allTime.total).toBe(5);
+  });
+
+  it("getCompetitorAdStats: dedupCount search fails then falls back to count()", async () => {
+    spies.esClient.server1.search.mockRejectedValue(new Error("agg-fail"));
+    spies.esClient.server1.count.mockResolvedValue({ count: 4 });
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: { unique_ads: { value: 0 } } });
+    const stats = await svc.getCompetitorAdStats("Acme");
+    expect(stats.allTime.facebook).toBe(4);
+  });
+
+  it("getCompetitorAdCountForRange with range and without (all-time)", async () => {
+    spies.esClient.server1.search.mockResolvedValue({ aggregations: { unique_ads: { value: 1 } } });
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: { unique_ads: { value: 1 } } });
+    const withRange = await svc.getCompetitorAdCountForRange("Acme", "2025-01-01 00:00:00", "2025-01-31 23:59:59");
+    expect(withRange.total).toBe(2);
+    const allTime = await svc.getCompetitorAdCountForRange("Acme", null, null);
+    expect(allTime.total).toBe(2);
+  });
+});
+
+describe("dashboardService > getCompetitorAdsByRange", () => {
+  it("validation fail when request_id missing", async () => {
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({ body: {} }, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Missing request_id");
+  });
+
+  it("brand request not found", async () => {
+    spies.competitorsReqFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve(null) });
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({ body: { request_id: "r1" } }, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Brand request not found");
+  });
+
+  it("happy: default date window, competitors sorted by ads desc", async () => {
+    spies.competitorsReqFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({ competitors: ["c1", "c2"] }) });
+    spies.competitorsFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([
+      { _id: "c1", competitor_name: "Low", competitor_url: "l.com" },
+      { _id: "c2", competitor_name: "High", competitor_url: "h.com" },
+    ]) });
+    spies.esClient.server1.search.mockImplementation(({ body }) => Promise.resolve({
+      aggregations: { unique_ads: { value: JSON.stringify(body).includes("High") ? 10 : 1 } },
+    }));
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: { unique_ads: { value: 0 } } });
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({ body: { request_id: "r1" } }, res);
+    const data = res.send.mock.calls[0][0].body.data;
+    expect(data.competitors[0].name).toBe("High");
+  });
+
+  it("all=true (all-time, no date filter) with empty competitors list", async () => {
+    spies.competitorsReqFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({ competitors: [] }) });
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({ body: { request_id: "r1", all: "true" } }, res);
+    expect(res.send.mock.calls[0][0].body.data.all).toBe(true);
+  });
+
+  it("explicit from/to dates", async () => {
+    spies.competitorsReqFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({ competitors: [] }) });
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({ body: { request_id: "r1", from: "2025-01-01", to: "2025-01-31" } }, res);
+    expect(res.send.mock.calls[0][0].body.status).toBe("success");
+  });
+
+  it("catch returns failure response", async () => {
+    spies.competitorsReqFindByIdSpy.mockImplementationOnce(() => { throw new Error("db-down"); });
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({ body: { request_id: "r1" } }, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Failed to fetch competitor ads by range");
+  });
+});
+
+describe("dashboardService > getUserBrandStats", () => {
+  it("validation fail when user_id missing", async () => {
+    const res = mockRes();
+    await svc.getUserBrandStats({ body: {} }, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Missing user_id");
+  });
+
+  it("happy: brands + competitors + planName resolved, growth computed", async () => {
+    spies.competitorsReqFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([
+      { _id: "r1", advertiser: ["BrandA"], competitors: ["c1"], monitoring: ["c1"], project_name: "P", brand_url: "b.com" },
+    ]) });
+    spies.userDetailsFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({ plan_id: 5 }) });
+    spies.planGroupsFindOneSpy.mockResolvedValueOnce({ groups: { Palladium: { plans: [5] } } });
+    spies.competitorsFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([
+      { _id: "c1", competitor_name: "C1", competitor_url: "c.com", facebook_status: 2 },
+    ]) });
+    spies.esClient.server1.search.mockResolvedValue({ aggregations: { unique_ads: { value: 5 } } });
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: { unique_ads: { value: 0 } } });
+    const res = mockRes();
+    await svc.getUserBrandStats({ body: { user_id: "u1" } }, res);
+    const data = res.send.mock.calls[0][0].body.data;
+    expect(data.planName).toBe("Palladium");
+    expect(data.totalBrands).toBe(1);
+    expect(data.brands[0].competitors[0].name).toBe("C1");
+  });
+
+  it("planId set but no matching group then planName null; growth no-baseline", async () => {
+    spies.competitorsReqFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([
+      { _id: "r1", advertiser: [], competitors: ["c1"], monitoring: [], project_name: "P" },
+    ]) });
+    spies.userDetailsFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({ plan_id: 99 }) });
+    spies.planGroupsFindOneSpy.mockResolvedValueOnce({ groups: { Other: { plans: [1, 2] } } });
+    spies.competitorsFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([
+      { _id: "c1", competitor_name: "C1" },
+    ]) });
+    let call = 0;
+    spies.esClient.server1.search.mockImplementation(() => Promise.resolve({ aggregations: { unique_ads: { value: (call++ === 1 ? 1 : 0) } } }));
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: { unique_ads: { value: 0 } } });
+    const res = mockRes();
+    await svc.getUserBrandStats({ body: { user_id: "u1" } }, res);
+    expect(res.send.mock.calls[0][0].body.data.planName).toBeNull();
+  });
+
+  it("no plan_id then planName stays null (skips plan_groups lookup)", async () => {
+    spies.competitorsReqFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([]) });
+    spies.userDetailsFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({}) });
+    const res = mockRes();
+    await svc.getUserBrandStats({ body: { user_id: "u1" } }, res);
+    expect(res.send.mock.calls[0][0].body.data.planId).toBeNull();
+    expect(spies.planGroupsFindOneSpy).not.toHaveBeenCalled();
+  });
+
+  it("catch returns failure response", async () => {
+    spies.competitorsReqFindSpy.mockImplementationOnce(() => { throw new Error("db-down"); });
+    const res = mockRes();
+    await svc.getUserBrandStats({ body: { user_id: "u1" } }, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Failed to fetch user brand stats");
+  });
+});
+
+describe("dashboardService > remaining branch coverage", () => {
+  it("projectcompeitetor: project with no competitors → 'No competitors selected' (L279)", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", competitors: [] });
+    const res = mockRes();
+    await svc.projectcompeitetor({ body: { project_name: "Acme", user_id: "u1" } }, res);
+    expect(res.send.mock.calls[0][0].body.message).toContain("No competitors selected");
+  });
+
+  it("getCompetitorAdsByRange: missing body → `req?.body || {}` (L1230)", async () => {
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({}, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Missing request_id");
+  });
+
+  it("getCompetitorAdsByRange: reqDoc.competitors not an array → `|| []` (L1247)", async () => {
+    spies.competitorsReqFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({ competitors: "not-an-array" }) });
+    const res = mockRes();
+    await svc.getCompetitorAdsByRange({ body: { request_id: "r1" } }, res);
+    expect(res.send.mock.calls[0][0].body.data.competitors).toEqual([]);
+  });
+
+  it("getUserBrandStats: plan_groups doc missing → planName null (L1308)", async () => {
+    spies.competitorsReqFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([]) });
+    spies.userDetailsFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({ plan_id: 5 }) });
+    spies.planGroupsFindOneSpy.mockResolvedValueOnce(null); // no plan_groups doc → `?.groups || {}`
+    const res = mockRes();
+    await svc.getUserBrandStats({ body: { user_id: "u1" } }, res);
+    expect(res.send.mock.calls[0][0].body.data.planName).toBeNull();
+  });
+
+  it("getUserBrandStats: competitor with no ads → growth 0 (L1318), non-array request fields (L1332-1340)", async () => {
+    spies.competitorsReqFindSpy.mockReturnValueOnce({ lean: () => Promise.resolve([
+      { _id: "r1", advertiser: "BrandA", competitors: "x", monitoring: undefined, project_name: "P" }, // all non-array
+      { _id: "r2", advertiser: ["B2"], competitors: ["c1"], monitoring: ["c1"], project_name: "P2" },
+    ]) });
+    spies.userDetailsFindByIdSpy.mockReturnValueOnce({ lean: () => Promise.resolve({}) });
+    spies.competitorsFindSpy.mockReturnValue({ lean: () => Promise.resolve([{ _id: "c1", competitor_name: "C1" }]) });
+    // all-zero counts → today 0, yesterday 0 → growthPct returns 0
+    Object.values(spies.esClient).forEach((c) => c.search.mockResolvedValue({ aggregations: { unique_ads: { value: 0 } } }));
+    const res = mockRes();
+    await svc.getUserBrandStats({ body: { user_id: "u1" } }, res);
+    expect(res.send.mock.calls[0][0].body.status).toBe("success");
+  });
+
+  it("getCompetitorsCountNew: aggregations with zero counts → average else-branches (L2107-2109)", async () => {
+    Object.values(spies.esClient).forEach((c) => {
+      c.search.mockResolvedValue({
+        hits: { total: { value: 0 } },
+        aggregations: {
+          impressions: { total_imp: { value: 0 }, imp_count: { value: 0 } },
+          popularity: { total_pop: { value: 0 }, pop_count: { value: 0 } },
+          budget: { sum_avg_budget: { value: 0 }, budget_count: { value: 0 } },
+          countries: { buckets: [] },
+        },
+      });
+      c.count.mockResolvedValue({ count: 0 });
+    });
+    const res = mockRes();
+    await svc.getCompetitorsCountNew({ body: { competitors: ["Acme"] } }, res);
+    expect(res.send).toHaveBeenCalled();
+  });
+
+  it("getCompetitorsCountNewInternal: zero-count aggregations → average else-branches", async () => {
+    Object.values(spies.esClient).forEach((c) => {
+      c.search.mockResolvedValue({
+        hits: { total: { value: 0 } },
+        aggregations: {
+          impressions: { total_imp: { value: 0 }, imp_count: { value: 0 } },
+          popularity: { total_pop: { value: 0 }, pop_count: { value: 0 } },
+          budget: { sum_avg_budget: { value: 0 }, budget_count: { value: 0 } },
+          countries: { buckets: [] },
+        },
+      });
+      c.count.mockResolvedValue({ count: 0 });
+    });
+    const r = await svc.getCompetitorsCountNewInternal(["Acme"]);
+    expect(typeof r).toBe("object");
   });
 });

@@ -10,14 +10,19 @@ const {
   userDetailsFindByIdSpy, userDetailsFindOneSpy, userDetailsUpdateOneSpy,
   emailSendEmailDirectSpy,
   emailRenderTemplateSpy,
+  emailSendCompetitorMemberMailSpy,
   configGetSpy,
   pLimitFn,
+  brandCcFindSpy,
+  memberFindSpy,
+  logSendSpy,
+  isBlacklistedSpy,
 } = vi.hoisted(() => {
   const esClientFake = {
-    server1: { search: vi.fn() },
-    server2: { search: vi.fn() },
-    server3: { search: vi.fn() },
-    server4: { search: vi.fn() },
+    server1: { search: vi.fn(), count: vi.fn() },
+    server2: { search: vi.fn(), count: vi.fn() },
+    server3: { search: vi.fn(), count: vi.fn() },
+    server4: { search: vi.fn(), count: vi.fn() },
   };
   return {
     loggerInfoSpy: vi.fn(),
@@ -34,8 +39,13 @@ const {
     userDetailsUpdateOneSpy: vi.fn(),
     emailSendEmailDirectSpy: vi.fn(),
     emailRenderTemplateSpy: vi.fn(() => "<html>rendered</html>"),
+    emailSendCompetitorMemberMailSpy: vi.fn(),
     configGetSpy: vi.fn(),
     pLimitFn: vi.fn((concurrency) => (fn) => fn()),
+    brandCcFindSpy: vi.fn(() => ({ lean: () => Promise.resolve([]) })),
+    memberFindSpy: vi.fn(() => ({ lean: () => Promise.resolve([]) })),
+    logSendSpy: vi.fn(),
+    isBlacklistedSpy: vi.fn(() => false),
   };
 });
 
@@ -81,12 +91,14 @@ vi.mock("../../mailer/emailService.js", () => ({
   default: {
     sendEmailDirect: emailSendEmailDirectSpy,
     renderTemplate: emailRenderTemplateSpy,
+    sendCompetitorMemberMail: emailSendCompetitorMemberMailSpy,
   },
 }));
 vi.mock("../../../core/mailer/emailService.js", () => ({
   default: {
     sendEmailDirect: emailSendEmailDirectSpy,
     renderTemplate: emailRenderTemplateSpy,
+    sendCompetitorMemberMail: emailSendCompetitorMemberMailSpy,
   },
 }));
 vi.mock("config", () => ({ default: { get: configGetSpy } }));
@@ -96,17 +108,17 @@ vi.mock("p-limit", () => ({ default: pLimitFn }));
 // timeouts / worker OOM). Stub them — an empty brand_cc_members result triggers the
 // early-return in _runMemberBrandPass.
 vi.mock("../../../models/brandCcMember.js", () => ({
-  default: { find: () => ({ lean: () => Promise.resolve([]) }) },
+  default: { find: brandCcFindSpy },
 }));
 vi.mock("../../../models/member.js", () => ({
-  default: { find: () => ({ lean: () => Promise.resolve([]) }) },
+  default: { find: memberFindSpy },
 }));
 vi.mock("../../../core/mailer/emailAudit.js", () => ({
   newSendId: () => "sid",
-  logSend: vi.fn(),
+  logSend: logSendSpy,
 }));
 vi.mock("../../../core/mailer/bounceGuard.js", () => ({
-  isBlacklisted: () => false,
+  isBlacklisted: (...a) => isBlacklistedSpy(...a),
   BLACKLISTED_SKIP_REASON: "blacklisted",
 }));
 
@@ -126,11 +138,20 @@ beforeEach(async () => {
   userDetailsUpdateOneSpy.mockReset();
   emailSendEmailDirectSpy.mockReset();
   emailRenderTemplateSpy.mockReset().mockReturnValue("<html>rendered</html>");
+  emailSendCompetitorMemberMailSpy.mockReset();
+  brandCcFindSpy.mockReset().mockReturnValue({ lean: () => Promise.resolve([]) });
+  memberFindSpy.mockReset().mockReturnValue({ lean: () => Promise.resolve([]) });
+  logSendSpy.mockReset();
+  isBlacklistedSpy.mockReset().mockReturnValue(false);
   configGetSpy.mockReset();
   esClientFake.server1.search.mockReset();
   esClientFake.server2.search.mockReset();
   esClientFake.server3.search.mockReset();
   esClientFake.server4.search.mockReset();
+  esClientFake.server1.count.mockReset();
+  esClientFake.server2.count.mockReset();
+  esClientFake.server3.count.mockReset();
+  esClientFake.server4.count.mockReset();
   configGetSpy.mockImplementation((k) => `cfg:${k}`);
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -178,6 +199,201 @@ describe("monitorService > activeCompetitorContacts main loop (PR #201)", () => 
     expect(data[0].name).toBe("Alice");
     expect(data[0].brands[0].brand_name).toBe("BrandA");
     expect(data[0].brands[0].competitors[0].name).toBe("X");
+  });
+
+  it("non-zero counts + ad preview → counts/ads assembled, post_owner_image_url picked (L900-912)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([
+      { _id: { toString: () => "id1" }, competitor_name: "X", competitor_url: "x.com" },
+    ]);
+    competitorsReqFindSpy.mockResolvedValueOnce([
+      { user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"], project_name: "ProjA" },
+    ]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", userName: "Alice", _id: "u1" });
+    // All three platforms have data → counts.{facebook,instagram,google} all set
+    esClientFake.server1.count.mockResolvedValue({ count: 3 });
+    esClientFake.server2.count.mockResolvedValue({ count: 2 });
+    esClientFake.server3.count.mockResolvedValue({ count: 1 });
+    // facebook ad is a VIDEO → isVideo true → thumbnailPaths branch (L284/L285)
+    esClientFake.server1.search.mockResolvedValue({ hits: { total: { value: 3 }, hits: [{ _source: {
+      "facebook_ad_variants.title": "Buy", "facebook_ad.type": "VIDEO", Thumbnail: "https://x/thumb.png",
+      post_owner_image_url: "https://x/owner.png", "facebook_ad_post_owners.post_owner_name": "Acme",
+    } }] } });
+    esClientFake.server2.search.mockResolvedValue({ hits: { total: { value: 2 }, hits: [{ _source: {
+      "instagram_ad_variants.title": "IG Buy", image_url: "https://x/ig.png",
+    } }] } });
+    esClientFake.server3.search.mockResolvedValue({ hits: { total: { value: 1 }, hits: [{ _source: {
+      title: "G Buy", image_url: "https://x/g.png", post_owner_image: "https://x/gowner.png",
+    } }] } });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", _id: "u1" });
+    competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", email_status: 0 });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", unsubscribed: 0 });
+    emailSendEmailDirectSpy.mockResolvedValueOnce({ message: "Email sent successfully" });
+    competitorsReqUpdateManySpy.mockResolvedValueOnce({});
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    const comp = res.send.mock.calls[0][0].body.data[0].brands[0].competitors[0];
+    expect(comp.counts.facebook.last24h).toBe(3);   // L900
+    expect(comp.counts.instagram.last24h).toBe(2);  // L901
+    expect(comp.counts.google.last24h).toBe(1);     // L902
+    expect(comp.ads.length).toBe(3);                // L906/907/908 — all three ads pushed
+  });
+
+  it("req.body.target_email override → only that user is targeted (L849)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([{ _id: { toString: () => "id1" }, competitor_name: "X" }]);
+    competitorsReqFindSpy.mockResolvedValueOnce([{ user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"] }]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", userName: "Alice", _id: "u1" });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", _id: "u1" });
+    competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", email_status: 0 });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", unsubscribed: 0 });
+    emailSendEmailDirectSpy.mockResolvedValueOnce({ message: "Email sent successfully" });
+    competitorsReqUpdateManySpy.mockResolvedValueOnce({});
+    const res = mockRes();
+    await svc.activeCompetitorContacts({ body: { target_email: "a@b.com" } }, res);
+    expect(res.send.mock.calls[0][0].body.data[0].mailStatus).toBe("sent");
+  });
+
+  it("brand_name fallbacks: project_name (no advertiser) and 'Your brand' (neither) (L970)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([{ _id: { toString: () => "id1" }, competitor_name: "X" }]);
+    competitorsReqFindSpy.mockResolvedValueOnce([
+      { user_id: "u1", monitoring: ["id1"], project_name: "ProjOnly" }, // no advertiser → project_name
+      { user_id: "u2", monitoring: ["id1"] },                            // no advertiser/project_name → "Your brand"
+    ]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy
+      .mockResolvedValueOnce({ email: "a@b.com", userName: "A", _id: "u1" })
+      .mockResolvedValueOnce({ email: "b@b.com", userName: "B", _id: "u2" });
+    userDetailsFindOneSpy.mockResolvedValue(null); // fullUser null for both → mailStatus 'not sent', brands still built
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    const data = res.send.mock.calls[0][0].body.data;
+    expect(data.find((d) => d.email === "a@b.com").brands[0].brand_name).toBe("ProjOnly");
+    expect(data.find((d) => d.email === "b@b.com").brands[0].brand_name).toBe("Your brand");
+  });
+
+  it("same user+brand across requests → new competitor pushed via dedup (L986 #0)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([
+      { _id: { toString: () => "id1" }, competitor_name: "X" },
+      { _id: { toString: () => "id2" }, competitor_name: "Y" }, // new name in 2nd request
+    ]);
+    competitorsReqFindSpy.mockResolvedValueOnce([
+      { user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"], project_name: "P" },
+      { user_id: "u1", monitoring: ["id2"], advertiser: ["BrandA"], project_name: "P" },
+    ]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValue({ email: "a@b.com", userName: "A", _id: "u1" }); // both requests use u1
+    userDetailsFindOneSpy.mockResolvedValue(null);
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    const brand = res.send.mock.calls[0][0].body.data[0].brands[0];
+    expect(brand.competitors.map((c) => c.name).sort()).toEqual(["X", "Y"]);
+  });
+
+  it("user without userName → name defaults to 'user' (L994 #1)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([{ _id: { toString: () => "id1" }, competitor_name: "X" }]);
+    competitorsReqFindSpy.mockResolvedValueOnce([{ user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"] }]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", _id: "u1" }); // no userName
+    userDetailsFindOneSpy.mockResolvedValueOnce(null);
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    expect(res.send.mock.calls[0][0].body.data[0].name).toBe("user");
+  });
+
+  it("send fails (no error field) → anySent false, mailStatus not 'sent' (L1108/L1111)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([{ _id: { toString: () => "id1" }, competitor_name: "X" }]);
+    competitorsReqFindSpy.mockResolvedValueOnce([{ user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"] }]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", userName: "Alice", _id: "u1" });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", _id: "u1" });
+    competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", email_status: 0 });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", unsubscribed: 0 });
+    emailSendEmailDirectSpy.mockResolvedValueOnce({ message: "fail" }); // no error → L1108 #1, anySent false → L1111 #1
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    expect(res.send.mock.calls[0][0].body.data[0].mailStatus).not.toBe("sent");
+  });
+
+  it("NODE_ENV unset → dlog env fallback string (L794 #1)", async () => {
+    const orig = process.env.NODE_ENV;
+    process.env.NODE_ENV = "";
+    try {
+      competitorsFindSpy.mockResolvedValueOnce([{ _id: { toString: () => "id1" }, competitor_name: "X" }]);
+      competitorsReqFindSpy.mockResolvedValueOnce([{ user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"] }]);
+      configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+      userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", userName: "A", _id: "u1" });
+      userDetailsFindOneSpy.mockResolvedValueOnce(null);
+      const res = mockRes();
+      await svc.activeCompetitorContacts({}, res);
+      expect(res.send).toHaveBeenCalled();
+    } finally { process.env.NODE_ENV = orig; }
+  });
+
+  it(">5 unique users → dlog truncation branch (L826 #0)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([{ _id: { toString: () => "id1" }, competitor_name: "X" }]);
+    const reqs = [];
+    for (let i = 1; i <= 6; i++) reqs.push({ user_id: "u" + i, monitoring: ["id1"], advertiser: ["BrandA"] });
+    competitorsReqFindSpy.mockResolvedValueOnce(reqs);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValue({ email: "a@b.com", userName: "A", _id: "u1" });
+    userDetailsFindOneSpy.mockResolvedValue(null);
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    expect(res.send).toHaveBeenCalled();
+  });
+
+  it("per-competitor non-Error throw is caught (L922 #1)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([{ _id: { toString: () => "id1" }, competitor_name: "X" }]);
+    competitorsReqFindSpy.mockResolvedValueOnce([{ user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"] }]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", userName: "A", _id: "u1" });
+    svc.countAdsLastDayIST = vi.fn(() => { throw "string-error"; }); // non-Error → error?.message || error
+    userDetailsFindOneSpy.mockResolvedValueOnce(null);
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    expect(res.send).toHaveBeenCalled();
+  });
+
+  it("bounce-blacklisted owner → mailStatus 'skipped:bounce_blacklist' + skip log (L1078-1092)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([
+      { _id: { toString: () => "id1" }, competitor_name: "X" },
+    ]);
+    competitorsReqFindSpy.mockResolvedValueOnce([
+      { user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"] },
+    ]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", userName: "Alice", _id: "u1" });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", _id: "u1" }); // fullUser
+    competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", email_status: 0 }); // pendingEmail
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", unsubscribed: 0 }); // subscribe-detail
+    isBlacklistedSpy.mockImplementation((e) => e === "a@b.com"); // owner blacklisted
+    logSendSpy.mockResolvedValue();
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    expect(res.send.mock.calls[0][0].body.data[0].mailStatus).toBe("skipped:bounce_blacklist");
+    expect(logSendSpy).toHaveBeenCalledWith(expect.objectContaining({ failure_reason: "blacklisted", meta: { source: "cron" } }));
+  });
+
+  it("member-brand pass throwing is swallowed without touching owner status (L1141-1142)", async () => {
+    competitorsFindSpy.mockResolvedValueOnce([
+      { _id: { toString: () => "id1" }, competitor_name: "X" },
+    ]);
+    competitorsReqFindSpy.mockResolvedValueOnce([
+      { user_id: "u1", monitoring: ["id1"], advertiser: ["BrandA"] },
+    ]);
+    configGetSpy.mockImplementation((k) => (k === "TEST_EMAIL_ONLY" ? "" : `cfg:${k}`));
+    userDetailsFindByIdSpy.mockResolvedValueOnce({ email: "a@b.com", userName: "Alice", _id: "u1" });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", _id: "u1" });
+    competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", email_status: 0 });
+    userDetailsFindOneSpy.mockResolvedValueOnce({ email: "a@b.com", unsubscribed: 0 });
+    emailSendEmailDirectSpy.mockResolvedValueOnce({ message: "Email sent successfully" });
+    competitorsReqUpdateManySpy.mockResolvedValueOnce({});
+    svc._runMemberBrandPass = vi.fn().mockRejectedValue(new Error("pass-boom"));
+    const res = mockRes();
+    await svc.activeCompetitorContacts({}, res);
+    expect(res.send.mock.calls[0][0].body.data[0].mailStatus).toBe("sent");
+    expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("member-brand pass for"));
   });
 
   it("TEST_EMAIL_ONLY skips users whose email doesn't match", async () => {
@@ -450,6 +666,50 @@ describe("monitorService > activeCompetitorContacts main loop (PR #201)", () => 
 });
 
 describe("monitorService > fetchTopAdPreview ES paths (PR #201)", () => {
+  it("PAS-prefixed image is rewritten onto the media CDN (L195/L197)", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [{ _source: {
+      "facebook_ad_variants.title": "T", image_url: "/Poweradspy/n2/foo.png",
+    } }] } });
+    const out = await svc.fetchTopAdPreview("Acme", "facebook");
+    expect(out.image_url).toContain("foo.png");
+    expect(out.image_url).not.toMatch(/^\/Poweradspy/);
+  });
+
+  it("PAS prefix with empty remainder → tail gets leading slash (L197 #1)", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [{ _source: {
+      "facebook_ad_variants.title": "T", image_url: "/Poweradspy/n2",
+    } }] } });
+    const out = await svc.fetchTopAdPreview("Acme", "facebook");
+    expect(out.image_url).toContain("cfg:media_url");
+  });
+
+  it("unknown relative image (not PAS) → STRIP false, image dropped (L195 #1)", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [{ _source: {
+      "facebook_ad_variants.title": "T", image_url: "relative/no-prefix.png",
+    } }] } });
+    const out = await svc.fetchTopAdPreview("Acme", "facebook");
+    expect(out.title).toBe("T");
+    expect(out.image_url).toBeFalsy();
+  });
+
+  it("ad with title but no image → image_url empty (L295 #1)", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [{ _source: {
+      "facebook_ad_variants.title": "Title only",
+    } }] } });
+    const out = await svc.fetchTopAdPreview("Acme", "facebook");
+    expect(out.title).toBe("Title only");
+    expect(out.image_url).toBeFalsy();
+  });
+
+  it("field stored as array-of-null is traversed safely (getByPath L146)", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [{ _source: {
+      facebook_ad_variants: [null], // nested path 'facebook_ad_variants.title' → array[0]=null → L146
+      image_url: "https://x/i.png",
+    } }] } });
+    const out = await svc.fetchTopAdPreview("Acme", "facebook");
+    expect(out.image_url).toBe("https://x/i.png");
+  });
+
   it("returns null when ES returns no hits", async () => {
     esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [] } });
     const out = await svc.fetchTopAdPreview("Acme", "facebook");
@@ -651,6 +911,71 @@ describe("monitorService > getCompetitors", () => {
     const res = mockRes();
     await svc.getCompetitors({ query: { platform: "facebook" } }, res);
     expect(res.send.mock.calls[0][0].body.msg).toContain("Error in getting competitors");
+  });
+});
+
+describe("monitorService > dlog gate (module init)", () => {
+  it("config.get(MAIL_DEBUG_LOG) throws at load → falls back to false (L24 catch)", async () => {
+    configGetSpy.mockImplementation((k) => { if (k === "MAIL_DEBUG_LOG") throw new Error("no-flag"); return `cfg:${k}`; });
+    vi.resetModules();
+    const { default: reloaded } = await import("../../../core/Competitors/monitorService.js");
+    expect(reloaded).toBeDefined();
+  });
+
+  it("MAIL_DEBUG_LOG=false → only ❌/FAILED dlog lines print (L29 #0)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    configGetSpy.mockImplementation((k) => (k === "MAIL_DEBUG_LOG" ? false : `cfg:${k}`));
+    vi.resetModules();
+    const { default: reloaded } = await import("../../../core/Competitors/monitorService.js");
+    esClientFake.server1.count.mockRejectedValueOnce(new Error("es-down"));
+    await reloaded.countAdsLastDayIST("Acme", "facebook"); // catch dlogs a "❌" line → console.log fires
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("❌"));
+    logSpy.mockRestore();
+  });
+});
+
+describe("monitorService > countAdsLastDayIST / countAdsAllTime", () => {
+  it("unknown platform → 0 (no cfg)", async () => {
+    expect(await svc.countAdsLastDayIST("Acme", "tiktok")).toBe(0);
+    expect(await svc.countAdsAllTime("Acme", "tiktok")).toBe(0);
+  });
+
+  it("falsy competitorName → String(name || '') fallback (L393/L555)", async () => {
+    esClientFake.server1.count.mockResolvedValue({ count: 0 });
+    expect(await svc.countAdsLastDayIST("", "facebook")).toBe(0);
+    expect(await svc.countAdsAllTime(null, "facebook")).toBe(0);
+  });
+
+  it("lastDay: multi-word advertiser + res.count present", async () => {
+    esClientFake.server1.count.mockResolvedValueOnce({ count: 5 });
+    expect(await svc.countAdsLastDayIST("Two Words", "facebook")).toBe(5);
+  });
+
+  it("lastDay: res.body.count fallback", async () => {
+    esClientFake.server1.count.mockResolvedValueOnce({ body: { count: 3 } });
+    expect(await svc.countAdsLastDayIST("Acme", "facebook")).toBe(3);
+  });
+
+  it("lastDay: neither count nor body.count → 0", async () => {
+    esClientFake.server1.count.mockResolvedValueOnce({});
+    expect(await svc.countAdsLastDayIST("Acme", "facebook")).toBe(0);
+  });
+
+  it("lastDay: google (excludeType) + count throws → catch returns 0", async () => {
+    esClientFake.server3.count.mockRejectedValueOnce(new Error("es-down"));
+    expect(await svc.countAdsLastDayIST("Acme", "google")).toBe(0);
+    expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("countAdsLastDayIST failed"));
+  });
+
+  it("allTime: multi-word + res.count, body.count fallback, empty, and catch", async () => {
+    esClientFake.server1.count.mockResolvedValueOnce({ count: 9 });
+    expect(await svc.countAdsAllTime("Two Words", "facebook")).toBe(9);
+    esClientFake.server2.count.mockResolvedValueOnce({ body: { count: 4 } });
+    expect(await svc.countAdsAllTime("Acme", "instagram")).toBe(4);
+    esClientFake.server3.count.mockResolvedValueOnce({});
+    expect(await svc.countAdsAllTime("Acme", "google")).toBe(0);
+    esClientFake.server1.count.mockRejectedValueOnce(new Error("boom"));
+    expect(await svc.countAdsAllTime("Acme", "facebook")).toBe(0);
   });
 });
 
@@ -951,5 +1276,101 @@ describe("monitorService > PAS_MEDIA_CDN module-init fallback (lines 218, 219)",
     const res = mockRes();
     await mod.default.activeCompetitorContacts({}, res);
     consoleLogSpy.mockRestore();
+  });
+});
+
+describe("monitorService > _runMemberBrandPass", () => {
+  it("no brand_cc_members rows → early return", async () => {
+    brandCcFindSpy.mockReturnValue({ lean: () => Promise.resolve([]) });
+    await svc._runMemberBrandPass({ userBrands: [], ownerUserId: "o1", ownerName: "Own", ownerEmail: "o@x.com" });
+    expect(emailSendCompetitorMemberMailSpy).not.toHaveBeenCalled();
+  });
+
+  it("full pass: data-brand send, no-data skip, deleted-brand + blacklist skip, invalid-email row skipped, failed send", async () => {
+    const userBrands = [
+      { project_id: "p1", brand_name: "B1", competitors: [{ counts: { facebook: { last24h: 5 } } }] }, // has data
+      { project_id: "p2", brand_name: "B2", competitors: [{ counts: { facebook: { last24h: 0 } } }] }, // no data
+    ];
+    brandCcFindSpy.mockReturnValue({ lean: () => Promise.resolve([
+      { project_id: "p1", member_ids: ["m1"], member_emails: ["data@x.com"] },
+      { project_id: "p1", member_ids: ["m3"], member_emails: ["data2@x.com"] },
+      { project_id: "p2", member_ids: ["m2"], member_emails: ["nodata@x.com"] },
+      { project_id: "p3", member_ids: [], member_emails: ["deleted@x.com"] }, // brand not in map
+      { project_id: "p1", member_ids: [], member_emails: ["bad-email", "   "] }, // all invalid → continue
+    ]) });
+    memberFindSpy.mockReturnValue({ lean: () => Promise.resolve([
+      { _id: "m1", email: "data@x.com", name: "Data" },
+      { _id: "m2", email: "nodata@x.com", name: "" },
+      { _id: "m3", email: "data2@x.com", name: "Data2" },
+    ]) });
+    isBlacklistedSpy.mockImplementation((e) => e === "deleted@x.com");
+    logSendSpy.mockResolvedValue();
+    emailSendCompetitorMemberMailSpy.mockImplementation(({ to }) => (to === "data2@x.com" ? { ok: false } : { ok: true }));
+    await svc._runMemberBrandPass({ userBrands, ownerUserId: "o1", ownerName: "Own", ownerEmail: "o@x.com" });
+    expect(emailSendCompetitorMemberMailSpy).toHaveBeenCalledWith(expect.objectContaining({ to: "data@x.com" }));
+    expect(logSendSpy).toHaveBeenCalledWith(expect.objectContaining({ status: "skipped" }));
+  });
+
+  it("skip-log writes that throw are swallowed (blacklist + no-data catch paths)", async () => {
+    const userBrands = [{ project_id: "p2", brand_name: "B2", competitors: [{ counts: { facebook: { last24h: 0 } } }] }];
+    brandCcFindSpy.mockReturnValue({ lean: () => Promise.resolve([
+      { project_id: "p2", member_ids: ["m2"], member_emails: ["nodata@x.com"] },
+      { project_id: "p2", member_ids: ["m4"], member_emails: ["black@x.com"] },
+    ]) });
+    memberFindSpy.mockReturnValue({ lean: () => Promise.resolve([
+      { _id: "m2", email: "nodata@x.com", name: "N" },
+      { _id: "m4", email: "black@x.com", name: "B" },
+    ]) });
+    isBlacklistedSpy.mockImplementation((e) => e === "black@x.com");
+    logSendSpy.mockRejectedValue(new Error("audit-down")); // both skip-log catches
+    await svc._runMemberBrandPass({ userBrands, ownerUserId: "o1", ownerName: "Own", ownerEmail: "o@x.com" });
+    expect(emailSendCompetitorMemberMailSpy).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("monitorService > _runMemberBrandPass exhaustive fallbacks", () => {
+  it("missing fields, dup emails, undefined owner, blacklist + no-data skips, nameless send", async () => {
+    const userBrands = [
+      { project_id: "p1", brand_name: "B1", competitors: [{ counts: { facebook: { last24h: 5 } } }] }, // data
+      { project_id: "p2" },                                  // mapped, no competitors → brandHasData [] (L1180 #1), no brand_name → "(unnamed)" (L1240 #1)
+      { competitors: [{ counts: { facebook: { last24h: 9 } } }] }, // no project_id → not mapped (L1188 #1)
+    ];
+    brandCcFindSpy.mockReturnValue({ lean: () => Promise.resolve([
+      { project_id: "p1", member_ids: ["m1", "m6"], member_emails: ["data@x.com", "noname@x.com"] },
+      { project_id: "p2", member_ids: ["m2"], member_emails: ["nodata@x.com"] },
+      { project_id: "p1", member_emails: ["data@x.com"] },   // no member_ids (L1204 #1) + dup email (L1227 #1)
+      { member_ids: ["m3"], member_emails: ["deleted@x.com"] }, // no project_id (L1219 #1) → deleted brand
+      { project_id: "p1" },                                  // no member_emails (L1221 #1)
+      { project_id: "p1", member_emails: ["", "  "] },       // empty/invalid emails (L1222 #1) → continue
+      { project_id: "p1", member_ids: ["m4"], member_emails: ["black@x.com"] }, // blacklisted
+    ]) });
+    memberFindSpy.mockReturnValue({ lean: () => Promise.resolve([
+      { _id: "m1", email: "data@x.com", name: "Data" },
+      { _id: "m2", name: "NoEmailMember" },                  // no email (L1210 #1, k="" → L1211 #1)
+      { _id: "m3", email: "deleted@x.com", name: "" },
+      { _id: "m4", email: "black@x.com", name: "B" },
+    ]) });
+    isBlacklistedSpy.mockImplementation((e) => e === "black@x.com");
+    logSendSpy.mockResolvedValue();
+    emailSendCompetitorMemberMailSpy.mockResolvedValue({ ok: true });
+    // owner name/email undefined → L1269/1270/1293/1294/1311 fallbacks
+    await svc._runMemberBrandPass({ userBrands, ownerUserId: "o1", ownerName: undefined, ownerEmail: undefined });
+    // data@x.com (data brand) and noname@x.com (data brand, no name → "there") both sent
+    expect(emailSendCompetitorMemberMailSpy).toHaveBeenCalledWith(expect.objectContaining({ to: "data@x.com" }));
+    expect(emailSendCompetitorMemberMailSpy).toHaveBeenCalledWith(expect.objectContaining({ to: "noname@x.com", name: "there" }));
+    // nodata + deleted → no-data skip logs; black → blacklist skip log
+    expect(logSendSpy).toHaveBeenCalledWith(expect.objectContaining({ status: "skipped", failure_reason: "blacklisted" }));
+  });
+
+  it("no member_ids anywhere → allMemberIds empty, memberDocs skipped (L1205 #1)", async () => {
+    const userBrands = [{ project_id: "p1", brand_name: "B1", competitors: [{ counts: { facebook: { last24h: 5 } } }] }];
+    brandCcFindSpy.mockReturnValue({ lean: () => Promise.resolve([
+      { project_id: "p1", member_emails: ["data@x.com"] }, // no member_ids on any row
+    ]) });
+    memberFindSpy.mockReturnValue({ lean: () => Promise.resolve([]) });
+    emailSendCompetitorMemberMailSpy.mockResolvedValue({ ok: true });
+    await svc._runMemberBrandPass({ userBrands, ownerUserId: "o1", ownerName: "Own", ownerEmail: "o@x.com" });
+    expect(emailSendCompetitorMemberMailSpy).toHaveBeenCalledWith(expect.objectContaining({ to: "data@x.com", name: "there" }));
   });
 });

@@ -115,6 +115,7 @@ async function fetchSuppressionList(kind) {
     }
     if (rows.length < limit) break;
     offset += limit;
+    /* v8 ignore next -- safety cap; reaching it needs 400+ full 500-row pages, not feasible to exercise */
     if (offset > 200_000) break; // safety cap
   }
   return out;

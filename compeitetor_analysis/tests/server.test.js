@@ -118,6 +118,18 @@ describe("server.js bootstrap", () => {
     expect(readFileSyncSpy).toHaveBeenCalledWith(expect.stringContaining("swagger-api-view.json"), "utf-8");
   });
 
+  it("express.json verify callback stashes the raw body on req.rawBody (line 38)", async () => {
+    esCheckSpy.mockResolvedValueOnce(undefined);
+    connectDBSpy.mockResolvedValueOnce(undefined);
+    await import("../server.js");
+    const jsonOpts = expressFake.json.mock.calls.find((c) => c[0] && typeof c[0].verify === "function");
+    expect(jsonOpts).toBeTruthy();
+    const req = {};
+    const buf = Buffer.from("raw-payload");
+    jsonOpts[0].verify(req, {}, buf);
+    expect(req.rawBody).toBe(buf);
+  });
+
   it("PORT defaults to 3000 when config.get returns falsy", async () => {
     configGetSpy.mockReturnValue(0);
     esCheckSpy.mockResolvedValueOnce(undefined);

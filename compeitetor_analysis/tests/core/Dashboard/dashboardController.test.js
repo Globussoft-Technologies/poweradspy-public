@@ -5,7 +5,7 @@ const methods = [
   "getplatformcount", "getCompetitorsCount", "getCompetitorsCountNew",
   "insertBacklink", "insertOrganicSearch", "insertpaidSearch",
   "getBackLinks", "getOrganicSearches", "getPaidSearches",
-  "getCount", "getCountry",
+  "getCount", "getCountry", "getUserBrandStats", "getCompetitorAdsByRange",
 ];
 
 const spies = vi.hoisted(() => {
@@ -15,7 +15,7 @@ const spies = vi.hoisted(() => {
     "getplatformcount", "getCompetitorsCount", "getCompetitorsCountNew",
     "insertBacklink", "insertOrganicSearch", "insertpaidSearch",
     "getBackLinks", "getOrganicSearches", "getPaidSearches",
-    "getCount", "getCountry",
+    "getCount", "getCountry", "getUserBrandStats", "getCompetitorAdsByRange",
   ]) m[k] = vi.fn();
   return m;
 });

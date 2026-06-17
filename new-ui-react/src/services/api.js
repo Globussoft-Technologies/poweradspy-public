@@ -1,3 +1,4 @@
+
 // ─── API Configuration ────────────────────────────────────────────────────────
 const GEMINI_API_KEY = "";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";

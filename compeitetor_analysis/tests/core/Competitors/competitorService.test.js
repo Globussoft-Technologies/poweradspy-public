@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const spies = vi.hoisted(() => {
+  const objectIdIsValidSpy = vi.fn(() => true);
   function ObjectIdStub(id) { return { _id: id, toString: () => id }; }
+  ObjectIdStub.isValid = (...a) => objectIdIsValidSpy(...a);
   const esClient = {
     server1: { search: vi.fn(), count: vi.fn() },
     server2: { search: vi.fn(), count: vi.fn() },
@@ -38,6 +40,8 @@ const spies = vi.hoisted(() => {
     tokenSyncFindOneSpy: vi.fn(),
     tokenSyncUpdateOneSpy: vi.fn(),
     isValidObjectIdSpy: vi.fn(),
+    objectIdIsValidSpy,
+    configHasSpy: vi.fn(() => false),
     ObjectIdStub,
     geminiGenerateSpy: vi.fn(),
     esClient,
@@ -47,7 +51,7 @@ const spies = vi.hoisted(() => {
 });
 
 vi.mock("../../../resources/logs/logger.log.js", () => ({
-  default: { info: spies.loggerInfoSpy, error: spies.loggerErrorSpy, warn: spies.loggerWarnSpy },
+  default: { info: spies.loggerInfoSpy, error: spies.loggerErrorSpy, warn: spies.loggerWarnSpy, debug: vi.fn() },
 }));
 vi.mock("../../../utils/response.js", () => ({
   default: {
@@ -65,8 +69,8 @@ vi.mock("../../../core/Dashboard/dashboardService.js", () => ({
 }));
 vi.mock("../../../core/Competitors/competitorValidation.js", () => ({
   default: {
-    createDetails: (b) => spies._validationCreateDetailsResult ?? ({ value: b, error: null }),
-    createRequest: (b) => spies._validationCreateRequestResult ?? ({ value: b, error: null }),
+    createDetails: (b) => { if (spies._createDetailsThrow) throw new Error("validation-boom"); return spies._validationCreateDetailsResult ?? ({ value: b, error: null }); },
+    createRequest: (b) => { if (spies._createRequestThrow) throw new Error("validation-boom"); return spies._validationCreateRequestResult ?? ({ value: b, error: null }); },
   },
 }));
 vi.mock("../../../models/user_details.js", () => ({
@@ -119,7 +123,7 @@ vi.mock("../../../models/jobTokenState.js", () => ({
     updateOne: spies.tokenSyncUpdateOneSpy,
   },
 }));
-vi.mock("config", () => ({ default: { get: spies.configGetSpy, has: () => false } }));
+vi.mock("config", () => ({ default: { get: spies.configGetSpy, has: (...a) => spies.configHasSpy(...a) } }));
 vi.mock("@google/genai", () => ({
   GoogleGenAI: vi.fn(function () {
     this.models = { generateContent: spies.geminiGenerateSpy };
@@ -161,6 +165,12 @@ beforeEach(async () => {
   });
   spies.configGetSpy.mockImplementation((k) => `cfg:${k}`);
   spies.isValidObjectIdSpy.mockReturnValue(true);
+  spies.objectIdIsValidSpy.mockReturnValue(true);
+  spies._createDetailsThrow = false;
+  spies._createRequestThrow = false;
+  spies._validationCreateDetailsResult = undefined;
+  spies._validationCreateRequestResult = undefined;
+  spies.configHasSpy.mockReturnValue(false);
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.resetModules();
@@ -632,7 +642,14 @@ describe("competitorService > saveUniqueCompetitors / getFirst30 / getAllComps",
       { tool_name: "c1", domain: "c1.com" }, // dup
       { tool_name: "existing", domain: "x.com" }, // already there
       { tool_name: "", domain: null }, // skipped
+      { tool_name: "NoUrl" }, // no domain → url || null fallback
     ]);
+    expect(r.length).toBe(2);
+  });
+  it("saveUniqueCompetitors: no existing doc → `doc?.competitors || []` fallback", async () => {
+    spies.existingCompFindOneSpy.mockResolvedValueOnce(null); // doc null
+    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
+    const r = await svc.saveUniqueCompetitors("Acme", [{ tool_name: "Solo", domain: "s.com" }], 5);
     expect(r.length).toBe(1);
   });
   it("getFirst30 returns first slice", async () => {
@@ -783,6 +800,25 @@ describe("competitorService > checkCompetitorProcess", () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
+  it("advertiser as empty array → fullBrand falls back to advertiser (L3280 #1, L3319 #1)", async () => {
+    spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
+    spies.configGetSpy.mockImplementation(() => 20000);
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
+    spies.axiosPostSpy.mockResolvedValueOnce({ data: { data: {} } });
+    const res = mockRes();
+    await svc.checkCompetitorProcess({ body: { user_id: "u1", advertiser: [], content_ref_id: "c", keywords: [], limit: 5 } }, res);
+    expect(res.json).toHaveBeenCalled();
+  });
+  it("advertiser as empty string → fullBrand falls back to '' (L3280 #2)", async () => {
+    spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
+    spies.configGetSpy.mockImplementation(() => 20000);
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
+    spies.axiosPostSpy.mockResolvedValueOnce({ data: { data: {} } });
+    const res = mockRes();
+    await svc.checkCompetitorProcess({ body: { user_id: "u1", advertiser: "", content_ref_id: "c", keywords: [], limit: 5 } }, res);
+    expect(res.json).toHaveBeenCalled();
+  });
+
   it("axios returns no .data → fallback to {} (line 3227 true branch)", async () => {
     spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
     spies.configGetSpy.mockImplementation(() => 20000);
@@ -927,6 +963,11 @@ describe("competitorService > attachCompetitorsToUserRequest", () => {
     await svc.attachCompetitorsToUserRequest("u", ["Acme"], ["c1"], []);
     expect(spies.competitorsReqUpdateOneSpy).toHaveBeenCalled();
   });
+  it("empty advertiserArray → normalizeAdvertiser('') fallback (L2868)", async () => {
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
+    await svc.attachCompetitorsToUserRequest("u", [], ["c1"], []);
+    expect(spies.competitorsReqUpdateOneSpy).toHaveBeenCalled();
+  });
   it("logs on updateOne throw (does NOT rethrow)", async () => {
     spies.competitorsReqUpdateOneSpy.mockRejectedValueOnce(new Error("db"));
     await svc.attachCompetitorsToUserRequest("u", ["Acme"], ["c1"], []);
@@ -949,13 +990,16 @@ describe("competitorService > checkExistingCompetitorCount", () => {
     expect(res.status).toHaveBeenCalledWith(409);
   });
   it("201 when count >= 200, with user_id", async () => {
-    const big = new Array(200).fill({ competitor_name: "X" });
+    // Interleave monitored ("M…") and unmonitored ("X…") so the monitored-first
+    // sort comparator exercises both `a.monitored ? -1 : 1` branches (L2970).
+    const big = new Array(200).fill(0).map((_, i) => ({ competitor_name: (i % 2 === 0 ? "M" : "X") + i }));
+    const monitored = big.filter((_, i) => i % 2 === 0).map((c) => ({ competitor_name: c.competitor_name }));
     spies.existingCompFindOneSpy.mockReturnValueOnce({
       lean: () => Promise.resolve({ competitors: big }),
     });
     spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", monitoring: ["m1"] });
     spies.competitorsFindSpy.mockReturnValueOnce({
-      lean: () => Promise.resolve([{ competitor_name: "M" }]),
+      lean: () => Promise.resolve(monitored),
     });
     spies.competitorsFindSpy.mockReturnValueOnce({
       lean: () => Promise.resolve([{ competitor_name: "X", _id: "x1" }]),
@@ -1093,6 +1137,11 @@ describe("competitorService > addManualCompetitor", () => {
     await svc.addManualCompetitor({ body: {} }, res);
     expect(res.status).toHaveBeenCalledWith(400);
   });
+  it("400 when body entirely missing → `req.body || {}`", async () => {
+    const res = mockRes();
+    await svc.addManualCompetitor({}, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
   it("400 when competitor_name normalises to empty", async () => {
     const res = mockRes();
     await svc.addManualCompetitor({ body: { user_id: "u", advertiser: "A", competitor_name: "   " } }, res);
@@ -1136,7 +1185,7 @@ describe("competitorService > addManualCompetitor", () => {
       competitors: [{ toString: () => "c1" }],
     });
     spies.competitorsFindOneSpy.mockResolvedValueOnce({ _id: { toString: () => "c1" }, competitor_name: "C" });
-    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [{ competitor_name: "c" }] });
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [{}, { competitor_name: "c" }] }); // {} → (c.competitor_name || "") fallback
     const res = mockRes();
     await svc.addManualCompetitor({ body: { user_id: "u", advertiser: "A", competitor_name: "C" } }, res);
     const payload = res.send.mock.calls[0][0];
@@ -1451,6 +1500,26 @@ describe("competitorService > fetchCompetitors", () => {
     const res = mockRes();
     await svc.fetchCompetitors({ body: { advertiser: ["Acme"] } }, res);
     expect(res.send.mock.calls[0][0].body.msg).toContain("Error in fetching competitors");
+  });
+
+  it("gemini path: non-array response → Array.isArray false (L327 #1)", async () => {
+    spies.existingCompFindOneSpy.mockResolvedValueOnce(null); // brandCheck null → gemini path
+    spies.geminiGenerateSpy.mockResolvedValue({ text: JSON.stringify({ not: "array" }) });
+    const res = mockRes();
+    await svc.fetchCompetitors({ body: { advertiser: ["Acme"] } }, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Fetched Competitors");
+  });
+
+  it("gemini path: null entry + null data + failing insert exercises entry/data fallbacks + .catch (L329-331)", async () => {
+    spies.existingCompFindOneSpy.mockResolvedValueOnce(null);
+    spies.geminiGenerateSpy.mockResolvedValue({
+      text: JSON.stringify([null, { Brand: null }, { Brand2: { competitors: [{ name: "X" }] } }]),
+    });
+    spies.existingCompUpdateOneSpy.mockRejectedValue(new Error("insert-fail")); // → insertIntoExistingComp .catch
+    const res = mockRes();
+    await svc.fetchCompetitors({ body: { advertiser: ["Acme"] } }, res);
+    await new Promise((r) => setImmediate(r)); // flush fire-and-forget .catch
+    expect(res.send).toHaveBeenCalled();
   });
 });
 
@@ -2129,6 +2198,20 @@ describe("competitorService > getStoreProcessCompetitors", () => {
     expect(res.send.mock.calls[0][0].body.msg).toContain("Failed to fetch");
   });
 
+  it("python returns competitors → attach resolves + logs (L2587)", async () => {
+    svc.isDailyLimitExceeded = vi.fn().mockResolvedValue(false);
+    svc.attachCompetitorsCappedToTarget = vi.fn().mockResolvedValue(1);
+    svc.getCompetitorTableRows = vi.fn().mockResolvedValue([]);
+    svc.generateCompetitorsInBackground = vi.fn();
+    spies.competitorsReqUpdateOneSpy.mockResolvedValue({});
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.axiosGetSpy.mockResolvedValueOnce({ data: { data: { competitors: [{ tool_name: "c1" }] } } });
+    const res = mockRes();
+    await svc.getStoreProcessCompetitors({ body: { advertiser: "Acme", content_ref_id: "c", user_id: "u", target: 5 } }, res);
+    expect(svc.attachCompetitorsCappedToTarget).toHaveBeenCalled();
+    expect(res.send).toHaveBeenCalled();
+  });
+
   it("axios response uses second-fallback shape `data.competitors` (no nested data.data) → covers fallback chain (lines 2483-2485)", async () => {
     spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
     spies.configGetSpy.mockImplementation((k) => k === "MAXIMUM_TOKEN_COUNt" ? 20000 : "cfg:" + k);
@@ -2796,5 +2879,218 @@ describe("competitorService > generateCompetitorsInBackground", () => {
       normalizedKey: "acme", content_ref_id: "c", keywordUrlC: "http://x", TARGET: 5, user_id: "u",
     });
     expect(emitSpy).toHaveBeenCalledWith("token-limit-exceeded", expect.any(Object));
+  });
+});
+
+describe("competitorService > generateCompetitorsInBackground enrichment", () => {
+  it("new data arrives → attaches, enriches rows with empty ES stats (all fallbacks), then completes", async () => {
+    svc.updateUserDailyTokens = vi.fn().mockResolvedValue();
+    svc.isDailyLimitExceeded = vi.fn().mockResolvedValue(false);
+    svc.attachCompetitorsCappedToTarget = vi.fn().mockResolvedValue(1);
+    svc.getCompetitorTableRows = vi.fn().mockResolvedValue([{ name: "C1" }]); // no countries/platforms → fallbacks
+    svc.sleep = vi.fn().mockResolvedValue();
+    spies.dashboardCountInternalSpy.mockResolvedValue({}); // empty stats → every `|| 0` / `?:` fallback fires
+    // iter 1: attachedCount 0 (<TARGET) → fetch+enrich; iter 2: attachedCount >= TARGET → break
+    spies.competitorsReqFindOneSpy
+      .mockResolvedValueOnce({ competitors: [] })
+      .mockResolvedValueOnce({ competitors: [1, 2] });
+    spies.axiosGetSpy.mockResolvedValue({ data: { data: { competitors: [{ tool_name: "X" }], total_items: 1, completed_items: 1 } } });
+    const emit = vi.fn();
+    spies.getIOSpy.mockReturnValue({ to: () => ({ emit }) });
+    await svc.generateCompetitorsInBackground({ normalizedKey: "acme", content_ref_id: "c", keywordUrlC: "http://x", TARGET: 2, user_id: "u" });
+    expect(emit).toHaveBeenCalledWith("competitor-batch", expect.any(Object));
+  });
+
+  it("shrinking data (len < lastCount) → falls through all smart-logic ifs (L2812 #1)", async () => {
+    svc.updateUserDailyTokens = vi.fn().mockResolvedValue();
+    svc.isDailyLimitExceeded = vi.fn().mockResolvedValue(false);
+    svc.attachCompetitorsCappedToTarget = vi.fn().mockResolvedValue(1);
+    svc.getCompetitorTableRows = vi.fn().mockResolvedValue([{ name: "C1" }]);
+    svc.sleep = vi.fn().mockResolvedValue();
+    spies.dashboardCountInternalSpy.mockResolvedValue({});
+    // iter1 count 0; iter2 count 0; iter3 count >= TARGET → break
+    spies.competitorsReqFindOneSpy
+      .mockResolvedValueOnce({ competitors: [] })
+      .mockResolvedValueOnce({ competitors: [] })
+      .mockResolvedValueOnce({ competitors: [1, 2] });
+    // iter1 returns 2 competitors (lastCount=2); iter2 returns 1 (< lastCount → no branch matches)
+    spies.axiosGetSpy
+      .mockResolvedValueOnce({ data: { data: { competitors: [{ tool_name: "X" }, { tool_name: "Y" }] } } })
+      .mockResolvedValueOnce({ data: { data: { competitors: [{ tool_name: "X" }] } } });
+    const emit = vi.fn();
+    spies.getIOSpy.mockReturnValue({ to: () => ({ emit }) });
+    await svc.generateCompetitorsInBackground({ normalizedKey: "acme", content_ref_id: "c", keywordUrlC: "http://x", TARGET: 2, user_id: "u" });
+    expect(emit).toHaveBeenCalled();
+  });
+});
+
+describe("competitorService > attachCompetitorsCappedToTarget", () => {
+  it("returns 0 when competitors is empty/non-array", async () => {
+    expect(await svc.attachCompetitorsCappedToTarget({ user_id: "u", normalizedKey: "k", competitors: [], TARGET: 5 })).toBe(0);
+    expect(await svc.attachCompetitorsCappedToTarget({ user_id: "u", normalizedKey: "k", competitors: null, TARGET: 5 })).toBe(0);
+  });
+
+  it("returns 0 when target already met (need <= 0)", async () => {
+    svc.getCompetitorTableRows = vi.fn().mockResolvedValue([{ name: "A" }, { name: "B" }, {}]); // {} → (r.name || "") fallback
+    const out = await svc.attachCompetitorsCappedToTarget({ user_id: "u", normalizedKey: "k", competitors: [{ tool_name: "C" }], TARGET: 2 });
+    expect(out).toBe(0);
+  });
+
+  it("competitorOverfetchLimit uses configured ratio when config.has is true", async () => {
+    spies.configHasSpy.mockReturnValue(true);
+    spies.configGetSpy.mockImplementation((k) => (k === "COMP_OVERFETCH_RATIO" ? 0.5 : `cfg:${k}`));
+    expect(svc.competitorOverfetchLimit(10)).toBeGreaterThan(10);
+    expect(svc.competitorOverfetchLimit(0)).toBe(0); // target <= 0 early return
+  });
+
+  it("attaches fresh, name-unique candidates up to need (break + dedup + skip)", async () => {
+    svc.getCompetitorTableRows = vi.fn().mockResolvedValue([]); // attachedNames empty
+    svc.saveUniqueCompetitors = vi.fn().mockResolvedValue();
+    svc.getCompetitorIdsFromMaster = vi.fn().mockResolvedValue(["id1", "id2"]);
+    svc.attachCompetitorsToUserRequest = vi.fn().mockResolvedValue();
+    const competitors = [
+      { tool_name: "Alpha" },
+      { tool_name: "" },        // no name → continue
+      { tool_name: "Alpha" },   // duplicate → continue
+      { tool_name: "Beta" },
+      { tool_name: "Gamma" },   // never reached (break at need=2)
+    ];
+    const out = await svc.attachCompetitorsCappedToTarget({ user_id: "u", normalizedKey: "k", competitors, TARGET: 2 });
+    expect(out).toBe(2);
+    expect(svc.saveUniqueCompetitors).toHaveBeenCalled();
+    expect(svc.attachCompetitorsToUserRequest).toHaveBeenCalled();
+  });
+
+  it("returns 0 when no fresh candidates (all already attached)", async () => {
+    svc.getCompetitorTableRows = vi.fn().mockResolvedValue([{ name: "alpha" }]);
+    const out = await svc.attachCompetitorsCappedToTarget({ user_id: "u", normalizedKey: "k", competitors: [{ tool_name: "Alpha" }], TARGET: 5 });
+    expect(out).toBe(0);
+  });
+});
+
+describe("competitorService > outer-catch safety nets", () => {
+  it("create: validation throws → outer catch", async () => {
+    spies.userDetailsFindOneSpy.mockResolvedValueOnce(null); // emailCheck null → enters createDetails
+    spies._createDetailsThrow = true;
+    const res = mockRes();
+    await svc.create({ body: { email: "a@b.c", company_name: "X" } }, res);
+    expect(spies.loggerErrorSpy).toHaveBeenCalledWith("Error in creating user details", expect.any(Error));
+  });
+
+  it("insertCompRequests: validation throws → outer catch", async () => {
+    spies._createRequestThrow = true;
+    const res = mockRes();
+    await svc.insertCompRequests({ body: { advertiser: ["Acme"], user_id: "u1" } }, res);
+    expect(spies.loggerErrorSpy).toHaveBeenCalledWith("Error in inserting competitors request", expect.any(Error));
+  });
+});
+
+describe("competitorService > fetchCompetitorsClient Gemini fallback", () => {
+  it("DB empty + scrolled beyond + below max → Gemini collects, dedups, inserts", async () => {
+    spies.configGetSpy.mockImplementation((k) => (k === "COMP_NUMBER_MAX" ? 50 : `cfg:${k}`));
+    spies.existingCompFindOneSpy.mockResolvedValueOnce(null); // dbCount 0 → fromDB empty, scrolled, below max
+    spies.geminiGenerateSpy.mockResolvedValue({
+      text: JSON.stringify([
+        { Acme: { competitors: [
+          { name: "R1", domain: "r1.com" },
+          { name: "R1", domain: "dup" }, // duplicate → seen-skip branch
+          { name: "R2", domain: "r2.com" },
+        ] } },
+      ]),
+    });
+    spies.existingCompUpdateOneSpy.mockResolvedValue({});
+    const res = mockRes();
+    await svc.fetchCompetitorsClient({ body: { advertiser: ["Acme"], offset: 0, limit: 2 } }, res);
+    expect(spies.geminiGenerateSpy).toHaveBeenCalled();
+    expect(spies.existingCompUpdateOneSpy).toHaveBeenCalled();
+    expect(res.send.mock.calls[0][0].body.status).toBe("success");
+  });
+
+  it("served fully from DB with dbCount>=MAX → done flag right operand evaluated (L1339/1353)", async () => {
+    spies.configGetSpy.mockImplementation((k) => (k === "COMP_NUMBER_MAX" ? 1 : `cfg:${k}`));
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [{ competitor_name: "C1", competitor_url: "u.com" }] });
+    const res = mockRes();
+    await svc.fetchCompetitorsClient({ body: { advertiser: ["Acme"], offset: 0, limit: 50 } }, res);
+    expect(res.send.mock.calls[0][0].body.status).toBe("success");
+  });
+
+  it("Gemini returns brand with no competitors → empty collected (L1431/1452)", async () => {
+    spies.configGetSpy.mockImplementation((k) => (k === "COMP_NUMBER_MAX" ? 50 : `cfg:${k}`));
+    spies.existingCompFindOneSpy.mockResolvedValueOnce(null); // dbCount 0
+    spies.geminiGenerateSpy.mockResolvedValue({ text: JSON.stringify([{ Acme: {} }]) }); // no competitors
+    const res = mockRes();
+    await svc.fetchCompetitorsClient({ body: { advertiser: ["Acme"], offset: 0, limit: 2 } }, res);
+    expect(res.send.mock.calls[0][0].body.status).toBe("success");
+    expect(spies.existingCompUpdateOneSpy).not.toHaveBeenCalled(); // collected empty → no insert
+  });
+});
+
+describe("competitorService > deleteCompetitor", () => {
+  it("400 when required fields missing", async () => {
+    const res = mockRes();
+    await svc.deleteCompetitor({ body: { user_id: "u1" } }, res); // no advertiser/competitor
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("400 when body entirely missing → `req.body || {}`", async () => {
+    const res = mockRes();
+    await svc.deleteCompetitor({}, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("404 when project not found", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
+    const res = mockRes();
+    await svc.deleteCompetitor({ body: { user_id: "u1", advertiser: "Acme", competitor_id: "c1" } }, res);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json.mock.calls[0][0].body.message).toContain("Project not found");
+  });
+
+  it("removes by valid competitor_id → success", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
+    spies.objectIdIsValidSpy.mockReturnValue(true);
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({ modifiedCount: 1 });
+    const res = mockRes();
+    await svc.deleteCompetitor({ body: { user_id: "u1", advertiser: "Acme", competitor_id: "c1" } }, res);
+    expect(spies.competitorsReqUpdateOneSpy).toHaveBeenCalled();
+    const out = res.send.mock.calls[0][0];
+    expect(out.body.data.removed).toBe(true);
+  });
+
+  it("falls back to competitor_name lookup when id absent → found", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
+    spies.competitorsFindOneSpy.mockResolvedValueOnce({ _id: "cFound" });
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({ modifiedCount: 0 });
+    const res = mockRes();
+    await svc.deleteCompetitor({ body: { user_id: "u1", advertiser: "Acme", competitor_name: "Rival Co" } }, res);
+    expect(spies.competitorsFindOneSpy).toHaveBeenCalled();
+    expect(res.send.mock.calls[0][0].body.data.removed).toBe(false); // modifiedCount 0
+  });
+
+  it("404 when competitor_id invalid and no competitor_name supplied (else-if false)", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
+    spies.objectIdIsValidSpy.mockReturnValue(false); // id invalid, no name → competitorId stays null
+    const res = mockRes();
+    await svc.deleteCompetitor({ body: { user_id: "u1", advertiser: "Acme", competitor_id: "bad" } }, res);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json.mock.calls[0][0].body.message).toContain("Competitor not found");
+  });
+
+  it("404 when competitor cannot be resolved (invalid id, name not found)", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
+    spies.objectIdIsValidSpy.mockReturnValue(false); // id invalid
+    spies.competitorsFindOneSpy.mockResolvedValueOnce(null); // name not found
+    const res = mockRes();
+    await svc.deleteCompetitor({ body: { user_id: "u1", advertiser: "Acme", competitor_id: "bad", competitor_name: "Nope" } }, res);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json.mock.calls[0][0].body.message).toContain("Competitor not found");
+  });
+
+  it("500 on unexpected error", async () => {
+    spies.competitorsReqFindOneSpy.mockRejectedValueOnce(new Error("db-down"));
+    const res = mockRes();
+    await svc.deleteCompetitor({ body: { user_id: "u1", advertiser: "Acme", competitor_id: "c1" } }, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(spies.loggerErrorSpy).toHaveBeenCalledWith("Error in deleteCompetitor", expect.any(Error));
   });
 });

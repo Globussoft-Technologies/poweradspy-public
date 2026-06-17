@@ -71,6 +71,7 @@ class ManualSendController {
       if (!email) {
         return res.send(Response.validationFailResp("email is required", ""));
       }
+      /* v8 ignore next -- req.body is always present here (the email check above returns otherwise); the `|| {}` is defensive */
       const { name, hours } = req.body || {};
       const result = await sendDataReportForEmail(email, { name, hours });
       if (!result.ok) {

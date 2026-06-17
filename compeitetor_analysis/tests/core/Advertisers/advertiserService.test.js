@@ -534,6 +534,56 @@ describe("advertiserService > inner bucket-format coverage", () => {
     expect(res.send).toHaveBeenCalled();
   });
 
+  it("getAverageBudgetByData: inner IIFE catch fires when monthly loop throws (err WITHOUT meta → line 1197 false)", async () => {
+    spies.esClient.server1.count.mockResolvedValue({ count: 10 });
+    spies.esClient.server2.count.mockResolvedValue({ count: 10 });
+    // A valid monthKey reaches monthKeyToName; we override it to throw a plain
+    // Error (no .meta) so the IIFE catch runs but `err.meta?.body` is falsy.
+    spies.esClient.server1.search.mockResolvedValue({
+      aggregations: { by_month: { buckets: [{ key: "2025-03", doc_count: 1, avg_budget: { value: 1 } }] } },
+      hits: { hits: [], total: { value: 0 } },
+    });
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: {} });
+    const origMk = svc.monthKeyToName;
+    svc.monthKeyToName = () => { throw new Error("boom-no-meta"); };
+    try {
+      const res = mockRes();
+      await svc.getAverageBudgetByData({
+        body: { competitors: "X", startDate: "01-01-2025", endDate: "31-01-2025" },
+      }, res);
+      expect(spies.loggerErrorSpy).toHaveBeenCalledWith("[ERROR] Processing failed:", expect.any(Error));
+      expect(res.send).toHaveBeenCalled();
+    } finally {
+      svc.monthKeyToName = origMk;
+    }
+  });
+
+  it("getAverageBudgetByData: inner IIFE catch with err.meta.body set → lines 1198-1199 fire (line 1197 true)", async () => {
+    spies.esClient.server1.count.mockResolvedValue({ count: 10 });
+    spies.esClient.server2.count.mockResolvedValue({ count: 10 });
+    spies.esClient.server1.search.mockResolvedValue({
+      aggregations: { by_month: { buckets: [{ key: "2025-03", doc_count: 1, avg_budget: { value: 1 } }] } },
+      hits: { hits: [], total: { value: 0 } },
+    });
+    spies.esClient.server2.search.mockResolvedValue({ aggregations: {} });
+    const origMk = svc.monthKeyToName;
+    svc.monthKeyToName = () => {
+      const e = new Error("boom-with-meta");
+      e.meta = { body: { error: "es-detail" } };
+      throw e;
+    };
+    try {
+      const res = mockRes();
+      await svc.getAverageBudgetByData({
+        body: { competitors: "X", startDate: "01-01-2025", endDate: "31-01-2025" },
+      }, res);
+      expect(spies.loggerErrorSpy).toHaveBeenCalledWith("[ERROR] ES response body:", { error: "es-detail" });
+      expect(res.send).toHaveBeenCalled();
+    } finally {
+      svc.monthKeyToName = origMk;
+    }
+  });
+
   it("getLCS: populates monthly aggregation buckets", async () => {
     spies.esClient.server1.search.mockResolvedValue({
       aggregations: {

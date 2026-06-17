@@ -7,7 +7,7 @@ const methods = [
   "updateAdvertiser", "getAllDetails", "filterDetails", "getActiveUsers", "getInactiveUsers",
   "getCompUsersCount", "getStoreProcessCompetitors", "checkExistingCompetitorCount",
   "getAllCompetitors", "checkDailyTokenLimit", "fetchKeywordsBasedOnWebsite",
-  "checkCompetitorProcess", "deleteProject", "addManualCompetitor",
+  "checkCompetitorProcess", "deleteProject", "addManualCompetitor", "deleteCompetitor",
 ];
 
 const spies = vi.hoisted(() => {
@@ -19,7 +19,7 @@ const spies = vi.hoisted(() => {
     "updateAdvertiser", "getAllDetails", "filterDetails", "getActiveUsers", "getInactiveUsers",
     "getCompUsersCount", "getStoreProcessCompetitors", "checkExistingCompetitorCount",
     "getAllCompetitors", "checkDailyTokenLimit", "fetchKeywordsBasedOnWebsite",
-    "checkCompetitorProcess", "deleteProject", "addManualCompetitor",
+    "checkCompetitorProcess", "deleteProject", "addManualCompetitor", "deleteCompetitor",
   ]) m[k] = vi.fn();
   return m;
 });

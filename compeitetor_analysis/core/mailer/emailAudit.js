@@ -213,6 +213,7 @@ export async function applyWebhookEvent(evt) {
     // click_count, push the URL into clicked_urls (deduped via $addToSet),
     // set last_clicked_at, and use $min so clicked_at captures the FIRST
     // click only. Status upgrade ("opened") already happened above.
+    /* v8 ignore next -- reached only after statusUpdateForEvent returned non-null, so evt.event is always a known truthy type; the `|| ""` is defensive */
     const evtTypeForClick = String(evt.event || "").toLowerCase();
     if (evtTypeForClick === "click") {
       const ts = evt.timestamp ? new Date(Number(evt.timestamp) * 1000) : new Date();
@@ -231,6 +232,7 @@ export async function applyWebhookEvent(evt) {
     //   - a `dropped` event whose reason matches the bounce regex (covers
     //     the case where SendGrid maps a hard reject to "dropped" before
     //     even attempting delivery).
+    /* v8 ignore next -- reached only after statusUpdateForEvent returned non-null, so evt.event is always a known truthy type; the `|| ""` is defensive */
     const evtType = String(evt.event || "").toLowerCase();
     if (
       evtType === "bounce" ||

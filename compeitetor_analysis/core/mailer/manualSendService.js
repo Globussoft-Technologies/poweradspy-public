@@ -50,6 +50,7 @@ async function snapshotState(competitorIds, requestIds) {
           { facebook_status: 1, instagram_status: 1, google_status: 1, youtube_status: 1 }
         ).lean()
       : Promise.resolve([]),
+    /* v8 ignore next -- requestIds is always non-empty here (callers guard on requests.length > 0); the empty branch is defensive */
     requestIds.length
       ? Competitors_request.find(
           { _id: { $in: requestIds } },
@@ -101,6 +102,7 @@ async function forceActive(competitorIds, requestIds) {
       { $set: { facebook_status: 2, instagram_status: 2, google_status: 2 } }
     );
   }
+  /* v8 ignore next -- requestIds is always non-empty here (callers guard on requests.length > 0); the empty branch is defensive */
   if (requestIds.length) {
     await Competitors_request.updateMany(
       { _id: { $in: requestIds } },
