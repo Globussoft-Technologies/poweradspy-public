@@ -1850,6 +1850,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     a.download = `${activeProject?.advertiser || "competitors"}_analytics.csv`;
                     a.click();
                     URL.revokeObjectURL(url);
+                    trackProjectEvent("export_competitors", {
+                      brand: activeProject?.advertiser || "Unknown",
+                      exported_Competitors: comps.map((c) => c.name),
+                    });
                   }}
                   title="Download Competitor Data as CSV"
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-theme-border text-theme-text-muted hover:text-white hover:border-white/20 transition-all"

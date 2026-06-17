@@ -546,7 +546,7 @@ async function getAllSearches(req, elastic, logger) {
       ], minimum_should_match: 1 } },
     ];
 
-    if (platform && platform !== 'Any')   filters.push({ term:  { 'network.keyword':           platform.toLowerCase() } });
+    if (platform && platform !== 'Any')   filters.push({ match: { 'network': { query: platform.toLowerCase(), operator: 'or' } } });
     if (ad_type  && ad_type  !== 'Any')   filters.push({ term:  { 'filter.ad_type.keyword':     ad_type  } });
     if (country  && country  !== '')      filters.push({ term: { 'user.current_country.keyword': country } });
     if (keyword    && keyword    !== '')  filters.push({ match: { 'search.keyword':    { query: keyword,    operator: 'and' } } });
@@ -760,7 +760,7 @@ async function getAllSearches(req, elastic, logger) {
       const kw      = s['search.keyword']    ?? s?.search?.keyword    ?? null;
       const adv     = s['search.advertiser'] ?? s?.search?.advertiser ?? null;
       const dom     = s['search.domain']     ?? s?.search?.domain     ?? null;
-      const network = s['network'] ?? null;
+      const network = s['network'] ?? s?.network ?? null;
       const dtSec   = s['dateTime'] ? Number(s['dateTime']) : null;
       const dateStr = dtSec
         ? new Date(dtSec * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
@@ -947,6 +947,11 @@ async function getAllSearches(req, elastic, logger) {
       // Country: user's current country (not the filter.country they searched with)
       const country = s['user.current_country'] ?? null;
 
+      // Get all platforms: check for platforms array first, fall back to single network
+      const platformsArray = Array.isArray(s['platforms']) ? s['platforms'].filter(Boolean) : [];
+      const allPlatforms = platformsArray.length > 0 ? platformsArray : (network ? [network] : []);
+      const platformStr = allPlatforms.join(',');
+
       return {
         _id:             h._id,
         timestamp:       dateStr,
@@ -956,7 +961,7 @@ async function getAllSearches(req, elastic, logger) {
         keyword:         kw,
         advertiser:      adv,
         domain:          dom,
-        platform:        network,
+        platform:        platformStr,
         country,
         filter_type:     s['filterType'] ?? null,
         ads_count:       s['adsCountOnSerach'] ?? 0,
@@ -1194,6 +1199,9 @@ async function getProjectActivity(req, elastic, logger) {
         { exists: { field: 'dashboard_advertisers'  } },
         { exists: { field: 'deleted_Advertisers'    } },
         { exists: { field: 'monitoring_status'      } },
+        { term: { 'method.keyword': 'add_member'        } },
+        { term: { 'method.keyword': 'delete_member'     } },
+        { term: { 'method.keyword': 'export_competitors'} },
       ], minimum_should_match: 1 } },
     ];
 
@@ -1277,15 +1285,20 @@ async function getProjectActivity(req, elastic, logger) {
         ? new Date(dtSec * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
         : null;
 
-      // Derive project_type
+      // Derive project_type and method
       let projectType = s['project_type'] ?? null;
+      const method = s['method'] ?? null;
+
       if (!projectType) {
-        if (s['deleted_Advertisers'])                     projectType = 'delete_brand';
-        else if (s['monitoring_status'] !== undefined)    projectType = 'monitoring_status';
-        else if (s['project_name'] && s['competitors'])   projectType = 'project_click';
-        else if (s['brand'] || s['advertiser'])           projectType = 'competitor_comparison';
+        if (method === 'add_member')                   projectType = 'add_member';
+        else if (method === 'delete_member')          projectType = 'delete_member';
+        else if (method === 'export_competitors')     projectType = 'export_competitors';
+        else if (s['deleted_Advertisers'])            projectType = 'delete_brand';
+        else if (s['monitoring_status'] !== undefined) projectType = 'monitoring_status';
+        else if (s['project_name'] && s['competitors']) projectType = 'project_click';
+        else if (s['brand'] || s['advertiser'])       projectType = 'competitor_comparison';
         else if (s['dashboard_Advertisers'] || s['dashboard_advertisers']) projectType = 'dashboard';
-        else                                              projectType = 'other';
+        else                                          projectType = 'other';
       }
 
       const dashAdv = s['dashboard_Advertisers']
@@ -1297,8 +1310,19 @@ async function getProjectActivity(req, elastic, logger) {
 
       let brands = null;
       let competitors = null;
+      let memberName = null;
+      let memberEmail = null;
+      let exportedCompetitors = null;
 
-      if (projectType === 'delete_brand') {
+      if (projectType === 'add_member') {
+        memberName = s['member_name'] ?? null;
+        memberEmail = s['member_email'] ?? null;
+      } else if (projectType === 'delete_member') {
+        memberName = s['delete_member_name'] ?? null;
+        memberEmail = s['delete_member_email'] ?? null;
+      } else if (projectType === 'export_competitors') {
+        exportedCompetitors = s['exported_Competitors'] ?? null;
+      } else if (projectType === 'delete_brand') {
         const del = s['deleted_Advertisers'];
         if (del) brands = Array.isArray(del) ? del.join(', ') : String(del);
       } else if (projectType === 'monitoring_status') {
@@ -1323,9 +1347,15 @@ async function getProjectActivity(req, elastic, logger) {
         user_id:           uid,
         email,
         project_type:      projectType,
+        method:            method,
         monitoring_status: projectType === 'monitoring_status' ? (s['monitoring_status'] ?? null) : undefined,
         brands,
         competitors,
+        member_name:       memberName,
+        member_email:      memberEmail,
+        delete_member_name: s['delete_member_name'] ?? null,
+        delete_member_email: s['delete_member_email'] ?? null,
+        exported_Competitors: exportedCompetitors,
       };
     });
 
@@ -1868,7 +1898,7 @@ async function getSummaryStats(req, elastic, logger) {
       ], minimum_should_match: 1 } },
     ];
 
-    if (platform && platform !== 'Any')   filters.push({ term:  { 'network.keyword':           platform.toLowerCase() } });
+    if (platform && platform !== 'Any')   filters.push({ match: { 'network': { query: platform.toLowerCase(), operator: 'or' } } });
     if (ad_type  && ad_type  !== 'Any')   filters.push({ term:  { 'filter.ad_type.keyword':     ad_type  } });
     if (country  && country  !== '')      filters.push({ term: { 'user.current_country.keyword': country } });
     if (keyword    && keyword    !== '')  filters.push({ match: { 'search.keyword':    { query: keyword,    operator: 'and' } } });
@@ -2456,20 +2486,23 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
 
       // Convert milliseconds to string format for string-based range query
       // Format: "YYYY-MM-DD HH:MM:SS"
-      // Since ms is already adjusted to local time, use getUTC* methods to get local values
       const formatTimestampString = (input) => {
         try{
           return String(input).replace(/"/g, '').slice(0, 19).replace('T', ' ');
         }catch(e){
           console.log(e)
         }
-        
       };
-      // Convert timestamps to ISO string format if they're numbers
-   
-      const startStr = formatTimestampString(JSON.stringify(startTime));
-      const endStr = formatTimestampString(JSON.stringify(endTime));
 
+      let startStr = formatTimestampString(JSON.stringify(startTime));
+      let endStr = formatTimestampString(JSON.stringify(endTime));
+
+      // For LinkedIn and YouTube: convert string timestamps back to Unix timestamps (seconds)
+      if (platformName === 'linkedin' || platformName === 'youtube') {
+        // Convert "YYYY-MM-DD HH:MM:SS" back to Unix timestamp in seconds
+        startStr = Math.floor(new Date(startStr.replace(' ', 'T') + 'Z').getTime() / 1000);
+        endStr = Math.floor(new Date(endStr.replace(' ', 'T') + 'Z').getTime() / 1000);
+      }
 
       // Build query based on search type
       const baseQuery = {

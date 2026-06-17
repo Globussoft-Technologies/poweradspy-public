@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Users, Trash2, X, Plus, Mail, Check, MailCheck } from "lucide-react";
-import { CompetitorAPI } from "../../services/api";
+import { CompetitorAPI, trackProjectEvent } from "../../services/api";
 
 /**
  * MembersManager (NEW) — self-contained. A floating "Members" button + modal
@@ -69,6 +69,10 @@ export default function MembersManager({ userId, projects = [] }) {
       if (r?.body?.status === "success") {
         setName(""); setEmail("");
         await loadMembers();
+        trackProjectEvent("add_member", {
+          member_name: name.trim(),
+          member_email: email.trim(),
+        });
       } else {
         setErr(r?.body?.message || "Failed to add member.");
       }
@@ -81,9 +85,14 @@ export default function MembersManager({ userId, projects = [] }) {
 
   const removeMember = async (id) => {
     try {
+      const member = members.find((m) => m._id === id);
       await CompetitorAPI.deleteMember(userId, id);
       await loadMembers();
       await loadBrandCc();
+      trackProjectEvent("delete_member", {
+        delete_member_name: member?.name || "NA",
+        delete_member_email: member?.email || "NA",
+      });
     } catch { /* ignore */ }
   };
 

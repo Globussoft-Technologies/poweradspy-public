@@ -1263,7 +1263,12 @@ export function trackProjectEvent(method, fields = {}) {
   if (fields.deleted_Advertisers   != null) body.deleted_Advertisers   = fields.deleted_Advertisers;
   if (fields.monitoring_status     != null) body.monitoring_status     = fields.monitoring_status;
   if (fields.network               != null) body.competitor_platform   = fields.network;
-  const ARRAY_KEYS = new Set(['competitors', 'dashboard_Advertisers', 'deleted_Advertisers']);
+  if (fields.exported_Competitors  != null) body.exported_Competitors  = fields.exported_Competitors;
+  if (fields.member_name           != null) body.member_name           = fields.member_name;
+  if (fields.member_email          != null) body.member_email          = fields.member_email;
+  if (fields.delete_member_name    != null) body.delete_member_name    = fields.delete_member_name;
+  if (fields.delete_member_email   != null) body.delete_member_email   = fields.delete_member_email;
+  const ARRAY_KEYS = new Set(['competitors', 'dashboard_Advertisers', 'deleted_Advertisers', 'exported_Competitors']);
   const formBody = Object.entries(body)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => {

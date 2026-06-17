@@ -407,11 +407,32 @@ const PlatformCell = ({ platforms, isExport = false }) => {
   const maxDisplay = isExport ? Infinity : MAX_PLATFORMS_UI;
   const visible = expanded || isExport ? platforms : platforms.slice(0, maxDisplay);
   const hidden  = Math.max(0, platforms.length - maxDisplay);
+  if (isExport && platforms.length > 2) {
+    console.log(`PlatformCell export - ${platforms.length} platforms:`, platforms);
+  }
+
+  const capitalize = (str) => str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
+
+  // For PDF export, render all platforms stacked vertically
+  if (isExport && visible.length > 0) {
+    return (
+      <>
+        {visible.map((p, i) => (
+          <div key={i} style={{ display: "block", marginBottom: i < visible.length - 1 ? "4px" : "0" }}>
+            <span style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", whiteSpace: "nowrap" }}>
+              {capitalize(p)}
+            </span>
+          </div>
+        ))}
+      </>
+    );
+  }
+
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "3px", alignItems: "center" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "3px", alignItems: "flex-start", overflow: isExport ? "visible" : "hidden" }}>
       {visible.map((p, i) => (
-        <span key={i} style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", whiteSpace: "nowrap" }}>
-          {p}
+        <span key={i} style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", whiteSpace: "nowrap", flexShrink: 0 }}>
+          {capitalize(p)}
         </span>
       ))}
       {!isExport && !expanded && hidden > 0 && (
@@ -770,7 +791,9 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         const json = await mainRes.json();
         if (json.code !== 200) throw new Error(json.message || "Unexpected response");
 
-        setRows(json.data.rows ?? []);
+        const rowsData = json.data.rows ?? [];
+        console.log("All-searches response - sample row platforms:", rowsData[0]?.platform);
+        setRows(rowsData);
         setTotal(json.data.total ?? 0);
         setTotalPages(json.data.total_pages ?? 1);
         setDateLabel(json.meta?.date_label ?? "");
@@ -896,7 +919,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       return (
         <tr
           key={i}
-          style={{ borderBottom: "1px solid #f3f4f6", backgroundColor: "white" }}
+          style={{ borderBottom: "1px solid #f3f4f6", backgroundColor: "white", height: forceExpand ? "auto" : "auto", minHeight: forceExpand ? "120px" : "auto", verticalAlign: "top" }}
           onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f9fafb")}
           onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "white")}
         >
@@ -924,7 +947,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {row.domain ?? "—"}
           </td>
-          <td style={{ padding: "10px 12px", overflow: forceExpand ? "visible" : "hidden" }}>
+          <td style={{ padding: "10px 12px", overflow: "visible", minWidth: forceExpand ? "600px" : "200px", verticalAlign: "top" }}>
             {row.platform ? (
               <PlatformCell platforms={String(row.platform).split(',').map(p => p.trim()).filter(Boolean)} isExport={forceExpand} />
             ) : <span style={{ color: "#9ca3af" }}>—</span>}
@@ -1134,15 +1157,15 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       </div>
 
       {/* Active filter chips + result count */}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
-        {!forceExpand && <span style={{ fontSize: "12px", color: "#6b7280" }}>Active filters:</span>}
-        {activeChips.map((chip) => (
-          forceExpand
-            ? <span key={chip.key} style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", fontSize: "11px", fontWeight: 600, padding: "3px 10px", borderRadius: "9999px", border: "1px solid #c7d2fe" }}>{chip.label}</span>
-            : <FilterPill key={chip.key} label={chip.label} onRemove={chip.clear} />
-        ))}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", minHeight: "24px" }}>
+          {!forceExpand && <span style={{ fontSize: "12px", color: "#6b7280" }}>Active filters:</span>}
+          {activeChips.map((chip) => (
+            forceExpand
+              ? <span key={chip.key} style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", fontSize: "11px", fontWeight: 600, padding: "3px 10px", borderRadius: "9999px", border: "1px solid #c7d2fe" }}>{chip.label}</span>
+              : <FilterPill key={chip.key} label={chip.label} onRemove={chip.clear} />
+          ))}
+        </div>
         <p style={{ fontSize: "12px", color: "#6b7280", margin: 0 }}>
           {total.toLocaleString()} searches matched{dateLabel ? ` · ${dateLabel}` : ""}
         </p>

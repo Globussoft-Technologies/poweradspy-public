@@ -55,6 +55,9 @@ const PROJECT_TYPE_LABELS = {
   dashboard:              { label: "Dashboard",            color: "#059669", bg: "#d1fae5" },
   delete_brand:           { label: "Delete Brand",         color: "#dc2626", bg: "#fee2e2" },
   monitoring_status:      { label: "Monitoring Status",    color: "#7c3aed", bg: "#ede9fe" },
+  add_member:             { label: "Added Member",         color: "#15803d", bg: "#dcfce7" },
+  delete_member:          { label: "Deleted Member",       color: "#b91c1c", bg: "#fee2e2" },
+  export_competitors:     { label: "Exported Competitors", color: "#0c4a6e", bg: "#dbeafe" },
   other:                  { label: "Other",                color: "#6b7280", bg: "#f3f4f6" },
 };
 
@@ -174,18 +177,32 @@ const Projects = ({ forceExpand = false, onDataReady }) => {
 
   const renderBody = () => {
     if (loading) return (
-      <tr><td colSpan={5} style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>Loading...</td></tr>
+      <tr><td colSpan={8} style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>Loading...</td></tr>
     );
     if (error) return (
-      <tr><td colSpan={5} style={{ padding: "40px 12px", textAlign: "center", color: "#ef4444", fontSize: "13px" }}>{error}</td></tr>
+      <tr><td colSpan={8} style={{ padding: "40px 12px", textAlign: "center", color: "#ef4444", fontSize: "13px" }}>{error}</td></tr>
     );
     if (rows.length === 0) return (
-      <tr><td colSpan={5} style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>No project activity found.</td></tr>
+      <tr><td colSpan={8} style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>No project activity found.</td></tr>
     );
 
     return rows.map((row, i) => {
       const { initials, color } = getAvatarProps(row.email);
-      const typeInfo = PROJECT_TYPE_LABELS[row.project_type] ?? PROJECT_TYPE_LABELS.other;
+      const typeInfo = (row.method && PROJECT_TYPE_LABELS[row.method]) ? PROJECT_TYPE_LABELS[row.method] : (PROJECT_TYPE_LABELS[row.project_type] ?? PROJECT_TYPE_LABELS.other);
+
+      let memberName = "—";
+      let memberEmail = "—";
+      let exportedCompetitors = "—";
+
+      if (row.method === "add_member") {
+        memberName = row.member_name ?? "—";
+        memberEmail = row.member_email ?? "—";
+      } else if (row.method === "delete_member") {
+        memberName = row.delete_member_name ?? "—";
+        memberEmail = row.delete_member_email ?? "—";
+      } else if (row.method === "export_competitors") {
+        exportedCompetitors = Array.isArray(row.exported_Competitors) ? row.exported_Competitors.join(", ") : "—";
+      }
 
       return (
         <tr
@@ -219,6 +236,15 @@ const Projects = ({ forceExpand = false, onDataReady }) => {
           </td>
           <td style={{ padding: "10px 12px", verticalAlign: forceExpand ? "top" : "middle", overflow: forceExpand ? "visible" : "hidden" }}>
             <TagList items={row.competitors ? row.competitors.split(', ') : []} bg="#e0e7ff" border="#c7d2fe" color="#4338ca" forceExpand={forceExpand} />
+          </td>
+          <td style={{ padding: "10px 12px", color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "middle" }}>
+            {memberName}
+          </td>
+          <td style={{ padding: "10px 12px", color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "middle" }}>
+            {memberEmail}
+          </td>
+          <td style={{ padding: "10px 12px", verticalAlign: forceExpand ? "top" : "middle", overflow: forceExpand ? "visible" : "hidden" }}>
+            <TagList items={Array.isArray(row.exported_Competitors) ? row.exported_Competitors : (row.exported_Competitors ? row.exported_Competitors.split(', ') : [])} bg="#dbeafe" border="#bfdbfe" color="#0c4a6e" forceExpand={forceExpand} />
           </td>
         </tr>
       );
@@ -290,15 +316,18 @@ const Projects = ({ forceExpand = false, onDataReady }) => {
         <div style={{ overflowX: forceExpand ? "visible" : "auto" }}>
           <table style={{ width: "100%", tableLayout: forceExpand ? "auto" : "fixed", fontSize: "13px", borderCollapse: "collapse" }}>
             <colgroup>
-              <col style={{ width: "110px" }} />
-              <col style={{ width: "200px" }} />
-              <col style={{ width: "110px" }} />
-              <col style={{ width: forceExpand ? "400px" : "220px" }} />
-              <col style={{ width: forceExpand ? "400px" : "220px" }} />
+              <col style={{ width: "130px" }} />
+              <col style={{ width: "280px" }} />
+              <col style={{ width: "160px" }} />
+              <col style={{ width: forceExpand ? "300px" : "180px" }} />
+              <col style={{ width: forceExpand ? "350px" : "200px" }} />
+              <col style={{ width: "160px" }} />
+              <col style={{ width: "240px" }} />
+              <col style={{ width: "280px" }} />
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
-                {["TIMESTAMP", "USER", "TYPE", "BRANDS", "COMPETITORS"].map((h) => (
+                {["TIMESTAMP", "USER", "TYPE", "BRANDS", "COMPETITORS", "MEMBER NAME", "MEMBER EMAIL", "EXPORTED COMPETITORS"].map((h) => (
                   <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
                     {h}
                   </th>

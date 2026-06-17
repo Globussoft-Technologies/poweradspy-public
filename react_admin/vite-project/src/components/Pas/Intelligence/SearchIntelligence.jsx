@@ -396,6 +396,7 @@ async function exportTopUsersPDF(data) {
 // ─── All Searches PDF ─────────────────────────────────────────────────────────
 
 async function exportAllSearchesPDF(data) {
+  console.log("exportAllSearchesPDF", data);
   const { jsPDF } = await import("jspdf");
   const { rows, applied, total, dateLabel } = data;
 
@@ -455,12 +456,12 @@ async function exportAllSearchesPDF(data) {
   pdf.text(pdfSafe(`${total.toLocaleString()} searches matched${dateLabel ? " · " + dateLabel : ""}`), MARGIN, curY);
   curY += 14;
 
-  // Columns: TIMESTAMP | USER | KEYWORD | ADVERTISER | DOMAIN | PLATFORM | AD COUNT | OTHER ACTIVITY | FILTERS APPLIED | COUNTRY
-  // availW landscape A4 ≈ 793pt; fixed cols sum = 80+120+68+65+62+50+36+110+60 = 651 → FILTERS APPLIED gets ~142
-  const COL_W = [68, 120, 68, 65, 62, 50, 36, 110, 0, 60];
+  // Columns: TIMESTAMP | USER | KEYWORD | ADVERTISER | DOMAIN | PLATFORM | AD COUNT | OTHER ACTIVITY | FILTERS APPLIED
+  // availW landscape A4 ≈ 793pt; allocate space: TIMESTAMP+USER+KEYWORD+ADVERTISER+DOMAIN+ADS+OTHER = 420, remaining split between PLATFORM(90) and FILTERS(283)
+  const COL_W = [60, 110, 60, 60, 55, 90, 30, 95, 0];
   COL_W[8] = availW - COL_W.reduce((s, v) => s + v, 0);
   const COL_X = COL_W.reduce((acc, w, i) => { acc.push(i === 0 ? MARGIN : acc[i-1] + COL_W[i-1]); return acc; }, []);
-  const HEADERS = ["TIMESTAMP", "USER", "KEYWORD", "ADVERTISER", "DOMAIN", "PLATFORM", "ADS", "OTHER ACTIVITY", "FILTERS APPLIED", "COUNTRY"];
+  const HEADERS = ["TIMESTAMP", "USER", "KEYWORD", "ADVERTISER", "DOMAIN", "PLATFORM", "ADS", "OTHER ACTIVITY", "FILTERS APPLIED"];
   const HEAD_H = 22; const MIN_ROW_H = 26; const PILL_ROW_H = 15; const PILL_ROW_GAP = 3;
 
   ensureSpace(HEAD_H + MIN_ROW_H);
@@ -477,8 +478,9 @@ async function exportAllSearchesPDF(data) {
     pdf.setFontSize(7.5);
     const emailLines = pdf.splitTextToSize(pdfSafe(email), COL_W[1] - 26);
     const emailH = Math.max(emailLines.length, 1) * 10 + 8;
-    const filterH = filters.length > 0 ? filters.length * (PILL_ROW_H + PILL_ROW_GAP) - PILL_ROW_GAP + 6 : MIN_ROW_H;
-    const thisRowH = Math.max(MIN_ROW_H, emailH, filterH);
+    const filterH = filters.length > 0 ? filters.length * (PILL_ROW_H + PILL_ROW_GAP) - PILL_ROW_GAP + 6 : 0;
+    const platformH = platforms.length > 0 ? platforms.length * (PILL_ROW_H + PILL_ROW_GAP) - PILL_ROW_GAP + 6 : 0;
+    const thisRowH = Math.max(MIN_ROW_H, emailH, filterH, platformH);
     ensureSpace(thisRowH);
 
     const rowBg = idx % 2 === 0 ? "#ffffff" : "#f9fafb";
@@ -524,7 +526,7 @@ async function exportAllSearchesPDF(data) {
     if (platforms.length === 0) {
       pdf.setTextColor(156,163,175); pdf.text("-", COL_X[5]+3, textBaseY);
     } else {
-      platforms.slice(0, 2).forEach((p, pi) => {
+      platforms.forEach((p, pi) => {
         drawPill(pdf, pdfSafe(p), COL_X[5]+3, curY + 4 + pi * 13, 12, "#e0e7ff", "#4338ca", 7);
       });
     }
@@ -551,11 +553,6 @@ async function exportAllSearchesPDF(data) {
         drawPill(pdf, pdfSafe(f), COL_X[8]+3, fy, PILL_ROW_H, "#f3f4f6", "#374151", 7, COL_W[8]-6);
       });
     }
-
-    // COUNTRY
-    if (row.country) {
-      drawPill(pdf, pdfSafe(row.country), COL_X[9]+3, midY-6, 13, "#f0fdf4", "#15803d", 7);
-    } else { pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(156,163,175); pdf.text("-", COL_X[9]+3, textBaseY); }
 
     curY += thisRowH;
   });
@@ -627,14 +624,17 @@ async function exportProjectsPDF(data) {
     dashboard:             { label: "Dashboard",            textCol: "#059669", bgCol: "#d1fae5" },
     delete_brand:          { label: "Delete Brand",         textCol: "#dc2626", bgCol: "#fee2e2" },
     monitoring_status:     { label: "Monitoring Status",    textCol: "#7c3aed", bgCol: "#ede9fe" },
+    add_member:            { label: "Added Member",         textCol: "#15803d", bgCol: "#dcfce7" },
+    delete_member:         { label: "Deleted Member",       textCol: "#b91c1c", bgCol: "#fee2e2" },
+    export_competitors:    { label: "Exported Competitors", textCol: "#0c4a6e", bgCol: "#dbeafe" },
     other:                 { label: "Other",                textCol: "#6b7280", bgCol: "#f3f4f6" },
   };
 
-  // Columns: TIMESTAMP | USER | TYPE | BRANDS | COMPETITORS
-  const COL_W = [90, 140, 100, 0, 120];
-  COL_W[3] = availW - COL_W.reduce((s, v) => s + v, 0);
+  // Columns: TIMESTAMP | USER | TYPE | BRANDS | COMPETITORS | MEMBER NAME | MEMBER EMAIL | EXPORTED COMPETITORS
+  const COL_W = [85, 130, 120, 90, 100, 100, 110, 0];
+  COL_W[7] = availW - COL_W.reduce((s, v) => s + v, 0);
   const COL_X = COL_W.reduce((acc, w, i) => { acc.push(i===0 ? MARGIN : acc[i-1]+COL_W[i-1]); return acc; }, []);
-  const HEADERS = ["TIMESTAMP", "USER", "TYPE", "BRANDS", "COMPETITORS"];
+  const HEADERS = ["TIMESTAMP", "USER", "TYPE", "BRANDS", "COMPETITORS", "MEMBER NAME", "MEMBER EMAIL", "EXPORTED COMPETITORS"];
   const HEAD_H = 22; const MIN_ROW_H = 28; const TAG_ROW_H = 15; const TAG_GAP = 3;
 
   ensureSpace(HEAD_H + MIN_ROW_H);
@@ -705,6 +705,40 @@ async function exportProjectsPDF(data) {
     } else {
       competitors.forEach((c, ci) => {
         drawPill(pdf, pdfSafe(c), COL_X[4]+4, compTop + ci*(TAG_ROW_H+TAG_GAP), TAG_ROW_H, "#e0e7ff", "#4338ca", 7, COL_W[4]-8);
+      });
+    }
+
+    // MEMBER NAME
+    let memberName = "-";
+    if (row.method === "add_member") {
+      memberName = row.member_name ?? "-";
+    } else if (row.method === "delete_member") {
+      memberName = row.delete_member_name ?? "-";
+    }
+    pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(17,24,39);
+    clippedText(pdf, pdfSafe(memberName), COL_X[5]+4, textBaseY, COL_W[5]-8);
+
+    // MEMBER EMAIL
+    let memberEmail = "-";
+    if (row.method === "add_member") {
+      memberEmail = row.member_email ?? "-";
+    } else if (row.method === "delete_member") {
+      memberEmail = row.delete_member_email ?? "-";
+    }
+    pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(17,24,39);
+    clippedText(pdf, pdfSafe(memberEmail), COL_X[6]+4, textBaseY, COL_W[6]-8);
+
+    // EXPORTED COMPETITORS
+    const exportedComps = (row.method === "export_competitors" && row.exported_Competitors)
+      ? (Array.isArray(row.exported_Competitors) ? row.exported_Competitors : row.exported_Competitors.split(', ').filter(Boolean))
+      : [];
+    const exCompTop = curY + (thisRowH - (exportedComps.length||1) * (TAG_ROW_H+TAG_GAP) + TAG_GAP) / 2;
+    if (exportedComps.length === 0) {
+      pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(156,163,175);
+      pdf.text("-", COL_X[7]+4, textBaseY);
+    } else {
+      exportedComps.forEach((ec, eci) => {
+        drawPill(pdf, pdfSafe(ec), COL_X[7]+4, exCompTop + eci*(TAG_ROW_H+TAG_GAP), TAG_ROW_H, "#dbeafe", "#0c4a6e", 7, COL_W[7]-8);
       });
     }
 

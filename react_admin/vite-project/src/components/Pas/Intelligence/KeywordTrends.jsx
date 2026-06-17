@@ -40,12 +40,15 @@ const TYPE_TABS = [
 ];
 
 const KeywordTrends = ({ onDataReady }) => {
-  const [sortBy,  setSortBy]  = useState("count");
-  const [typeTab, setTypeTab] = useState("keywords");
-  const [data,    setData]    = useState({ keywords: [], advertisers: [], domains: [] });
-  const [meta,    setMeta]    = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState(null);
+  const [sortBy,     setSortBy]     = useState("count");
+  const [typeTab,    setTypeTab]    = useState("keywords");
+  const [data,       setData]       = useState({ keywords: [], advertisers: [], domains: [] });
+  const [meta,       setMeta]       = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [error,      setError]      = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [openDropdown, setOpenDropdown] = useState(false);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     const fetchTrends = async () => {
@@ -87,7 +90,16 @@ const KeywordTrends = ({ onDataReady }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onDataReady]);
 
-  const currentList = data[typeTab] ?? [];
+  const currentList = (data[typeTab] ?? []).filter((item) =>
+    searchTerm === "" || item.term.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const allItemsForDropdown = data[typeTab] ?? [];
+  const filteredDropdownItems = searchTerm === ""
+    ? []
+    : allItemsForDropdown
+      .filter((item) => item.term.toLowerCase().includes(searchTerm.toLowerCase()))
+      .slice(0, 8);
 
   const chartData = [...currentList]
     .sort((a, b) => sortBy === "growth"
@@ -125,6 +137,64 @@ const KeywordTrends = ({ onDataReady }) => {
 
     return (
       <>
+        {/* Search input above chart */}
+        <div ref={searchInputRef} style={{ position: "relative", width: "100%" }}>
+          <input
+            type="text"
+            placeholder="Search keyword..."
+            value={searchTerm}
+            onChange={(e) => { setSearchTerm(e.target.value); setOpenDropdown(e.target.value.length > 0); }}
+            onFocus={() => setOpenDropdown(searchTerm.length > 0)}
+            onBlur={() => setTimeout(() => setOpenDropdown(false), 200)}
+            style={{
+              width: "100%",
+              padding: "10px 16px",
+              fontSize: "12px",
+              border: "1px solid #d1d5db",
+              borderRadius: "6px",
+              outline: "none",
+              boxSizing: "border-box",
+              background: "white",
+            }}
+          />
+          {openDropdown && filteredDropdownItems.length > 0 && (
+            <div style={{
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              right: 0,
+              zIndex: 999,
+              background: "white",
+              border: "1px solid #d1d5db",
+              borderRadius: "6px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.10)",
+              marginTop: "2px",
+              maxHeight: "250px",
+              overflowY: "auto",
+            }}>
+              {filteredDropdownItems.map((item) => (
+                <div
+                  key={item.term}
+                  onClick={() => { setSearchTerm(item.term); setOpenDropdown(false); }}
+                  style={{
+                    padding: "8px 12px",
+                    fontSize: "12px",
+                    color: "#374151",
+                    cursor: "pointer",
+                    borderBottom: "1px solid #f3f4f6",
+                    transition: "background-color 0.2s",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f9fafb")}
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "white")}
+                >
+                  <div>{item.term}</div>
+                  <div style={{ fontSize: "11px", color: "#9ca3af" }}>{item.count} searches</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Chart */}
         <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "20px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px", flexWrap: "wrap", gap: "8px" }}>
@@ -274,6 +344,7 @@ const KeywordTrends = ({ onDataReady }) => {
           </button>
         </div>
       </div>
+
 
       {/* Growth rate info */}
       <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "8px", padding: "10px 16px" }}>
