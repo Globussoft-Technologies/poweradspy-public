@@ -97,6 +97,7 @@ async function getJoinedAd(exec, whereCol, whereVal) {
            ANY_VALUE(gdn_ad_meta_data.affiliate_data)     AS affiliate_data,
            ANY_VALUE(gdn_ad_meta_data.destination_url)    AS destination_url,
            ANY_VALUE(gdn_ad_meta_data.redirect_url)       AS redirect_url,
+           ANY_VALUE(gdn_ad_meta_data.ad_url)             AS ad_url,
            ANY_VALUE(gdn_ad_meta_data.firstSeenOnDesktop) AS firstSeenOnDesktop,
            ANY_VALUE(gdn_ad_meta_data.built_with)         AS built_with,
            ANY_VALUE(gdn_ad_meta_data.built_with_analytics_tracking) AS built_with_analytics_tracking,
