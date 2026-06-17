@@ -78,7 +78,7 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
     n_total: p.n_total == null ? null : num(p.n_total), status: p.status,
   }));
   const creatives = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad')).c) +
-                    num((await one(n, 'SELECT COUNT(*) c FROM native_ad')).c);
+                    num((await one(n, "SELECT COALESCE(table_rows,0) c FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='native_ad'")).c);
   const runs = num((await one(g, 'SELECT COALESCE(SUM(total_crawls),0) c FROM gdn_crawl_quality')).c);
   const ah = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
   const nh = num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
@@ -99,11 +99,14 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
 async function buildOverview(g, n, sid) {
   // totals
   const gtot = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad')).c);
-  const ntot = num((await one(n, 'SELECT COUNT(*) c FROM native_ad')).c);
+  const ntot = num((await one(n, "SELECT COALESCE(table_rows,0) c FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='native_ad'")).c);
   const ah24 = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date>=NOW()-INTERVAL 24 HOUR')).c) +
                num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date>=NOW()-INTERVAL 24 HOUR')).c);
   const cq = await one(g, 'SELECT COUNT(*) urls, COUNT(DISTINCT country) ccs, COALESCE(SUM(total_ads),0) ads FROM gdn_crawl_quality');
-  const nadv = num((await one(g, "SELECT COUNT(*) c FROM gdn_ad_post_owners WHERE post_owner_name<>''")).c);
+  // distinct advertisers actually present in the live keep-set (NOT COUNT(*) of the
+  // gdn_ad_post_owners dimension — that table was copied in full at migration and is
+  // ~95% orphan rows, which over-counted advertisers ~20x).
+  const nadv = num((await one(g, "SELECT COUNT(DISTINCT post_owner_id) c FROM gdn_ad WHERE post_owner_id IS NOT NULL")).c);
   // URLs crawled in the last 24h, split by what they yielded (a URL can yield both, so gdn+native may
   // exceed total). Filtered to our crawl (provider=sid). total = distinct URLs touched in the window.
   const u24 = await one(g,
