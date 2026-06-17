@@ -18,7 +18,7 @@ const repo = require('./repository');
 const { searchIdQuery, firstHitId } = require('./esDocBuilder');
 const { rejected, serverError } = require('../../../insertion/helpers/responses');
 
-const ES_INDEX = 'gdn_search_mix';
+const ES_INDEX = 'gdn_search_mix_v2'; // module fallback; per-call below sources the network's configured index (db.elastic.indexName)
 
 async function processDelete(ref, ctx) {
   const { db, log } = ctx;
@@ -52,6 +52,7 @@ async function processDelete(ref, ctx) {
 
     // 2. Elasticsearch delete (best-effort — SQL is the source of truth)
     if (db.elastic) {
+      const ES_INDEX = db.elastic.indexName || 'gdn_search_mix_v2';
       try {
         const _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, internalId)));
         if (_id) await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: _id });

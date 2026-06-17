@@ -147,7 +147,7 @@ module.exports = {
       },
       elastic: {
         enabled: toBool(netVal(netCfg.gdn?.elastic, 'enabled', 'GDN_ELASTIC_ENABLED', false)),
-        index:   netVal(netCfg.gdn?.elastic, 'index', 'GDN_ELASTIC_INDEX', 'gdn_search_mix'),
+        index:   netVal(netCfg.gdn?.elastic, 'index', 'GDN_ELASTIC_INDEX', 'gdn_search_mix_v2'),
         node:    netVal(netCfg.gdn?.elastic, 'node',     'GDN_ELASTIC_NODE',     config.databases.elastic.node,               true),
         auth: {
           username: netVal(netCfg.gdn?.elastic, 'username', 'GDN_ELASTIC_USERNAME', config.databases.elastic.auth.username, true),

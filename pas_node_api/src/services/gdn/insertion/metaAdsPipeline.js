@@ -30,7 +30,7 @@ const { storeInNas, DEFAULT_IMAGE } = require('../../../insertion/helpers/nasCli
 const { nowDateTime, today, toInt } = require('../../../insertion/helpers/util');
 const { ok, updated, rejected, serverError } = require('../../../insertion/helpers/responses');
 
-const ES_INDEX = 'gdn_search_mix';
+const ES_INDEX = 'gdn_search_mix_v2'; // module fallback; per-call below sources the network's configured index (db.elastic.indexName)
 const DEFAULT_AD_IMAGE = '/bydefault_ads.jpg';
 // Near-duplicate guard: a new creative whose perceptual hash (dhash, stored in gdn_ad.phash) is within
 // NEAR_HAM bits of one this SAME advertiser already has is a render/animation variant of the same ad ->
@@ -281,6 +281,7 @@ async function updatePath(ctx, rawAd, { translation, existingId, network }) {
 async function indexAd(ctx, gdnAdId, n, { iso, imageUrl }, network) {
   const { db } = ctx;
   if (!db.elastic) return;
+  const ES_INDEX = db.elastic.indexName || 'gdn_search_mix_v2';
   const joined = await repo.getJoinedAd(db.sql, 'gdn_ad.id', gdnAdId);
   const row = joined[0];
   if (!row) return;
@@ -297,6 +298,7 @@ async function indexAd(ctx, gdnAdId, n, { iso, imageUrl }, network) {
 async function updateEsDoc(ctx, gdnAdId, n, { translation, cur, network }) {
   const { db } = ctx;
   if (!db.elastic) return;
+  const ES_INDEX = db.elastic.indexName || 'gdn_search_mix_v2';
 
   const found = await db.elastic.search(searchIdQuery(ES_INDEX, gdnAdId));
   const _id = firstHitId(found);

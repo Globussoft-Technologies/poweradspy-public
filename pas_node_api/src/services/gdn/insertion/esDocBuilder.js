@@ -67,7 +67,7 @@ function sizeToWH(adImageSize) {
  * @returns {{index:string, type:string, body:Object}}
  */
 function buildSearchMixDoc(columns, row, opts = {}) {
-  const index = (opts.index || 'gdn_search_mix').toLowerCase();
+  const index = (opts.index || 'gdn_search_mix_v2').toLowerCase();
   const body = {};
   const wh = sizeToWH(row.ad_image_size);
 

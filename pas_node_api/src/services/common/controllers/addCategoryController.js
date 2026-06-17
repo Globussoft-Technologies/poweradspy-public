@@ -49,7 +49,7 @@ const PLATFORM_CONFIG = {
   },
   gdn: {
     service:      'gdn',
-    index:        process.env.GDN_ELASTIC_INDEX       || 'gdn_search_mix',
+    index:        process.env.GDN_ELASTIC_INDEX       || 'gdn_search_mix_v2',
     idField:      'gdn_ad.id',
     textField:    'gdn_ad_variants.text',
     titleField:   'gdn_ad_variants.title',
@@ -183,8 +183,10 @@ async function getDescriptionDetails(req, res) {
   }
 
   try {
+    // GDN is on gdn_search_mix_v2 — resolve the env-correct index from the live ES client, not the config-immune static map.
+    const esIndex = (cfg.service === 'gdn' && service.db.elastic.indexName) ? service.db.elastic.indexName : cfg.index;
     const esResult = await service.db.elastic.search({
-      index: cfg.index,
+      index: esIndex,
       body: {
         from: 0,
         size: limit,
@@ -466,10 +468,12 @@ async function newCatInsertion(req, res) {
 
     // ── Step 2: Update the ad record in the platform's search_mix index ──
     const esForPlat = platService?.db?.elastic || gdnService.db.elastic;
+    // GDN is on gdn_search_mix_v2 — resolve the env-correct index from the live ES client, not the config-immune static map.
+    const esIndex = (platCfg.service === 'gdn' && esForPlat?.indexName) ? esForPlat.indexName : platCfg.index;
     try {
       gdnService.log?.info(`[newCatInsertion] searching index="${platCfg.index}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
       const adSearch = await esForPlat.search({
-        index: platCfg.index,
+        index: esIndex,
         body:  {
           query: {
             bool: {
@@ -492,7 +496,7 @@ async function newCatInsertion(req, res) {
         // Version-aware: 6.x needs type 'doc' (matches PHP: 'type' => 'doc'),
         // TikTok's ES 8.1 is typeless and would reject an explicit type.
         await esForPlat.update(withEsType(esForPlat, {
-          index: platCfg.index,
+          index: esIndex,
           id:    adHits[0]._id,
           body:  { doc: updateDoc },
         }));

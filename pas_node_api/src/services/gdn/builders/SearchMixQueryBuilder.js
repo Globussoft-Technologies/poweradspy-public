@@ -75,7 +75,7 @@ const EXTRA_CONDITION = [
 
 class SearchMixQueryBuilder {
   constructor(indexName) {
-    this._indexName  = indexName || 'gdn_search_mix';
+    this._indexName  = indexName || 'gdn_search_mix_v2';
     this._from       = 0;
     this._size       = 20;
     this._sortField  = 'gdn_ad.last_seen';
