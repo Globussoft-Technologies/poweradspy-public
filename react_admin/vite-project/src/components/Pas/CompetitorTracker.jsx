@@ -129,6 +129,14 @@ const isoDay = (d) => {
   return z.toISOString().slice(0, 10);
 };
 
+// {from,to} (YYYY-MM-DD) for a "last N days" preset — N days back through today,
+// inclusive. Fills the date inputs so the active preset is reflected there.
+const presetDates = (days) => {
+  const start = new Date();
+  start.setDate(start.getDate() - (days - 1));
+  return { from: isoDay(start), to: isoDay(new Date()) };
+};
+
 /**
  * Per-brand "ads by competitor" bar chart with a date filter. Fetches
  * /competitor-ads-by-range for the brand's request_id on mount and whenever the
@@ -136,8 +144,8 @@ const isoDay = (d) => {
  */
 function BrandAdsChart({ requestId }) {
   const [preset, setPreset] = useState("30d");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(() => presetDates(30).from); // mirror default preset
+  const [to, setTo] = useState(() => presetDates(30).to);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -217,7 +225,7 @@ function BrandAdsChart({ requestId }) {
           y: {
             formatter: (_v, opts) => {
               const c = top[opts?.dataPointIndex] || {};
-              return `${fmtNum(c.ads)} ads  (FB ${fmtNum(c.facebook)} · IG ${fmtNum(c.instagram)} · G ${fmtNum(c.google)})`;
+              return `${fmtNum(c.ads)} ads  (FB ${fmtNum(c.facebook)} · IG ${fmtNum(c.instagram)} · GG ${fmtNum(c.google)})`;
             },
           },
         },
@@ -241,7 +249,7 @@ function BrandAdsChart({ requestId }) {
             <button
               key={p.key}
               type="button"
-              onClick={() => { setPreset(p.key); setFrom(""); setTo(""); }}
+              onClick={() => { setPreset(p.key); const d = presetDates(p.days); setFrom(d.from); setTo(d.to); }}
               className={presetBtn(preset === p.key)}
             >
               {p.label}
@@ -277,8 +285,8 @@ function BrandAdsChart({ requestId }) {
           />
           <button
             type="button"
-            onClick={() => { setPreset("30d"); setFrom(""); setTo(""); }}
-            disabled={preset !== "custom" && !from && !to}
+            onClick={() => { setPreset("30d"); const d = presetDates(30); setFrom(d.from); setTo(d.to); }}
+            disabled={preset !== "custom"}
             className="h-8 px-2.5 inline-flex items-center justify-center leading-none text-[11px] font-semibold rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-rose-500 hover:border-rose-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-gray-500 disabled:hover:border-gray-200 transition-colors"
             title="Clear the custom date range"
           >
