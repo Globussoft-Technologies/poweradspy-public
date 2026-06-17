@@ -190,6 +190,36 @@ const BasicInfo = ({
         hoverColor: "hover:text-white/60",
       },
     ];
+  } else if (p === "gdn") {
+    // GDN: INITIAL URL = ad_url (the initial click — Google ad-server /aclk),
+    // REDIRECT URL = redirect_url (funnel/affiliate hops, || separated),
+    // AD URL = destination_url (the final advertiser lander).
+    // fbPostLink resolves to adDetails.ad_url; redirectUrl to redirect_url; initialUrl to destination_url.
+    // INITIAL falls back to the destination so legacy / pre-cutover ads (ad_url empty) never render blank.
+    const gdnInitial = fbPostLink || initialUrl;
+    basicRows = [
+      {
+        label: "INITIAL URL",
+        icon: Globe,
+        value: gdnInitial,
+        href: gdnInitial,
+        hoverColor: "hover:text-[#6b99ff]",
+      },
+      {
+        label: "REDIRECT URL",
+        icon: RefreshCw,
+        value: redirectUrl,
+        href: redirectUrl,
+        hoverColor: "hover:text-white/60",
+      },
+      {
+        label: "AD URL",
+        icon: BookOpen,
+        value: initialUrl,
+        href: initialUrl,
+        hoverColor: "hover:text-emerald-400",
+      },
+    ];
   } else {
     basicRows = [
       {

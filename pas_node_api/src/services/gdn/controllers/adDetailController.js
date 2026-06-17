@@ -33,6 +33,7 @@ const AD_DETAIL_SQL = `
     gdn_ad_meta_data.built_with_analytics_tracking,
     gdn_ad_meta_data.version,
     gdn_ad_meta_data.redirect_url,
+    gdn_ad_meta_data.ad_url,
     gdn_ad_meta_data.firstSeenOnDesktop,
     gdn_ad_meta_data.lastSeenOnDesktop,
     gdn_ad_variants.title           AS ad_title,
