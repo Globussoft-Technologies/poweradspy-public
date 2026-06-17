@@ -434,6 +434,7 @@ async function getAllSearches(req, elastic, logger) {
       date_range = 'Last 90 days',
       from_date, to_date,
       from_time, to_time,
+      tz_offset_minutes,
       user, users, exclude_users,
       keyword, advertiser, domain,
       platform, ad_type, country,
@@ -449,22 +450,30 @@ async function getAllSearches(req, elastic, logger) {
     if (from_date && to_date) {
       let fromDate, toDate;
 
-      // Check if from_date/to_date are ISO format (2026-03-18T15:00:00) or separate date+time
-      if (from_date.includes('T')) {
-        // ISO format: 2026-03-18T15:00:00 (sent as local time, parse without Z)
-        fromDate = new Date(from_date);
-        toDate = new Date(to_date);
+      // Frontend sends date and time as separate params (user's local time)
+      // along with timezone offset to convert to UTC
+      const fromTimeStr = from_time || '00:00:00';
+      const toTimeStr = to_time || '23:59:59';
+
+      // Parse as if in UTC first (creates Date object)
+      fromDate = new Date(from_date + 'T' + fromTimeStr + 'Z');
+      toDate = new Date(to_date + 'T' + toTimeStr + 'Z');
+
+      // If we received timezone offset from frontend, apply it
+      // tz_offset_minutes is negative for timezones ahead of UTC (e.g., -330 for IST = UTC+5:30)
+      // JavaScript's getTimezoneOffset() returns: UTC_time - local_time in minutes
+      // So for IST: -330 = UTC_time - IST_time (because IST is 5:30 ahead)
+      // To convert local time TO UTC: UTC_time = local_time - offset_in_minutes
+      if (tz_offset_minutes !== undefined && tz_offset_minutes !== null) {
+        const tzOffsetSeconds = Number(tz_offset_minutes) * 60;
+        fromTs = Math.floor(fromDate.getTime() / 1000) + tzOffsetSeconds;
+        toTs   = Math.floor(toDate.getTime()   / 1000) + tzOffsetSeconds;
       } else {
-        // Separate date and time: from_date=2026-03-18, from_time=15:00:00
-        const fromTimeStr = from_time || '00:00:00';
-        const toTimeStr = to_time || '23:59:59';
-        fromDate = new Date(from_date + 'T' + fromTimeStr);
-        toDate = new Date(to_date + 'T' + toTimeStr);
+        // Fallback: if no timezone offset provided, treat as UTC (old behavior)
+        fromTs = Math.floor(fromDate.getTime() / 1000);
+        toTs   = Math.floor(toDate.getTime()   / 1000);
       }
 
-      const tzOffset = new Date().getTimezoneOffset() * 60;
-      fromTs = Math.floor(fromDate.getTime() / 1000) - tzOffset;
-      toTs   = Math.floor(toDate.getTime()   / 1000) - tzOffset;
 
     } else {
       const now = new Date();

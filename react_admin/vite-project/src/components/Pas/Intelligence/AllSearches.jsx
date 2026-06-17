@@ -769,8 +769,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         const buildParams = (includePageSize = true) => {
           const params = new URLSearchParams();
           if (f.dateRange === "Custom") {
-            params.set("from_date", `${f.fromDate}T${f.fromTime}:00`);
-            params.set("to_date",   `${f.toDate}T${f.toTime}:59`);
+            // Send date and time as separate parameters - let backend know these are user's local times
+            params.set("from_date", f.fromDate);
+            params.set("from_time", f.fromTime + ":00");
+            params.set("to_date", f.toDate);
+            params.set("to_time", f.toTime + ":59");
+            // Send timezone offset so backend can convert local time to UTC correctly
+            params.set("tz_offset_minutes", new Date().getTimezoneOffset());
           } else {
             params.set("date_range", f.dateRange);
           }
@@ -793,15 +798,32 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
 
         const token = Cookies.get("token");
 
+        const allSearchesUrl = `${NODE_API}/intelligence/all-searches?${params.toString()}`;
+        const summaryUrl = `${NODE_API}/intelligence/summary?${summaryParams.toString()}`;
+        console.log('[AllSearches] Query Params:', {
+          date_range: applied.dateRange,
+          from_date: applied.fromDate,
+          from_time: applied.fromTime,
+          to_date: applied.toDate,
+          to_time: applied.toTime,
+          users: applied.includedUsers.join(','),
+          exclude_users: applied.excludedUsers.join(','),
+          keyword: applied.keyword,
+          advertiser: applied.advertiser,
+          domain: applied.domain,
+          platform: applied.platform,
+          activity_type: applied.activityType,
+        });
+
         // Fetch both in parallel
         const [mainRes, summaryRes] = await Promise.all([
-          fetch(`${NODE_API}/intelligence/all-searches?${params.toString()}`, {
+          fetch(allSearchesUrl, {
             headers: {
               "Content-Type": "application/json",
               ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
           }),
-          fetch(`${NODE_API}/intelligence/summary?${summaryParams.toString()}`, {
+          fetch(summaryUrl, {
             headers: {
               "Content-Type": "application/json",
               ...(token ? { Authorization: `Bearer ${token}` } : {}),
