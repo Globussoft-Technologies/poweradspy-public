@@ -1013,6 +1013,8 @@ tags:
     description: Facebook image OCB (object/celebrity/brand) and OCR (text) pipeline (getFBImageUrl, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes facebook_ad_variants + patches search_mix ES. Every response is HTTP 200 — outcome is in the body code.
   - name: GDN OCR
     description: GDN image OCB (object/celebrity/brand) and OCR (text) pipeline (getGDNImageUrl, insert-GDN-imageUrl-data). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report patches gdn_search_mix ES FIRST (normalized ||-joined strings) then writes gdn_ad_variants. Every response is HTTP 200 — outcome is in the body code.
+  - name: YouTube OCB
+    description: YouTube image OCB (object/celebrity/brand) pipeline (get-ocb-url, insert-update-ocb). Scraper-facing; unauthenticated. Lease (type=1, image) leases off ocb_url_status; report upserts youtube_ad_ocb, flips youtube_ad_variants.ocb_url_status, and patches the youtube_ads_data ES doc by _id (fields image_object/image_celebrity/image_brand as arrays, no language families). Body uses the PHP buildResponse shape (messages/data). Every response is HTTP 200 — outcome is in the body code.
   - name: Native OCR
     description: Native image OCB (object/celebrity/brand) and OCR (text) pipeline (getNativeImageUrl, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes native_ad_variants + patches native_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
   - name: Quora OCR
@@ -2768,6 +2770,88 @@ paths:
                 updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
                 noVariant: { summary: No variant row, value: { code: 400, message: gdn_ad_id not present in gdn_ad_variants table } }
                 notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: Ad not found } }
+
+  # ═══════════════════════════════════════════
+  # YOUTUBE OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/youtube/ocr/get-ocb-url:
+    get:
+      tags: [YouTube OCB]
+      summary: Lease a batch of YouTube image ads queued for OCB
+      description: >-
+        Hands out up to 20 OCB-pending IMAGE/DISPLAY ads (ocb_url_status=0), resolves video_url →
+        absolute image_url, and flips them to ocb_url_status=1 so the next call does not return the
+        same ads. Only type=1 (image OCB) is supported. No auth. HTTP is always 200; the body follows
+        the PHP buildResponse shape (messages/data — note `messages` plural).
+      parameters:
+        - in: query
+          name: type
+          required: true
+          schema: { type: integer, enum: [1], example: 1 }
+          description: 1 = image OCB (IMAGE/DISPLAY). Any other value → 404 Missing Parameter.
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty, 404 bad type, 500 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  messages: { type: string, example: Success }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 295834 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/yt/adImage/202606/abc.webp" }
+              examples:
+                leased: { summary: Leased, value: { code: 200, messages: Success, data: [{ ad_id: 295834, image_url: "https://media.globussoft.com/...webp" }] } }
+                empty: { summary: Queue empty, value: { code: 400, messages: No data found } }
+                badType: { summary: Invalid type, value: { code: 404, messages: Missing Parameter, error: "" } }
+
+  /api/v1/youtube/ocr/insert-update-ocb:
+    post:
+      tags: [YouTube OCB]
+      summary: Persist OCB results (youtube_ad_ocb upsert + ES by _id)
+      description: >-
+        Upserts youtube_ad_ocb (keyed by youtube_ad_id), flips youtube_ad_variants.ocb_url_status to
+        `status`, and patches the youtube_ads_data ES doc directly by _id (= ad_id). status=1 (OCB)
+        writes object/celebrity/brand_logo (+ object_update_date) and ES image_object/image_celebrity/
+        image_brand. ES fields are ARRAYS (split on ||), with NO language families. (The report also
+        accepts status=4 → ocr per the PHP, but YouTube's pipeline is OCB-only.) No auth; HTTP always
+        200 (outcome in body `code`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id, status]
+              properties:
+                ad_id: { type: integer, example: 295834, description: youtube_ad_id (also the ES _id) }
+                status: { type: integer, enum: [1, 4], example: 1, description: 1=OCB done (primary), 4=OCR done }
+                object: { type: string, nullable: true, example: "shoe||bottle", description: "status=1; ||-delimited" }
+                celebrity: { type: string, nullable: true, example: "", description: "status=1; ||-delimited" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "status=1; ||-delimited" }
+                ocr: { type: string, nullable: true, example: "", description: "status=4; ||-delimited" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Data Updated Successfully }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
+                alreadyUpdated: { summary: No change, value: { code: 400, message: Image Data is already updated } }
+                esNoop: { summary: ES not updated, value: { code: 400, message: Image Object not updated } }
+                missing: { summary: Validation, value: { code: 404, messages: Missing Parameter, error: "" } }
 
   # ═══════════════════════════════════════════
   # NATIVE OCR / OCB (image-processing pipeline)
