@@ -76,9 +76,11 @@ export const fetchUserDetails = createAsyncThunk(
     "adsgpt/fetchAdsCount",
     async (payload, { rejectWithValue, signal }) => {
       try {
+        // Centralized count API (per-platform metric). Reshaped into the existing
+        // { data: [{ platform, total_ads }], network } store shape so cards stay untouched.
         const { data } = await axios.post(
-          `${HOST_URL}/networks-ad-counts/ad-counts`,
-          payload,
+          `${HOST_URL}/network-name/get-count`,
+          { network: payload.network, metric: "platform", range: payload.range, platform: payload.platform },
           {
             signal,
             headers: {
@@ -86,8 +88,12 @@ export const fetchUserDetails = createAsyncThunk(
             },
           }
         );
-        data.network=payload.network;
-        return data;
+        return {
+          code: 200,
+          message: "success",
+          data: [{ platform: payload.platform, total_ads: data?.data?.total ?? 0 }],
+          network: payload.network,
+        };
       } catch (error) {
         if (axios.isCancel(error)) throw error;
         return rejectWithValue(error.response.data.message);
@@ -100,8 +106,8 @@ export const fetchUserDetails = createAsyncThunk(
     async (payload, { rejectWithValue, signal }) => {
       try {
         const { data } = await axios.post(
-          `${HOST_URL}/networks-ad-counts/ad-counts`,
-          payload,
+          `${HOST_URL}/network-name/get-count`,
+          { network: payload.network, metric: "platform", range: payload.range, platform: payload.platform },
           {
             signal,
             headers: {
@@ -109,8 +115,12 @@ export const fetchUserDetails = createAsyncThunk(
             },
           }
         );
-        data.network=payload.network;
-        return data;
+        return {
+          code: 200,
+          message: "success",
+          data: [{ platform: payload.platform, total_ads: data?.data?.total ?? 0 }],
+          network: payload.network,
+        };
       } catch (error) {
         if (axios.isCancel(error)) throw error;
         return rejectWithValue(error.response.data.message);
@@ -124,8 +134,8 @@ export const fetchAdsCountPython = createAsyncThunk(
   async (payload, { rejectWithValue, signal }) => {
     try {
       const { data } = await axios.post(
-        `${HOST_URL}/networks-ad-counts/ad-counts`,
-        payload,
+        `${HOST_URL}/network-name/get-count`,
+        { network: payload.network, metric: "platform", range: payload.range, platform: payload.platform },
         {
           signal,
           headers: {
@@ -133,8 +143,12 @@ export const fetchAdsCountPython = createAsyncThunk(
           },
         }
       );
-      data.network=payload.network;
-      return data;
+      return {
+        code: 200,
+        message: "success",
+        data: [{ platform: payload.platform, total_ads: data?.data?.total ?? 0 }],
+        network: payload.network,
+      };
     } catch (error) {
       if (axios.isCancel(error)) throw error;
       return rejectWithValue(error.response.data.message);
@@ -147,8 +161,8 @@ export const fetchAdsCountMeta = createAsyncThunk(
   async (payload, { rejectWithValue, signal }) => {
     try {
       const { data } = await axios.post(
-        `${HOST_URL}/networks-ad-counts/ad-counts`,
-        payload,
+        `${HOST_URL}/network-name/get-count`,
+        { network: payload.network, metric: "platform", range: payload.range, platform: payload.platform },
         {
           signal,
           headers: {
@@ -156,23 +170,28 @@ export const fetchAdsCountMeta = createAsyncThunk(
           },
         }
       );
-      data.network=payload.network;
-      return data;
+      return {
+        code: 200,
+        message: "success",
+        data: [{ platform: payload.platform, total_ads: data?.data?.total ?? 0 }],
+        network: payload.network,
+      };
     } catch (error) {
       if (axios.isCancel(error)) throw error;
       return rejectWithValue(error.response.data.message);
     }
   }
 );
-// Q2 (new) + Q3 (active) counts from the main <network>_ad table.
-// Backed by /network-name/get-range-counts — see admin_panel_backend/src/range-counts-analytics.js.
+// Unique (new) + Total (active) counts for the date-ranged cards.
+// Backed by the centralized /network-name/get-count (metric: "range") — see
+// admin_panel_backend/src/dynamic-count-analytics.js. Returns { newCount, activeCount }.
 export const fetchRangeCounts = createAsyncThunk(
   "adsgpt/fetchRangeCounts",
   async (payload, { rejectWithValue, signal }) => {
     try {
       const { data } = await axios.post(
-        `${HOST_URL}/network-name/get-range-counts`,
-        payload,
+        `${HOST_URL}/network-name/get-count`,
+        { network: payload.network, metric: "range", range: payload.range },
         {
           signal,
           headers: {

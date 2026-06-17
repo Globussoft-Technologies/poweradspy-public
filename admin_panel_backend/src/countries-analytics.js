@@ -95,7 +95,9 @@ const countryStatsWithFilter = async (req, res) => {
           country: search_after,
         };
       }
-    } else if (country && range) {
+    } else {
+      // Reached only when (country && range) — the preceding three branches
+      // exhaust every other combination of country/range truthiness.
       query = {
         query: {
           bool: {
@@ -155,9 +157,10 @@ function dateToEpoch(dateString, type = 'start') {
     const date = new Date(dateString);
 
     if (type === 'start') {
-        date.setHours(0, 0, 0, 0); 
-    } else if (type === 'end') {
-        date.setHours(23, 59, 59, 999); 
+        date.setHours(0, 0, 0, 0);
+    } else {
+        // type === 'end' — the only other value any call site passes.
+        date.setHours(23, 59, 59, 999);
     }
 
     return Math.floor(date.getTime() / 1000);

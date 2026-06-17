@@ -19,7 +19,7 @@ function normalizePlatformApplicability(value) {
  */
 function sortByRank(arr) {
     if (!Array.isArray(arr)) return [];
-    return [...arr].sort((a, b) => (a?.rank ?? 999) - (b?.rank ?? 999));
+    return [...arr].filter(Boolean).sort((a, b) => (a?.rank ?? 999) - (b?.rank ?? 999));
 }
 
 /**

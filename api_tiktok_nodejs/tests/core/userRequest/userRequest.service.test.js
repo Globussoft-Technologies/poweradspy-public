@@ -408,18 +408,17 @@ describe("userRequest.service > getUserRequestKeywords", () => {
     );
   });
 
-  it("falls back to no-country query when country lookup returns null + userRequestData empty -> 'No Data Found'", async () => {
+  it("returns 'Invalid Country Code' when a country is supplied but the ISO lookup returns null", async () => {
     knFindAllSpy.mockResolvedValueOnce([]);
-    countryFindOneSpy.mockResolvedValueOnce(null);
-    urFindAllSpy
-      .mockResolvedValueOnce([]) // first query (with country filter)
-      .mockResolvedValueOnce([]); // fallback query (no country)
+    countryFindOneSpy.mockResolvedValueOnce(null); // unknown ISO -> no match
     const res = mockRes();
     await service.getUserRequestKeywords(
       { query: { country: "XX", limit: "2" } },
       res
     );
-    expect(userFailSpy).toHaveBeenCalledWith("No Data Found");
+    // country is truthy but countryName is null, so `!country || countryName`
+    // is false -> the source rejects the request instead of falling back.
+    expect(userFailSpy).toHaveBeenCalledWith("Invalid Country Code");
   });
 
   it("uses fallback query (no country) when first query returns nothing but subscribed keywords exist", async () => {
@@ -550,11 +549,7 @@ describe("userRequest.service > sendRequestedKeywordMail", () => {
     expect(userFailSpy).toHaveBeenCalledWith("No more user request data");
   });
 
-  it("hits the latent mailRes-not-defined bug -> outer catch -> 'Failed to send mail'", async () => {
-    // The source references `mailRes` (line 370) without declaring it;
-    // the `let mailRes = await sendMail()` line is commented out. In
-    // ESM strict mode that's a ReferenceError, which falls through to
-    // the outer catch and emits userFailResp 'Failed to send mail.'.
+  it("returns 'Fetched requested keyword data' with the mapped rows when pending data exists", async () => {
     urFindAllSpy.mockResolvedValueOnce([
       row({
         id: 1,
@@ -564,36 +559,30 @@ describe("userRequest.service > sendRequestedKeywordMail", () => {
         user_id: 99,
       }),
     ]);
-    msFindOneSpy.mockResolvedValueOnce({ email: "x@y", name: "X" });
     const res = mockRes();
     await service.sendRequestedKeywordMail({}, res);
-    // Bug filed: see test comment block in commit body.
-    expect(userFailSpy).toHaveBeenCalledWith(
-      "Failed to send mail.",
-      expect.any(String) // error.message string
-    );
+    expect(userSuccessSpy).toHaveBeenCalledWith("Fetched requested keyword data", [
+      { id: 1, keywords: "k", advertiser: "a", url: "u", user_id: 99 },
+    ]);
   });
 
-  it("sendRequestedKeywordMail: row with nullish fields → `|| null` fallback fires for keywords/advertiser/url (lines 322-324)", async () => {
+  it("maps nullish keywords/advertiser/url to null via the `|| null` fallback", async () => {
     urFindAllSpy.mockResolvedValueOnce([
       row({ id: 1, user_id: 99 /* no keywords/advertiser/url */ }),
     ]);
-    msFindOneSpy.mockResolvedValueOnce({ email: "x@y", name: "X" });
     const res = mockRes();
     await service.sendRequestedKeywordMail({}, res);
-    // Source still hits the `mailRes`-not-defined bug → outer catch fires
-    expect(userFailSpy).toHaveBeenCalledWith(
-      "Failed to send mail.",
-      expect.any(String)
-    );
+    expect(userSuccessSpy).toHaveBeenCalledWith("Fetched requested keyword data", [
+      { id: 1, keywords: null, advertiser: null, url: null, user_id: 99 },
+    ]);
   });
 
-  it("returns 'Failed to send mail' via outer catch when findAll throws", async () => {
+  it("returns 'Failed to fetch requested keyword data.' via catch when findAll throws", async () => {
     urFindAllSpy.mockRejectedValueOnce(new Error("db-down"));
     const res = mockRes();
     await service.sendRequestedKeywordMail({}, res);
     expect(userFailSpy).toHaveBeenCalledWith(
-      "Failed to send mail.",
+      "Failed to fetch requested keyword data.",
       "db-down"
     );
   });

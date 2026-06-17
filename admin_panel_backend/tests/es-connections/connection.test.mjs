@@ -81,23 +81,6 @@ describe("es-connections/connection (DEV env)", () => {
   });
 });
 
-describe("es-connections/connection (empty config failsafe)", () => {
-  it("calls process.exit(1) when esClients empty", () => {
-    const modPath = require.resolve("../../es-connections/connection");
-    delete require.cache[modPath];
-    const prevEnv = process.env.ENVIRONMENT;
-    process.env.ENVIRONMENT = "DEV";
-    delete process.env.ELASTICSEARCH_HOST;
-    // The empty failsafe block triggers only when esClients.length === 0.
-    // Manually patch the module file's clientList via env: with no host
-    // ELASTICSEARCH_HOST set, DEV branch still produces a single-element
-    // array with undefined host — so length is 1, not 0. The failsafe is
-    // unreachable through env alone; we document this branch as dead.
-    process.env.ENVIRONMENT = prevEnv;
-    expect(true).toBe(true);
-  });
-});
-
 describe("es-connections/connection (ENVIRONMENT default fallback)", () => {
   it("uses DEV when ENVIRONMENT env var is unset (line 5 `|| 'DEV'` falsy branch)", async () => {
     const modPath = require.resolve("../../es-connections/connection");
@@ -118,12 +101,46 @@ describe("es-connections/connection (ENVIRONMENT default fallback)", () => {
   });
 });
 
-describe("es-connections/connection > checkAllInstances (indirect through export check)", () => {
-  it("happy: cluster.health resolves", async () => {
-    constructedClients[0].cluster.health.mockResolvedValueOnce({ status: "green" });
-    // checkAllInstances isn't exported; we exercise the prod client surface
-    // here only to ensure mock wiring is intact for subsequent assertions.
-    const out = await constructedClients[0].cluster.health();
-    expect(out.status).toBe("green");
+describe("es-connections/connection > buildClient", () => {
+  it("sets httpAuth when auth is provided (truthy branch)", () => {
+    const before = constructedClients.length;
+    searchAllInstances.buildClient({ host: "es-auth", auth: { username: "u", password: "p" } });
+    const built = constructedClients[constructedClients.length - 1];
+    expect(constructedClients.length).toBe(before + 1);
+    expect(built.cfg.host).toBe("es-auth");
+    expect(built.cfg.httpAuth).toBe("u:p");
+  });
+
+  it("omits httpAuth when auth is absent (falsy branch)", () => {
+    searchAllInstances.buildClient({ host: "es-noauth" });
+    const built = constructedClients[constructedClients.length - 1];
+    expect(built.cfg.host).toBe("es-noauth");
+    expect(built.cfg.httpAuth).toBeUndefined();
+  });
+});
+
+describe("es-connections/connection > checkAllInstances", () => {
+  it("is exposed as a property on the default export (still callable as a function)", () => {
+    expect(typeof searchAllInstances).toBe("function");
+    expect(typeof searchAllInstances.checkAllInstances).toBe("function");
+  });
+
+  it("logs success when cluster.health resolves (try branch)", async () => {
+    const fakeClient = { cluster: { health: vi.fn().mockResolvedValue({ status: "green" }) } };
+    const fakeConfig = { host: "es-inject-ok" };
+    await searchAllInstances.checkAllInstances([fakeClient], [fakeConfig]);
+    expect(fakeClient.cluster.health).toHaveBeenCalledTimes(1);
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("es-inject-ok")
+    );
+  });
+
+  it("logs failure when cluster.health rejects (catch branch)", async () => {
+    const fakeClient = { cluster: { health: vi.fn().mockRejectedValue(new Error("es-down")) } };
+    const fakeConfig = { host: "es-inject-bad" };
+    await searchAllInstances.checkAllInstances([fakeClient], [fakeConfig]);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("es-down")
+    );
   });
 });

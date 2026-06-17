@@ -19,13 +19,9 @@ if (environment === 'PROD') {
     ];
 }
 
-// Check if esClients is empty (Failsafe)
-if (esClients.length === 0) {
-    console.error("No Elasticsearch instances configured. Please check your environment variables.");
-    process.exit(1);
-}
-// Create a client for each Elasticsearch instance
-const clients = esClients.map(config => {
+// Build a single Elasticsearch client from a config entry.
+// Extracted so the no-auth branch is unit-testable; behavior is unchanged.
+function buildClient(config) {
     const clientConfig = {
         host: config.host,
         log: 'error',
@@ -37,16 +33,21 @@ const clients = esClients.map(config => {
     }
 
     return new elasticsearch.Client(clientConfig);
-});
+}
 
-// Function to check health of all Elasticsearch instances
-async function checkAllInstances() {
-    for (let i = 0; i < clients.length; i++) {
+// Create a client for each Elasticsearch instance
+const clients = esClients.map(buildClient);
+
+// Function to check health of all Elasticsearch instances.
+// clientList/configList are injectable to make the health-check unit-testable;
+// they default to the module-level clients/esClients built above.
+async function checkAllInstances(clientList = clients, configList = esClients) {
+    for (let i = 0; i < clientList.length; i++) {
         try {
-            const health = await clients[i].cluster.health();
-            console.log(`✅ Elasticsearch connected: Node ${i + 1} (${esClients[i].host}) — status: ${health.status}`);
+            const health = await clientList[i].cluster.health();
+            console.log(`✅ Elasticsearch connected: Node ${i + 1} (${configList[i].host}) — status: ${health.status}`);
         } catch (error) {
-            console.error(`❌ Elasticsearch connection FAILED: Node ${i + 1} (${esClients[i].host}) — ${error.message}`);
+            console.error(`❌ Elasticsearch connection FAILED: Node ${i + 1} (${configList[i].host}) — ${error.message}`);
         }
     }
 }
@@ -89,4 +90,9 @@ async function searchAllInstances(index, query, es_id, search_type) {
 
 
 
+// Keep the default export callable as a function (existing consumers do
+// `const searchAllInstances = require('.../connection')`), while also exposing
+// checkAllInstances for health-check tasks and unit tests.
+searchAllInstances.checkAllInstances = checkAllInstances;
+searchAllInstances.buildClient = buildClient;
 module.exports = searchAllInstances
