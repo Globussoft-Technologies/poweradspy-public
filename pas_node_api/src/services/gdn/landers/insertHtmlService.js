@@ -76,7 +76,10 @@ async function insertHtmlContent(req, db, log) {
   const ES_INDEX = elastic?.indexName || 'gdn_search_mix';
 
   const body = req.body;
-  const postdata = Array.isArray(body) ? body : (body ? [body] : []);
+  // ONLY the standard wrapped payload { ad_id, insertData: {...} } is accepted.
+  // Flat {...} and array [ {...} ] shapes are rejected (postdata stays empty → 400).
+  const value = (body && !Array.isArray(body)) ? body.insertData : undefined;
+  const postdata = (value !== undefined && value !== null) ? [value] : [];
   const date = new Date().toISOString().slice(0, 10);
 
   // accumulators (mirror PHP locals)
