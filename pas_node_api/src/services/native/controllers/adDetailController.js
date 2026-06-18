@@ -24,6 +24,9 @@ const AD_DETAIL_SQL = `
     native_ad_meta_data.affiliate_data,
     native_ad_meta_data.platform,
     native_ad_meta_data.destination_url,
+    native_ad_meta_data.ad_url,
+    native_ad_meta_data.redirect_url,
+    native_ad_meta_data.tracker_url,
     native_ad_meta_data.screenshot_url,
     native_ad_meta_data.version,
     native_ad_meta_data.firstSeenOnDesktop,
@@ -126,6 +129,23 @@ async function getAdDetails(req, db, logger) {
       } catch (esErr) {
         logger.warn('ES overlay failed', { error: esErr.message });
       }
+    }
+
+    // Redirect chain: initial click -> network tracker -> hops -> final lander -> placement.
+    // Hops are stored ||-joined in native_ad_meta_data.redirect_url. tracker_url + initial_url
+    // (ad_url) are populated for fresh ads only; historic ads carry just hops + final.
+    {
+      const hops = (typeof adData.redirect_url === 'string' && adData.redirect_url)
+        ? adData.redirect_url.split('||').map((s) => s.trim()).filter(Boolean)
+        : [];
+      adData.redirect_chain = {
+        network:       adData.network         || null,
+        tracker_url:   adData.tracker_url     || null,
+        initial_url:   adData.ad_url          || null,
+        hops,
+        final_url:     adData.destination_url || null,
+        placement_url: adData.placement_url   || null,
+      };
     }
 
     adData.ad_status = computeAdStatus(adData.last_seen);

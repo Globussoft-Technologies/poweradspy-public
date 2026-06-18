@@ -231,6 +231,7 @@ async function insertPath(ctx, n, { translation, network }) {
       destination_url:    n.destination_url || null,
       redirect_url:       buildRedirectUrl(n),
       ad_url:             (n.ad_url && String(n.ad_url).trim() !== '') ? n.ad_url : null,
+      tracker_url:        (n.tracker_url && String(n.tracker_url).trim() !== '') ? n.tracker_url : null,
       screenshot_url:     '/processing.gif',
       firstSeenOnDesktop: String(n.source).toLowerCase() === 'desktop' ? nowDateTime() : '0001-01-01 01:01:01',
       lastSeenOnDesktop:  String(n.source).toLowerCase() === 'desktop' ? nowDateTime() : '0001-01-01 01:01:01',

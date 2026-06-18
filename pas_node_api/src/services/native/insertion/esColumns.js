@@ -33,6 +33,8 @@ const NATIVE_INSERT_COLUMNS = [
   'native_ad.network_id',
   'native_ad.target_site_id',
   'native_placement_url.placement_url',
+  'native_ad_domains.domain',
+  'native_ad_meta_data.tracker_url',
   'native_ad_domains.domain_registered_date',
   'native_ad_translation.ad_text',
   'native_ad_translation.news_feed_description',
