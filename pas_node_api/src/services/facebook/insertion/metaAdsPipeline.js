@@ -363,6 +363,9 @@ async function updatePath(ctx, rawAd, { userId, translation, existingId, network
   // ── meta built_with_status = 4 when no destination_url ──
   if (!n.destination_url) await repo.updateMetaBuiltWith(sql, facebookAdId, 4).catch(() => {});
 
+  // ── meta initial_url refresh on update (so existing ads populate too) ──
+  if (n.initial_url) await repo.updateMetaInitialUrl(sql, facebookAdId, n.initial_url).catch(() => {});
+
   // ── country_only + countries_only upsert ──
   const countryOnly = await repo.upsertCountryOnly(sql, n.country);
   if (countryOnly.length) await repo.upsertAdCountriesOnly(sql, countryOnly.map((c) => ({ ...c, facebook_ad_id: facebookAdId })));
@@ -499,6 +502,7 @@ async function insertMetaData(tx, n, facebookAdId) {
   await repo.insertMetaData(tx, {
     facebook_ad_id: facebookAdId,
     destination_url: n.destination_url ?? null,
+    initial_url: n.initial_url ?? null,
     built_with_status: builtWithStatus,
     firstSeenOnDesktop: sourceIs(n, 'desktop') ? nowDateTime() : null,
     firstSeenOnAndroid: sourceIs(n, 'android') ? nowDateTime() : null,

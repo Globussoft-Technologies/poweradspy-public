@@ -132,6 +132,7 @@ async function getJoinedAd(exec, whereCol, whereVal) {
            ANY_VALUE(country.country) AS country_row,
            ANY_VALUE(facebook_users.Gender) AS Gender,
            ANY_VALUE(facebook_ad_meta_data.destination_url) AS destination_url,
+           ANY_VALUE(facebook_ad_meta_data.initial_url) AS initial_url,
            ANY_VALUE(facebook_ad_meta_data.built_with) AS built_with,
            ANY_VALUE(facebook_ad_meta_data.built_with_analytics_tracking) AS built_with_analytics_tracking,
            ANY_VALUE(facebook_ad_meta_data.affiliate_data) AS affiliate_data,
@@ -409,6 +410,12 @@ async function updateMetaBuiltWith(exec, facebookAdId, builtWithStatus) {
     [builtWithStatus, facebookAdId]
   ));
 }
+async function updateMetaInitialUrl(exec, facebookAdId, initialUrl) {
+  return affected(await exec.query(
+    'UPDATE facebook_ad_meta_data SET initial_url = ? WHERE facebook_ad_id = ?',
+    [initialUrl, facebookAdId]
+  ));
+}
 
 // ── facebook_meta_ad_budget (dedup meta_ad_id) ──────────────────────────────────
 async function budgetExists(exec, metaAdId) {
@@ -559,7 +566,7 @@ module.exports = {
   insertComment, upsertAdImageVideo,
   insertAdCountries, insertAdCountriesOnly, upsertAdCountriesOnly,
   getAdUser, insertAdUser, bumpAdUserCount, setAdUserIdStatus,
-  getMetaData, insertMetaData, updateMetaBuiltWith,
+  getMetaData, insertMetaData, updateMetaBuiltWith, updateMetaInitialUrl,
   budgetExists, insertBudget,
   upsertTranslation,
   getUserByFacebookId, getUserFacebookIdByCountry, updateUser,

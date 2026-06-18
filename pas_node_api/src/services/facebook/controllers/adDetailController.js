@@ -31,6 +31,7 @@ const AD_DETAIL_SQL = `
     facebook_ad_meta_data.meta_ad_url,
     facebook_ad_meta_data.built_with_analytics_tracking,
     facebook_ad_meta_data.destination_url,
+    facebook_ad_meta_data.initial_url,
     facebook_ad_meta_data.screenshot_url_status,
     facebook_ad_meta_data.built_with,
     facebook_ad_meta_data.affiliate_data,
@@ -215,6 +216,7 @@ async function getAdDetails(req, db, logger) {
             final_url:       source['facebook_ad_outgoing_links.final_url']    || null,
             url_redirects:   source['facebook_ad_url.url_redirects']           || null,
             destination_url: source['facebook_ad_meta_data.destination_url']   || null,
+            initial_url:     source['facebook_ad_meta_data.initial_url']       || null,
           };
 
           // Category & SubCategory

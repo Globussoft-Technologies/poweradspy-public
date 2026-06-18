@@ -9,7 +9,7 @@
  */
 
 const URL_DECODE_FIELDS = [
-  'ad_text', 'news_feed_description', 'destination_url',
+  'ad_text', 'news_feed_description', 'destination_url', 'initial_url',
   'image_video_url', 'ad_title', 'post_owner_image', 'ad_url',
 ];
 

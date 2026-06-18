@@ -77,7 +77,7 @@ async function processAdsLibrary(ad, ctx) {
 function normalizeLibrary(ad) {
   const n = { ...ad };
   if (n.post_owner_image === 'null') n.post_owner_image = null;
-  for (const f of ['destination_url', 'ad_title', 'news_feed_description', 'ad_text', 'meta_ad_url', 'post_owner_image']) {
+  for (const f of ['destination_url', 'initial_url', 'ad_title', 'news_feed_description', 'ad_text', 'meta_ad_url', 'post_owner_image']) {
     if (n[f] !== undefined && n[f] !== null) n[f] = urldecode(n[f]);
   }
   if (typeof n.post_owner_image === 'string') n.post_owner_image = n.post_owner_image.replace(/=v1:/g, '=v1%3A');
@@ -210,6 +210,7 @@ async function insertPath(ctx, n, { translation, network }) {
       await repo.insertMetaData(tx, {
         facebook_ad_id: facebookAdId,
         destination_url: n.destination_url ?? null,
+        initial_url: n.initial_url ?? null,
         screenshot_url: 'processing.gif',
         platform: toInt(n.platform),
         firstSeenOnDesktop: nowDateTime(),
@@ -297,6 +298,9 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
       ad_text: translation.text ?? n.ad_text,
     });
   }
+
+  // meta initial_url refresh on update (so existing ads populate too)
+  if (n.initial_url) await repo.updateMetaInitialUrl(sql, facebookAdId, n.initial_url).catch(() => {});
 
   const carryOver = await fetchCarryOver(ctx, facebookAdId);
   await deleteEsDoc(ctx, facebookAdId).catch(() => {});

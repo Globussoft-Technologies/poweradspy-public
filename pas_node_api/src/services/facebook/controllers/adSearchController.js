@@ -29,6 +29,7 @@ const AD_DETAIL_SELECT = `
     facebook_ad_meta_data.ad_url                    AS ad_url,
     facebook_ad_meta_data.meta_ad_url               AS meta_ad_url,
     facebook_ad_meta_data.destination_url            AS destination_url,
+    facebook_ad_meta_data.initial_url               AS initial_url,
     facebook_ad_meta_data.built_with                AS built_with,
     facebook_ad_meta_data.built_with_analytics_tracking AS built_with_analytics_tracking,
     facebook_ad_outgoing_links.redirect_url         AS redirect_url,
@@ -575,6 +576,7 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
           final_url:        src['facebook_ad_outgoing_links.final_url']    || null,
           url_redirects:    src['facebook_ad_url.url_redirects']           || null,
           destination_url:  src['facebook_ad_meta_data.destination_url']   || null,
+          initial_url:      src['facebook_ad_meta_data.initial_url']       || null,
         },
       };
     });
