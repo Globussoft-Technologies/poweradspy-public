@@ -109,6 +109,13 @@ A frontend search sends one of: `keyword`, `advertiser`, `domain` (plus `country
   "users": ["user2@example.com"],
   "userCount": 1,                  // counter, so we never need to read the array length
 
+  // rich searcher identity — one { id, username, email } per user, deduped BY id (or by
+  // email when id is absent). Returned on the scraper /work response so a term can be
+  // attributed to WHOSE request it is. Bounded like `users` (one entry per unique user).
+  "userInfos": [
+    { "id": 281, "username": "john_d", "email": "john@example.com" }
+  ],
+
   // recent search timestamps — CAPPED to the last N (see §5)
   "searchDates": [
     "2026-06-12T14:22:15Z",
@@ -231,7 +238,10 @@ Apply the §1 gates (`realTimeStore`, `newPlanUser`) **before** this write. Sett
 `networkState.<net>.isActive = true` on **every** POST means a freshly re-searched term
 re-enters the priority queue (§7.A) for those networks even after a previous scrape
 deactivated them. The single pipeline does dedupe, bounded arrays, per-network
-reactivation, and an exact `userCount` in one atomic op.
+reactivation, and an exact `userCount` in one atomic op. It also maintains `userInfos` —
+the rich `{ id, username, email }` searcher list (id/username pulled from the JWT) deduped
+by id — which the scraper `/work` response echoes per term so each term is attributable to
+whose request it is.
 
 ---
 
@@ -242,7 +252,12 @@ in a loop. The scraper does NOT hit multiple APIs. One call does **both**:
 1. **auto-close the term this scraper finished last** — matched **by owner name**
    (`x-scraper-name`), NOT by id. The scraper sends no `docId`/`scrapeId` and no
    `adsCount`; only an optional `status` (default `completed`). See §7.D.
-2. **claim the next** term for one `type` + one concrete `network`.
+2. **claim the next** term for the requested `type`(s) + concrete `network`(s). Both
+   `type` and `network` accept a single value, a comma list, **or an array** (e.g.
+   `network: ["facebook","instagram"]`, `type: ["keyword","advertiser"]`). The claim pool
+   is the union of every requested `type × network` pair, so a single returned value may
+   come from any of them — each item still carries its own concrete `type`+`network`.
+   Identical in priority and daily modes.
 
 > Advanced: a scraper claiming many at once (`size > 1`) can't auto-map one outcome to
 > several terms, so it may instead send an explicit `results: [{ docId, scrapeId,
@@ -255,13 +270,17 @@ term, and **only that owner can close its own session** (enforced in the update 
 `$elemMatch` on `{ _id: scrapeId, owner }`).
 
 Body: `{ type, network, priority?, size?, results?: [{ docId, scrapeId, status, adsCount }] }`.
-`type` and `network` are required (the work stream). `priority` is a body flag — same two
-modes as before. `size` (clamped to `maxClaimSize`) = how many to claim this call.
+`type` and `network` are required (the work stream) and each accept a single value, a
+comma list, or an array. `priority` is a body flag — same two modes as before. `size`
+(clamped to `maxClaimSize`) = how many to claim this call.
 
-**Required `type` + `network` scoping (both modes):** the claim is scoped to that `type`
-**and** to terms whose `networks` array contains the network — so a facebook
-keyword-scraper only receives keywords applicable to facebook. Both are ANDed into the
-claim filter (§7.C).
+**Required `type` + `network` scoping (both modes):** each individual claim is scoped to
+**one** `type` **and** to terms whose `networks` array contains **one** network — so a
+facebook keyword-claim only receives keywords applicable to facebook. When `type`/`network`
+are arrays, the endpoint enumerates every `type × network` pair and, for each slot, claims
+from the first pair that has a term (each claim is still the atomic single-pair
+`findOneAndUpdate` of §7.C). This keeps per-network independence and concurrency-safety
+intact while letting one stream drain several pools.
 
 ### 7.A. Priority mode — body `{ priority: true, type: "keyword", network: "facebook", size: N }`
 
@@ -312,13 +331,18 @@ const doc = await col.findOneAndUpdate(
 - **`size > 1`:** loop this claim `size` times in the request; each iteration is its own
   atomic claim → distinct docs even within one multi-size call. Stop early on `null`.
   Clamped to `config.keywordSearch.maxClaimSize`.
-- **Response:** `{ scraper, mode, network, completed, count, data: [{ docId, type, value, network, scrapeId, mode }, ...] }`.
-  The scraper keeps each `scrapeId` paired with the term it is scraping.
+- **Response:** `{ scraper, mode, networks, network, types, completed, count, data: [{ docId, type, value, network, scrapeId, mode, users: [{ id, username, email }] }, ...] }`.
+  `networks`/`types` echo the request; `network` is a single slug when one was requested,
+  else the array. Each `data[]` item carries its own concrete `type`+`network` (the value's
+  source) plus `users` — the rich searcher list (from `userInfos`) so the term can be
+  attributed to WHOSE request it is. The scraper keeps each `scrapeId` paired with the term.
 
 ### 7.D. Closing the previous term — auto, by owner name
 
 By default the scraper sends **no ids**. At the top of each `work` call we close that
-scraper's still-open session(s) for this `type`+`network`, matched **by owner name**.
+scraper's still-open session(s) for the requested `network`(s) and any of the requested
+`type`(s) (one auto-close pass per network so each net's `lastScrape` denorm stays
+correct), matched **by owner name**.
 The scraper optionally sends `status` (`no_ads_found`/`failed`; default `completed`).
 No `adsCount`. In the normal size-1 loop there is exactly one open session per owner, so
 this is unambiguous — and a different scraper name never touches another's session.

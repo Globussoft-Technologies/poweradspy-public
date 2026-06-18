@@ -30,8 +30,8 @@ All paths below are under `/api/v1/common`.
 
 | Field | Values |
 |-------|--------|
-| `type` | `1` = keyword, `2` = advertiser, `3` = domain. The words `keyword` / `advertiser` / `domain` are also accepted. |
-| `network` | One of: `facebook, instagram, gdn, youtube, google, native, linkedin, reddit, quora, pinterest, tiktok`. On **store** you may also send `all` (expands to every network) or a comma list. On **work** it must be ONE concrete network (never `all`). |
+| `type` | `1` = keyword, `2` = advertiser, `3` = domain. The words `keyword` / `advertiser` / `domain` are also accepted. On **work** you may send one type, a comma list, or an array (e.g. `["keyword","advertiser"]`). |
+| `network` | One of: `facebook, instagram, gdn, youtube, google, native, linkedin, reddit, quora, pinterest, tiktok`. On **store** you may also send `all` (expands to every network) or a comma list. On **work** send one concrete network, a comma list, or an array (e.g. `["facebook","instagram"]`) — but never `all`. |
 | `status` (optional, on work) | `completed` (default) \| `no_ads_found` \| `failed` |
 
 ---
@@ -98,11 +98,18 @@ and hands the **next** term. The scraper does **not** track `docId`/`scrapeId` a
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `type` | yes | `1` / `2` / `3` (or word). |
-| `network` | yes | One concrete network slug. |
+| `type` | yes | `1` / `2` / `3` (or word). One value, a comma list, or an array (e.g. `["keyword","advertiser"]`). |
+| `network` | yes | One concrete network slug, a comma list, or an array (e.g. `["facebook","instagram"]`). Never `all`. |
 | `priority` | no | `true` = priority mode; omit/`false` = daily mode. |
 | `size` | no | How many terms to claim this call (default 1). |
 | `status` | no | Outcome of the term just finished: `no_ads_found` / `failed`. Omit = `completed`. |
+
+> **Multi type/network:** when `type` and/or `network` are arrays, the claim pool is the
+> union of every requested type × network. Each call still returns **one value per slot**,
+> and each returned item carries its own concrete `type` + `network` — so a single value
+> may come from facebook **or** instagram (or be a keyword **or** an advertiser). This
+> works identically in **priority** and **daily** modes; per-network independence is
+> preserved (a term scraped for facebook is still claimable for instagram the same day).
 
 **Two modes (same endpoint, same auto-close):**
 
@@ -130,6 +137,17 @@ and hands the **next** term. The scraper does **not** track `docId`/`scrapeId` a
 { "type": "keyword", "network": "facebook", "priority": true }
 ```
 
+**Multi network / type — one stream draining several pools (priority or daily):**
+
+```jsonc
+// keywords across facebook OR instagram — each returned value is one term tagged with
+// the network it came from (facebook or instagram).
+{ "type": "keyword", "network": ["facebook", "instagram"] }
+
+// keywords AND advertisers, facebook OR instagram — pool is the union of all 4 pairs.
+{ "type": ["keyword", "advertiser"], "network": ["facebook", "instagram"], "priority": true }
+```
+
 **Response `200`**
 
 ```json
@@ -139,15 +157,31 @@ and hands the **next** term. The scraper does **not** track `docId`/`scrapeId` a
   "scraper": "fb-keyword-plugin-01",
   "mode": "daily",
   "network": "facebook",
+  "networks": ["facebook"],
+  "types": [1],
   "completed": 1,
   "completionErrors": [],
   "count": 1,
   "data": [
-    { "docId": "665f1f77bcf86cd799439002", "type": 1, "value": "Nike", "network": "facebook", "scrapeId": "665f200abcf86cd799439010", "mode": "daily" }
+    {
+      "docId": "665f1f77bcf86cd799439002", "type": 1, "value": "Nike", "network": "facebook",
+      "scrapeId": "665f200abcf86cd799439010", "mode": "daily",
+      "users": [
+        { "id": 281, "username": "john_d", "email": "john@example.com" },
+        { "id": 305, "username": "asha", "email": "asha@example.com" }
+      ]
+    }
   ]
 }
 ```
 
+- `networks` / `types` echo what was requested. `network` is the single slug when one
+  network was requested, or the array when several were. Each `data[]` item always carries
+  its own concrete `network` + `type` — that is the source of the value.
+- `data[].users` is the array of everyone who searched that term — one
+  `{ id, username, email }` object per user — so you know **whose** request the term is.
+  (`id`/`username` come from the searcher's login; older terms stored before this change
+  may show `id: null`, `username: ""` with just the email.)
 - `completed` = how many of this scraper's previous open terms were just closed (1 in a
   normal size-1 loop; 0 on the very first hit).
 - When the pool is empty, `count: 0` and `data: []` — the scraper just waits and retries.

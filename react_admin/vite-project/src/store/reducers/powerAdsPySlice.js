@@ -16,7 +16,14 @@ import {
   fetchSystemInfoAccounts,
   fetchStatusSystemInfo,
   fetchStatusAccountInfo,
-  fetchDomaninProcessDetails
+  fetchDomaninProcessDetails,
+  fetchDashboardOverview,
+  fetchDashboardSystem,
+  fetchDashboardAccounts,
+  fetchDashboardAccountTimeline,
+  fetchDashboardPlatforms,
+  fetchSystemDebug,
+  fetchExporterHealth
 } from "./../actions/powerAdsPyActionsApi";
 const initialState = {
   countData: [],
@@ -53,6 +60,20 @@ const initialState = {
   SystemInsitesAdsCount:[],
   StatusSystemInfo:[],
   AccountInfo:[],
+  // NEW — crawler dashboard overview
+  dashboardOverview: null,
+  loadingDashboardOverview: false,
+  dashboardError: null,
+  dashboardSystem: null,
+  loadingDashboardSystem: false,
+  dashboardAccounts: null,
+  loadingDashboardAccounts: false,
+  dashboardAccountTimeline: null,
+  loadingDashboardAccountTimeline: false,
+  dashboardPlatforms: [],
+  systemDebug: null,
+  loadingSystemDebug: false,
+  exporterHealth: null,
   network: "",
 };
 
@@ -334,6 +355,92 @@ const networkTypesSlice = createSlice({
            .addCase(fetchStatusAccountInfo.rejected, (state, action) => {
              state.loadingStatusAccountInfo = false;
              state.error = action.payload;
+           });
+
+           // NEW — Crawler dashboard overview (do NOT clear old data on refetch,
+           // so live auto-refresh doesn't flicker the UI to empty).
+           builder
+           .addCase(fetchDashboardOverview.pending, (state) => {
+             state.loadingDashboardOverview = true;
+           })
+           .addCase(fetchDashboardOverview.fulfilled, (state, action) => {
+             state.loadingDashboardOverview = false;
+             state.dashboardOverview = action.payload;
+             state.dashboardError = null;
+           })
+           .addCase(fetchDashboardOverview.rejected, (state, action) => {
+             state.loadingDashboardOverview = false;
+             state.dashboardError = action.payload;
+           });
+
+           // NEW — system drill (per-account breakdown)
+           builder
+           .addCase(fetchDashboardSystem.pending, (state) => {
+             state.loadingDashboardSystem = true;
+           })
+           .addCase(fetchDashboardSystem.fulfilled, (state, action) => {
+             state.loadingDashboardSystem = false;
+             state.dashboardSystem = action.payload;
+           })
+           .addCase(fetchDashboardSystem.rejected, (state) => {
+             state.loadingDashboardSystem = false;
+           });
+
+           // NEW — all accounts overview
+           builder
+           .addCase(fetchDashboardAccounts.pending, (state) => {
+             state.loadingDashboardAccounts = true;
+           })
+           .addCase(fetchDashboardAccounts.fulfilled, (state, action) => {
+             state.loadingDashboardAccounts = false;
+             state.dashboardAccounts = action.payload;
+           })
+           .addCase(fetchDashboardAccounts.rejected, (state) => {
+             state.loadingDashboardAccounts = false;
+           });
+
+           // NEW — per-account timeline (account_id based)
+           builder
+           .addCase(fetchDashboardAccountTimeline.pending, (state) => {
+             state.loadingDashboardAccountTimeline = true;
+             state.dashboardAccountTimeline = null;
+           })
+           .addCase(fetchDashboardAccountTimeline.fulfilled, (state, action) => {
+             state.loadingDashboardAccountTimeline = false;
+             state.dashboardAccountTimeline = action.payload;
+           })
+           .addCase(fetchDashboardAccountTimeline.rejected, (state) => {
+             state.loadingDashboardAccountTimeline = false;
+           });
+
+           // NEW — platform discovery
+           builder
+           .addCase(fetchDashboardPlatforms.fulfilled, (state, action) => {
+             state.dashboardPlatforms = action.payload?.platforms || [];
+           });
+
+           // NEW — system debug trace
+           builder
+           .addCase(fetchSystemDebug.pending, (state) => {
+             state.loadingSystemDebug = true;
+             state.systemDebug = null;
+           })
+           .addCase(fetchSystemDebug.fulfilled, (state, action) => {
+             state.loadingSystemDebug = false;
+             state.systemDebug = action.payload;
+           })
+           .addCase(fetchSystemDebug.rejected, (state, action) => {
+             state.loadingSystemDebug = false;
+             state.systemDebug = { error: action.payload };
+           });
+
+           // NEW — raw exporter health
+           builder
+           .addCase(fetchExporterHealth.fulfilled, (state, action) => {
+             state.exporterHealth = action.payload;
+           })
+           .addCase(fetchExporterHealth.rejected, (state) => {
+             state.exporterHealth = { up: false };
            });
   },
 });

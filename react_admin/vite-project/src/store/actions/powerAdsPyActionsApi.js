@@ -1,10 +1,8 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 import Cookies from "js-cookie";
-import { Network } from "lucide-react";
 
 const PAS_ADMIN_BASEURL = import.meta.env.VITE_ADMIN_BACKEND_URL;
-const PAS_ADMIN_BASEURL_SYSTEMDETAILS = import.meta.env.VITE_ADMIN_BACKEND_URL_SYSTEMDETAILS;
 const TIKTOK_HOST = import.meta.env.VITE_ADMIN_TIKTOK_HOST;
 
 export const fetchNetworkTypesCount = createAsyncThunk(
@@ -341,6 +339,147 @@ export const fetchSystemInfo = createAsyncThunk(
   }
 );
 
+
+// NEW — Crawler dashboard (Grafana-style) overview. Hits the new additive
+// backend endpoint; supports a live auto-refresh poll from the UI.
+export const fetchDashboardOverview = createAsyncThunk(
+  "fetchDashboardOverview/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/overview`,
+        args,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
+// NEW — system drill: per-account breakdown for one system.
+export const fetchDashboardSystem = createAsyncThunk(
+  "fetchDashboardSystem/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/system`,
+        args,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
+// NEW — all accounts across the fleet (Accounts / Scraping-Now tiles).
+export const fetchDashboardAccounts = createAsyncThunk(
+  "fetchDashboardAccounts/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/accounts`,
+        args,
+        { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
+// NEW — per-account status timeline (by account_id, reliable).
+export const fetchDashboardAccountTimeline = createAsyncThunk(
+  "fetchDashboardAccountTimeline/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/account-timeline`,
+        args,
+        { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
+// NEW — discover all platform values present in the data (for the filter).
+export const fetchDashboardPlatforms = createAsyncThunk(
+  "fetchDashboardPlatforms/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/platforms`,
+        args || {},
+        { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
+// NEW — system data-lineage debug trace.
+export const fetchSystemDebug = createAsyncThunk(
+  "fetchSystemDebug/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/system-debug`,
+        args,
+        { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
+// NEW — raw metrics exporter (send-metrics) health + freshest snapshot.
+export const fetchExporterHealth = createAsyncThunk(
+  "fetchExporterHealth/details",
+  async (_, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.get(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/exporter-health`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
 
 export const fetchSystemInfoAccounts = createAsyncThunk(
   "fetchSystemInfoAccounts/details",

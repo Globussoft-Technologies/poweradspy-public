@@ -66,7 +66,7 @@
           "mode": "raw",
           "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"facebook\"\n}"
         },
-        "description": "First hit: completed=0 (nothing to close yet), returns one keyword in data[]."
+        "description": "First hit: completed=0 (nothing to close yet), returns one keyword in data[]. Each data[] item includes users: [{ id, username, email }] — everyone who searched that term, so you know whose request it is."
       }
     },
     {
@@ -127,6 +127,26 @@
           "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"facebook\",\n  \"priority\": true\n}"
         },
         "description": "Same auto-close behaviour, priority mode: only hands out freshly re-searched terms. Empty unless you store again first."
+      }
+    },
+    {
+      "name": "7. Work: multi network + type (facebook OR instagram, keyword OR advertiser)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-scraper-name", "value": "{{scraperName}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/work",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "work"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": [\"keyword\", \"advertiser\"],\n  \"network\": [\"facebook\", \"instagram\"]\n}"
+        },
+        "description": "type and network may be arrays (or comma lists). The pool is the union of every type x network pair; each returned value carries its own concrete type+network, so a single value may come from facebook OR instagram and be a keyword OR an advertiser. Add \"priority\": true for the same behaviour in priority mode."
       }
     }
   ]
