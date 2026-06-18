@@ -11,3 +11,4 @@ PowerAdSpy is a commercial product by Globussoft Technologies. It lets marketers
 ## This repository
 
 This is the public-facing repository for PowerAdSpy (public resources, documentation and issue tracking). The product's application code is maintained in private repositories.
+
