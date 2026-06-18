@@ -250,7 +250,10 @@ async function searchAllNetworks(req, res) {
       // shared anywhere else. Spreading every ad just to add a single field
       // allocated 220+ new objects per request and ~doubled GC pressure.
       const arr = r.data;
-      for (let i = 0; i < arr.length; i++) arr[i].network = r.network;
+      // Preserve a network already set by the controller (e.g. YouTube DISPLAY
+      // ads surfaced under GDN keep network:'youtube' so ad-detail routes to
+      // YouTube). Only stamp the dispatching network when none is present.
+      for (let i = 0; i < arr.length; i++) arr[i].network = arr[i].network || r.network;
       requestedArrays.push(arr);
     }
   }

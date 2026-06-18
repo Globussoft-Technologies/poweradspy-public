@@ -1,0 +1,256 @@
+'use strict';
+
+/**
+ * YouTube DISPLAY → GDN merge helper.
+ *
+ * Product rule: YouTube ads whose `ad_type = DISPLAY` must be surfaced under the
+ * GDN listing (NOT under YouTube). They physically live in the YouTube store
+ * (`youtube_ads_data` ES index + `youtube_ad` SQL), so this helper reads them
+ * from there and the GDN ad-search controller interleaves them into its results.
+ *
+ * Design (read-path only, no data migration):
+ *   - YouTube side hides DISPLAY via a `must_not` in youtube SearchMixQueryBuilder.
+ *   - GDN side, for the normal pagination window, fetches the first `upper`
+ *     (= from + size) GDN hits AND the first `upper` YouTube DISPLAY hits, merges
+ *     them by a normalized recency key, and slices the page. Because every page
+ *     recomputes the same merged prefix [0, upper) and slices [from, upper), the
+ *     boundaries align across pages → no duplicates / no skips. `total` is the
+ *     sum of both counts.
+ *
+ * Interleave is only enabled for the recency sorts (last_seen / post_date), which
+ * are GDN's default and dominant sorts and the only ones with a directly
+ * comparable field on both sides. For any other sort the GDN controller skips the
+ * merge and behaves exactly as before.
+ */
+
+const databaseManager = require('../../../database/DatabaseManager');
+const {
+  AD_DETAIL_SELECT: YT_SELECT,
+  AD_DETAIL_JOINS: YT_JOINS,
+} = require('../../youtube/controllers/adSearchController');
+const { cleanAdsData: cleanYoutubeAds } = require('../../youtube/helpers/paramParser');
+
+// ES max_result_window — we only merge inside the standard from/size window.
+const MAX_WINDOW = 10000;
+
+// GDN sort field → the YouTube field used to fetch/order the DISPLAY side.
+// `gdn_ad.id` is the frontend's default "Newest" sort: GDN orders by row id but
+// we still interleave the DISPLAY side by recency (last_seen), and the GDN merge
+// key is read from gdn_ad.last_seen (see gdnKeyField in the controller), so both
+// sides compare on a real timestamp.
+const SORT_FIELD_MAP = {
+  'gdn_ad.last_seen': 'last_seen',
+  'gdn_ad.post_date': 'post_date',
+  'gdn_ad.id':        'last_seen',
+};
+
+// new_nas_image_url substrings the UI hides (mirror youtube displayable-media gate).
+const BLOCKED_MEDIA = ['*pasvideo*', '*pasimage*', '*bydefault*'];
+
+function getYoutubeConns() {
+  try {
+    return databaseManager.getConnections('youtube');
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Normalize a last_seen/post_date value to epoch SECONDS for cross-source merge. */
+function toEpochSeconds(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  if (typeof v === 'number') return v > 1e12 ? Math.floor(v / 1000) : v; // ms vs s
+  const s = String(v);
+  if (/^\d+$/.test(s)) {
+    const n = Number(s);
+    return n > 1e12 ? Math.floor(n / 1000) : n;
+  }
+  const t = Date.parse(s.replace(' ', 'T'));
+  return Number.isNaN(t) ? 0 : Math.floor(t / 1000);
+}
+
+function ensureArr(v) {
+  if (Array.isArray(v)) return v;
+  if (v === '' || v === null || v === undefined) return [];
+  return [v];
+}
+
+/**
+ * Should YouTube DISPLAY ads be merged into this GDN request?
+ * @returns {boolean}
+ */
+function isDisplayMergeApplicable(p, sort, from, size) {
+  // Favorite/hidden modes are handled before this is ever called.
+  if (!SORT_FIELD_MAP[sort.field]) return false;          // only recency sorts
+  if ((from + size) > MAX_WINDOW) return false;           // deep pages → GDN-only
+  // If the user filters by ad type and DISPLAY isn't one of them, exclude.
+  const types = ensureArr(p.type).map(t => String(t).toUpperCase());
+  if (types.length && !types.includes('DISPLAY')) return false;
+  const yt = getYoutubeConns();
+  return !!(yt && yt.elastic);
+}
+
+/** Build the optional shared-filter clauses (keyword / advertiser / country / seen-range). */
+function buildSharedFilters(p) {
+  const must = [];
+  const filter = [];
+
+  if (p.keyword) {
+    must.push({
+      multi_match: {
+        query: String(p.keyword).replace(/"/g, ''),
+        type: 'phrase',
+        fields: ['ad_title', 'ad_text', 'newsfeed_description'],
+      },
+    });
+  }
+  if (p.advertiser) {
+    must.push({ match_phrase: { post_owner: String(p.advertiser) } });
+  }
+  const countries = ensureArr(p.country);
+  if (countries.length) {
+    filter.push({
+      bool: { should: countries.map(c => ({ match: { countries: c } })), minimum_should_match: 1 },
+    });
+  }
+  if (Array.isArray(p.seen_btn_sort) && p.seen_btn_sort.length === 2) {
+    const lower = Number(p.seen_btn_sort[1]);
+    const upper = Number(p.seen_btn_sort[0]);
+    if (Number.isFinite(lower) && Number.isFinite(upper)) {
+      filter.push({ range: { last_seen: { gte: lower, lte: upper } } });
+    }
+  }
+  return { must, filter };
+}
+
+/**
+ * Fetch the first `upper` YouTube DISPLAY hits (light: id + sort key only).
+ * @returns {Promise<{ items: Array<{src:'yt', id:number, key:number}>, total:number }>}
+ */
+async function getYoutubeDisplayHits(upper, sort, p, logger) {
+  const yt = getYoutubeConns();
+  if (!yt || !yt.elastic) return { items: [], total: 0 };
+
+  const ytField = SORT_FIELD_MAP[sort.field] || 'last_seen';
+  const order = sort.order === 'asc' ? 'asc' : 'desc';
+  const shared = buildSharedFilters(p);
+
+  const body = {
+    from: 0,
+    size: upper,
+    sort: [{ [ytField]: { order } }, { ad_id: 'desc' }],
+    _source: ['ad_id', ytField],
+    query: {
+      bool: {
+        must: shared.must,
+        filter: [
+          { term: { 'ad_type.keyword': 'DISPLAY' } },
+          { exists: { field: 'new_nas_image_url' } },
+          ...shared.filter,
+        ],
+        must_not: BLOCKED_MEDIA.map(v => ({ wildcard: { 'new_nas_image_url.keyword': { value: v } } })),
+      },
+    },
+  };
+
+  try {
+    const index = yt.elastic.indexName || 'youtube_ads_data';
+    const res = await yt.elastic.search({ index, body });
+    const hits = res.hits || res.body?.hits;
+    const total = typeof hits?.total === 'object' ? hits.total.value : (hits?.total || 0);
+    const items = (hits?.hits || []).map(h => ({
+      src: 'yt',
+      id: h._source.ad_id,
+      key: toEpochSeconds(h._source[ytField]),
+    }));
+    return { items, total };
+  } catch (err) {
+    if (logger) logger.warn('YouTube DISPLAY hits fetch failed; GDN-only fallback', { error: err.message });
+    return { items: [], total: 0 };
+  }
+}
+
+function dedupeById(rows) {
+  const seen = new Set();
+  return rows.filter(r => {
+    const id = r.ad_id ?? r.id;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+/**
+ * Enrich a page's YouTube DISPLAY ad ids into fully shaped ad objects (youtube
+ * shape + a `network: 'youtube'` marker so the frontend routes detail/clicks to
+ * YouTube). Returns a Map keyed by String(id).
+ */
+async function enrichYoutubeDisplayAds(ids, logger) {
+  const out = new Map();
+  if (!ids || ids.length === 0) return out;
+
+  const yt = getYoutubeConns();
+  if (!yt || !yt.sql) return out;
+
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const sql = `SELECT ${YT_SELECT}
+${YT_JOINS}
+WHERE youtube_ad.id IN (${placeholders})
+ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
+    const rawRows = await yt.sql.query(sql, [...ids, ...ids]);
+    const rows = dedupeById(rawRows);
+
+    // Overlay live media/engagement from ES (DISPLAY media = new_nas_image_url).
+    let esMap = new Map();
+    if (yt.elastic) {
+      try {
+        const index = yt.elastic.indexName || 'youtube_ads_data';
+        const r = await yt.elastic.search({
+          index,
+          body: {
+            query: { terms: { ad_id: ids.map(Number) } },
+            size: ids.length,
+            _source: ['ad_id', 'ad_type', 'new_nas_image_url', 'reactions', 'dislikes',
+              'comments', 'views', 'verified', 'countries', 'duration', 'call_to_action'],
+          },
+        });
+        const hh = r.hits || r.body?.hits;
+        esMap = new Map((hh?.hits || []).map(h => [String(h._source.ad_id), h._source]));
+      } catch (esErr) {
+        if (logger) logger.warn('YouTube DISPLAY ES overlay failed', { error: esErr.message });
+      }
+    }
+
+    const shaped = rows.map(row => {
+      const src = esMap.get(String(row.ad_id)) || {};
+      if (src.new_nas_image_url) {
+        row.image_video_url = src.new_nas_image_url;
+        row.image_url_original = src.new_nas_image_url;
+      }
+      if (src.reactions?.likes !== undefined) row.likes = src.reactions.likes;
+      if (src.dislikes !== undefined) row.dislikes = src.dislikes;
+      if (src.comments !== undefined) row.comment = src.comments;
+      if (src.views !== undefined) row.view = src.views;
+      if (src.verified !== undefined) row.verified = src.verified;
+      if (src.countries !== undefined) row.countries = src.countries;
+      if (src.duration !== undefined) row.days_running = src.duration;
+      if (src.call_to_action !== undefined) row.call_to_action = src.call_to_action;
+      return row;
+    });
+
+    for (const ad of cleanYoutubeAds(shaped)) {
+      out.set(String(ad.ad_id ?? ad.id), { ...ad, network: 'youtube', ad_origin: 'youtube_display' });
+    }
+  } catch (err) {
+    if (logger) logger.warn('YouTube DISPLAY SQL enrich failed', { error: err.message });
+  }
+  return out;
+}
+
+module.exports = {
+  isDisplayMergeApplicable,
+  getYoutubeDisplayHits,
+  enrichYoutubeDisplayAds,
+  toEpochSeconds,
+  MAX_WINDOW,
+};

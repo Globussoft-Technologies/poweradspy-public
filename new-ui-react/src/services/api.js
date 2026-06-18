@@ -286,6 +286,9 @@ export const mapAdToCard = (raw) => {
     adPosition: raw.ad_position || '',
     destinationUrl: raw.destination_url || '',
     network: resolvedNetwork,
+    // YouTube DISPLAY ads are surfaced under GDN. Show the GDN badge while
+    // keeping network:'youtube' so ad-detail / insights still route to YouTube.
+    badgeNetwork: raw.ad_origin === 'youtube_display' ? 'gdn' : resolvedNetwork,
     verified: raw.verified === 1,
     isMetaLib: Number(raw.platform) === 15 && ['facebook', 'instagram'].includes(resolvedNetwork),
     postOwnerId: raw.post_owner_id || '',

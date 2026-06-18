@@ -402,11 +402,15 @@ const App = () => {
   const openAnalyticsModal = (ad) => {
     if (ad) {
       const network = ad.network || ad.platform || "instagram";
+      // YouTube DISPLAY ads surfaced under GDN show /gdn/<id> in the URL, while
+      // the history state keeps the real network ('youtube') so in-session
+      // back/forward still loads the insights from the right source.
+      const urlNetwork = ad.badgeNetwork || network;
       const id = ad.adId || ad.id;
       window.history.pushState(
         { adModal: true, network, id },
         "",
-        `/${network}/${id}`,
+        `/${urlNetwork}/${id}`,
       );
       trackEvent('showAnalytics', { ad_id: id, network });
     }
@@ -439,9 +443,12 @@ const App = () => {
       if (pathParts.length === 2) {
         const [network, adId] = pathParts;
         if (validNetworks.includes(network.toLowerCase()) && adId) {
+          // Prefer the real network stored in history state — for YouTube DISPLAY
+          // ads the URL shows 'gdn' but insights must load from 'youtube'.
+          const realNetwork = (e.state?.network || network).toLowerCase();
           setSelectedAdForAnalytics({
             id: adId,
-            network: network.toLowerCase(),
+            network: realNetwork,
             _fromUrl: true,
           });
           return;

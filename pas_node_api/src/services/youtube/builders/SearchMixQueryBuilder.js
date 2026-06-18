@@ -394,6 +394,11 @@ class SearchMixQueryBuilder {
     // Exclude ads with empty ad_type (invalid YouTube ads)
     buckets.must_not.push({ term: { 'ad_type.keyword': '' } });
 
+    // DISPLAY-type YouTube ads are surfaced under GDN, not YouTube — hide them
+    // here so they never appear in YouTube results. They are merged back into the
+    // GDN listing by gdn/helpers/youtubeDisplayMerge.js.
+    buckets.must_not.push({ term: { 'ad_type.keyword': 'DISPLAY' } });
+
     // Displayable-media gate (see EXTRA_CONDITION above).
     buckets.filter.push(...EXTRA_CONDITION);
 

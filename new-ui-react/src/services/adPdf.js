@@ -167,7 +167,7 @@ export const downloadAdAsPdf = async (ad) => {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.text(
-    `${(ad.network || "-").toString().toUpperCase()}  ·  ${ad.adType || "-"}  ·  Generated ${new Date().toLocaleDateString()}`,
+    `${(ad.badgeNetwork || ad.network || "-").toString().toUpperCase()}  ·  ${ad.adType || "-"}  ·  Generated ${new Date().toLocaleDateString()}`,
     margin,
     56,
   );
@@ -317,7 +317,7 @@ export const downloadAdAsPdf = async (ad) => {
   drawRows([
     ["Advertiser", ad.advertiser],
     ["Verified", ad.verified ? "Yes" : null],
-    ["Network", ad.network],
+    ["Network", ad.badgeNetwork || ad.network],
     ["Ad Type", ad.adType],
     ["Status", ad.status],
     ["Industry", ad.industry],

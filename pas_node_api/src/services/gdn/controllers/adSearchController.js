@@ -3,6 +3,12 @@
 const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const {
+  isDisplayMergeApplicable,
+  getYoutubeDisplayHits,
+  enrichYoutubeDisplayAds,
+  toEpochSeconds,
+} = require('../helpers/youtubeDisplayMerge');
 
 // ─── SQL fragments ────────────────────────────────────────────────────────────
 //
@@ -217,6 +223,144 @@ ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
   }
 }
 
+// ─── Shared enrichment ─────────────────────────────────────────────────────────
+// Turn a set of GDN ES hits into fully shaped, cleaned ad objects (SQL join +
+// ES overlay + market_platform_urls). Used by both the normal search path and
+// the YouTube-DISPLAY merge path so they stay byte-for-byte consistent.
+async function enrichGdnHits(esHits, db, logger) {
+  if (!esHits || esHits.length === 0) return [];
+
+  // gdn_search_mix indexes data with flat dot-notation keys: "gdn_ad.id", "gdn_ad.type", etc.
+  // Support both flat ("gdn_ad.id") and nested (gdn_ad.id) access.
+  const getEsId = (src) =>
+    src?.['gdn_ad']?.['id'] ??   // nested (just in case)
+    src?.['gdn_ad.id'];           // flat dot-notation (primary format)
+
+  const adIds = esHits.map(hit => getEsId(hit._source)).filter(Boolean);
+  let finalAds = [];
+
+  if (db.sql && adIds.length > 0) {
+    try {
+      const placeholders = adIds.map(() => '?').join(',');
+      const sql = `SELECT ${AD_DETAIL_SELECT}
+${AD_DETAIL_JOINS}
+WHERE gdn_ad.id IN (${placeholders})
+ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
+
+      const rawRows = await db.sql.query(sql, [...adIds, ...adIds]);
+      const sqlRows = dedupeRows(rawRows);
+
+      // ES lookup map keyed on gdn_ad.id (flat or nested)
+      const esMap = new Map(
+        esHits.map(hit => [String(getEsId(hit._source)), hit])
+      );
+
+      finalAds = sqlRows.map(row => {
+        const esHit = esMap.get(String(row.id));
+        if (!esHit) return row;
+
+        const src = esHit._source || {};
+
+        // Overlay NAS image URL if present
+        if (src['new_nas_image_url']) row.image_video_url = src['new_nas_image_url'];
+
+        // Merge country from ES — supports both flat and nested
+        const country = src['gdn_country_only.country'] ?? src['gdn_country_only']?.['country'];
+        if (country !== undefined) row.country = country;
+
+        return row;
+      });
+
+    } catch (sqlErr) {
+      if (logger) logger.warn('SQL fetch failed, falling back to ES data (gdn)', { error: sqlErr.message });
+      finalAds = esHits.map(hit => normalizeEsSource(hit._source || {}));
+    }
+  } else {
+    // No SQL — normalize flat ES source to clean field names
+    finalAds = esHits.map(hit => normalizeEsSource(hit._source || {}));
+  }
+
+  const esMap2 = new Map(esHits.map(hit => [String(getEsId(hit._source)), hit._source]));
+  finalAds = finalAds.map(ad => {
+    const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+    return {
+      ...ad,
+      market_platform_urls: {
+        url_destination: src['gdn_ad_url.url_destination']         || null,
+        source_url:      src['gdn_ad_outgoing_links.source_url']   || null,
+        redirect_url:    src['gdn_ad_outgoing_links.redirect_url'] || null,
+        final_url:       src['gdn_ad_outgoing_links.final_url']    || null,
+        url_redirects:   src['gdn_ad_url.url_redirects']           || null,
+        redirect_urls:   src['gdn_ad_meta_data.redirect_url']      || null,
+        destination_url: src['gdn_ad_meta_data.destination_url']   || null,
+      },
+    };
+  });
+
+  return cleanAdsData(finalAds);
+}
+
+// ─── YouTube DISPLAY merge path ─────────────────────────────────────────────────
+// Interleaves YouTube DISPLAY ads into the GDN listing by recency. Fetches the
+// first `upper` (= from+size) hits from BOTH stores, merges by a normalized
+// last_seen/post_date key, slices the page, then enriches only that page. Because
+// every page recomputes the same merged prefix and slices [from, upper), the
+// boundaries align across pages → no duplicates / no skips. total = gdn + yt.
+async function searchWithDisplayMerge({ db, logger, esParams, p, from, size, sort }) {
+  const upper = from + size;
+  const order = sort.order === 'asc' ? 'asc' : 'desc';
+
+  // GDN hits for the whole [0, upper) window (own query, no search_after needed).
+  const gdnParams = { index: esParams.index, body: { ...esParams.body, from: 0, size: upper } };
+  delete gdnParams.body.search_after;
+
+  const [gdnRes, ytDisplay] = await Promise.all([
+    db.elastic.search(gdnParams),
+    getYoutubeDisplayHits(upper, sort, p, logger),
+  ]);
+
+  const gHits    = gdnRes.hits || gdnRes.body?.hits;
+  const gdnTotal = typeof gHits.total === 'object' ? gHits.total.value : gHits.total;
+  const gdnHits  = gHits.hits || [];
+  const ytItems  = ytDisplay.items;
+  const ytTotal  = ytDisplay.total;
+
+  // Interleave on a real timestamp. When the GDN sort is `gdn_ad.id` ("Newest"),
+  // its _source value is a row id (not comparable to the YouTube last_seen key),
+  // so always read the GDN recency key from a date field.
+  const gdnKeyField = sort.field === 'gdn_ad.post_date' ? 'gdn_ad.post_date' : 'gdn_ad.last_seen';
+  const getEsId = (src) => src?.['gdn_ad']?.['id'] ?? src?.['gdn_ad.id'];
+  const merged = gdnHits
+    .map(h => ({ src: 'gdn', id: getEsId(h._source), key: toEpochSeconds(h._source?.[gdnKeyField]), hit: h }))
+    .concat(ytItems);
+
+  // Stable sort by recency key (gdn entries precede yt on ties → deterministic).
+  merged.sort((a, b) => (order === 'asc' ? a.key - b.key : b.key - a.key));
+
+  const pageItems = merged.slice(from, upper);
+  const total = gdnTotal + ytTotal;
+  if (pageItems.length === 0) {
+    return { code: 200, data: [], total, message: 'No ads found' };
+  }
+
+  const gdnSliceHits = pageItems.filter(it => it.src === 'gdn').map(it => it.hit);
+  const ytIds        = pageItems.filter(it => it.src === 'yt').map(it => it.id);
+
+  const [gdnAds, ytMap] = await Promise.all([
+    enrichGdnHits(gdnSliceHits, db, logger),
+    enrichYoutubeDisplayAds(ytIds, logger),
+  ]);
+  const gdnMap = new Map(gdnAds.map(ad => [String(ad.id), ad]));
+
+  const data = [];
+  for (const it of pageItems) {
+    const ad = it.src === 'gdn' ? gdnMap.get(String(it.id)) : ytMap.get(String(it.id));
+    if (ad) data.push(ad);
+  }
+
+  return { code: 200, data, total, message: 'Ads fetched successfully' };
+}
+
 // ─── Main search ──────────────────────────────────────────────────────────────
 
 async function searchAds(req, db, logger) {
@@ -295,6 +439,20 @@ async function searchAds(req, db, logger) {
 
   const esParams = builder.build();
 
+  // ─── YouTube DISPLAY merge ────────────────────────────────────────────
+  // DISPLAY-type YouTube ads are shown under GDN (and hidden from YouTube). For
+  // the normal pagination window + a recency sort, interleave them here. Falls
+  // through to the standard GDN-only path otherwise (deep pages, exotic sorts,
+  // YouTube unavailable) — see helpers/youtubeDisplayMerge.js.
+  if (isDisplayMergeApplicable(p, sort, from, size)) {
+    try {
+      return await searchWithDisplayMerge({ db, logger, esParams, p, from, size, sort });
+    } catch (mergeErr) {
+      logger.warn('YouTube DISPLAY merge failed; falling back to GDN-only', { error: mergeErr.message });
+      // fall through to the standard GDN-only path below
+    }
+  }
+
   // ─── Deep pagination: swap from/size → search_after ───────────────────
   const queryHash = buildQueryHash(p);
   if (from >= SAFE_FROM) {
@@ -328,78 +486,12 @@ async function searchAds(req, db, logger) {
       return { code: 200, data: [], total, message: 'No ads found' };
     }
 
-    // ─── Phase 2: enrich from SQL ────────────────────────────────────────
-    // gdn_search_mix indexes data with flat dot-notation keys: "gdn_ad.id", "gdn_ad.type", etc.
-    // (PHP uses array_column($data, "gdn_ad.id") which confirms flat storage)
-    // Support both flat ("gdn_ad.id") and nested (gdn_ad.id) access.
-    const getEsId = (src) =>
-      src?.['gdn_ad']?.['id'] ??   // nested (just in case)
-      src?.['gdn_ad.id'];           // flat dot-notation (primary format)
-
-    const adIds = esHits.map(hit => getEsId(hit._source)).filter(Boolean);
-    let finalAds = [];
-
-    if (db.sql && adIds.length > 0) {
-      try {
-        const placeholders = adIds.map(() => '?').join(',');
-        const sql = `SELECT ${AD_DETAIL_SELECT}
-${AD_DETAIL_JOINS}
-WHERE gdn_ad.id IN (${placeholders})
-ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
-
-        const rawRows = await db.sql.query(sql, [...adIds, ...adIds]);
-        const sqlRows = dedupeRows(rawRows);
-
-        // ES lookup map keyed on gdn_ad.id (flat or nested)
-        const esMap = new Map(
-          esHits.map(hit => [String(getEsId(hit._source)), hit])
-        );
-
-        finalAds = sqlRows.map(row => {
-          const esHit = esMap.get(String(row.id));
-          if (!esHit) return row;
-
-          const src = esHit._source || {};
-
-          // Overlay NAS image URL if present
-          if (src['new_nas_image_url']) row.image_video_url = src['new_nas_image_url'];
-
-          // Merge country from ES — supports both flat and nested
-          const country = src['gdn_country_only.country'] ?? src['gdn_country_only']?.['country'];
-          if (country !== undefined) row.country = country;
-
-          return row;
-        });
-
-      } catch (sqlErr) {
-        logger.warn('SQL fetch failed, falling back to ES data (gdn)', { error: sqlErr.message });
-        finalAds = esHits.map(hit => normalizeEsSource(hit._source || {}));
-      }
-    } else {
-      // No SQL — normalize flat ES source to clean field names
-      finalAds = esHits.map(hit => normalizeEsSource(hit._source || {}));
-    }
-
-    const esMap2 = new Map(esHits.map(hit => [String(getEsId(hit._source)), hit._source]));
-    finalAds = finalAds.map(ad => {
-      const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
-      return {
-        ...ad,
-        market_platform_urls: {
-          url_destination: src['gdn_ad_url.url_destination']         || null,
-          source_url:      src['gdn_ad_outgoing_links.source_url']   || null,
-          redirect_url:    src['gdn_ad_outgoing_links.redirect_url'] || null,
-          final_url:       src['gdn_ad_outgoing_links.final_url']    || null,
-          url_redirects:   src['gdn_ad_url.url_redirects']           || null,
-          redirect_urls:   src['gdn_ad_meta_data.redirect_url']      || null,
-          destination_url: src['gdn_ad_meta_data.destination_url']   || null,
-        },
-      };
-    });
+    // ─── Phase 2: enrich from SQL (shared with the DISPLAY merge path) ────
+    const finalAds = await enrichGdnHits(esHits, db, logger);
 
     return {
       code: 200,
-      data: cleanAdsData(finalAds),
+      data: finalAds,
       total,
       message: 'Ads fetched successfully',
     };

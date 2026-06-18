@@ -1290,9 +1290,12 @@ const AnalyticsModal = ({
         {!isLight && (
           <div className="absolute top-0 left-1/4 w-1/2 h-64 bg-[#3762c1]/10 blur-[120px] opacity-50" />
         )}
+        {/* platform is a display label only: YouTube DISPLAY ads surfaced under
+            GDN show "GDN" here (ad.badgeNetwork), while ctx.platform stays
+            'youtube' so the metrics render from the YouTube insights data. */}
         <AnalyticsHeader
           adId={ad?.id}
-          platform={ctx.platform}
+          platform={ad?.badgeNetwork || ctx.platform}
           onClose={onClose}
         />
         {!creativeClosed && (

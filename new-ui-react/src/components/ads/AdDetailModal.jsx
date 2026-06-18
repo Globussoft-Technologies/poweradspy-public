@@ -407,6 +407,10 @@ const AdDetailModal = ({
   if (!ad) return null;
 
   const platform = (ad.network || "").toLowerCase();
+  // Network shown in the UI. YouTube DISPLAY ads surfaced under GDN carry
+  // badgeNetwork:'gdn' so they display as GDN, while `platform` (= ad.network)
+  // keeps routing share/insights to YouTube where the ad actually lives.
+  const displayNetwork = (ad.badgeNetwork || ad.network || "").toLowerCase();
 
   // Format platform name for display
   const PLATFORM_NAMES = {
@@ -421,7 +425,7 @@ const AdDetailModal = ({
     pinterest: "Pinterest",
     tiktok: "TikTok",
   };
-  const platformDisplayName = PLATFORM_NAMES[platform] || ad.network || "";
+  const platformDisplayName = PLATFORM_NAMES[displayNetwork] || ad.badgeNetwork || ad.network || "";
 
   // Format position for display (e.g. SEARCHFEED_DISCOVERY → Search Feed Discovery)
   const formatPosition = (pos) => {
@@ -748,7 +752,7 @@ const AdDetailModal = ({
             {!showOriginal && (
               <>
                 {/* Corner Ad Type Strip */}
-                {PLATFORM_ICONS[platform] && (
+                {PLATFORM_ICONS[displayNetwork] && (
                   <div className="absolute top-0 left-0 w-[72px] h-[72px] z-[3] pointer-events-none overflow-hidden rounded-tl-2xl">
                     <div
                       className="absolute inset-0 bg-white/20 flex items-center justify-center backdrop-blur-[2px]"
@@ -756,8 +760,8 @@ const AdDetailModal = ({
                     >
                       <div className="flex items-center gap-1 pr-6 pb-8">
                         <img
-                          src={PLATFORM_ICONS[platform]}
-                          alt={ad.network}
+                          src={PLATFORM_ICONS[displayNetwork]}
+                          alt={displayNetwork}
                           className="w-[22px] h-[22px] object-contain drop-shadow-sm"
                         />
                       </div>
