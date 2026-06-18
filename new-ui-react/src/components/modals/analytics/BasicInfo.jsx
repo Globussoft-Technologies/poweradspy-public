@@ -133,29 +133,64 @@ const BasicInfo = ({
       },
     ];
   } else if (p === "native") {
+    // Native redirect chain (from API redirect_chain): network tracker -> initial click ->
+    // hops -> final lander -> placement. Falls back to legacy fields so historic ads
+    // (no ad_url / tracker_url captured) still render exactly as before.
+    const rc = adDetails?.redirect_chain || {};
+    const rcHops = Array.isArray(rc.hops)
+      ? rc.hops.map((h) => (h || "").trim()).filter(Boolean)
+      : [];
+    const rcFinal = sanitizeUrl(rc.final_url) || sanitizeUrl(adDetails?.destination_url);
+    const rcInitial = sanitizeUrl(rc.initial_url) || rcHops[0] || rcFinal;
+    const rcTracker = sanitizeUrl(rc.tracker_url);
+    const rcNetwork = rc.network || nativeNetwork;
+    const rcPlacement = sanitizeUrl(rc.placement_url) || placementUrl;
+    const showChain = rcHops.length > 1; // only render the hop list when there's a real chain
+
     basicRows = [
-      {
-        label: "NETWORK",
-        icon: Network,
-        value: nativeNetwork,
-        href: null,
-        hoverColor: "",
-      },
-      {
-        label: "INITIAL URL",
-        icon: Globe,
-        value: initialUrl,
-        href: initialUrl,
-        hoverColor: "hover:text-[#6b99ff]",
-      },
-      {
-        label: "PLACEMENT URL",
-        icon: MapPin,
-        value: placementUrl,
-        href: placementUrl,
-        hoverColor: "hover:text-emerald-400",
-      },
+      { label: "NETWORK", icon: Network, value: rcNetwork, href: null, hoverColor: "" },
     ];
+    if (rcTracker) {
+      basicRows.push({
+        label: "TRACKER URL",
+        icon: ArrowRightLeft,
+        value: rcTracker,
+        href: rcTracker,
+        hoverColor: "hover:text-amber-400",
+      });
+    }
+    basicRows.push({
+      label: "INITIAL URL",
+      icon: Globe,
+      value: rcInitial,
+      href: rcInitial,
+      hoverColor: "hover:text-[#6b99ff]",
+    });
+    if (showChain) {
+      basicRows.push({
+        label: "REDIRECT URL",
+        icon: RefreshCw,
+        value: rcHops.join("||"),
+        href: null,
+        hoverColor: "hover:text-white/60",
+      });
+    }
+    if (rcFinal && rcFinal !== rcInitial) {
+      basicRows.push({
+        label: "FINAL URL",
+        icon: Target,
+        value: rcFinal,
+        href: rcFinal,
+        hoverColor: "hover:text-emerald-400",
+      });
+    }
+    basicRows.push({
+      label: "PLACEMENT URL",
+      icon: MapPin,
+      value: rcPlacement,
+      href: rcPlacement,
+      hoverColor: "hover:text-emerald-400",
+    });
   } else if (urlOnlyPlatforms.includes(p)) {
     basicRows = [
       {
