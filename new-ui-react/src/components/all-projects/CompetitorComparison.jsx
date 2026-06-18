@@ -26,6 +26,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { CompetitorAPI, trackProjectEvent } from "../../services/api";
+import { useTheme } from "../../hooks/useTheme";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -58,30 +59,44 @@ const SHORT_MONTHS = [
   "Dec",
 ];
 
-const COLORS = {
-  brand: "#FFA43C",
-  competitor: "#326DE7",
-};
-
-const CTA_COLORS = [
-  "#f97316",
-  "#ef4444",
-  "#facc15",
-  "#6366f1",
-  "#ec4899",
-  "#06b6d4",
-  "#10b981",
-  "#8b5cf6",
-];
-
-// ─── Common axis/grid props ─────────────────────────────────────────────────
-
-const axisProps = {
-  tick: { fill: "#64748b", fontSize: 11 },
-  axisLine: false,
-  tickLine: false,
-};
-const gridProps = { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.05)" };
+// ─── Theme-aware chart palette ───────────────────────────────────────────────
+// Chart colours are resolved per-theme so lines keep enough contrast against the
+// background: darker / more saturated tones for the light theme (which sits on a
+// white card) and slightly brighter tones for the dark/midnight themes.
+const getChartTheme = (isLight) => ({
+  COLORS: {
+    brand: isLight ? "#D97706" : "#FFB454",
+    competitor: isLight ? "#1D4ED8" : "#5B8DEF",
+  },
+  CTA_COLORS: isLight
+    ? ["#ea580c", "#dc2626", "#ca8a04", "#4f46e5", "#db2777", "#0891b2", "#059669", "#7c3aed"]
+    : ["#fb923c", "#f87171", "#facc15", "#818cf8", "#f472b6", "#22d3ee", "#34d399", "#a78bfa"],
+  // Per-series engagement colours (likes / comments / shares for brand & competitor)
+  ENGAGEMENT: {
+    brandLikes: isLight ? "#2563eb" : "#60a5fa",
+    competitorLikes: isLight ? "#0d9488" : "#2dd4bf",
+    brandComments: isLight ? "#ca8a04" : "#facc15",
+    competitorComments: isLight ? "#dc2626" : "#f87171",
+    brandShares: isLight ? "#9333ea" : "#c084fc",
+    competitorShares: isLight ? "#1e3a5f" : "#7da7d9",
+  },
+  // Instagram series in the budget chart (Facebook reuses brand/competitor)
+  BUDGET: {
+    brandIG: isLight ? "#db2777" : "#f472b6",
+    competitorIG: isLight ? "#0284c7" : "#38bdf8",
+  },
+  axisProps: {
+    tick: { fill: isLight ? "#475569" : "#94a3b8", fontSize: 11 },
+    axisLine: false,
+    tickLine: false,
+  },
+  gridProps: {
+    strokeDasharray: "3 3",
+    stroke: isLight ? "rgba(15,23,42,0.08)" : "rgba(255,255,255,0.08)",
+  },
+  cursorFill: isLight ? "rgba(15,23,42,0.04)" : "rgba(255,255,255,0.03)",
+  axisLabelFill: isLight ? "#475569" : "#94a3b8",
+});
 
 // ─── Tooltip ────────────────────────────────────────────────────────────────
 
@@ -658,6 +673,20 @@ const extractImages = (longestData) => {
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
+  // Resolve chart colours for the active theme so graph lines stay legible in
+  // both light and dark modes.
+  const { theme } = useTheme();
+  const {
+    COLORS,
+    CTA_COLORS,
+    ENGAGEMENT,
+    BUDGET,
+    axisProps,
+    gridProps,
+    cursorFill,
+    axisLabelFill,
+  } = getChartTheme(theme === "light");
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -921,7 +950,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     <YAxis {...axisProps} />
                     <Tooltip
                       content={<CustomTooltip />}
-                      cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                      cursor={{ fill: cursorFill }}
                     />
                     <Bar
                       dataKey="brand"
@@ -989,7 +1018,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     <YAxis {...axisProps} />
                     <Tooltip
                       content={<CustomTooltip />}
-                      cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                      cursor={{ fill: cursorFill }}
                     />
                     <Bar
                       dataKey="brand"
@@ -1065,7 +1094,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                 <YAxis {...axisProps} />
                 <Tooltip
                   content={<CustomTooltip />}
-                  cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                  cursor={{ fill: cursorFill }}
                 />
                 <Area
                   type="monotone"
@@ -1162,10 +1191,10 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     >
                       <stop
                         offset="5%"
-                        stopColor="#ec4899"
+                        stopColor={BUDGET.brandIG}
                         stopOpacity={0.25}
                       />
-                      <stop offset="95%" stopColor="#ec4899" stopOpacity={0} />
+                      <stop offset="95%" stopColor={BUDGET.brandIG} stopOpacity={0} />
                     </linearGradient>
                     <linearGradient
                       id="gradCompFB2"
@@ -1188,10 +1217,10 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     <linearGradient id="gradCompIG" x1="0" y1="0" x2="0" y2="1">
                       <stop
                         offset="5%"
-                        stopColor="#38bdf8"
+                        stopColor={BUDGET.competitorIG}
                         stopOpacity={0.25}
                       />
-                      <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
+                      <stop offset="95%" stopColor={BUDGET.competitorIG} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid {...gridProps} />
@@ -1205,13 +1234,13 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                       value: "Budget ($)",
                       angle: -90,
                       position: "insideLeft",
-                      fill: "#64748b",
+                      fill: axisLabelFill,
                       fontSize: 11,
                     }}
                   />
                   <Tooltip
                     content={<CustomTooltip />}
-                    cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                    cursor={{ fill: cursorFill }}
                   />
                   <Legend
                     content={
@@ -1235,7 +1264,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="brandIG"
                     name={`${brandName} Instagram`}
-                    stroke="#ec4899"
+                    stroke={BUDGET.brandIG}
                     strokeWidth={2}
                     fill="url(#gradBrandIG)"
                     dot={false}
@@ -1255,7 +1284,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="competitorIG"
                     name={`${competitorName} Instagram`}
-                    stroke="#38bdf8"
+                    stroke={BUDGET.competitorIG}
                     strokeWidth={2}
                     fill="url(#gradCompIG)"
                     dot={false}
@@ -1313,7 +1342,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                   />
                   <Tooltip
                     content={<CustomTooltip />}
-                    cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                    cursor={{ fill: cursorFill }}
                   />
                   <Legend
                     content={
@@ -1327,7 +1356,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="brandLikes"
                     name={`${brandName} Likes`}
-                    stroke="#3b82f6"
+                    stroke={ENGAGEMENT.brandLikes}
                     strokeWidth={2.5}
                     fill="transparent"
                     dot={false}
@@ -1337,7 +1366,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="competitorLikes"
                     name={`${competitorName} Likes`}
-                    stroke="#2dd4bf"
+                    stroke={ENGAGEMENT.competitorLikes}
                     strokeWidth={2.5}
                     fill="transparent"
                     dot={false}
@@ -1348,7 +1377,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="brandComments"
                     name={`${brandName} Comments`}
-                    stroke="#facc15"
+                    stroke={ENGAGEMENT.brandComments}
                     strokeWidth={2}
                     fill="transparent"
                     dot={false}
@@ -1359,7 +1388,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="competitorComments"
                     name={`${competitorName} Comments`}
-                    stroke="#ef4444"
+                    stroke={ENGAGEMENT.competitorComments}
                     strokeWidth={2}
                     fill="transparent"
                     dot={false}
@@ -1369,7 +1398,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="brandShares"
                     name={`${brandName} Shares`}
-                    stroke="#a855f7"
+                    stroke={ENGAGEMENT.brandShares}
                     strokeWidth={2}
                     fill="transparent"
                     dot={false}
@@ -1380,7 +1409,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                     type="monotone"
                     dataKey="competitorShares"
                     name={`${competitorName} Shares`}
-                    stroke="#1e3a5f"
+                    stroke={ENGAGEMENT.competitorShares}
                     strokeWidth={2}
                     fill="transparent"
                     dot={false}
@@ -1454,13 +1483,13 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                                 value: "Count",
                                 angle: -90,
                                 position: "insideLeft",
-                                fill: "#64748b",
+                                fill: axisLabelFill,
                                 fontSize: 11,
                               }}
                             />
                             <Tooltip
                               content={<CustomTooltip />}
-                              cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                              cursor={{ fill: cursorFill }}
                             />
                             <Legend
                               content={
@@ -1501,13 +1530,13 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                                 value: "Count",
                                 angle: -90,
                                 position: "insideLeft",
-                                fill: "#64748b",
+                                fill: axisLabelFill,
                                 fontSize: 11,
                               }}
                             />
                             <Tooltip
                               content={<CustomTooltip />}
-                              cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                              cursor={{ fill: cursorFill }}
                             />
                             <Legend
                               content={

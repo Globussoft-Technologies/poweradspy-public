@@ -59,7 +59,13 @@ All responses are wrapped as `{ "code": 200, "message": "success", "data": <belo
 { "total": 5401, "groupBy": "type", "buckets": [ { "key": "VIDEO", "count": 922 }, { "key": "IMAGE", "count": 4479 } ] }
 ```
 
-### `active` — total ads active in the window
+### `active` — total ads in the window
+Counts ads whose **last sighting falls in the window**: `last_seen >= from AND last_seen < (to+1)`.
+This is the single agreed definition — DS calls this endpoint instead of their
+own query, so the admin panel and the daily report run identical SQL. (Heads-up:
+`last_seen` moves as ads get re-crawled, so the same past date can read a bit
+differently at different times of day — query at a consistent time for exact
+admin↔DS agreement.)
 ```json
 { "network": "youtube", "metric": "active", "range": { "from": "2026-06-15", "to": "2026-06-15" } }
 ```
@@ -99,7 +105,7 @@ Without `platform` → all plugins as buckets:
 |---|---|
 | Total Ads (lifetime) | **Not this API** — use `POST /admin-panel/network-name/get-ads-count` (Elasticsearch) |
 | Yesterday Ads | `metric: "new"` |
-| Yesterday Total Ads | `metric: "active"` |
+| Yesterday Total Ads | `metric: "active"` — see note below |
 | New Ads per Platform | `metric: "platform"` (no filter → buckets) |
 | New Ads based on Type | `metric: "new"`, `groupBy: "type"` |
 | New Ads based on Position | `metric: "new"`, `groupBy: "ad_position"` |
@@ -125,10 +131,43 @@ Without `platform` → all plugins as buckets:
 
 ---
 
+## Audit log
+
+Every hit is logged (best-effort, never blocks the response) to one file per day:
+
+```
+admin_panel_backend/logs/get-count/YYYY-MM-DD.jsonl
+```
+
+One JSON line per request, capturing who hit it, with what, and what came back:
+
+```json
+{ "ts": "2026-06-18T11:03:41.410Z", "ip": "203.0.113.9", "source": "ds-daily-report",
+  "userAgent": "python-requests/2.31", "origin": null, "referer": null,
+  "status": 200, "durationMs": 87,
+  "request":  { "network": "youtube", "metric": "new", "range": { "from": "2026-06-15", "to": "2026-06-15" } },
+  "response": { "code": 200, "message": "success", "data": { "total": 0 } } }
+```
+
+- **Retention:** only the **most recent 7 days** of files are kept; older day-files
+  are deleted automatically.
+- **Identify yourself:** send a `x-source: <name>` header (e.g. `x-source: ds-daily-report`)
+  so your calls are easy to find in the log. Without it, callers are still
+  distinguishable by `ip` / `userAgent` / `origin`.
+- **Use it for reconciliation:** if the admin panel and the DS report disagree,
+  grep the day's file for the exact payload + response each side received.
+
 ## Notes
 
 - The window upper bound is explicit, so the count is correct **at any time of
   day** (the DS cron leaves it implicit because it runs at midnight).
+- **`active` is the agreed source-of-truth definition.** DS's legacy per-network
+  query was open-ended (`last_seen >= from`), which isn't reproducible (it keeps
+  growing as ads are re-crawled). The fix is not a cleverer WHERE clause — it's
+  that everyone runs the **same** query: `last_seen >= from AND last_seen < (to+1)`.
+  DS should call this endpoint instead of their own SQL. Their daily "Yesterday
+  Total Ads" number will change when they switch — that's expected; it's now the
+  one shared definition.
 - `tiktok` is **not** supported here — it lives on a separate stack.
 - Lifetime "Total Ads" stays on Elasticsearch (`get-ads-count`) for speed.
 

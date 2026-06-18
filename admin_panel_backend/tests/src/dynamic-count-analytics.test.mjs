@@ -74,6 +74,7 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
     const [, , sqlNew, pNew] = queryDatabaseSpy.mock.calls[0];
     const [, , sqlAct, pAct] = queryDatabaseSpy.mock.calls[1];
     expect(norm(sqlNew)).toBe("SELECT COUNT(id) AS cnt FROM facebook_ad WHERE first_seen >= ? AND first_seen < ?");
+    // active = ads whose last sighting falls in the window (last_seen bounded both ends)
     expect(norm(sqlAct)).toBe("SELECT COUNT(id) AS cnt FROM facebook_ad WHERE last_seen >= ? AND last_seen < ?");
     expect(pNew).toEqual(WIN);
     expect(pAct).toEqual(WIN);
@@ -88,13 +89,19 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
     expect(norm(sqlNew)).toBe("SELECT COUNT(id) AS cnt FROM youtube_ad WHERE created_date >= ? AND created_date < ?");
   });
 
-  it("range: gdn 'active' uses the first_seen upper-bound quirk", async () => {
+  it("range: 'active' is a last_seen window for every network (incl. gdn & youtube — no per-network variant)", async () => {
     queryDatabaseSpy.mockResolvedValue([{ cnt: 0 }]);
-    const res = mockRes();
-    await dynamicCountFilter({ body: { network: "gdn", range: RANGE } }, res);
-    const [, , sqlAct, pAct] = queryDatabaseSpy.mock.calls[1];
-    expect(norm(sqlAct)).toBe("SELECT COUNT(id) AS cnt FROM gdn_ad WHERE last_seen >= ? AND first_seen < ?");
-    expect(pAct).toEqual(WIN);
+    const resG = mockRes();
+    await dynamicCountFilter({ body: { network: "gdn", range: RANGE } }, resG);
+    const [, , sqlGdn, pGdn] = queryDatabaseSpy.mock.calls[1];
+    expect(norm(sqlGdn)).toBe("SELECT COUNT(id) AS cnt FROM gdn_ad WHERE last_seen >= ? AND last_seen < ?");
+    expect(pGdn).toEqual(WIN);
+
+    queryDatabaseSpy.mockClear();
+    const resY = mockRes();
+    await dynamicCountFilter({ body: { network: "youtube", metric: "active", range: RANGE } }, resY);
+    expect(norm(queryDatabaseSpy.mock.calls[0][2])).toBe(
+      "SELECT COUNT(id) AS cnt FROM youtube_ad WHERE last_seen >= ? AND last_seen < ?");
   });
 
   // ── new / active singles ──────────────────────────────────────────────────

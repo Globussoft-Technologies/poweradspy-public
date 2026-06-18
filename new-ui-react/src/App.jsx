@@ -27,7 +27,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
 import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setSearchIn, setExactSearch, setActiveTab, setPreviewMode, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
-import { useBrowserHistoryState } from './hooks/useBrowserHistoryState';
+import { useBrowserHistoryState, coalesceNextHistoryWrite } from './hooks/useBrowserHistoryState';
 
 // Components
 import Header from "./components/layout/Header";
@@ -1258,6 +1258,9 @@ const App = () => {
 
     handleSearch(advertiserName, "advertiser");
     if (range) handleDateChange("ad_seen", range);
+    // Fold the upcoming filter snapshot into the page-navigation history entry so
+    // one browser Back returns to the project's Competitor Analytics view.
+    coalesceNextHistoryWrite();
     dispatch(setActivePage("ads"));
   }, [guestGuard, dispatch, sdui, handleSearch]);
 
@@ -1286,6 +1289,9 @@ const App = () => {
     sdui.setAllFilters(list.length ? { country_filter: list } : {});
 
     handleSearch(advertiserName, "advertiser");
+    // Fold the upcoming filter snapshot into the page-navigation history entry so
+    // one browser Back returns to the project's Competitor Analytics view.
+    coalesceNextHistoryWrite();
     dispatch(setActivePage("ads"));
   }, [guestGuard, dispatch, sdui, handleSearch]);
 
@@ -1498,7 +1504,7 @@ const App = () => {
         {ui.activePage === "projects" && canAccessProjects ? (
           <AllProjects
             onSearch={handleSearch}
-            onNavigateToAds={() => dispatch(setActivePage("ads"))}
+            onNavigateToAds={() => { coalesceNextHistoryWrite(); dispatch(setActivePage("ads")); }}
             onRecentActivityClick={handleRecentActivityClick}
             onCountryClick={handleCountryClick}
             setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}

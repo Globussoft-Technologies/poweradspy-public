@@ -231,6 +231,36 @@ const KEYWORDS_SUGGESTIONS = [
   "ad research",
 ];
 
+// One-shot signal used to keep the user on a project's Competitor Analytics view
+// when they return (e.g. via the browser Back button) after drilling into the
+// Dashboard from that view (Recent Activity / Platform / Top Country). Without
+// it, AllProjects remounts and resets to the projects list, forcing the user to
+// re-select the project.
+const RESTORE_ANALYTICS_FLAG = "pas_restore_analytics_view";
+
+// Marked at the moment of a drill-down (only reachable from viewState 4).
+const markReturnToAnalytics = () => {
+  try {
+    sessionStorage.setItem(RESTORE_ANALYTICS_FLAG, "1");
+  } catch {
+    /* sessionStorage unavailable — fall back to default (projects list) */
+  }
+};
+
+// True when we should restore the analytics view on mount: the flag is set and a
+// valid project + analytics view were persisted.
+const shouldRestoreAnalytics = () => {
+  try {
+    return (
+      !!sessionStorage.getItem(RESTORE_ANALYTICS_FLAG) &&
+      localStorage.getItem("pas_dashboard_view") === "4" &&
+      !!localStorage.getItem("pas_dashboard_selected_proj_id")
+    );
+  } catch {
+    return false;
+  }
+};
+
 const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCountryClick, setProjectContext }) => {
   const { user: authUser, token: authToken } = useAuth();
   const [competitorUserId, setCompetitorUserId] = useState(null);
@@ -246,7 +276,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const socketRef = useRef(null);
 
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(() =>
+    shouldRestoreAnalytics()
+      ? localStorage.getItem("pas_dashboard_selected_proj_id") || null
+      : null,
+  );
   const [contentRefId, setContentRefId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -254,7 +288,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [openGeoId, setOpenGeoId] = useState(null);
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
-  const [viewState, setViewState] = useState(0);
+  // viewState 4 = a project's Competitor Analytics view. Restore it when the user
+  // returns from a Dashboard drill-down; otherwise start on the projects list (0).
+  const [viewState, setViewState] = useState(() =>
+    shouldRestoreAnalytics() ? 4 : 0,
+  );
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editSearch, setEditSearch] = useState("");
   const [projectToDelete, setProjectToDelete] = useState(null);
@@ -404,11 +442,29 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     };
   }, [authUser]);
 
-  // Always start at projects list — don't restore previous view state
+  // One-shot view initialization (runs once; ref-guarded so React StrictMode's
+  // double-invoke in dev doesn't clobber a restored analytics view).
+  const didInitViewRef = useRef(false);
   useEffect(() => {
-    setViewState(0);
-    setSelectedProjectId(null);
+    if (didInitViewRef.current) return;
+    didInitViewRef.current = true;
+    if (shouldRestoreAnalytics()) {
+      // Returning from a Dashboard drill-down: keep the analytics view that the
+      // lazy initializers above restored, and consume the one-shot flag.
+      try {
+        sessionStorage.removeItem(RESTORE_ANALYTICS_FLAG);
+      } catch {
+        /* ignore */
+      }
+    } else {
+      // Fresh visit: start on the projects list.
+      setViewState(0);
+      setSelectedProjectId(null);
+    }
+  }, []);
 
+  // Close dropdowns on outside click / scroll.
+  useEffect(() => {
     const handleClickOutside = (e) => {
       const isTrigger = e.target.closest(".dropdown-trigger");
       const isDropdown = e.target.closest(".dropdown-portal");
@@ -449,7 +505,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   }, [selectedProjectId]);
 
   // Auto-fetch competitors if we restored a selected project but it has no data.
+  // `projects` is in the deps so this re-runs once the list finishes loading
+  // asynchronously after a restore (browser Back) — otherwise the analytics view
+  // would render with an empty competitor table. The ref guards against fetching
+  // the same project more than once, which would otherwise loop forever for a
+  // project that genuinely has zero competitors.
   // Skip if the project is currently generating (data arrives via socket, not API).
+  const autoFetchedProjectRef = useRef(null);
   useEffect(() => {
     if (viewState === 4 && selectedProjectId && projects.length > 0) {
       const project = projects.find((p) => p.id === selectedProjectId);
@@ -457,12 +519,31 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         project &&
         (!project.competitors || project.competitors.length === 0) &&
         !isProjectLoading &&
-        !project.isGenerating
+        !project.isGenerating &&
+        competitorUserId &&
+        autoFetchedProjectRef.current !== selectedProjectId
       ) {
+        autoFetchedProjectRef.current = selectedProjectId;
         openProject(selectedProjectId, project.advertiser);
       }
     }
-  }, [viewState, selectedProjectId]);
+  }, [viewState, selectedProjectId, projects, isProjectLoading, competitorUserId]);
+
+  // Safety net for a stale restore: if the persisted project id no longer exists
+  // once the list has loaded, fall back to the projects list instead of showing
+  // an empty analytics view.
+  useEffect(() => {
+    if (
+      viewState === 4 &&
+      !isLoadingProjects &&
+      selectedProjectId &&
+      projects.length > 0 &&
+      !projects.some((p) => p.id === selectedProjectId)
+    ) {
+      setViewState(0);
+      setSelectedProjectId(null);
+    }
+  }, [viewState, isLoadingProjects, selectedProjectId, projects]);
 
   // --- SOCKET IO INTEGRATION ---
   // Refs to hold mutable values so socket handlers always see current state
@@ -1688,6 +1769,15 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         </div>
       )}
 
+      {/* Restore window: viewState 4 was restored (e.g. browser Back from a
+          Dashboard drill-down) but the projects list is still loading, so
+          activeProject isn't resolved yet — show a spinner instead of a blank. */}
+      {viewState === 4 && !activeProject && isLoadingProjects && (
+        <div className="flex justify-center py-20">
+          <Loader2 className="animate-spin text-[#3759a3] w-10 h-10" />
+        </div>
+      )}
+
       {viewState === 4 && activeProject && (
         <div className="animate-in fade-in duration-500 w-full">
           <button
@@ -2071,7 +2161,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setOpenDropdownId(null);
-                                        onRecentActivityClick?.(comp.name, row.period, comp.platforms);
+                                        markReturnToAnalytics(); onRecentActivityClick?.(comp.name, row.period, comp.platforms);
                                       }}
                                     >
                                       <span className="text-theme-text-muted">{row.label}</span>{" "}
@@ -2110,6 +2200,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                         competitor_platform: p,
                                       });
                                       onSearch?.(comp.name, "advertiser", p.toLowerCase());
+                                      markReturnToAnalytics();
                                       onNavigateToAds?.();
                                     }}
                                   />
@@ -2125,6 +2216,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                         competitor_platform: p,
                                       });
                                       onSearch?.(comp.name, "advertiser", p.toLowerCase());
+                                      markReturnToAnalytics();
                                       onNavigateToAds?.();
                                     }}
                                   >
@@ -2160,7 +2252,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setOpenGeoId(null);
-                                        onCountryClick?.(comp.name, c, comp.platforms);
+                                        markReturnToAnalytics(); onCountryClick?.(comp.name, c, comp.platforms);
                                       }}
                                     >
                                       <img
@@ -2210,7 +2302,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setOpenGeoId(null);
-                                          onCountryClick?.(comp.name, comp.countries, comp.platforms);
+                                          markReturnToAnalytics(); onCountryClick?.(comp.name, comp.countries, comp.platforms);
                                         }}
                                       >
                                         <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
@@ -2229,7 +2321,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               setOpenGeoId(null);
-                                              onCountryClick?.(comp.name, c, comp.platforms);
+                                              markReturnToAnalytics(); onCountryClick?.(comp.name, c, comp.platforms);
                                             }}
                                           >
                                             <div className="w-5 rounded-[2px] overflow-hidden shadow-sm">

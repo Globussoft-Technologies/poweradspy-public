@@ -10,7 +10,6 @@ const countGraphAnalytics = require("./ad-count-graph-analytics")
 const affiliateDate = require("./affiliate-data")
 const networkAccountAnalytics = require("./network-account-analytics")
 const totalAdCountAnalytics = require("./total-ad-count.anaylytics")
-const rangeCountsAnalytics = require("./range-counts-analytics")
 const dynamicCountAnalytics = require("./dynamic-count-analytics")
 const systemMetrics = require("./system-metrics-api")
 const adsgptUsersRoute = require("./adsgpt-users-route")
@@ -32,7 +31,6 @@ app.use("/affiliate_data",affiliateDate)
 
  app.use("/network-account",networkAccountAnalytics)
  app.use("/network-name", totalAdCountAnalytics)
- app.use("/network-name", rangeCountsAnalytics)
  app.use("/network-name", dynamicCountAnalytics)
 
 

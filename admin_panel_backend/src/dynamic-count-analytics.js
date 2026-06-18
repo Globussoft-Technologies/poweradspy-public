@@ -58,12 +58,11 @@ const queryDatabase = require('../db-connections/connection');
 //                      for bing/linkedin, `id` for the rest / facebook-on-main).
 //   metaCountCol     → COUNT() column for the meta-table "processed" queries (DS
 //                      counts the FK for bing/facebook/linkedin, `id` for the rest).
-//   gdnQuirk         → DS bounds GDN's "active" by `first_seen < to` (not last_seen).
 //   db_id            → prod server index (see db-connections/connection.js).
 const DB_DATA = {
     bing:      { main: 'bing_text_ad',   meta: 'bing_text_ad_meta_data',   firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'bing_text_ad_id', metaCountCol: 'bing_text_ad_id', db_id: 10, index: process.env.BING_DATABASE },
     facebook:  { main: 'facebook_ad',    meta: 'facebook_ad_meta_data',    firstSeen: 'first_seen',   created: 'created_date', platformOnMain: true,  platformCountCol: 'id',              metaCountCol: 'facebook_ad_id',  db_id: 0,  index: process.env.FB_DATABASE },
-    gdn:       { main: 'gdn_ad',         meta: 'gdn_ad_meta_data',         firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              gdnQuirk: true, db_id: 5, index: process.env.GDN_DATABASE },
+    gdn:       { main: 'gdn_ad',         meta: 'gdn_ad_meta_data',         firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 5,  index: process.env.GDN_DATABASE },
     google:    { main: 'google_text_ad', meta: 'google_text_ad_meta_data', firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 9,  index: process.env.GT_DATABASE },
     instagram: { main: 'instagram_ad',   meta: 'instagram_ad_meta_data',   firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 8,  index: process.env.INSTA_DATABASE },
     linkedin:  { main: 'linkedin_ad',    meta: 'linkedin_ad_meta_data',    firstSeen: 'first_seen',   created: 'created_at',   platformOnMain: false, platformCountCol: 'linkedin_ad_id',  metaCountCol: 'linkedin_ad_id',  db_id: 2,  index: process.env.LINKEDIN_DATABASE },
@@ -109,12 +108,16 @@ const ok = (res, data) => res.status(200).json({ code: 200, message: 'success', 
 const newAdsSql = (cfg) =>
     `SELECT COUNT(id) AS cnt FROM ${cfg.main} WHERE ${cfg.firstSeen} >= ? AND ${cfg.firstSeen} < ?`;
 
-// "active" / Total Ads — COUNT(id) FROM main WHERE last_seen in window.
-// GDN keeps DS's per-network shape: bounds first_seen instead of last_seen on top.
+// "active" / Total Ads — ads whose last sighting falls in the window:
+//   last_seen >= from  AND  last_seen < (to+1)     (same 12am->12am bound, both on last_seen)
+// This is the single agreed definition shared with the DS team — DS calls this
+// API instead of their own query, so the admin panel and the daily report run the
+// identical SQL. NOTE: last_seen is a moving field (active ads get re-crawled and
+// roll out of the window), so the same date can read slightly differently at
+// different times of day; for exact admin<->DS agreement, query at a consistent
+// time (or snapshot daily). See docs/get-count-api.md.
 const activeAdsSql = (cfg) =>
-    cfg.gdnQuirk
-        ? `SELECT COUNT(id) AS cnt FROM ${cfg.main} WHERE last_seen >= ? AND ${cfg.firstSeen} < ?`
-        : `SELECT COUNT(id) AS cnt FROM ${cfg.main} WHERE last_seen >= ? AND last_seen < ?`;
+    `SELECT COUNT(id) AS cnt FROM ${cfg.main} WHERE last_seen >= ? AND last_seen < ?`;
 
 const dynamicCountFilter = async (req, res) => {
     try {
