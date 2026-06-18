@@ -77,12 +77,11 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
     n_native: p.n_native == null ? null : num(p.n_native),
     n_total: p.n_total == null ? null : num(p.n_total), status: p.status,
   }));
-  // GDN-only dashboard: native scraper is paused, so native is excluded entirely
-  // (counting the 48.8M un-migrated native table was both wrong and the main slowness).
+  // Native is LIVE on v2: getSQL('native') -> nativepro_v2 keep-set (4.1M, fast — no longer the 48.8M table).
   const creatives = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad')).c);
   const runs = num((await one(g, 'SELECT COALESCE(SUM(total_crawls),0) c FROM gdn_crawl_quality')).c);
   const ah = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
-  const nh = 0;
+  const nh = num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
   const todayNew = num((await one(g,
     'SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=CURDATE()', [sid])).c);
   const act = await all(g,
@@ -100,7 +99,7 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
 async function buildOverview(g, n, sid) {
   // totals
   const gtot = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad')).c);
-  const ntot = 0; // native paused — excluded from this GDN dashboard
+  const ntot = num((await one(n, 'SELECT COUNT(*) c FROM native_ad')).c); // native live on v2 (nativepro_v2.native_ad)
   const ah24 = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date>=NOW()-INTERVAL 24 HOUR')).c);
   const cq = await one(g, 'SELECT COUNT(*) urls, COUNT(DISTINCT country) ccs, COALESCE(SUM(total_ads),0) ads FROM gdn_crawl_quality');
   // distinct advertisers actually present in the live keep-set (NOT COUNT(*) of the
@@ -155,11 +154,13 @@ async function buildOverview(g, n, sid) {
   // GDN vs Native split
   const obs = await one(g, 'SELECT COALESCE(SUM(total_gdn_ads),0) g, COALESCE(SUM(total_native_ads),0) n FROM gdn_crawl_quality WHERE provider=?', [sid]);
   const gNew = num((await one(g, 'SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1', [sid])).c);
-  const nNew = 0; // native paused
+  const nNew = num((await one(n, 'SELECT COUNT(*) c FROM native_account_activities WHERE system_id=? AND is_unique=1', [sid])).c);
   const split = { g_obs: num(obs.g), n_obs: num(obs.n), g_new: gNew, n_new: nNew };
 
-  // native by network — native paused, so removed from this GDN dashboard
-  const networks = [];
+  // native by network (live on v2): Taboola / Outbrain / Revcontent / …
+  const networks = (await all(n,
+    "SELECT nw.network, COUNT(*) c FROM native_ad a JOIN networks nw ON a.network_id=nw.id " +
+    "GROUP BY nw.network ORDER BY c DESC LIMIT 10")).map((r) => ({ network: r.network, creatives: num(r.c) }));
 
   // by country / site / advertisers
   const byc = await all(g,
