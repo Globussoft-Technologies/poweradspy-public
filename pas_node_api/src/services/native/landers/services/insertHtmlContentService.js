@@ -294,7 +294,9 @@ class InsertHtmlContentService {
     ];
 
     for (const field of requiredFields) {
-      if (!item[field]) {
+      // Presence check (matches quora/reddit) so legitimately-empty
+      // values like html_path: "" are accepted.
+      if (!(field in item)) {
         errors.push(`${field} is required`);
       }
     }

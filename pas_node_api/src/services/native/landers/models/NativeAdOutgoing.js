@@ -30,7 +30,7 @@ class NativeAdOutgoing {
           destinationUrl || null,
           redirectUrl || null,
           destinationUrl || null,
-          countryIso ? countryIso.join('|') : null,
+          countryIso ? (Array.isArray(countryIso) ? countryIso.join('|') : countryIso) : null,
           0  // default proxy_lander_status
         ]);
       }

@@ -34,8 +34,13 @@ function validateItem(item) {
 }
 
 function normalizeCountry(countryArray) {
-  return countryArray
+  // Accept an array, or a single/`||`/comma-separated string.
+  const list = Array.isArray(countryArray)
+    ? countryArray
+    : String(countryArray || '').split(/[|,]+/);
+  return list
     .map(c => String(c).trim())
+    .filter(Boolean)
     .join('||')
     .toUpperCase();
 }
@@ -61,7 +66,18 @@ async function insertHtmlRedirectCountry(req, db, log) {
       };
     }
 
-    const items = Array.isArray(payload) ? payload : [payload];
+    const rawItems = Array.isArray(payload) ? payload : [payload];
+    // All lander payloads must use the `insertData` wrapper.
+    const items = rawItems.map((item) =>
+      item && item.insertData ? item.insertData : null
+    );
+    if (items.some((item) => !item)) {
+      return {
+        code: 400,
+        message: 'insertData wrapper is required',
+        exe_time: (Date.now() - startTime) / 1000
+      };
+    }
     const adId = items[0]?.ad_id;
 
     // Validate all items

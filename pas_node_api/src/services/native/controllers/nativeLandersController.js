@@ -87,7 +87,18 @@ class LandersController {
   static async insertHtmlContent(req, res, next, service) {
     try {
       const startTime = Date.now();
-      const requestArray = Array.isArray(req.body) ? req.body : [req.body];
+      const rawArray = Array.isArray(req.body) ? req.body : [req.body];
+      // All lander payloads must use the `insertData` wrapper.
+      const requestArray = rawArray.map((item) =>
+        item && item.insertData ? item.insertData : null
+      );
+      if (requestArray.some((item) => !item)) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Validation failed',
+          errors: ['insertData wrapper is required'],
+        });
+      }
       const db = service?.db || {};
 
       // Validate each item
