@@ -385,7 +385,7 @@ async function getAdvertiserCountryData(req, db, logger) {
 
   const adYear = p.year || (lastSeen ? new Date(lastSeen).getFullYear() : new Date().getFullYear());
   const dateRange = getYearRange(adYear);
-  const index = 'native_search_mix';
+  const index = db.elastic.indexName || 'native_search_mix_v2';
 
   const advertiserFilter = { match_phrase: { 'native_ad_post_owners.post_owner_name': postOwnerName } };
   const [availableYears, esResult] = await Promise.allSettled([
@@ -464,7 +464,7 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
 
   const dateRange = getCustomDateRange(from_date, to_date);
   const base = { from_date, to_date, post_owner_id };
-  const index = 'native_search_mix';
+  const index = db.elastic.indexName || 'native_search_mix_v2';
 
   const targetType = (type || 'country').toLowerCase();
 

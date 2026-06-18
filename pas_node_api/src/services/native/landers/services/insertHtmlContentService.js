@@ -26,7 +26,7 @@ async function searchAd(adId, esWrapper) {
 
 
     const result = await esWrapper.search({
-      index: 'native_search_mix',
+      index: esWrapper.indexName || 'native_search_mix_v2',
       body: {
         query: {
           match: {
@@ -52,7 +52,7 @@ async function updateAdDocument(adId, data, esWrapper) {
 
     // Use client.updateByQuery directly
     await esWrapper.client.updateByQuery({
-      index: 'native_search_mix',
+      index: esWrapper.indexName || 'native_search_mix_v2',
       body: {
         query: {
           match: {

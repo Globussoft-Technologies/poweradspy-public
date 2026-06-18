@@ -45,12 +45,12 @@ function coerceEsDate(v, kind) {
  * @param {string[]} columns  - NATIVE_INSERT_COLUMNS template
  * @param {Object}   row      - flat join row from getJoinedAd()
  * @param {Object}   [opts]
- * @param {string}   [opts.index='native_search_mix']
+ * @param {string}   [opts.index='native_search_mix_v2']
  * @param {Object}   [opts.extra={}]  - extra body fields merged last (nas_url, platform, lang_detect, etc.)
  * @returns {{index:string, type:string, body:Object}}
  */
 function buildNativeSearchMixDoc(columns, row, opts = {}) {
-  const index = (opts.index || 'native_search_mix').toLowerCase();
+  const index = (opts.index || 'native_search_mix_v2').toLowerCase();
   const body  = {};
 
   for (const rawCol of columns) {

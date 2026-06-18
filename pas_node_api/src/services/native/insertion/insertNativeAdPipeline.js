@@ -25,7 +25,7 @@ const { ok, updated, rejected, serverError } = require('../../../insertion/helpe
 
 const TRANSLATION_TIMEOUT_MS = 3000; // cap translation wait at 3s
 
-const ES_INDEX = 'native_search_mix';
+const ES_INDEX = 'native_search_mix_v2'; // module fallback; per-call below sources db.elastic.indexName
 
 // Perceptual near-duplicate threshold: max Hamming distance between dhashes
 // for two ads (same post owner) to be treated as the same creative.
@@ -398,7 +398,7 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
 
   if (db.elastic) {
     try {
-      const esRes = await db.elastic.search(searchIdQuery(ES_INDEX, adId));
+      const esRes = await db.elastic.search(searchIdQuery(db.elastic.indexName || ES_INDEX, adId));
       const _id = firstHitId(esRes);
       if (_id) {
         const esUpdate = {
@@ -417,7 +417,7 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
           esUpdate['native_ad.nas_url'] = uploadedMedia.image_video_url;
           esUpdate['native_ad.aws_url'] = uploadedMedia.image_video_url;
         }
-        await db.elastic.update({ index: ES_INDEX, type: 'doc', id: _id, body: { doc: esUpdate } });
+        await db.elastic.update({ index: db.elastic.indexName || ES_INDEX, type: 'doc', id: _id, body: { doc: esUpdate } });
       }
     } catch (e) {
       log.warn('ES update failed', { error: e.message, adId });
@@ -446,10 +446,11 @@ async function indexAd(ctx, nativeAdId, n, result) {
   if (result.imageUrl) { extra['native_ad.nas_url'] = result.imageUrl; extra['native_ad.aws_url'] = result.imageUrl; }
   if (row.post_owner_image) extra['native_ad_post_owners.post_owner_image'] = row.post_owner_image;
 
-  const doc = buildNativeSearchMixDoc(NATIVE_INSERT_COLUMNS, row, { index: ES_INDEX, extra });
+  const idx = db.elastic.indexName || ES_INDEX;
+  const doc = buildNativeSearchMixDoc(NATIVE_INSERT_COLUMNS, row, { index: idx, extra });
 
   let _id;
-  try { const f = await db.elastic.search(searchIdQuery(ES_INDEX, nativeAdId)); _id = firstHitId(f); } catch { /* ignore */ }
+  try { const f = await db.elastic.search(searchIdQuery(idx, nativeAdId)); _id = firstHitId(f); } catch { /* ignore */ }
   await db.elastic.index({ index: doc.index, type: doc.type, id: _id || undefined, body: doc.body });
 }
 

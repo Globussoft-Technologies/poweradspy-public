@@ -23,7 +23,7 @@ async function getAdsByAdvertiser(req, db, logger) {
       if (db.elastic) {
         try {
           const esRes = await db.elastic.search({
-            index: natNet?.database?.elastic?.index || process.env.NATIVE_ELASTIC_INDEX || 'native_ads_data',
+            index: db.elastic.indexName || natNet?.database?.elastic?.index || 'native_search_mix_v2',
             body: { query: { bool: { filter: { term: { "native_ad.id": row.id } } } } }
           });
           const hit = esRes.body?.hits?.hits?.[0]?._source || esRes.hits?.hits?.[0]?._source;

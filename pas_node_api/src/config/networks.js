@@ -275,7 +275,7 @@ module.exports = {
       },
       elastic: {
         enabled: toBool(netVal(netCfg.native?.elastic, 'enabled', 'NAT_ELASTIC_ENABLED', false)),
-        index:   netVal(netCfg.native?.elastic, 'index', 'NAT_ELASTIC_INDEX', 'native_search_mix'),
+        index:   netVal(netCfg.native?.elastic, 'index', 'NAT_ELASTIC_INDEX', 'native_search_mix_v2'),
         node:    netVal(netCfg.native?.elastic, 'node',     'NAT_ELASTIC_NODE',     config.databases.elastic.node,               true),
         auth: {
           username: netVal(netCfg.native?.elastic, 'username', 'NAT_ELASTIC_USERNAME', config.databases.elastic.auth.username, true),

@@ -16,7 +16,7 @@
 
 const repo = require('../repository');
 
-const ES_INDEX = 'native_search_mix';
+const ES_INDEX = 'native_search_mix_v2'; // module fallback; per-call below sources elastic.indexName
 
 /** PHP `in_array(null, $row)` — true when any column of the variant row is null. */
 function hasNullColumn(row) {
@@ -96,7 +96,7 @@ async function updateImageOcrDetails(postData, db, log) {
 
   // Locate the ES document by internal native_ad id.
   const search = await elastic.search({
-    index: ES_INDEX,
+    index: elastic.indexName || ES_INDEX,
     body: { query: { match: { 'native_ad.id': adId } } },
   });
   const hits = search?.hits?.hits || search?.body?.hits?.hits || [];
@@ -134,7 +134,7 @@ async function updateImageOcrDetails(postData, db, log) {
   }
 
   const updateRes = await elastic.update({
-    index: ES_INDEX,
+    index: elastic.indexName || ES_INDEX,
     type: 'doc',
     id: hits[0]._id,
     body: { doc: docValue, detect_noop: false },

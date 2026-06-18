@@ -84,7 +84,7 @@ async function getAdDetails(req, db, logger) {
     if (db.elastic) {
       try {
         const esResult = await db.elastic.search({
-          index: 'native_search_mix',
+          index: db.elastic.indexName || 'native_search_mix_v2',
           body: { query: { bool: { filter: { terms: { 'native_ad.id': [parseInt(p.ad_id, 10)] } } } } },
         });
         const hits = esResult.hits || esResult.body?.hits;

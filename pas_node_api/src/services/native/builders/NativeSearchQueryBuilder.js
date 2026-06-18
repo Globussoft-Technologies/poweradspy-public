@@ -24,7 +24,7 @@ const {
   wrapIfNeed,
 } = require('../../common/helpers/esQueryHelpers');
 
-const DEFAULT_NAT_INDEX = process.env.NAT_ELASTIC_INDEX || 'native_search_mix';
+const DEFAULT_NAT_INDEX = process.env.NAT_ELASTIC_INDEX || 'native_search_mix_v2';
 
 const EXTRA_CONDITION = [
   {

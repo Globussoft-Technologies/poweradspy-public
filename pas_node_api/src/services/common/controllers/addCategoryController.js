@@ -76,7 +76,7 @@ const PLATFORM_CONFIG = {
   },
   native: {
     service:      'native',
-    index:        process.env.NAT_ELASTIC_INDEX       || 'native_search_mix',
+    index:        process.env.NAT_ELASTIC_INDEX       || 'native_search_mix_v2',
     idField:      'native_ad.id',
     textField:    'native_ad_translation.ad_text',
     titleField:   'native_ad_translation.ad_title',
@@ -184,7 +184,7 @@ async function getDescriptionDetails(req, res) {
 
   try {
     // GDN is on gdn_search_mix_v2 — resolve the env-correct index from the live ES client, not the config-immune static map.
-    const esIndex = (cfg.service === 'gdn' && service.db.elastic.indexName) ? service.db.elastic.indexName : cfg.index;
+    const esIndex = ((cfg.service === 'gdn' || cfg.service === 'native') && service.db.elastic.indexName) ? service.db.elastic.indexName : cfg.index;
     const esResult = await service.db.elastic.search({
       index: esIndex,
       body: {
@@ -469,7 +469,7 @@ async function newCatInsertion(req, res) {
     // ── Step 2: Update the ad record in the platform's search_mix index ──
     const esForPlat = platService?.db?.elastic || gdnService.db.elastic;
     // GDN is on gdn_search_mix_v2 — resolve the env-correct index from the live ES client, not the config-immune static map.
-    const esIndex = (platCfg.service === 'gdn' && esForPlat?.indexName) ? esForPlat.indexName : platCfg.index;
+    const esIndex = ((platCfg.service === 'gdn' || platCfg.service === 'native') && esForPlat?.indexName) ? esForPlat.indexName : platCfg.index;
     try {
       gdnService.log?.info(`[newCatInsertion] searching index="${platCfg.index}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
       const adSearch = await esForPlat.search({

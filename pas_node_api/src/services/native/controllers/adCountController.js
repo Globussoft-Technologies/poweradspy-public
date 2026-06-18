@@ -52,7 +52,7 @@ async function getAdsCount(req, db, logger) {
 
 
     const result = await db.elastic.search({
-      index: process.env.NAT_ELASTIC_INDEX || 'native_search_mix',
+      index: db.elastic.indexName || process.env.NAT_ELASTIC_INDEX || 'native_search_mix_v2',
       body: {
         query: {
           bool: {

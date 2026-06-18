@@ -151,7 +151,7 @@ async function searchFavoriteAds(p, db, logger) {
     const adIds = favRows.map(r => r.ad_id).filter(Boolean);
     if (adIds.length === 0) return { code: 200, data: [], total: 0, message: 'No favorite ads found' };
 
-    const esIndex = db.elastic?.indexName || 'native_search_mix';
+    const esIndex = db.elastic?.indexName || 'native_search_mix_v2';
     const take = parseInt(p.take, 10) || 20;
     const skip = (parseInt(p.skip, 10) || 0) * take;
     const MAX_ROUNDS = 3;
@@ -196,7 +196,7 @@ async function searchHiddenAds(p, db, logger) {
     const adIds = hiddenRows.map(r => r.ad_id).filter(Boolean);
     if (adIds.length === 0) return { code: 200, data: [], total: 0, message: 'No hidden ads found' };
 
-    const esIndex = db.elastic?.indexName || 'native_search_mix';
+    const esIndex = db.elastic?.indexName || 'native_search_mix_v2';
     const take = parseInt(p.take, 10) || 20;
     const skip = (parseInt(p.skip, 10) || 0) * take;
     const MAX_ROUNDS = 3;

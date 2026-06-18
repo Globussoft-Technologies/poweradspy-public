@@ -9,7 +9,7 @@ const repo = require('./repository');
 const { searchIdQuery, firstHitId } = require('./esDocBuilder');
 const { rejected, serverError } = require('../../../insertion/helpers/responses');
 
-const ES_INDEX = 'native_search_mix';
+const ES_INDEX = 'native_search_mix_v2'; // module fallback; per-call below sources db.elastic.indexName
 
 async function processDelete(ref, ctx) {
   const { db, log } = ctx;
@@ -43,8 +43,9 @@ async function processDelete(ref, ctx) {
 
     if (db.elastic) {
       try {
-        const _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, internalId)));
-        if (_id) await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: _id });
+        const idx = db.elastic.indexName || ES_INDEX;
+        const _id = firstHitId(await db.elastic.search(searchIdQuery(idx, internalId)));
+        if (_id) await db.elastic.delete({ index: idx, type: 'doc', id: _id });
       } catch (e) {
         log.warn('ES delete failed', { id: internalId, error: e.message });
       }

@@ -2457,7 +2457,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
     reddit: 'reddit_search_mix',
     pinterest: 'pinterest_search_mix',
     quora: 'quora_search_mix',
-    native: 'native_search_mix',
+    native: 'native_search_mix_v2',
   };
 
   // Query each platform's data
