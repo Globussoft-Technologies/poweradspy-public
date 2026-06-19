@@ -11,6 +11,7 @@ const { asyncHandler } = require('../../../middleware/errorHandler');
 const ResponseFormatter = require('../../../utils/responseFormatter');
 const { searchAds } = require('../controllers/adSearchController');
 const { getAdDetails } = require('../controllers/adDetailController');
+const { getOverview: getYtDashOverview, getLive: getYtDashLive } = require('../controllers/youtubeDashboardController');
 const {
   getLikeCommentShareDetails,
   getYoutubeAdCountry,
@@ -71,6 +72,18 @@ function createYoutubeRoutes(service) {
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
+
+  // ─── Monitoring dashboard (read-only, unguarded — same convention as GDN dashboard) ──
+  // GET /api/v1/youtube/dashboard/overview
+  router.get('/dashboard/overview', asyncHandler(async (req, res) => {
+    const r = await getYtDashOverview(req, service.db, service.log);
+    return res.status(r.code === 200 ? 200 : r.code).json({ code: r.code, status: r.code === 200 ? 'ok' : 'error', data: r.data, message: r.message });
+  }));
+  // GET /api/v1/youtube/dashboard/live
+  router.get('/dashboard/live', asyncHandler(async (req, res) => {
+    const r = await getYtDashLive(req, service.db, service.log);
+    return res.status(r.code === 200 ? 200 : r.code).json({ code: r.code, status: r.code === 200 ? 'ok' : 'error', data: r.data, message: r.message });
+  }));
 
   // ─── Like/Comment/Share Analytics Timeline ────────────
   // POST /api/v1/youtube/ads/getLikeCommentShareDetails
