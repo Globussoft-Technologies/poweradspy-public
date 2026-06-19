@@ -42,7 +42,7 @@ const AudienceSection = ({ adDetails }) => {
                  <Icon size={12} className={`text-${color}-400 ${isLight ? 'opacity-90' : 'opacity-60'} group-hover:opacity-100 transition-opacity`} />
                  <span className={`text-[10px] font-bold uppercase ${isLight ? 'text-gray-400' : `text-${color}-400/90`}`}>{label}</span>
               </div>
-              <div className="flex-1 min-w-0 flex flex-wrap gap-1.5">
+              <div className="flex-1 min-w-0 flex flex-wrap gap-1.5 max-h-[140px] overflow-y-auto modal-scroll pr-1">
                  {audience[key].map((item, i) => (
                    <span key={i} className={`inline-flex items-center gap-1.5 text-[13px] rounded-lg px-2.5 py-1 leading-snug ${isLight ? 'text-gray-800 bg-white border border-gray-200' : 'text-white/80 bg-white/[0.04] border border-white/5'}`}>
                      {item}

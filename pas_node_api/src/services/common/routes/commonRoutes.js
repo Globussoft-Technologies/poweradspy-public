@@ -35,7 +35,7 @@ const {
 const { sendMailDailyUpdate } = require('../controllers/dailyMailUpdateController');
 const { getTotalAdCount } = require('../controllers/totalAdCountController');
 const { getRecentAds } = require('../controllers/recentAdsController');
-const { storeBehaviourData, insertInterestBehaviour } = require('../controllers/interestBehaviourController');
+const { storeBehaviourData, insertInterestBehaviour, updateInterestBehaviour } = require('../controllers/interestBehaviourController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware } = require('../../../middleware/planAccess');
@@ -336,5 +336,8 @@ router.post('/store-bahaviour-data', asyncHandler(storeBehaviourData));
 
 // GET /api/v1/common/insert-interest-behaviour?network=facebook — batch puller (cron)
 router.get('/insert-interest-behaviour', asyncHandler(insertInterestBehaviour));
+
+// GET /api/v1/common/update-interest-behaviour?network=facebook — refresh + cleanup (cron)
+router.get('/update-interest-behaviour', asyncHandler(updateInterestBehaviour));
 
 module.exports = router;
