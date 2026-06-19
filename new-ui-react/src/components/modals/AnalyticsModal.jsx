@@ -1621,6 +1621,11 @@ const AnalyticsModal = ({
               ad={ad}
             />
 
+            {/* Target Audience — Facebook & Instagram (right after Basic Info) */}
+            {["facebook", "instagram"].includes(ctx.platform) && (
+              <AudienceSection adDetails={adDetailsData} />
+            )}
+
             {/* Lander Details */}
             {![
               "google",
@@ -1637,11 +1642,6 @@ const AnalyticsModal = ({
                   adDetailsData?.white_ad_screenshot || ad?.white_ad_screenshot
                 }
               />
-            )}
-
-            {/* Target Audience — Facebook only */}
-            {ctx.platform === "facebook" && (
-              <AudienceSection adDetails={adDetailsData} />
             )}
 
             {/* Social Engagements — Facebook, Instagram, YouTube, LinkedIn, Reddit & TikTok */}

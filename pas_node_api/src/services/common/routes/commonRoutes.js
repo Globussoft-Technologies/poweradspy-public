@@ -35,6 +35,7 @@ const {
 const { sendMailDailyUpdate } = require('../controllers/dailyMailUpdateController');
 const { getTotalAdCount } = require('../controllers/totalAdCountController');
 const { getRecentAds } = require('../controllers/recentAdsController');
+const { storeBehaviourData, insertInterestBehaviour } = require('../controllers/interestBehaviourController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware } = require('../../../middleware/planAccess');
@@ -323,5 +324,17 @@ router.post('/total-ad-count', asyncHandler(getTotalAdCount));
 // window (e.g. days=2, days=3), `network` to restrict platforms, and `limit` to
 // cap ads per network. Sorted newest-first across networks.
 router.get('/recent-ads', authMiddleware, asyncHandler(getRecentAds));
+
+// ─── Interest / Behaviour (audience targeting) — Node port of the Laravel
+// adsDataController/InstagramUserController endpoints. Populate the
+// interests/behaviors/confidence_score fields on ads in each network's
+// search_mix index. `network` param selects facebook|instagram. Internal/cron
+// — no auth, mirroring the PHP routes.
+//
+// POST /api/v1/common/store-bahaviour-data — push targeting data for ONE ad (write-once)
+router.post('/store-bahaviour-data', asyncHandler(storeBehaviourData));
+
+// GET /api/v1/common/insert-interest-behaviour?network=facebook — batch puller (cron)
+router.get('/insert-interest-behaviour', asyncHandler(insertInterestBehaviour));
 
 module.exports = router;
