@@ -10,8 +10,7 @@ const COLORS = ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#3b82f6","#ef
 
 // Custom YAxis tick renderer with hover tooltip
 const CustomYAxisTick = ({ x, y, payload, chartData }) => {
-  const item = chartData?.find((d) => d.id === payload.value);
-  const displayText = item?.displayTerm || payload.value;
+  const item = chartData?.find((d) => d.displayTerm === payload.value);
   const fullTerm = item?.term || payload.value;
 
   return (
@@ -24,7 +23,7 @@ const CustomYAxisTick = ({ x, y, payload, chartData }) => {
         fontSize={11}
         title={fullTerm}
       >
-        {displayText}
+        {payload.value}
       </text>
     </g>
   );
@@ -49,6 +48,7 @@ const KeywordTrends = ({ onDataReady }) => {
   const [page,          setPage]          = useState(0);
   const [topKeywords,   setTopKeywords]   = useState([]);
   const [adsCount,      setAdsCount]      = useState(null);
+  const [expandedPlatformRows, setExpandedPlatformRows] = useState(new Set());
   const searchInputRef = useRef(null);
 
   // Fetch top keywords/advertisers/domains for chart - updates when typeTab changes
@@ -325,45 +325,75 @@ const KeywordTrends = ({ onDataReady }) => {
           </div>
         )}
 
-        {/* Chart */}
+        {/* Chart - Custom SVG implementation to avoid Recharts rendering issues */}
         <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px", flexWrap: "wrap", gap: "8px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "8px" }}>
             <p style={{ fontSize: "13px", fontWeight: 600, color: "#374151", margin: 0 }}>
               Top {TYPE_TABS.find((t) => t.key === typeTab)?.label} by Search Volume
             </p>
           </div>
-          <ResponsiveContainer width="100%" height={chartData.length * 20 + 60}>
-            <BarChart data={chartData} layout="vertical" barSize={18} margin={{ top: 0, right: 32, bottom: 0, left: 10 }}>
-              <XAxis type="number" domain={[0, 'dataMax']} tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
-              <YAxis
-                type="category" dataKey="displayTerm" width={yAxisWidth}
-                tick={(props) => <CustomYAxisTick {...props} chartData={chartData} />}
-                axisLine={false} tickLine={false}
-              />
-              <Tooltip
-                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", maxWidth: "350px", wordWrap: "break-word", whiteSpace: "normal", backgroundColor: "#ffffff", padding: "12px" }}
-                content={({ active, payload }) => {
-                  if (active && payload && payload.length > 0) {
-                    const data = payload[0].payload;
-                    return (
-                      <div style={{ backgroundColor: "white", border: "1px solid #e5e7eb", borderRadius: "6px", padding: "8px 12px", maxWidth: "350px" }}>
-                        <p style={{ margin: "0 0 6px 0", fontWeight: 600, color: "#111827", wordBreak: "break-word", whiteSpace: "normal" }}>{data.term}</p>
-                        <p style={{ margin: "0", color: "#6b7280" }}>Searches: {data.count}</p>
-                      </div>
-                    );
-                  }
-                  return null;
-                }}
-              />
-              <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+
+          <div style={{ overflowX: "auto" }}>
+            <svg width="100%" height={Math.max(chartData.length * 24 + 40, 300)} style={{ minHeight: "300px" }}>
+              {chartData.map((item, idx) => {
+                const barHeight = 18;
+                const rowHeight = 24;
+                const y = 20 + idx * rowHeight;
+                const barWidth = (item.count / maxCount) * (typeof window !== 'undefined' ? window.innerWidth - 400 : 800);
+                const labelX = yAxisWidth - 10;
+
+                return (
+                  <g key={idx}>
+                    {/* Label */}
+                    <title>{item.term}</title>
+                    <text
+                      x={labelX}
+                      y={y + 13}
+                      textAnchor="end"
+                      fontSize="11"
+                      fill="#374151"
+                      style={{ cursor: "help" }}
+                    >
+                      {item.displayTerm}
+                    </text>
+
+                    {/* Bar */}
+                    <rect
+                      x={yAxisWidth + 5}
+                      y={y + 2}
+                      width={Math.max(barWidth, 0)}
+                      height={barHeight}
+                      fill={COLORS[idx % COLORS.length]}
+                      rx="4"
+                      style={{ cursor: "pointer" }}
+                    >
+                      <title>{item.term} - Searches: {item.count}</title>
+                    </rect>
+
+                    {/* Value label */}
+                    {barWidth > 50 && (
+                      <text
+                        x={yAxisWidth + 10 + barWidth}
+                        y={y + 13}
+                        fontSize="11"
+                        fill="#6b7280"
+                        style={{ pointerEvents: "none" }}
+                      >
+                        {item.count}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* X-axis */}
+              <line x1={yAxisWidth} y1={20 + chartData.length * 24} x2="100%" y2={20 + chartData.length * 24} stroke="#e5e7eb" strokeWidth="1" />
+            </svg>
+          </div>
 
           {/* Tooltip for full text on hover */}
-          <div style={{ marginTop: "8px", fontSize: "11px", color: "#6b7280", display: "flex", alignItems: "center", gap: "4px" }}>
-            <span>ℹ Hover over truncated labels to see full text</span>
+          <div style={{ marginTop: "12px", fontSize: "11px", color: "#6b7280", display: "flex", alignItems: "center", gap: "4px" }}>
+            <span>ℹ Hover over labels to see full text</span>
           </div>
         </div>
 
@@ -433,17 +463,32 @@ const KeywordTrends = ({ onDataReady }) => {
                       <td style={{ padding: "10px 12px", overflow: "visible" }}>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
                           {platformLabels.length > 0 ? (
-                            platformLabels.slice(0, 3).map((platform) => (
-                              <span key={platform} style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap" }}>
-                                {platform}
-                              </span>
-                            ))
+                            <>
+                              {(expandedPlatformRows.has(row.term) ? platformLabels : platformLabels.slice(0, 3)).map((platform) => (
+                                <span key={platform} style={{ display: "inline-block", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap" }}>
+                                  {platform}
+                                </span>
+                              ))}
+                              {platformLabels.length > 3 && (
+                                <button
+                                  onClick={() => {
+                                    const newSet = new Set(expandedPlatformRows);
+                                    if (newSet.has(row.term)) {
+                                      newSet.delete(row.term);
+                                    } else {
+                                      newSet.add(row.term);
+                                    }
+                                    setExpandedPlatformRows(newSet);
+                                  }}
+                                  style={{ display: "inline-block", background: "#f3f4f6", color: "#6b7280", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap", border: "none", cursor: "pointer", fontWeight: 600, transition: "all 0.2s" }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.background = "#e5e7eb"; e.currentTarget.style.color = "#374151"; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.background = "#f3f4f6"; e.currentTarget.style.color = "#6b7280"; }}
+                                >
+                                  {expandedPlatformRows.has(row.term) ? "Show Less" : `+${platformLabels.length - 3}`}
+                                </button>
+                              )}
+                            </>
                           ) : <span style={{ color: "#9ca3af" }}>—</span>}
-                          {platformLabels.length > 3 && (
-                            <span style={{ display: "inline-block", background: "#f3f4f6", color: "#6b7280", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "nowrap" }}>
-                              +{platformLabels.length - 3}
-                            </span>
-                          )}
                         </div>
                       </td>
                       <td style={{ padding: "10px 12px" }}>
