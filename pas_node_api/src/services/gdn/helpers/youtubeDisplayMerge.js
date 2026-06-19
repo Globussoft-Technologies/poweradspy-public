@@ -82,9 +82,11 @@ function isDisplayMergeApplicable(p, sort, from, size) {
   // Favorite/hidden modes are handled before this is ever called.
   if (!SORT_FIELD_MAP[sort.field]) return false;          // only recency sorts
   if ((from + size) > MAX_WINDOW) return false;           // deep pages → GDN-only
-  // If the user filters by ad type and DISPLAY isn't one of them, exclude.
+  // If the user filters by ad type and neither DISPLAY nor IMAGE is one of them, exclude.
+  // (YouTube display ads land as ad_type IMAGE via the Node insertion; DISPLAY is the legacy
+  // PHP label kept for historical ads — both surface under GDN.)
   const types = ensureArr(p.type).map(t => String(t).toUpperCase());
-  if (types.length && !types.includes('DISPLAY')) return false;
+  if (types.length && !types.includes('DISPLAY') && !types.includes('IMAGE')) return false;
   const yt = getYoutubeConns();
   return !!(yt && yt.elastic);
 }
@@ -143,7 +145,7 @@ async function getYoutubeDisplayHits(upper, sort, p, logger) {
       bool: {
         must: shared.must,
         filter: [
-          { term: { 'ad_type.keyword': 'DISPLAY' } },
+          { terms: { 'ad_type.keyword': ['DISPLAY', 'IMAGE'] } },
           { exists: { field: 'new_nas_image_url' } },
           ...shared.filter,
         ],
