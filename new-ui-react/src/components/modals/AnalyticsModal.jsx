@@ -114,6 +114,7 @@ import {
   ChevronRight,
   X,
   FileText,
+  Youtube,
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import { useAdInsights } from "../../hooks/useAdInsights";
@@ -1188,6 +1189,22 @@ const AnalyticsModal = ({
         icon: MapPin,
         color: "text-yellow-400",
       },
+      // YouTube display ads surfaced under GDN: show their true source platform + placement.
+      // ytSourced comes from the card; the placement check also catches deep-link opens
+      // (SEARCHFEED/HOMEFEED/DISCOVERY are YouTube-only positions, never native GDN).
+      ...((ad?.ytSourced || /SEARCHFEED|HOMEFEED|DISCOVERY/.test(String(d.ad_position || ad?.adPosition || "").toUpperCase())) ? [{
+        label: "SHOWN ON",
+        value: (() => {
+          const pos = String(d.ad_position || ad?.adPosition || "").toUpperCase();
+          const place = pos.includes("SEARCHFEED") ? "Search / Discovery feed"
+            : pos.includes("HOMEFEED") ? "Home feed"
+            : pos.includes("COMPANION") ? "Companion banner"
+            : pos.includes("SIDE") ? "Side rail" : "";
+          return place ? `YouTube · ${place}` : "YouTube";
+        })(),
+        icon: Youtube,
+        color: "text-red-500",
+      }] : []),
       {
         label: "SOURCE",
         value: d.source || "—",
