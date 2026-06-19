@@ -4,10 +4,9 @@ const { Router } = require('express');
 const { asyncHandler } = require('../../../middleware/errorHandler');
 const { authMiddleware, generateToken } = require('../../../middleware/auth');
 const databaseManager = require('../../../database/DatabaseManager');
-const { getUsersCount } = require('../controllers/getUsersCountController');
-const { getActiveUsers, getExpiredUsers, getPendingUsers } = require('../controllers/getUsersListController');
-const { getKeywords, getAdvertiser, getDomain, getProjects, getAllSearches: getUserActivitySearches, getSearchCounts } = require('../controllers/userActivitySearchController');
-const { getIntelligenceStats, getTopUsers, getAllSearches, getKeywordTrends, getProjectActivity, getOtherActivities, purgeOldActivities, getFilterOptions, getSummaryStats, getKeywordScrapingHistory } = require('../controllers/searchIntelligenceController');
+const { getAllSearches, getFilterOptions, getSummaryStats: getSearchesSummaryStats } = require('../controllers/userActivitySearchController');
+const { getIntelligenceStats, getTopUsers, purgeOldActivities, getKeywordScrapingHistory } = require('../controllers/searchIntelligenceController');
+const { getKeywordTrends, getProjectActivity, getTopKeywords, getSummaryStats: getTrendsSummaryStats } = require('../controllers/keyword_Trend_ProjectController');
 
 const ELASTIC_FALLBACK_NETWORKS = ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'pinterest', 'quora', 'native', 'gdn', 'google'];
 
@@ -41,102 +40,13 @@ function createAdmin_user_activityRoutes(service) {
     })
   );
 
-  // GET /api/v1/admin_user_activity/get-users-count
-  router.get(
-    '/get-users-count',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getUsersCount(req, service.db, service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // GET /api/v1/admin_user_activity/get-active-users?page=1&size=20
-  router.get(
-    '/get-active-users',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getActiveUsers(req, service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // GET /api/v1/admin_user_activity/get-expired-users?page=1&size=20
-  router.get(
-    '/get-expired-users',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getExpiredUsers(req, service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // GET /api/v1/admin_user_activity/get-pending-users?page=1&size=20
-  router.get(
-    '/get-pending-users',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getPendingUsers(req, service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // POST /api/v1/admin_user_activity/get-search-counts
-  router.post(
-    '/get-search-counts',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getSearchCounts(req, getElastic(service.db), service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // POST /api/v1/admin_user_activity/get-keywords
-  router.post(
-    '/get-keywords',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getKeywords(req, getElastic(service.db), service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // POST /api/v1/admin_user_activity/get-advertiser
-  router.post(
-    '/get-advertiser',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getAdvertiser(req, getElastic(service.db), service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // POST /api/v1/admin_user_activity/get-domain
-  router.post(
-    '/get-domain',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getDomain(req, getElastic(service.db), service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
-
-  // POST /api/v1/admin_user_activity/get-projects
-  router.post(
-    '/get-projects',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getProjects(req, getElastic(service.db), service.log);
-      return res.status(result.code === 401 ? 401 : 200).json(result);
-    })
-  );
 
   // POST /api/v1/admin_user_activity/get-all-searches
   router.post(
     '/get-all-searches',
     authMiddleware,
     asyncHandler(async (req, res) => {
-      const result = await getUserActivitySearches(req, getElastic(service.db), service.log);
+      const result = await getAllSearches(req, getElastic(service.db), service.log);
       return res.status(result.code === 401 ? 401 : 200).json(result);
     })
   );
@@ -179,7 +89,7 @@ function createAdmin_user_activityRoutes(service) {
     '/intelligence/summary',
     authMiddleware,
     asyncHandler(async (req, res) => {
-      const result = await getSummaryStats(req, getElastic(service.db), service.log);
+      const result = await getSearchesSummaryStats(req, getElastic(service.db), service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
@@ -213,6 +123,28 @@ function createAdmin_user_activityRoutes(service) {
     authMiddleware,
     asyncHandler(async (req, res) => {
       const result = await getKeywordTrends(req, getElastic(service.db), service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // GET /api/v1/admin_user_activity/intelligence/top-keywords
+  // Fetch top 10 keywords based on search count from user_activities
+  router.get(
+    '/intelligence/top-keywords',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getTopKeywords(req, getElastic(service.db), service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // GET /api/v1/admin_user_activity/intelligence/summary-stats
+  // Fetch all summary statistics (total, completed, under scraping, not went, etc) for Keyword Trends
+  router.get(
+    '/intelligence/summary-stats',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getTrendsSummaryStats(req, getElastic(service.db), service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

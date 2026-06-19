@@ -139,7 +139,10 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
   const [isFiltering, setIsFiltering] = useState(false);
   const [viewMode, setViewMode] = useState('map');
   const [searchQuery, setSearchQuery] = useState('');
-  const [deselected, setDeselected] = useState(new Set());
+  const [deselectedAd, setDeselectedAd] = useState(new Set());
+  const [deselectedAdvertiser, setDeselectedAdvertiser] = useState(new Set());
+  const deselected = level === 'ad' ? deselectedAd : deselectedAdvertiser;
+  const setDeselected = level === 'ad' ? setDeselectedAd : setDeselectedAdvertiser;
 
   // Reset state when navigating to a different ad
   useEffect(() => {
@@ -148,7 +151,8 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
     setIsFiltering(false);
     setViewMode('map');
     setSearchQuery('');
-    setDeselected(new Set());
+    setDeselectedAd(new Set());
+    setDeselectedAdvertiser(new Set());
   }, [adId]);
   const mapRootRef = useRef(null);
   const uniqueId = useId();
