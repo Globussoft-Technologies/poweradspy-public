@@ -239,6 +239,9 @@ const MasonryCard = ({
   // carry badgeNetwork:'gdn' so they show the GDN badge (while still routing to
   // YouTube via ad.network).
   const badgeNetwork = String(ad.badgeNetwork || ad.network || "").toLowerCase();
+  // YouTube display ads surfaced in GDN show the YouTube icon so they're distinguishable
+  // in the grid from native GDN ads (which keep the GDN icon).
+  const cornerNetwork = ad.ytSourced ? "youtube" : badgeNetwork;
   const adTypeLower = (ad.adType || "image").toLowerCase();
   const badge = AD_TYPE_BADGES[adTypeLower] || AD_TYPE_BADGES.image;
   const TypeIcon = AD_TYPE_ICONS[adTypeLower] || ImageIcon;
@@ -646,7 +649,7 @@ const MasonryCard = ({
                     letterSpacing: "0.35em",
                   }}
                 >
-                  AD CREATIVE · {badgeNetwork.toUpperCase()}
+                  AD CREATIVE · {cornerNetwork.toUpperCase()}
                 </span>
               </div>
 
@@ -688,7 +691,7 @@ const MasonryCard = ({
           )}
 
           {/* Top-left: triangular corner ribbon with platform icon — always visible */}
-          {PLATFORM_ICONS[badgeNetwork] && (
+          {PLATFORM_ICONS[cornerNetwork] && (
             <div className="absolute top-0 left-0 w-16 h-16 z-30 pointer-events-none overflow-hidden">
               <div
                 className="absolute inset-0 bg-white/20 flex items-center justify-center"
@@ -696,8 +699,8 @@ const MasonryCard = ({
               >
                 <div className="flex items-center gap-1 pr-5 pb-7">
                   <img
-                    src={PLATFORM_ICONS[badgeNetwork]}
-                    alt={badgeNetwork}
+                    src={PLATFORM_ICONS[cornerNetwork]}
+                    alt={cornerNetwork}
                     className="w-[22px] h-[22px] object-contain drop-shadow-sm"
                   />
                 </div>
