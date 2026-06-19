@@ -7,8 +7,9 @@
  * Optimized the same way as Native:
  *   - Translation capped at 3s
  *   - Image download starts immediately, overlaps with ALL DB work
- *   - 5 parallel pre-tx DB lookups
- *   - Transaction has only INSERTs (no lookups)
+ *   - Parallel pre-tx DB lookups for post owner, domain, language
+ *   - Country lookups/inserts are done inside the tx because the payload may
+ *     contain multiple comma-separated countries (platform 12/15 style)
  *   - All media uploads awaited before response (no fire-and-forget on SQL paths)
  *   - ES index fire-and-forget (search index only, SQL is source of truth)
  */
@@ -165,15 +166,11 @@ async function insertPath(ctx, n, { translation, network }) {
   const [
     postOwnerRes,
     domainRes,
-    countryOnlyRes,
-    countryRes,
     languageId,
   ] = await Promise.all([
     repo.getPostOwner(sql, n.post_owner),
-    domain ? repo.getDomain(sql, domain)                         : Promise.resolve({ code: 400, data: null }),
-    n.country ? repo.getCountryOnly(sql, n.country)              : Promise.resolve({ code: 400, data: null }),
-    n.country ? repo.getCountry(sql, n.city, n.state, n.country) : Promise.resolve({ code: 400, data: null }),
-    iso ? repo.getLanguageId(sql, iso)                           : Promise.resolve(0),
+    domain ? repo.getDomain(sql, domain) : Promise.resolve({ code: 400, data: null }),
+    iso ? repo.getLanguageId(sql, iso)   : Promise.resolve(0),
   ]);
 
   // Step 3 — transaction (only INSERTs, NAS URL already available)
@@ -198,21 +195,15 @@ async function insertPath(ctx, n, { translation, network }) {
     let domainId = 0;
     if (domain) domainId = domainRes.code === 200 ? domainRes.data[0].id : await repo.insertDomain(tx, domain);
 
-    // Country only
-    let countryOnlyId = 0;
-    if (n.country) {
-      countryOnlyId = countryOnlyRes.code === 200
-        ? countryOnlyRes.data[0].id
-        : await repo.insertCountryOnly(tx, n.country);
+    // Countries (split comma-separated list; each country gets its own row)
+    const countries = parseCountries(n.country);
+    const countryMappings = [];
+    for (const country of countries) {
+      countryMappings.push(await ensureCountry(tx, n.city, n.state, country));
     }
-
-    // Country
-    let countryId = 0;
-    if (n.country) {
-      countryId = countryRes.code === 200
-        ? countryRes.data[0].id
-        : await repo.insertCountry(tx, { city: n.city, state: n.state, country: n.country, country_only_id: countryOnlyId });
-    }
+    const lastCountry = countryMappings[countryMappings.length - 1] || { countryId: 0, countryOnlyId: 0 };
+    const countryId = lastCountry.countryId;
+    const countryOnlyId = lastCountry.countryOnlyId;
 
     // pinterest_ad main row
     const pinterestAdId = await repo.insertPinterestAd(tx, stripNulls({
@@ -253,9 +244,10 @@ async function insertPath(ctx, n, { translation, network }) {
     });
 
     // Countries
-    if (countryOnlyId) {
-      await repo.insertPinterestAdCountry(tx, { pinterest_ad_id: pinterestAdId, country_id: countryId, country_only_id: countryOnlyId, count: 1 });
-      await repo.insertPinterestAdCountryOnly(tx, { pinterest_ad_id: pinterestAdId, country_only_id: countryOnlyId, count: 1 });
+    for (const { countryId: cid, countryOnlyId: coid } of countryMappings) {
+      if (!coid) continue;
+      await repo.insertPinterestAdCountry(tx, { pinterest_ad_id: pinterestAdId, country_id: cid, country_only_id: coid, count: 1 });
+      await repo.insertPinterestAdCountryOnly(tx, { pinterest_ad_id: pinterestAdId, country_only_id: coid, count: 1, ip_address: n.ip_address });
     }
 
     // Meta data
@@ -320,24 +312,13 @@ async function updatePath(ctx, n, { existingId, network }) {
   const firstSeen = adRow.data?.[0]?.first_seen ?? n.first_seen;
   const daysRunning = computeDaysRunning(firstSeen, n.last_seen);
 
-  // Parallel: update ad + lookups
-  const [, countryOnlyRes] = await Promise.all([
-    repo.updatePinterestAd(sql, { last_seen: n.last_seen, days_running: daysRunning }, adId),
-    n.country ? repo.getCountryOnly(sql, n.country) : Promise.resolve({ code: 400, data: null }),
-  ]);
+  // Update ad row
+  await repo.updatePinterestAd(sql, { last_seen: n.last_seen, days_running: daysRunning }, adId);
 
-  // Country upsert
-  let countryOnlyId = 0, countryId = 0;
-  if (n.country) {
-    countryOnlyId = countryOnlyRes.code === 200
-      ? countryOnlyRes.data[0].id
-      : await repo.insertCountryOnly(sql, n.country);
-
-    const cRes = await repo.getCountry(sql, n.city, n.state, n.country);
-    countryId = cRes.code === 200
-      ? cRes.data[0].id
-      : await repo.insertCountry(sql, { city: n.city, state: n.state, country: n.country, country_only_id: countryOnlyId });
-
+  // Country upsert (split comma-separated list; each country gets its own row)
+  const countryList = parseCountries(n.country);
+  for (const country of countryList) {
+    const { countryId, countryOnlyId } = await ensureCountry(sql, n.city, n.state, country);
     const [crRes, coRes] = await Promise.all([
       repo.getPinterestAdCountry(sql, adId, countryId),
       repo.getPinterestAdCountryOnly(sql, adId, countryOnlyId),
@@ -348,7 +329,7 @@ async function updatePath(ctx, n, { existingId, network }) {
         : repo.insertPinterestAdCountry(sql, { pinterest_ad_id: adId, country_id: countryId, country_only_id: countryOnlyId, count: 1 }),
       coRes.code === 200
         ? repo.updatePinterestAdCountryOnlyCount(sql, coRes.data[0].id)
-        : repo.insertPinterestAdCountryOnly(sql, { pinterest_ad_id: adId, country_only_id: countryOnlyId, count: 1 }),
+        : repo.insertPinterestAdCountryOnly(sql, { pinterest_ad_id: adId, country_only_id: countryOnlyId, count: 1, ip_address: n.ip_address }),
     ]);
   }
 
@@ -466,17 +447,21 @@ async function updatePath(ctx, n, { existingId, network }) {
 async function indexAd(ctx, pinterestAdId, n, result) {
   const { db } = ctx;
   if (!db.elastic) return;
-  const joined = await repo.getJoinedAd(db.sql, pinterestAdId);
+  const [joined, countries] = await Promise.all([
+    repo.getJoinedAd(db.sql, pinterestAdId),
+    repo.getAdCountriesList(db.sql, pinterestAdId),
+  ]);
   const row = joined[0];
   if (!row) return;
 
   const extra = {
-    lang_detect:              (result.iso || '').toLowerCase(),
-    'pinterest_ad.platform':  n.platform,
+    lang_detect:                       (result.iso || '').toLowerCase(),
+    'pinterest_ad.platform':           n.platform,
+    'pinterest_country_only.country':  countries,
     states: n.state ? n.state.split(',').map((s) => s.trim()).filter(Boolean) : [],
     city:   n.city  ? n.city.split(',').map((s) => s.trim()).filter(Boolean)  : [],
-    image_url_original:       result.imageUrlOriginal ?? null,
-    post_owner_image:         result.postOwnerNasImage ?? row.post_owner_image ?? null,
+    image_url_original:                result.imageUrlOriginal ?? null,
+    post_owner_image:                  result.postOwnerNasImage ?? row.post_owner_image ?? null,
   };
 
   // PHP: Image → set image_url + new_nas_image_url only
@@ -532,6 +517,25 @@ function computeDaysRunning(firstSeen, lastSeen) {
     const diff = Math.floor((toDate(lastSeen) - toDate(firstSeen)) / 86400000);
     return diff > 1 ? diff + 1 : 1;
   } catch { return 1; }
+}
+
+function parseCountries(countryStr) {
+  if (!countryStr || typeof countryStr !== 'string') return [];
+  return countryStr.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+async function ensureCountry(exec, city, state, country) {
+  let countryOnlyRes = await repo.getCountryOnly(exec, country);
+  const countryOnlyId = countryOnlyRes.code === 200
+    ? countryOnlyRes.data[0].id
+    : await repo.insertCountryOnly(exec, country);
+
+  let countryRes = await repo.getCountry(exec, city, state, country);
+  const countryId = countryRes.code === 200
+    ? countryRes.data[0].id
+    : await repo.insertCountry(exec, { city, state, country, country_only_id: countryOnlyId });
+
+  return { countryId, countryOnlyId };
 }
 
 module.exports = { processPinterestAd };

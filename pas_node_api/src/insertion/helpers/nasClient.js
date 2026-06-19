@@ -27,8 +27,22 @@ const axios = require('axios');
 const https = require('https');
 const config = require('../../config');
 const logger = require('../../logger');
+const { enqueueFailedUpload } = require('./nasUploadQueue');
 
 const log = logger.createChild('nas-client');
+
+// The NAS media host (media.globussoft.com) is behind Cloudflare and intermittently
+// returns transient 5xx/429 (origin overloaded). We try a couple of QUICK in-request
+// attempts (short timeout so the API never waits long); if they all fail we DON'T block
+// — we hand the bytes to the durable retry queue and return the deterministic predicted
+// path, so the ad references the eventual file and a background cron finishes the upload.
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const UPLOAD_MAX_ATTEMPTS = 2;     // in-request attempts before deferring to the queue
+const UPLOAD_RETRY_BASE_MS = 300;  // backoff between in-request attempts
+// Short per-attempt timeout so a slow/down NAS can't stall the insertion response.
+// (Downloads still use the full nas.timeoutMs.) Override via config.insertion.nas.uploadTimeoutMs.
+const UPLOAD_TIMEOUT_MS = config.insertion.nas.uploadTimeoutMs || 10000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const DEFAULT_IMAGE = '/DefaultImage.jpg';
 
@@ -134,22 +148,53 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
     const mediaPath = (nas.mediaUploadPath || '/{bucket}/upload').replace('{bucket}', resolveBucket());
     const url = joinUrl(nas.mediaUrl, mediaPath);
 
-    const form = new FormData();
-    form.append('key', key);
-    form.append('file', fs.createReadStream(filePath), { filename: fileName });
+    // A few QUICK in-request attempts (short timeout). The FormData is rebuilt each
+    // attempt because a fs.createReadStream is single-use (can't replay).
+    let lastStatus, lastBody;
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+      const form = new FormData();
+      form.append('key', key);
+      form.append('file', fs.createReadStream(filePath), { filename: fileName });
 
-    const res = await axios.post(url, form, {
-      headers: { ...form.getHeaders(), Authorization: `Bearer ${nas.mediaToken}` },
-      timeout: nas.timeoutMs,
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      httpsAgent: nasAgent(),
-      validateStatus: () => true,
-    });
+      let res = null;
+      try {
+        res = await axios.post(url, form, {
+          headers: { ...form.getHeaders(), Authorization: `Bearer ${nas.mediaToken}` },
+          timeout: UPLOAD_TIMEOUT_MS,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          httpsAgent: nasAgent(),
+          validateStatus: () => true,
+        });
+      } catch (err) {
+        // network/timeout error — treat as retryable
+        lastStatus = 0; lastBody = { error: err.message };
+        if (attempt < UPLOAD_MAX_ATTEMPTS) { await sleep(UPLOAD_RETRY_BASE_MS * attempt); continue; }
+        break;
+      }
 
-    if (res.data?.ok && res.data?.path) return res.data.path;
+      if (res.data?.ok && res.data?.path) return res.data.path;
 
-    log.error('NAS upload failed', { status: res.status, body: res.data });
+      lastStatus = res.status; lastBody = res.data;
+      if (RETRYABLE_STATUS.has(res.status) && attempt < UPLOAD_MAX_ATTEMPTS) {
+        log.warn('NAS upload transient failure — retrying', { status: res.status, attempt, key });
+        await sleep(UPLOAD_RETRY_BASE_MS * attempt);
+        continue;
+      }
+      break; // success handled above; here it's non-retryable or out of attempts
+    }
+
+    // In-request attempts exhausted. DON'T block or lose the media: persist the bytes to
+    // the durable queue (a background cron re-uploads to the SAME key) and return the
+    // DETERMINISTIC path the file WILL have, so the ad references it now and self-heals
+    // once the cron succeeds. Needs a real extension (NAS requires one); else fall back.
+    if (fileExt && enqueueFailedUpload({ filePath, url, key, fileName })) {
+      const predictedPath = `/${resolveBucket()}/stream/${key}.${fileExt}`;
+      log.warn('NAS upload deferred to retry queue (returning predicted path)', { status: lastStatus, key, predictedPath });
+      return predictedPath;
+    }
+
+    log.error('NAS upload failed', { status: lastStatus, body: lastBody, attempts: UPLOAD_MAX_ATTEMPTS });
     return failVal;
   } catch (err) {
     log.error('Error in NAS upload', { error: err.message });

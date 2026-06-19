@@ -239,8 +239,8 @@ async function getPinterestAdCountryOnly(exec, adId, countryOnlyId) {
 
 async function insertPinterestAdCountryOnly(exec, d) {
   return firstId(await exec.query(
-    'INSERT INTO pinterest_ad_countries_only (pinterest_ad_id, country_only_id, count) VALUES (?,?,?)',
-    [d.pinterest_ad_id, d.country_only_id, d.count ?? 1]
+    'INSERT INTO pinterest_ad_countries_only (pinterest_ad_id, country_only_id, count, ip_address) VALUES (?,?,?,?)',
+    [d.pinterest_ad_id, d.country_only_id, d.count ?? 1, d.ip_address ?? '']
   ));
 }
 

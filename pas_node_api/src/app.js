@@ -191,6 +191,18 @@ async function createApp() {
     }
   }
 
+  // NAS media upload retry cron — re-uploads media that failed during insertion
+  // (media.globussoft.com transient outages) from on-disk persisted bytes. One worker
+  // per machine; independent of notifications. No data loss even if NAS was down.
+  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+    try {
+      const { initNasUploadRetryCron } = require('./jobs/nasUploadRetryCron');
+      initNasUploadRetryCron();
+    } catch (error) {
+      log.error('Failed to initialize NAS upload retry cron', { error: error.message });
+    }
+  }
+
   return app;
 }
 
