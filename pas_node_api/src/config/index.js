@@ -214,6 +214,8 @@ const config = {
     deleteToken: getVal(fileConfig.insertion?.deleteToken, 'API_DELETE_TOKEN') || '',
     // ES field prefix carried over on UPDATE re-index (PHP TRANSLATION_FEILD).
     translationField: getVal(fileConfig.insertion?.translationField, 'TRANSLATION_FEILD') || 'facebook_translations',
+    // XOR key for the encrypted `data` field on user-chk (PHP env DECRYPTION_KEY).
+    decryptionKey: getVal(fileConfig.insertion?.decryptionKey, 'DECRYPTION_KEY') || '',
     // Shared NAS media-upload settings (common helper, used by all networks). config.json → env.
     nas: {
       videoUrl: getVal(fileConfig.insertion?.nas?.videoUrl, 'NAS_VIDEO_URL') || '',

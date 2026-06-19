@@ -21,6 +21,7 @@ const {
   getAdvertiserCountryData,
   getAdvertiserInsightsByDateRange,
   } = require('../controllers/adInsightsController');
+const { userChk } = require('../controllers/userCheckController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
@@ -213,6 +214,19 @@ function createInstagramRoutes(service) {
     asyncHandler(async (req, res) => {
       const result = await unHide(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // ─── User Check / Upsert (browser extension) ───────────
+  // POST /api/v1/instagram/user-chk  → UserController@instagram_user_data
+  // Public (no auth in PHP); the payload may be XOR-encrypted in body.data.
+  router.post(
+    '/user-chk',
+    asyncHandler(async (req, res) => {
+      const result = await userChk(req, service.db, service.log);
+      // PHP returns json_encode($response) as a plain string → HTTP 200 always;
+      // the app-level status lives in the body `code` (the extension reads that).
+      return res.status(200).json(result);
     })
   );
 

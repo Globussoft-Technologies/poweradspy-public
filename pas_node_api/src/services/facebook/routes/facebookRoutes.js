@@ -34,6 +34,7 @@ const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
 const validator = require('../../../middleware/validator');
 const { getAdsByAdvertiser } = require('../controllers/getAdsByAdvertiserController');
+const { userChk, adsData } = require('../controllers/userCheckController');
 const searchSchema = {
   body: {
     page:      { type: 'number' },
@@ -216,6 +217,29 @@ function createFacebookRoutes(service) {
         .json(result);
     })
   );
+
+  // ─── User Check (browser extension) ────────────────────
+  // POST /api/v1/facebook/user-chk  → Userv2Controller@checkFbUser  (check-only)
+  // Public (no auth in PHP); the payload may be XOR-encrypted in body.data.
+  router.post(
+    '/user-chk',
+    asyncHandler(async (req, res) => {
+      const result = await userChk(req, service.db, service.log);
+      // PHP returns json_encode($response) → HTTP 200 always; app status is body.code.
+      return res.status(200).json(result);
+    })
+  );
+
+  // ─── User Insert / Update (browser extension) ──────────
+  // POST /api/v1/facebook/ads-data  → Userv2Controller@fb_user_data  (insert/update)
+  router.post(
+    '/ads-data',
+    asyncHandler(async (req, res) => {
+      const result = await adsData(req, service.db, service.log);
+      return res.status(200).json(result);
+    })
+  );
+
   return router;
 }
 

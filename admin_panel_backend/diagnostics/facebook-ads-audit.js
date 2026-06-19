@@ -25,7 +25,7 @@
  * (ENABLE_DELETE = false) — see deleteFlow() — so for now this only reports.
  *
  * Every audit run is ALSO written to
- * diagnostics/audit-reports/facebook-audit-<timestamp>.{json,txt}
+ * diagnostics/audit-reports/facebook-audit-<timestamp>.{json,xlsx}
  * automatically — incrementally, so the ES portion is on disk before the SQL
  * audit even starts, and a hang / Ctrl-C still leaves whatever finished. A
  * per-operation timeout means a stuck ES/MySQL connection errors out (and gets
@@ -47,6 +47,7 @@ const readline = require('readline');
 const queryDatabase = require('../db-connections/connection');
 const searchAllInstances = require('../es-connections/connection');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { writeXlsx } = require('./xlsx-writer');
 
 // --------------------------------------------------------------------------
 // HARD SAFETY SWITCH. Deletion is intentionally not enabled yet — this run is
@@ -327,9 +328,9 @@ function writeReport() {
   if (!runBase) startRun();
   try {
     fs.writeFileSync(`${runBase}.json`, JSON.stringify(lastReport, null, 2), 'utf8');
-    fs.writeFileSync(`${runBase}.txt`, renderText(lastReport), 'utf8');
+    fs.writeFileSync(`${runBase}.xlsx`, writeXlsx(buildSheets(lastReport)));
   } catch (e) {
-    bad(`Failed to write log file: ${e.message}`);
+    bad(`Failed to write report file: ${e.message}`);
     return null;
   }
   return runBase;
@@ -348,7 +349,7 @@ function announceRun() {
   if (!runBase) { warn('No report on disk (audit produced nothing).'); return; }
   sub('Detailed report written to:');
   info(`${runBase}.json`);
-  info(`${runBase}.txt`);
+  info(`${runBase}.xlsx`);
 }
 
 // Manual re-export from the menu — writes the in-memory report to a fresh file.
@@ -360,34 +361,77 @@ function exportReport() {
   return runBase;
 }
 
-function renderText(rep) {
-  const L = [];
-  L.push('FACEBOOK UNHEALTHY-ADS AUDIT');
-  L.push(`generated: ${rep.generatedAt}`);
-  L.push('');
+// Numeric percentage (1 dp) for spreadsheet cells, e.g. 76.8.
+const pctNum = (n, d) => (d ? Number(((n / d) * 100).toFixed(1)) : 0);
+
+// Build the workbook as an array of { name, rows } sheets:
+//   Summary     — headline counts for each store
+//   Factors     — every unhealthy factor + its count
+//   ES Samples  — one row per Elasticsearch sample doc
+//   SQL Samples — one row per MySQL sample row
+function buildSheets(rep) {
+  const sheets = [];
+
+  // ---- Summary ----
+  const summary = [
+    ['Facebook Unhealthy-Ads Audit'],
+    ['Generated', rep.generatedAt],
+    [],
+  ];
   if (rep.elasticsearch) {
     const r = rep.elasticsearch;
-    L.push(`== ELASTICSEARCH (${r.index}) ==`);
-    L.push(`total=${r.total} displayable=${r.displayable} unhealthy=${r.unhealthy} (${pct(r.unhealthy, r.total)})`);
-    L.push(`type: IMAGE=${r.typeDistribution.IMAGE} VIDEO=${r.typeDistribution.VIDEO} OTHER=${r.typeDistribution.OTHER}`);
-    r.factors.forEach((f) => {
-      L.push(`  - ${f.label}: ${f.count}`);
-      f.samples.forEach((s) => L.push(`      _id=${s._id} fbId=${s.ad_id} type=${s.type} img=${trunc(s.new_nas_image_url)} thumb=${trunc(s.Thumbnail)}`));
-    });
-    L.push('');
+    summary.push(['ELASTICSEARCH', r.index]);
+    summary.push(['Metric', 'Value']);
+    summary.push(['Total docs', r.total]);
+    summary.push(['Displayable (passes)', r.displayable]);
+    summary.push(['Unhealthy (fails)', r.unhealthy]);
+    summary.push(['Unhealthy %', pctNum(r.unhealthy, r.total)]);
+    summary.push(['Type: IMAGE', r.typeDistribution.IMAGE]);
+    summary.push(['Type: VIDEO', r.typeDistribution.VIDEO]);
+    summary.push(['Type: OTHER', r.typeDistribution.OTHER]);
+    summary.push([]);
   }
   if (rep.mysql) {
     const r = rep.mysql;
-    L.push(`== MYSQL (${r.database} / ${r.mediaTable}) ==`);
-    L.push(`total=${r.total} healthy=${r.healthy} unhealthy=${r.unhealthy} (${pct(r.unhealthy, r.total)})`);
-    Object.entries(r.byType).forEach(([t, b]) =>
-      L.push(`  ${t}: unhealthy=${b.unhealthy}/${b.total} (missing_row=${b.missing_row} empty=${b.empty_content})`));
-    r.factors.forEach((f) => {
-      L.push(`  - ${f.label}: ${f.count}`);
-      f.samples.forEach((s) => L.push(`      id=${s.id} ad_id=${s.ad_id} type=${s.type} last_seen=${fmtDate(s.last_seen)}`));
+    summary.push(['MYSQL', `${r.database} / ${r.mediaTable}`]);
+    summary.push(['Metric', 'Value']);
+    summary.push(['Total ads', r.total]);
+    summary.push(['Healthy', r.healthy]);
+    summary.push(['Unhealthy', r.unhealthy]);
+    summary.push(['Unhealthy %', pctNum(r.unhealthy, r.total)]);
+    Object.entries(r.byType).forEach(([t, b]) => {
+      summary.push([`${t}: unhealthy`, b.unhealthy]);
+      summary.push([`${t}: missing_row`, b.missing_row]);
+      summary.push([`${t}: empty_content`, b.empty_content]);
     });
   }
-  return L.join('\n') + '\n';
+  sheets.push({ name: 'Summary', rows: summary });
+
+  // ---- Factors ----
+  const factors = [['Store', 'Factor', 'Description', 'Count']];
+  if (rep.elasticsearch) rep.elasticsearch.factors.forEach((f) => factors.push(['ES', f.key, f.label, f.count]));
+  if (rep.mysql) rep.mysql.factors.forEach((f) => factors.push(['SQL', f.key, f.label, f.count]));
+  sheets.push({ name: 'Factors', rows: factors });
+
+  // ---- ES Samples ----
+  if (rep.elasticsearch) {
+    const rows = [['Factor', 'ES _id', 'facebook_ad.id', 'type', 'last_seen', 'new_nas_image_url', 'Thumbnail', 'url']];
+    rep.elasticsearch.factors.forEach((f) =>
+      (f.samples || []).forEach((s) =>
+        rows.push([f.key, s._id, s.ad_id, s.type, s.last_seen, s.new_nas_image_url, s.Thumbnail, s.url])));
+    sheets.push({ name: 'ES Samples', rows });
+  }
+
+  // ---- SQL Samples ----
+  if (rep.mysql) {
+    const rows = [['Factor', 'id', 'ad_id', 'type', 'last_seen']];
+    rep.mysql.factors.forEach((f) =>
+      (f.samples || []).forEach((s) =>
+        rows.push([f.key, s.id, s.ad_id, s.type, fmtDate(s.last_seen)])));
+    sheets.push({ name: 'SQL Samples', rows });
+  }
+
+  return sheets;
 }
 
 // ==========================================================================
@@ -433,7 +477,7 @@ ${'═'.repeat(78)}
   PAS — FACEBOOK UNHEALTHY-ADS AUDIT   (read-only)
   ES index: ${FB.esIndex}   |   DB: ${FB.database}   |   samples/factor: ${SAMPLE_SIZE}
 ${'═'.repeat(78)}
-  Every audit is auto-saved to diagnostics/audit-reports/ (JSON + text).
+  Every audit is auto-saved to diagnostics/audit-reports/ (JSON + Excel).
   1) Run ES audit       (Elasticsearch displayable-media filter)
   2) Run SQL audit      (facebook_ad / facebook_ad_image_video)
   3) Run BOTH           (full report)
