@@ -218,6 +218,9 @@ async function updatePath(ctx, rawAd, { userId, translation, existingId }) {
   if (userId) await upsertAdUser(sql, adId, userId, n.platform);
   if (!n.destination_url) await repo.updateMetaBuiltWith(sql, adId, 4).catch(() => {});
 
+  // meta initial_url refresh on update (so existing ads populate too)
+  if (n.initial_url) await repo.updateMetaInitialUrl(sql, adId, n.initial_url).catch(() => {});
+
   const countryOnly = n.country ? await repo.upsertCountryOnly(sql, [n.country]) : [];
   if (countryOnly.length) await repo.upsertAdCountriesOnly(sql, countryOnly.map((c) => ({ ...c, instagram_ad_id: adId })));
 
@@ -302,6 +305,7 @@ async function insertMetaData(tx, n, adId) {
   await repo.insertMetaData(tx, {
     instagram_ad_id: adId,
     destination_url: n.destination_url ?? null,
+    initial_url: n.initial_url ?? null,
     firstSeenOnDesktop: src === 'desktop' ? nowDateTime() : null,
     firstSeenOnAndroid: src === 'android' ? nowDateTime() : null,
     firstSeenOnIos: src === 'ios' ? nowDateTime() : null,

@@ -140,7 +140,7 @@ async function insertPath(ctx, n, { translation }) {
 
     // meta_data
     if ((await repo.getMetaData(tx, instagramAdId)).code !== 200) {
-      await repo.insertMetaData(tx, { instagram_ad_id: instagramAdId, destination_url: n.destination_url ?? 'null', screenshot_url: 'processing.gif', platform: toInt(n.platform), ad_url: n.meta_ad_url ?? '' });
+      await repo.insertMetaData(tx, { instagram_ad_id: instagramAdId, destination_url: n.destination_url ?? 'null', initial_url: n.initial_url ?? null, screenshot_url: 'processing.gif', platform: toInt(n.platform), ad_url: n.meta_ad_url ?? '' });
     }
 
     // child countries (array form)
@@ -208,6 +208,9 @@ async function updatePath(ctx, n, { translation, existingId }) {
       if (mm) { await repo.upsertAdImageVideo(sql, mm).catch(() => {}); mediaPaths.multimedia = mm; }
     }
   }
+
+  // meta initial_url refresh on update (so existing ads populate too)
+  if (n.initial_url) await repo.updateMetaInitialUrl(sql, adId, n.initial_url).catch(() => {});
 
   const carryOver = await fetchCarryOver(ctx, adId);
   await deleteEsDoc(ctx, adId).catch(() => {});

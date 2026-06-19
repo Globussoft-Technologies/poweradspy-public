@@ -27,6 +27,7 @@ const AD_DETAIL_SQL = `
     instagram_ad_meta_data.ad_url,
     instagram_ad_meta_data.built_with_analytics_tracking,
     instagram_ad_meta_data.destination_url,
+    instagram_ad_meta_data.initial_url,
 
     instagram_ad_meta_data.built_with,
     instagram_ad_meta_data.affiliate_data,
@@ -239,6 +240,7 @@ async function getAdDetails(req, db, logger) {
             final_url:       source['instagram_ad_outgoing_links.final_url']    || null,
             url_redirects:   source['instagram_ad_url.url_redirects']           || null,
             destination_url: source['instagram_ad_meta_data.destination_url']   || null,
+            initial_url:     source['instagram_ad_meta_data.initial_url']       || null,
           };
 
           if (source['instagram_ad_domain.domain_registered_date'] !== undefined) adData.domain_registered_date = source['instagram_ad_domain.domain_registered_date'];

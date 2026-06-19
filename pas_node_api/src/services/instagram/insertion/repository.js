@@ -61,6 +61,7 @@ async function getJoinedAd(exec, whereVal) {
            ANY_VALUE(instagram_country.country) AS country_row,
            ANY_VALUE(instagram_user.gender) AS gender,
            ANY_VALUE(instagram_ad_meta_data.destination_url) AS destination_url,
+           ANY_VALUE(instagram_ad_meta_data.initial_url) AS initial_url,
            ANY_VALUE(instagram_ad_meta_data.built_with) AS built_with,
            ANY_VALUE(instagram_ad_meta_data.built_with_analytics_tracking) AS built_with_analytics_tracking,
            ANY_VALUE(instagram_ad_meta_data.affiliate_data) AS affiliate_data,
@@ -341,6 +342,9 @@ async function insertMetaData(exec, data) {
 async function updateMetaBuiltWith(exec, adId, builtWithStatus) {
   return affected(await exec.query('UPDATE instagram_ad_meta_data SET built_with_status = ? WHERE instagram_ad_id = ?', [builtWithStatus, adId]));
 }
+async function updateMetaInitialUrl(exec, adId, initialUrl) {
+  return affected(await exec.query('UPDATE instagram_ad_meta_data SET initial_url = ? WHERE instagram_ad_id = ?', [initialUrl, adId]));
+}
 
 // ── instagram_meta_ad_budget (dedup meta_ad_id) ─────────────────────────────────
 async function budgetExists(exec, metaAdId) {
@@ -478,7 +482,7 @@ module.exports = {
   insertComment, upsertAdImageVideo,
   insertAdCountries, insertAdCountriesOnly, upsertAdCountriesOnly,
   getAdUser, insertAdUser, bumpAdUserCount, setAdUserIdStatus,
-  getMetaData, insertMetaData, updateMetaBuiltWith,
+  getMetaData, insertMetaData, updateMetaBuiltWith, updateMetaInitialUrl,
   budgetExists, insertBudget,
   upsertTranslation,
   getUserByInstagramId, getUserInstagramIdByCountry, updateUser,
