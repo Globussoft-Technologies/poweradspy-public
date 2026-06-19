@@ -193,13 +193,19 @@ const BasicInfo = ({
     });
   } else if (p === "youtube" || p === "yt") {
     // YouTube redirect chain: ad-click/tracker -> hops (funnels/trackers) -> final landing.
-    // redirect_urls (captured array, ~138k ads) holds the hop list; destination_url is the final.
-    const ytArr = Array.isArray(adDetails?.redirect_urls)
-      ? adDetails.redirect_urls.map((u) => (u || "").trim()).filter(Boolean)
-      : typeof adDetails?.redirect_urls === "string" && adDetails.redirect_urls
-        ? [adDetails.redirect_urls]
-        : [];
-    const ytFinal = sanitizeUrl(adDetails?.destination_url) || sanitizeUrl(ytArr[ytArr.length - 1]);
+    // redirect_urls (captured ~138k ads) holds the hop list and is nested under
+    // market_platform_urls by the ad-detail API (adDetailController); it may arrive as an
+    // array, a "||"-joined string, or a single string. destination_url is the final lander.
+    const ytRaw = mpUrls?.redirect_urls ?? adDetails?.redirect_urls;
+    const ytArr = (Array.isArray(ytRaw)
+      ? ytRaw
+      : typeof ytRaw === "string" && ytRaw
+        ? ytRaw.split("||")
+        : []
+    ).map((u) => (u || "").trim()).filter(Boolean);
+    const ytFinal = sanitizeUrl(adDetails?.destination_url)
+      || sanitizeUrl(mpUrls?.destination_url)
+      || sanitizeUrl(ytArr[ytArr.length - 1]);
     const ytInitial = sanitizeUrl(ytArr[0]) || ytFinal || initialUrl;
     basicRows = [
       {
