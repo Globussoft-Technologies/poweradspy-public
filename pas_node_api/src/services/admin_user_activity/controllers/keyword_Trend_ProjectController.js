@@ -196,6 +196,176 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
   return results;
 }
 
+// ─── GET /intelligence/total-ads-count ──────────────────────────────────────
+// Query params: type (1=keyword, 2=advertiser, 3=domain), period (today|all)
+// Returns: total ads count for all items of given type with per-platform breakdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getTotalAdsCount(req, elastic, logger) {
+  let client = null;
+  try {
+    const mongoUri = config.databases?.mongo?.uri;
+    let mongoDatabase = config.databases?.mongo?.database;
+
+    let dbFromUri = null;
+    if (mongoUri) {
+      const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
+      if (match) {
+        dbFromUri = match[1];
+      }
+    }
+
+    const finalDatabase = dbFromUri || mongoDatabase;
+
+    if (!mongoUri || !finalDatabase) {
+      return { code: 500, message: 'MongoDB not available' };
+    }
+
+    client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
+    await client.connect();
+    const mongoDb = client.db(finalDatabase);
+
+    const { type = 1 } = req.query;
+    const typeNum = Number(type);
+
+    if (![1, 2, 3].includes(typeNum)) {
+      return { code: 400, message: 'Invalid type. Use: 1 (keyword), 2 (advertiser), or 3 (domain)' };
+    }
+
+    // Fetch all keywords/advertisers/domains of given type
+    const collection = mongoDb.collection('keyword_searches');
+    const docs = await collection.find({ type: typeNum }).toArray();
+
+    if (docs.length === 0) {
+      return {
+        code: 200,
+        data: {
+          today_ads_count: 0,
+          total_ads_count: 0,
+          type: typeNum,
+          today_per_platform: {},
+          total_per_platform: {},
+          items_count: 0
+        }
+      };
+    }
+
+    // Get today's date boundaries
+    const now = new Date();
+    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+    // Collect ads count separated by today vs previous days
+    const todayPlatformAdsCount = {};
+    const totalPlatformAdsCount = {};
+    let todayAdsCount = 0;
+    let totalAdsCount = 0;
+    const keywordBreakdown = [];
+
+    for (const doc of docs) {
+      const searchValue = doc.value;
+      const platforms = doc.networks || [];
+      const scrapingHistory = doc.scrapping_status || [];
+
+      if (scrapingHistory.length === 0) continue;
+
+      let keywordTodayCount = 0;
+      let keywordTotalCount = 0;
+      const keywordTodayPlatforms = {};
+      const keywordTotalPlatforms = {};
+
+      // Fetch ads for each scraping run
+      for (const run of scrapingHistory) {
+        try {
+          const runPlatforms = run.network ? [run.network] : platforms;
+          const startTime = run.startTime;
+          const endTime = run.endTime || new Date().toISOString();
+          const runStartDate = new Date(startTime);
+
+          const adsCount = await fetchAdsCountByPlatform(
+            elastic,
+            runPlatforms,
+            null,
+            searchValue,
+            typeNum,
+            logger,
+            startTime,
+            endTime
+          );
+
+          const count = adsCount || 0;
+
+          // Check if this run is from today
+          const isToday = runStartDate >= todayStart && runStartDate < todayEnd;
+
+          if (isToday) {
+            keywordTodayCount += count;
+            todayAdsCount += count;
+            for (const platform of runPlatforms) {
+              if (!keywordTodayPlatforms[platform]) {
+                keywordTodayPlatforms[platform] = 0;
+              }
+              keywordTodayPlatforms[platform] += count;
+              if (!todayPlatformAdsCount[platform]) {
+                todayPlatformAdsCount[platform] = 0;
+              }
+              todayPlatformAdsCount[platform] += count;
+            }
+          } else {
+            keywordTotalCount += count;
+            totalAdsCount += count;
+            for (const platform of runPlatforms) {
+              if (!keywordTotalPlatforms[platform]) {
+                keywordTotalPlatforms[platform] = 0;
+              }
+              keywordTotalPlatforms[platform] += count;
+              if (!totalPlatformAdsCount[platform]) {
+                totalPlatformAdsCount[platform] = 0;
+              }
+              totalPlatformAdsCount[platform] += count;
+            }
+          }
+        } catch (err) {
+          logger?.warn?.('[getTotalAdsCount] Failed to fetch ads for run:', run, err.message);
+        }
+      }
+
+      // Add to keyword breakdown if has any ads
+      if (keywordTodayCount > 0 || keywordTotalCount > 0) {
+        keywordBreakdown.push({
+          keyword: searchValue,
+          today_ads_count: keywordTodayCount,
+          total_ads_count: keywordTotalCount,
+          today_per_platform: keywordTodayPlatforms,
+          total_per_platform: keywordTotalPlatforms
+        });
+      }
+    }
+
+    const typeLabel = typeNum === 1 ? 'keywords' : typeNum === 2 ? 'advertisers' : 'domains';
+
+    return {
+      code: 200,
+      data: {
+        today_ads_count: todayAdsCount,
+        total_ads_count: totalAdsCount,
+        type: typeNum,
+        type_label: typeLabel,
+        today_per_platform: todayPlatformAdsCount,
+        total_per_platform: totalPlatformAdsCount,
+        items_count: docs.length,
+        breakdown: keywordBreakdown
+      }
+    };
+  } catch (err) {
+    logger?.error?.('[getTotalAdsCount] Error:', err);
+    return { code: 500, message: 'Internal server error', error: err.message };
+  } finally {
+    if (client) {
+      await client.close();
+    }
+  }
+}
 
 // ─── GET /intelligence/projects ──────────────────────────────────────────────
 // Paginated list of project activity docs (last 90 days), sorted by dateTime desc.
@@ -727,39 +897,6 @@ async function getSummaryStats(req, elastic, logger) {
     const allUnderScraping = allFacets.under_scraping?.[0]?.count || 0;
     const allNotWent = allFacets.not_went_scrapping?.[0]?.count || 0;
 
-    // Fetch total ads count from respective platform indices
-    let totalAdsCount = 0;
-    if (elastic) {
-      try {
-        const fieldName = type === 'keyword' ? 'search.keyword' : type === 'advertiser' ? 'search.advertiser' : 'search.domain';
-
-        const adsCountResponse = await elastic.search({
-          index: '*',
-          body: {
-            size: 0,
-            query: {
-              bool: {
-                filter: [
-                  { exists: { field: fieldName } }
-                ]
-              }
-            },
-            aggs: {
-              total_ads: {
-                sum: {
-                  field: 'adsCount'
-                }
-              }
-            }
-          }
-        });
-
-        totalAdsCount = adsCountResponse.aggregations?.total_ads?.value || 0;
-       
-      } catch (esErr) {
-        console.error('[getSummaryStats] Error fetching ads count from Elasticsearch:', esErr.message);
-      }
-    }
 
 
     return {
@@ -775,8 +912,7 @@ async function getSummaryStats(req, elastic, logger) {
         total: allTotal,
         completed_scraping: allCompleted,
         under_scraping: allUnderScraping,
-        not_went_scrapping: allNotWent,
-        total_ads_count: totalAdsCount,
+        not_went_scrapping: allNotWent
       },
       meta: {
         date_range: 'all_and_today',
@@ -799,4 +935,5 @@ module.exports = {
   getProjectActivity,
   getTopKeywords,
   getSummaryStats,
+  getTotalAdsCount,
 };

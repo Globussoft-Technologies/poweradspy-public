@@ -1,31 +1,52 @@
 # Intelligence Manifest
 ## Complete Documentation of Intelligence APIs & Logic
-**Last Updated:** 2026-06-18  
+**Last Updated:** 2026-06-19  
 **Service:** admin_user_activity  
 **Status:** Production Ready
 
 ---
 
 ## Table of Contents
-1. [Overview](#overview)
-2. [Intelligence APIs](#intelligence-apis)
-3. [Core Logic Breakdown](#core-logic-breakdown)
-4. [Data Flow](#data-flow)
-5. [Filtering & Aggregation](#filtering--aggregation)
-6. [Caching Strategy](#caching-strategy)
-7. [Error Handling](#error-handling)
-8. [Performance Considerations](#performance-considerations)
+1. [API Routes Summary](#api-routes-summary)
+2. [Overview](#overview)
+3. [Intelligence APIs](#intelligence-apis)
+4. [Core Logic Breakdown](#core-logic-breakdown)
+5. [Data Flow](#data-flow)
+6. [Filtering & Aggregation](#filtering--aggregation)
+7. [Caching Strategy](#caching-strategy)
+8. [Error Handling](#error-handling)
+9. [Performance Considerations](#performance-considerations)
+
+---
+
+## API Routes Summary
+
+All routes are under `/api/v1/admin_user_activity/` prefix and require authentication (except `/login`).
+
+| # | Endpoint | Method | Controller | Purpose |
+|---|----------|--------|-----------|---------|
+| 1 | `/login` | POST | authMiddleware | User authentication |
+| 2 | `/intelligence/stats` | GET | getIntelligenceStats | Dashboard statistics & trends |
+| 3 | `/intelligence/top-users` | GET | getTopUsers | Rank users by activity, anomaly detection |
+| 4 | `/intelligence/all-searches` | GET | getAllSearches | Paginated activity search with filters |
+| 5 | `/intelligence/filter-options` | GET | getFilterOptions | Dropdown autocomplete options |
+| 6 | `/intelligence/summary` | GET | getSummaryStats | Aggregated statistics breakdown |
+| 7 | `/intelligence/keyword-trends` | GET | getKeywordTrends | Keywords/advertisers/domains with history |
+| 8 | `/intelligence/scraping-history` | GET | getKeywordScrapingHistory | 30-day scraping history for keywords |
+| 9 | `/intelligence/projects` | GET | getProjectActivity | Project-related user activities |
+| 10 | `/intelligence/total-ads-count` | GET | getTotalAdsCount | **NEW:** Total ads count by type (today vs all-time) |
 
 ---
 
 ## Overview
 
 The intelligence system provides comprehensive user activity analytics, search trends, and behavioral insights. It consists of:
-- **2 main intelligence controllers** with 10+ functions
-- **5 API endpoints** for analytics and trends
+- **3 main intelligence controllers** with 11+ functions
+- **10 API endpoints** for analytics, trends, and ad counting
 - **Complex aggregation queries** with multi-level filtering
-- **Real-time scraping history tracking**
+- **Real-time scraping history tracking** with MongoDB integration
 - **User anomaly detection** (high-volume flagging)
+- **Per-keyword ads counting** with platform breakdown
 
 ---
 
@@ -592,6 +613,127 @@ Returns 30-day scraping history for keywords, advertisers, or domains.
 
 ---
 
+### 9. Total Ads Count by Type (NEW)
+**Endpoint:** `GET /api/v1/admin_user_activity/intelligence/total-ads-count`  
+**Controller:** `keyword_Trend_ProjectController.js::getTotalAdsCount()`  
+**Lines:** 199-335  
+**Status:** Production Ready  
+**Added:** 2026-06-19
+
+#### Purpose
+Aggregates total ads count across all keywords/advertisers/domains of a specified type, separated into:
+- **Today's ads count** - Only from today's scraping runs
+- **Total ads count** - From all previous days (cumulative)
+
+With per-platform breakdown for each category.
+
+#### Response Structure
+```json
+{
+  "code": 200,
+  "data": {
+    "today_ads_count": 10,
+    "total_ads_count": 98,
+    "type": 1,
+    "type_label": "keywords",
+    "today_per_platform": {
+      "google": 10
+    },
+    "total_per_platform": {
+      "facebook": 60,
+      "instagram": 30,
+      "google": 8
+    },
+    "items_count": 56,
+    "breakdown": [
+      {
+        "keyword": "insurance",
+        "today_ads_count": 0,
+        "total_ads_count": 25,
+        "today_per_platform": {},
+        "total_per_platform": {
+          "facebook": 20,
+          "instagram": 5
+        }
+      },
+      {
+        "keyword": "Myntra",
+        "today_ads_count": 10,
+        "total_ads_count": 73,
+        "today_per_platform": {
+          "google": 10
+        },
+        "total_per_platform": {
+          "facebook": 40,
+          "instagram": 25,
+          "google": 8
+        }
+      }
+    ]
+  }
+}
+```
+
+#### Key Features
+- **Period Separation:** Automatically splits today vs previous days based on UTC date
+- **Per-Keyword Breakdown:** Individual totals for each keyword/advertiser/domain with platform split
+- **Platform Granularity:** Track ads per platform for targeted analysis
+- **MongoDB Integration:** Fetches all items of specified type from MongoDB
+- **Elasticsearch Integration:** Queries Elasticsearch for actual ad counts per scraping run
+- **Type Support:** Keywords (1), Advertisers (2), Domains (3)
+
+#### Query Parameters
+- `type` (required): 1=keyword, 2=advertiser, 3=domain
+- No period parameter needed - always returns both today and all-time
+
+#### Data Processing Flow
+1. Fetch all documents of specified type from MongoDB `keyword_searches` collection
+2. For each document, iterate through scraping history
+3. For each scraping run:
+   - Call `fetchAdsCountByPlatform()` to query Elasticsearch
+   - Check if run date is today (UTC) or previous
+   - Accumulate counts per platform
+4. Build keyword breakdown array (only items with ads)
+5. Aggregate totals for summary
+
+#### Implementation Details
+- Uses MongoDB connection (same as `getKeywordTrends`)
+- Calls `fetchAdsCountByPlatform()` for each scraping run (can be slow with many runs)
+- Date filtering: Compares `run.startTime` against today's UTC midnight boundary
+- Only includes keywords/advertisers/domains with at least 1 ad in breakdown array
+- Platform isolation: Each scraping run may target specific platform, tracked separately
+
+#### MongoDB Collection Reference
+```javascript
+{
+  type: 1,  // 1=keyword, 2=advertiser, 3=domain
+  value: "Myntra",  // Search term
+  networks: ["facebook", "instagram", "google"],  // Platforms
+  scrapping_status: [
+    {
+      network: "facebook",
+      status: "completed",
+      startTime: "2026-06-19T04:26:20.405Z",
+      endTime: "2026-06-19T04:26:46.780Z"
+    },
+    {
+      network: "google",
+      status: "completed",
+      startTime: "2026-06-18T11:57:27.028Z",
+      endTime: "2026-06-18T11:57:37.039Z"
+    }
+  ]
+}
+```
+
+#### Performance Notes
+- **Latency:** Higher due to sequential `fetchAdsCountByPlatform()` calls (1-2s per keyword typically)
+- **Optimization:** Consider implementing batch processing if >1000 items
+- **Caching:** Not cached - returns fresh data each time
+- **Timeout:** Default 30s timeout adequate for up to 100 keywords
+
+---
+
 ## Core Logic Breakdown
 
 ### Time Window Resolution (`resolveTimeWindow()`)
@@ -1060,7 +1202,8 @@ logger?.info?.(`Query completed in ${duration}ms`);
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-06-18 | Initial production release |
+| 1.1 | 2026-06-19 | Added total-ads-count endpoint with keyword breakdown |
+| 1.0 | 2026-06-18 | Initial production release (8 endpoints) |
 
 ---
 

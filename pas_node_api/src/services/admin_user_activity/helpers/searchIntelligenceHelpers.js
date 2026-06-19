@@ -61,7 +61,7 @@ async function getAllUserEmails(elastic) {
     setCache(CACHE_KEY, emailMap, CACHE_TTL);
     return emailMap;
   } catch (err) {
-    console.error('[getAllUserEmails] Error fetching emails:', err.message);
+
     return {};
   }
 }
@@ -84,7 +84,7 @@ function formatTimestampString(input) {
     const normalized = normalizeTimestampForQuery(input);
     return String(normalized).replace(/"/g, '').slice(0, 19).replace('T', ' ');
   } catch (e) {
-    console.log('[formatTimestampString] Error:', e);
+  
     return null;
   }
 }
@@ -490,7 +490,7 @@ async function resolveUserIds(patterns, elastic) {
           if (email.endsWith(suffix)) ids.add(b.key);
         }
       } catch (err) {
-        console.error('[resolveUserIds] Domain lookup error:', err.message);
+
       }
     } else {
       const lookupBody = {
@@ -506,7 +506,7 @@ async function resolveUserIds(patterns, elastic) {
         const uid = hit?._source?.['user.id'] ?? hit?._source?.user?.id ?? null;
         if (uid != null) { ids.add(uid); ids.add(String(uid)); }
       } catch (err) {
-        console.error('[resolveUserIds] Email lookup error:', err.message);
+
       }
     }
   }));

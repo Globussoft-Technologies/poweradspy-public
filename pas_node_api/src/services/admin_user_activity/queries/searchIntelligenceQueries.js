@@ -194,8 +194,6 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
     return 0;
   }
 
-  console.log('fetchAdsCountByPlatform', { platforms, dateStr, searchValue, searchType, startTime, endTime });
-
   let totalCount = 0;
 
   for (const platform of platforms) {
@@ -214,8 +212,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
       let startStr = formatTimestampString(JSON.stringify(startTime));
       let endStr = formatTimestampString(JSON.stringify(endTime));
 
-      console.log('Platform:', platform, 'Index:', indexName, 'Timestamp Field:', timestampField, 'Start:', startStr, 'End:', endStr);
-
+  
       // For LinkedIn and YouTube: convert string timestamps to Unix seconds
       if (platformName === 'linkedin' || platformName === 'youtube') {
         startStr = convertToUnixSeconds(startStr);
@@ -231,8 +228,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
           must: []
         }
       };
-      console.log('Base query for platform', platform, ':', JSON.stringify(baseQuery));
-
+  
       const searchTypeStr = String(searchType);
       
 
@@ -285,7 +281,6 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
         continue;
       }
 
-      console.log('Elasticsearch query for platform', platform, ':', JSON.stringify(baseQuery));
 
       const esQuery = {
         index: indexName,
@@ -295,16 +290,13 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
         }
       };
 
-      console.log('Executing Elasticsearch query for platform', JSON.stringify(esQuery));
-
       logger?.info?.('[fetchAdsCountByPlatform] Query for platform:', { platform, index: indexName, searchType, searchValue });
 
       const esResult = await elastic.search(esQuery);
       const hits = esResult.hits || esResult.body?.hits;
       const count = typeof hits.total === 'object' ? hits.total.value : hits.total;
       totalCount += (count || 0);
-      console.log(`[fetchAdsCountByPlatform] Ads count for platform ${platform}: ${count || 0}`);
-
+   
       logger?.info?.('[fetchAdsCountByPlatform] Results:', { platform, count: count || 0 });
     } catch (err) {
       logger?.warn?.('[fetchAdsCountByPlatform] Failed for platform:', platform, 'Error:', err.message);

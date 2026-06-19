@@ -37,7 +37,7 @@ const EMPTY = {
   toDate: todayStr(),   toTime: "23:59",
   includedUsers: [], excludedUsers: [],  // Will be populated with globussoft.in emails after filterOptions load
   keyword: "", advertiser: "", domain: "",
-  platform: "", activityType: "",
+  platform: "", activityType: "keyword",  // Default to keyword filter
 };
 
 const ACTIVITY_TYPES = [

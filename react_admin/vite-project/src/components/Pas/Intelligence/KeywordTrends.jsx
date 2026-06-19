@@ -38,7 +38,7 @@ const TYPE_TABS = [
 
 const KeywordTrends = ({ onDataReady }) => {
   const [sortBy,        setSortBy]        = useState("count");
-  const [typeTab,       setTypeTab]       = useState("keywords");
+  const [typeTab,       setTypeTab]       = useState("keywords");  // Default to keywords instead of "all"
   const [data,          setData]          = useState({ keywords: [], advertisers: [], domains: [] });
   const [meta,          setMeta]          = useState(null);
   const [loading,       setLoading]       = useState(false);
@@ -48,6 +48,7 @@ const KeywordTrends = ({ onDataReady }) => {
   const [scrapingStats, setScrapingStats] = useState(null);
   const [page,          setPage]          = useState(0);
   const [topKeywords,   setTopKeywords]   = useState([]);
+  const [adsCount,      setAdsCount]      = useState(null);
   const searchInputRef = useRef(null);
 
   // Fetch top keywords/advertisers/domains for chart - updates when typeTab changes
@@ -123,6 +124,32 @@ const KeywordTrends = ({ onDataReady }) => {
       }
     };
     fetchSummaryStats();
+  }, [typeTab]);
+
+  // Fetch ads count data when typeTab changes
+  useEffect(() => {
+    const fetchAdsCountData = async () => {
+      if (!NODE_API) return;
+      try {
+        const token = Cookies.get("token");
+        const typeParam = typeTab === "keywords" ? "1" : typeTab === "advertisers" ? "2" : "3";
+        const res = await fetch(`${NODE_API}/intelligence/total-ads-count?type=${typeParam}&period=total`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.code === 200 && json.data) {
+          console.log('[fetchAdsCountData] Ads count data:', json.data);
+          setAdsCount(json.data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch ads count:', err);
+      }
+    };
+    fetchAdsCountData();
   }, [typeTab]);
 
   // Track if typeTab changed (to show loading only on tab change, not pagination)
@@ -207,7 +234,7 @@ const KeywordTrends = ({ onDataReady }) => {
     .map((item, idx) => {
       const term = item.keyword || item.advertiser || item.domain || "Unknown";
       return {
-        id: `chart-${idx}`,
+        id: `item-${idx + 1}`,
         term: term.trim(),
         searchCount: item.searchCount,
         displayTerm: term.length > 35 ? term.slice(0, 35) + "..." : term,
@@ -215,7 +242,8 @@ const KeywordTrends = ({ onDataReady }) => {
       };
     });
 
-  console.log('[KeywordTrends] Chart Data:', chartData);
+  console.log('[KeywordTrends] Top Keywords received:', topKeywords.length, topKeywords);
+  console.log('[KeywordTrends] Chart Data:', chartData.length, chartData);
 
   const maxCount = chartData.length > 0 ? Math.max(...chartData.map((r) => r.searchCount)) : 1;
 
@@ -268,6 +296,35 @@ const KeywordTrends = ({ onDataReady }) => {
           </div>
         )}
 
+        {/* Ads Count Section */}
+        {adsCount && (
+          <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "12px" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
+              {/* Today Ads Count */}
+              <SummaryMetric label="Today Ads Count" value={adsCount.today_ads_count} />
+
+              {/* Total Ads Count */}
+              <SummaryMetric label="Total Ads Count" value={adsCount.total_ads_count} />
+
+              {/* Platform Wise Breakdown */}
+              <div style={{ flex: 1, minWidth: "250px", padding: "10px", background: "#f9fafb", borderRadius: "8px", textAlign: "left", border: "1px solid #e5e7eb" }}>
+                <div style={{ fontSize: "10px", color: "#9ca3af", fontWeight: 500, marginBottom: "8px" }}>Ads Count by Platform</div>
+                <div style={{ fontSize: "12px", color: "#111827" }}>
+                  {Object.entries(adsCount.total_per_platform || {}).map(([platform, count]) => (
+                    <div key={platform} style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                      <span style={{ textTransform: "capitalize" }}>{platform}:</span>
+                      <span style={{ fontWeight: 600 }}>{count}</span>
+                    </div>
+                  ))}
+                  {Object.keys(adsCount.total_per_platform || {}).length === 0 && (
+                    <div style={{ color: "#9ca3af" }}>No ads found</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Chart */}
         <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "20px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px", flexWrap: "wrap", gap: "8px" }}>
@@ -275,11 +332,11 @@ const KeywordTrends = ({ onDataReady }) => {
               Top {TYPE_TABS.find((t) => t.key === typeTab)?.label} by Search Volume
             </p>
           </div>
-          <ResponsiveContainer width="100%" height={240}>
+          <ResponsiveContainer width="100%" height={chartData.length * 20 + 60}>
             <BarChart data={chartData} layout="vertical" barSize={18} margin={{ top: 0, right: 32, bottom: 0, left: 10 }}>
               <XAxis type="number" domain={[0, 'dataMax']} tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
               <YAxis
-                type="category" dataKey="id" width={yAxisWidth}
+                type="category" dataKey="displayTerm" width={yAxisWidth}
                 tick={(props) => <CustomYAxisTick {...props} chartData={chartData} />}
                 axisLine={false} tickLine={false}
               />
@@ -310,63 +367,6 @@ const KeywordTrends = ({ onDataReady }) => {
           </div>
         </div>
 
-        {/* Search input below chart */}
-        <div ref={searchInputRef} style={{ position: "relative", width: "100%" }}>
-          <input
-            type="text"
-            placeholder="Search keyword..."
-            value={searchTerm}
-            onChange={(e) => { setSearchTerm(e.target.value); setOpenDropdown(e.target.value.length > 0); }}
-            onFocus={() => setOpenDropdown(searchTerm.length > 0)}
-            onBlur={() => setTimeout(() => setOpenDropdown(false), 200)}
-            style={{
-              width: "100%",
-              padding: "10px 16px",
-              fontSize: "12px",
-              border: "1px solid #d1d5db",
-              borderRadius: "6px",
-              outline: "none",
-              boxSizing: "border-box",
-              background: "white",
-            }}
-          />
-          {openDropdown && filteredDropdownItems.length > 0 && (
-            <div style={{
-              position: "absolute",
-              top: "100%",
-              left: 0,
-              right: 0,
-              zIndex: 999,
-              background: "white",
-              border: "1px solid #d1d5db",
-              borderRadius: "6px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.10)",
-              marginTop: "2px",
-              maxHeight: "250px",
-              overflowY: "auto",
-            }}>
-              {filteredDropdownItems.map((item) => (
-                <div
-                  key={item.term}
-                  onClick={() => { setSearchTerm(item.term); setOpenDropdown(false); }}
-                  style={{
-                    padding: "8px 12px",
-                    fontSize: "12px",
-                    color: "#374151",
-                    cursor: "pointer",
-                    borderBottom: "1px solid #f3f4f6",
-                    transition: "background-color 0.2s",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f9fafb")}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "white")}
-                >
-                  <div>{item.term}</div>
-                  <div style={{ fontSize: "11px", color: "#9ca3af" }}>{item.count} searches</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
         {/* Table */}
         <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
