@@ -191,6 +191,43 @@ const BasicInfo = ({
       href: rcPlacement,
       hoverColor: "hover:text-emerald-400",
     });
+  } else if (p === "youtube" || p === "yt") {
+    // YouTube redirect chain: ad-click/tracker -> hops (funnels/trackers) -> final landing.
+    // redirect_urls (captured array, ~138k ads) holds the hop list; destination_url is the final.
+    const ytArr = Array.isArray(adDetails?.redirect_urls)
+      ? adDetails.redirect_urls.map((u) => (u || "").trim()).filter(Boolean)
+      : typeof adDetails?.redirect_urls === "string" && adDetails.redirect_urls
+        ? [adDetails.redirect_urls]
+        : [];
+    const ytFinal = sanitizeUrl(adDetails?.destination_url) || sanitizeUrl(ytArr[ytArr.length - 1]);
+    const ytInitial = sanitizeUrl(ytArr[0]) || ytFinal || initialUrl;
+    basicRows = [
+      {
+        label: "INITIAL / CLICK URL",
+        icon: Globe,
+        value: ytInitial,
+        href: ytInitial,
+        hoverColor: "hover:text-[#6b99ff]",
+      },
+    ];
+    if (ytArr.length > 1) {
+      basicRows.push({
+        label: "REDIRECT CHAIN",
+        icon: RefreshCw,
+        value: ytArr.join("||"), // BasicInfo splits on "||" -> one row per hop (tracker/funnel)
+        href: null,
+        hoverColor: "hover:text-white/60",
+      });
+    }
+    if (ytFinal && ytFinal !== ytInitial) {
+      basicRows.push({
+        label: "FINAL URL",
+        icon: Target,
+        value: ytFinal,
+        href: ytFinal,
+        hoverColor: "hover:text-emerald-400",
+      });
+    }
   } else if (urlOnlyPlatforms.includes(p)) {
     basicRows = [
       {
