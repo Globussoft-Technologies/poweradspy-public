@@ -850,7 +850,7 @@ async function exportKeywordTrendsPDF(data) {
 
     // SEARCH COUNT
     pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(17,24,39);
-    pdf.text(row.count.toLocaleString(), COL_X[2]+4, textBaseY);
+    pdf.text((row.count ?? 0).toLocaleString(), COL_X[2]+4, textBaseY);
 
     // BAR (mini bar chart)
     const barMaxW = COL_W[3] - 12;
@@ -873,7 +873,7 @@ async function exportKeywordTrendsPDF(data) {
 
     // PREV COUNT
     pdf.setFont("helvetica","normal"); pdf.setFontSize(8.5); pdf.setTextColor(107,114,128);
-    pdf.text(row.prev_count.toLocaleString(), COL_X[5]+4, textBaseY);
+    pdf.text((row.prev_count ?? 0).toLocaleString(), COL_X[5]+4, textBaseY);
 
     curY += ROW_H;
   });

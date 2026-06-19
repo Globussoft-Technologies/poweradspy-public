@@ -111,6 +111,8 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
   const [previousDatePickerOpen, setPreviousDatePickerOpen] = useState(false);
   const [currentCustomFrom, setCurrentCustomFrom] = useState("");
   const [currentCustomTo, setCurrentCustomTo] = useState("");
+  const [appliedCurrentCustomFrom, setAppliedCurrentCustomFrom] = useState("");
+  const [appliedCurrentCustomTo, setAppliedCurrentCustomTo] = useState("");
   const [previousCustomFrom, setPreviousCustomFrom] = useState("");
   const [previousCustomTo, setPreviousCustomTo] = useState("");
   const [previousCalendarMonth, setPreviousCalendarMonth] = useState(new Date());
@@ -156,10 +158,10 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
     let prevFromISO, prevToISO;
 
-    if (currentPeriod === "Custom" && currentCustomFrom && currentCustomTo) {
+    if (currentPeriod === "Custom" && appliedCurrentCustomFrom && appliedCurrentCustomTo) {
       // Calculate previous period with same duration
-      const currentFromDate = new Date(currentCustomFrom);
-      const currentToDate = new Date(currentCustomTo);
+      const currentFromDate = new Date(appliedCurrentCustomFrom);
+      const currentToDate = new Date(appliedCurrentCustomTo);
       const durationDays = Math.floor((currentToDate - currentFromDate) / (1000 * 60 * 60 * 24)) + 1;
 
       const prevToDate = new Date(currentFromDate);
@@ -218,15 +220,29 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
     const token = Cookies.get("token");
     setStatsLoading(true);
 
-    // Get current and previous period dates
-    const currentDates = getPeriodDates(currentPeriod, currentCustomFrom, currentCustomTo);
+    // Only fetch if currentPeriod is a preset or if custom dates are applied
+    let shouldFetch = false;
+    if (currentPeriod === "Custom" && !appliedCurrentCustomFrom && !appliedCurrentCustomTo) {
+      // Custom period selected but dates not yet applied
+      shouldFetch = false;
+    } else {
+      shouldFetch = true;
+    }
+
+    if (!shouldFetch) {
+      setStatsLoading(false);
+      return;
+    }
+
+    // Get current and previous period dates (use applied values for custom)
+    const currentDates = getPeriodDates(currentPeriod, appliedCurrentCustomFrom, appliedCurrentCustomTo);
     const previousDates = getPeriodDates(previousPeriod, previousCustomFrom, previousCustomTo);
 
     const params = new URLSearchParams({
-      from_date: currentDates.from,
-      to_date: currentDates.to,
-      prev_from_date: previousDates.from,
-      prev_to_date: previousDates.to,
+      from_date: `${currentDates.from}T00:00:00`,
+      to_date: `${currentDates.to}T23:59:59`,
+      prev_from_date: `${previousDates.from}T00:00:00`,
+      prev_to_date: `${previousDates.to}T23:59:59`,
     });
 
     fetch(`${NODE_API}/intelligence/stats?${params}`, {
@@ -238,7 +254,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
       .catch(() => {})
       .finally(() => setStatsLoading(false));
     return () => controller.abort();
-  }, [currentPeriod, previousPeriod, currentCustomFrom, currentCustomTo, previousCustomFrom, previousCustomTo]);
+  }, [currentPeriod, previousPeriod, appliedCurrentCustomFrom, appliedCurrentCustomTo, previousCustomFrom, previousCustomTo]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -330,11 +346,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
     if (plat !== "Any") {
       const platVal = (u.top_platform ?? "").toLowerCase();
       const platSel = plat.toLowerCase();
-      // Google covers both "google" and "gdn"
-      const matches = platSel === "google"
-        ? (platVal === "google" || platVal === "gdn")
-        : platVal === platSel;
-      if (!matches) return false;
+      if (platVal !== platSel) return false;
     }
     return true;
   });
@@ -394,8 +406,8 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
               ...(currentDatePickerOpen ? { borderColor: "#6366f1", color: "#6366f1" } : {}),
             }}
           >
-            {currentPeriod === "Custom" && currentCustomFrom && currentCustomTo
-              ? `${currentCustomFrom} → ${currentCustomTo}`
+            {currentPeriod === "Custom" && appliedCurrentCustomFrom && appliedCurrentCustomTo
+              ? `${appliedCurrentCustomFrom} → ${appliedCurrentCustomTo}`
               : currentPeriod}
           </button>
 
@@ -446,6 +458,8 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
                     <button
                       onClick={() => {
                         if (currentCustomFrom && currentCustomTo) {
+                          setAppliedCurrentCustomFrom(currentCustomFrom);
+                          setAppliedCurrentCustomTo(currentCustomTo);
                           setCurrentPeriod("Custom");
                           setCurrentDatePickerOpen(false);
                         }

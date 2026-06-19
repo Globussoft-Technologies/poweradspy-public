@@ -49,6 +49,7 @@ const KeywordTrends = ({ onDataReady }) => {
   const [topKeywords,   setTopKeywords]   = useState([]);
   const [adsCount,      setAdsCount]      = useState(null);
   const [expandedPlatformRows, setExpandedPlatformRows] = useState(new Set());
+  const [expandedKeywords, setExpandedKeywords] = useState(new Set());
   const searchInputRef = useRef(null);
 
   // Fetch top keywords/advertisers/domains for chart - updates when typeTab changes
@@ -407,8 +408,8 @@ const KeywordTrends = ({ onDataReady }) => {
                 <col style={{ width: "18%" }} />
                 <col style={{ width: "11%" }} />
                 <col style={{ width: "12%" }} />
-                <col style={{ width: "8%" }} />
-                <col style={{ width: "30%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "28%" }} />
                 <col style={{ width: "8%" }} />
                 <col style={{ width: "6%" }} />
                 <col style={{ width: "7%" }} />
@@ -431,17 +432,38 @@ const KeywordTrends = ({ onDataReady }) => {
                   // Calculate stats from history
                   const completedCount = row.history?.filter(h => h.status === "completed").length || 0;
                   const failedCount = row.history?.filter(h => h.status === "failed").length || 0;
+                  const scrapingCount = row.history?.filter(h => h.status === "scrapping").length || 0;
                   const totalAds = row.history?.reduce((sum, h) => sum + (h.adsCount || 0), 0) || 0;
-                  const lastHistory = row.history && row.history.length > 0 ? row.history[row.history.length - 1] : null;
 
-                  const statusColorMap = {
-                    completed: { bg: "#dbeafe", text: "#0c4a6e", label: "✓ Completed" },
-                    failed: { bg: "#fee2e2", text: "#991b1b", label: "✗ Failed" },
-                    scrapping: { bg: "#fef3c7", text: "#92400e", label: "⏱ Scrapping" },
-                    "no_ads_found": { bg: "#fef3c7", text: "#92400e", label: "⚠ No Ads" },
-                  };
-                  const lastStatus = row.hasScrappingStatus ? (lastHistory?.status || "pending") : null;
-                  const statusInfo = lastStatus ? (statusColorMap[lastStatus] || { bg: "#f3f4f6", text: "#6b7280", label: "✗ Pending" }) : { bg: "#f3f4f6", text: "#6b7280", label: "—" };
+                  // Build status summary
+                  let statusLabel = "";
+                  let statusBg = "#f3f4f6";
+                  let statusText = "#6b7280";
+
+                  if (row.hasScrappingStatus) {
+                    const totalScraped = completedCount + failedCount + scrapingCount;
+                    const parts = [];
+                    if (completedCount > 0) parts.push(`${completedCount} Crawl${completedCount > 1 ? 's' : ''} Completed`);
+                    if (failedCount > 0) parts.push(`${failedCount} Failed`);
+                    if (scrapingCount > 0) parts.push(`${scrapingCount} Under Scraping`);
+
+                    if (parts.length > 0) {
+                      statusLabel = parts.join(", ");
+                      // Color based on priority: Failed > Scrapping > Completed
+                      if (failedCount > 0) {
+                        statusBg = "#fee2e2";
+                        statusText = "#991b1b";
+                      } else if (scrapingCount > 0) {
+                        statusBg = "#fef3c7";
+                        statusText = "#92400e";
+                      } else {
+                        statusBg = "#dbeafe";
+                        statusText = "#0c4a6e";
+                      }
+                    }
+                  } else {
+                    statusLabel = "⚠ Not Went for Scrapping";
+                  }
 
                   const platformLabels = row.platforms?.map(p => p.charAt(0).toUpperCase() + p.slice(1)) || [];
 
@@ -453,8 +475,28 @@ const KeywordTrends = ({ onDataReady }) => {
                       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "white")}
                     >
                       <td style={{ padding: "10px 12px", color: "#9ca3af" }}>{page * 10 + idx + 1}</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 500, color: "#111827", wordBreak: "break-word", whiteSpace: "normal" }}>
-                        {row.term}
+                      <td style={{ padding: "10px 12px", fontWeight: 500, color: "#111827" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                          <div style={{ whiteSpace: expandedKeywords.has(row.term) ? "normal" : "nowrap", overflow: expandedKeywords.has(row.term) ? "visible" : "hidden", textOverflow: "ellipsis", maxWidth: expandedKeywords.has(row.term) ? "none" : "200px" }}>
+                            {row.term}
+                          </div>
+                          {row.term.length > 50 && (
+                            <button
+                              onClick={() => {
+                                const newSet = new Set(expandedKeywords);
+                                if (newSet.has(row.term)) {
+                                  newSet.delete(row.term);
+                                } else {
+                                  newSet.add(row.term);
+                                }
+                                setExpandedKeywords(newSet);
+                              }}
+                              style={{ fontSize: "11px", color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left", fontWeight: 500 }}
+                            >
+                              {expandedKeywords.has(row.term) ? "Show Less" : "Show More"}
+                            </button>
+                          )}
+                        </div>
                       </td>
 
                       <td style={{ padding: "10px 12px", fontSize: "12px", color: "#6b7280" }}>
@@ -492,8 +534,8 @@ const KeywordTrends = ({ onDataReady }) => {
                         </div>
                       </td>
                       <td style={{ padding: "10px 12px" }}>
-                        <div style={{ display: "inline-block", padding: "4px 8px", borderRadius: "4px", background: statusInfo.bg, color: statusInfo.text, fontSize: "11px", fontWeight: 500 }}>
-                          {statusInfo.label}
+                        <div style={{ display: "inline-block", padding: "4px 8px", borderRadius: "4px", background: statusBg, color: statusText, fontSize: "11px", fontWeight: 500, whiteSpace: "normal", maxWidth: "150px" }}>
+                          {statusLabel}
                         </div>
                       </td>
                       <td style={{ padding: "10px 12px", fontSize: "11px", color: "#6b7280" }}>
