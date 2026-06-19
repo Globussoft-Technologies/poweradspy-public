@@ -8,10 +8,12 @@
  * PARAMETER (PHP hard-coded 'facebook') so every network reuses this one helper.
  *
  * Behaviour:
- *   - VIDEO  → POST to config.insertion.nas.videoUrl  (multipart: network, adid, file)
- *   - others → POST to {mediaUrl}/{bucket}/upload      (Bearer token; multipart: key, file)
- *              key = "{network}/{typeSubfolder}{YYYYMM}/{filename}.jpg"
- *   - Returns the stored path string, or '/DefaultImage.jpg' on any failure
+ *   - ALL types (image AND video) → POST to {mediaUrl}/{bucket}/upload (Bearer token;
+ *     multipart: key, file). The key is sent WITHOUT an extension and the file WITH its
+ *     real extension (from the downloaded file's Content-Type); the NAS validates and
+ *     appends the extension — we never hard-code mp4/jpg. VIDEO subfolder = "adVideo/"
+ *     (the old dedicated nas-video-api endpoint is no longer used).
+ *   - Returns the stored path the NAS returns, or '/DefaultImage.jpg' on any failure
  *     (never throws — mirrors PHP).
  *
  * Settings come from config.insertion.nas (config.json → env). Nothing here is
@@ -51,7 +53,7 @@ const NAS_KEY_PREFIX = {
 // PHP $typeMap: upload type → NAS subfolder.
 const TYPE_SUBFOLDER = {
   IMAGE: 'adImage/',
-  VIDEO: 'video/',
+  VIDEO: 'adVideo/',
   THUMBNAIL: 'thumbnail/',
   POSTOWNER: 'postowner/',
   OTHERMULTIMEDIA: 'otherMultiMedia/',
@@ -112,41 +114,23 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
     // str_replace(':','') + the NAS key validator. Numeric ids are unaffected.
     const baseName = String(keyBaseName || path.parse(filePath).name).replace(/[^A-Za-z0-9._-]/g, '');
 
-    // ── VIDEO → dedicated NAS video endpoint (PHP: env('NAS_VIDEO_URL')."upload"). ──
-    // Multipart: network, file, adid. Returns the stored `path` (→ nas_video_url).
-    if (folder === 'VIDEO') {
-      if (!nas.videoUrl) {
-        log.error('NAS videoUrl not configured (config.insertion.nas.videoUrl / NAS_VIDEO_URL)');
-        return DEFAULT_IMAGE;
-      }
-      const videoEndpoint = joinUrl(nas.videoUrl, nas.videoUploadPath || '/upload');
-      const form = new FormData();
-      form.append('network', network);
-      form.append('file', fs.createReadStream(filePath), { filename: `${baseName}.mp4` });
-      form.append('adid', String(adId));
-      const res = await axios.post(videoEndpoint, form, {
-        headers: form.getHeaders(),
-        timeout: nas.timeoutMs,
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity,
-        httpsAgent: nasAgent(),
-        validateStatus: () => true,
-      });
-      if (res.data?.path) return res.data.path;
-      log.error('NAS video upload failed', { status: res.status, body: res.data });
-      return null;
-    }
-
-    // ── Unified NAS media endpoint (images AND video, per the Media Upload API doc) ──
+    // ── Unified NAS media endpoint (images AND video — same place we store thumbnails) ──
+    // VIDEO now goes here too (subfolder adVideo/) instead of the old dedicated
+    // nas-video-api endpoint. We send the key WITHOUT an extension and the file WITH
+    // its real extension (set by the downloader from the file's Content-Type); the NAS
+    // validates that extension and appends it — so we never hard-code mp4/jpg, and a
+    // video in other_multimedia stays a video. On failure VIDEO returns null (so
+    // uploadVideo falls back to its video default); other types fall back to the image.
+    const failVal = folder === 'VIDEO' ? null : DEFAULT_IMAGE;
     if (!nas.mediaUrl) {
       log.error('NAS mediaUrl not configured (config.insertion.nas.mediaUrl / NAS_MEDIA_URL)');
-      return DEFAULT_IMAGE;
+      return failVal;
     }
     const subfolder = TYPE_SUBFOLDER[folder] || 'adImage/';
-    const ext = folder === 'VIDEO' ? 'mp4' : 'jpg';
-    const fileName = `${baseName}.${ext}`;
     const keyPrefix = NAS_KEY_PREFIX[network] || network;
-    const key = `${keyPrefix}/${subfolder}${yearMonth()}/${fileName}`;
+    const fileExt = path.parse(filePath).ext.replace(/^\./, '').toLowerCase();
+    const fileName = fileExt ? `${baseName}.${fileExt}` : baseName;
+    const key = `${keyPrefix}/${subfolder}${yearMonth()}/${baseName}`;
     const mediaPath = (nas.mediaUploadPath || '/{bucket}/upload').replace('{bucket}', resolveBucket());
     const url = joinUrl(nas.mediaUrl, mediaPath);
 
@@ -163,14 +147,13 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
       validateStatus: () => true,
     });
 
-   
     if (res.data?.ok && res.data?.path) return res.data.path;
 
     log.error('NAS upload failed', { status: res.status, body: res.data });
-    return DEFAULT_IMAGE;
+    return failVal;
   } catch (err) {
     log.error('Error in NAS upload', { error: err.message });
-    return DEFAULT_IMAGE;
+    return folder === 'VIDEO' ? null : DEFAULT_IMAGE;
   }
 }
 

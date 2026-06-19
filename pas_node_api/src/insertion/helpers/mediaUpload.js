@@ -25,6 +25,7 @@ const os = require('os');
 const path = require('path');
 const axios = require('axios');
 const https = require('https');
+const mime = require('mime-types');
 const { storeInNas, DEFAULT_IMAGE } = require('./nasClient');
 const config = require('../../config');
 const logger = require('../../logger');
@@ -43,7 +44,7 @@ async function downloadToTemp(url, ext, network = '') {
 
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      'Accept': 'image/webp,image/apng,image/svg+xml,image/*,video/*,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
       'Accept-Encoding': 'gzip, deflate, br',
       'Referer': 'https://www.quora.com/',
@@ -70,7 +71,11 @@ async function downloadToTemp(url, ext, network = '') {
       return null;
     }
 
-    const tmp = path.join(os.tmpdir(), `ins_${Date.now()}_${Math.round(process.hrtime()[1])}.${ext}`);
+    // Extension from the server's own Content-Type (so a video URL in other_multimedia
+    // becomes .mp4, an image .jpg, etc.). `ext` is only a fallback when the server
+    // sends no recognizable type. The NAS still validates the final extension.
+    const realExt = mime.extension(res.headers['content-type']) || ext;
+    const tmp = path.join(os.tmpdir(), `ins_${Date.now()}_${Math.round(process.hrtime()[1])}.${realExt}`);
     fs.writeFileSync(tmp, Buffer.from(res.data));
     return tmp;
   } catch (err) {
