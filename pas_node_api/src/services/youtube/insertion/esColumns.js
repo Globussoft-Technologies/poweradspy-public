@@ -23,7 +23,7 @@ const META_INSERT_COLUMNS = [
   'ad_url', 'ad_image_or_video', 'verified',
   'first_seen', 'last_seen', 'hastags',
   'reactions', 'comments', 'views', 'impression', 'popularity',
-  'destination_url', 'html_text',
+  'destination_url', 'redirect_urls', 'html_text',
   'image_ocr', 'image_object', 'image_brand', 'image_celebrity',
   'post_date', 'countries', 'states', 'city',
   'ad_type', 'ad_position', 'ad_language',

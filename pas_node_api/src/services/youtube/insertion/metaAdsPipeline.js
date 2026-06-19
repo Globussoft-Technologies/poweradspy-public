@@ -395,6 +395,8 @@ async function buildFlatData(db, row, youtubeAdId, n, extras) {
     impression: row.impression ?? extras.impressionVal ?? 0,
     popularity: safeJson(row.popularity) ?? extras.popularityObj ?? { max: 0, current: 0 },
     destination_url: row.destination_url ?? null,
+    // redirect_urls: resolved click chain from the crawler (no SQL column — read from payload).
+    redirect_urls: n.redirect_urls ?? null,
     html_text: null,
     image_ocr: null, image_object: null, image_brand: null, image_celebrity: null,
     post_date: row.post_date ?? null,

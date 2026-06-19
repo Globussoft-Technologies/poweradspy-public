@@ -66,7 +66,9 @@ function buildDoc(columns, data, opts = {}) {
       body[col] = (val && typeof val === 'object') ? val : { likes: Number(val) || 0 };
     } else if (col === 'countries' || col === 'states' || col === 'city') {
       body[col] = splitCsv(val);
-    } else if (col === 'source' || col === 'image_object' || col === 'image_celebrity') {
+    } else if (col === 'source' || col === 'image_object' || col === 'image_celebrity' || col === 'redirect_urls') {
+      // redirect_urls: crawler sends the resolved chain as an array (aclk -> hops -> final);
+      // splitPipes keeps arrays as-is and splits a legacy "||" string into an array.
       body[col] = splitPipes(val);
     } else {
       body[col] = val === undefined ? null : val;
