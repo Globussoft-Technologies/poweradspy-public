@@ -91,10 +91,6 @@ async function insertDomainName(exec, data) {
   const sql = `INSERT INTO youtube_ad_domains (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
   return firstId(await exec.query(sql, Object.values(clean)));
 }
-/** PHP: UPDATE youtube_ad_domains SET dod_date = now() WHERE domain = ? (insertHtml ACK). */
-async function setDomainDodDate(exec, domain, dodDate) {
-  return affected(await exec.query('UPDATE youtube_ad_domains SET dod_date = ? WHERE domain = ?', [dodDate, domain]));
-}
 
 // ── youtube_ad_outgoing_links ───────────────────────────────────────────────────
 
@@ -193,7 +189,7 @@ async function getNicenameByIso(exec, iso) {
 
 module.exports = {
   getDataForLander, getMetaDataDetails, updateMeta, updateMainAdDomainId,
-  getDomainId, updateDomainRegisterDate, insertDomainName, setDomainDodDate,
+  getDomainId, updateDomainRegisterDate, insertDomainName,
   getOutgoingDetails, insertOutgoing, updateOutgoingCountry,
   getDestinationDetails, insertAdUrl, updateAdUrl, getCountryCodes,
   getHtmlLanderDetails, insertHtmlFile, updateHtmlFile,

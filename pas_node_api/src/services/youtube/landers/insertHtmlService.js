@@ -10,7 +10,7 @@
  *
  * Pipeline (faithful to the PHP):
  *   ES check (youtube_ads_data, match ad_id) → validate → status-3 short-circuit →
- *   domain upsert (+ dod_date) → country normalize → blackhat/whitehat bookkeeping →
+ *   domain upsert (no dod_date) → country normalize → blackhat/whitehat bookkeeping →
  *   outgoing_links upsert → ad_url redirect(R)/destination(D) upsert → html_lander upsert →
  *   youtube_ad.domain_id → meta update → ES doc update.
  *
@@ -121,7 +121,8 @@ async function insertHtmlContent(req, db, log) {
       }
     }
 
-    // 5. Domain upsert (+ dod_date).
+    // 5. Domain upsert (no dod_date — youtube_ad_domains has no dod_date column,
+    //    same as the google/gdn/linkedin landers).
     domain_name = extractDomain(value.destinations);
     if (domain_name) {
       const domainRows = await repo.getDomainId(sql, domain_name);
@@ -138,7 +139,6 @@ async function insertHtmlContent(req, db, log) {
         }
         id = await repo.insertDomainName(sql, insert_domain);
       }
-      await repo.setDomainDodDate(sql, domain_name, new Date().toISOString().slice(0, 19).replace('T', ' '));
     }
 
     // 6. Country + redirect_status (found case).
