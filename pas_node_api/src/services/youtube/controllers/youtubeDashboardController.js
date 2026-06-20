@@ -110,15 +110,20 @@ async function getLive(req, db, logger) {
         first_seen: num(s.first_seen), source: Array.isArray(s.source) ? s.source.join(',') : (s.source || ''),
       };
     });
-    const [ads_1h, ads_3h, ads_24h] = await Promise.all([
+    const [ads_1h, ads_3h, ads_24h, new_1h, new_3h, new_24h] = await Promise.all([
       esCount(db, { range: { last_seen: { gte: now - 3600 } } }),
       esCount(db, { range: { last_seen: { gte: now - 10800 } } }),
       esCount(db, { range: { last_seen: { gte: now - 86400 } } }),
+      esCount(db, { range: { first_seen: { gte: now - 3600 } } }),
+      esCount(db, { range: { first_seen: { gte: now - 10800 } } }),
+      esCount(db, { range: { first_seen: { gte: now - 86400 } } }),
     ]);
     const lastTs = pages.length ? pages[0].ts : null;
     const running = !!(lastTs && (now - lastTs) < 300);
     return { code: 200, data: {
-      live: { status: running ? 'running' : 'idle', ads_1h, ads_3h, ads_24h, last_ts: lastTs, multi_hop: multiHop },
+      live: { status: running ? 'running' : 'idle', ads_1h, ads_3h, ads_24h,
+        dup_1h: Math.max(0, ads_1h - new_1h), dup_3h: Math.max(0, ads_3h - new_3h), dup_24h: Math.max(0, ads_24h - new_24h),
+        new_1h, new_3h, new_24h, last_ts: lastTs, multi_hop: multiHop },
       pages,
     } };
   } catch (e) {
