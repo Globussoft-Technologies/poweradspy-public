@@ -23,6 +23,7 @@ const { getDescriptionDetails, newCatInsertion } = require('../controllers/addCa
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
 const { storeKeywordSearch, scraperWork } = require('../controllers/keywordSearchController');
+const { unscoredCreatives, storeCreativeScore } = require('../controllers/creativeScoreController');
 const { getNotifications, markNotificationsRead } = require('../controllers/notificationController');
 const { 
   registerToken,
@@ -190,6 +191,14 @@ router.post(
   '/keyword-search/work',
   asyncHandler(scraperWork)
 );
+
+// ─── AI creative scoring — internal/scorer endpoints (NO JWT, like keyword-search/work) ───
+// The scorer is the Claude Code harness (hourly cron, Sonnet). GET pulls un-scored ads
+// with creative image URLs; POST writes the produced scores onto the ad's ES doc.
+// GET  /api/v1/common/creative-score/unscored?network=<net>&limit=N
+router.get('/creative-score/unscored', asyncHandler(unscoredCreatives));
+// POST /api/v1/common/creative-score/store  { network, ad_id, es_doc_id?, scores:{...} }
+router.post('/creative-score/store', asyncHandler(storeCreativeScore));
 
 // GET /api/v1/common/notifications — Fetch scraping notifications for current user
 router.get(
