@@ -33,13 +33,16 @@ async function saveOwnerImage(exec, ownerId, imageUrl, network) {
  * @returns {Promise<number>} post_owner id
  */
 async function upsertPostOwner(tx, n, network, opts = {}) {
-  const existing = await repo.getPostOwner(tx, n.post_owner); // PHP dedups by post_owner_name
+  // instagram_ad.post_owner_id is a NOT NULL FK with no id=0 sentinel, so even an owner-less ad
+  // must resolve to a real row — fall back to a '(none)' placeholder owner.
+  const ownerName = n.post_owner || '(none)';
+  const existing = await repo.getPostOwner(tx, ownerName); // PHP dedups by post_owner_name
   const verified = verifiedFlag(n);
 
   let ownerId;
   if (existing.code !== 200) {
     ownerId = await repo.insertPostOwner(tx, {
-      post_owner_name: n.post_owner,
+      post_owner_name: ownerName,
       post_owner_image: n.post_owner_image,
       original_post_owner_image: n.post_owner_image,
       ads_count: 1,

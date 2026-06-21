@@ -203,16 +203,20 @@ async function upsertCountryOnly(exec, names) {
   return f.map((row) => ({ country_only_id: row.id, count: 1 }));
 }
 async function getCountry(exec, where) {
+  // coalesce to '' to match insertCountry's NOT NULL '' values, so the dedup lookup finds the
+  // existing row (else a city-less ad re-inserts → UNIQUE instagram_country.triple).
   return found(await exec.query(
     'SELECT id FROM instagram_country WHERE city <=> ? AND state <=> ? AND country <=> ? LIMIT 1',
-    [where.city ?? null, where.state ?? null, where.country ?? null]
+    [where.city ?? '', where.state ?? '', where.country ?? '']
   ));
 }
 async function insertCountry(exec, d) {
   const country = Array.isArray(d.country) ? d.country.join(',') : d.country;
+  // instagram_country.city/state/country are NOT NULL with no default — coalesce to '' so a
+  // city/state-less ad can't throw "Column 'city' cannot be null".
   return firstId(await exec.query(
     'INSERT INTO instagram_country (city, state, country, country_only_id) VALUES (?,?,?,?)',
-    [d.city ?? null, d.state ?? null, country ?? null, d.country_only_id ?? null]
+    [d.city ?? '', d.state ?? '', country ?? '', d.country_only_id ?? null]
   ));
 }
 
@@ -368,16 +372,17 @@ async function insertBudget(exec, d) {
 
 // ── instagram_ad_translation (upsert by instagram_ad_id) ────────────────────────
 async function upsertTranslation(exec, d) {
-  // instagram_ad_translation.ad_title is varchar(255) — cap to 255 chars (multibyte-safe)
-  // so an over-length (machine-translated) title can't throw ER_DATA_TOO_LONG (errno 1406).
-  const adTitle = truncateChars(d.ad_title, 255) ?? null;
+  // ad_title is varchar(255) NOT NULL — cap to 255 chars (multibyte-safe), and coalesce the three
+  // NOT NULL text columns to '' (never null) so an over-length OR missing translation can't throw
+  // ER_DATA_TOO_LONG (1406) or "Column 'ad_title'/'ad_text' cannot be null".
+  const adTitle = truncateChars(d.ad_title, 255) ?? '';
   const existing = rows(await exec.query('SELECT instagram_ad_id FROM instagram_ad_translation WHERE instagram_ad_id = ? LIMIT 1', [d.instagram_ad_id]));
   if (existing.length) {
     await exec.query('UPDATE instagram_ad_translation SET news_feed_description = ?, ad_title = ?, ad_text = ? WHERE instagram_ad_id = ?',
-      [d.news_feed_description ?? null, adTitle, d.ad_text ?? null, d.instagram_ad_id]);
+      [d.news_feed_description ?? '', adTitle, d.ad_text ?? '', d.instagram_ad_id]);
   } else {
     await exec.query('INSERT INTO instagram_ad_translation (instagram_ad_id, news_feed_description, ad_title, ad_text) VALUES (?,?,?,?)',
-      [d.instagram_ad_id, d.news_feed_description ?? null, adTitle, d.ad_text ?? null]);
+      [d.instagram_ad_id, d.news_feed_description ?? '', adTitle, d.ad_text ?? '']);
   }
   return true;
 }

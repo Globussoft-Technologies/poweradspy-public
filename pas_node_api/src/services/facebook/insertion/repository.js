@@ -244,17 +244,20 @@ async function upsertCountryOnly(exec, names) {
 
 // ── country (city/state/country) ────────────────────────────────────────────────
 async function getCountry(exec, where) {
-  // where: { city, state, country }
+  // where: { city, state, country } — coalesce to '' to match insertCountry's NOT NULL '' values,
+  // so the dedup lookup finds the existing row (else a city-less ad re-inserts → UNIQUE country.triple).
   return found(await exec.query(
     'SELECT id FROM country WHERE city <=> ? AND state <=> ? AND country <=> ? LIMIT 1',
-    [where.city ?? null, where.state ?? null, where.country ?? null]
+    [where.city ?? '', where.state ?? '', where.country ?? '']
   ));
 }
 async function insertCountry(exec, d) {
   const country = Array.isArray(d.country) ? d.country.join(',') : d.country;
+  // country.city/state/country are NOT NULL with no default — coalesce to '' so a city/state-less
+  // ad (e.g. country-only targeting) can't throw "Column 'city' cannot be null".
   return firstId(await exec.query(
     'INSERT INTO country (city, state, country, country_only_id) VALUES (?,?,?,?)',
-    [d.city ?? null, d.state ?? null, country ?? null, d.country_only_id ?? null]
+    [d.city ?? '', d.state ?? '', country ?? '', d.country_only_id ?? null]
   ));
 }
 
@@ -432,19 +435,20 @@ async function insertBudget(exec, d) {
 
 // ── facebook_translation (upsert on facebook_ad_id) ─────────────────────────────
 async function upsertTranslation(exec, d) {
-  // facebook_translation.ad_title is varchar(255) — cap to 255 chars (multibyte-safe)
-  // so an over-length (machine-translated) title can't throw ER_DATA_TOO_LONG (errno 1406).
-  const adTitle = truncateChars(d.ad_title, 255) ?? null;
+  // ad_title is varchar(255) NOT NULL — cap to 255 chars (multibyte-safe), and coalesce the three
+  // NOT NULL text columns to '' (never null) so an over-length OR missing translation can't throw
+  // ER_DATA_TOO_LONG (1406) or "Column 'ad_title'/'ad_text' cannot be null".
+  const adTitle = truncateChars(d.ad_title, 255) ?? '';
   const existing = rows(await exec.query('SELECT facebook_ad_id FROM facebook_translation WHERE facebook_ad_id = ? LIMIT 1', [d.facebook_ad_id]));
   if (existing.length) {
     await exec.query(
       'UPDATE facebook_translation SET news_feed_description = ?, ad_title = ?, ad_text = ? WHERE facebook_ad_id = ?',
-      [d.news_feed_description ?? null, adTitle, d.ad_text ?? null, d.facebook_ad_id]
+      [d.news_feed_description ?? '', adTitle, d.ad_text ?? '', d.facebook_ad_id]
     );
   } else {
     await exec.query(
       'INSERT INTO facebook_translation (facebook_ad_id, news_feed_description, ad_title, ad_text) VALUES (?,?,?,?)',
-      [d.facebook_ad_id, d.news_feed_description ?? null, adTitle, d.ad_text ?? null]
+      [d.facebook_ad_id, d.news_feed_description ?? '', adTitle, d.ad_text ?? '']
     );
   }
   return true;

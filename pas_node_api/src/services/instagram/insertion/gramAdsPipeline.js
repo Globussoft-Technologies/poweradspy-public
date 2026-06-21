@@ -110,10 +110,13 @@ async function insertPath(ctx, rawAd, { userId, translation }) {
     const postOwnerId = await upsertPostOwner(tx, n, NETWORK, { skipImage: true });
 
     let ctaId = 0;
-    if (n.call_to_action) {
-      const c = await repo.getCallToAction(tx, n.call_to_action);
+    // instagram_ad.call_to_action_id is a NOT NULL FK with no id=0 sentinel (unlike facebook's
+    // DEFAULT 0), so even a CTA-less ad must resolve to a real row — fall back to a '(none)' placeholder.
+    const ctaText = n.call_to_action || '(none)';
+    if (ctaText) {
+      const c = await repo.getCallToAction(tx, ctaText);
       if (c.code === 200) { ctaId = c.data[0].id; await repo.bumpCallToActionCount(tx, ctaId); }
-      else ctaId = await repo.insertCallToAction(tx, n.call_to_action);
+      else ctaId = await repo.insertCallToAction(tx, ctaText);
     }
 
     let categoryId = 0;
