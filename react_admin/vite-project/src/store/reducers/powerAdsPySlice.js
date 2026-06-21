@@ -24,12 +24,16 @@ import {
   fetchDashboardPlatforms,
   fetchSystemDebug,
   fetchExporterHealth,
-  fetchNasStorage
+  fetchNasStorage,
+  fetchInfraStorage
 } from "./../actions/powerAdsPyActionsApi";
 const initialState = {
   nasStorage: null,
   loadingNasStorage: false,
   nasStorageError: null,
+  infraStorage: null,
+  loadingInfraStorage: false,
+  infraStorageError: null,
   countData: [],
   countryData: [],
   funnelData: [],
@@ -391,6 +395,21 @@ const networkTypesSlice = createSlice({
            .addCase(fetchNasStorage.rejected, (state, action) => {
              state.loadingNasStorage = false;
              state.nasStorageError = action.payload;
+           });
+
+           // NEW — Infrastructure storage (per-DB/per-table + ES disk); keep old data on refetch.
+           builder
+           .addCase(fetchInfraStorage.pending, (state) => {
+             state.loadingInfraStorage = true;
+           })
+           .addCase(fetchInfraStorage.fulfilled, (state, action) => {
+             state.loadingInfraStorage = false;
+             state.infraStorage = action.payload;
+             state.infraStorageError = null;
+           })
+           .addCase(fetchInfraStorage.rejected, (state, action) => {
+             state.loadingInfraStorage = false;
+             state.infraStorageError = action.payload;
            });
 
            // NEW — system drill (per-account breakdown)

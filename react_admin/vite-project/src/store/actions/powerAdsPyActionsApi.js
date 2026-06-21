@@ -24,6 +24,23 @@ export const fetchNasStorage = createAsyncThunk(
   }
 );
 
+// Infrastructure storage — per-DB-host + per-table sizes + ES cluster disk, from admin_panel_backend
+// (BE-02) GET /admin-panel/infra/storage. Background-snapshotted; returns { data, computing, ageSec }.
+export const fetchInfraStorage = createAsyncThunk(
+  "infraStorage/fetch",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.get(`${PAS_ADMIN_BASEURL}/infra/storage`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
 export const fetchNetworkTypesCount = createAsyncThunk(
   "networkTypes/fetchCount",
   async (args, { rejectWithValue, signal }) => {

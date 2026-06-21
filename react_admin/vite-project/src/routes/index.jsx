@@ -28,6 +28,7 @@ import Tiktok from "../components/Pas/CrawlerInsight/Tiktok";
 import Youtube from "../components/Pas/CrawlerInsight/Youtube";
 import SystemInfo from "../pages/user/SystemInfo";
 import NasStorage from "../pages/user/NasStorage";
+import InfraStorage from "../pages/user/InfraStorage";
 import CompetitorDetails from "../components/Pas/CompetitorDetails"
 import DailyKeywordDetails from "../components/Pas/DailyKeywordDetails"
 import Calculator from "../components/Calculator"
@@ -59,6 +60,7 @@ export const routes = createBrowserRouter(
         <Route path="search-intelligence" element={<AuthCheck><SearchIntelligence /></AuthCheck>} />
         <Route path="system-info" element={<AuthCheck><SystemInfo /></AuthCheck>} />
         <Route path="nas-storage" element={<AuthCheck><NasStorage /></AuthCheck>} />
+        <Route path="infrastructure" element={<AuthCheck><InfraStorage /></AuthCheck>} />
         <Route path="crawler-insights" element={<AuthCheck><CrawlerInsight /></AuthCheck>}>
           <Route index element={<AuthCheck><Facebook /></AuthCheck>} />
           <Route path="gdn" element={<AuthCheck><GDN /></AuthCheck>} />
