@@ -17,7 +17,7 @@ const PLATFORM_INDEX_MAP = {
   reddit: 'reddit_search_mix',
   pinterest: 'pinterest_search_mix',
   quora: 'quora_search_mix',
-  native: 'native_search_mix',
+  native: 'native_search_mix_v2',
 };
 
 // Platform-specific field mappings for keyword/advertiser/domain searches

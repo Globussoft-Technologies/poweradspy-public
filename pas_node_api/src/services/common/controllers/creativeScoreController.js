@@ -23,8 +23,8 @@
  *
  * Networks: youtube, gdn, native, facebook, instagram. ES map verified via
  * src/config/networks.js + the per-network insertion pipelines. CAVEATS:
- *  - native index is 'native_search_mix' on live (config says _v2 but per the
- *    migration it 404s) — override with NATIVE_ES_INDEX if needed.
+ *  - native uses 'native_search_mix_v2' (the live serving index; the old
+ *    native_search_mix was retired in the 2026-06 cleanup) — override with CREATIVE_NATIVE_INDEX.
  *  - creatives that are NAS *paths* (not http URLs) are skipped by /unscored
  *    until a NAS base is configured; only fetchable http(s) images are returned.
  */
@@ -56,7 +56,7 @@ function served(v) {
 const FIELD_CONFIG = {
   youtube:   { idField: 'ad_id',           images: ['new_nas_image_url', 'ad_image_or_video', 'ad_image', 'thumbnail_url', 'ad_url'] },
   gdn:       { idField: 'gdn_ad.id',       images: ['new_nas_image_url', 'gdn_ad.new_nas_image_url', 'gdn_ad_variants.image_url', 'gdn_ad.ad_image'] },
-  native:    { idField: 'native_ad.id',    indexOverride: process.env.CREATIVE_NATIVE_INDEX || 'native_search_mix', images: ['native_ad.nas_url', 'native_ad.new_nas_image_url', 'native_ad_variants.image_url'] },
+  native:    { idField: 'native_ad.id',    indexOverride: process.env.CREATIVE_NATIVE_INDEX || 'native_search_mix_v2', images: ['native_ad.nas_url', 'native_ad.new_nas_image_url', 'native_ad_variants.image_url'] },
   facebook:  { idField: 'facebook_ad.id',  images: ['new_nas_image_url', 'facebook_ad.s3_path', 'facebook_ad.image_url', 'facebook_ad.Thumbnail'] },
   instagram: { idField: 'instagram_ad.id', images: ['new_nas_image_url', 'instagram_ad.s3_path', 'instagram_ad_variants.image_url'] },
 };
