@@ -178,6 +178,7 @@ const StarRating = ({ value, isLight }) => {
 
 import AnalyticsHeader from "./analytics/AnalyticsHeader";
 import BasicInfo from "./analytics/BasicInfo";
+import CreativeScore from "./analytics/CreativeScore";
 import AudienceSection from "./analytics/AudienceSection";
 import SocialEngagements from "./analytics/SocialEngagements";
 import LanderDetails from "./analytics/LanderDetails";
@@ -1630,6 +1631,7 @@ const AnalyticsModal = ({
 
           {/* ── Sections below hero ────────────────────────────── */}
           <div className="space-y-6 pt-6">
+            <CreativeScore adDetails={adDetailsData} />
             <BasicInfo
               adDetails={adDetailsData}
               outgoingLinks={insights.outgoingLinks}

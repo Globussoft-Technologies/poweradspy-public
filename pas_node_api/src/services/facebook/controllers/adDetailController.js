@@ -258,6 +258,10 @@ async function getAdDetails(req, db, logger) {
             const langMap = await getLanguageMap(db.sql);
             adData.language = resolveLanguageName(langMap, source['lang_detect']);
           }
+
+          // AI creative-quality scores (flat top-level ES keys written by creativeScoreController)
+          const CREATIVE_FIELDS = ['creative_predicted_ctr','creative_hook_score','creative_hold_score','creative_hook_total','creative_hold_total','creative_total_score','creative_score_rationale','creative_scored_at','creative_scored_by'];
+          for (const f of CREATIVE_FIELDS) { if (source[f] !== undefined) adData[f] = source[f]; }
         }
       } catch (esErr) {
         logger.warn('ES overlay failed, continuing with SQL data only', { error: esErr.message });

@@ -29,6 +29,7 @@ const axios = require('axios');
 const https = require('https');
 const config = require('../../config');
 const logger = require('../../logger');
+const sftpPool = require('./nasSftpPool');
 
 const log = logger.createChild('nas-upload-queue');
 
@@ -70,19 +71,12 @@ function enqueueFailedUpload({ filePath, url, key, fileName }) {
 async function uploadBlob(meta) {
   const blobPath = path.join(PENDING_DIR, meta.blob);
   if (!fs.existsSync(blobPath)) return { done: true }; // bytes gone → nothing to retry
-  const form = new FormData();
-  form.append('key', meta.key);
-  form.append('file', fs.createReadStream(blobPath), { filename: meta.fileName });
-  const res = await axios.post(meta.url, form, {
-    headers: { ...form.getHeaders(), Authorization: `Bearer ${config.insertion.nas.mediaToken}` },
-    timeout: config.insertion.nas.timeoutMs,
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    httpsAgent: nasAgent(),
-    validateStatus: () => true,
-  });
-  if (res.data && res.data.ok && res.data.path) return { done: true, path: res.data.path };
-  return { done: false, status: res.status };
+  // Direct-to-NAS SFTP (bypasses Cloudflare's ~100MB cap). putFile throws on failure → the
+  // caller (sweepPending) catches it and reschedules with backoff.
+  const ext = path.extname(meta.fileName || meta.blob) || '';
+  const remote = meta.key + ext;
+  await sftpPool.putFile(blobPath, remote);
+  return { done: true, path: '/' + remote };
 }
 
 let sweeping = false;

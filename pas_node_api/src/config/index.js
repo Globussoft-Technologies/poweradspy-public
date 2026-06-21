@@ -227,6 +227,14 @@ const config = {
       bucket: getVal(fileConfig.insertion?.nas?.bucket, 'NAS_BUCKET') || '',
       verifyTls: fileConfig.insertion?.nas?.verifyTls === true,
       timeoutMs: getVal(fileConfig.insertion?.nas?.timeoutMs, 'NAS_TIMEOUT_MS', toInt) || 60000,
+      // Direct-to-NAS SFTP write target — bypasses the Cloudflare-fronted media endpoint and its
+      // ~100MB 413 cap (which silently dropped large fb/insta videos onto the API box's disk).
+      // When sftpHost is set, storeInNas writes media straight to the NAS over SFTP.
+      sftpHost: getVal(fileConfig.insertion?.nas?.sftpHost, 'NAS_SFTP_HOST') || '',
+      sftpPort: getVal(fileConfig.insertion?.nas?.sftpPort, 'NAS_SFTP_PORT', toInt) || 7361,
+      sftpUser: getVal(fileConfig.insertion?.nas?.sftpUser, 'NAS_SFTP_USER') || '',
+      sftpPass: getVal(fileConfig.insertion?.nas?.sftpPass, 'NAS_SFTP_PASS') || '',
+      sftpPoolSize: getVal(fileConfig.insertion?.nas?.sftpPoolSize, 'NAS_SFTP_POOL', toInt) || 5,
     },
     // Shared external-API endpoints (translation/impression/popularity/adgpt). config.json → env.
     api: {

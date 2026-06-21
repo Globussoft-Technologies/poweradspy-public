@@ -191,6 +191,10 @@ async function getAdDetails(req, db, logger) {
           adData.market_platform_urls = {
             redirect_urls: src['redirect_urls'] || null,
           };
+
+          // AI creative-quality scores (flat top-level ES keys written by creativeScoreController)
+          const CREATIVE_FIELDS = ['creative_predicted_ctr','creative_hook_score','creative_hold_score','creative_hook_total','creative_hold_total','creative_total_score','creative_score_rationale','creative_scored_at','creative_scored_by'];
+          for (const f of CREATIVE_FIELDS) { if (src[f] !== undefined) adData[f] = src[f]; }
         }
       } catch (esErr) {
         // console.log('ES overlay failed, continuing with SQL data only', { error: esErr.message });

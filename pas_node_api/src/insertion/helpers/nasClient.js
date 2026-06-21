@@ -28,6 +28,7 @@ const https = require('https');
 const config = require('../../config');
 const logger = require('../../logger');
 const { enqueueFailedUpload } = require('./nasUploadQueue');
+const sftpPool = require('./nasSftpPool');
 
 const log = logger.createChild('nas-client');
 
@@ -136,8 +137,8 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
     // video in other_multimedia stays a video. On failure VIDEO returns null (so
     // uploadVideo falls back to its video default); other types fall back to the image.
     const failVal = folder === 'VIDEO' ? null : DEFAULT_IMAGE;
-    if (!nas.mediaUrl) {
-      log.error('NAS mediaUrl not configured (config.insertion.nas.mediaUrl / NAS_MEDIA_URL)');
+    if (!sftpPool.isConfigured()) {
+      log.error('NAS SFTP not configured (config.insertion.nas.sftpHost / sftpUser / sftpPass)');
       return failVal;
     }
     const subfolder = TYPE_SUBFOLDER[folder] || 'adImage/';
@@ -145,57 +146,27 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
     const fileExt = path.parse(filePath).ext.replace(/^\./, '').toLowerCase();
     const fileName = fileExt ? `${baseName}.${fileExt}` : baseName;
     const key = `${keyPrefix}/${subfolder}${yearMonth()}/${baseName}`;
-    const mediaPath = (nas.mediaUploadPath || '/{bucket}/upload').replace('{bucket}', resolveBucket());
-    const url = joinUrl(nas.mediaUrl, mediaPath);
-
-    // A few QUICK in-request attempts (short timeout). The FormData is rebuilt each
-    // attempt because a fs.createReadStream is single-use (can't replay).
-    let lastStatus, lastBody;
-    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
-      const form = new FormData();
-      form.append('key', key);
-      form.append('file', fs.createReadStream(filePath), { filename: fileName });
-
-      let res = null;
-      try {
-        res = await axios.post(url, form, {
-          headers: { ...form.getHeaders(), Authorization: `Bearer ${nas.mediaToken}` },
-          timeout: UPLOAD_TIMEOUT_MS,
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-          httpsAgent: nasAgent(),
-          validateStatus: () => true,
-        });
-      } catch (err) {
-        // network/timeout error — treat as retryable
-        lastStatus = 0; lastBody = { error: err.message };
-        if (attempt < UPLOAD_MAX_ATTEMPTS) { await sleep(UPLOAD_RETRY_BASE_MS * attempt); continue; }
-        break;
+    // ── Direct-to-NAS SFTP write — no Cloudflare, no ~100MB body cap. ──
+    // The Cloudflare-fronted media endpoint 413s any body >~100MB, so large fb/insta videos could
+    // never upload and piled up on this box's disk (took prod down 2026-06-21). The SFTP user is
+    // chrooted to the bucket stream root, so writing `<key>.<ext>` lands exactly where the CDN
+    // serves /<bucket>/stream/<key>.<ext> — the deterministic path the ad references.
+    const remoteKey = `${key}.${fileExt}`;
+    const storedPath = `/${resolveBucket()}/stream/${key}.${fileExt}`;
+    try {
+      await sftpPool.putFile(filePath, remoteKey);
+      return storedPath;
+    } catch (err) {
+      // Transient SFTP failure — persist the bytes and let the background cron retry over SFTP,
+      // returning the deterministic path now so the ad references the eventual file. Needs a real
+      // extension; else fall back to the default.
+      if (fileExt && enqueueFailedUpload({ filePath, url: remoteKey, key, fileName })) {
+        log.warn('NAS SFTP write deferred to retry queue', { error: err.message, key, storedPath });
+        return storedPath;
       }
-
-      if (res.data?.ok && res.data?.path) return res.data.path;
-
-      lastStatus = res.status; lastBody = res.data;
-      if (RETRYABLE_STATUS.has(res.status) && attempt < UPLOAD_MAX_ATTEMPTS) {
-        log.warn('NAS upload transient failure — retrying', { status: res.status, attempt, key });
-        await sleep(UPLOAD_RETRY_BASE_MS * attempt);
-        continue;
-      }
-      break; // success handled above; here it's non-retryable or out of attempts
+      log.error('NAS SFTP write failed', { error: err.message, key });
+      return failVal;
     }
-
-    // In-request attempts exhausted. DON'T block or lose the media: persist the bytes to
-    // the durable queue (a background cron re-uploads to the SAME key) and return the
-    // DETERMINISTIC path the file WILL have, so the ad references it now and self-heals
-    // once the cron succeeds. Needs a real extension (NAS requires one); else fall back.
-    if (fileExt && enqueueFailedUpload({ filePath, url, key, fileName })) {
-      const predictedPath = `/${resolveBucket()}/stream/${key}.${fileExt}`;
-      log.warn('NAS upload deferred to retry queue (returning predicted path)', { status: lastStatus, key, predictedPath });
-      return predictedPath;
-    }
-
-    log.error('NAS upload failed', { status: lastStatus, body: lastBody, attempts: UPLOAD_MAX_ATTEMPTS });
-    return failVal;
   } catch (err) {
     log.error('Error in NAS upload', { error: err.message });
     return folder === 'VIDEO' ? null : DEFAULT_IMAGE;

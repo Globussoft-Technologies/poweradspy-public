@@ -23,7 +23,7 @@ const { getDescriptionDetails, newCatInsertion } = require('../controllers/addCa
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
 const { storeKeywordSearch, scraperWork } = require('../controllers/keywordSearchController');
-const { unscoredCreatives, storeCreativeScore } = require('../controllers/creativeScoreController');
+const { unscoredCreatives, storeCreativeScore, storeRunReport, getRunReports } = require('../controllers/creativeScoreController');
 const { getNotifications, markNotificationsRead } = require('../controllers/notificationController');
 const { 
   registerToken,
@@ -199,6 +199,9 @@ router.post(
 router.get('/creative-score/unscored', asyncHandler(unscoredCreatives));
 // POST /api/v1/common/creative-score/store  { network, ad_id, es_doc_id?, scores:{...} }
 router.post('/creative-score/store', asyncHandler(storeCreativeScore));
+// Cron run reports (admin monitoring): POST a per-run report; GET recent runs + all-time summary
+router.post('/creative-score/run-report', asyncHandler(storeRunReport));
+router.get('/creative-score/run-report', asyncHandler(getRunReports));
 
 // GET /api/v1/common/notifications — Fetch scraping notifications for current user
 router.get(
