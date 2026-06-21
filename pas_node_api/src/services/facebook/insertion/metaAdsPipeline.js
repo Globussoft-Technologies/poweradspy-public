@@ -83,17 +83,16 @@ async function processMetaAd(ad, ctx) {
       text: ad.ad_text ?? '',
       title: ad.ad_title ?? '',
       newsfeed_description: ad.news_feed_description ?? '',
-    }),
+    }).catch(() => ({ ok: false })),
   ]);
   if (userRes.code !== 200) return userRes;
   const userId = userRes.userId;
 
-  if (!translation.ok && config.insertion.api.translationRequired) {
-    return serverError(503, 'The language-translation service is unavailable, so the ad could not be processed.', {
-      hint: 'This is on our side, not your data. Please retry shortly. (Set config.insertion.api.translationRequired=false to insert without translation.)',
-    });
-  }
-  // translationRequired=false → continue even if translation failed (no translated copy)
+  // Translation is best-effort here, matching facebook's own adsLibrary pipeline
+  // (adsLibraryPipeline.js) and the instagram pipeline: a slow/down translation
+  // upstream must NOT 503 the insert — we store the ORIGINAL copy instead. The
+  // downstream upsertTranslation already falls back to n.ad_title/ad_text/etc.
+  // when translationData is null, so the only effect is "no translated copy".
   const translationData = translation.ok ? translation.data : null;
 
   // 14. branch

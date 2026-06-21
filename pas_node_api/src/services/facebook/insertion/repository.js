@@ -47,6 +47,8 @@ async function withTransaction(sql, fn) {
   }
 }
 
+const { truncateChars } = require('../../../insertion/helpers/util');
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const firstId = (r) => (r && r.insertId ? r.insertId : 0);
 
@@ -424,22 +426,25 @@ async function budgetExists(exec, metaAdId) {
 async function insertBudget(exec, d) {
   return affected(await exec.query(
     'INSERT INTO facebook_meta_ad_budget (facebook_ad_id, meta_ad_id, lowerBudget, upperBudget) VALUES (?,?,?,?)',
-    [d.facebook_ad_id, d.meta_ad_id, d.lowerBudget ?? null, d.upperBudget ?? null]
+    [d.facebook_ad_id, d.meta_ad_id, d.lowerBudget ?? 0, d.upperBudget ?? 0]
   ));
 }
 
 // ── facebook_translation (upsert on facebook_ad_id) ─────────────────────────────
 async function upsertTranslation(exec, d) {
+  // facebook_translation.ad_title is varchar(255) — cap to 255 chars (multibyte-safe)
+  // so an over-length (machine-translated) title can't throw ER_DATA_TOO_LONG (errno 1406).
+  const adTitle = truncateChars(d.ad_title, 255) ?? null;
   const existing = rows(await exec.query('SELECT facebook_ad_id FROM facebook_translation WHERE facebook_ad_id = ? LIMIT 1', [d.facebook_ad_id]));
   if (existing.length) {
     await exec.query(
       'UPDATE facebook_translation SET news_feed_description = ?, ad_title = ?, ad_text = ? WHERE facebook_ad_id = ?',
-      [d.news_feed_description ?? null, d.ad_title ?? null, d.ad_text ?? null, d.facebook_ad_id]
+      [d.news_feed_description ?? null, adTitle, d.ad_text ?? null, d.facebook_ad_id]
     );
   } else {
     await exec.query(
       'INSERT INTO facebook_translation (facebook_ad_id, news_feed_description, ad_title, ad_text) VALUES (?,?,?,?)',
-      [d.facebook_ad_id, d.news_feed_description ?? null, d.ad_title ?? null, d.ad_text ?? null]
+      [d.facebook_ad_id, d.news_feed_description ?? null, adTitle, d.ad_text ?? null]
     );
   }
   return true;

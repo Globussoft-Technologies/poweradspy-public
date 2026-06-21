@@ -30,4 +30,15 @@ function ensureUtf8mb3Compatible(str) {
   return [...str].filter(char => char.codePointAt(0) <= 0xFFFF).join('');
 }
 
-module.exports = { nowDateTime, today, epochToDateTime, toInt, ensureUtf8mb3Compatible };
+/**
+ * Multibyte-safe truncation to at most `max` characters (not bytes). Uses code-point
+ * iteration so astral/emoji chars are not split, matching ensureUtf8mb3Compatible.
+ * Non-string / nullish values pass through unchanged so the caller's `?? null` still applies.
+ */
+function truncateChars(value, max) {
+  if (typeof value !== 'string') return value;
+  const chars = [...value];
+  return chars.length > max ? chars.slice(0, max).join('') : value;
+}
+
+module.exports = { nowDateTime, today, epochToDateTime, toInt, ensureUtf8mb3Compatible, truncateChars };

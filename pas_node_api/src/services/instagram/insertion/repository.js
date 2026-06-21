@@ -6,6 +6,8 @@
  * Conventions: getX → {code,data}; insertX → id; updateX → affected. `exec` is db.sql or a tx.
  */
 
+const { truncateChars } = require('../../../insertion/helpers/util');
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const firstId = (r) => (r && r.insertId ? r.insertId : 0);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
@@ -61,7 +63,9 @@ async function getJoinedAd(exec, whereVal) {
            ANY_VALUE(instagram_country.country) AS country_row,
            ANY_VALUE(instagram_user.gender) AS gender,
            ANY_VALUE(instagram_ad_meta_data.destination_url) AS destination_url,
-           ANY_VALUE(instagram_ad_meta_data.initial_url) AS initial_url,
+           -- initial_url temporarily disabled: column not yet on prod DB (FULLTEXT-index
+           -- table needs a blocking COPY to add it). Re-enable after the column exists.
+           -- ANY_VALUE(instagram_ad_meta_data.initial_url) AS initial_url,
            ANY_VALUE(instagram_ad_meta_data.built_with) AS built_with,
            ANY_VALUE(instagram_ad_meta_data.built_with_analytics_tracking) AS built_with_analytics_tracking,
            ANY_VALUE(instagram_ad_meta_data.affiliate_data) AS affiliate_data,
@@ -333,6 +337,9 @@ async function getMetaData(exec, adId) {
 }
 async function insertMetaData(exec, data) {
   const clean = stripNulls(data);
+  // initial_url column not yet present on prod DB → drop it so the INSERT never
+  // references a missing column. (Remove this once the column is added.)
+  delete clean.initial_url;
   const cols = Object.keys(clean);
   return affected(await exec.query(
     `INSERT INTO instagram_ad_meta_data (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -343,7 +350,9 @@ async function updateMetaBuiltWith(exec, adId, builtWithStatus) {
   return affected(await exec.query('UPDATE instagram_ad_meta_data SET built_with_status = ? WHERE instagram_ad_id = ?', [builtWithStatus, adId]));
 }
 async function updateMetaInitialUrl(exec, adId, initialUrl) {
-  return affected(await exec.query('UPDATE instagram_ad_meta_data SET initial_url = ? WHERE instagram_ad_id = ?', [initialUrl, adId]));
+  // No-op until the initial_url column exists on prod DB (FULLTEXT-index table
+  // needs a blocking COPY to add it). Restore the UPDATE once the column is added.
+  return 0;
 }
 
 // ── instagram_meta_ad_budget (dedup meta_ad_id) ─────────────────────────────────
@@ -353,19 +362,22 @@ async function budgetExists(exec, metaAdId) {
 async function insertBudget(exec, d) {
   return affected(await exec.query(
     'INSERT INTO instagram_meta_ad_budget (instagram_ad_id, meta_ad_id, lowerBudget, upperBudget) VALUES (?,?,?,?)',
-    [d.instagram_ad_id, d.meta_ad_id, d.lowerBudget ?? null, d.upperBudget ?? null]
+    [d.instagram_ad_id, d.meta_ad_id, d.lowerBudget ?? 0, d.upperBudget ?? 0]
   ));
 }
 
 // ── instagram_ad_translation (upsert by instagram_ad_id) ────────────────────────
 async function upsertTranslation(exec, d) {
+  // instagram_ad_translation.ad_title is varchar(255) — cap to 255 chars (multibyte-safe)
+  // so an over-length (machine-translated) title can't throw ER_DATA_TOO_LONG (errno 1406).
+  const adTitle = truncateChars(d.ad_title, 255) ?? null;
   const existing = rows(await exec.query('SELECT instagram_ad_id FROM instagram_ad_translation WHERE instagram_ad_id = ? LIMIT 1', [d.instagram_ad_id]));
   if (existing.length) {
     await exec.query('UPDATE instagram_ad_translation SET news_feed_description = ?, ad_title = ?, ad_text = ? WHERE instagram_ad_id = ?',
-      [d.news_feed_description ?? null, d.ad_title ?? null, d.ad_text ?? null, d.instagram_ad_id]);
+      [d.news_feed_description ?? null, adTitle, d.ad_text ?? null, d.instagram_ad_id]);
   } else {
     await exec.query('INSERT INTO instagram_ad_translation (instagram_ad_id, news_feed_description, ad_title, ad_text) VALUES (?,?,?,?)',
-      [d.instagram_ad_id, d.news_feed_description ?? null, d.ad_title ?? null, d.ad_text ?? null]);
+      [d.instagram_ad_id, d.news_feed_description ?? null, adTitle, d.ad_text ?? null]);
   }
   return true;
 }

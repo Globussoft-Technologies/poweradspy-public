@@ -114,7 +114,10 @@ async function insertPath(ctx, n, { translation }) {
     const countryOnly = await repo.upsertCountryOnly(tx, n.countryNames);
 
     let domainId = 0;
-    const domain = extractDomain(n.destination_url);
+    // instagram_ad.domain_id is a NOT NULL FK with no id=0 sentinel row (unlike
+    // facebook_ad.domain_id DEFAULT 0), so a domainless ad must resolve to a real
+    // domain row. Use a stable placeholder so the FK is satisfied.
+    const domain = extractDomain(n.destination_url) || '(none)';
     if (domain) {
       const d = await repo.getDomain(tx, domain);
       domainId = d.code === 200 ? d.data[0].id : await repo.insertDomain(tx, domain);
