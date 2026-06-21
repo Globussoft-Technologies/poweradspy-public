@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { RxCross1 } from "react-icons/rx";
-import { FiHardDrive, FiServer } from "react-icons/fi";
+import { FiHardDrive, FiServer, FiShare2 } from "react-icons/fi";
 import AdminContext from "../Context/Context";
 import fbaccountdetails from '../assets/fbaccountdetails.png'
 import systeminfo from '../assets/systeminfo.png'
@@ -166,6 +166,14 @@ const navLabelClass = (active) =>
                     </span>
                   </li>
                 </Link>
+                <a href="/obsidian-graph.html" target="_blank" rel="noreferrer" className="block">
+                  <li className={navItemClass(false)}>
+                    <FiShare2 className="w-[22px] h-[22px] text-[#1f296a]" />
+                    <span className={navLabelClass(false)}>
+                      Knowledge Graph
+                    </span>
+                  </li>
+                </a>
                 <Link to={"/pas/crawler-insights"} className="block">
                   <li className={navItemClass(isActive("/pas/crawler-insights"))}>
                     <img
