@@ -184,6 +184,20 @@ function createAdmin_user_activityRoutes(service) {
     })
   );
 
+  // GET /api/v1/admin_user_activity/nas-storage
+  // NAS capacity (total/used/free) + per-network storage breakdown + day-over-day growth, for the
+  // react_admin "NAS Storage" page. JWT-guarded like the rest of this service (the panel's own
+  // login token validates here). Query: ?days=30 (1-150); ?refresh=1 forces a fresh df read.
+  router.get(
+    '/nas-storage',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const { buildNasReport } = require('../../../insertion/helpers/nasStorageReport');
+      const data = await buildNasReport({ days: req.query.days, refresh: req.query.refresh === '1' });
+      return res.status(200).json({ code: 200, data });
+    })
+  );
+
   return router;
 }
 

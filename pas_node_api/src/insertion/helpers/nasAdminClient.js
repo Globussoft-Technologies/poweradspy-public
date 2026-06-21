@@ -19,6 +19,12 @@ const nas = config.insertion.nas;
 const CACHE_MS = 5 * 60 * 1000;
 let cache = { at: 0, data: null };
 
+// Per-network du is far too slow to run per-request (millions of files per network), so a daily
+// cron kicks it in the background; it writes PN_FILE and getPerNetworkSizes() reads that cheaply.
+const PN_FILE = '/tmp/nas_per_network_du.txt';
+const PN_CACHE_MS = 5 * 60 * 1000;
+let pnCache = { at: 0, data: null };
+
 function isConfigured() {
   return !!(nas.adminHost && nas.adminUser && nas.adminPass);
 }
@@ -80,4 +86,63 @@ async function getStorage(force = false) {
   return data;
 }
 
-module.exports = { getStorage, isConfigured };
+/**
+ * Kick a per-network `du` on the NAS in the BACKGROUND (fire-and-forget).
+ *
+ * Per-network totals mean summing millions of files under each network dir — many minutes, far too
+ * slow for a request. A daily cron calls this; it writes the result to PN_FILE (atomic temp+rename)
+ * and getPerNetworkSizes() just reads that file cheaply. A guard skips kicking if a scan is already
+ * running, so repeated calls never stack. Returns 'kicked' or 'busy'.
+ */
+async function kickPerNetworkDu() {
+  if (!isConfigured()) throw new Error('NAS admin SSH not configured');
+  const root = `${nas.adminMount || '/mnt/nfs'}/poweradspy-NAS`;
+  const cmd =
+    `if pgrep -f "du -b -d1 ${root}" >/dev/null 2>&1; then echo busy; else `
+    + `nohup bash -c 'du -b -d1 ${root} 2>/dev/null > ${PN_FILE}.tmp && mv -f ${PN_FILE}.tmp ${PN_FILE}' `
+    + `>/dev/null 2>&1 & echo kicked; fi`;
+  const out = (await sshExec(cmd, 15000)).trim();
+  log.info('NAS per-network du kick', { result: out, root });
+  return out;
+}
+
+/**
+ * Read the latest per-network `du` snapshot (cheap — just cats PN_FILE). Returns
+ * { sizes: { <network>: bytes }, total, computedAt } or null if no scan has completed yet.
+ * Cached PN_CACHE_MS (the underlying scan only changes once a day anyway).
+ */
+async function getPerNetworkSizes(force = false) {
+  if (!force && pnCache.data && (Date.now() - pnCache.at) < PN_CACHE_MS) return pnCache.data;
+  if (!isConfigured()) return null;
+  let out;
+  try {
+    out = await sshExec(`stat -c %Y ${PN_FILE} 2>/dev/null || echo 0; echo '==='; cat ${PN_FILE} 2>/dev/null || true`, 15000);
+  } catch (e) {
+    log.warn('NAS per-network read failed', { error: e.message });
+    return pnCache.data; // serve last-known on a transient SSH error
+  }
+  const [mtPart, body = ''] = out.split('===');
+  const mt = parseInt(String(mtPart).trim(), 10);
+  const sizes = {};
+  let total = null;
+  for (const line of body.split('\n')) {
+    const m = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!m) continue;
+    const bytes = parseInt(m[1], 10);
+    const name = m[2].split('/').pop();
+    if (!name || !Number.isFinite(bytes)) continue;
+    if (name === 'poweradspy-NAS') { total = bytes; continue; }
+    sizes[name] = bytes;
+  }
+  const networks = Object.keys(sizes);
+  if (!networks.length) return pnCache.data; // not computed yet → keep prior value (likely null)
+  const data = {
+    sizes,
+    total: Number.isFinite(total) ? total : networks.reduce((s, n) => s + sizes[n], 0),
+    computedAt: mt ? new Date(mt * 1000).toISOString() : null,
+  };
+  pnCache = { at: Date.now(), data };
+  return data;
+}
+
+module.exports = { getStorage, isConfigured, kickPerNetworkDu, getPerNetworkSizes };

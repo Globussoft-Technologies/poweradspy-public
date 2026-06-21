@@ -4,6 +4,25 @@ import Cookies from "js-cookie";
 
 const PAS_ADMIN_BASEURL = import.meta.env.VITE_ADMIN_BACKEND_URL;
 const TIKTOK_HOST = import.meta.env.VITE_ADMIN_TIKTOK_HOST;
+const PAS_NODE_BASEURL = import.meta.env.VITE_NODE_USER_ACTIVITY_API; // pas_node_api (v2-api) admin_user_activity base
+
+// NAS storage — capacity (total/free/used) + per-network breakdown + daily growth, from
+// pas_node_api (BE-08) GET /api/v1/admin_user_activity/nas-storage. JWT (panel token) via Bearer.
+export const fetchNasStorage = createAsyncThunk(
+  "nasStorage/fetch",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const days = (args && args.days) || 30;
+      const { data } = await axios.get(`${PAS_NODE_BASEURL}nas-storage?days=${days}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return data?.data ?? data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
 
 export const fetchNetworkTypesCount = createAsyncThunk(
   "networkTypes/fetchCount",

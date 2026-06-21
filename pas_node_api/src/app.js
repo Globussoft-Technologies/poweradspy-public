@@ -214,6 +214,17 @@ async function createApp() {
     }
   }
 
+  // NAS per-network du cron — once a day at server-time midnight, kicks a background per-network
+  // `du` so the NAS-storage report can show how much each network occupies. Worker-1 only.
+  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+    try {
+      const { initNasPerNetworkDuCron } = require('./jobs/nasPerNetworkDuCron');
+      initNasPerNetworkDuCron();
+    } catch (error) {
+      log.error('Failed to initialize NAS per-network du cron', { error: error.message });
+    }
+  }
+
   return app;
 }
 

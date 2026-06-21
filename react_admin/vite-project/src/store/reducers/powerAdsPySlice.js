@@ -23,9 +23,13 @@ import {
   fetchDashboardAccountTimeline,
   fetchDashboardPlatforms,
   fetchSystemDebug,
-  fetchExporterHealth
+  fetchExporterHealth,
+  fetchNasStorage
 } from "./../actions/powerAdsPyActionsApi";
 const initialState = {
+  nasStorage: null,
+  loadingNasStorage: false,
+  nasStorageError: null,
   countData: [],
   countryData: [],
   funnelData: [],
@@ -371,6 +375,22 @@ const networkTypesSlice = createSlice({
            .addCase(fetchDashboardOverview.rejected, (state, action) => {
              state.loadingDashboardOverview = false;
              state.dashboardError = action.payload;
+           });
+
+           // NEW — NAS storage (capacity + per-network breakdown + daily growth);
+           // keep old data on refetch so the 30s auto-refresh doesn't flicker.
+           builder
+           .addCase(fetchNasStorage.pending, (state) => {
+             state.loadingNasStorage = true;
+           })
+           .addCase(fetchNasStorage.fulfilled, (state, action) => {
+             state.loadingNasStorage = false;
+             state.nasStorage = action.payload;
+             state.nasStorageError = null;
+           })
+           .addCase(fetchNasStorage.rejected, (state, action) => {
+             state.loadingNasStorage = false;
+             state.nasStorageError = action.payload;
            });
 
            // NEW — system drill (per-account breakdown)
