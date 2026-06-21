@@ -184,7 +184,9 @@ async function buildAccountBridge(range) {
 async function buildHostMap(acctToSystem) {
   const sysToHosts = {};
   try {
-    const pc = await instantQuery(`scroll_plugin_counter_total{mode="${mode}"}`);
+    // Aggregate server-side to the only labels we read (account_id, server_name). Without this the
+    // raw query returns every plugin_id×country×network series (tens of MB) → event-loop-blocking parse.
+    const pc = await instantQuery(`count by (account_id, server_name) (scroll_plugin_counter_total{mode="${mode}"})`);
     for (const s of (pc.data?.result || [])) {
       const host = s.metric?.server_name;
       const acct = s.metric?.account_id != null ? String(s.metric.account_id) : '';
@@ -206,7 +208,7 @@ async function buildHostMap(acctToSystem) {
 async function buildAccountPromMap() {
   const map = new Map();
   try {
-    const r = await instantQuery(`scroll_plugin_counter_total{mode="${mode}"}`);
+    const r = await instantQuery(`count by (account_id, account_name, server_name) (scroll_plugin_counter_total{mode="${mode}"})`);
     for (const s of (r.data?.result || [])) {
       const id = s.metric?.account_id;
       if (id == null) continue;
@@ -223,7 +225,7 @@ async function buildAccountPromMap() {
 async function liveAccountIds() {
   const set = new Set();
   try {
-    const r = await instantQuery(`increase(account_active_hb_total{mode="${mode}"}[120s]) > 0`);
+    const r = await instantQuery(`count by (account_id) (increase(account_active_hb_total{mode="${mode}"}[120s]) > 0)`);
     for (const s of (r.data?.result || [])) {
       const id = s.metric?.account_id;
       if (id != null) set.add(String(id));
@@ -993,13 +995,25 @@ async function exporterHealth(req, res) {
 
   const t0 = Date.now();
   try {
-    const r = await axios.get(SEND_METRICS_URL, {
-      timeout: 10000,
-      responseType: 'text',
-      maxContentLength: 60 * 1024 * 1024, // guard: don't choke on a huge blob
-      transformResponse: [(d) => d],       // keep as raw text
+    // The raw exposition has grown to tens of MB (high metric cardinality), which blew past the
+    // old 60MB cap (→ outright failure) and made the fetch+parse slow enough to block the event
+    // loop. We only need a representative head for the "up" signal + headline counters, so STREAM
+    // and stop after CAP_BYTES — fast, bounded, and it can never choke on the full blob again.
+    const CAP_BYTES = 12 * 1024 * 1024;
+    const stream = await axios.get(SEND_METRICS_URL, {
+      timeout: 10000, responseType: 'stream', maxContentLength: Infinity, maxBodyLength: Infinity,
     });
-    const text = typeof r.data === 'string' ? r.data : String(r.data || '');
+    let text = ''; let bytes = 0; let truncated = false;
+    await new Promise((resolve, reject) => {
+      stream.data.on('data', (chunk) => {
+        bytes += chunk.length;
+        if (bytes <= CAP_BYTES) { text += chunk.toString('latin1'); }
+        else if (!truncated) { truncated = true; try { stream.data.destroy(); } catch (e) { /* ignore */ } resolve(); }
+      });
+      stream.data.on('end', resolve);
+      stream.data.on('close', resolve);
+      stream.data.on('error', reject);
+    });
     const lines = text.split('\n');
 
     // Count distinct metric names + total series (sample lines, ignore # HELP/# TYPE).
@@ -1044,6 +1058,7 @@ async function exporterHealth(req, res) {
       fetchedAt: new Date().toISOString(),
       latency_ms: Date.now() - t0,
       bytes: text.length,
+      truncated,
       series,
       metric_names: metricNames.size,
       snapshot: {
@@ -1054,7 +1069,6 @@ async function exporterHealth(req, res) {
       },
       live_metric_check,          // which live-strip metrics exist + their raw sum
       candidate_metrics: candidates, // real names matching cycle/capture/plugin/etc.
-      all_metric_names: allNames,    // full list (for mapping)
     };
     cache.set(cacheKey, payload, 15);
     return res.json(payload);
