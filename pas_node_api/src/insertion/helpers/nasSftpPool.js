@@ -80,7 +80,19 @@ async function putFile(localPath, remoteKeyPath) {
       await c.mkdir(dir, true).catch(() => {});   // tolerate "already exists"
       mkdone.add(dir);
     }
-    await c.put(localPath, remoteKeyPath);
+    try {
+      await c.put(localPath, remoteKeyPath);
+    } catch (e) {
+      // A stale root-owned file (left by the old upload mechanism) can't be overwritten in place.
+      // Our ownership of the directory lets us unlink it first, then write a fresh
+      // poweradspy-NAS-owned file. The bytes are safe: on any failure the caller re-queues them.
+      if (/permission denied/i.test(e.message || '')) {
+        await c.delete(remoteKeyPath).catch(() => {});
+        await c.put(localPath, remoteKeyPath);
+      } else {
+        throw e;
+      }
+    }
     release(slot);
     return true;
   } catch (err) {
