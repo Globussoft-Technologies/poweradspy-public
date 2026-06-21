@@ -54,6 +54,13 @@ function nasAgent() {
 function enqueueFailedUpload({ filePath, url, key, fileName }) {
   try {
     if (!filePath || !fs.existsSync(filePath)) return false;
+    // Circuit breaker: never let this durable queue fill the API box disk again (the 2026-06-21
+    // outage). If free space is low, drop the deferral — the media is lost, but the box stays up.
+    try {
+      const sf = fs.statfsSync(PENDING_DIR);
+      const freeGB = (sf.bavail * sf.bsize) / 1e9;
+      if (freeGB < 3) { log.error('nas-pending enqueue skipped — low disk', { freeGB: +freeGB.toFixed(1), key }); return false; }
+    } catch (e) { /* statfs unavailable -> proceed */ }
     ensureDir(PENDING_DIR);
     const id = uniqueId();
     const ext = path.parse(fileName || filePath).ext || '';
@@ -79,49 +86,60 @@ async function uploadBlob(meta) {
   return { done: true, path: '/' + remote };
 }
 
+// Sweep concurrency = the SFTP pool size (each worker borrows one pooled connection). Video can be
+// large, so a sequential sweep (1 file at a time) can't keep up with fb/insta inflow → run a bounded
+// worker pool so the backlog drains as fast as the NAS link allows without overrunning the pool.
+const SWEEP_CONCURRENCY = config.insertion.nas.sftpPoolSize || 5;
+
+/** Process one pending sidecar: upload, then unlink on success / reschedule or give up on failure. */
+async function processPending(f, now, counters) {
+  const metaPath = path.join(PENDING_DIR, f);
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { return; }
+  if ((meta.nextAttemptAt || 0) > now) return;
+
+  let r;
+  try { r = await uploadBlob(meta); } catch (e) { r = { done: false, error: e.message }; }
+
+  if (r.done) {
+    try { fs.unlinkSync(path.join(PENDING_DIR, meta.blob)); } catch { /* ignore */ }
+    try { fs.unlinkSync(metaPath); } catch { /* ignore */ }
+    counters.ok++;
+    return;
+  }
+
+  meta.attempts = (meta.attempts || 0) + 1;
+  if (meta.attempts >= MAX_ATTEMPTS) {
+    // Give up retrying but keep the bytes for manual recovery.
+    try {
+      ensureDir(FAILED_DIR);
+      fs.renameSync(path.join(PENDING_DIR, meta.blob), path.join(FAILED_DIR, meta.blob));
+      fs.renameSync(metaPath, path.join(FAILED_DIR, f));
+    } catch { /* ignore */ }
+    counters.gaveUp++;
+    log.error('NAS pending upload gave up (moved to failed/)', { key: meta.key, attempts: meta.attempts });
+  } else {
+    meta.nextAttemptAt = now + Math.min(BACKOFF_MAX_MS, BACKOFF_STEP_MS * meta.attempts);
+    try { fs.writeFileSync(metaPath, JSON.stringify(meta)); } catch { /* ignore */ }
+    counters.retry++;
+  }
+}
+
 let sweeping = false;
-/** Process all due pending uploads once. Safe to call repeatedly (self-guards against overlap). */
+/** Process all due pending uploads once, with bounded concurrency. Self-guards against overlap. */
 async function sweepPending() {
   if (sweeping) return;
   sweeping = true;
   try {
     if (!fs.existsSync(PENDING_DIR)) return;
     const metas = fs.readdirSync(PENDING_DIR).filter((f) => f.endsWith('.json'));
+    if (!metas.length) return;
     const now = Date.now();
-    let ok = 0, retry = 0, gaveUp = 0;
-    for (const f of metas) {
-      const metaPath = path.join(PENDING_DIR, f);
-      let meta;
-      try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { continue; }
-      if ((meta.nextAttemptAt || 0) > now) continue;
-
-      let r;
-      try { r = await uploadBlob(meta); } catch (e) { r = { done: false, status: 0, error: e.message }; }
-
-      if (r.done) {
-        try { fs.unlinkSync(path.join(PENDING_DIR, meta.blob)); } catch { /* ignore */ }
-        try { fs.unlinkSync(metaPath); } catch { /* ignore */ }
-        ok++;
-        continue;
-      }
-
-      meta.attempts = (meta.attempts || 0) + 1;
-      if (meta.attempts >= MAX_ATTEMPTS) {
-        // Give up retrying but keep the bytes for manual recovery.
-        try {
-          ensureDir(FAILED_DIR);
-          fs.renameSync(path.join(PENDING_DIR, meta.blob), path.join(FAILED_DIR, meta.blob));
-          fs.renameSync(metaPath, path.join(FAILED_DIR, f));
-        } catch { /* ignore */ }
-        gaveUp++;
-        log.error('NAS pending upload gave up (moved to failed/)', { key: meta.key, attempts: meta.attempts });
-      } else {
-        meta.nextAttemptAt = now + Math.min(BACKOFF_MAX_MS, BACKOFF_STEP_MS * meta.attempts);
-        try { fs.writeFileSync(metaPath, JSON.stringify(meta)); } catch { /* ignore */ }
-        retry++;
-      }
-    }
-    if (ok || gaveUp) log.info('NAS pending sweep done', { uploaded: ok, rescheduled: retry, gaveUp });
+    const counters = { ok: 0, retry: 0, gaveUp: 0 };
+    let i = 0;
+    const worker = async () => { while (i < metas.length) { await processPending(metas[i++], now, counters); } };
+    await Promise.all(Array.from({ length: Math.min(SWEEP_CONCURRENCY, metas.length) }, worker));
+    if (counters.ok || counters.gaveUp) log.info('NAS pending sweep done', { uploaded: counters.ok, rescheduled: counters.retry, gaveUp: counters.gaveUp });
   } catch (err) {
     log.error('sweepPending error', { error: err.message });
   } finally {

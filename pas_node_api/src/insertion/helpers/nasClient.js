@@ -153,6 +153,14 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
     // serves /<bucket>/stream/<key>.<ext> — the deterministic path the ad references.
     const remoteKey = `${key}.${fileExt}`;
     const storedPath = `/${resolveBucket()}/stream/${key}.${fileExt}`;
+    // Video can be 100s of MB — NEVER upload it inside the insert request (it would hold an SFTP
+    // pool slot for minutes and stall inserts under fb/insta load). Defer video straight to the
+    // durable queue and return the deterministic path; the parallel background sweep uploads it.
+    // Images are small, so upload them in-request.
+    if ((folder === 'VIDEO' || folder === 'OTHERMULTIMEDIA') && fileExt) {
+      if (enqueueFailedUpload({ filePath, url: remoteKey, key, fileName })) return storedPath;
+      return failVal;
+    }
     try {
       await sftpPool.putFile(filePath, remoteKey);
       return storedPath;
