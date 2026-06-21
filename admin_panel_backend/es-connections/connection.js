@@ -95,4 +95,8 @@ async function searchAllInstances(index, query, es_id, search_type) {
 // checkAllInstances for health-check tasks and unit tests.
 searchAllInstances.checkAllInstances = checkAllInstances;
 searchAllInstances.buildClient = buildClient;
+// Expose the raw per-cluster clients + their configs so infra-analytics can run cat APIs
+// (allocation/indices) directly. Read-only use; does not change existing search behavior.
+searchAllInstances.clients = clients;
+searchAllInstances.esClients = esClients;
 module.exports = searchAllInstances

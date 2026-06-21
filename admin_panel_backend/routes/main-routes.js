@@ -11,7 +11,9 @@ const affiliateDate = require("./affiliate-data")
 const networkAccountAnalytics = require("./network-account-analytics")
 const totalAdCountAnalytics = require("./total-ad-count.anaylytics")
 const dynamicCountAnalytics = require("./dynamic-count-analytics")
+const rangeCountsAnalytics = require("./range-counts-analytics")
 const systemMetrics = require("./system-metrics-api")
+const infraAnalytics = require("./infra-analytics")
 const adsgptUsersRoute = require("./adsgpt-users-route")
 const agentConfig = require("./agent-config-route")
 const competitorEmailDetails = require("./competitor-email-details")
@@ -32,9 +34,12 @@ app.use("/affiliate_data",affiliateDate)
  app.use("/network-account",networkAccountAnalytics)
  app.use("/network-name", totalAdCountAnalytics)
  app.use("/network-name", dynamicCountAnalytics)
+ app.use("/network-name", rangeCountsAnalytics)
 
 
  app.use("/system-metrics",systemMetrics)
+
+ app.use("/infra", infraAnalytics)
 
  app.use("/adsgpt-users", adsgptUsersRoute)
  app.use("/agent-config", agentConfig)
