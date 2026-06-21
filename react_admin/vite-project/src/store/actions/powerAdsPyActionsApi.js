@@ -5,18 +5,18 @@ import Cookies from "js-cookie";
 const PAS_ADMIN_BASEURL = import.meta.env.VITE_ADMIN_BACKEND_URL;
 const TIKTOK_HOST = import.meta.env.VITE_ADMIN_TIKTOK_HOST;
 const PAS_NODE_BASEURL = import.meta.env.VITE_NODE_USER_ACTIVITY_API; // pas_node_api (v2-api) admin_user_activity base
+// NAS stats are also served (same builder, infra metrics only) at the sibling unauthenticated
+// /common path. The NAS page reads that so this always-on monitoring view keeps working even if
+// the panel JWT expires mid-session (the strict pas_node_api auth would otherwise 401 it).
+const PAS_COMMON_BASEURL = (PAS_NODE_BASEURL || "").replace("admin_user_activity", "common");
 
-// NAS storage — capacity (total/free/used) + per-network breakdown + daily growth, from
-// pas_node_api (BE-08) GET /api/v1/admin_user_activity/nas-storage. JWT (panel token) via Bearer.
+// NAS storage — capacity (total/free/used) + per-network breakdown + daily growth.
 export const fetchNasStorage = createAsyncThunk(
   "nasStorage/fetch",
   async (args, { rejectWithValue }) => {
     try {
-      const token = Cookies.get("token");
       const days = (args && args.days) || 30;
-      const { data } = await axios.get(`${PAS_NODE_BASEURL}nas-storage?days=${days}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const { data } = await axios.get(`${PAS_COMMON_BASEURL}nas-storage?days=${days}`);
       return data?.data ?? data;
     } catch (error) {
       return rejectWithValue(error?.response?.data?.message || error.message);
