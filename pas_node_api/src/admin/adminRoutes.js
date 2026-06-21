@@ -103,6 +103,45 @@ router.get('/api/metrics/ips', async (req, res) => {
   });
 });
 
+// ─── NAS Storage (read-only report) ───────────────────────
+const nasAdminClient = require('../insertion/helpers/nasAdminClient');
+const nasStorageHistory = require('../insertion/helpers/nasStorageHistory');
+
+router.get('/api/nas-storage', async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 150);
+    // Current filesystem totals via a cached `df` (admin SSH). Each successful read is also
+    // snapshotted to the on-disk history so the per-day series builds over time (a 6-hourly cron
+    // guarantees daily points even if nobody opens the page). There is no Redis on this box, so the
+    // "data stored / day" metric is the day-over-day growth of `used` (net of any deletions).
+    let storage = null;
+    let storageError = null;
+    if (nasAdminClient.isConfigured()) {
+      try {
+        storage = await nasAdminClient.getStorage(req.query.refresh === '1');
+        nasStorageHistory.recordSnapshot(storage);
+      } catch (e) { storageError = e.message; log.warn('NAS df failed', { error: e.message }); }
+    } else {
+      storageError = 'NAS admin SSH not configured (insertion.nas.adminHost/User/Pass)';
+    }
+    const daily = nasStorageHistory.getSeries(days);
+    const lastGrowth = [...daily].reverse().find((d) => d.growthBytes != null);
+    res.json({
+      code: 200,
+      data: {
+        storage,
+        storageError,
+        daily,
+        points: daily.length,
+        windowDays: days,
+        lastDayGrowthBytes: lastGrowth ? lastGrowth.growthBytes : null,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ code: 500, message: err.message });
+  }
+});
+
 // ─── Database Status ──────────────────────────────────────
 router.get('/api/db-status', (req, res) => {
   const health = databaseManager.getHealth();

@@ -235,6 +235,13 @@ const config = {
       sftpUser: getVal(fileConfig.insertion?.nas?.sftpUser, 'NAS_SFTP_USER') || '',
       sftpPass: getVal(fileConfig.insertion?.nas?.sftpPass, 'NAS_SFTP_PASS') || '',
       sftpPoolSize: getVal(fileConfig.insertion?.nas?.sftpPoolSize, 'NAS_SFTP_POOL', toInt) || 5,
+      // NAS admin SSH (read-only) — used ONLY by the admin NAS-storage report to run `df` for
+      // total/used/free. Separate from the chrooted sftpUser (no shell). config.json → env NAS_ADMIN_*.
+      adminHost: getVal(fileConfig.insertion?.nas?.adminHost, 'NAS_ADMIN_HOST') || '',
+      adminPort: getVal(fileConfig.insertion?.nas?.adminPort, 'NAS_ADMIN_PORT', toInt) || 7361,
+      adminUser: getVal(fileConfig.insertion?.nas?.adminUser, 'NAS_ADMIN_USER') || '',
+      adminPass: getVal(fileConfig.insertion?.nas?.adminPass, 'NAS_ADMIN_PASS') || '',
+      adminMount: getVal(fileConfig.insertion?.nas?.adminMount, 'NAS_ADMIN_MOUNT') || '/mnt/nfs',
     },
     // Shared external-API endpoints (translation/impression/popularity/adgpt). config.json → env.
     api: {

@@ -203,6 +203,17 @@ async function createApp() {
     }
   }
 
+  // NAS storage snapshot cron — records a periodic `df` snapshot (total/used/free) into the
+  // on-disk history so the admin NAS-storage report can show day-over-day growth. Worker-1 only.
+  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+    try {
+      const { initNasStorageSnapshotCron } = require('./jobs/nasStorageSnapshotCron');
+      initNasStorageSnapshotCron();
+    } catch (error) {
+      log.error('Failed to initialize NAS storage snapshot cron', { error: error.message });
+    }
+  }
+
   return app;
 }
 

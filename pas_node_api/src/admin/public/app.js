@@ -312,6 +312,7 @@ function switchTab(tab) {
     config: 'Configuration',
     ips: 'IP Manager',
     database: 'Database Status',
+    nas: 'NAS Storage',
     sdui: 'SDUI Config',
     'plan-access': 'Plan Validation',
   };
@@ -344,6 +345,7 @@ function refreshCurrentTab() {
     case 'config': loadConfig(); break;
     case 'ips': loadIps(); break;
     case 'database': loadDbStatus(); break;
+    case 'nas': loadNasStorage(); break;
     case 'sdui': loadSdui(); break;
     case 'plan-access': loadPlanAccessDocs(); break;
   }
@@ -886,6 +888,82 @@ function renderDbConn(type, health, pool) {
       ${poolInfo}
     </div>
   `;
+}
+
+// ─── NAS Storage ──────────────────────────────────────────
+function nasFmtBytes(n) {
+  if (n == null || isNaN(n)) return '—';
+  const neg = n < 0;
+  let v = Math.abs(n);
+  const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return (neg ? '-' : '') + (v >= 100 || i === 0 ? v.toFixed(0) : v.toFixed(1)) + ' ' + u[i];
+}
+
+async function loadNasStorage() {
+  try {
+    const res = await fetch(`${API}/nas-storage?days=30`, { credentials: 'include' });
+    const { data } = await res.json();
+    const s = data.storage;
+    if (s) {
+      setText('nas-total', nasFmtBytes(s.totalBytes));
+      setText('nas-mount', `${s.mount} · as of ${formatDate(s.at)}`);
+      setText('nas-free', nasFmtBytes(s.freeBytes));
+      setText('nas-free-pct', `${(100 - s.pctUsed).toFixed(1)}% free`);
+      setText('nas-used', nasFmtBytes(s.usedBytes));
+      setText('nas-used-pct', `${s.pctUsed}% used`);
+      const bar = document.getElementById('nas-usage-bar');
+      bar.style.width = `${Math.max(3, s.pctUsed)}%`;
+      bar.textContent = `${s.pctUsed}%`;
+      bar.className = 'bar-fill ' + (s.pctUsed >= 90 ? 'danger' : s.pctUsed >= 75 ? 'warning' : 'success');
+      setText('nas-usage-note', `${nasFmtBytes(s.usedBytes)} used of ${nasFmtBytes(s.totalBytes)} · ${nasFmtBytes(s.freeBytes)} free`);
+    } else {
+      setText('nas-total', 'unavailable');
+      setText('nas-mount', data.storageError || 'NAS df unavailable');
+    }
+    setText('nas-last-growth', data.lastDayGrowthBytes != null ? nasFmtBytes(data.lastDayGrowthBytes) : '—');
+    setText('nas-as-of', `${data.points} daily snapshot${data.points === 1 ? '' : 's'} recorded`);
+
+    renderNasGrowthChart('nas-daily-chart', (data.daily || []).filter((d) => d.growthBytes != null));
+
+    const tbody = document.getElementById('nas-daily-table');
+    tbody.innerHTML = (data.daily || []).slice().reverse().map((d) => `
+      <tr>
+        <td>${d.date}</td>
+        <td>${nasFmtBytes(d.usedBytes)}</td>
+        <td>${nasFmtBytes(d.freeBytes)}</td>
+        <td>${d.growthBytes == null ? '<span class="muted">—</span>' : nasFmtBytes(d.growthBytes)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="4" class="muted">No snapshots yet</td></tr>';
+
+    const statusEl = document.getElementById('server-status');
+    statusEl.textContent = '● Connected';
+    statusEl.classList.remove('error');
+  } catch (err) {
+    showToast('Failed to load NAS storage', 'error');
+  }
+}
+
+function renderNasGrowthChart(containerId, series) {
+  const el = document.getElementById(containerId);
+  if (!series.length) {
+    el.innerHTML = '<p class="muted">Day-over-day growth appears after the second daily snapshot (≈ tomorrow).</p>';
+    return;
+  }
+  const max = Math.max(1, ...series.map((d) => Math.abs(d.growthBytes)));
+  el.innerHTML = series.map((d) => {
+    const pct = Math.max(3, (Math.abs(d.growthBytes) / max) * 100);
+    const cls = d.growthBytes < 0 ? 'info' : 'success';
+    return `
+      <div class="bar-row">
+        <span class="bar-label">${d.date.slice(5)}</span>
+        <div class="bar-track">
+          <div class="bar-fill ${cls}" style="width:${pct}%">${nasFmtBytes(d.growthBytes)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 // ─── Helpers ──────────────────────────────────────────────

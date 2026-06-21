@@ -58,6 +58,9 @@
         <a href="javascript:void(0)" class="nav-item" data-tab="database">
           <span class="nav-icon">🗄️</span> Database
         </a>
+        <a href="javascript:void(0)" class="nav-item" data-tab="nas">
+          <span class="nav-icon">💾</span> NAS Storage
+        </a>
         <a href="javascript:void(0)" class="nav-item" data-tab="sdui">
           <span class="nav-icon">🎛️</span> SDUI Config
         </a>
@@ -342,6 +345,59 @@
           </div>
           <div class="card-body" id="db-status-content">
             <p class="muted">Loading...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- NAS Storage Tab -->
+      <section id="tab-nas" class="tab-content">
+        <div class="metrics-grid">
+          <div class="metric-card glass">
+            <div class="metric-label">Total NAS Size</div>
+            <div class="metric-value" id="nas-total">—</div>
+            <div class="metric-sub" id="nas-mount">—</div>
+          </div>
+          <div class="metric-card glass">
+            <div class="metric-label">Storage Left (Free)</div>
+            <div class="metric-value" id="nas-free">—</div>
+            <div class="metric-sub" id="nas-free-pct">—</div>
+          </div>
+          <div class="metric-card glass">
+            <div class="metric-label">Used</div>
+            <div class="metric-value" id="nas-used">—</div>
+            <div class="metric-sub" id="nas-used-pct">—</div>
+          </div>
+          <div class="metric-card glass">
+            <div class="metric-label">Stored in Last Day</div>
+            <div class="metric-value" id="nas-last-growth">—</div>
+            <div class="metric-sub" id="nas-as-of">—</div>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Capacity</h3></div>
+          <div class="card-body">
+            <div class="bar-track" style="height:28px;border-radius:6px;overflow:hidden">
+              <div class="bar-fill danger" id="nas-usage-bar" style="width:0%;line-height:28px;text-align:center">0%</div>
+            </div>
+            <p class="muted" id="nas-usage-note" style="margin-top:10px">—</p>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Data Stored per Day (NAS growth)</h3></div>
+          <div class="card-body"><div id="nas-daily-chart" class="bar-chart"></div></div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Daily Snapshots</h3></div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead>
+                <tr><th>Date (UTC)</th><th>Used</th><th>Free</th><th>Stored that day</th></tr>
+              </thead>
+              <tbody id="nas-daily-table"></tbody>
+            </table>
           </div>
         </div>
       </section>

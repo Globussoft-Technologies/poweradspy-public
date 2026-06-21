@@ -19,11 +19,30 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const Client = require('ssh2-sftp-client');
 const config = require('../../config');
 const logger = require('../../logger');
 
 const log = logger.createChild('nas-sftp');
+
+// Best-effort daily NAS-ingest counter (powers the admin NAS-storage report). Increments a
+// per-UTC-day Redis counter with the bytes written. Wrapped so it can NEVER throw or block an
+// upload — a missing/slow Redis just means the report misses some bytes.
+let _redisCache = null;
+function recordNasBytes(localPath) {
+  try {
+    if (!_redisCache) _redisCache = require('../../cache/RedisCache');
+    const r = _redisCache.client;
+    if (!r) return;
+    const size = fs.statSync(localPath).size;
+    if (!size) return;
+    const day = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+    const ttl = 95 * 24 * 3600;
+    r.incrby(`nas:bytes:${day}`, size).then(() => r.expire(`nas:bytes:${day}`, ttl)).catch(() => {});
+    r.incr(`nas:files:${day}`).then(() => r.expire(`nas:files:${day}`, ttl)).catch(() => {});
+  } catch (e) { /* counter must never affect uploads */ }
+}
 const nas = config.insertion.nas;
 const POOL_SIZE = nas.sftpPoolSize || 5;
 
@@ -93,6 +112,7 @@ async function putFile(localPath, remoteKeyPath) {
         throw e;
       }
     }
+    recordNasBytes(localPath);
     release(slot);
     return true;
   } catch (err) {
