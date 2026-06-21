@@ -203,6 +203,29 @@ router.post('/creative-score/store', asyncHandler(storeCreativeScore));
 router.post('/creative-score/run-report', asyncHandler(storeRunReport));
 router.get('/creative-score/run-report', asyncHandler(getRunReports));
 
+// ─── NAS storage (internal — proxied by admin_panel_backend for the System Info dashboard) ───
+// Reuses the same `df` + on-disk history as the /admin ops dashboard. NO JWT (internal /
+// server-to-server, like the creative-score + keyword-work endpoints). Returns total/used/free
+// + the per-day growth series. GET /api/v1/common/nas-storage?days=30
+const nasAdminClient = require('../../../insertion/helpers/nasAdminClient');
+const nasStorageHistory = require('../../../insertion/helpers/nasStorageHistory');
+router.get('/nas-storage', asyncHandler(async (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 150);
+  let storage = null;
+  let storageError = null;
+  if (nasAdminClient.isConfigured()) {
+    try {
+      storage = await nasAdminClient.getStorage(req.query.refresh === '1');
+      nasStorageHistory.recordSnapshot(storage);
+    } catch (e) { storageError = e.message; }
+  } else {
+    storageError = 'NAS admin SSH not configured (insertion.nas.adminHost/User/Pass)';
+  }
+  const daily = nasStorageHistory.getSeries(days);
+  const lastGrowth = [...daily].reverse().find((d) => d.growthBytes != null);
+  res.json({ code: 200, data: { storage, storageError, daily, points: daily.length, windowDays: days, lastDayGrowthBytes: lastGrowth ? lastGrowth.growthBytes : null } });
+}));
+
 // GET /api/v1/common/notifications — Fetch scraping notifications for current user
 router.get(
   '/notifications',
