@@ -86,6 +86,8 @@ const InfraStorage = () => {
     [payload]
   );
   const dbErr = (payload?.databases || []).filter((d) => !d.ok);
+  const servers = payload?.servers || [];
+  const serversAt = payload?.serversAt;
   const esClusters = payload?.elasticsearch || [];
   const maxHostGB = dbHosts.length ? dbHosts[0].totalGB : 1;
 
@@ -131,6 +133,32 @@ const InfraStorage = () => {
           <KpiTile label="DB Storage" value={fmtGB(summary.dbTotalGB)} sub={`${summary.dbHostsOk}/${summary.dbHosts} hosts`} />
           <KpiTile label="ES Storage Used" value={fmtGB(summary.esUsedGB)} accent="#7c3aed" sub={`${summary.esClustersOk}/${summary.esClusters} clusters`} />
           <KpiTile label="Total Tracked" value={fmtGB((summary.dbTotalGB || 0) + (summary.esUsedGB || 0))} accent="#16a34a" />
+        </div>
+      ) : null}
+
+      {servers.length ? (
+        <div className="rounded-[14px] border border-[#e6e9f5] bg-white px-5 py-4 shadow-sm mb-5">
+          <div className="flex justify-between items-baseline mb-3">
+            <h2 className="text-[16px] font-[600] text-[#1f296a] flex items-center gap-2"><FiServer /> Servers — root disk</h2>
+            {serversAt ? <span className="text-[12px] text-[#9aa2c0]">swept {Math.max(0, Math.round((Date.now() - new Date(serversAt).getTime()) / 60000))}m ago</span> : null}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+            {servers.filter((s) => !s.error).slice().sort((a, b) => b.pctUsed - a.pctUsed).map((s) => {
+              const col = s.pctUsed > 85 ? "#cf1322" : s.pctUsed > 70 ? "#fa8c16" : "#16a34a";
+              return (
+                <div key={s.label}>
+                  <div className="flex justify-between text-[12px] mb-1">
+                    <span className="text-[#1f296a] font-medium">{s.label}</span>
+                    <span className="text-[#7a83a8]">{fmtGB(s.usedGB)} / {fmtGB(s.totalGB)} · <span style={{ color: col, fontWeight: 600 }}>{fmtGB(s.availGB)} free</span></span>
+                  </div>
+                  <Bar2 pct={s.pctUsed} color={col} />
+                </div>
+              );
+            })}
+          </div>
+          {servers.some((s) => s.error) ? (
+            <p className="text-[11px] text-[#ad8b00] mt-3">Unreachable: {servers.filter((s) => s.error).map((s) => s.label).join(", ")}</p>
+          ) : null}
         </div>
       ) : null}
 

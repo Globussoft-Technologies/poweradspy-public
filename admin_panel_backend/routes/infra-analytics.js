@@ -2,6 +2,20 @@ const express = require("express");
 const router = express.Router();
 const queryDatabase = require("../db-connections/connection");
 const searchAllInstances = require("../es-connections/connection");
+const fs = require("fs");
+const path = require("path");
+
+// Server root-disk snapshot is collected out-of-band by GDN/_server_disk_sweep.py (SSH keys stay
+// off the servers, per policy) and published to this file; we just read it. Missing -> empty list.
+const SERVER_DISK_FILE = path.join(__dirname, "..", "data", "server-disk.json");
+function readServerDisk() {
+  try {
+    const j = JSON.parse(fs.readFileSync(SERVER_DISK_FILE, "utf8"));
+    return { servers: j.servers || [], serversAt: j.at || null };
+  } catch (e) {
+    return { servers: [], serversAt: null };
+  }
+}
 
 /**
  * Infrastructure analytics — storage across the whole PowerAdSpy fleet:
@@ -119,11 +133,12 @@ async function refreshInfra() {
 // background recompute (still returns the current snapshot). Cold start returns { computing:true }.
 router.get("/storage", (req, res) => {
   if (req.query.refresh) refreshInfra();
+  const sd = readServerDisk();
   if (_snap.data) {
-    return res.json({ code: 200, data: _snap.data, computing: _snap.computing, ageSec: Math.round((Date.now() - _snap.at) / 1000) });
+    return res.json({ code: 200, data: { ..._snap.data, servers: sd.servers, serversAt: sd.serversAt }, computing: _snap.computing, ageSec: Math.round((Date.now() - _snap.at) / 1000) });
   }
   if (!_snap.computing) refreshInfra();
-  return res.json({ code: 200, data: null, computing: true });
+  return res.json({ code: 200, data: { databases: [], elasticsearch: [], summary: null, servers: sd.servers, serversAt: sd.serversAt, at: null }, computing: true });
 });
 
 // Warm on boot, then keep it fresh.
