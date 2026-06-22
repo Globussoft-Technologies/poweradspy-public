@@ -757,21 +757,21 @@ async function exportProjectsPDF(data) {
 
 async function exportKeywordTrendsPDF(data) {
   const { jsPDF } = await import("jspdf");
-  const { data: trendsData, typeTab, sortBy, meta } = data;
+  const { tableList, typeTab, sortBy, meta, scrapingStats, adsCount } = data;
 
   const TYPE_LABELS = { keywords: "Keywords", advertisers: "Advertisers", domains: "Domains" };
-  const list = (trendsData[typeTab] ?? []).sort((a, b) =>
+  const list = (tableList ?? []).sort((a, b) =>
     sortBy === "growth"
       ? (b.growth_pct ?? -Infinity) - (a.growth_pct ?? -Infinity)
       : b.count - a.count
   );
 
-  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
   const MARGIN = 24;
   const availW = pageW - MARGIN * 2;
-  const HEADER_H = 72;
+  const HEADER_H = 60;
   const FOOTER_H = 24;
   const dateStr = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
@@ -781,13 +781,7 @@ async function exportKeywordTrendsPDF(data) {
     pdf.setFontSize(15); pdf.setFont("helvetica","bold"); pdf.setTextColor(17,24,39);
     pdf.text("Search Intelligence", MARGIN, 24);
     pdf.setFontSize(9); pdf.setFont("helvetica","normal"); pdf.setTextColor(107,114,128);
-    const year = new Date().getFullYear();
-    const addYear = (s) => s && /\d{4}/.test(s) ? s : s ? `${s} ${year}` : s;
-    const periodStr = meta ? `${addYear(meta.current_period)} vs ${addYear(meta.previous_period)}` : "";
     pdf.text(pdfSafe(`Keyword trends  .  ${TYPE_LABELS[typeTab]}${pageNum>1?`  .  Page ${pageNum}`:""}`), MARGIN, 40);
-    if (periodStr) {
-      pdf.text(pdfSafe(periodStr), MARGIN, 56);
-    }
   };
   const drawFooter = () => {
     pdf.setFontSize(8); pdf.setFont("helvetica","normal"); pdf.setTextColor(156,163,175);
@@ -800,87 +794,237 @@ async function exportKeywordTrendsPDF(data) {
   const newPage = () => { pdf.addPage(); pageNum++; drawHeader(pageNum); drawFooter(); curY = HEADER_H+12; };
   const ensureSpace = (n) => { if (curY+n > pageH-FOOTER_H-8) newPage(); };
 
-  // Sort pills
-  const PILL_H = 15; const PILL_GAP = 5;
-  drawPill(pdf, TYPE_LABELS[typeTab], MARGIN, curY, PILL_H, "#e0e7ff", "#4338ca", 7.5);
-  const tw = pdf.getTextWidth(TYPE_LABELS[typeTab]) + 14 + PILL_GAP;
-  drawPill(pdf, sortBy === "count" ? "Sort: Frequency" : "Sort: Growth Rate", MARGIN + tw, curY, PILL_H, "#f3f4f6", "#374151", 7.5);
-  curY += PILL_H + 12;
+  // Summary stats section (all stats from UI)
+  if (scrapingStats) {
+    const STAT_COLS = 5;
+    const statGap = 8;
+    const statW = (availW - statGap * (STAT_COLS - 1)) / STAT_COLS;
+    const statH = 44;
 
-  // Info box
-  pdf.setFillColor(240, 249, 255); pdf.roundedRect(MARGIN, curY, availW, 24, 4, 4, "F");
-  pdf.setDrawColor(186, 230, 253); pdf.roundedRect(MARGIN, curY, availW, 24, 4, 4, "S");
-  pdf.setFont("helvetica","normal"); pdf.setFontSize(7.5); pdf.setTextColor(3, 105, 161);
-  const infoText = pdfSafe("Growth Rate compares last 45 days vs the 45 days before that.  No prev data = new/emerging term.");
-  pdf.text(infoText, MARGIN+10, curY+15);
-  curY += 30;
+    const stats = [
+      { label: "Total Keywords", value: (scrapingStats.totalItems ?? 0).toLocaleString() },
+      { label: "Total Scraped Completed", value: (scrapingStats.completedToday ?? 0).toLocaleString() },
+      { label: "Total keywords Not Went for Scraping", value: (scrapingStats.notQueued ?? 0).toLocaleString() },
+      { label: "Total under Scraping Keywords", value: (scrapingStats.scrapingQueued ?? 0).toLocaleString() },
+      { label: "Total Failed", value: (scrapingStats.totalFailed ?? 0).toLocaleString() },
+      { label: "Today Scraped Completed", value: (scrapingStats.todayCompletedItems ?? 0).toLocaleString() },
+      { label: "Today Not Went for Scraping", value: (scrapingStats.todayNotQueued ?? 0).toLocaleString() },
+      { label: "Today under Scraping Keywords", value: (scrapingStats.todayScrapingQueued ?? 0).toLocaleString() },
+      { label: "Today Failed", value: (scrapingStats.todayFailed ?? 0).toLocaleString() }
+    ];
 
-  // Table: # | TERM | SEARCH COUNT | BAR | GROWTH RATE | PREV COUNT
-  const COL_W = [28, 0, 90, 100, 70, 70];
-  COL_W[1] = availW - COL_W.reduce((s, v) => s + v, 0);
+    ensureSpace(statH * 2 + statGap + 14);
+    stats.forEach((stat, i) => {
+      const col = i % STAT_COLS;
+      const row = Math.floor(i / STAT_COLS);
+      const sx = MARGIN + col * (statW + statGap);
+      const sy = curY + row * (statH + statGap);
+
+      roundedRect(pdf, sx, sy, statW, statH, 4, "#f9fafb");
+      pdf.setDrawColor(229, 231, 235);
+      pdf.rect(sx, sy, statW, statH);
+
+      pdf.setFont("helvetica","normal"); pdf.setFontSize(6); pdf.setTextColor(156,163,175);
+      const labelLines = pdf.splitTextToSize(pdfSafe(stat.label), statW - 12);
+      labelLines.slice(0, 2).forEach((line, li) => {
+        pdf.text(line, sx + 6, sy + 8 + li * 4);
+      });
+
+      pdf.setFont("helvetica","bold"); pdf.setFontSize(11); pdf.setTextColor(17,24,39);
+      pdf.text(pdfSafe(stat.value), sx + 6, sy + 32);
+    });
+
+    curY += statH * 2 + statGap + 18;
+  }
+
+  // Ads Count section
+  if (adsCount) {
+    const adsStatW = availW / 3;
+    const adsStatH = 60;
+
+    ensureSpace(adsStatH + 12);
+    const adsStats = [
+      { label: "Today Ads Count", value: (adsCount.today_ads_count ?? 0).toLocaleString() },
+      { label: "Total Ads Count", value: (adsCount.total_ads_count ?? 0).toLocaleString() }
+    ];
+
+    adsStats.forEach((stat, i) => {
+      const sx = MARGIN + i * (adsStatW + 8);
+      const sy = curY;
+
+      roundedRect(pdf, sx, sy, adsStatW, adsStatH, 4, "#f9fafb");
+      pdf.setDrawColor(229, 231, 235);
+      pdf.rect(sx, sy, adsStatW, adsStatH);
+
+      pdf.setFont("helvetica","normal"); pdf.setFontSize(7); pdf.setTextColor(156,163,175);
+      pdf.text(pdfSafe(stat.label), sx + 6, sy + 12);
+
+      pdf.setFont("helvetica","bold"); pdf.setFontSize(12); pdf.setTextColor(17,24,39);
+      pdf.text(pdfSafe(stat.value), sx + 6, sy + 40);
+    });
+
+    // Platform breakdown
+    const platformStatX = MARGIN + adsStatW * 2 + 16;
+    roundedRect(pdf, platformStatX, curY, adsStatW - 8, adsStatH, 4, "#f9fafb");
+    pdf.setDrawColor(229, 231, 235);
+    pdf.rect(platformStatX, curY, adsStatW - 8, adsStatH);
+
+    pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(156,163,175);
+    pdf.text("Ads Count by Platform", platformStatX + 6, curY + 12);
+
+    pdf.setFont("helvetica","normal"); pdf.setFontSize(7); pdf.setTextColor(55,65,81);
+    let platY = curY + 22;
+    Object.entries(adsCount.total_per_platform || {}).slice(0, 4).forEach(([platform, count]) => {
+      const platText = pdfSafe(`${platform.charAt(0).toUpperCase() + platform.slice(1)}: ${count}`);
+      pdf.text(platText, platformStatX + 6, platY);
+      platY += 8.5;
+    });
+
+    curY += adsStatH + 16;
+  }
+
+  // Section title
+  pdf.setFont("helvetica","bold"); pdf.setFontSize(10); pdf.setTextColor(55,65,81);
+  pdf.text(pdfSafe(`${TYPE_LABELS[typeTab]} Trends`), MARGIN, curY);
+  curY += 14;
+
+  // Table: # | KEYWORDS | SEARCHED DATE | PLATFORMS | STATUS | HISTORY | CRAWLED | FAILED | ADS COUNT
+  // Landscape A4 ≈ 1123pt wide, with margins = 1075pt available
+  const COL_W = [26, 115, 68, 105, 95, 230, 42, 42, 42];
   const COL_X = COL_W.reduce((acc, w, i) => { acc.push(i===0 ? MARGIN : acc[i-1]+COL_W[i-1]); return acc; }, []);
   const colLabel = TYPE_LABELS[typeTab].toUpperCase();
-  const HEADERS = ["#", colLabel, "SEARCH COUNT", "VOLUME", "GROWTH RATE", "PREV COUNT"];
-  const HEAD_H = 22; const ROW_H = 28;
-  const maxCount = list.length > 0 ? Math.max(...list.map(r => r.count)) : 1;
-  const BAR_COLORS = ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#3b82f6","#ef4444","#14b8a6"];
+  const HEADERS = ["#", colLabel, "SEARCHED DATE", "PLATFORMS", "STATUS", "HISTORY", "CRAWLED", "FAILED", "ADS COUNT"];
+  const HEAD_H = 20; const MIN_ROW_H = 62;
 
-  ensureSpace(HEAD_H + ROW_H);
+  ensureSpace(HEAD_H + MIN_ROW_H);
   pdf.setFillColor(249,250,251); pdf.rect(MARGIN,curY,availW,HEAD_H,"F");
   pdf.setDrawColor(229,231,235); pdf.rect(MARGIN,curY,availW,HEAD_H);
-  pdf.setFont("helvetica","bold"); pdf.setFontSize(7.5); pdf.setTextColor(156,163,175);
-  HEADERS.forEach((h,i) => pdf.text(h, COL_X[i]+4, curY+HEAD_H/2+3));
+  pdf.setFont("helvetica","bold"); pdf.setFontSize(8); pdf.setTextColor(156,163,175);
+  HEADERS.forEach((h,i) => pdf.text(h, COL_X[i]+4, curY+HEAD_H/2+2.5));
   curY += HEAD_H;
 
   list.forEach((row, idx) => {
-    ensureSpace(ROW_H);
+    const completedCount = row.history?.filter(h => h.status === "completed").length || 0;
+    const failedCount = row.history?.filter(h => h.status === "failed").length || 0;
+    const totalAds = row.history?.reduce((sum, h) => sum + (h.adsCount || 0), 0) || 0;
+    const platformLabels = row.platforms?.map(p => p.charAt(0).toUpperCase() + p.slice(1)) || [];
+
+    // Calculate row height based on platforms and history display
+    let thisRowH = MIN_ROW_H;
+    const platformH = platformLabels.length > 0 ? platformLabels.length * 7.5 + 10 : 0;
+    const gapBetweenHistoryItems = 8;
+    const historyH = row.history && row.history.length > 0 ? Math.min(row.history.length, 4) * (45.5 + gapBetweenHistoryItems) + 24 : 0;
+    if (platformH > 0 || historyH > 0) {
+      thisRowH = Math.max(MIN_ROW_H, platformH, historyH);
+    }
+
+    ensureSpace(thisRowH);
+
     const rowBg = idx % 2 === 0 ? "#ffffff" : "#f9fafb";
     const [rb,gb,bb] = hexToRgb(rowBg);
-    pdf.setFillColor(rb,gb,bb); pdf.rect(MARGIN,curY,availW,ROW_H,"F");
-    pdf.setDrawColor(243,244,246); pdf.line(MARGIN,curY+ROW_H,MARGIN+availW,curY+ROW_H);
-    const midY = curY + ROW_H/2; const textBaseY = midY + 3.5;
+    pdf.setFillColor(rb,gb,bb); pdf.rect(MARGIN,curY,availW,thisRowH,"F");
+    pdf.setDrawColor(243,244,246); pdf.line(MARGIN,curY+thisRowH,MARGIN+availW,curY+thisRowH);
+    const textBaseY = curY + 10;
 
     // #
-    pdf.setFont("helvetica","normal"); pdf.setFontSize(9); pdf.setTextColor(156,163,175);
+    pdf.setFont("helvetica","normal"); pdf.setFontSize(8.5); pdf.setTextColor(156,163,175);
     pdf.text(String(idx+1), COL_X[0]+4, textBaseY);
 
     // TERM
     pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(17,24,39);
-    clippedText(pdf, pdfSafe(row.term), COL_X[1]+4, textBaseY, COL_W[1]-8);
+    const termLines = pdf.splitTextToSize(pdfSafe(row.term), COL_W[1]-8);
+    termLines.slice(0, 2).forEach((line, li) => {
+      pdf.text(line, COL_X[1]+4, textBaseY + li*9);
+    });
 
-    // SEARCH COUNT
-    pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(17,24,39);
-    pdf.text((row.count ?? 0).toLocaleString(), COL_X[2]+4, textBaseY);
+    // SEARCHED DATE
+    pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(107,114,128);
+    pdf.text(pdfSafe(row.searchedDate ?? "-"), COL_X[2]+4, textBaseY);
 
-    // BAR (mini bar chart)
-    const barMaxW = COL_W[3] - 12;
-    const barW = Math.max(4, Math.round((row.count / maxCount) * barMaxW));
-    const barH = 6; const barY = midY - barH/2;
-    pdf.setFillColor(229,231,235); pdf.roundedRect(COL_X[3]+4, barY, barMaxW, barH, 2, 2, "F");
-    const [bR,bG,bB] = hexToRgb(BAR_COLORS[idx % BAR_COLORS.length]);
-    pdf.setFillColor(bR,bG,bB); pdf.roundedRect(COL_X[3]+4, barY, barW, barH, 2, 2, "F");
-
-    // GROWTH RATE
-    if (row.growth_pct === null || row.growth_pct === undefined) {
+    // PLATFORMS (multi-line display)
+    if (platformLabels.length === 0) {
       pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(156,163,175);
-      pdf.text("No prev data", COL_X[4]+4, textBaseY);
+      pdf.text("-", COL_X[3]+4, textBaseY);
     } else {
-      const isUp = row.growth_pct >= 0;
-      const [gR,gG,gB] = hexToRgb(isUp ? "#10b981" : "#ef4444");
-      pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(gR,gG,gB);
-      pdf.text(`${isUp ? "(+)" : "(-)"} ${Math.abs(row.growth_pct)}%`, COL_X[4]+4, textBaseY);
+      pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(67,56,202);
+      platformLabels.forEach((p, pi) => {
+        pdf.text(pdfSafe(p), COL_X[3]+4, textBaseY + (pi * 9));
+      });
     }
 
-    // PREV COUNT
-    pdf.setFont("helvetica","normal"); pdf.setFontSize(8.5); pdf.setTextColor(107,114,128);
-    pdf.text((row.prev_count ?? 0).toLocaleString(), COL_X[5]+4, textBaseY);
+    // STATUS
+    let statusLabel = "";
+    if (row.history && row.history.length > 0) {
+      const parts = [];
+      if (completedCount > 0) parts.push(`${completedCount} Crawl${completedCount > 1 ? 's' : ''}`);
+      if (failedCount > 0) parts.push(`${failedCount} Failed`);
+      statusLabel = parts.length > 0 ? parts.join(", ") : "Completed";
+    } else {
+      statusLabel = "Not Went";
+    }
+    pdf.setFont("helvetica","normal"); pdf.setFontSize(8);
+    if (failedCount > 0) {
+      pdf.setTextColor(153,27,27);
+    } else if (row.history?.length > 0) {
+      pdf.setTextColor(30,58,138);
+    } else {
+      pdf.setTextColor(156,163,175);
+    }
+    const statusLines = pdf.splitTextToSize(pdfSafe(statusLabel), COL_W[4]-8);
+    statusLines.slice(0, 2).forEach((line, li) => {
+      pdf.text(line, COL_X[4]+4, textBaseY + li*9);
+    });
 
-    curY += ROW_H;
+    // HISTORY (full detailed format with maximum spacing and gaps between items)
+    if (row.history && row.history.length > 0) {
+      let histY = textBaseY - 2;
+      const histColW = COL_W[5] - 10;
+      const itemSpacing = 45.5;
+      const gapBetweenItems = 8; // Extra gap between each history item
+
+      row.history.slice(0, 4).forEach((h, hi) => {
+        const network = h.network ? h.network.charAt(0).toUpperCase() + h.network.slice(1) : "Unknown";
+
+        pdf.setFont("helvetica","bold"); pdf.setFontSize(7); pdf.setTextColor(17,24,39);
+        clippedText(pdf, pdfSafe(network), COL_X[5]+5, histY, histColW);
+
+        pdf.setFont("helvetica","normal"); pdf.setFontSize(5.5); pdf.setTextColor(107,114,128);
+        const date = h.date ? h.date : "-";
+        const startTime = h.startTime ? new Date(h.startTime).toLocaleString() : "-";
+        const endTime = h.endTime ? new Date(h.endTime).toLocaleString() : "-";
+        const ads = h.adsCount ?? 0;
+
+        clippedText(pdf, pdfSafe(`Date: ${date}`), COL_X[5]+5, histY + 12.68, histColW);
+        clippedText(pdf, pdfSafe(`Start: ${startTime}`), COL_X[5]+5, histY + 21.58, histColW);
+        clippedText(pdf, pdfSafe(`End: ${endTime}`), COL_X[5]+5, histY + 30.42, histColW);
+        clippedText(pdf, pdfSafe(`Ads: ${ads}`), COL_X[5]+5, histY + 39.33, histColW);
+
+        histY += itemSpacing + gapBetweenItems;
+      });
+    } else {
+      pdf.setFont("helvetica","normal"); pdf.setFontSize(7); pdf.setTextColor(156,163,175);
+      clippedText(pdf, "-", COL_X[5]+5, textBaseY, COL_W[5]-10);
+    }
+
+    // CRAWLED
+    pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(17,24,39);
+    pdf.text(String(completedCount), COL_X[6]+8, textBaseY);
+
+    // FAILED
+    pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(239,68,68);
+    pdf.text(String(failedCount), COL_X[7]+8, textBaseY);
+
+    // ADS COUNT
+    pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(17,24,39);
+    pdf.text(String(totalAds), COL_X[8]+8, textBaseY);
+
+    curY += thisRowH;
   });
 
   if (list.length === 0) {
+    ensureSpace(40);
     pdf.setFont("helvetica","normal"); pdf.setFontSize(9); pdf.setTextColor(156,163,175);
-    pdf.text("No data found.", MARGIN+availW/2, curY+20, { align: "center" });
+    pdf.text("No data found for this category.", MARGIN+availW/2, curY+20, { align: "center" });
   }
 
   pdf.save(`search-intelligence-keyword-trends-${new Date().toISOString().slice(0,10)}.pdf`);

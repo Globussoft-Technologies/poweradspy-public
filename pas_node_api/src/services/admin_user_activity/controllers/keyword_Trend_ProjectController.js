@@ -37,7 +37,7 @@ async function getKeywordTrends(req, elastic, logger) {
     await client.connect();
     const mongoDb = client.db(finalDatabase);
    
-    const { type = 'all', page = 0, size = 10, sort_by = 'createdAt' } = req.query;
+    const { type = 'all', page = 0, size = 10, sort_by = 'createdAt', status, search_value } = req.query;
 
     const pageNum = Math.max(0, Number(page));
     const pageSize = Math.min(100, Math.max(1, Number(size)));
@@ -59,8 +59,137 @@ async function getKeywordTrends(req, elastic, logger) {
     // Fetch from keyword_searches collection
     const collection = mongoDb.collection('keyword_searches');
 
-    // Build query filter
-    const filter = typeNum !== null ? { type: typeNum } : {};
+    // Build query filter based on type and status
+    let filter = typeNum !== null ? { type: typeNum } : {};
+
+    // Add search_value filter if provided (exact match on value field)
+    if (search_value) {
+      filter.value = search_value;
+    }
+
+    // Add status-based filtering
+    if (status) {
+      switch (status) {
+        case 'totalkeywords':
+          // All time: all keywords (no additional filter)
+          filter = {
+            ...filter
+          };
+          break;
+        case 'totalcompleted':
+          // All time: has completed scraping with no failures
+          filter = {
+            ...filter,
+            'scrapping_status': { $exists: true, $not: { $size: 0 } },
+            'scrapping_status.status': 'completed'
+          };
+          break;
+        case 'totalnotwent':
+          // All time: never went for scrapping
+          filter = {
+            ...filter,
+            $or: [
+              { 'scrapping_status': { $exists: false } },
+              { 'scrapping_status': { $size: 0 } }
+            ]
+          };
+          break;
+        case 'totalunderscrapping':
+          // All time: currently under scrapping (has startTime but no endTime)
+          filter = {
+            ...filter,
+            'scrapping_status': {
+              $elemMatch: {
+                startTime: { $exists: true },
+                endTime: { $exists: false }
+              }
+            }
+          };
+          break;
+        case 'todaycompleted':
+          // Today: completed scraping with date=today (primary) or endTime within today (fallback)
+          const todayDateStr = new Date().toISOString().split('T')[0];
+          const todayStartMs = new Date(todayDateStr + 'T00:00:00Z').getTime();
+          const todayEndMs = new Date(todayDateStr + 'T23:59:59.999Z').getTime();
+          filter = {
+            ...filter,
+            'scrapping_status': {
+              $elemMatch: {
+                status: 'completed',
+                $or: [
+                  { date: todayDateStr },
+                  { endTime: { $gte: todayStartMs, $lte: todayEndMs } }
+                ]
+              }
+            }
+          };
+          break;
+        case 'todaynotwent':
+          // Today: keywords that were searched today but never went for scrapping
+          const todayStr = new Date().toISOString().split('T')[0];
+          filter = {
+            ...filter,
+            'searchDates': {
+              $elemMatch: {
+                $gte: new Date(todayStr + 'T00:00:00Z')
+              }
+            },
+            $or: [
+              { 'scrapping_status': { $exists: false } },
+              { 'scrapping_status': { $size: 0 } }
+            ]
+          };
+          break;
+        case 'todayunderscrapping':
+          // Today: under scrapping where date=today (primary) or startTime within today
+          const todayDateStrUnder = new Date().toISOString().split('T')[0];
+          const todayStartMsUnder = new Date(todayDateStrUnder + 'T00:00:00Z').getTime();
+          const todayEndMsUnder = new Date(todayDateStrUnder + 'T23:59:59.999Z').getTime();
+          filter = {
+            ...filter,
+            'scrapping_status': {
+              $elemMatch: {
+                startTime: { $exists: true },
+                endTime: { $exists: false },
+                $or: [
+                  { date: todayDateStrUnder },
+                  { startTime: { $gte: todayStartMsUnder, $lte: todayEndMsUnder } }
+                ]
+              }
+            }
+          };
+          break;
+        case 'totalfailed':
+          // All time: failed scraping (has status='failed' in scrapping_status)
+          filter = {
+            ...filter,
+            'scrapping_status': {
+              $elemMatch: {
+                status: 'failed'
+              }
+            }
+          };
+          break;
+        case 'todayfailed':
+          // Today: failed scraping with date=today or endTime within today
+          const todayDateStrFailed = new Date().toISOString().split('T')[0];
+          const todayStartMsFailed = new Date(todayDateStrFailed + 'T00:00:00Z').getTime();
+          const todayEndMsFailed = new Date(todayDateStrFailed + 'T23:59:59.999Z').getTime();
+          filter = {
+            ...filter,
+            'scrapping_status': {
+              $elemMatch: {
+                status: 'failed',
+                $or: [
+                  { date: todayDateStrFailed },
+                  { endTime: { $gte: todayStartMsFailed, $lte: todayEndMsFailed } }
+                ]
+              }
+            }
+          };
+          break;
+      }
+    }
 
     const total = await collection.countDocuments(filter);
   
@@ -194,6 +323,92 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
   }
 
   return results;
+}
+
+// ─── GET /intelligence/items-list ──────────────────────────────────────────
+// Query params: type (1=keyword, 2=advertiser, 3=domain)
+// Returns: list of all unique items (keywords/advertisers/domains) for dropdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getItemsList(req, elastic, logger) {
+  let client = null;
+  try {
+    const mongoUri = config.databases?.mongo?.uri;
+    let mongoDatabase = config.databases?.mongo?.database;
+
+    let dbFromUri = null;
+    if (mongoUri) {
+      const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
+      if (match) {
+        dbFromUri = match[1];
+      }
+    }
+
+    const finalDatabase = dbFromUri || mongoDatabase;
+
+    if (!mongoUri || !finalDatabase) {
+      return { code: 500, message: 'MongoDB not available' };
+    }
+
+    client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
+    await client.connect();
+    const mongoDb = client.db(finalDatabase);
+
+    const { type = 1 } = req.query;
+    const typeNum = Number(type);
+
+    if (![1, 2, 3].includes(typeNum)) {
+      return { code: 400, message: 'Invalid type. Use: 1 (keyword), 2 (advertiser), or 3 (domain)' };
+    }
+
+    // Fetch all items of specified type from MongoDB
+    const collection = mongoDb.collection('keyword_searches');
+    const items = await collection
+      .find({ type: typeNum })
+      .sort({ searchCount: -1 })  // Sort by most searched first
+      .toArray();
+
+    if (items.length === 0) {
+      const typeLabel = typeNum === 1 ? 'keywords' : typeNum === 2 ? 'advertisers' : 'domains';
+      return {
+        code: 200,
+        data: {
+          type: typeNum,
+          type_label: typeLabel,
+          items: [],
+          total: 0
+        }
+      };
+    }
+
+    // Extract unique items with their counts
+    const itemsList = items.map((doc) => ({
+      id: doc._id.toString(),
+      value: doc.value,
+      count: doc.searchCount || 0
+    }));
+
+    const typeLabel = typeNum === 1 ? 'keywords' : typeNum === 2 ? 'advertisers' : 'domains';
+
+    logger?.info?.('[getItemsList] Fetched items for type:', { typeNum, typeLabel, count: itemsList.length });
+
+    return {
+      code: 200,
+      data: {
+        type: typeNum,
+        type_label: typeLabel,
+        items: itemsList,
+        total: itemsList.length
+      }
+    };
+  } catch (err) {
+    logger?.error?.('[getItemsList] Error:', err);
+    return { code: 500, message: 'Internal server error', error: err.message };
+  } finally {
+    if (client) {
+      await client.close();
+    }
+  }
 }
 
 // ─── GET /intelligence/total-ads-count ──────────────────────────────────────
@@ -802,6 +1017,20 @@ async function getSummaryStats(req, elastic, logger) {
               }
             },
             { $count: 'count' }
+          ],
+
+          // Failed scraping: documents with scrapping_status containing status="failed"
+          failed_scraping: [
+            {
+              $match: {
+                'scrapping_status': {
+                  $elemMatch: {
+                    status: 'failed'
+                  }
+                }
+              }
+            },
+            { $count: 'count' }
           ]
         }
       }
@@ -811,68 +1040,85 @@ async function getSummaryStats(req, elastic, logger) {
     const result = await collection.aggregate(pipeline).toArray();
    
     // Always fetch BOTH today and all-time data
-    let todayDateFilter = {};
     const now = new Date();
-    const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-    todayDateFilter = { createdAt: { $gte: startOfDay, $lt: endOfDay } };
+    const todayDateStr = now.toISOString().split('T')[0]; // e.g., "2026-06-19"
 
-    // Fetch today's stats with same aggregation
+    // Fetch today's stats - count keywords with scraping activity TODAY
     const todayPipeline = [
       {
         $match: {
-          type: typeNum,
-          ...todayDateFilter,
+          type: typeNum
         }
       },
       {
         $facet: {
-          total_count: [{ $count: 'count' }],
-          completed_scraping: [
+          // Total keywords (created or searched today)
+          total_count: [
             {
               $match: {
-                'scrapping_status': { $exists: true, $not: { $size: 0 } },
-                'scrapping_status.status': 'completed'
+                $or: [
+                  { createdAt: { $gte: new Date(todayDateStr + 'T00:00:00Z') } },
+                  { 'searchDates': { $elemMatch: { $gte: new Date(todayDateStr + 'T00:00:00Z') } } }
+                ]
               }
             },
             { $count: 'count' }
           ],
-          under_scraping: [
+          // Today: completed scraping today
+          completed_scraping: [
             {
               $match: {
-                'scrapping_status': { $exists: true, $not: { $size: 0 } }
-              }
-            },
-            {
-              $addFields: {
-                has_running: {
-                  $anyElementTrue: {
-                    $map: {
-                      input: '$scrapping_status',
-                      as: 'status',
-                      in: {
-                        $and: [
-                          { $ifNull: ['$$status.startTime', false] },
-                          { $not: ['$$status.endTime'] }
-                        ]
-                      }
-                    }
+                'scrapping_status': {
+                  $elemMatch: {
+                    status: 'completed',
+                    date: todayDateStr
                   }
                 }
               }
             },
+            { $count: 'count' }
+          ],
+          // Today: currently under scrapping today
+          under_scraping: [
             {
-              $match: { has_running: true }
+              $match: {
+                'scrapping_status': {
+                  $elemMatch: {
+                    date: todayDateStr,
+                    startTime: { $exists: true },
+                    endTime: { $exists: false }
+                  }
+                }
+              }
             },
             { $count: 'count' }
           ],
+          // Today: searched today but never went for scrapping
           not_went_scrapping: [
             {
               $match: {
+                'searchDates': {
+                  $elemMatch: { $gte: new Date(todayDateStr + 'T00:00:00Z') }
+                },
                 $or: [
                   { 'scrapping_status': { $exists: false } },
                   { 'scrapping_status': { $size: 0 } }
                 ]
+              }
+            },
+            { $count: 'count' }
+          ],
+
+          // Today: failed scraping today
+          failed_scraping: [
+            {
+              $match: {
+                'scrapping_status': {
+                  $elemMatch: {
+                    status: 'failed',
+                    date: todayDateStr
+                  }
+                }
               }
             },
             { $count: 'count' }
@@ -890,12 +1136,14 @@ async function getSummaryStats(req, elastic, logger) {
     const todayCompleted = todayFacets.completed_scraping?.[0]?.count || 0;
     const todayUnderScraping = todayFacets.under_scraping?.[0]?.count || 0;
     const todayNotWent = todayFacets.not_went_scrapping?.[0]?.count || 0;
+    const todayFailed = todayFacets.failed_scraping?.[0]?.count || 0;
 
     // Extract all-time counts
     const allTotal = allFacets.total_count?.[0]?.count || 0;
     const allCompleted = allFacets.completed_scraping?.[0]?.count || 0;
     const allUnderScraping = allFacets.under_scraping?.[0]?.count || 0;
     const allNotWent = allFacets.not_went_scrapping?.[0]?.count || 0;
+    const allFailed = allFacets.failed_scraping?.[0]?.count || 0;
 
 
 
@@ -907,12 +1155,14 @@ async function getSummaryStats(req, elastic, logger) {
         today_completed_scraping: todayCompleted,
         today_under_scraping: todayUnderScraping,
         today_not_went_scrapping: todayNotWent,
+        today_failed_scraping: todayFailed,
 
         // All time metrics
         total: allTotal,
         completed_scraping: allCompleted,
         under_scraping: allUnderScraping,
-        not_went_scrapping: allNotWent
+        not_went_scrapping: allNotWent,
+        failed_scraping: allFailed
       },
       meta: {
         date_range: 'all_and_today',
@@ -936,4 +1186,5 @@ module.exports = {
   getTopKeywords,
   getSummaryStats,
   getTotalAdsCount,
+  getItemsList,
 };

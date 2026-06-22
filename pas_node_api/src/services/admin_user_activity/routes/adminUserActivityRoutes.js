@@ -6,7 +6,7 @@ const { authMiddleware, generateToken } = require('../../../middleware/auth');
 const databaseManager = require('../../../database/DatabaseManager');
 const { getAllSearches, getFilterOptions, getSummaryStats: getSearchesSummaryStats } = require('../controllers/userActivitySearchController');
 const { getIntelligenceStats, getTopUsers, purgeOldActivities, getKeywordScrapingHistory } = require('../controllers/searchIntelligenceController');
-const { getKeywordTrends, getProjectActivity, getTopKeywords, getSummaryStats: getTrendsSummaryStats, getTotalAdsCount } = require('../controllers/keyword_Trend_ProjectController');
+const { getKeywordTrends, getProjectActivity, getTopKeywords, getSummaryStats: getTrendsSummaryStats, getTotalAdsCount, getItemsList } = require('../controllers/keyword_Trend_ProjectController');
 
 const ELASTIC_FALLBACK_NETWORKS = ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'pinterest', 'quora', 'native', 'gdn', 'google'];
 
@@ -145,6 +145,18 @@ function createAdmin_user_activityRoutes(service) {
     authMiddleware,
     asyncHandler(async (req, res) => {
       const result = await getTrendsSummaryStats(req, getElastic(service.db), service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // GET /api/v1/admin_user_activity/intelligence/items-list
+  // Query params: type (1=keyword, 2=advertiser, 3=domain)
+  // Returns: list of all unique items for dropdown filter
+  router.get(
+    '/intelligence/items-list',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getItemsList(req, getElastic(service.db), service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 import Cookies from "js-cookie";
+import ItemFilter from "./ItemFilter";
 
 const NODE_API = (import.meta.env.VITE_NODE_USER_ACTIVITY_API ?? "").trim().replace(/\/$/, "");
 
@@ -50,7 +51,10 @@ const KeywordTrends = ({ onDataReady }) => {
   const [adsCount,      setAdsCount]      = useState(null);
   const [expandedPlatformRows, setExpandedPlatformRows] = useState(new Set());
   const [expandedKeywords, setExpandedKeywords] = useState(new Set());
+  const [statusFilter, setStatusFilter] = useState("totalkeywords"); // Default to Total Keywords filter
+  const [selectedFilterValue, setSelectedFilterValue] = useState(null); // New state for item filter
   const searchInputRef = useRef(null);
+  const tableRef = useRef(null);
 
   // Fetch top keywords/advertisers/domains for chart - updates when typeTab changes
   useEffect(() => {
@@ -105,6 +109,7 @@ const KeywordTrends = ({ onDataReady }) => {
             todayCompletedItems: data.today_completed_scraping || 0,
             todayNotQueued: data.today_not_went_scrapping || 0,
             todayScrapingQueued: data.today_under_scraping || 0,
+            todayFailed: data.today_failed_scraping || 0,
 
             // All time stats
             totalItems: data.total || 0,
@@ -112,7 +117,7 @@ const KeywordTrends = ({ onDataReady }) => {
             notQueued: data.not_went_scrapping || 0,
             scrapingQueued: data.under_scraping || 0,
             totalScraped: data.completed_scraping || 0,
-            totalFailed: 0,
+            totalFailed: data.failed_scraping || 0,
             todayAdsCount: 0,
             totalAdsCount: data.total_ads_count || 0,
           };
@@ -162,7 +167,7 @@ const KeywordTrends = ({ onDataReady }) => {
     }
   }, [typeTab]);
 
-  // Fetch table data with pagination (only when page or typeTab changes)
+  // Fetch table data with pagination (only when page, typeTab, statusFilter, or selectedFilterValue changes)
   useEffect(() => {
     const fetchTableData = async () => {
       if (!NODE_API) { setError("API URL not configured"); return; }
@@ -170,7 +175,15 @@ const KeywordTrends = ({ onDataReady }) => {
       try {
         const token = Cookies.get("token");
         const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
-        const params = new URLSearchParams({ type: typeParam, sort_by: "createdAt", page: String(page), size: "10" });
+        const params = new URLSearchParams({
+          type: typeParam,
+          sort_by: "createdAt",
+          page: String(page),
+          size: "10",
+          ...(statusFilter && statusFilter !== "totalkeywords" ? { status: statusFilter } : {}),
+          ...(selectedFilterValue ? { search_value: selectedFilterValue } : {})
+        });
+        console.log('[fetchTableData] params:', Object.fromEntries(params));
         const res = await fetch(`${NODE_API}/intelligence/keyword-trends?${params}`, {
           headers: {
             "Content-Type": "application/json",
@@ -209,18 +222,27 @@ const KeywordTrends = ({ onDataReady }) => {
       }
     };
     fetchTableData();
-  }, [typeTab, page]);
+  }, [typeTab, page, statusFilter, selectedFilterValue]);
+
+  // Full list from API (already paginated and filtered by statusFilter via API)
+  const fullList = data[typeTab] ?? [];
 
   // Expose live data for native PDF export
   const exportDataRef = useRef(null);
-  exportDataRef.current = { data, typeTab, sortBy, meta };
+  exportDataRef.current = {
+    data,
+    typeTab,
+    sortBy,
+    meta,
+    // Include full table data for PDF export
+    tableList: fullList,
+    scrapingStats,
+    adsCount
+  };
   useEffect(() => {
     if (onDataReady) onDataReady(() => exportDataRef.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onDataReady]);
-
-  // Full list from API (already paginated)
-  const fullList = data[typeTab] ?? [];
 
   // For dropdown search (search across all items, not just current page)
   const allItems = data[typeTab] ?? [];
@@ -252,8 +274,36 @@ const KeywordTrends = ({ onDataReady }) => {
   const maxLabelLength = chartData.length > 0 ? Math.max(...chartData.map((d) => d.displayTerm.length), 10) : 10;
   const yAxisWidth = Math.max(80, Math.min(200, maxLabelLength * 6.5));
 
-  const SummaryMetric = ({ label, value, sublabel }) => (
-    <div style={{ flex: 1, minWidth: "120px", padding: "10px", background: "#f9fafb", borderRadius: "8px", textAlign: "center", border: "1px solid #e5e7eb" }}>
+  const SummaryMetric = ({ label, value, sublabel, filterKey, isActive }) => (
+    <div
+      onClick={() => {
+        if (filterKey) {
+          setStatusFilter(statusFilter === filterKey ? null : filterKey);
+          setPage(0);
+          // Scroll to table after a brief delay to allow state update
+          setTimeout(() => {
+            tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 100);
+        }
+      }}
+      style={{
+        flex: 1, minWidth: "120px", padding: "10px", background: isActive ? "#dbeafe" : "#f9fafb", borderRadius: "8px", textAlign: "center", border: isActive ? "1px solid #7dd3fc" : "1px solid #e5e7eb",
+        cursor: filterKey ? "pointer" : "default",
+        transition: "all 0.2s"
+      }}
+      onMouseEnter={(e) => {
+        if (filterKey && !isActive) {
+          e.currentTarget.style.background = "#f0f9ff";
+          e.currentTarget.style.borderColor = "#bfdbfe";
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (filterKey && !isActive) {
+          e.currentTarget.style.background = "#f9fafb";
+          e.currentTarget.style.borderColor = "#e5e7eb";
+        }
+      }}
+    >
       <div style={{ fontSize: "10px", color: "#9ca3af", fontWeight: 500, marginBottom: "3px" }}>{label}</div>
       <div style={{ fontSize: "18px", fontWeight: 700, color: "#111827" }}>{typeof value === 'number' ? value.toLocaleString() : value}</div>
       {sublabel && <div style={{ fontSize: "10px", color: "#d1d5db", marginTop: "2px" }}>{sublabel}</div>}
@@ -271,11 +321,6 @@ const KeywordTrends = ({ onDataReady }) => {
         {error}
       </div>
     );
-    if (!loading && fullList.length === 0) return (
-      <div style={{ padding: "60px 0", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>
-        No data found for this category.
-      </div>
-    );
 
     return (
       <>
@@ -284,15 +329,17 @@ const KeywordTrends = ({ onDataReady }) => {
           <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "12px" }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
               {/* All Time Metrics - First */}
-              <SummaryMetric label={`Total ${typeTab.charAt(0).toUpperCase() + typeTab.slice(1)}`} value={scrapingStats.totalItems} />
-              <SummaryMetric label="Total Scraped Completed" value={scrapingStats.completedToday} />
-              <SummaryMetric label="Total keywords Not Went for Scraping" value={scrapingStats.notQueued} />
-              <SummaryMetric label={`Total under Scraping ${typeTab.charAt(0).toUpperCase() + typeTab.slice(1)}`} value={scrapingStats.scrapingQueued} />
+              <SummaryMetric label={`Total ${typeTab.charAt(0).toUpperCase() + typeTab.slice(1)}`} value={scrapingStats.totalItems} filterKey="totalkeywords" isActive={statusFilter === "totalkeywords"} />
+              <SummaryMetric label="Total Scraped Completed" value={scrapingStats.completedToday} filterKey="totalcompleted" isActive={statusFilter === "totalcompleted"} />
+              <SummaryMetric label="Total keywords Not Went for Scraping" value={scrapingStats.notQueued} filterKey="totalnotwent" isActive={statusFilter === "totalnotwent"} />
+              <SummaryMetric label={`Total under Scraping ${typeTab.charAt(0).toUpperCase() + typeTab.slice(1)}`} value={scrapingStats.scrapingQueued} filterKey="totalunderscrapping" isActive={statusFilter === "totalunderscrapping"} />
+              <SummaryMetric label="Total Failed" value={scrapingStats.totalFailed} filterKey="totalfailed" isActive={statusFilter === "totalfailed"} />
 
               {/* Today's Metrics */}
-              <SummaryMetric label="Today Scraped Completed" value={scrapingStats.todayCompletedItems} />
-              <SummaryMetric label="Today Not Went for Scraping" value={scrapingStats.todayNotQueued} />
-              <SummaryMetric label={`Today under Scraping ${typeTab.charAt(0).toUpperCase() + typeTab.slice(1)}`} value={scrapingStats.todayScrapingQueued} />
+              <SummaryMetric label="Today Scraped Completed" value={scrapingStats.todayCompletedItems} filterKey="todaycompleted" isActive={statusFilter === "todaycompleted"} />
+              <SummaryMetric label="Today Not Went for Scraping" value={scrapingStats.todayNotQueued} filterKey="todaynotwent" isActive={statusFilter === "todaynotwent"} />
+              <SummaryMetric label={`Today under Scraping ${typeTab.charAt(0).toUpperCase() + typeTab.slice(1)}`} value={scrapingStats.todayScrapingQueued} filterKey="todayunderscrapping" isActive={statusFilter === "todayunderscrapping"} />
+              <SummaryMetric label="Today Failed" value={scrapingStats.todayFailed} filterKey="todayfailed" isActive={statusFilter === "todayfailed"} />
             </div>
           </div>
         )}
@@ -346,7 +393,6 @@ const KeywordTrends = ({ onDataReady }) => {
                 return (
                   <g key={idx}>
                     {/* Label */}
-                    <title>{item.term}</title>
                     <text
                       x={labelX}
                       y={y + 13}
@@ -354,6 +400,7 @@ const KeywordTrends = ({ onDataReady }) => {
                       fontSize="11"
                       fill="#374151"
                       style={{ cursor: "help" }}
+                      title={item.term}
                     >
                       {item.displayTerm}
                     </text>
@@ -368,21 +415,9 @@ const KeywordTrends = ({ onDataReady }) => {
                       rx="4"
                       style={{ cursor: "pointer" }}
                     >
-                      <title>{item.term} - Searches: {item.count}</title>
+                      <title>{item.term} - {item.count} searches</title>
                     </rect>
 
-                    {/* Value label */}
-                    {barWidth > 50 && (
-                      <text
-                        x={yAxisWidth + 10 + barWidth}
-                        y={y + 13}
-                        fontSize="11"
-                        fill="#6b7280"
-                        style={{ pointerEvents: "none" }}
-                      >
-                        {item.count}
-                      </text>
-                    )}
                   </g>
                 );
               })}
@@ -398,15 +433,19 @@ const KeywordTrends = ({ onDataReady }) => {
           </div>
         </div>
 
+        {/* Filter row - above table */}
+        <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "12px 20px" }}>
+          <ItemFilter typeTab={typeTab} onFilterApply={handleFilterApply} />
+        </div>
 
         {/* Table */}
-        <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
+        <div ref={tableRef} style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", tableLayout: "fixed", fontSize: "13px", borderCollapse: "collapse" }}>
               <colgroup>
                 <col style={{ width: "40px" }} />
-                <col style={{ width: "18%" }} />
-                <col style={{ width: "11%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "13%" }} />
                 <col style={{ width: "12%" }} />
                 <col style={{ width: "14%" }} />
                 <col style={{ width: "28%" }} />
@@ -581,6 +620,13 @@ const KeywordTrends = ({ onDataReady }) => {
                     </tr>
                   );
                 })}
+                {fullList.length === 0 && (
+                  <tr>
+                    <td colSpan="9" style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>
+                      No data found for this category.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -615,16 +661,21 @@ const KeywordTrends = ({ onDataReady }) => {
     );
   };
 
+  const handleFilterApply = (value) => {
+    setSelectedFilterValue(value);
+    setPage(0); // Reset to first page when filter changes
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      {/* Controls row */}
-      <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+      {/* Type tabs row */}
+      <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "12px 20px", display: "flex", alignItems: "center", gap: "12px" }}>
         {/* Type tabs */}
         <div style={{ display: "flex", alignItems: "center", gap: "4px", background: "#f3f4f6", borderRadius: "8px", padding: "4px" }}>
           {TYPE_TABS.map((tab) => (
             <button
               key={tab.key}
-              onClick={() => { setTypeTab(tab.key); setPage(0); }}
+              onClick={() => { setTypeTab(tab.key); setPage(0); setSelectedFilterValue(null); }}
               style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: typeTab === tab.key ? "1px solid #e5e7eb" : "1px solid transparent", cursor: "pointer", background: typeTab === tab.key ? "white" : "transparent", color: typeTab === tab.key ? "#111827" : "#6b7280", boxShadow: "none" }}
             >
               {tab.label}
@@ -636,9 +687,7 @@ const KeywordTrends = ({ onDataReady }) => {
             </button>
           ))}
         </div>
-
       </div>
-
 
       {renderContent()}
     </div>
