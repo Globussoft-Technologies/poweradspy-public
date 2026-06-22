@@ -19,6 +19,7 @@ const { ObjectId } = require('mongodb');
 const dbManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
 const config = require('../../../config');
+const { syncGoogleKeyword } = require('../../google/searchAudit/userSearchHook');
 
 const log = logger.createChild('keyword-search');
 
@@ -235,6 +236,11 @@ async function storeKeywordSearch(req, res) {
     );
 
     const status = result.upsertedCount ? 'new' : 'existing';
+
+    // Dual-write: a google keyword search is mirrored into google_audit_keywords (deduped).
+    // Non-fatal — never blocks/breaks the store response (see userSearchHook).
+    await syncGoogleKeyword({ value, type, networks: netList }, log);
+
     return res.json({ code: 200, message: 'keyword search stored', data: { status, type, value, networks: netList } });
   } catch (err) {
     log.error('storeKeywordSearch failed', { error: err.message });

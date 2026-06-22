@@ -16,6 +16,7 @@ const config = require('../config');
 const logger = require('../logger');
 const { parseSchedule } = require('./parseSchedule');
 const { runActiveCountSnapshot } = require('./activeCountSnapshotJob');
+const { runGoogleKeywordAudit } = require('./googleKeywordAuditCron');
 
 const log = logger.createChild('cron-manager');
 
@@ -23,6 +24,7 @@ const log = logger.createChild('cron-manager');
 const REGISTRY = {
   activeCountSnapshot: (jobCfg) =>
     runActiveCountSnapshot({ retentionDays: jobCfg.retentionDays || 365 }),
+  googleKeywordAudit: () => runGoogleKeywordAudit(),
 };
 
 /**

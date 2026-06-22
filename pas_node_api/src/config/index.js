@@ -299,6 +299,43 @@ const config = {
     staleSweepBatch: getVal(fileConfig.keywordSearch?.staleSweepBatch, 'KEYWORD_SEARCH_STALE_SWEEP_BATCH', toInt) || 100,
   },
 
+  // ─── Google search-audit keyword store (MongoDB) ───
+  // Backs GET get-search-audit-keywords (crawler pull) + POST insert-search-audit-keywords
+  // (CSV/JSON bulk insert). Lives in the SAME Mongo DB as keyword_searches (so the
+  // google user-search import is a same-connection cross-collection read). Dedupe is a
+  // unique index on keywordNorm (lowercased+trimmed); the collection is capped at maxCount.
+  googleKeywordAudit: {
+    enabled: getVal(fileConfig.googleKeywordAudit?.enabled, 'GKA_ENABLED', toBool) !== false,
+    mongoSlug: getVal(fileConfig.googleKeywordAudit?.mongoSlug, 'GKA_MONGO_SLUG') || 'facebook',
+    database: getVal(fileConfig.googleKeywordAudit?.database, 'GKA_DATABASE') || '',
+    collection: getVal(fileConfig.googleKeywordAudit?.collection, 'GKA_COLLECTION') || 'google_audit_keywords',
+    metaCollection: getVal(fileConfig.googleKeywordAudit?.metaCollection, 'GKA_META_COLLECTION') || 'google_audit_meta',
+    // Hard ceiling — on insert and on cron, the oldest rows beyond this are deleted.
+    maxCount: getVal(fileConfig.googleKeywordAudit?.maxCount, 'GKA_MAX_COUNT', toInt) || 100000,
+    // GET crawler: batch size + which statuses are "crawlable" (0=pending, 2=re-crawl).
+    crawlBatchSize: getVal(fileConfig.googleKeywordAudit?.crawlBatchSize, 'GKA_CRAWL_BATCH', toInt) || 5,
+    crawlStatuses: (() => {
+      const val = getVal(fileConfig.googleKeywordAudit?.crawlStatuses, 'GKA_CRAWL_STATUSES');
+      if (!val) return [0, 2];
+      try { return (Array.isArray(val) ? val : JSON.parse(val)).map((n) => parseInt(n, 10)).filter(Number.isFinite); } catch { return [0, 2]; }
+    })(),
+    // POST upload limits.
+    maxUploadMb: getVal(fileConfig.googleKeywordAudit?.maxUploadMb, 'GKA_MAX_UPLOAD_MB', toInt) || 50,
+    insertChunkSize: getVal(fileConfig.googleKeywordAudit?.insertChunkSize, 'GKA_INSERT_CHUNK', toInt) || 2000,
+    // Import of google user-searched keywords from the existing keyword_searches collection.
+    sourceCollection: getVal(fileConfig.googleKeywordAudit?.sourceCollection, 'GKA_SOURCE_COLLECTION') || 'keyword_searches',
+    importType: getVal(fileConfig.googleKeywordAudit?.importType, 'GKA_IMPORT_TYPE', toInt) || 1, // 1 = keyword
+    importNetwork: getVal(fileConfig.googleKeywordAudit?.importNetwork, 'GKA_IMPORT_NETWORK') || 'google',
+    importBatch: getVal(fileConfig.googleKeywordAudit?.importBatch, 'GKA_IMPORT_BATCH', toInt) || 2000,
+    importMaxBatches: getVal(fileConfig.googleKeywordAudit?.importMaxBatches, 'GKA_IMPORT_MAX_BATCHES', toInt) || 50,
+    // Synchronous dual-write: when a google keyword is stored in keyword_searches, also
+    // upsert it into google_audit_keywords in the same request (deduped). Default ON.
+    syncFromUserSearch: getVal(fileConfig.googleKeywordAudit?.syncFromUserSearch, 'GKA_SYNC_FROM_USER_SEARCH', toBool) !== false,
+    // Enforce the cap inline on the dual-write, but only when a NEW row was actually
+    // inserted (so dedupe hits cost nothing). Default ON to keep the collection at ≤maxCount.
+    syncEnforceCap: getVal(fileConfig.googleKeywordAudit?.syncEnforceCap, 'GKA_SYNC_ENFORCE_CAP', toBool) !== false,
+  },
+
   sendgrid: {
     enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
     apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),
