@@ -8,6 +8,8 @@
  * `exec` = `db.sql` (autocommit) or a `withTransaction` tx.
  */
 
+const { latin1Safe } = require('../../../insertion/helpers/util');
+
 async function withTransaction(sql, fn) {
   const conn = await sql.getConnection();
   const tx = { query: async (q, p) => { const [r] = await conn.execute(q, p); return r; } };
@@ -186,7 +188,7 @@ async function insertVariant(exec, d) {
   const clean = stripNulls({
     google_text_ad_id: d.google_text_ad_id,
     title: d.title ?? '', text: d.text ?? '', newsfeed_description: d.newsfeed_description ?? '',
-    image_url_original: d.image_url_original ?? null, image_url: d.image_url ?? null,
+    image_url_original: latin1Safe(d.image_url_original) ?? null, image_url: d.image_url ?? null,
     target_keyword: d.target_keyword ?? '', target_page: d.target_page ?? null,
   });
   const cols = Object.keys(clean);

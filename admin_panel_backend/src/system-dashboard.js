@@ -298,16 +298,50 @@ async function fleetIncrease(metric, win = '5m') {
 
 // ---- main endpoint -------------------------------------------------------
 
+// In-flight overview computes keyed by cacheKey — the single-flight stampede
+// guard (see the cache-miss path below). Prevents the FE auto-refresh + multiple
+// tabs from each launching a duplicate ~5s recompute on every cache expiry,
+// which on this small shared box stacked into a CPU stampede (load 50+).
+const _overviewInflight = new Map();
+
 async function overview(req, res) {
   const range = req.body?.range || {};
   const platform = req.body?.platform;
   const activeWindowMin = toNum(req.body?.activeWindowMin) || 10;
-  const { fromSql, toSql, fromDay, toDay } = dayBounds(range);
+  let { fromSql, toSql, fromDay, toDay } = dayBounds(range);
+  // Live-dashboard timezone guard: the FE derives "today" from the viewer's
+  // local timezone, which for IST users in the evening is a calendar day AHEAD
+  // of the server's UTC day — so the default window lands entirely in the future
+  // and returns nothing (data is timestamped in UTC). If the window STARTS after
+  // the current UTC day, snap it to the current UTC day so live data shows.
+  const _todayUtc = new Date().toISOString().slice(0, 10);
+  if (fromDay > _todayUtc) {
+    ({ fromSql, toSql, fromDay, toDay } = dayBounds({ from: _todayUtc, to: _todayUtc }));
+  }
 
   const platKey = Array.isArray(platform) && platform.length ? platform.slice().sort().join('-') : 'all';
   const cacheKey = `dash_overview_${fromDay}_${toDay}_${platKey}_${activeWindowMin}`;
   const cached = cache.get(cacheKey);
   if (cached) return res.json(cached);
+
+  // Single-flight stampede guard: if this exact overview is already being
+  // computed, wait for it and serve the cache it populates, instead of kicking
+  // off a duplicate ~5s recompute.
+  const _existing = _overviewInflight.get(cacheKey);
+  if (_existing) {
+    try { await _existing; } catch (_) { /* ignore */ }
+    const _c2 = cache.get(cacheKey);
+    if (_c2) return res.json(_c2);
+    // the in-flight compute yielded no cache hit; fall through and compute.
+  }
+  let _flightDone;
+  const _flight = new Promise(r => { _flightDone = r; });
+  _overviewInflight.set(cacheKey, _flight);
+  // Safety net: never let a thrown compute pin the key (bounds the wait above).
+  const _flightTimer = setTimeout(() => {
+    if (_overviewInflight.get(cacheKey) === _flight) _overviewInflight.delete(cacheKey);
+    _flightDone();
+  }, 25000);
 
   // 1) DB rollups per network (each fail-safe).
   const rollups = await Promise.all(
@@ -485,7 +519,10 @@ async function overview(req, res) {
     systems: systemRows,
   };
 
-  cache.set(cacheKey, payload, 20); // short TTL so "live" auto-refresh stays cheap
+  cache.set(cacheKey, payload, 60); // was 20s (< the 30s FE refresh, so EVERY refresh missed); single-flight collapses any concurrent misses
+  clearTimeout(_flightTimer);
+  if (_overviewInflight.get(cacheKey) === _flight) _overviewInflight.delete(cacheKey);
+  _flightDone();
   return res.json(payload);
 }
 

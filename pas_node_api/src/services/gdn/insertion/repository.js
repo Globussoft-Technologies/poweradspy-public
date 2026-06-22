@@ -15,6 +15,8 @@
  *   - updateX → affected row count (number)
  */
 
+const { latin1Safe } = require('../../../insertion/helpers/util');
+
 // ── Transaction helper (relaxes strict sql_mode for the insertion connection) ──
 async function withTransaction(sql, fn) {
   const conn = await sql.getConnection();
@@ -262,7 +264,7 @@ async function insertVariant(exec, d) {
     title: d.title ?? '',
     text: d.text ?? '',
     newsfeed_description: d.newsfeed_description ?? '',
-    image_url_original: d.image_url_original ?? null,
+    image_url_original: latin1Safe(d.image_url_original) ?? null,
     ad_image_size: d.ad_image_size ?? null,
     image_url: d.image_url ?? '/bydefault_ads.jpg',
   });
