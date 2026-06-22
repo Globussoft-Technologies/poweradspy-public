@@ -328,6 +328,15 @@ const config = {
     credentialsPath: getVal(fileConfig.firebase?.credentialsPath, 'FIREBASE_CREDENTIALS_PATH') || 'firebase-credentials.json',
   },
 
+  // ─── Centralized cron config (see config.json "crons") ───
+  // Generic, reusable scheduler config. `jobs` is a map of jobKey → { enabled,
+  // schedule, ...jobSpecificOpts }. The cron manager (src/jobs/cronManager.js)
+  // schedules every enabled job whose key is registered in cronRegistry.js.
+  crons: {
+    timezone: getVal(fileConfig.crons?.timezone, 'CRONS_TIMEZONE') || fileConfig.notifications?.timezone || 'Asia/Kolkata',
+    jobs: fileConfig.crons?.jobs || {},
+  },
+
   notifications: {
     enabled: getVal(fileConfig.notifications?.enabled, 'NOTIFICATIONS_ENABLED', toBool),
     // Timezone for ALL cron times (IANA name). Default IST so "daily 12:30 AM" = India time.

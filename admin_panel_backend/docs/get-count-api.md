@@ -60,12 +60,17 @@ All responses are wrapped as `{ "code": 200, "message": "success", "data": <belo
 ```
 
 ### `active` — total ads in the window
-Counts ads whose **last sighting falls in the window**: `last_seen >= from AND last_seen < (to+1)`.
-This is the single agreed definition — DS calls this endpoint instead of their
-own query, so the admin panel and the daily report run identical SQL. (Heads-up:
-`last_seen` moves as ads get re-crawled, so the same past date can read a bit
-differently at different times of day — query at a consistent time for exact
-admin↔DS agreement.)
+"Active ads" for a day = ads whose last sighting fell in that day (`last_seen ∈ [day, day+1)`).
+Because `last_seen` keeps moving as ads are re-crawled, a *live* query for a past
+date isn't reproducible — so:
+- **Past days** are read from a **frozen daily snapshot** (written nightly by the
+  pas_node_api cron `activeCountSnapshot`), so the number is stable forever.
+- **Today** is computed **live** (the day isn't over yet).
+- **A multi-day range** = the **sum of the daily snapshots** in range (+ live today
+  if today is included). Note this is a per-day total — an ad active on N days
+  counts N times.
+- If a past day's snapshot is missing (cron hadn't run yet), it transparently
+  falls back to a live count for that span, so the card is never blank.
 ```json
 { "network": "youtube", "metric": "active", "range": { "from": "2026-06-15", "to": "2026-06-15" } }
 ```
@@ -161,13 +166,14 @@ One JSON line per request, capturing who hit it, with what, and what came back:
 
 - The window upper bound is explicit, so the count is correct **at any time of
   day** (the DS cron leaves it implicit because it runs at midnight).
-- **`active` is the agreed source-of-truth definition.** DS's legacy per-network
-  query was open-ended (`last_seen >= from`), which isn't reproducible (it keeps
-  growing as ads are re-crawled). The fix is not a cleverer WHERE clause — it's
-  that everyone runs the **same** query: `last_seen >= from AND last_seen < (to+1)`.
-  DS should call this endpoint instead of their own SQL. Their daily "Yesterday
-  Total Ads" number will change when they switch — that's expected; it's now the
-  one shared definition.
+- **`active` past values are frozen snapshots, not live.** A nightly cron in
+  pas_node_api (`config.json` → `crons.activeCountSnapshot`, default 12:05 AM)
+  stores each network's previous-day active count in a per-network
+  `active_count_snapshots` table (kept `retentionDays`, default 365). This API
+  reads those for past dates so the number stays consistent; only **today** is live.
+- **Timezone must match.** The admin read side uses `SNAPSHOT_TZ` (default
+  `Asia/Kolkata`) to decide "today"; it must equal the cron's `crons.timezone`,
+  or the past/today boundary disagrees by a day.
 - `tiktok` is **not** supported here — it lives on a separate stack.
 - Lifetime "Total Ads" stays on Elasticsearch (`get-ads-count`) for speed.
 

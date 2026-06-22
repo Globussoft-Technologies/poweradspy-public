@@ -18,6 +18,9 @@ function mockRes() {
   return res;
 }
 
+// Pin "today" so snapshot-vs-live routing is deterministic (RANGE below is fully past).
+process.env.SNAPSHOT_TODAY = "2026-06-18";
+
 const norm = (s) => s.replace(/\s+/g, " ").trim();
 const RANGE = { from: "2025-01-01", to: "2025-01-31" };
 const WIN = ["2025-01-01 00:00:00", "2025-02-01 00:00:00"]; // 12am→12am, exclusive next-midnight
@@ -64,20 +67,22 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
     expect(res.json.mock.calls[0][0].message).toMatch(/platform must be/);
   });
 
-  // ── range (default) → newCount + activeCount ──────────────────────────────
-  it("range: two parallel queries, returns newCount + activeCount (default metric)", async () => {
-    queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 10 }]); // new
-    queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 50 }]); // active
+  // ── new is always live; active uses frozen snapshots (past) + live (today) ─
+  it("range (fully past): new is live, active SUMS the daily snapshots", async () => {
+    queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 10 }]);              // new (live)
+    queryDatabaseSpy.mockResolvedValueOnce([                           // active: snapshot rows
+      { snapshot_date: "2025-01-01", active_count: 30 },
+      { snapshot_date: "2025-01-02", active_count: 20 },
+    ]);
     const res = mockRes();
     await dynamicCountFilter({ body: { network: "facebook", range: RANGE } }, res);
     expect(queryDatabaseSpy).toHaveBeenCalledTimes(2);
     const [, , sqlNew, pNew] = queryDatabaseSpy.mock.calls[0];
     const [, , sqlAct, pAct] = queryDatabaseSpy.mock.calls[1];
     expect(norm(sqlNew)).toBe("SELECT COUNT(id) AS cnt FROM facebook_ad WHERE first_seen >= ? AND first_seen < ?");
-    // active = ads whose last sighting falls in the window (last_seen bounded both ends)
-    expect(norm(sqlAct)).toBe("SELECT COUNT(id) AS cnt FROM facebook_ad WHERE last_seen >= ? AND last_seen < ?");
     expect(pNew).toEqual(WIN);
-    expect(pAct).toEqual(WIN);
+    expect(norm(sqlAct)).toBe("SELECT snapshot_date, active_count FROM active_count_snapshots WHERE snapshot_date >= ? AND snapshot_date <= ?");
+    expect(pAct).toEqual(["2025-01-01", "2025-01-31"]); // [from, min(to, yesterday)]
     expect(res.json).toHaveBeenCalledWith({ code: 200, message: "success", data: { newCount: 10, activeCount: 50 } });
   });
 
@@ -89,23 +94,7 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
     expect(norm(sqlNew)).toBe("SELECT COUNT(id) AS cnt FROM youtube_ad WHERE created_date >= ? AND created_date < ?");
   });
 
-  it("range: 'active' is a last_seen window for every network (incl. gdn & youtube — no per-network variant)", async () => {
-    queryDatabaseSpy.mockResolvedValue([{ cnt: 0 }]);
-    const resG = mockRes();
-    await dynamicCountFilter({ body: { network: "gdn", range: RANGE } }, resG);
-    const [, , sqlGdn, pGdn] = queryDatabaseSpy.mock.calls[1];
-    expect(norm(sqlGdn)).toBe("SELECT COUNT(id) AS cnt FROM gdn_ad WHERE last_seen >= ? AND last_seen < ?");
-    expect(pGdn).toEqual(WIN);
-
-    queryDatabaseSpy.mockClear();
-    const resY = mockRes();
-    await dynamicCountFilter({ body: { network: "youtube", metric: "active", range: RANGE } }, resY);
-    expect(norm(queryDatabaseSpy.mock.calls[0][2])).toBe(
-      "SELECT COUNT(id) AS cnt FROM youtube_ad WHERE last_seen >= ? AND last_seen < ?");
-  });
-
-  // ── new / active singles ──────────────────────────────────────────────────
-  it("metric=new returns a single total", async () => {
+  it("metric=new returns a single live total", async () => {
     queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 5401 }]);
     const res = mockRes();
     await dynamicCountFilter({ body: { network: "youtube", metric: "new", range: RANGE } }, res);
@@ -113,11 +102,50 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
     expect(res.json).toHaveBeenCalledWith({ code: 200, message: "success", data: { total: 5401 } });
   });
 
-  it("metric=active returns a single total", async () => {
-    queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 9742 }]);
+  it("metric=active (past single day) reads that day's snapshot", async () => {
+    queryDatabaseSpy.mockResolvedValueOnce([{ snapshot_date: "2025-06-15", active_count: 9742 }]);
     const res = mockRes();
-    await dynamicCountFilter({ body: { network: "youtube", metric: "active", range: RANGE } }, res);
+    await dynamicCountFilter({ body: { network: "youtube", metric: "active", range: { from: "2025-06-15", to: "2025-06-15" } } }, res);
+    expect(queryDatabaseSpy).toHaveBeenCalledTimes(1);
+    const [, , sql, params] = queryDatabaseSpy.mock.calls[0];
+    expect(norm(sql)).toBe("SELECT snapshot_date, active_count FROM active_count_snapshots WHERE snapshot_date >= ? AND snapshot_date <= ?");
+    expect(params).toEqual(["2025-06-15", "2025-06-15"]);
     expect(res.json.mock.calls[0][0].data).toEqual({ total: 9742 });
+  });
+
+  it("metric=active for TODAY runs live (no snapshot read)", async () => {
+    queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 4093 }]);
+    const res = mockRes();
+    await dynamicCountFilter({ body: { network: "facebook", metric: "active", range: { from: "2026-06-18", to: "2026-06-18" } } }, res);
+    expect(queryDatabaseSpy).toHaveBeenCalledTimes(1);
+    const [, , sql, params] = queryDatabaseSpy.mock.calls[0];
+    expect(norm(sql)).toBe("SELECT COUNT(id) AS cnt FROM facebook_ad WHERE last_seen >= ? AND last_seen < ?");
+    expect(params).toEqual(["2026-06-18 00:00:00", "2026-06-19 00:00:00"]);
+    expect(res.json.mock.calls[0][0].data).toEqual({ total: 4093 });
+  });
+
+  it("metric=active spanning yesterday+today SUMS the snapshot + live today", async () => {
+    queryDatabaseSpy.mockResolvedValueOnce([{ snapshot_date: "2026-06-17", active_count: 100 }]); // past
+    queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 9 }]);                                          // today live
+    const res = mockRes();
+    await dynamicCountFilter({ body: { network: "facebook", metric: "active", range: { from: "2026-06-17", to: "2026-06-18" } } }, res);
+    expect(queryDatabaseSpy).toHaveBeenCalledTimes(2);
+    expect(queryDatabaseSpy.mock.calls[0][3]).toEqual(["2026-06-17", "2026-06-17"]); // snapshot [from, yesterday]
+    const [, , liveSql, livePar] = queryDatabaseSpy.mock.calls[1];
+    expect(norm(liveSql)).toBe("SELECT COUNT(id) AS cnt FROM facebook_ad WHERE last_seen >= ? AND last_seen < ?");
+    expect(livePar).toEqual(["2026-06-18 00:00:00", "2026-06-19 00:00:00"]);
+    expect(res.json.mock.calls[0][0].data).toEqual({ total: 109 });
+  });
+
+  it("metric=active falls back to a live count when the snapshot table is missing", async () => {
+    queryDatabaseSpy.mockRejectedValueOnce(new Error("Table 'active_count_snapshots' doesn't exist"));
+    queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 27664 }]); // live fallback
+    const res = mockRes();
+    await dynamicCountFilter({ body: { network: "facebook", metric: "active", range: RANGE } }, res);
+    const [, , fbSql, fbPar] = queryDatabaseSpy.mock.calls[1];
+    expect(norm(fbSql)).toBe("SELECT COUNT(id) AS cnt FROM facebook_ad WHERE last_seen >= ? AND last_seen < ?");
+    expect(fbPar).toEqual(WIN); // [from 00:00:00, (pastTo+1) 00:00:00]
+    expect(res.json.mock.calls[0][0].data).toEqual({ total: 27664 });
   });
 
   it("metric=lifetime is rejected (lifetime is served from ES, not here)", async () => {
@@ -264,7 +292,7 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
 
   // ── resilience ────────────────────────────────────────────────────────────
   it("rows null → counts default to 0", async () => {
-    queryDatabaseSpy.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    queryDatabaseSpy.mockResolvedValue(null); // new=0, snapshot null → live fallback null → active=0
     const res = mockRes();
     await dynamicCountFilter({ body: { network: "facebook", range: RANGE } }, res);
     expect(res.json.mock.calls[0][0].data).toEqual({ newCount: 0, activeCount: 0 });

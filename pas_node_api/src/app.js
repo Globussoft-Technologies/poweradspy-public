@@ -203,6 +203,17 @@ async function createApp() {
     }
   }
 
+  // Initialize config-driven crons (config.json "crons" section) — also on one
+  // worker only. Independent of the notification toggle above.
+  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+    try {
+      const { initConfigCrons } = require('./jobs/cronManager');
+      initConfigCrons();
+    } catch (error) {
+      log.error('Failed to initialize config crons', { error: error.message });
+    }
+  }
+
   // NAS storage snapshot cron — records a periodic `df` snapshot (total/used/free) into the
   // on-disk history so the admin NAS-storage report can show day-over-day growth. Worker-1 only.
   if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {

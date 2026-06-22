@@ -101,6 +101,23 @@ function nextDay(dateStr) {
     return d.toISOString().slice(0, 10);
 }
 
+// Snapshot timezone — MUST match the pas_node_api cron's config.crons.timezone so
+// "today" lines up on both sides. (SNAPSHOT_TODAY overrides today — tests only.)
+const SNAPSHOT_TZ = process.env.SNAPSHOT_TZ || 'Asia/Kolkata';
+
+function tzToday() {
+    if (process.env.SNAPSHOT_TODAY) return process.env.SNAPSHOT_TODAY;
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: SNAPSHOT_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+}
+
+function addDays(dateStr, n) {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+}
+
 const num = (rows) => Number(rows?.[0]?.cnt || 0);
 const ok = (res, data) => res.status(200).json({ code: 200, message: 'success', data });
 
@@ -118,6 +135,46 @@ const newAdsSql = (cfg) =>
 // time (or snapshot daily). See docs/get-count-api.md.
 const activeAdsSql = (cfg) =>
     `SELECT COUNT(id) AS cnt FROM ${cfg.main} WHERE last_seen >= ? AND last_seen < ?`;
+
+// "active" / Total Ads — reads the FROZEN per-day snapshot for past days (so the
+// number stays consistent instead of shrinking as last_seen moves), live-counts
+// TODAY (window still open), and SUMS the daily snapshots across a multi-day range.
+// Falls back to a live bounded count if a past day's snapshot is missing or the
+// snapshots table doesn't exist yet — so it's never blank. The nightly snapshot
+// job lives in pas_node_api (src/jobs/activeCountSnapshotJob.js).
+async function computeActiveCount(run, cfg, range) {
+    const { from, to } = range;
+    const today = tzToday();
+    const yesterday = addDays(today, -1);
+    const pastTo = to < yesterday ? to : yesterday;   // last past day inside the range
+    const includesToday = from <= today && to >= today;
+
+    let total = 0;
+
+    if (from <= pastTo) {
+        let rows = null;
+        try {
+            rows = await run(
+                `SELECT snapshot_date, active_count FROM active_count_snapshots WHERE snapshot_date >= ? AND snapshot_date <= ?`,
+                [from, pastTo],
+            );
+        } catch (_) {
+            rows = null; // table not created yet → live fallback below
+        }
+        if (rows && rows.length) {
+            total += rows.reduce((s, r) => s + Number(r.active_count || 0), 0);
+        } else {
+            // no snapshots for the past portion → live bounded count for [from, pastTo]
+            total += num(await run(activeAdsSql(cfg), [`${from} 00:00:00`, `${nextDay(pastTo)} 00:00:00`]));
+        }
+    }
+
+    if (includesToday) {
+        total += num(await run(activeAdsSql(cfg), [`${today} 00:00:00`, `${nextDay(today)} 00:00:00`]));
+    }
+
+    return total;
+}
 
 const dynamicCountFilter = async (req, res) => {
     try {
@@ -167,12 +224,15 @@ const dynamicCountFilter = async (req, res) => {
                 return ok(res, { total: num(rows) });
             }
             case 'active': {
-                const rows = await run(activeAdsSql(cfg), win);
-                return ok(res, { total: num(rows) });
+                const total = await computeActiveCount(run, cfg, range);
+                return ok(res, { total });
             }
             case 'range': {
-                const [n, a] = await Promise.all([run(newAdsSql(cfg), win), run(activeAdsSql(cfg), win)]);
-                return ok(res, { newCount: num(n), activeCount: num(a) });
+                const [newRows, activeTotal] = await Promise.all([
+                    run(newAdsSql(cfg), win),
+                    computeActiveCount(run, cfg, range),
+                ]);
+                return ok(res, { newCount: num(newRows), activeCount: activeTotal });
             }
             case 'platform': {
                 // Plugin cards / DS "New Ads per Platform". Platform lives on the
