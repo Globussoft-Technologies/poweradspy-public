@@ -31,10 +31,11 @@ const NET_COLOR = {
 const fmtBytes = (b) => {
   if (b == null || !Number.isFinite(b)) return "—";
   const TB = 1e12, GB = 1e9, MB = 1e6;
-  if (b >= TB) return `${(b / TB).toFixed(2)} TB`;
-  if (b >= GB) return `${(b / GB).toFixed(1)} GB`;
-  if (b >= MB) return `${(b / MB).toFixed(0)} MB`;
-  return `${b} B`;
+  const s = b < 0 ? "-" : ""; b = Math.abs(b);   // keep the sign; format the magnitude
+  if (b >= TB) return `${s}${(b / TB).toFixed(2)} TB`;
+  if (b >= GB) return `${s}${(b / GB).toFixed(1)} GB`;
+  if (b >= MB) return `${s}${(b / MB).toFixed(0)} MB`;
+  return `${s}${b} B`;
 };
 const fmtDay = (d) => (d ? d.slice(5) : "");
 
