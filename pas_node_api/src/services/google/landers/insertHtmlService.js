@@ -50,15 +50,24 @@ function extractDomain(destinations) {
   return m ? m[1] : null;
 }
 
-// ── validator (PHP: all fields required) ─────────────────────────────────────────
+// ── validator ────────────────────────────────────────────────────────────────────
+// html_path & domain_registered_date are OPTIONAL (may be omitted or null).
 function validate(v) {
   if (v === null || typeof v !== 'object') return 'The insert data is invalid.';
-  const required = ['ad_id', 'country_iso', 'destinations', 'html_path', 'screen_shot', 'html_content', 'status', 'domain_registered_date'];
+  const required = ['ad_id', 'country_iso', 'destinations', 'screen_shot', 'html_content', 'status'];
   for (const k of required) {
     if (v[k] === undefined || v[k] === null || v[k] === '') return `The ${k} field is required.`;
   }
   if (v.crawled_by !== '.net' && v.crawled_by !== 'python') return 'The selected crawled by is invalid.';
   return null;
+}
+
+// Append html_path to an existing zip list only when it was actually provided
+// (optional field — never inject null/undefined into the stored array).
+function appendZip(dbValue, htmlPath) {
+  const base = splitDbList(dbValue);
+  if (htmlPath === undefined || htmlPath === null || htmlPath === '') return uniq(base);
+  return uniq([...base, htmlPath]);
 }
 
 const ES_DOC_TYPE = 'doc';
@@ -186,14 +195,14 @@ async function insertHtmlContent(req, db, log) {
         dc_black_hat.push(value.html_content); // PHP quirk: whitehat html → dc_blackhat
         update_meta_table.white_lander_date = date;
         whitehat_screenshot = uniq([...splitDbList(whitehat_screenshot_db), value.screen_shot]);
-        whitehat_zip = uniq([...splitDbList(whitehat_zip_db), value.html_path]);
+        whitehat_zip = appendZip(whitehat_zip_db, value.html_path);
         update_meta_table.white_ad_status = Number(value.domain_age) === 1 ? 2 : value.status;
       } else if (Number(value.status) === 1) {
         update_meta_table.blackhat_status = value.status;
         res_black_hat.push(value.html_content);
         update_meta_table.blackhat_date = date;
         blackhat_screenshot = uniq([...splitDbList(blackhat_screenshot_db), value.screen_shot]);
-        blackhat_zip = uniq([...splitDbList(blackhat_zip_db), value.html_path]);
+        blackhat_zip = appendZip(blackhat_zip_db, value.html_path);
       }
 
       // 8. Outgoing links upsert (per entry — gtext processes each inside the loop).
@@ -301,13 +310,13 @@ async function insertHtmlContent(req, db, log) {
     await repo.updateMainAdDomainId(sql, firstAdId2, id);
 
     // 13. Fold screenshot/zip JSON into the meta update.
-    if (blackhat_zip.length > 0) {
+    if (blackhat_screenshot.length > 0) {
       update_meta_table.png_file = JSON.stringify(blackhat_screenshot);
-      update_meta_table.blackhat_path = JSON.stringify(blackhat_zip);
+      if (blackhat_zip.length > 0) update_meta_table.blackhat_path = JSON.stringify(blackhat_zip);
     }
     if (whitehat_screenshot.length > 0) {
       update_meta_table.white_ad_screenshot = JSON.stringify(whitehat_screenshot);
-      update_meta_table.white_ad_lander = JSON.stringify(whitehat_zip);
+      if (whitehat_zip.length > 0) update_meta_table.white_ad_lander = JSON.stringify(whitehat_zip);
     }
 
     // 14. Meta update → ES doc update.

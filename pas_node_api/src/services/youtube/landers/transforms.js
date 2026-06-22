@@ -37,6 +37,16 @@ function splitDbList(dbValue) {
 
 const uniq = (arr) => [...new Set(arr)];
 
+/**
+ * Append html_path (the lander zip) to an existing db zip list, but only when it was
+ * actually provided. html_path is OPTIONAL — never inject null/undefined into the array.
+ */
+function appendZip(dbValue, htmlPath) {
+  const base = splitDbList(dbValue);
+  if (htmlPath === undefined || htmlPath === null || htmlPath === '') return uniq(base);
+  return uniq([...base, htmlPath]);
+}
+
 /** Registrable domain from a destination URL (PHP parse_url + regex). */
 function extractDomain(destinations) {
   if (!destinations) return null;
@@ -54,4 +64,4 @@ function toUnixSeconds(dateStr) {
   return Number.isNaN(t) ? null : Math.floor(t / 1000);
 }
 
-module.exports = { esHits, pipeJoin, normalizeCountry, splitDbList, uniq, extractDomain, toUnixSeconds };
+module.exports = { esHits, pipeJoin, normalizeCountry, splitDbList, uniq, appendZip, extractDomain, toUnixSeconds };

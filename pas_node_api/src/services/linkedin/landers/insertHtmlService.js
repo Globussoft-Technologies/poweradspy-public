@@ -23,7 +23,7 @@
 
 const repo = require('./repository');
 const {
-  esHits, pipeJoin, normalizeCountry, splitDbList, uniq, extractDomain, toUnixSeconds,
+  esHits, pipeJoin, normalizeCountry, splitDbList, uniq, appendZip, extractDomain, toUnixSeconds,
 } = require('./transforms');
 const { validate } = require('./validate');
 
@@ -143,7 +143,7 @@ async function insertHtmlContent(req, db, log) {
       dc_black_hat.push(value.html_content);
       update_meta_table.white_lander_date = date;
       whitehat_screenshot = uniq([...splitDbList(whitehat_screenshot_db), value.screen_shot]);
-      whitehat_zip = uniq([...splitDbList(whitehat_zip_db), value.html_path]);
+      whitehat_zip = appendZip(whitehat_zip_db, value.html_path);
       update_meta_table.white_ad_status = Number(value.domain_age) === 1 ? 2 : value.status;
     } else if (Number(value.status) === 1) {
       update_meta_table.blackhat_status = value.status;
@@ -152,7 +152,7 @@ async function insertHtmlContent(req, db, log) {
       // the live schema) — not 'blackhat_date' like youtube. repo.updateMeta backticks it.
       update_meta_table['blackhat_date-date'] = date;
       blackhat_screenshot = uniq([...splitDbList(blackhat_screenshot_db), value.screen_shot]);
-      blackhat_zip = uniq([...splitDbList(blackhat_zip_db), value.html_path]);
+      blackhat_zip = appendZip(blackhat_zip_db, value.html_path);
     }
 
     // 8. Outgoing links upsert.
@@ -238,14 +238,14 @@ async function insertHtmlContent(req, db, log) {
     await repo.updateMainAdDomainId(sql, ad_id, id);
 
     // 13. Fold screenshot/zip JSON into the meta update.
-    if (blackhat_zip.length > 0) {
+    if (blackhat_screenshot.length > 0) {
       update_meta_table.png_file = JSON.stringify(blackhat_screenshot);
-      update_meta_table.blackhat_path = JSON.stringify(blackhat_zip);
+      if (blackhat_zip.length > 0) update_meta_table.blackhat_path = JSON.stringify(blackhat_zip);
     }
     if (whitehat_screenshot.length > 0) {
       update_meta_table.screenshot_url = value.screen_shot;
       update_meta_table.white_ad_screenshot = JSON.stringify(whitehat_screenshot);
-      update_meta_table.white_ad_lander = JSON.stringify(whitehat_zip);
+      if (whitehat_zip.length > 0) update_meta_table.white_ad_lander = JSON.stringify(whitehat_zip);
     }
 
     // 14. Meta update -> ES doc update (flat fields).

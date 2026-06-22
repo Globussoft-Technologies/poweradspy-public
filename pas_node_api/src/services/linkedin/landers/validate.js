@@ -12,8 +12,9 @@
  * Returns the first error message (string), or null when valid.
  */
 
-const REQUIRED = ['ad_id', 'country_iso', 'destinations', 'html_path', 'screen_shot', 'html_content', 'status'];
-const PRESENT = ['domain_registered_date'];
+// html_path & domain_registered_date are OPTIONAL (may be omitted or null).
+const REQUIRED = ['ad_id', 'country_iso', 'destinations', 'screen_shot', 'html_content', 'status'];
+const PRESENT = [];
 
 function validate(v) {
   if (v === null || typeof v !== 'object') return 'The insert data is invalid.';
