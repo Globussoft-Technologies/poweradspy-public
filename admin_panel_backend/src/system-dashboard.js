@@ -20,6 +20,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const queryDatabase = require('../db-connections/connection');
+const searchAllInstances = require('../es-connections/connection'); // ES (for YouTube benchmark)
 const cache = require('../utils/cache');
 const { adCountAcrossSelectedNetworks } = require('../utils/db-query-metrics');
 // REUSE the EXACT same per-network config + query that Crawler Insight's
@@ -140,6 +141,34 @@ async function networkRollup(net, fromSql, toSql, platform) {
   const cfg = NETS[net];
   const dbName = process.env[cfg.env];
   if (!dbName) return { net, rows: [] };
+
+  // YouTube systems live in youtube_ad.system_id (proxmox machines) — its
+  // activities table is stale; youtube_ad has no account_id/is_unique/platform.
+  if (net === 'youtube') {
+    const sql = `SELECT system_id, 0 AS accounts, '' AS account_ids,
+        COUNT(*) AS ads, 0 AS unique_ads, MAX(last_seen) AS last_active
+      FROM youtube_ad
+      WHERE created_date BETWEEN ? AND ? AND system_id IS NOT NULL AND system_id <> ''
+      GROUP BY system_id`;
+    const rows = await queryDatabase(cfg.db_id, dbName, sql, [fromSql, toSql]);
+    return { net, rows: rows || [] };
+  }
+
+  // GDN/Native systems = the proxmox MACHINES (gdn_crawl_quality.host), NOT the
+  // activities table — there system_id is the ISP/proxy (e.g. "decodo-isp"), not
+  // a system. Both gdn & native crawl data live in one table (gdnpro_v2.
+  // gdn_crawl_quality) with total_gdn_ads / total_native_ads columns, so both
+  // read from the GDN pool (db_id 5). last_crawled is the activity timestamp.
+  if (net === 'gdn' || net === 'native') {
+    const adCol = net === 'gdn' ? 'total_gdn_ads' : 'total_native_ads';
+    const sql = `SELECT host AS system_id, 0 AS accounts, '' AS account_ids,
+        COALESCE(SUM(${adCol}),0) AS ads, 0 AS unique_ads, MAX(last_crawled) AS last_active
+      FROM gdn_crawl_quality
+      WHERE last_crawled BETWEEN ? AND ? AND host IS NOT NULL AND host <> ''
+      GROUP BY host`;
+    const rows = await queryDatabase(5, process.env.GDN_DATABASE, sql, [fromSql, toSql]);
+    return { net, rows: rows || [] };
+  }
 
   const params = [fromSql, toSql];
   let platClause = '';
@@ -440,8 +469,12 @@ async function overview(req, res) {
     if (active) totActive++;
     // Per-system ads = DB activity in the window (ES is network-level only, so
     // it can't attribute per-system). Headline/per-network totals use ES below.
+    // kind drives the click action: gdncrawl (gdn/native proxmox machine) opens
+    // the host-scoped crawl benchmark; others open the per-account drill.
+    const isGdnCrawl = s.networks.includes('gdn') || s.networks.includes('native');
     systemRows.push({
       system_id: s.system_id,
+      kind: isGdnCrawl ? 'gdncrawl' : 'normal',
       hostname: host,
       hostnames: hosts,
       networks: s.networks,
@@ -547,6 +580,7 @@ async function systemDrill(req, res) {
   const nowMs = Date.now();
   const accounts = [];
   const perNetwork = [];
+  let recent = [];   // per-system live feed (youtube: what this machine just inserted)
 
   await Promise.all(NET_KEYS.map(async (net) => {
     const cfg = NETS[net];
@@ -559,7 +593,28 @@ async function systemDrill(req, res) {
       params.push(...platform);
     }
     try {
-      if (cfg.hasAccount) {
+      if (net === 'youtube') {
+        // youtube systems come from youtube_ad.system_id (proxmox machines)
+        const sql = `SELECT COUNT(*) AS ads, MAX(last_seen) AS last_active
+          FROM youtube_ad WHERE system_id = ? AND created_date BETWEEN ? AND ?`;
+        const rows = await queryDatabase(cfg.db_id, dbName, sql, [system_id, fromSql, toSql]);
+        const r = rows && rows[0];
+        if (r && toNum(r.ads) > 0) {
+          const la = r.last_active ? new Date(r.last_active).getTime() : 0;
+          perNetwork.push({ network: net, accounts: 0, ads: toNum(r.ads), unique_ads: 0,
+            last_active: la ? new Date(la).toISOString() : null });
+        }
+        // per-system LIVE feed: the latest ads THIS machine just inserted/saw.
+        try {
+          const feed = await queryDatabase(cfg.db_id, dbName,
+            `SELECT ad_id, type, ad_position, UNIX_TIMESTAMP(last_seen) last_seen, UNIX_TIMESTAMP(created_date) created
+             FROM youtube_ad WHERE system_id = ? ORDER BY id DESC LIMIT 60`, [system_id]);
+          recent = (feed || []).map((x) => ({
+            network: 'youtube', ad_id: x.ad_id, ad_type: x.type || '', ad_position: x.ad_position || '',
+            ts: toNum(x.last_seen) || toNum(x.created),
+          }));
+        } catch (e) { /* feed is best-effort */ }
+      } else if (cfg.hasAccount) {
         const sql = `SELECT account_id, COUNT(*) AS ads, COALESCE(SUM(is_unique),0) AS unique_ads,
             MAX(created_at) AS last_active
           FROM \`${cfg.acts}\`
@@ -661,6 +716,7 @@ async function systemDrill(req, res) {
     },
     accounts,
     perNetwork,
+    recent,
   };
   cache.set(cacheKey, payload, 30);
   return res.json(payload);
@@ -1107,14 +1163,357 @@ async function exporterHealth(req, res) {
       live_metric_check,          // which live-strip metrics exist + their raw sum
       candidate_metrics: candidates, // real names matching cycle/capture/plugin/etc.
     };
-    cache.set(cacheKey, payload, 15);
+    cache.set(cacheKey, payload, 120); // 2-min cache so the 12MB stream isn't refetched every poll
     return res.json(payload);
   } catch (e) {
     const payload = { up: false, configured: true, url: SEND_METRICS_URL,
       latency_ms: Date.now() - t0, error: e.message };
-    cache.set(cacheKey, payload, 10);
+    cache.set(cacheKey, payload, 30);
     return res.json(payload);
   }
 }
 
-module.exports = { overview, systemDrill, accountsOverview, accountTimeline, platforms, systemDebug, exporterHealth };
+// ---- GDN / Native scraping-benchmark (ported from pas_node_api gdn dashboard) -
+//
+// POST /dashboard/gdn-benchmark  { system_id?, session_secs?, limit? }
+// Direct DB read (NO v2 HTTP API) — the admin pools already reach the same DBs:
+//   GDN    = db_id 5 / gdnpro_v2     (gdn_crawl_quality, gdn_ad, gdn_account_activities, …)
+//   NATIVE = db_id 3 / nativepro_v2  (native_ad, native_account_activities, networks)
+// SQL is a faithful copy of buildOverview/buildLive in
+// pas_node_api/src/services/gdn/routes/gdnDashboardRoutes.js.
+const GDN_POOL = { id: NETS.gdn.db_id, db: () => process.env[NETS.gdn.env] };
+const NAT_POOL = { id: NETS.native.db_id, db: () => process.env[NETS.native.env] };
+const g1 = (q, p) => queryDatabase(GDN_POOL.id, GDN_POOL.db(), q, p).then(r => (r && r[0]) ? r[0] : {});
+const gA = (q, p) => queryDatabase(GDN_POOL.id, GDN_POOL.db(), q, p).then(r => r || []);
+const n1 = (q, p) => queryDatabase(NAT_POOL.id, NAT_POOL.db(), q, p).then(r => (r && r[0]) ? r[0] : {});
+const nA = (q, p) => queryDatabase(NAT_POOL.id, NAT_POOL.db(), q, p).then(r => r || []);
+
+// scope = ISP/provider (default, network 📊 button) OR a single proxmox machine
+// (host, when a system card is clicked). host mode filters gdn_crawl_quality by
+// host; the account_activities "new" counts are ISP-keyed so they're 0 per host.
+async function gdnBuildLive(sid, sessionSecs, limit, host) {
+  const byHost = !!host;
+  const sCol = byHost ? 'host' : 'provider';
+  const sVal = byHost ? host : sid;
+  const scopeWhere = byHost ? `WHERE ${sCol}=?` : '';
+  const sp = byHost ? [sVal] : [];
+
+  const a = await g1('SELECT COUNT(*) done, COUNT(DISTINCT host) hosts, MAX(UNIX_TIMESTAMP(last_crawled)) last_ts, '
+    + 'MIN(UNIX_TIMESTAMP(last_crawled)) start_ts FROM gdn_crawl_quality '
+    + `WHERE last_crawled > (NOW() - INTERVAL ? SECOND) AND ${sCol}=?`, [sessionSecs, sVal]);
+  const ccsRows = await gA('SELECT DISTINCT country FROM gdn_crawl_quality WHERE last_crawled > (NOW() - INTERVAL ? SECOND) '
+    + `AND ${sCol}=? AND country<>'' ORDER BY country`, [sessionSecs, sVal]);
+  const ccs = ccsRows.map(r => r.country);
+  let pool = 0;
+  if (ccs.length) {
+    const ph = ccs.map(() => '?').join(',');
+    pool = toNum((await g1(`SELECT COUNT(DISTINCT url) c FROM gdn_crawl_quality WHERE ${sCol}=? AND country IN (${ph})`, [sVal, ...ccs])).c);
+  }
+  const obs = await g1(`SELECT COALESCE(SUM(total_gdn_ads),0) g, COALESCE(SUM(total_native_ads),0) n FROM gdn_crawl_quality WHERE ${sCol}=?`, [sVal]);
+  const gnew = byHost ? 0 : toNum((await g1('SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1', [sid])).c);
+  const nnew = byHost ? 0 : toNum((await n1('SELECT COUNT(*) c FROM native_account_activities WHERE system_id=? AND is_unique=1', [sid])).c);
+  const gObs = toNum(obs.g), nObs = toNum(obs.n);
+  const lastTs = a.last_ts != null ? toNum(a.last_ts) : null;
+  const running = !!(lastTs && (Date.now() / 1000 - lastTs) < 120);
+  const done = toNum(a.done);
+  const startTs = a.start_ts != null ? toNum(a.start_ts) : null;
+  const live = {
+    status: running ? 'running' : 'idle', country: ccs.join(',') || '—',
+    mode: `${toNum(a.hosts)} machine(s) · session = last 3h`,
+    done: pool ? Math.min(done, pool) : done, pool, last_ts: lastTs, start_ts: startTs,
+    run_secs: (startTs && lastTs) ? Math.max(0, lastTs - startTs) : 0,
+    gdn_ads: Math.max(gObs, gnew), gdn_new: gnew, native_ads: Math.max(nObs, nnew), native_new: nnew,
+  };
+  const lim = parseInt(limit, 10) || 100;
+  const pagesRaw = await gA('SELECT UNIX_TIMESTAMP(last_crawled) ts, target_site site, url, country cc, os, '
+    + 'last_gdn_ads n_gdn, last_native_ads n_native, last_total_ads n_total, status '
+    + `FROM gdn_crawl_quality ${scopeWhere} ORDER BY last_crawled DESC LIMIT ${lim}`, sp);
+  const pages = pagesRaw.map(p => ({ ts: toNum(p.ts), site: p.site, url: p.url, cc: p.cc, os: p.os,
+    n_gdn: p.n_gdn == null ? null : toNum(p.n_gdn), n_native: p.n_native == null ? null : toNum(p.n_native),
+    n_total: p.n_total == null ? null : toNum(p.n_total), status: p.status }));
+  const creatives = toNum((await g1('SELECT COUNT(*) c FROM gdn_ad')).c);
+  const runs = toNum((await g1(`SELECT COALESCE(SUM(total_crawls),0) c FROM gdn_crawl_quality ${scopeWhere}`, sp)).c);
+  const ah = toNum((await g1('SELECT COUNT(*) c FROM gdn_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
+  const nh = toNum((await n1('SELECT COUNT(*) c FROM native_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
+  const todayNew = byHost ? 0 : toNum((await g1('SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=CURDATE()', [sid])).c);
+  const act = await gA("SELECT COALESCE(host,'unknown') host, COALESCE(os,'unknown') os, COUNT(*) c FROM gdn_crawl_quality "
+    + `WHERE last_crawled > (NOW()-INTERVAL 50 SECOND) AND ${sCol}=? GROUP BY host, os`, [sVal]);
+  const fleet = act.length ? { text: act.map(r => `${r.host} [${r.os}] ~${toNum(r.c)} profiles crawling`).join(' · ') } : null;
+  const profiles = toNum((await g1(`SELECT COUNT(*) c FROM gdn_crawl_quality WHERE last_crawled > (NOW()-INTERVAL 45 SECOND) AND ${sCol}=?`, [sVal])).c);
+  return { live, pages, db: { creatives, runs }, ads_hr: ah + nh, gdn_hr: ah, native_hr: nh, today_new: todayNew, fleet, profiles };
+}
+
+async function gdnBuildOverview(sid, host) {
+  const byHost = !!host;
+  const sCol = byHost ? 'host' : 'provider';
+  const sVal = byHost ? host : sid;
+  const scopeWhere = byHost ? `WHERE ${sCol}=?` : '';
+  const scopeAnd = byHost ? `AND ${sCol}=?` : '';
+  const sp = byHost ? [sVal] : [];
+
+  const gtot = toNum((await g1('SELECT COUNT(*) c FROM gdn_ad')).c);
+  const ntot = toNum((await n1('SELECT COUNT(*) c FROM native_ad')).c);
+  const ah24 = toNum((await g1('SELECT COUNT(*) c FROM gdn_ad WHERE created_date>=NOW()-INTERVAL 24 HOUR')).c);
+  const cq = await g1(`SELECT COUNT(*) urls, COUNT(DISTINCT country) ccs, COALESCE(SUM(total_ads),0) ads FROM gdn_crawl_quality ${scopeWhere}`, sp);
+  const nadv = toNum((await g1("SELECT COUNT(DISTINCT post_owner_id) c FROM gdn_ad WHERE post_owner_id IS NOT NULL")).c);
+  const u24 = await g1('SELECT COUNT(*) total, COALESCE(SUM(last_gdn_ads>0),0) gdn, COALESCE(SUM(last_native_ads>0),0) native '
+    + `FROM gdn_crawl_quality WHERE last_crawled >= NOW()-INTERVAL 24 HOUR AND ${sCol}=?`, [sVal]);
+  const urls24h = { total: toNum(u24.total), gdn: toNum(u24.gdn), native: toNum(u24.native) };
+
+  const live = await gA("SELECT COALESCE(provider,'unknown') provider, COUNT(*) urls, COUNT(DISTINCT country) countries, "
+    + 'COALESCE(SUM(total_gdn_ads),0) gdn, COALESCE(SUM(total_native_ads),0) native, '
+    + `SUM(status='zero' OR last_total_ads=0) zero_urls, MAX(UNIX_TIMESTAMP(last_crawled)) last_ts FROM gdn_crawl_quality ${scopeWhere} GROUP BY provider`, sp);
+  let hist = [];
+  try {
+    // page_visits/runs are ISP-keyed (no host column) — skip in host mode.
+    if (!byHost) hist = await gA("SELECT COALESCE(provider,'unknown') provider, COUNT(*) urls, 0 countries, "
+      + 'COALESCE(SUM(n_gdn),0) gdn, COALESCE(SUM(n_native),0) native, '
+      + 'SUM(COALESCE(n_ads,0)=0) zero_urls, MAX(ts) last_ts FROM page_visits GROUP BY provider');
+  } catch (e) { hist = []; }
+  let runsCc = {};
+  try {
+    if (!byHost) {
+      const rc = await gA("SELECT COALESCE(provider,'unknown') provider, COUNT(DISTINCT proxy_country) c FROM runs GROUP BY provider");
+      rc.forEach(r => { runsCc[r.provider] = toNum(r.c); });
+    }
+  } catch (e) { runsCc = {}; }
+  const merged = {};
+  [...hist, ...live].forEach(r => {
+    const p = r.provider;
+    const m = merged[p] || (merged[p] = { provider: p, urls: 0, countries: 0, gdn: 0, native: 0, zero_urls: 0, last_ts: 0 });
+    m.urls += toNum(r.urls); m.gdn += toNum(r.gdn); m.native += toNum(r.native);
+    m.zero_urls += toNum(r.zero_urls); m.last_ts = Math.max(m.last_ts, toNum(r.last_ts));
+    m.countries = Math.max(m.countries, toNum(r.countries));
+  });
+  Object.values(merged).forEach(m => { if (!m.countries) m.countries = runsCc[m.provider] || 0; });
+  const providers = Object.values(merged).sort((x, y) => y.gdn - x.gdn);
+
+  const machinesRaw = await gA("SELECT COALESCE(host,'unknown') host, COALESCE(os,'unknown') os, COUNT(*) urls, COALESCE(SUM(total_gdn_ads),0) gdn, "
+    + `COALESCE(SUM(total_native_ads),0) native, SUM(last_total_ads>0) hit FROM gdn_crawl_quality WHERE ${sCol}=? GROUP BY host, os ORDER BY gdn DESC`, [sVal]);
+  const machines = machinesRaw.map(m => ({ host: m.host, os: m.os, urls: toNum(m.urls), gdn: toNum(m.gdn), native: toNum(m.native), hit: toNum(m.hit) }));
+
+  const obs = await g1(`SELECT COALESCE(SUM(total_gdn_ads),0) g, COALESCE(SUM(total_native_ads),0) n FROM gdn_crawl_quality WHERE ${sCol}=?`, [sVal]);
+  const gNew = byHost ? 0 : toNum((await g1('SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1', [sid])).c);
+  const nNew = byHost ? 0 : toNum((await n1('SELECT COUNT(*) c FROM native_account_activities WHERE system_id=? AND is_unique=1', [sid])).c);
+  const split = { g_obs: toNum(obs.g), n_obs: toNum(obs.n), g_new: gNew, n_new: nNew };
+
+  const networks = (await nA("SELECT nw.network, COUNT(*) c FROM native_ad a JOIN networks nw ON a.network_id=nw.id "
+    + "GROUP BY nw.network ORDER BY c DESC LIMIT 10")).map(r => ({ network: r.network, creatives: toNum(r.c) }));
+
+  const byc = await gA("SELECT country, COUNT(*) urls, COALESCE(SUM(total_gdn_ads),0) gdn, COALESCE(SUM(total_native_ads),0) nat "
+    + `FROM gdn_crawl_quality WHERE country<>'' ${scopeAnd} GROUP BY country ORDER BY gdn DESC`, sp);
+  const countries = byc.map(r => ({ country: r.country, urls: toNum(r.urls), gdn: toNum(r.gdn), nat: toNum(r.nat) }));
+  const bys = await gA('SELECT target_site site, COUNT(*) urls, COALESCE(SUM(total_ads),0) ads FROM gdn_crawl_quality '
+    + `WHERE target_site<>'' ${scopeAnd} GROUP BY target_site ORDER BY ads DESC LIMIT 25`, sp);
+  const sites = bys.map(r => ({ site: r.site, urls: toNum(r.urls), ads: toNum(r.ads) }));
+  const adv = await gA("SELECT post_owner_name, ads_count FROM gdn_ad_post_owners WHERE post_owner_name<>'' ORDER BY ads_count DESC LIMIT 25");
+  const advertisers = adv.map(r => ({ post_owner_name: r.post_owner_name, ads_count: toNum(r.ads_count) }));
+
+  let proxyCountries = [];
+  try {
+    const pc = await gA('SELECT cc, name, supported FROM proxy_countries ORDER BY cc');
+    proxyCountries = pc.map(r => ({ cc: r.cc, name: r.name, supported: toNum(r.supported) }));
+  } catch (e) { proxyCountries = []; }
+
+  const zuRaw = await gA('SELECT url, target_site site, country, os, UNIX_TIMESTAMP(last_crawled) ts, zero_streak '
+    + `FROM gdn_crawl_quality WHERE (status='zero' OR last_total_ads=0) ${scopeAnd} ORDER BY last_crawled DESC LIMIT 40`, sp);
+  const zeroUrls = {
+    rows: zuRaw.map(r => ({ url: r.url, site: r.site, country: r.country, os: r.os, ts: toNum(r.ts), zero_streak: toNum(r.zero_streak) })),
+    count: toNum((await g1(`SELECT COUNT(*) c FROM gdn_crawl_quality WHERE (status='zero' OR last_total_ads=0) ${scopeAnd}`, sp)).c),
+  };
+
+  const throughput = byHost ? { fg_hr: 0, fn_hr: 0, fg_day: 0, fn_day: 0 } : {
+    fg_hr: toNum((await g1('SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=NOW()-INTERVAL 1 HOUR', [sid])).c),
+    fn_hr: toNum((await n1('SELECT COUNT(*) c FROM native_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=NOW()-INTERVAL 1 HOUR', [sid])).c),
+    fg_day: toNum((await g1('SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=CURDATE()', [sid])).c),
+    fn_day: toNum((await n1('SELECT COUNT(*) c FROM native_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=CURDATE()', [sid])).c),
+  };
+
+  let proxyQuality = { rows: [], totals: {} };
+  try {
+    const ph = await gA('SELECT country, COUNT(*) ips, COALESCE(SUM(urls_crawled>0),0) used, '
+      + 'COALESCE(SUM(ads_total),0) ads, COALESCE(SUM(urls_crawled),0) urls FROM proxy_health GROUP BY country ORDER BY ads DESC, ips DESC');
+    const pqt = await g1('SELECT COUNT(*) ips, COALESCE(SUM(ads_total),0) ads, COALESCE(SUM(urls_crawled),0) urls, '
+      + 'COALESCE(SUM(urls_crawled>0),0) used FROM proxy_health');
+    proxyQuality = {
+      rows: ph.map(r => ({ country: r.country, ips: toNum(r.ips), used: toNum(r.used), ads: toNum(r.ads), urls: toNum(r.urls) })),
+      totals: { ips: toNum(pqt.ips), ads: toNum(pqt.ads), urls: toNum(pqt.urls), used: toNum(pqt.used) },
+    };
+  } catch (e) { proxyQuality = { rows: [], totals: {} }; }
+
+  return {
+    totals: { gtot, ntot, ah24, urls: toNum(cq.urls), ccs: toNum(cq.ccs), total_ads: toNum(cq.ads), advertisers: nadv },
+    urls_24h: urls24h, providers, machines, split, networks, countries, sites, advertisers,
+    proxy_countries: proxyCountries, zero_urls: zeroUrls, throughput, proxy_quality: proxyQuality,
+  };
+}
+
+async function gdnBenchmark(req, res) {
+  // host = a single proxmox machine (system-card click); system_id = ISP/proxy
+  // (network 📊 button, default). host takes precedence when present.
+  const host = req.body?.host ? String(req.body.host) : null;
+  const sid = (req.body?.system_id || 'decodo-isp').toString();
+  const sessionSecs = parseInt(req.body?.session_secs, 10) || 10800;
+  const limit = parseInt(req.body?.limit, 10) || 100;
+  const cacheKey = `dash_gdnbench_${host || sid}_${sessionSecs}_${limit}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return res.json(cached);
+  try {
+    const [liveData, overview] = await Promise.all([
+      gdnBuildLive(sid, sessionSecs, limit, host),
+      gdnBuildOverview(sid, host),
+    ]);
+    // gdnBuildLive returns { live, pages, ads_hr, gdn_hr, native_hr, today_new,
+    // fleet, profiles, db } — flatten it so the frontend's gdnBenchmark.live /
+    // .today_new / .ads_hr / .pages paths line up (it was double-nested before).
+    const payload = { system_id: host || sid, scope: host ? 'host' : 'provider',
+      generatedAt: new Date().toISOString(), overview, ...liveData };
+    cache.set(cacheKey, payload, 15);
+    return res.json(payload);
+  } catch (e) {
+    console.error('gdnBenchmark failed:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+}
+
+// ---- YouTube monitoring benchmark (ported from pas_node_api youtube dashboard) -
+//
+// POST /dashboard/youtube-benchmark  { limit? }
+// YouTube has NO crawl_quality / MySQL benchmark — its dashboard reads the
+// ElasticSearch `youtube_ads_data` index. We query it DIRECTLY via the admin ES
+// connection (searchAllInstances), faithfully replicating getOverview/getLive in
+// pas_node_api/src/services/youtube/controllers/youtubeDashboardController.js.
+const YT_ES = { es_id: 0, index: process.env.YT_INDEX || 'youtube_ads_data' };
+// The youtube crawler's own live dashboard JSON — authoritative "running" status
+// + the real live processing feed. ES is the fallback when this is unreachable.
+const YT_LIVE_URL = process.env.YT_LIVE_URL || 'http://125.16.67.186:8081/api/youtube-live';
+const YT_VD = ['VIDEO', 'DISCOVERY'];
+const YT_THUMB = ['pasvideo', 'pasimage', 'bydefault', 'DefaultImage'].map((p) => ({ wildcard: { 'thumbnail_url.keyword': { value: `*${p}*` } } }));
+const YT_NAS = ['pasvideo', 'pasimage', 'bydefault'].map((p) => ({ wildcard: { 'new_nas_image_url.keyword': { value: `*${p}*` } } }));
+const YT_FINDABLE = { bool: { should: [
+  { bool: { filter: [{ terms: { 'ad_type.keyword': YT_VD } }, { exists: { field: 'thumbnail_url' } }], must_not: YT_THUMB } },
+  { bool: { filter: [{ exists: { field: 'new_nas_image_url' } }], must_not: [{ terms: { 'ad_type.keyword': YT_VD } }, ...YT_NAS] } },
+], minimum_should_match: 1 } };
+const YT_HAS_REDIRECT = { bool: { filter: [{ exists: { field: 'redirect_urls' } }], must_not: [{ term: { 'redirect_urls.keyword': '' } }] } };
+
+const ytHits = (r) => r?.hits || r?.body?.hits || {};
+const ytAggs = (r) => r?.aggregations || r?.body?.aggregations || {};
+const ytTotal = (r) => { const t = ytHits(r).total; return typeof t === 'object' ? toNum(t?.value) : toNum(t); };
+const ytBuckets = (a) => (a && a.buckets) || [];
+function ytMergeWindowed(b1h, b24h, keyName) {
+  const m = {};
+  ytBuckets(b24h).forEach((b) => { const k = b.key || '(none)'; m[k] = { [keyName]: k, h1: 0, d1: toNum(b.doc_count) }; });
+  ytBuckets(b1h).forEach((b) => { const k = b.key || '(none)'; m[k] = m[k] || { [keyName]: k, h1: 0, d1: 0 }; m[k].h1 = toNum(b.doc_count); });
+  return Object.values(m).sort((a, z) => z.d1 - a.d1);
+}
+async function ytSearch(body) {
+  const r = await searchAllInstances(YT_ES.index, body, YT_ES.es_id, 'search');
+  return r?.data || {};
+}
+async function ytCount(query) {
+  const r = await searchAllInstances(YT_ES.index, { query }, YT_ES.es_id, 'count');
+  return toNum(r?.data);
+}
+
+async function youtubeBenchmark(req, res) {
+  const limit = Math.min(parseInt(req.body?.limit, 10) || 250, 500);
+  const cacheKey = `dash_ytbench_${limit}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    // ----- overview -----
+    const TY = { field: 'ad_type.keyword', size: 15 };
+    const PO = { field: 'ad_position.keyword', size: 20 };
+    const aggRes = await ytSearch({
+      size: 0, track_total_hits: true, query: { match_all: {} },
+      aggs: {
+        by_type: { terms: TY }, by_position: { terms: PO },
+        w1h: { filter: { range: { last_seen: { gte: now - 3600 } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
+        w24h: { filter: { range: { last_seen: { gte: now - 86400 } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
+      },
+    });
+    const total = ytTotal(aggRes);
+    const aggs = ytAggs(aggRes);
+    const [ads1h, ads24h, new1h, new24h, findable, withChain] = await Promise.all([
+      ytCount({ range: { last_seen: { gte: now - 3600 } } }),
+      ytCount({ range: { last_seen: { gte: now - 86400 } } }),
+      ytCount({ range: { first_seen: { gte: now - 3600 } } }),
+      ytCount({ range: { first_seen: { gte: now - 86400 } } }),
+      ytCount(YT_FINDABLE),
+      ytCount(YT_HAS_REDIRECT),
+    ]);
+    const overview = {
+      totals: { total, ads_1h: ads1h, ads_24h: ads24h, findable, shown_pct: total ? Number((100 * findable / total).toFixed(1)) : 0 },
+      unique: { new_1h: new1h, dup_1h: Math.max(0, ads1h - new1h), new_24h: new24h, dup_24h: Math.max(0, ads24h - new24h) },
+      redirect_chain: { with_chain: withChain, pct: total ? Number((100 * withChain / total).toFixed(2)) : 0 },
+      by_type: ytBuckets(aggs.by_type).map((b) => ({ type: b.key || '(none)', count: toNum(b.doc_count) })),
+      by_position: ytBuckets(aggs.by_position).map((b) => ({ position: b.key || '(none)', count: toNum(b.doc_count) })),
+      by_type_win: ytMergeWindowed(aggs.w1h && aggs.w1h.t, aggs.w24h && aggs.w24h.t, 'type'),
+      by_position_win: ytMergeWindowed(aggs.w1h && aggs.w1h.p, aggs.w24h && aggs.w24h.p, 'position'),
+    };
+
+    // ----- live -----
+    const liveRes = await ytSearch({
+      size: limit, sort: [{ last_seen: { order: 'desc' } }, { ad_id: 'desc' }],
+      _source: ['ad_id', 'ad_type', 'ad_position', 'post_owner', 'destination_url', 'redirect_urls', 'last_seen', 'first_seen', 'source'],
+      query: { match_all: {} },
+    });
+    let multiHop = 0;
+    let pages = (ytHits(liveRes).hits || []).map((h) => {
+      const s = h._source || {};
+      const rv = s.redirect_urls;
+      const chain = Array.isArray(rv) ? rv.filter(Boolean).map(String) : (rv ? [String(rv)] : []);
+      if (chain.length > 1) multiHop += 1;
+      return { ts: toNum(s.last_seen), ad_id: s.ad_id, ad_type: s.ad_type || '', ad_position: s.ad_position || '',
+        advertiser: s.post_owner || '—', url: s.destination_url || '', hops: chain.length, chain,
+        first_seen: toNum(s.first_seen), source: Array.isArray(s.source) ? s.source.join(',') : (s.source || '') };
+    });
+    const [l1h, l3h, l24h, n1h, n3h, n24h] = await Promise.all([
+      ytCount({ range: { last_seen: { gte: now - 3600 } } }),
+      ytCount({ range: { last_seen: { gte: now - 10800 } } }),
+      ytCount({ range: { last_seen: { gte: now - 86400 } } }),
+      ytCount({ range: { first_seen: { gte: now - 3600 } } }),
+      ytCount({ range: { first_seen: { gte: now - 10800 } } }),
+      ytCount({ range: { first_seen: { gte: now - 86400 } } }),
+    ]);
+    const lastTs = pages.length ? pages[0].ts : null;
+    let live = {
+      status: lastTs && (now - lastTs) < 300 ? 'running' : 'idle',
+      ads_1h: l1h, ads_3h: l3h, ads_24h: l24h,
+      dup_1h: Math.max(0, l1h - n1h), dup_3h: Math.max(0, l3h - n3h), dup_24h: Math.max(0, l24h - n24h),
+      new_1h: n1h, new_3h: n3h, new_24h: n24h, last_ts: lastTs, multi_hop: multiHop,
+    };
+
+    // Prefer the crawler's OWN live endpoint — it knows the true "running" status
+    // and the real processing feed right now. ES (above) stays as the fallback.
+    let live_source = 'es';
+    try {
+      const r = await axios.get(YT_LIVE_URL, { timeout: 8000 });
+      if (r.data && r.data.live) {
+        live = { ...live, ...r.data.live };
+        live_source = 'crawler';
+        if (Array.isArray(r.data.pages) && r.data.pages.length) {
+          pages = r.data.pages.map((p) => ({
+            ts: toNum(p.ts), ad_id: p.ad_id, ad_type: p.ad_type || '', ad_position: p.ad_position || '',
+            advertiser: p.advertiser || '—', url: p.url || '', hops: toNum(p.hops),
+            chain: Array.isArray(p.chain) ? p.chain : [], first_seen: toNum(p.first_seen),
+            source: Array.isArray(p.source) ? p.source.join(',') : (p.source || ''),
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('youtube-live endpoint unreachable, using ES live:', e.message);
+    }
+
+    const payload = { generatedAt: new Date().toISOString(), index: YT_ES.index, live_source, overview, live, pages };
+    cache.set(cacheKey, payload, 20);
+    return res.json(payload);
+  } catch (e) {
+    console.error('youtubeBenchmark failed:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+}
+
+module.exports = { overview, systemDrill, accountsOverview, accountTimeline, platforms, systemDebug, gdnBenchmark, youtubeBenchmark, exporterHealth };

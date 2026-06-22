@@ -23,6 +23,8 @@ import {
   fetchDashboardAccountTimeline,
   fetchDashboardPlatforms,
   fetchSystemDebug,
+  fetchGdnBenchmark,
+  fetchYoutubeBenchmark,
   fetchExporterHealth,
   fetchNasStorage,
   fetchInfraStorage
@@ -81,6 +83,10 @@ const initialState = {
   dashboardPlatforms: [],
   systemDebug: null,
   loadingSystemDebug: false,
+  gdnBenchmark: null,
+  loadingGdnBenchmark: false,
+  ytBenchmark: null,
+  loadingYtBenchmark: false,
   exporterHealth: null,
   network: "",
 };
@@ -471,6 +477,34 @@ const networkTypesSlice = createSlice({
            .addCase(fetchSystemDebug.rejected, (state, action) => {
              state.loadingSystemDebug = false;
              state.systemDebug = { error: action.payload };
+           });
+
+           // NEW — GDN/Native benchmark
+           builder
+           .addCase(fetchGdnBenchmark.pending, (state) => {
+             state.loadingGdnBenchmark = true;
+             state.gdnBenchmark = null;
+           })
+           .addCase(fetchGdnBenchmark.fulfilled, (state, action) => {
+             state.loadingGdnBenchmark = false;
+             state.gdnBenchmark = action.payload;
+           })
+           .addCase(fetchGdnBenchmark.rejected, (state) => {
+             state.loadingGdnBenchmark = false;
+           });
+
+           // NEW — YouTube benchmark
+           builder
+           .addCase(fetchYoutubeBenchmark.pending, (state) => {
+             state.loadingYtBenchmark = true;
+             state.ytBenchmark = null;
+           })
+           .addCase(fetchYoutubeBenchmark.fulfilled, (state, action) => {
+             state.loadingYtBenchmark = false;
+             state.ytBenchmark = action.payload;
+           })
+           .addCase(fetchYoutubeBenchmark.rejected, (state) => {
+             state.loadingYtBenchmark = false;
            });
 
            // NEW — raw exporter health

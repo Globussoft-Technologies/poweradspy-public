@@ -43,7 +43,7 @@ function getInitialAndFinalTimestamps(range, format = null) {
   async function queryRange(promql, start, end, step = '1h') {
     const url = `${PROMETHEUS_URL}?query=${encodeURIComponent(promql)}&start=${start}&end=${end}&step=${step}`;
     try {
-        const response = await axios.get(url);
+        const response = await axios.get(url, { timeout: 20000 });
         return response.data;
     } catch (error) {
         console.error('Error querying Prometheus:', error.message);
@@ -54,7 +54,7 @@ function getInitialAndFinalTimestamps(range, format = null) {
 async function instantQuery(promql) {
   const url = `${process.env.PROMETHEUS_URL}/api/v1/query?query=${encodeURIComponent(promql)}`;
   try {
-    const response = await axios.get(url);
+    const response = await axios.get(url, { timeout: 20000 });
     return response.data;
   } catch (error) {
     console.error('Error during instantQuery:', error.message);
@@ -238,7 +238,7 @@ async function fetchPrometheusData(from, to, step) {
       Object.entries(queries).map(async ([key, query]) => {
         try {
           const url = `${PROMETHEUS_URL}?query=${encodeURIComponent(query)}&start=${from}&end=${to}&step=${step}`;
-          const { data } = await axios.get(url);
+          const { data } = await axios.get(url, { timeout: 20000 });
           return { key, data: data?.data?.result || [] };
         } catch (error) {
           console.error(`Error fetching ${key} from Prometheus:`, error);
@@ -848,7 +848,7 @@ async function fetchPrometheusMetrics(from, to, step) {
     } else {
       queryUrl = `${PROMETHEUS_URL}?query=${encodeURIComponent(query)}&start=${from}&end=${to}&step=${step}`;
     }
-    const { data } = await axios.get(queryUrl);
+    const { data } = await axios.get(queryUrl, { timeout: 20000 });
     return { key, data: data.data.result };
   }));
   
@@ -894,7 +894,7 @@ async function accountsNameList(req, res) {
 
   try {
     const url = `${PROMETHEUS_URL}?query=${encodeURIComponent(query)}&start=${from}&end=${to}&step=${step}`;
-    const { data } = await axios.get(url);
+    const { data } = await axios.get(url, { timeout: 20000 });
 
     const accounts = new Set();
 
@@ -1190,7 +1190,7 @@ async function pluginWithChart(req, res) {
       step
     };
 
-    const prometheusRes = await axios.get(PROMETHEUS_URL, { params });
+    const prometheusRes = await axios.get(PROMETHEUS_URL, { params, timeout: 20000 });
     const results = prometheusRes.data.data.result;
 
     const prometheusAccountMap = new Map();
@@ -1587,6 +1587,7 @@ const accountStateChart = async (req, res) => {
 
     const prometheusQuery = `increase(account_active_hb_total{account_name="${accountName}",server_name="${systemName}"}[100s])`;
     const response = await axios.get(PROMETHEUS_URL, {
+      timeout: 20000,
       params: {
         query: prometheusQuery,
         start: from,

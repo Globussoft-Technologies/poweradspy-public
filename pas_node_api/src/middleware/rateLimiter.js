@@ -63,6 +63,8 @@ const globalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.ip || req.connection.remoteAddress,
+    // crawler subsystems (insertion / landers / ocr+ocb) ko rate-limit se exempt karo
+  skip: (req) => /\/(insertion|landers|ocr)\//.test(req.path),
 });
 
 // ─── Blocklist management API (used by admin routes) ──────

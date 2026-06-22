@@ -22,5 +22,7 @@ router.post('/dashboard/accounts', wrapAsync(dashboard.accountsOverview));
 router.post('/dashboard/account-timeline', wrapAsync(dashboard.accountTimeline));
 router.post('/dashboard/platforms', wrapAsync(dashboard.platforms));
 router.post('/dashboard/system-debug', wrapAsync(dashboard.systemDebug));
+router.post('/dashboard/gdn-benchmark', wrapAsync(dashboard.gdnBenchmark));
+router.post('/dashboard/youtube-benchmark', wrapAsync(dashboard.youtubeBenchmark));
 router.get('/dashboard/exporter-health', wrapAsync(dashboard.exporterHealth));
 module.exports = router;

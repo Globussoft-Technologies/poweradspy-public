@@ -495,6 +495,42 @@ export const fetchSystemDebug = createAsyncThunk(
   }
 );
 
+// NEW — GDN/Native scraping-benchmark (direct DB read, ported from v2 dashboard).
+export const fetchGdnBenchmark = createAsyncThunk(
+  "fetchGdnBenchmark/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/gdn-benchmark`,
+        args || {},
+        { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
+// NEW — YouTube monitoring benchmark (direct ES read, ported from v2 dashboard).
+export const fetchYoutubeBenchmark = createAsyncThunk(
+  "fetchYoutubeBenchmark/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/youtube-benchmark`,
+        args || {},
+        { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
 // NEW — raw metrics exporter (send-metrics) health + freshest snapshot.
 export const fetchExporterHealth = createAsyncThunk(
   "fetchExporterHealth/details",

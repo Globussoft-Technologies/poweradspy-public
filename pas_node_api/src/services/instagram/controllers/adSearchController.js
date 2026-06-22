@@ -29,7 +29,10 @@ const AD_DETAIL_SELECT = `
     instagram_ad_post_owners.verified                AS verified,
     instagram_ad_meta_data.ad_url                    AS ad_url,
     instagram_ad_meta_data.destination_url           AS destination_url,
-    instagram_ad_meta_data.initial_url               AS initial_url,
+    -- initial_url temporarily removed: column being added to prod DB via online ALTER.
+    -- Re-enable once instagram_ad_meta_data.initial_url exists. (market_platform_urls
+    -- still sources initial_url from ES _source, so no data loss meanwhile.)
+    -- instagram_ad_meta_data.initial_url               AS initial_url,
     instagram_ad_outgoing_links.redirect_url         AS redirect_url,
     instagram_ad_variants.image_url                  AS image_video_url,
     instagram_ad_variants.image_url_original         AS image_url_original,
@@ -74,7 +77,8 @@ const AD_DETAIL_SELECT_GROUPED = `
     ANY_VALUE(instagram_ad_post_owners.verified)                        AS verified,
     ANY_VALUE(instagram_ad_meta_data.ad_url)                            AS ad_url,
     ANY_VALUE(instagram_ad_meta_data.destination_url)                   AS destination_url,
-    ANY_VALUE(instagram_ad_meta_data.initial_url)                       AS initial_url,
+    -- initial_url temporarily removed (see note above): column being added to prod DB.
+    -- ANY_VALUE(instagram_ad_meta_data.initial_url)                       AS initial_url,
     ANY_VALUE(instagram_ad_outgoing_links.redirect_url)                 AS redirect_url,
     ANY_VALUE(instagram_ad_variants.image_url)                          AS image_video_url,
     ANY_VALUE(instagram_ad_variants.image_url_original)                 AS image_url_original,

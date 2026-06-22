@@ -1,6 +1,7 @@
 require('dotenv').config()
 const queryDatabase = require('../db-connections/connection');
 const Redis = require("ioredis");
+const memCache = require('../utils/cache'); // in-memory fallback — keeps working if Redis is down
 const DB_DATA = {
     facebook: { createdAt: 'first_seen', tableName: 'facebook_ad', db_id: 0, index: process.env.FB_DATABASE },
     youtube: { createdAt: "created_date", tableName: "youtube_ad_meta_data", db_id: 1, index: process.env.YT_DATABASE },
@@ -21,7 +22,16 @@ const redisClient = new Redis({
     port: process.env.REDIS_PORT,
     password: process.env.REDIS_PASSWORD,
     retryStrategy: () => null,
+    // When Redis is down, fail fast (don't queue/hang the request — that was a
+    // big cause of the backend resource spike). We fall back to in-memory cache.
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 1,
 });
+// Swallow connection errors so a dead Redis never crashes the process or spams;
+// reads/writes below are wrapped to degrade to the in-memory cache gracefully.
+redisClient.on('error', () => {});
+const redisGet = async (k) => { try { return await redisClient.get(k); } catch (e) { return null; } };
+const redisSet = async (k, v, ...a) => { try { await redisClient.set(k, v, ...a); } catch (e) { /* ignore */ } };
 const adCountGraphFilter = async (req, res) => {
 
     try {
@@ -38,8 +48,9 @@ const adCountGraphFilter = async (req, res) => {
         const startDateStr = `${start.toISOString().split("T")[0]} 00:00:00`;
         const endDateStr = `${end.toISOString().split("T")[0]} 23:59:59`;
 
-        let cachedData = await redisClient.get(redisKey);
-        cachedData = cachedData ? JSON.parse(cachedData) : null;
+        const cachedRaw = await redisGet(redisKey);
+        // Redis hit → parse it; Redis down/miss → fall back to in-memory cache.
+        let cachedData = cachedRaw ? JSON.parse(cachedRaw) : (memCache.get(redisKey) || null);
 
         if (!cachedData) {
             const fromDate = new Date(today.getFullYear(), today.getMonth() - 5, 1);
@@ -75,7 +86,8 @@ const adCountGraphFilter = async (req, res) => {
             const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
             const ttlInSeconds = Math.floor((nextMonth.getTime() - today.getTime()) / 1000);
 
-            await redisClient.set(redisKey, JSON.stringify(cachedData), 'EX', ttlInSeconds);
+            await redisSet(redisKey, JSON.stringify(cachedData), 'EX', ttlInSeconds);
+            memCache.set(redisKey, cachedData, ttlInSeconds); // mirror to in-memory so it survives a Redis outage
         } else {
             const monthlyQuery = `
         SELECT 
@@ -100,7 +112,8 @@ const adCountGraphFilter = async (req, res) => {
             const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
             const ttlInSeconds = Math.floor((nextMonth.getTime() - today.getTime()) / 1000);
 
-            await redisClient.set(redisKey, JSON.stringify(cachedData), 'EX', ttlInSeconds);
+            await redisSet(redisKey, JSON.stringify(cachedData), 'EX', ttlInSeconds);
+            memCache.set(redisKey, cachedData, ttlInSeconds); // mirror to in-memory so it survives a Redis outage
 
         }
 

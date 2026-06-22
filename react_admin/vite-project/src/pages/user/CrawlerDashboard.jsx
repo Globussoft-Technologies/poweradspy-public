@@ -15,6 +15,8 @@ import {
   fetchDashboardAccountTimeline,
   fetchDashboardPlatforms,
   fetchSystemDebug,
+  fetchGdnBenchmark,
+  fetchYoutubeBenchmark,
   fetchStatusSystemInfo,
   fetchExporterHealth,
 } from "../../store/actions/powerAdsPyActionsApi";
@@ -235,6 +237,39 @@ const MiniBar = ({ value, color }) => (
   </div>
 );
 
+// Compact table for the GDN/Native benchmark modal. cols = [[key, label, isNum?], ...]
+const BenchTable = ({ title, rows, cols, limit = 25 }) => {
+  const data = (rows || []).slice(0, limit);
+  if (!data.length) return null;
+  return (
+    <div className="rounded-[12px] border border-[#eef1fb]">
+      <div className="border-b border-[#eef1fb] px-3 py-2 text-[12px] font-semibold text-[#1f296a]">{title}</div>
+      <div className="max-h-[220px] overflow-auto">
+        <table className="w-full text-left text-[12px]">
+          <thead className="sticky top-0 bg-white text-[10px] uppercase text-[#9aa2c0]">
+            <tr className="border-b border-[#f4f6fc]">
+              {cols.map(([k, l, isNum]) => (
+                <th key={k} className={`px-3 py-1.5 ${isNum ? "text-right" : ""}`}>{l}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((r, i) => (
+              <tr key={i} className="border-b border-[#f7f8fd] hover:bg-[#f7f8fd]">
+                {cols.map(([k, , isNum]) => (
+                  <td key={k} className={`px-3 py-1.5 ${isNum ? "text-right tabular-nums text-[#264688]" : "text-[#7a83a8]"}`}>
+                    {isNum ? Number(r[k] || 0).toLocaleString("en-US") : (r[k] ?? "—")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 /* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
@@ -245,13 +280,15 @@ const CrawlerDashboard = () => {
           dashboardSystem, loadingDashboardSystem, StatusSystemInfo, loadingStatusSystemInfo,
           dashboardAccounts, loadingDashboardAccounts,
           dashboardAccountTimeline, loadingDashboardAccountTimeline,
-          dashboardPlatforms, systemDebug, loadingSystemDebug } =
+          dashboardPlatforms, systemDebug, loadingSystemDebug,
+          gdnBenchmark, loadingGdnBenchmark,
+          ytBenchmark, loadingYtBenchmark } =
     useSelector((s) => s.poweradspy);
 
   const [dateRange, setDateRange] = useState(loadSelectedDates());
   const [platform, setPlatform] = useState([]); // [] = both 10 & 12 (no filter)
   const [showFilter, setShowFilter] = useState(false);
-  const [refreshMs, setRefreshMs] = useState(30000);
+  const [refreshMs, setRefreshMs] = useState(60000); // 60s default — lighter on Prometheus/DB
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const [search, setSearch] = useState("");
@@ -260,6 +297,10 @@ const CrawlerDashboard = () => {
   const [sortBy, setSortBy] = useState("recent"); // recent | ads | unique | accounts
   const [scrapingOnly, setScrapingOnly] = useState(false); // "Scraping Now" tile filter
   const [infoOpen, setInfoOpen] = useState(false); // "where does data come from?" modal
+  // GDN/Native scraping-benchmark modal
+  const [benchOpen, setBenchOpen] = useState(false);
+  // YouTube monitoring-benchmark modal
+  const [ytOpen, setYtOpen] = useState(false);
   // debug / data-lineage modal
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugSys, setDebugSys] = useState(null);
@@ -409,6 +450,19 @@ const CrawlerDashboard = () => {
     setSortBy(sort);
     setScrapingOnly(scraping);
     setTimeout(() => systemsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+
+  // open the GDN/Native scraping-benchmark modal (direct DB, ported v2 dashboard).
+  // host = one proxmox system (system-card click); no host = ISP/proxy view (📊).
+  const openBenchmark = (opts = {}) => {
+    setBenchOpen(true);
+    dispatch(fetchGdnBenchmark(opts.host ? { host: opts.host } : { system_id: "decodo-isp" }));
+  };
+
+  // open the YouTube monitoring-benchmark modal (direct ES, ported v2 dashboard)
+  const openYtBenchmark = () => {
+    setYtOpen(true);
+    dispatch(fetchYoutubeBenchmark({ limit: 250 }));
   };
 
   // open the debug / data-lineage trace for a system
@@ -788,6 +842,8 @@ const CrawlerDashboard = () => {
           .filter((n) => n && n.systems > 0)
           .map((n) => {
             const sel = netFilter === n.network;
+            const hasGdnBench = n.network === "gdn" || n.network === "native";
+            const isYt = n.network === "youtube";
             return (
               <div
                 key={n.network}
@@ -795,6 +851,8 @@ const CrawlerDashboard = () => {
                 className={`flex cursor-pointer items-center gap-3 rounded-[12px] border px-4 py-3 ${
                   sel ? "border-[#1f296a] bg-[#eef2ff]" : "border-[#e6e9f5] bg-white"
                 }`}
+                data-tooltip-id="dash-tip"
+                data-tooltip-content="Filter systems by this network"
               >
                 {NETWORK_ICONS[n.network] && (
                   <img src={NETWORK_ICONS[n.network]} alt="" className="h-8 w-8 rounded-full border border-[#e6e9f5] p-1" />
@@ -806,6 +864,16 @@ const CrawlerDashboard = () => {
                       <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
                       {n.active_systems} live
                     </span>
+                    {(hasGdnBench || isYt) && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); isYt ? openYtBenchmark() : openBenchmark(); }}
+                        className="rounded-full bg-[#7c3aed] px-1.5 text-[9px] font-bold text-white hover:bg-[#6d28d9]"
+                        data-tooltip-id="dash-tip"
+                        data-tooltip-content={isYt ? "Open YouTube live benchmark (status, 1h/3h/24h, recent ads feed)" : "Open ISP/proxy crawl-benchmark (all machines, providers, proxy)"}
+                      >
+                        📊
+                      </button>
+                    )}
                   </div>
                   <div className="text-[12px] text-[#7a83a8]">
                     {n.systems} sys · {nfmt(n.ads)} ads · {nfmt(n.unique_ads)} uniq
@@ -887,7 +955,7 @@ const CrawlerDashboard = () => {
           {visibleSystems.map((sys) => (
             <div
               key={sys.system_id}
-              onClick={() => openDrill(sys)}
+              onClick={() => (sys.kind === "gdncrawl" ? openBenchmark({ host: sys.system_id }) : openDrill(sys))}
               className="group cursor-pointer rounded-[14px] border border-[#e6e9f5] bg-white p-4 shadow-sm transition hover:border-[#1f296a] hover:shadow-md"
             >
               {/* row 1: id + status */}
@@ -1146,7 +1214,7 @@ const CrawlerDashboard = () => {
                     <div key={i} className="h-9 animate-pulse rounded bg-[#f1f3fb]" />
                   ))}
                 </div>
-              ) : (dashboardSystem?.accounts?.length || dashboardSystem?.perNetwork?.length) ? (
+              ) : (dashboardSystem?.accounts?.length || dashboardSystem?.perNetwork?.length || dashboardSystem?.recent?.length) ? (
                 <>
                   {drillAccounts.length > 0 && (
                     <table className="w-full text-left text-[13px]">
@@ -1222,6 +1290,36 @@ const CrawlerDashboard = () => {
                             <span className="text-[#7a83a8]">{nfmt(p.ads)} ads · {nfmt(p.unique_ads)} uniq</span>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 🔴 per-system LIVE feed (youtube): the latest ads THIS machine just processed */}
+                  {dashboardSystem?.recent?.length > 0 && (
+                    <div className="mt-4 rounded-[12px] border border-[#fde2e2] bg-[#fff7f7]">
+                      <div className="flex items-center gap-2 border-b border-[#fde2e2] px-3 py-2 text-[12px] font-semibold text-[#b42318]">
+                        <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                        Live feed — ads this system just processed (most recent first)
+                      </div>
+                      <div className="max-h-[240px] overflow-auto">
+                        <table className="w-full text-left text-[12px]">
+                          <thead className="sticky top-0 bg-[#fff7f7] text-[10px] uppercase text-[#9aa2c0]">
+                            <tr className="border-b border-[#fde2e2]">
+                              <th className="px-3 py-1.5">When</th><th className="px-3 py-1.5">Ad ID</th>
+                              <th className="px-3 py-1.5">Type</th><th className="px-3 py-1.5">Placement</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dashboardSystem.recent.slice(0, 60).map((p, i) => (
+                              <tr key={i} className="border-b border-[#fbeaea] hover:bg-[#fff0f0]">
+                                <td className="px-3 py-1.5 whitespace-nowrap text-[#7a83a8]">{p.ts ? agoText(Math.max(0, Math.floor(Date.now() / 1000) - p.ts)) : "—"}</td>
+                                <td className="px-3 py-1.5 text-[#1f296a]">{p.ad_id}</td>
+                                <td className="px-3 py-1.5 text-[#7a83a8]">{p.ad_type || "—"}</td>
+                                <td className="px-3 py-1.5 text-[#7a83a8]">{p.ad_position || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   )}
@@ -1543,6 +1641,241 @@ const CrawlerDashboard = () => {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ===== GDN / Native scraping-benchmark modal ===== */}
+      {benchOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 transition-all duration-300"
+          onClick={() => setBenchOpen(false)}
+        >
+          <div
+            className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[20px] border border-white/20 bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* header */}
+            <div className="flex items-start justify-between border-b border-[#eef1fb] px-6 py-4">
+              <div className="flex flex-col gap-1">
+                <span className="flex items-center gap-2 text-[20px] font-[700] text-[#1f296a]">
+                  {gdnBenchmark?.scope === "host" ? `System · ${gdnBenchmark.system_id}` : "GDN / Native Scraping Benchmark"}
+                  {gdnBenchmark?.live && (
+                    <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      gdnBenchmark.live.status === "running" ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-500"}`}>
+                      <span className={`inline-block h-2 w-2 rounded-full ${gdnBenchmark.live.status === "running" ? "bg-green-500 animate-pulse" : "bg-gray-400"}`} />
+                      {gdnBenchmark.live.status || "—"}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[12px] text-[#9aa2c0]">
+                  {gdnBenchmark?.scope === "host" ? (
+                    <>System (proxmox machine): <b className="text-[#7a83a8]">{gdnBenchmark.system_id}</b> · GDN + Native crawl · direct DB</>
+                  ) : (
+                    <>ISP/Proxy: <b className="text-[#7a83a8]">{gdnBenchmark?.system_id || "decodo-isp"}</b> (not a system) · systems = machines below · direct DB</>
+                  )}
+                  {gdnBenchmark?.live?.country ? ` · ${gdnBenchmark.live.country}` : ""}
+                </span>
+              </div>
+              <button onClick={() => setBenchOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto px-6 py-4">
+              {loadingGdnBenchmark && !gdnBenchmark ? (
+                <div className="space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-10 animate-pulse rounded bg-[#f1f3fb]" />)}</div>
+              ) : !gdnBenchmark ? (
+                <div className="py-10 text-center text-[#9aa2c0]">No benchmark data.</div>
+              ) : (() => {
+                const ov = gdnBenchmark.overview || {};
+                const lv = gdnBenchmark.live || {};
+                const t = ov.totals || {};
+                const tp = ov.throughput || {};
+                const sp = ov.split || {};
+                const Tile = ({ l, v, c = "#264688" }) => (
+                  <div className="rounded-lg bg-[#f7f8fd] px-4 py-2">
+                    <div className="text-[18px] font-[700]" style={{ color: c }}>{nfmt(v)}</div>
+                    <div className="text-[10px] uppercase text-[#9aa2c0]">{l}</div>
+                  </div>
+                );
+                return (
+                  <div className="flex flex-col gap-4">
+                    {/* tiles */}
+                    <div className="flex flex-wrap gap-3">
+                      <Tile l="GDN creatives" v={t.gtot} />
+                      <Tile l="Native creatives" v={t.ntot} c="#0ea5e9" />
+                      <Tile l="GDN ads /24h" v={t.ah24} c="#16a34a" />
+                      <Tile l="URLs crawled" v={t.urls} />
+                      <Tile l="Countries" v={t.ccs} />
+                      <Tile l="Advertisers" v={t.advertisers} c="#7c3aed" />
+                      <Tile l="GDN new (live)" v={lv.gdn_new} c="#16a34a" />
+                      <Tile l="Native new (live)" v={lv.native_new} c="#16a34a" />
+                    </div>
+
+                    {/* live + throughput strip */}
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="rounded-[12px] border border-[#eef1fb] p-3 text-[12px] text-[#7a83a8]">
+                        <div className="mb-1 text-[12px] font-semibold text-[#1f296a]">Live session</div>
+                        <div>Mode: <b className="text-[#1f296a]">{lv.mode || "—"}</b></div>
+                        <div>Done / pool: <b className="text-[#1f296a]">{nfmt(lv.done)}</b> / {nfmt(lv.pool)}</div>
+                        <div>Today new: <b className="text-[#1f296a]">{nfmt(gdnBenchmark.today_new)}</b> · ads/hr: <b className="text-[#1f296a]">{nfmt(gdnBenchmark.ads_hr)}</b> (gdn {nfmt(gdnBenchmark.gdn_hr)} / native {nfmt(gdnBenchmark.native_hr)})</div>
+                        {gdnBenchmark.fleet?.text && <div className="mt-1 text-[#16a34a]">{gdnBenchmark.fleet.text}</div>}
+                      </div>
+                      <div className="rounded-[12px] border border-[#eef1fb] p-3 text-[12px] text-[#7a83a8]">
+                        <div className="mb-1 text-[12px] font-semibold text-[#1f296a]">Throughput / split</div>
+                        <div>GDN new: <b className="text-[#1f296a]">{nfmt(tp.fg_hr)}</b>/hr · <b className="text-[#1f296a]">{nfmt(tp.fg_day)}</b>/day</div>
+                        <div>Native new: <b className="text-[#1f296a]">{nfmt(tp.fn_hr)}</b>/hr · <b className="text-[#1f296a]">{nfmt(tp.fn_day)}</b>/day</div>
+                        <div>Observed: gdn <b className="text-[#1f296a]">{nfmt(sp.g_obs)}</b> · native <b className="text-[#1f296a]">{nfmt(sp.n_obs)}</b></div>
+                      </div>
+                    </div>
+
+                    {/* 🔴 LIVE feed — which URLs are being crawled right now (most recent first) */}
+                    <div className="rounded-[12px] border border-[#fde2e2] bg-[#fff7f7]">
+                      <div className="flex items-center gap-2 border-b border-[#fde2e2] px-3 py-2 text-[12px] font-semibold text-[#b42318]">
+                        <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                        Live feed — URLs being processed now {gdnBenchmark?.scope === "host" ? `(${gdnBenchmark.system_id})` : ""}
+                        <span className="font-normal text-[#9aa2c0]">· most recent first</span>
+                      </div>
+                      <div className="max-h-[260px] overflow-auto">
+                        {(gdnBenchmark.pages || []).length === 0 ? (
+                          <div className="px-3 py-6 text-center text-[12px] text-[#9aa2c0]">No crawl activity in this window.</div>
+                        ) : (
+                          <table className="w-full text-left text-[12px]">
+                            <thead className="sticky top-0 bg-[#fff7f7] text-[10px] uppercase text-[#9aa2c0]">
+                              <tr className="border-b border-[#fde2e2]">
+                                <th className="px-3 py-1.5">When</th><th className="px-3 py-1.5">Site</th>
+                                <th className="px-3 py-1.5">URL</th><th className="px-3 py-1.5">Cc</th><th className="px-3 py-1.5">OS</th>
+                                <th className="px-3 py-1.5 text-right">GDN</th><th className="px-3 py-1.5 text-right">Native</th>
+                                <th className="px-3 py-1.5">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(gdnBenchmark.pages || []).slice(0, 60).map((p, i) => (
+                                <tr key={i} className="border-b border-[#fbeaea] hover:bg-[#fff0f0]">
+                                  <td className="px-3 py-1.5 whitespace-nowrap text-[#7a83a8]">{p.ts ? agoText(Math.max(0, Math.floor(Date.now() / 1000) - p.ts)) : "—"}</td>
+                                  <td className="px-3 py-1.5 text-[#1f296a]">{p.site || "—"}</td>
+                                  <td className="px-3 py-1.5 max-w-[280px] truncate text-[#7a83a8]" title={p.url}>{p.url || "—"}</td>
+                                  <td className="px-3 py-1.5 text-[#7a83a8]">{p.cc || "—"}</td>
+                                  <td className="px-3 py-1.5 text-[#7a83a8]">{p.os || "—"}</td>
+                                  <td className="px-3 py-1.5 text-right tabular-nums text-[#16a34a]">{p.n_gdn == null ? "—" : nfmt(p.n_gdn)}</td>
+                                  <td className="px-3 py-1.5 text-right tabular-nums text-[#0ea5e9]">{p.n_native == null ? "—" : nfmt(p.n_native)}</td>
+                                  <td className="px-3 py-1.5">
+                                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                      (p.n_total || 0) > 0 ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-500"}`}>
+                                      {p.status || ((p.n_total || 0) > 0 ? "hit" : "zero")}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* tables */}
+                    <BenchTable title="Providers" rows={ov.providers} cols={[["provider","Provider"],["urls","URLs",1],["countries","Cc",1],["gdn","GDN",1],["native","Native",1],["zero_urls","0-ad",1]]} />
+                    <BenchTable title="Machines = Systems (proxmox)" rows={ov.machines} cols={[["host","System (host)"],["os","OS"],["urls","URLs",1],["gdn","GDN",1],["native","Native",1],["hit","Hit",1]]} />
+                    <BenchTable title="Native networks" rows={ov.networks} cols={[["network","Network"],["creatives","Creatives",1]]} />
+                    <BenchTable title="Top countries" rows={ov.countries} cols={[["country","Country"],["urls","URLs",1],["gdn","GDN",1],["nat","Native",1]]} limit={12} />
+                    <BenchTable title="Top sites" rows={ov.sites} cols={[["site","Site"],["urls","URLs",1],["ads","Ads",1]]} limit={12} />
+                    <BenchTable title="Top advertisers" rows={ov.advertisers} cols={[["post_owner_name","Advertiser"],["ads_count","Ads",1]]} limit={12} />
+                    <BenchTable title={`Proxy quality (${nfmt(ov.proxy_quality?.totals?.ips)} IPs · ${nfmt(ov.proxy_quality?.totals?.ads)} ads)`} rows={ov.proxy_quality?.rows} cols={[["country","Country"],["ips","IPs",1],["used","Used",1],["ads","Ads",1],["urls","URLs",1]]} limit={12} />
+                    <BenchTable title={`0-ad URLs (${nfmt(ov.zero_urls?.count)})`} rows={ov.zero_urls?.rows} cols={[["site","Site"],["country","Cc"],["os","OS"],["zero_streak","Streak",1]]} limit={12} />
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== YouTube monitoring-benchmark modal (ElasticSearch) ===== */}
+      {ytOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 transition-all duration-300"
+          onClick={() => setYtOpen(false)}
+        >
+          <div
+            className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[20px] border border-white/20 bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-[#eef1fb] px-6 py-4">
+              <div className="flex flex-col gap-1">
+                <span className="flex items-center gap-2 text-[20px] font-[700] text-[#1f296a]">
+                  YouTube Monitoring Benchmark
+                  {ytBenchmark?.live && (
+                    <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      ytBenchmark.live.status === "running" ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-500"}`}>
+                      <span className={`inline-block h-2 w-2 rounded-full ${ytBenchmark.live.status === "running" ? "bg-green-500 animate-pulse" : "bg-gray-400"}`} />
+                      {ytBenchmark.live.status || "—"}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[12px] text-[#9aa2c0]">
+                  Live: <b className="text-[#7a83a8]">{ytBenchmark?.live_source === "crawler" ? "crawler feed (real-time)" : "ElasticSearch"}</b>
+                  {" · "}overview: ES index <b className="text-[#7a83a8]">{ytBenchmark?.index || "youtube_ads_data"}</b>
+                </span>
+              </div>
+              <button onClick={() => setYtOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto px-6 py-4">
+              {loadingYtBenchmark && !ytBenchmark ? (
+                <div className="space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-10 animate-pulse rounded bg-[#f1f3fb]" />)}</div>
+              ) : !ytBenchmark ? (
+                <div className="py-10 text-center text-[#9aa2c0]">No YouTube data.</div>
+              ) : (() => {
+                const ov = ytBenchmark.overview || {};
+                const lv = ytBenchmark.live || {};
+                const t = ov.totals || {};
+                const u = ov.unique || {};
+                const Tile = ({ l, v, c = "#264688", suf = "" }) => (
+                  <div className="rounded-lg bg-[#f7f8fd] px-4 py-2">
+                    <div className="text-[18px] font-[700]" style={{ color: c }}>{v == null ? "—" : nfmt(v)}{suf}</div>
+                    <div className="text-[10px] uppercase text-[#9aa2c0]">{l}</div>
+                  </div>
+                );
+                return (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-wrap gap-3">
+                      <Tile l="Total ads (ES)" v={t.total} />
+                      <Tile l="Ads · 1h" v={t.ads_1h} c="#16a34a" />
+                      <Tile l="Ads · 24h" v={t.ads_24h} c="#16a34a" />
+                      <Tile l="Findable" v={t.shown_pct} suf="%" c="#7c3aed" />
+                      <Tile l="Redirect chain" v={ov.redirect_chain?.pct} suf="%" c="#0ea5e9" />
+                      <Tile l="Multi-hop (live)" v={lv.multi_hop} c="#ff7f0e" />
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="rounded-[12px] border border-[#eef1fb] p-3 text-[12px] text-[#7a83a8]">
+                        <div className="mb-1 text-[12px] font-semibold text-[#1f296a]">Unique vs duplicate</div>
+                        <div>1h: new <b className="text-[#16a34a]">{nfmt(u.new_1h)}</b> · dup <b className="text-[#1f296a]">{nfmt(u.dup_1h)}</b></div>
+                        <div>24h: new <b className="text-[#16a34a]">{nfmt(u.new_24h)}</b> · dup <b className="text-[#1f296a]">{nfmt(u.dup_24h)}</b></div>
+                      </div>
+                      <div className="rounded-[12px] border border-[#eef1fb] p-3 text-[12px] text-[#7a83a8]">
+                        <div className="mb-1 text-[12px] font-semibold text-[#1f296a]">Live activity (last_seen)</div>
+                        <div>1h <b className="text-[#1f296a]">{nfmt(lv.ads_1h)}</b> · 3h <b className="text-[#1f296a]">{nfmt(lv.ads_3h)}</b> · 24h <b className="text-[#1f296a]">{nfmt(lv.ads_24h)}</b></div>
+                        <div>new 1h/3h/24h: <b className="text-[#16a34a]">{nfmt(lv.new_1h)}</b> / {nfmt(lv.new_3h)} / {nfmt(lv.new_24h)}</div>
+                      </div>
+                    </div>
+
+                    <BenchTable title="By ad type (all-time)" rows={ov.by_type} cols={[["type","Type"],["count","Ads",1]]} limit={15} />
+                    <BenchTable title="By placement (all-time)" rows={ov.by_position} cols={[["position","Placement"],["count","Ads",1]]} limit={20} />
+                    <BenchTable title="By type · 1h vs 24h" rows={ov.by_type_win} cols={[["type","Type"],["h1","1h",1],["d1","24h",1]]} limit={15} />
+                    <BenchTable title="By placement · 1h vs 24h" rows={ov.by_position_win} cols={[["position","Placement"],["h1","1h",1],["d1","24h",1]]} limit={20} />
+                    <BenchTable title={`Recent ads (multi-hop: ${nfmt(lv.multi_hop)})`} rows={ytBenchmark.pages} cols={[["advertiser","Advertiser"],["ad_type","Type"],["ad_position","Placement"],["hops","Hops",1]]} limit={25} />
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </div>
       )}
