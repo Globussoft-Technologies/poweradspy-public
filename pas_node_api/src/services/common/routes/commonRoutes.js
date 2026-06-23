@@ -24,6 +24,7 @@ const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = r
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
 const { storeKeywordSearch, scraperWork } = require('../controllers/keywordSearchController');
 const { unscoredCreatives, storeCreativeScore, storeRunReport, getRunReports } = require('../controllers/creativeScoreController');
+const { getUserKeywordAdNotifications, markKeywordAdNotificationRead } = require('../controllers/keywordAdNotificationController');
 const { getNotifications, markNotificationsRead } = require('../controllers/notificationController');
 const { 
   registerToken,
@@ -213,6 +214,23 @@ router.get('/nas-storage', asyncHandler(async (req, res) => {
   const data = await buildNasReport({ days: req.query.days, refresh: req.query.refresh === '1' });
   res.json({ code: 200, data });
 }));
+// ─── Keyword ad-count notifications (frontend bell) — 2 APIs, additive. ───
+// See KEYWORD_AD_NOTIFICATION_MANIFEST.md.
+// Primary — GET — poll for the caller's keyword→ad-count notifications. Each call runs
+// a per-user scan (terms the caller searched, scraped today) then returns pending docs.
+// Poll cadence is env-tunable (KEYWORD_SEARCH_NOTIFY_POLL_SEC) and echoed in meta.
+router.get(
+  '/keyword-ad-notifications',
+  authMiddleware,
+  asyncHandler(getUserKeywordAdNotifications)
+);
+
+// Mark read — POST { id } | { ids: [...] } — delete the caller's own notification doc(s).
+router.post(
+  '/keyword-ad-notifications/read',
+  authMiddleware,
+  asyncHandler(markKeywordAdNotificationRead)
+);
 
 // GET /api/v1/common/notifications — Fetch scraping notifications for current user
 router.get(

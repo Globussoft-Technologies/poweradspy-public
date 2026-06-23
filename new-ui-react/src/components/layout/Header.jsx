@@ -155,6 +155,21 @@ const Header = ({
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
 
+  // Click a notification → search its term on its network. The bell's type is 0=keyword,
+  // 1=advertiser, 2=domain; map it to the search-in value. onSearch is App's handleSearch,
+  // whose 3rd arg selects the platform (same path the "advertiser click on an ad" uses), so
+  // this sets query + type + network and fires the search in one shot.
+  const handleNotificationClick = (notif) => {
+    const TYPE_TO_SEARCHIN = { 0: "keyword", 1: "advertiser", 2: "domain" };
+    const searchType = TYPE_TO_SEARCHIN[notif?.type] || "keyword";
+    const term = notif?.keyword || "";
+    if (!term) return;
+    setLocalSearchIn(searchType);
+    setLocalQuery(term);
+    if (onSearch) onSearch(term, searchType, notif.network);
+    setNotifOpen(false);
+  };
+
   // Auto-toast only for freshly-arrived notifications (deduped in the hook), so it
   // never re-fires for ones already in the bell or on reload.
   const [autoToast, setAutoToast] = useState(null);
@@ -687,6 +702,7 @@ const Header = ({
               <NotificationPopup
                 notifications={notifications}
                 onMarkAllRead={() => { markAllRead(); setNotifOpen(false); }}
+                onNotificationClick={handleNotificationClick}
                 onClose={() => setNotifOpen(false)}
               />
             )}

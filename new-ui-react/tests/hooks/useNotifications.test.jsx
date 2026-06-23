@@ -111,7 +111,8 @@ describe("hooks/useNotifications > with user", () => {
     renderHook(() => useNotifications());
     await act(async () => { await Promise.resolve(); });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    // Default cadence is 1 min (VITE_NOTIFY_POLL_SEC unset in tests).
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 

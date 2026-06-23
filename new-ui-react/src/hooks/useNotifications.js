@@ -2,7 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchNotifications, markNotificationsRead } from '../services/api';
 import { useAuth } from './useAuth';
 
-const POLL_INTERVAL = 30000; // 30 seconds
+// Frontend control for how often the primary notifications API is polled.
+// VITE_NOTIFY_POLL_SEC (seconds) is the knob in .env — change it to any cadence.
+// When unset/invalid, fall back to 60s and let the backend's meta.pollIntervalMs win.
+const ENV_POLL_MS = (() => {
+  const sec = Number(import.meta.env.VITE_NOTIFY_POLL_SEC);
+  return Number.isFinite(sec) && sec >= 1 ? Math.round(sec * 1000) : null;
+})();
+const POLL_INTERVAL = ENV_POLL_MS ?? 60000; // default 1 min when the env knob is unset
 const SHOWN_NOTIFICATIONS_KEY = 'shown_notifications'; // localStorage key for deduplication
 
 /**
@@ -14,6 +21,8 @@ export function useNotifications() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [newNotifications, setNewNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
+  // Server-driven poll cadence (env-controlled via meta.pollIntervalMs); falls back to default.
+  const [pollMs, setPollMs] = useState(POLL_INTERVAL);
   const intervalRef = useRef(null);
 
   // Get previously shown notification IDs from localStorage
@@ -41,6 +50,16 @@ export function useNotifications() {
       setLoading(true);
       const result = await fetchNotifications();
       const allNotifs = result.data || [];
+
+      // Cadence control: the frontend .env knob (VITE_NOTIFY_POLL_SEC) wins. Only when
+      // it's unset do we adopt the backend's reported meta.pollIntervalMs. The effect
+      // below re-arms the interval whenever pollMs changes.
+      if (ENV_POLL_MS == null) {
+        const serverMs = Number(result.meta?.pollIntervalMs);
+        if (Number.isFinite(serverMs) && serverMs >= 1000) {
+          setPollMs((prev) => (prev === serverMs ? prev : serverMs));
+        }
+      }
 
       // Bell badge + dropdown show ALL unread notifications (server is_view=0).
       // They persist until the user clicks "mark as read" — never auto-cleared.
@@ -77,14 +96,15 @@ export function useNotifications() {
     // Initial fetch
     poll();
 
-    // Set up interval
-    intervalRef.current = setInterval(poll, POLL_INTERVAL);
+    // Set up interval at the current (possibly server-driven) cadence. Re-arms when
+    // pollMs changes after the server reports its interval.
+    intervalRef.current = setInterval(poll, pollMs);
 
     return () => {
       /* v8 ignore next -- intervalRef is always set earlier in this effect, so the guard's else is defensive */
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [user, poll]);
+  }, [user, poll, pollMs]);
 
   const markAllRead = useCallback(async () => {
     if (notifications.length === 0) return;

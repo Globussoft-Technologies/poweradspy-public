@@ -2147,13 +2147,20 @@ export const fetchFreshTikTokVideoUrl = async (libraryUrl) => {
 // Notifications — Real-time scraping alerts
 // ─────────────────────────────────────────────────────────────────────────────
 
+// keyword_ad_notifications store uses type 1=keyword, 2=advertiser, 3=domain; the bell's
+// TYPE_MAP (NotificationPopup) + Header toast use 0/1/2 — shift down by one so the right
+// icon/label render without touching those components.
+const NOTIFY_TYPE_TO_UI = { 1: 0, 2: 1, 3: 2 };
+
 /**
- * Fetch ad notifications for the current user.
- * GET /api/v1/common/push-notifications/pending
+ * Fetch keyword→ad-count notifications for the current user.
+ * GET /api/v1/common/keyword-ad-notifications — each call also runs a per-user scan
+ * server-side, then returns the caller's pending (notified:false) docs. The response
+ * carries meta.pollIntervalMs (env-controlled) so the bell can self-pace its polling.
  */
 export const fetchNotifications = async () => {
   try {
-    const res = await fetch(`${PAS_API_BASE}/api/v1/common/push-notifications/pending`, {
+    const res = await fetch(`${PAS_API_BASE}/api/v1/common/keyword-ad-notifications`, {
       headers: {
         Authorization: `Bearer ${getPASToken()}`,
       },
@@ -2161,35 +2168,41 @@ export const fetchNotifications = async () => {
     await checkFor401(res);
     if (!res.ok) return { data: [], meta: { unreadCount: 0 } };
     const json = await res.json();
-    return { data: json.data || [], meta: json.meta || { unreadCount: 0 } };
+    // Map Mongo docs → the shape the bell UI already consumes (id / keyword / type /
+    // created_at). adsCount + network are passed through for richer wording if needed.
+    const data = (json.data || []).map((n) => ({
+      id: n._id,
+      keyword: n.value,
+      type: NOTIFY_TYPE_TO_UI[n.type] ?? 0,
+      network: n.network,
+      adsCount: n.adsCount,
+      created_at: n.createdAt || n.updatedAt,
+    }));
+    return { data, meta: json.meta || { unreadCount: data.length } };
   } catch {
     return { data: [], meta: { unreadCount: 0 } };
   }
 };
 
 /**
- * Mark notifications as read.
- * POST /api/v1/common/push-notifications/read
- * @param {number[]} ids — specific IDs to mark
+ * Mark keyword ad-notifications as read.
+ * POST /api/v1/common/keyword-ad-notifications/read — accepts the whole id array in one
+ * call; the server deletes those notification docs for this user.
+ * @param {string[]} ids — notification _ids to mark
  */
 export const markNotificationsRead = async (ids = []) => {
   try {
     if (!Array.isArray(ids) || ids.length === 0) return true;
-
-    // Mark each notification as read
-    for (const notificationId of ids) {
-      const res = await fetch(`${PAS_API_BASE}/api/v1/common/push-notifications/read`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getPASToken()}`,
-        },
-        body: JSON.stringify({ notificationId, adId: null }),
-      });
-      await checkFor401(res);
-      if (!res.ok) return false;
-    }
-    return true;
+    const res = await fetch(`${PAS_API_BASE}/api/v1/common/keyword-ad-notifications/read`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getPASToken()}`,
+      },
+      body: JSON.stringify({ ids }),
+    });
+    await checkFor401(res);
+    return res.ok;
   } catch {
     return false;
   }

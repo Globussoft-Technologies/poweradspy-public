@@ -297,6 +297,22 @@ const config = {
     autoRecoverStale: getVal(fileConfig.keywordSearch?.autoRecoverStale, 'KEYWORD_SEARCH_AUTO_RECOVER_STALE', toBool) !== false,
     staleSweepIntervalSec: getVal(fileConfig.keywordSearch?.staleSweepIntervalSec, 'KEYWORD_SEARCH_STALE_SWEEP_SEC', toInt) || 120,
     staleSweepBatch: getVal(fileConfig.keywordSearch?.staleSweepBatch, 'KEYWORD_SEARCH_STALE_SWEEP_BATCH', toInt) || 100,
+
+    // Ad-count notification cron — scans terms scraped today, checks Elasticsearch for
+    // matching ads per network, records a notification when count >= adsCountThreshold.
+    notify: {
+      enabled: getVal(fileConfig.keywordSearch?.notify?.enabled, 'KEYWORD_SEARCH_NOTIFY_ENABLED', toBool) !== false,
+      schedule: getVal(fileConfig.keywordSearch?.notify?.schedule, 'KEYWORD_SEARCH_NOTIFY_SCHEDULE') || '15 min',
+      adsCountThreshold: getVal(fileConfig.keywordSearch?.notify?.adsCountThreshold, 'KEYWORD_SEARCH_NOTIFY_THRESHOLD', toInt) || 20,
+      collection: getVal(fileConfig.keywordSearch?.notify?.collection, 'KEYWORD_SEARCH_NOTIFY_COLLECTION') || 'keyword_ad_notifications',
+      dateScoped: getVal(fileConfig.keywordSearch?.notify?.dateScoped, 'KEYWORD_SEARCH_NOTIFY_DATE_SCOPED', toBool) !== false,
+      scanBatch: getVal(fileConfig.keywordSearch?.notify?.scanBatch, 'KEYWORD_SEARCH_NOTIFY_SCAN_BATCH', toInt) || 500,
+      // Frontend "primary" read API: how many of the caller's own terms to scan per
+      // request, and the poll cadence (ms, echoed back so the UI can self-pace its
+      // polling). pollIntervalSec is env-tunable so ops can change it without a deploy.
+      userScanLimit: getVal(fileConfig.keywordSearch?.notify?.userScanLimit, 'KEYWORD_SEARCH_NOTIFY_USER_SCAN_LIMIT', toInt) || 100,
+      pollIntervalSec: getVal(fileConfig.keywordSearch?.notify?.pollIntervalSec, 'KEYWORD_SEARCH_NOTIFY_POLL_SEC', toInt) || 60,
+    },
   },
 
   // ─── Google search-audit keyword store (MongoDB) ───

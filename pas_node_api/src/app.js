@@ -236,6 +236,17 @@ async function createApp() {
     }
   }
 
+  // Keyword ad-notification cron (additive, own config toggle keywordSearch.notify.enabled).
+  // Worker-1 only to avoid duplicate jobs in cluster mode.
+  if ((!process.env.WORKER_ID || process.env.WORKER_ID === '1')) {
+    try {
+      const { initKeywordAdNotificationCron } = require('./jobs/keywordAdNotificationCron');
+      initKeywordAdNotificationCron();
+    } catch (error) {
+      log.error('Failed to initialize keyword ad-notification cron', { error: error.message });
+    }
+  }
+
   return app;
 }
 

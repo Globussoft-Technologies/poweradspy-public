@@ -194,5 +194,6 @@ module.exports = {
   initPushNotificationCron,
   initDailyMailUpdateCron,
   initDailyResetCron,
-  initUpdateKeywordStatusCron
+  initUpdateKeywordStatusCron,
+  parseSchedule
 };

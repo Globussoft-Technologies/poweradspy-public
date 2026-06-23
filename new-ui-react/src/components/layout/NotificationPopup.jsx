@@ -30,7 +30,7 @@ function timeAgo(dateStr) {
 /**
  * NotificationPopup — dropdown list of scraping notifications.
  */
-const NotificationPopup = ({ notifications, onMarkAllRead, onClose }) => {
+const NotificationPopup = ({ notifications, onMarkAllRead, onNotificationClick, onClose }) => {
   return (
     <div
       className="group absolute right-0 top-full mt-2 w-80 z-[60] rounded-xl p-[2px] overflow-hidden shadow-2xl"
@@ -84,7 +84,17 @@ const NotificationPopup = ({ notifications, onMarkAllRead, onClose }) => {
             return (
               <div
                 key={notif.id}
-                className="flex items-start gap-3 px-4 py-3 hover:bg-theme-text/[0.03] transition-colors border-b border-theme-border/50 last:border-b-0"
+                role="button"
+                tabIndex={0}
+                onClick={() => onNotificationClick?.(notif)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onNotificationClick?.(notif);
+                  }
+                }}
+                title={`Search "${notif.keyword}" on ${notif.network || "this network"}`}
+                className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-theme-text/[0.05] transition-colors border-b border-theme-border/50 last:border-b-0"
               >
                 {/* Type icon */}
                 <div

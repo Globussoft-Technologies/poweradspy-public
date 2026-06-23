@@ -73,6 +73,23 @@ describe("NotificationPopup", () => {
     fireEvent.click(getByText("Mark all read"));
     expect(onMarkAllRead).toHaveBeenCalled();
   });
+  it("clicking a notification fires onNotificationClick with the notif", () => {
+    const onNotificationClick = vi.fn();
+    const notif = { id: 1, type: 1, keyword: "Nike", network: "facebook", created_at: "2025-01-01" };
+    const { getByText } = render(
+      <NotificationPopup notifications={[notif]} onMarkAllRead={() => {}}
+        onNotificationClick={onNotificationClick} onClose={() => {}} />,
+    );
+    fireEvent.click(getByText(/Nike/));
+    expect(onNotificationClick).toHaveBeenCalledWith(notif);
+  });
+  it("no onNotificationClick → clicking is a no-op (no throw)", () => {
+    const { getByText } = render(
+      <NotificationPopup notifications={[{ id: 1, type: 0, keyword: "shoes", created_at: "2025-01-01" }]}
+        onMarkAllRead={() => {}} onClose={() => {}} />,
+    );
+    expect(() => fireEvent.click(getByText(/shoes/))).not.toThrow();
+  });
 });
 
 describe("NotificationPopup > timeAgo helper (via rendered text)", () => {
