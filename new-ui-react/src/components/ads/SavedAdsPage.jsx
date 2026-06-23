@@ -127,14 +127,25 @@ const SavedAdsPage = ({
 
   const isAllActive = specificPlatforms.length === 0;
 
+  // Keep sdui.activePlatforms in sync alongside the redux specificPlatforms.
+  // The Ad Lib (AdGrid) fetch effect keys on sdui.activePlatforms, not on
+  // specificPlatforms — so without this, switching platforms here updates only
+  // the tab highlight and leaves the Ad Lib grid showing stale ads from the
+  // previously selected platform after navigating back.
   const handleAllClick = () => {
     setSpecificPlatforms([]);
     dispatch(setReduxPlatforms([]));
+    sdui.setActivePlatforms?.(allPlatformValues);
   };
+  // Single-select in Fav Ads: picking a platform REPLACES the current selection
+  // (so switching GDN → Google auto-closes GDN instead of stacking both). Clicking
+  // the already-active platform clears back to "All". Ad Lib keeps its own
+  // multi-select handler in App.jsx — this only changes the Fav Ads tabs.
   const handlePlatformClick = (val) => {
     setSpecificPlatforms((prev) => {
-      const next = prev.includes(val) ? prev.filter((p) => p !== val) : [...prev, val];
+      const next = prev.length === 1 && prev[0] === val ? [] : [val];
       dispatch(setReduxPlatforms(next));
+      sdui.setActivePlatforms?.(next.length > 0 ? next : allPlatformValues);
       return next;
     });
   };
