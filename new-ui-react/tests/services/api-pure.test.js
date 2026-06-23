@@ -280,6 +280,21 @@ describe("api > mapAdToCard", () => {
     const out = mapAdToCard({ video_url: "/pasvideos/vid.mp4" });
     expect(out.videoUrl).toContain("vid.mp4");
   });
+  it("videoUrl: nas_video_url is served from the NAS host, not the original source", () => {
+    const out = mapAdToCard({
+      nas_video_url: "/pas-prod/stream/fb/adVideo/202606/123.mp4",
+      image_url_original: "https://video.fbcdn.net/original.mp4",
+    });
+    expect(out.videoUrl).toBe("https://content-dev.poweradspy.com/pas-prod/stream/fb/adVideo/202606/123.mp4");
+    expect(out.videoUrl).not.toContain("fbcdn.net");
+  });
+  it("videoUrl: a failed-upload placeholder falls back to the original source", () => {
+    const out = mapAdToCard({
+      nas_video_url: "/DefaultImage.mp4",
+      image_url_original: "https://video.fbcdn.net/original.mp4",
+    });
+    expect(out.videoUrl).toBe("https://video.fbcdn.net/original.mp4");
+  });
   it("thumbnail uses image_url_original fallback chain", () => {
     expect(mapAdToCard({ image_video_url: "http://x/1.jpg" }).thumbnail).toBe("http://x/1.jpg");
     expect(mapAdToCard({ image_url_original: "http://x/2.jpg" }).thumbnail).toBe("http://x/2.jpg");
@@ -334,9 +349,10 @@ describe("api > mapAdToCard", () => {
 });
 
 describe("api > resolveNasUrl /stream non-leading-slash (line 75)", () => {
-  it("inserts '/' when /stream/ url does not start with '/'", () => {
-    // NAS_VIDEO_BASE_URL is '' in tests → result is '/' + url
-    expect(resolveNasUrl("vid/stream/y.mp4")).toBe("/vid/stream/y.mp4");
+  it("prefixes a /stream/ url (no leading slash) with the NAS video base", () => {
+    // NAS_VIDEO_BASE_URL falls back to VITE_NAS_BASE_URL (set in .env), so a
+    // /stream/ path resolves against the content host instead of the origin.
+    expect(resolveNasUrl("vid/stream/y.mp4")).toBe("https://content-dev.poweradspy.com/vid/stream/y.mp4");
   });
 });
 

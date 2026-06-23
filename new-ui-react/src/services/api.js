@@ -64,8 +64,14 @@ export const fetchPlanAccess = async (network) => {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const NAS_BASE_URL = import.meta.env.VITE_NAS_BASE_URL || "";
-const NAS_VIDEO_BASE_URL = (import.meta.env.VITE_NAS_VIDEO_URL || "").replace(/\/$/, '');
+const NAS_BASE_URL = (import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, '');
+// Since the 2026-06-21 SFTP migration the NAS stores BOTH images and videos under
+// /<bucket>/stream/ on the same content host (the old dedicated nas-video-api
+// endpoint is gone). So VITE_NAS_VIDEO_URL is optional — when it's unset we fall
+// back to the shared NAS base. Without this fallback the `/stream/` branch below
+// and the videoUrl gate in mapAdToCard resolve against an empty base, so the UI
+// silently leaks the original source CDN URL instead of serving the NAS copy.
+const NAS_VIDEO_BASE_URL = (import.meta.env.VITE_NAS_VIDEO_URL || import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, '');
 
 export const resolveNasUrl = (url) => {
   if (!url || typeof url !== 'string') return url;
