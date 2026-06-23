@@ -1329,7 +1329,7 @@ const AdDetailModal = ({
                     </span>
                   </>
                 )}
-                {ad.adLanguage && (
+                {(
                   <>
                     <span style={{ color: "var(--color-text-muted)" }}>
                       Language
@@ -1338,7 +1338,7 @@ const AdDetailModal = ({
                       className="font-medium flex items-center gap-1"
                       style={{ color: "var(--color-text-secondary)" }}
                     >
-                      <Globe size={9} /> {ad.adLanguage}
+                      <Globe size={9} /> {ad.adLanguage || "—"}
                     </span>
                   </>
                 )}
@@ -1535,7 +1535,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.adLanguage && (
+  {(
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1553,7 +1553,7 @@ const AdDetailModal = ({
           color: "var(--color-text-secondary)",
         }}
       >
-        <Globe size={10} /> {ad.adLanguage}
+        <Globe size={10} /> {ad.adLanguage || "—"}
       </span>
     </>
   )}

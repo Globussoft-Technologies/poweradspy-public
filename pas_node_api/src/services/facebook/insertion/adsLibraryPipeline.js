@@ -105,12 +105,14 @@ async function insertPath(ctx, n, { translation, network }) {
   const { db, log } = ctx;
   const sql = db.sql;
 
-  // language detect (best-effort)
-  let languageId = 1;
+  // language detect (best-effort). Default 0 (= unknown / no language) when detection is
+  // absent or fails — do NOT default to 1 (English); an undetected ad must stay language-less
+  // so the read side returns null, not a misleading "English". Matches every other pipeline.
+  let languageId = 0;
   let iso = null;
   if (translation?.detected_language) {
     iso = translation.detected_language;
-    languageId = (await repo.getLanguageId(sql, iso)) || (await repo.insertLanguage(sql, iso, translation.language_name)) || 1;
+    languageId = (await repo.getLanguageId(sql, iso)) || (await repo.insertLanguage(sql, iso, translation.language_name)) || 0;
   }
   if (translation?.call_to_action) n.call_to_action = translation.call_to_action;
 
@@ -326,7 +328,7 @@ function buildLibraryAdRow(n, ids) {
     days_running: 1,
     lower_age_seen: 18, upper_age_seen: 65,
     type: n.type, platform: toInt(n.platform), ad_id: n.ad_id, ad_position: adPosition,
-    default_ad_url_id: 0, post_owner_updated: 0, language_id: ids.languageId || 1,
+    default_ad_url_id: 0, post_owner_updated: 0, language_id: ids.languageId || 0,
     variants_count: 0, destination_scraper_status: 0, l_c_s_status: 0, l_c_s_updated_date: nowDateTime(),
     status: 1, affiliate_ad: 0, redirect_destination_url_source: 0, reward_status: 0,
     hits: 1, impression: ids.impression || 0,

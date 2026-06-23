@@ -72,8 +72,15 @@ async function insertPath(ctx, n, { translation }) {
   const { db, log } = ctx;
   const sql = db.sql;
 
+  // language detect (best-effort). Default 0 (= unknown / no language) when detection is
+  // absent or fails — do NOT default to 1 (English); an undetected ad must stay language-less
+  // so the read side returns null, not a misleading "English". Matches every other pipeline.
+  let languageId = 0;
   let iso = null;
-  if (translation?.detected_language) iso = translation.detected_language;
+  if (translation?.detected_language) {
+    iso = translation.detected_language;
+    languageId = (await repo.getLanguageId(sql, iso)) || (await repo.insertLanguage(sql, iso, translation.language_name)) || 0;
+  }
   if (translation?.call_to_action) n.call_to_action = translation.call_to_action;
 
   const finalImpression = n.impressions_high !== 0 ? Math.round((n.impressions_high + n.impressions_low) / 2) : 0;
@@ -126,7 +133,7 @@ async function insertPath(ctx, n, { translation }) {
       domainId = d.code === 200 ? d.data[0].id : await repo.insertDomain(tx, domain);
     }
 
-    const adRow = buildLibraryAdRow(n, { ctaId, domainId, postOwnerId, categoryId, impression: finalImpression });
+    const adRow = buildLibraryAdRow(n, { ctaId, domainId, postOwnerId, categoryId, languageId, impression: finalImpression });
     const instagramAdId = await repo.insertInstagramAd(tx, adRow);
     if (!instagramAdId) { const e = new Error(`This ad_id "${n.ad_id}" already exists (duplicate).`); e.insertionCode = 402; throw e; }
 
@@ -240,7 +247,7 @@ function buildLibraryAdRow(n, ids) {
     post_date: n.post_date, first_seen: n.first_seen, last_seen: n.last_seen,
     source: 'desktop', days_running: 1, lower_age_seen: 18, upper_age_seen: 65,
     type: n.type, ad_id: n.ad_id, ad_position: adPosition,
-    default_ad_url_id: 0, post_owner_updated: 0, language_id: 1, variants_count: 0,
+    default_ad_url_id: 0, post_owner_updated: 0, language_id: ids.languageId || 0, variants_count: 0,
     l_c_s_status: 0, l_c_s_updated_date: nowDateTime(), status: 1,
     affiliate_ad: 0, redirect_destination_url_source: 0, reward_status: 0,
     hits: 1, impression: ids.impression || 0, category_id: ids.categoryId || 0,

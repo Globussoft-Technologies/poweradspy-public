@@ -541,14 +541,14 @@ const SharedAdView = ({ shareToken }) => {
                   </p>
                 </div>
               )}
-              {ad.adLanguage && (
+              {(
                 <div>
                   <span className="text-[10px] text-gray-600 uppercase font-semibold tracking-wider">
                     Language
                   </span>
                   <p className="text-[11px] text-gray-300 font-medium mt-0.5 flex items-center gap-1">
                     <Globe size={10} />
-                    {ad.adLanguage}
+                    {ad.adLanguage || "—"}
                   </p>
                 </div>
               )}
