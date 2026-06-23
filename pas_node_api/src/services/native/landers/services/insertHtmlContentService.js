@@ -194,13 +194,15 @@ class InsertHtmlContentService {
     if (data.status === 2) {
       // Whitehat
       metadataUpdate.white_ad_screenshot = [data.screen_shot];
-      metadataUpdate.white_ad_lander = [data.html_path];
+      // html_path optional — only store the zip path when provided.
+      if (data.html_path) metadataUpdate.white_ad_lander = [data.html_path];
       metadataUpdate.white_lander_date = new Date().toISOString().split('T')[0];
       metadataUpdate.white_ad_status = data.domain_age === 1 ? 2 : 2;
     } else if (data.status === 1) {
       // Blackhat
       metadataUpdate.png_file = [data.screen_shot];
-      metadataUpdate.blackhat_path = [data.html_path];
+      // html_path optional — only store the zip path when provided.
+      if (data.html_path) metadataUpdate.blackhat_path = [data.html_path];
       metadataUpdate.blackhat_date = new Date().toISOString().split('T')[0];
       metadataUpdate.blackhat_status = 1;
     }
@@ -282,11 +284,11 @@ class InsertHtmlContentService {
    */
   static validateRequest(item) {
     const errors = [];
+    // html_path is OPTIONAL (may be omitted) — mirrors gdn/google/youtube/linkedin.
     const requiredFields = [
       'ad_id',
       'country_iso',
       'destinations',
-      'html_path',
       'screen_shot',
       'html_content',
       'status',

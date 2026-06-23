@@ -3,7 +3,8 @@
 const repo = require('./repository');
 
 function validateItem(item) {
-  const required = ['ad_id', 'country_iso', 'destinations', 'html_path', 'screen_shot', 'html_content', 'status', 'crawled_by'];
+  // html_path is OPTIONAL (may be omitted) — mirrors gdn/google/youtube/linkedin.
+  const required = ['ad_id', 'country_iso', 'destinations', 'screen_shot', 'html_content', 'status', 'crawled_by'];
   for (const field of required) {
     if (!(field in item)) {
       return { valid: false, error: `Missing required field: ${field}` };
@@ -260,7 +261,8 @@ async function insertHtmlRedirectCountry(req, db, log) {
         }
 
         screenshots.push(item.screen_shot);
-        zips.push(item.html_path);
+        // html_path optional — only append the zip path when provided.
+        if (item.html_path) zips.push(item.html_path);
 
         // Remove duplicates and store as JSON
         updateMeta.white_ad_screenshot = JSON.stringify([...new Set(screenshots)]);
@@ -297,7 +299,8 @@ async function insertHtmlRedirectCountry(req, db, log) {
         }
 
         screenshots.push(item.screen_shot);
-        zips.push(item.html_path);
+        // html_path optional — only append the zip path when provided.
+        if (item.html_path) zips.push(item.html_path);
 
         // Remove duplicates and store as JSON
         updateMeta.png_file = JSON.stringify([...new Set(screenshots)]);

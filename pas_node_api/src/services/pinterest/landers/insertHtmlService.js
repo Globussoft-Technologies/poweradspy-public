@@ -18,7 +18,8 @@ const repo = require('./repository');
  */
 
 function validateItem(item) {
-  const required = ['ad_id', 'country_iso', 'destinations', 'html_path', 'screen_shot', 'html_content', 'status', 'crawled_by'];
+  // html_path is OPTIONAL (may be omitted) — mirrors gdn/google/youtube/linkedin.
+  const required = ['ad_id', 'country_iso', 'destinations', 'screen_shot', 'html_content', 'status', 'crawled_by'];
   for (const field of required) {
     if (!(field in item)) {
       return { valid: false, error: `Missing required field: ${field}` };
@@ -198,11 +199,13 @@ async function insertHtmlRedirectCountry(req, db, log) {
         whitehat.push(item.html_content);
         dcBlackHat.push(item.html_content);
         whitehatScreenshot.push(item.screen_shot);
-        whitehatZip.push(item.html_path);
+        // html_path optional — only append the zip path when provided.
+        if (item.html_path) whitehatZip.push(item.html_path);
       } else if (itemStatus === 1) {
         resBlackHat.push(item.html_content);
         blackhatScreenshot.push(item.screen_shot);
-        blackhatZip.push(item.html_path);
+        // html_path optional — only append the zip path when provided.
+        if (item.html_path) blackhatZip.push(item.html_path);
       }
 
       // Outgoing URLs

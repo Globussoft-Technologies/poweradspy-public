@@ -167,7 +167,8 @@ class InsertHtmlContentService {
         if (data.status === 2) {
           whitehat_screenshot.push(data.screen_shot);
           whitehat_screenshot = [...new Set(whitehat_screenshot)];
-          whitehat_zip.push(data.html_path);
+          // html_path optional — only append the zip path when provided.
+          if (data.html_path) whitehat_zip.push(data.html_path);
           whitehat_zip = [...new Set(whitehat_zip)];
 
           if (whitehat_screenshot.length > 0) {
@@ -182,7 +183,8 @@ class InsertHtmlContentService {
         } else if (data.status === 1) {
           blackhat_screenshot.push(data.screen_shot);
           blackhat_screenshot = [...new Set(blackhat_screenshot)];
-          blackhat_zip.push(data.html_path);
+          // html_path optional — only append the zip path when provided.
+          if (data.html_path) blackhat_zip.push(data.html_path);
           blackhat_zip = [...new Set(blackhat_zip)];
 
           if (blackhat_screenshot.length > 0) {
