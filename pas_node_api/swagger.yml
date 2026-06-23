@@ -1025,6 +1025,8 @@ tags:
     description: Pinterest image OCB (object/celebrity/brand) and OCR (text) pipeline (get-pinterest-image-url, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes pinterest_ad_variants + patches pinterest_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
   - name: Instagram OCR
     description: Instagram image OCB (object/celebrity/brand) and OCR (text) pipeline (getImageUrl, updateImageDetails). Scraper-facing; unauthenticated. Lease returns IMAGE/STORIES ads seen in the last 10 days and drives off image_url_status (0=OCB, 4=OCR); report writes instagram_ad_variants + patches instagram_search_mix ES. Every response is HTTP 200 — outcome is in the body code.
+  - name: LinkedIn OCR
+    description: LinkedIn image OCB (object/celebrity/brand) and OCR (text) pipeline (get-linkedin-image-url, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR; no last_seen window). OCB/OCR columns live in a SEPARATE table linkedin_ad_ocr_ocb_details. Report is MySQL-FIRST (linkedin_ad_variants status + linkedin_ad_ocr_ocb_details raw values) then patches the flat linkedin_ads_data ES doc BY id=ad_id — object/celebrity/brand as ||-exploded arrays (brand key image_brand), ocr as a string, only for status 1/4. Every response is HTTP 200 — outcome is in the body code.
   - name: Google Landers
     description: Google (gtext) destination-lander scraping pipeline (get_ads_for_blackhat, upload_gtext_blackhat, insert_html_content). Scraper-facing; unauthenticated. Patches google_ads_data ES.
   - name: GDN Landers
@@ -2770,6 +2772,87 @@ paths:
                 updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
                 noVariant: { summary: No variant row, value: { code: 400, message: gdn_ad_id not present in gdn_ad_variants table } }
                 notInEs: { summary: Not in Elasticsearch, value: { code: 400, message: Ad not found } }
+
+  # ═══════════════════════════════════════════
+  # LINKEDIN OCR / OCB (image-processing pipeline)
+  # ═══════════════════════════════════════════
+
+  /api/v1/linkedin/ocr/get-linkedin-image-url:
+    get:
+      tags: [LinkedIn OCR]
+      summary: Lease a batch of LinkedIn image ads queued for OCB/OCR
+      description: >-
+        Hands out up to 20 IMAGE ads (newest first; no last_seen window), resolves each image_url to an
+        absolute NAS URL, and flips the batch to image_url_status=2 (in-progress). status=0 → OCB queue;
+        status=4 → OCR queue (also returns image_ocr, joined from linkedin_ad_ocr_ocb_details). No auth.
+        HTTP is always 200 — outcome is the body `code`.
+      parameters:
+        - in: query
+          name: status
+          required: true
+          schema: { type: integer, enum: [0, 4], example: 0 }
+          description: 0 = OCB queue, 4 = OCR queue
+      responses:
+        '200':
+          description: Outcome in body code (200 leased, 400 empty/validation, 401 error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Url fetched successfully }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id: { type: integer, example: 379113 }
+                        image_url: { type: string, example: "https://media.globussoft.com/pas-dev/stream/linkedin/adImage/202606/379113.jpg" }
+                        image_ocr: { type: string, nullable: true, description: Only present when status=4 }
+                  exe_time: { type: number, example: 0.01 }
+
+  /api/v1/linkedin/ocr/update-image-info:
+    post:
+      tags: [LinkedIn OCR]
+      summary: Persist OCB/OCR results to MySQL (first) + Elasticsearch
+      description: >-
+        Writes MySQL FIRST then ES (reverse of GDN). On linkedin_ad_variants: sets image_text_final_status
+        (when it was 0) and image_url_status (= status for 1/4). On the SEPARATE linkedin_ad_ocr_ocb_details
+        table: stores the RAW body values (image_ocr kept if omitted), stamping object_update_date on status=1
+        and ocr_updated_date on status=4 — both gated on that OCR row existing (else 400 "Please enter valid
+        ad_id"). Then patches the flat linkedin_ads_data ES doc BY id=ad_id (no search): object/celebrity/brand
+        as ||-exploded ARRAYS (brand under key image_brand, null when empty), ocr as a STRING — image_object/
+        celebrity/brand only on status=1, image_ocr only on status=4. No auth; HTTP always 200 (outcome in body
+        `code`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id]
+              properties:
+                ad_id: { type: integer, example: 379113, description: internal linkedin_ad.id }
+                status: { type: integer, enum: [1, 4], example: 1, description: 1=OCB done, 4=OCR done }
+                object: { type: string, nullable: true, example: "shoe||bottle", description: "RAW into MySQL; ||-exploded array in ES (status=1)" }
+                celebrity: { type: string, nullable: true, example: "", description: "RAW into MySQL; ||-exploded array in ES (status=1)" }
+                brand_logo: { type: string, nullable: true, example: "Nike", description: "RAW into MySQL; ||-exploded array in ES under key image_brand (status=1)" }
+                ocr: { type: string, nullable: true, example: "Buy now||Limited offer", description: "kept if omitted; written to ES as a string (status=4)" }
+      responses:
+        '200':
+          description: Outcome in body code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Image Data Updated Successfully }
+              examples:
+                updated: { summary: Success, value: { code: 200, message: Image Data Updated Successfully } }
+                noOcrRow: { summary: No OCR/OCB row, value: { code: 400, message: Please enter valid ad_id } }
+                notUpdated: { summary: ES not updated, value: { code: 400, message: Image Object not updated } }
 
   # ═══════════════════════════════════════════
   # YOUTUBE OCB (image-processing pipeline)
