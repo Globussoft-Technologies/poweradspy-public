@@ -548,11 +548,61 @@ const MasonryCard = ({
               </p>
             </div>
           ) : isTextOnlyAd ? (
-            <div className="w-full flex items-center min-h-60 justify-center p-6 bg-gradient-to-br from-indigo-950/40 to-slate-900/40">
-              <p className="text-[14px] font-medium leading-relaxed text-zinc-300 text-center line-clamp-6">
-                "{currentTitle || ad.ad_text || "Text Ad"}"
-              </p>
-            </div>
+            platform === "google" ? (
+              // Google Search ad → SERP-style listing: Sponsored chip, destination
+              // URL, blue headline, description, keyword pills, Top/Bottom slot.
+              <div className="w-full min-h-60 flex flex-col justify-center gap-1.5 px-5 py-4 bg-white">
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-bold text-gray-600 bg-gray-100 rounded border border-gray-300">
+                    Sponsored
+                  </span>
+                  {(ad.destination_url || ad.advertiser) && (
+                    <span className="min-w-0 truncate text-[11px] text-gray-500">
+                      {ad.destination_url || ad.advertiser}
+                    </span>
+                  )}
+                  {ad.ad_sub_position && (
+                    <span className="ml-auto shrink-0 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 bg-emerald-50 rounded border border-emerald-200">
+                      {ad.ad_sub_position === "TOP"
+                        ? "Top of page"
+                        : ad.ad_sub_position === "BOTTOM"
+                        ? "Bottom"
+                        : ad.ad_sub_position}
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-[17px] font-medium leading-snug text-blue-700 line-clamp-2 group-hover:underline">
+                  {currentTitle || ad.ad_title || ad.title || "Text Ad"}
+                </h3>
+                {ad.ad_text && (
+                  <p className="text-[13px] leading-relaxed text-gray-600 line-clamp-3">
+                    {ad.ad_text}
+                  </p>
+                )}
+                {ad.target_keyword && (
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {String(ad.target_keyword)
+                      .split(",")
+                      .filter(Boolean)
+                      .slice(0, 4)
+                      .map((kw, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-0.5 text-[10px] text-blue-700 bg-blue-50 rounded-full border border-blue-100"
+                        >
+                          {kw.trim()}
+                        </span>
+                      ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="w-full flex items-center min-h-60 justify-center p-6 bg-gradient-to-br from-indigo-950/40 to-slate-900/40">
+                <p className="text-[14px] font-medium leading-relaxed text-zinc-300 text-center line-clamp-6">
+                  "{currentTitle || ad.ad_text || "Text Ad"}"
+                </p>
+              </div>
+            )
           ) : isTextImageAd ? (
             <div className="relative w-full min-h-[220px] flex items-center justify-center overflow-hidden">
               {currentImg && (
