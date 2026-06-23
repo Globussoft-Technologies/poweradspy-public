@@ -15,7 +15,7 @@
  *   - updateX → affected row count (number)
  */
 
-const { latin1Safe } = require('../../../insertion/helpers/util');
+const { latin1SafeCols } = require('../../../insertion/helpers/util');
 
 // ── Transaction helper (relaxes strict sql_mode for the insertion connection) ──
 async function withTransaction(sql, fn) {
@@ -259,15 +259,15 @@ async function insertPlacementUrl(exec, d) {
 
 // ── gdn_ad_variants ─────────────────────────────────────────────────────────────
 async function insertVariant(exec, d) {
-  const clean = stripNulls({
+  const clean = latin1SafeCols(stripNulls({
     gdn_ad_id: d.gdn_ad_id,
     title: d.title ?? '',
     text: d.text ?? '',
     newsfeed_description: d.newsfeed_description ?? '',
-    image_url_original: latin1Safe(d.image_url_original) ?? null,
+    image_url_original: d.image_url_original ?? null,
     ad_image_size: d.ad_image_size ?? null,
     image_url: d.image_url ?? '/bydefault_ads.jpg',
-  });
+  }));
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO gdn_ad_variants (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -275,6 +275,7 @@ async function insertVariant(exec, d) {
   ));
 }
 async function updateVariantByAdId(exec, data, gdnAdId) {
+  latin1SafeCols(data);
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE gdn_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE gdn_ad_id = ?`,

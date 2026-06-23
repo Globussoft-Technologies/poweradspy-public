@@ -53,4 +53,30 @@ function latin1Safe(value) {
   return value.replace(/[^\x00-\xFF]/g, '');
 }
 
-module.exports = { nowDateTime, today, epochToDateTime, toInt, ensureUtf8mb3Compatible, truncateChars, latin1Safe };
+/**
+ * The latin1-charset columns on every network's `*_ad_variants` table. These are all
+ * image / URL / path / size columns — binding a utf8mb4 param (emoji/CJK/accented char)
+ * into one of them makes mysql2 throw the collation error and the whole insert rolls back,
+ * silently dropping the ad. The text columns (title/text/newsfeed_description) are utf8mb4
+ * and are intentionally NOT in this list so real emoji/CJK ad copy is preserved.
+ */
+const LATIN1_VARIANT_COLS = [
+  'image_url_original', 'image_url', 'old_image_url',
+  'image_object', 'image_celebrity', 'image_brand_logo', 'ad_image_size',
+];
+
+/**
+ * In-place latin1-sanitize the known latin1 `*_ad_variants` columns of an insert/update
+ * payload object, so neither the INSERT (inside the txn → would lose the ad) nor the
+ * post-commit UPDATE (would silently drop the image URL) can throw the collation error.
+ * Only the columns in LATIN1_VARIANT_COLS are touched. Returns the same object for chaining.
+ */
+function latin1SafeCols(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  for (const k of LATIN1_VARIANT_COLS) {
+    if (typeof obj[k] === 'string') obj[k] = latin1Safe(obj[k]);
+  }
+  return obj;
+}
+
+module.exports = { nowDateTime, today, epochToDateTime, toInt, ensureUtf8mb3Compatible, truncateChars, latin1Safe, latin1SafeCols };

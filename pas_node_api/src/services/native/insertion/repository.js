@@ -29,6 +29,8 @@ const affected  = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRo
 const found    = (r) => (rows(r).length ? { code: 200, data: rows(r) } : { code: 400, data: null });
 const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 
+const { latin1SafeCols } = require('../../../insertion/helpers/util');
+
 // ── native_ad ──────────────────────────────────────────────────────────────────
 
 async function getAdByAdId(exec, adId) {
@@ -295,14 +297,14 @@ async function updateNativePlacementUrlCount(exec, id) {
 // ── native_ad_variants ────────────────────────────────────────────────────────
 
 async function insertNativeAdVariant(exec, d) {
-  const clean = stripNulls({
+  const clean = latin1SafeCols(stripNulls({
     native_ad_id:         d.native_ad_id,
     title:                d.title                ?? '',
     text:                 d.text                 ?? '',
     newsfeed_description: d.newsfeed_description ?? '',
     image_url_original:   d.image_url_original   ?? null,
     image_url:            d.image_url            ?? null,
-  });
+  }));
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO native_ad_variants (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -311,6 +313,7 @@ async function insertNativeAdVariant(exec, d) {
 }
 
 async function updateNativeAdVariant(exec, data, adId) {
+  latin1SafeCols(data);
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE native_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE native_ad_id = ?`,

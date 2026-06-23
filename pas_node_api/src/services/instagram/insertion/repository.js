@@ -6,7 +6,7 @@
  * Conventions: getX → {code,data}; insertX → id; updateX → affected. `exec` is db.sql or a tx.
  */
 
-const { truncateChars } = require('../../../insertion/helpers/util');
+const { truncateChars, latin1Safe, latin1SafeCols } = require('../../../insertion/helpers/util');
 
 const rows = (r) => (Array.isArray(r) ? r : []);
 const firstId = (r) => (r && r.insertId ? r.insertId : 0);
@@ -234,10 +234,11 @@ async function insertDomain(exec, domain) {
 async function insertVariant(exec, d) {
   return firstId(await exec.query(
     'INSERT INTO instagram_ad_variants (instagram_ad_id, title, text, newsfeed_description, image_url_original) VALUES (?,?,?,?,?)',
-    [d.instagram_ad_id, d.title ?? '', d.text ?? '', d.newsfeed_description ?? '', d.image_url_original ?? null]
+    [d.instagram_ad_id, d.title ?? '', d.text ?? '', d.newsfeed_description ?? '', latin1Safe(d.image_url_original) ?? null]
   ));
 }
 async function updateVariantByAdId(exec, data, adId) {
+  latin1SafeCols(data);
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE instagram_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE instagram_ad_id = ?`,

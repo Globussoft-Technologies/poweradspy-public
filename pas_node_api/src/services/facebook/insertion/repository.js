@@ -47,7 +47,7 @@ async function withTransaction(sql, fn) {
   }
 }
 
-const { truncateChars, latin1Safe } = require('../../../insertion/helpers/util');
+const { truncateChars, latin1Safe, latin1SafeCols } = require('../../../insertion/helpers/util');
 
 const rows = (r) => (Array.isArray(r) ? r : []);
 const firstId = (r) => (r && r.insertId ? r.insertId : 0);
@@ -277,6 +277,7 @@ async function insertVariant(exec, d) {
   ));
 }
 async function updateVariant(exec, data, variantId) {
+  latin1SafeCols(data);
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE facebook_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
@@ -285,6 +286,7 @@ async function updateVariant(exec, data, variantId) {
 }
 // PHP updates the variant by facebook_ad_id on the UPDATE path.
 async function updateVariantByAdId(exec, data, facebookAdId) {
+  latin1SafeCols(data);
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE facebook_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE facebook_ad_id = ?`,

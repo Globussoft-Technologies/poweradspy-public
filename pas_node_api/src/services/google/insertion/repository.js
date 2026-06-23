@@ -8,7 +8,7 @@
  * `exec` = `db.sql` (autocommit) or a `withTransaction` tx.
  */
 
-const { latin1Safe } = require('../../../insertion/helpers/util');
+const { latin1SafeCols } = require('../../../insertion/helpers/util');
 
 async function withTransaction(sql, fn) {
   const conn = await sql.getConnection();
@@ -185,12 +185,12 @@ async function getDomainRegisteredDate(exec, domainId) {
 
 // ── google_text_ad_variants ──────────────────────────────────────────────────
 async function insertVariant(exec, d) {
-  const clean = stripNulls({
+  const clean = latin1SafeCols(stripNulls({
     google_text_ad_id: d.google_text_ad_id,
     title: d.title ?? '', text: d.text ?? '', newsfeed_description: d.newsfeed_description ?? '',
-    image_url_original: latin1Safe(d.image_url_original) ?? null, image_url: d.image_url ?? null,
+    image_url_original: d.image_url_original ?? null, image_url: d.image_url ?? null,
     target_keyword: d.target_keyword ?? '', target_page: d.target_page ?? null,
-  });
+  }));
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO google_text_ad_variants (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -198,6 +198,7 @@ async function insertVariant(exec, d) {
   ));
 }
 async function updateVariantByAdId(exec, data, googleTextAdId) {
+  latin1SafeCols(data);
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE google_text_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE google_text_ad_id = ?`,
