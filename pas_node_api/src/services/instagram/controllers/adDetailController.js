@@ -1,7 +1,6 @@
 'use strict';
 const { normalizeParams, cleanAdsData } = require('../helpers/paramParser');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { fetchTargetingData, storeTargetingData } = require('../../common/helpers/interestBehaviour');
 
 // SQL query to get ad details with all JOINs (mirrors PHP getJoindAds)
 const AD_DETAIL_SQL = `
@@ -260,28 +259,6 @@ async function getAdDetails(req, db, logger) {
 
           // Confidence score
           if (source['confidence_score']) adData.confidence_score = source['confidence_score'];
-
-          // ─── Lazy read-through ──────────────────────────────
-          // No targeting data cached for this ad yet → fetch it from the
-          // external targeting service, surface it in this response, and write
-          // it back to ES (fire-and-forget) so the next open is a cache hit.
-          if (!source['interests'] && !source['behaviors']) {
-            const targeting = await fetchTargetingData({
-              network: 'instagram',
-              adId: parseInt(p.ad_id, 10),
-              log: logger,
-            });
-            if (targeting) {
-              adData.interests = targeting.interests;
-              adData.behaviours = targeting.behaviors;
-              if (targeting.confidence_score != null) adData.confidence_score = targeting.confidence_score;
-              const docId = hits.hits[0]._id;
-              const docIndex = hits.hits[0]._index;
-              setImmediate(() => storeTargetingData({
-                esConn: db.elastic, index: docIndex, docId, source, data: targeting, log: logger,
-              }));
-            }
-          }
 
           // Language from ES lang_detect ISO
           if (source['lang_detect']) {

@@ -1,19 +1,15 @@
 import { Heart, Zap, Copy, Users } from 'lucide-react';
 import { useTheme } from '../../../hooks/useTheme';
 
-const AudienceSection = ({ adDetails }) => {
+const AudienceSection = ({ interests = [], behaviours = [], loading = false }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
-  const interests = adDetails?.interests
-    ? (Array.isArray(adDetails.interests) ? adDetails.interests : [adDetails.interests])
-    : [];
-  const behaviour = adDetails?.behaviours
-    ? (Array.isArray(adDetails.behaviours) ? adDetails.behaviours : [adDetails.behaviours])
-    : [];
+  const interestList = Array.isArray(interests) ? interests : (interests ? [interests] : []);
+  const behaviourList = Array.isArray(behaviours) ? behaviours : (behaviours ? [behaviours] : []);
 
-  const audience = { interests, behaviour };
-  const hasData = interests.length > 0 || behaviour.length > 0;
+  const audience = { interests: interestList, behaviour: behaviourList };
+  const hasData = interestList.length > 0 || behaviourList.length > 0;
 
   const categories = [
     { key: 'interests', label: 'INTERESTS', icon: Heart, color: 'pink' },
@@ -23,14 +19,15 @@ const AudienceSection = ({ adDetails }) => {
   // Filter to only show categories that have data
   const visibleCategories = categories.filter(({ key }) => audience[key].length > 0);
 
-  if (adDetails !== null && !hasData) return null;
+  // Hide entirely only when we're done loading and there's nothing to show.
+  if (!loading && !hasData) return null;
 
   return (
     <div className="px-6">
       <h3 className="flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 text-white/90">
         <Users size={16} className="opacity-60" />Target Audience
       </h3>
-      {adDetails === null ? (
+      {loading ? (
         <div className={`rounded-xl border py-12 flex items-center justify-center ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-white/[0.02] border-white/5'}`}>
           <span className={`text-sm ${isLight ? 'text-gray-400' : 'text-white/30'}`}>Loading...</span>
         </div>

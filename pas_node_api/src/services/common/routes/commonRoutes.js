@@ -37,6 +37,8 @@ const { sendMailDailyUpdate } = require('../controllers/dailyMailUpdateControlle
 const { getTotalAdCount } = require('../controllers/totalAdCountController');
 const { getRecentAds } = require('../controllers/recentAdsController');
 const { storeBehaviourData, insertInterestBehaviour, updateInterestBehaviour } = require('../controllers/interestBehaviourController');
+const { getAdDetailsData } = require('../controllers/adDetailsDataController');
+const { authunticatePhpApi } = require('../controllers/phpAuthController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware } = require('../../../middleware/planAccess');
@@ -360,5 +362,18 @@ router.get('/insert-interest-behaviour', asyncHandler(insertInterestBehaviour));
 
 // GET /api/v1/common/update-interest-behaviour?network=facebook — refresh + cleanup (cron)
 router.get('/update-interest-behaviour', asyncHandler(updateInterestBehaviour));
+
+// GET /api/v1/common/get-ad-details/:adId
+// Node port of Userv2Controller@getAdDetailsData. Returns a trimmed ad card
+// (title/text/newsfeed_description/image_url/category/subcategory) from the
+// facebook `search_mix` ES index. No auth (PHP route carried only `cors`).
+// Always HTTP 200; the real status is in the body `code` (matches Laravel).
+router.get('/get-ad-details/:adId', asyncHandler(getAdDetailsData));
+
+// GET /api/v1/common/authunticate-php-api
+// Node port of adsDataController@authunticatePhpApi. Verifies the Bearer JWT in
+// the Authorization header (HS512, shared secret). No auth middleware — the
+// endpoint validates the token itself. Always HTTP 200; status is in body `code`.
+router.get('/authunticate-php-api', asyncHandler(authunticatePhpApi));
 
 module.exports = router;

@@ -118,6 +118,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import { useAdInsights } from "../../hooks/useAdInsights";
+import { useInterestBehaviour } from "../../hooks/useInterestBehaviour";
 import { mapAdToCard, resolveNasUrl, fetchFreshTikTokVideoUrl, getVideoEmbedUrl } from '../../services/api';
 import he from "he";
 
@@ -1036,6 +1037,15 @@ const AnalyticsModal = ({
     return { platform, adType, position, typeBadge, runningDays, engagementItems: items, hasEngagement: items.length > 0 };
   }, [processedAd, ad, isLight]);
 
+  // Interests/behaviours for the Target Audience panel. Reads from ES (adDetails)
+  // on a cache hit; on a miss it calls the targeting API directly from the browser
+  // (visible in the Network tab) and caches the result back to ES.
+  const audience = useInterestBehaviour({
+    adId: ad?.id,
+    network: ctx.platform,
+    adDetails: adDetailsData,
+  });
+
   if (!ad) return null;
 
   // Show 404 immediately when backend sends code:404 for adDetails event — don't wait for SSE stream to finish
@@ -1642,7 +1652,11 @@ const AnalyticsModal = ({
 
             {/* Target Audience — Facebook & Instagram (right after Basic Info) */}
             {["facebook", "instagram"].includes(ctx.platform) && (
-              <AudienceSection adDetails={adDetailsData} />
+              <AudienceSection
+                interests={audience.interests}
+                behaviours={audience.behaviours}
+                loading={audience.loading}
+              />
             )}
 
             {/* Lander Details */}
