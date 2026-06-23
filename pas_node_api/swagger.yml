@@ -8340,6 +8340,123 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/common/get-ad-details/{adId}:
+    get:
+      tags: [Common]
+      summary: Lightweight ad details card by ad ID
+      description: |
+        Node port of the PHP `Userv2Controller@getAdDetailsData`. Looks up a single
+        Facebook ad in the `search_mix` Elasticsearch index by `facebook_ad.id` and
+        returns a trimmed card: `title`, `text`, `newsfeed_description`, `image_url`,
+        `category`, `subcategory`.
+
+        - **IMAGE** ads use `new_nas_image_url`; everything else falls back to
+          `thumbnail_url`. The chosen path is prefixed with the `NAS_URL_FE` env value.
+        - **No auth** — the original PHP route carried only the `cors` middleware.
+        - **Always responds HTTP 200** (mirrors Laravel `response()->json()`); the real
+          status is in the body `code` (`200` = found, `404` = no ad, `400` = error).
+      security: []
+      parameters:
+        - name: adId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Facebook ad id (`facebook_ad.id`).
+          example: "1234567890"
+      responses:
+        '200':
+          description: |
+            Always HTTP 200. Inspect the body `code`: `200` = found, `404` = no ad for
+            the given id, `400` = error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Data Fetched Successfully }
+                  data:
+                    type: object
+                    properties:
+                      title: { type: string, example: "Summer Sale" }
+                      text: { type: string, example: "Up to 50% off everything" }
+                      newsfeed_description: { type: string, example: "Limited time offer" }
+                      image_url: { type: string, example: "https://nas.example.com/ads/1/img.jpg" }
+                      category: { type: string, example: "E-commerce" }
+                      subcategory: { type: string, example: "Apparel" }
+              examples:
+                found:
+                  summary: Ad found
+                  value:
+                    code: 200
+                    message: Data Fetched Successfully
+                    data:
+                      title: "Summer Sale"
+                      text: "Up to 50% off everything"
+                      newsfeed_description: "Limited time offer"
+                      image_url: "https://nas.example.com/ads/1/img.jpg"
+                      category: "E-commerce"
+                      subcategory: "Apparel"
+                notFound:
+                  summary: No ad for the given id
+                  value:
+                    code: 404
+                    message: No data found for the given ad_id
+                error:
+                  summary: Lookup error
+                  value:
+                    code: 400
+                    message: "Error in getAdDetailsData: <reason>"
+
+  /api/v1/common/authunticate-php-api:
+    get:
+      tags: [Common]
+      summary: Validate a PHP-issued JWT
+      description: |
+        Node port of the PHP `adsDataController@authunticatePhpApi`. Verifies the
+        `Bearer` token in the `Authorization` header against the shared HS512 JWT
+        secret (the same value PHP uses via `config('services.jwt.key')`). Lets other
+        services check a token without a full auth context.
+
+        - **No auth middleware** — the endpoint validates the supplied token itself
+          (use the **Authorize** button to send the `Bearer` token to test).
+        - **Always responds HTTP 200** (mirrors Laravel `response()->json()`); the real
+          outcome is in the body `code` / `message`:
+          - `403` "Bearer token required" — missing / non-Bearer header
+          - `200` "valid token" — signature ok and not expired
+          - `400` "Token expired" — expired token
+          - `400` "Invalid token signature" — signature mismatch
+          - `400` "Malformed token" — unparseable token
+          - `400` "Invalid token" — any other failure
+      responses:
+        '200':
+          description: |
+            Always HTTP 200. Inspect the body `code`: `200` = valid, `403` = no bearer
+            token, `400` = expired / bad signature / malformed / invalid.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: valid token }
+              examples:
+                valid:
+                  summary: Valid token
+                  value: { code: 200, message: valid token }
+                missing:
+                  summary: No bearer token
+                  value: { code: 403, message: Bearer token required }
+                expired:
+                  summary: Expired token
+                  value: { code: 400, message: Token expired }
+                badSignature:
+                  summary: Bad signature
+                  value: { code: 400, message: Invalid token signature }
+                malformed:
+                  summary: Malformed token
+                  value: { code: 400, message: Malformed token }
+
   # ═══════════════════════════════════════════
   # HEALTH
   # ═══════════════════════════════════════════
