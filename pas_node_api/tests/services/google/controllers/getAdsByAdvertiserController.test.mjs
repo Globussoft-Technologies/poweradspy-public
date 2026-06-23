@@ -135,39 +135,39 @@ describe("services/google/getAdsByAdvertiser", () => {
     expect(fakeLogger.error).toHaveBeenCalled();
   });
 
-  it("ES index falls back to GOOGLE_ELASTIC_INDEX env var (line 26 second operand)", async () => {
+  it("ES index falls back to GOOG_ELASTIC_INDEX env var (line 26 second operand)", async () => {
     const origExports = require.cache[networksPath].exports;
     require.cache[networksPath].exports = { google: { database: { elastic: {} } } };
     delete require.cache[require.resolve("../../../../src/services/google/controllers/getAdsByAdvertiserController")];
     const reloaded = require("../../../../src/services/google/controllers/getAdsByAdvertiserController");
-    const origEnv = process.env.GOOGLE_ELASTIC_INDEX;
-    process.env.GOOGLE_ELASTIC_INDEX = "env_google_idx";
+    const origEnv = process.env.GOOG_ELASTIC_INDEX;
+    process.env.GOOG_ELASTIC_INDEX = "env_google_idx";
     try {
       const esSearch = vi.fn(async () => ({ body: { hits: { hits: [] } } }));
       const db = { sql: { query: vi.fn(async () => [[{ id: 5 }]]) }, elastic: { search: esSearch } };
       await reloaded.getAdsByAdvertiser({ body: { ad_id: 1 } }, db, fakeLogger);
       expect(esSearch.mock.calls[0][0].index).toBe("env_google_idx");
     } finally {
-      if (origEnv !== undefined) process.env.GOOGLE_ELASTIC_INDEX = origEnv;
-      else delete process.env.GOOGLE_ELASTIC_INDEX;
+      if (origEnv !== undefined) process.env.GOOG_ELASTIC_INDEX = origEnv;
+      else delete process.env.GOOG_ELASTIC_INDEX;
       require.cache[networksPath].exports = origExports;
     }
   });
 
-  it("ES index falls back to 'google_text_ads_data' when both config and env missing (line 26 third operand)", async () => {
+  it("ES index falls back to 'google_ads_data' when both config and env missing (line 26 third operand)", async () => {
     const origExports = require.cache[networksPath].exports;
     require.cache[networksPath].exports = { google: { database: { elastic: {} } } };
     delete require.cache[require.resolve("../../../../src/services/google/controllers/getAdsByAdvertiserController")];
     const reloaded = require("../../../../src/services/google/controllers/getAdsByAdvertiserController");
-    const origEnv = process.env.GOOGLE_ELASTIC_INDEX;
-    delete process.env.GOOGLE_ELASTIC_INDEX;
+    const origEnv = process.env.GOOG_ELASTIC_INDEX;
+    delete process.env.GOOG_ELASTIC_INDEX;
     try {
       const esSearch = vi.fn(async () => ({ body: { hits: { hits: [] } } }));
       const db = { sql: { query: vi.fn(async () => [[{ id: 5 }]]) }, elastic: { search: esSearch } };
       await reloaded.getAdsByAdvertiser({ body: { ad_id: 1 } }, db, fakeLogger);
-      expect(esSearch.mock.calls[0][0].index).toBe("google_text_ads_data");
+      expect(esSearch.mock.calls[0][0].index).toBe("google_ads_data");
     } finally {
-      if (origEnv !== undefined) process.env.GOOGLE_ELASTIC_INDEX = origEnv;
+      if (origEnv !== undefined) process.env.GOOG_ELASTIC_INDEX = origEnv;
       require.cache[networksPath].exports = origExports;
     }
   });

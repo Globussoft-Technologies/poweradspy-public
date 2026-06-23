@@ -23,7 +23,7 @@ async function getAdsByAdvertiser(req, db, logger) {
       if (db.elastic) {
         try {
           const esRes = await db.elastic.search({
-            index: googNet?.database?.elastic?.index || process.env.GOOGLE_ELASTIC_INDEX || 'google_text_ads_data',
+            index: googNet?.database?.elastic?.index || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data',
             body: { query: { bool: { filter: { term: { "id": row.id } } } } }
           });
           const hit = esRes.body?.hits?.hits?.[0]?._source || esRes.hits?.hits?.[0]?._source;
