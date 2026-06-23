@@ -17,7 +17,7 @@ require.cache[configPath] = {
   exports: { crons: { timezone: "Asia/Kolkata" } },
 };
 
-// ── mock DatabaseManager: per-network getSql → fake pooled connection ──
+// ── mock DatabaseManager: per-network getSQL → fake pooled connection ──
 const dbmPath = require.resolve("../../src/database/DatabaseManager");
 let queries = [];
 function makeConn() {
@@ -34,19 +34,19 @@ function makeConn() {
   };
 }
 let lastConn;
-const getSql = vi.fn((network) => {
+const getSQL = vi.fn((network) => {
   if (network === "bing") return null; // simulate a network with no SQL connection
   return { getConnection: async () => { lastConn = makeConn(); return lastConn; } };
 });
 require.cache[dbmPath] = {
   id: dbmPath, filename: dbmPath, loaded: true,
-  exports: { getSql },
+  exports: { getSQL },
 };
 
 const { runActiveCountSnapshot, snapshotNetwork, NETWORK_TABLES } =
   require("../../src/jobs/activeCountSnapshotJob");
 
-beforeEach(() => { queries = []; getSql.mockClear(); });
+beforeEach(() => { queries = []; getSQL.mockClear(); });
 
 describe("jobs/activeCountSnapshotJob > snapshotNetwork", () => {
   it("creates the table, counts the day's window, upserts, and prunes", async () => {

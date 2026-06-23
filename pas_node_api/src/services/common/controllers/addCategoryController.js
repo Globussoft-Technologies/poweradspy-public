@@ -1,13 +1,28 @@
 'use strict';
 
 const serviceRegistry = require('../../ServiceRegistry');
+const networksConfig = require('../../../config/networks');
 const { syncCategory } = require('./categoryController');
+
+/**
+ * Resolve a platform's ES index name from config.json (via the shared networks
+ * config), instead of reading XX_ELASTIC_INDEX env vars directly. networksConfig
+ * already layers config.json → env → built-in default for every network, and
+ * exposes TikTok's index under `elastic_tiktok` rather than `elastic`.
+ *
+ * @param {string} platform network slug (matches PLATFORM_CONFIG keys)
+ * @returns {string|undefined} the configured index name
+ */
+function resolveIndex(platform) {
+  const dbCfg = networksConfig[platform]?.database;
+  return (dbCfg?.elastic || dbCfg?.elastic_tiktok)?.index;
+}
 
 // Per-platform ES field mapping for getDescriptionDetails + newCatInsertion ad update
 const PLATFORM_CONFIG = {
   facebook: {
     service:      'facebook',
-    index:        process.env.FB_ELASTIC_INDEX        || 'search_mix',
+    index:        resolveIndex('facebook'),
     idField:      'facebook_ad.id',
     textField:    'facebook_ad_variants.text_exactly',
     titleField:   'facebook_ad_variants.title_exactly',
@@ -21,7 +36,7 @@ const PLATFORM_CONFIG = {
   },
   instagram: {
     service:      'instagram',
-    index:        process.env.IG_ES_INDEX             || 'instagram_search_mix',
+    index:        resolveIndex('instagram'),
     idField:      'instagram_ad.id',
     textField:    'instagram_ad_translation.ad_text',
     titleField:   'instagram_ad_translation.ad_title',
@@ -34,7 +49,7 @@ const PLATFORM_CONFIG = {
   },
   youtube: {
     service:      'youtube',
-    index:        process.env.YT_ELASTIC_INDEX        || 'youtube_ads_data',
+    index:        resolveIndex('youtube'),
     idField:      'ad_id',
     categoryField:    'category',
     subCategoryField: 'subCategory',
@@ -49,7 +64,7 @@ const PLATFORM_CONFIG = {
   },
   gdn: {
     service:      'gdn',
-    index:        process.env.GDN_ELASTIC_INDEX       || 'gdn_search_mix_v2',
+    index:        resolveIndex('gdn'),
     idField:      'gdn_ad.id',
     textField:    'gdn_ad_variants.text',
     titleField:   'gdn_ad_variants.title',
@@ -63,7 +78,7 @@ const PLATFORM_CONFIG = {
   },
   google: {
     service:      'google',
-    index:        process.env.GOOG_ELASTIC_INDEX      || 'google_ads_data',
+    index:        resolveIndex('google'),
     idField:      'ad_id',
     textField:    'ad_text',
     titleField:   'ad_title',
@@ -76,7 +91,7 @@ const PLATFORM_CONFIG = {
   },
   native: {
     service:      'native',
-    index:        process.env.NAT_ELASTIC_INDEX       || 'native_search_mix_v2',
+    index:        resolveIndex('native'),
     idField:      'native_ad.id',
     textField:    'native_ad_translation.ad_text',
     titleField:   'native_ad_translation.ad_title',
@@ -90,7 +105,7 @@ const PLATFORM_CONFIG = {
   },
   linkedin: {
     service:      'linkedin',
-    index:        process.env.LI_ELASTIC_INDEX        || 'linkedin_ads_data',
+    index:        resolveIndex('linkedin'),
     idField:      'ad_id',
     textField:    'ad_text',
     titleField:   'ad_title',
@@ -103,7 +118,7 @@ const PLATFORM_CONFIG = {
   },
   quora: {
     service:      'quora',
-    index:        process.env.QR_ELASTIC_INDEX        || 'quora_search_mix',
+    index:        resolveIndex('quora'),
     idField:      'quora_ad.id',
     textField:    'quora_ad_translation.ad_text',
     titleField:   'quora_ad_translation.ad_title',
@@ -116,7 +131,7 @@ const PLATFORM_CONFIG = {
   },
   reddit: {
     service:      'reddit',
-    index:        process.env.RED_ELASTIC_INDEX       || 'reddit_search_mix',
+    index:        resolveIndex('reddit'),
     idField:      'reddit_ad.id',
     textField:    'reddit_ad_variants.text',
     titleField:   'reddit_ad_variants.title',
@@ -129,7 +144,7 @@ const PLATFORM_CONFIG = {
   },
   pinterest: {
     service:      'pinterest',
-    index:        process.env.PIN_ELASTIC_INDEX       || 'pinterest_search_mix',
+    index:        resolveIndex('pinterest'),
     idField:      'pinterest_ad.id',
     textField:    'pinterest_ad_variants.text',
     titleField:   'pinterest_ad_variants.title',
@@ -142,7 +157,7 @@ const PLATFORM_CONFIG = {
   },
   tiktok: {
     service:      'tiktok',
-    index:        process.env.TT_ELASTIC_INDEX        || 'tiktok_ads',
+    index:        resolveIndex('tiktok'),
     idField:      'ad_id',
     textField:    'ad_text',
     titleField:   'ad_title',

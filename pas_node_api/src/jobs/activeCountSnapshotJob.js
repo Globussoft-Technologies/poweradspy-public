@@ -71,7 +71,7 @@ async function snapshotNetwork(network, date, retentionDays, tz) {
   const table = NETWORK_TABLES[network];
   if (!table) return { network, skipped: 'no table mapping' };
 
-  const sqlConn = databaseManager.getSql(network);
+  const sqlConn = databaseManager.getSQL(network);
   if (!sqlConn) return { network, skipped: 'no sql connection' };
 
   const conn = await sqlConn.getConnection();
