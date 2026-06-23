@@ -152,7 +152,7 @@ async function insertPath(ctx, rawAd, { userId, translation }) {
 
     const variantId = await repo.insertVariant(tx, { instagram_ad_id: instagramAdId, title: n.ad_title, text: n.ad_text, newsfeed_description: n.news_feed_description, image_url_original: n.image_video_url });
 
-    const analyticsId = await repo.insertAnalytics(tx, { instagram_ad_id: instagramAdId, likes: toInt(n.likes), comments: toInt(n.comment), shares: toInt(n.share), popularity: popToSql(pop), impression: imp.impression, date: today(), hits: 1 });
+    const analyticsId = await repo.insertAnalytics(tx, { instagram_ad_id: instagramAdId, likes: toInt(n.likes), comments: toInt(n.comment), shares: toInt(n.share), popularity: popToSql(pop), impression: imp.impression, date: today(), hits: 1, initial_url: n.initial_url ?? null });
     await repo.updateInstagramAd(tx, { default_variant_id: variantId, default_analytics_id: analyticsId }, instagramAdId);
 
     // child rows: countries
@@ -224,8 +224,8 @@ async function updatePath(ctx, rawAd, { userId, translation, existingId }) {
   if (userId) await upsertAdUser(sql, adId, userId, n.platform);
   if (!n.destination_url) await repo.updateMetaBuiltWith(sql, adId, 4).catch(() => {});
 
-  // meta initial_url refresh on update (so existing ads populate too)
-  if (n.initial_url) await repo.updateMetaInitialUrl(sql, adId, n.initial_url).catch(() => {});
+  // initial_url refresh on update (now on analytics, so existing ads populate too)
+  if (n.initial_url) await repo.updateAnalyticsInitialUrl(sql, adId, n.initial_url).catch(() => {});
 
   const countryOnly = n.country ? await repo.upsertCountryOnly(sql, [n.country]) : [];
   if (countryOnly.length) await repo.upsertAdCountriesOnly(sql, countryOnly.map((c) => ({ ...c, instagram_ad_id: adId })));
@@ -259,7 +259,7 @@ async function updateAnalyticsAndAd(sql, adId, n, daysRunning, likes, comments, 
     analyticsId = row.id;
     await repo.updateAnalytics(sql, { likes, comments, shares, hits: toInt(row.hits) + 1, impression: imp.impression, popularity: popToSql(pop) }, analyticsId);
   } else {
-    analyticsId = await repo.insertAnalytics(sql, { instagram_ad_id: adId, likes, comments, shares, impression: imp.impression, popularity: popToSql(pop), date: today(), hits: 1 });
+    analyticsId = await repo.insertAnalytics(sql, { instagram_ad_id: adId, likes, comments, shares, impression: imp.impression, popularity: popToSql(pop), date: today(), hits: 1, initial_url: n.initial_url ?? null });
   }
   const adUpdate = { likes, comments, shares, impression: imp.impression, popularity: popToSql(pop), default_analytics_id: analyticsId };
   if (n.type === 'VIDEO') adUpdate.views = toInt(n.views);
@@ -311,7 +311,7 @@ async function insertMetaData(tx, n, adId) {
   await repo.insertMetaData(tx, {
     instagram_ad_id: adId,
     destination_url: n.destination_url ?? null,
-    initial_url: n.initial_url ?? null,
+    // initial_url now stored on instagram_ad_analytics (see insertAnalytics), not meta.
     firstSeenOnDesktop: src === 'desktop' ? nowDateTime() : null,
     firstSeenOnAndroid: src === 'android' ? nowDateTime() : null,
     firstSeenOnIos: src === 'ios' ? nowDateTime() : null,

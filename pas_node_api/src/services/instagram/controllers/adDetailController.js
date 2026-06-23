@@ -28,7 +28,7 @@ const AD_DETAIL_SQL = `
     instagram_ad_meta_data.ad_url,
     instagram_ad_meta_data.built_with_analytics_tracking,
     instagram_ad_meta_data.destination_url,
-    instagram_ad_meta_data.initial_url,
+    instagram_ad_analytics.initial_url,
 
     instagram_ad_meta_data.built_with,
     instagram_ad_meta_data.affiliate_data,
@@ -94,8 +94,11 @@ const AD_DETAIL_SQL = `
   LEFT JOIN languages 
     ON instagram_ad.language_id = languages.id
 
-  LEFT JOIN instagram_page_details 
+  LEFT JOIN instagram_page_details
     ON instagram_ad.id = instagram_page_details.instagram_ad_id
+
+  LEFT JOIN instagram_ad_analytics
+    ON instagram_ad.default_analytics_id = instagram_ad_analytics.id
 
   WHERE instagram_ad.id = ?
   LIMIT 1

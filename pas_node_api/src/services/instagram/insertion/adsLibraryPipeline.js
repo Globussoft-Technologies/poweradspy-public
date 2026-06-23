@@ -131,7 +131,7 @@ async function insertPath(ctx, n, { translation }) {
     if (!instagramAdId) { const e = new Error(`This ad_id "${n.ad_id}" already exists (duplicate).`); e.insertionCode = 402; throw e; }
 
     const variantId = await repo.insertVariant(tx, { instagram_ad_id: instagramAdId, title: n.ad_title, text: n.ad_text, newsfeed_description: n.news_feed_description, image_url_original: n.image_video_url ?? n.ad_image });
-    const analyticsId = await repo.insertAnalytics(tx, { instagram_ad_id: instagramAdId, likes: 0, comments: 0, shares: 0, popularity: null, impression: finalImpression, date: today(), hits: 1 });
+    const analyticsId = await repo.insertAnalytics(tx, { instagram_ad_id: instagramAdId, likes: 0, comments: 0, shares: 0, popularity: null, impression: finalImpression, date: today(), hits: 1, initial_url: n.initial_url ?? null });
     await repo.updateInstagramAd(tx, { default_variant_id: variantId, default_analytics_id: analyticsId }, instagramAdId);
 
     // cost-usage (audience/EUT)
@@ -146,7 +146,8 @@ async function insertPath(ctx, n, { translation }) {
 
     // meta_data
     if ((await repo.getMetaData(tx, instagramAdId)).code !== 200) {
-      await repo.insertMetaData(tx, { instagram_ad_id: instagramAdId, destination_url: n.destination_url ?? 'null', initial_url: n.initial_url ?? null, screenshot_url: 'processing.gif', platform: toInt(n.platform), ad_url: n.meta_ad_url ?? '' });
+      // initial_url now stored on instagram_ad_analytics (see insertAnalytics), not meta.
+      await repo.insertMetaData(tx, { instagram_ad_id: instagramAdId, destination_url: n.destination_url ?? 'null', screenshot_url: 'processing.gif', platform: toInt(n.platform), ad_url: n.meta_ad_url ?? '' });
     }
 
     // child countries (array form)
@@ -215,8 +216,8 @@ async function updatePath(ctx, n, { translation, existingId }) {
     }
   }
 
-  // meta initial_url refresh on update (so existing ads populate too)
-  if (n.initial_url) await repo.updateMetaInitialUrl(sql, adId, n.initial_url).catch(() => {});
+  // initial_url refresh on update (now on analytics, so existing ads populate too)
+  if (n.initial_url) await repo.updateAnalyticsInitialUrl(sql, adId, n.initial_url).catch(() => {});
 
   const carryOver = await fetchCarryOver(ctx, adId);
   await deleteEsDoc(ctx, adId).catch(() => {});

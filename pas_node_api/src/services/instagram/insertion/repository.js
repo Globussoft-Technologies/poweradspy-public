@@ -63,9 +63,10 @@ async function getJoinedAd(exec, whereVal) {
            ANY_VALUE(instagram_country.country) AS country_row,
            ANY_VALUE(instagram_user.gender) AS gender,
            ANY_VALUE(instagram_ad_meta_data.destination_url) AS destination_url,
-           -- initial_url temporarily disabled: column not yet on prod DB (FULLTEXT-index
-           -- table needs a blocking COPY to add it). Re-enable after the column exists.
-           -- ANY_VALUE(instagram_ad_meta_data.initial_url) AS initial_url,
+           -- initial_url moved from instagram_ad_meta_data to instagram_ad_analytics.
+           -- The ES doc field stays named instagram_ad_meta_data.initial_url (see esColumns)
+           -- so no ES mapping/reindex is needed — only the SQL source moved to analytics.
+           ANY_VALUE(instagram_ad_analytics.initial_url) AS initial_url,
            ANY_VALUE(instagram_ad_meta_data.built_with) AS built_with,
            ANY_VALUE(instagram_ad_meta_data.built_with_analytics_tracking) AS built_with_analytics_tracking,
            ANY_VALUE(instagram_ad_meta_data.affiliate_data) AS affiliate_data,
@@ -109,6 +110,7 @@ async function getJoinedAd(exec, whereVal) {
     LEFT JOIN languages                ON instagram_ad.language_id = languages.id
     LEFT JOIN instagram_meta_ad_budget ON instagram_ad.id = instagram_meta_ad_budget.instagram_ad_id
     LEFT JOIN instagram_ad_cost_usage_benefit_analysis ON instagram_ad.id = instagram_ad_cost_usage_benefit_analysis.instagram_ad_id
+    LEFT JOIN instagram_ad_analytics ON instagram_ad.default_analytics_id = instagram_ad_analytics.id
     WHERE instagram_ad.id = ?
     GROUP BY instagram_ad.id`;
   return rows(await exec.query(sql, [whereVal]));
@@ -246,8 +248,8 @@ async function updateVariantByAdId(exec, data, adId) {
 // ── instagram_ad_analytics ──────────────────────────────────────────────────────
 async function insertAnalytics(exec, d) {
   return firstId(await exec.query(
-    'INSERT INTO instagram_ad_analytics (instagram_ad_id, likes, comments, shares, popularity, impression, engagement_rate, date, hits) VALUES (?,?,?,?,?,?,?,?,?)',
-    [d.instagram_ad_id, d.likes ?? 0, d.comments ?? 0, d.shares ?? 0, d.popularity ?? 0, d.impression ?? 0, d.engagement_rate ?? 0, d.date, d.hits ?? 1]
+    'INSERT INTO instagram_ad_analytics (instagram_ad_id, likes, comments, shares, popularity, impression, engagement_rate, date, hits, initial_url) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [d.instagram_ad_id, d.likes ?? 0, d.comments ?? 0, d.shares ?? 0, d.popularity ?? 0, d.impression ?? 0, d.engagement_rate ?? 0, d.date, d.hits ?? 1, d.initial_url ?? null]
   ));
 }
 async function updateAnalytics(exec, data, id) {
@@ -341,8 +343,8 @@ async function getMetaData(exec, adId) {
 }
 async function insertMetaData(exec, data) {
   const clean = stripNulls(data);
-  // initial_url column not yet present on prod DB → drop it so the INSERT never
-  // references a missing column. (Remove this once the column is added.)
+  // initial_url no longer lives on instagram_ad_meta_data (moved to instagram_ad_analytics).
+  // Drop it defensively so this INSERT never references the meta column.
   delete clean.initial_url;
   const cols = Object.keys(clean);
   return affected(await exec.query(
@@ -353,10 +355,14 @@ async function insertMetaData(exec, data) {
 async function updateMetaBuiltWith(exec, adId, builtWithStatus) {
   return affected(await exec.query('UPDATE instagram_ad_meta_data SET built_with_status = ? WHERE instagram_ad_id = ?', [builtWithStatus, adId]));
 }
-async function updateMetaInitialUrl(exec, adId, initialUrl) {
-  // No-op until the initial_url column exists on prod DB (FULLTEXT-index table
-  // needs a blocking COPY to add it). Restore the UPDATE once the column is added.
-  return 0;
+// initial_url now lives on instagram_ad_analytics (moved off the FULLTEXT meta table).
+// Stamp it across this ad's analytics rows so any joined row (and the ES doc, built from
+// the default analytics row) returns the current value on re-index.
+async function updateAnalyticsInitialUrl(exec, adId, initialUrl) {
+  return affected(await exec.query(
+    'UPDATE instagram_ad_analytics SET initial_url = ? WHERE instagram_ad_id = ?',
+    [initialUrl, adId]
+  ));
 }
 
 // ── instagram_meta_ad_budget (dedup meta_ad_id) ─────────────────────────────────
@@ -499,7 +505,7 @@ module.exports = {
   insertComment, upsertAdImageVideo,
   insertAdCountries, insertAdCountriesOnly, upsertAdCountriesOnly,
   getAdUser, insertAdUser, bumpAdUserCount, setAdUserIdStatus,
-  getMetaData, insertMetaData, updateMetaBuiltWith, updateMetaInitialUrl,
+  getMetaData, insertMetaData, updateMetaBuiltWith, updateAnalyticsInitialUrl,
   budgetExists, insertBudget,
   upsertTranslation,
   getUserByInstagramId, getUserInstagramIdByCountry, updateUser,
