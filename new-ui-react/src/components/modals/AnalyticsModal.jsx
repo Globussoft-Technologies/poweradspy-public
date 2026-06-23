@@ -563,11 +563,18 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   // locked value for the non-carousel case where stability matters.
   const thumbnailSrc = hasCarousel ? computedThumbnailSrc : (stableSrcRef.current || computedThumbnailSrc);
   const isQuora = ctx.platform === 'quora';
-  // Quora: image_url_original first (primary), video_url as fallback — mirrors MasonryCard/api.js mapAdToCard logic
-  const videoSrc = isQuora
-    ? (resolveNasUrl(d?.image_url_original || '') || resolveNasUrl(d?.video_url || '') || ad?.videoUrl || null)
-    : (resolveNasUrl(d?.video_url || '') || resolveNasUrl(d?.image_url_original || '') || resolveNasUrl(ad?.image_url_original || '') || ad?.videoUrl || null);
-  const videoSrcFallback = isQuora ? (resolveNasUrl(d?.video_url || '') || null) : null;
+  // NAS-first with live-CDN fallback. `ad` here is processedAd (mapped via
+  // mapAdToCard), so `ad.videoUrl`/`ad.videoUrlFallback` already encode the
+  // NAS→CDN preference — use them directly so this view resolves identically to
+  // MasonryCard and AdDetailModal. The `d`-derived URL is a last-ditch primary
+  // for the rare case where the mapped card carries no video URL.
+  const liveFromDetail = isQuora
+    ? (resolveNasUrl(d?.image_url_original || '') || resolveNasUrl(d?.video_url || ''))
+    : (resolveNasUrl(d?.video_url || '') || resolveNasUrl(d?.image_url_original || ''));
+  const videoSrc = ad?.videoUrl || liveFromDetail || null;
+  const videoSrcFallback = ad?.videoUrlFallback
+    || (isQuora ? (resolveNasUrl(d?.video_url || '') || null) : null)
+    || null;
   // YouTube and Facebook ads ship their playable URL in `ad_url` (mapped to
   // ad.adUrl) — not in ad.videoUrl — so for those we embed via iframe rather
   // than <video> (which can't decode either platform's watch page).
@@ -672,22 +679,23 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   const videoFallbackAttempted = useRef(false);
   const handleVideoError = useCallback(async () => {
     clearVideoStallTimer();
-    // Quora: primary URL (image_url_original) failed — switch to video_url fallback
-    if (isQuora && videoSrcFallback && !videoFallbackAttempted.current) {
-      videoFallbackAttempted.current = true;
-      setResolvedVideoUrl(videoSrcFallback);
-      return;
-    }
     // TikTok: refresh via library URL if we haven't yet. fetchFromLibraryUrl
     // itself sets `videoUnavailable` when its own attempt fails / is exhausted.
     if (isTikTok && ad?.tiktokLibraryUrl) {
       fetchFromLibraryUrl();
       return;
     }
+    // Primary source failed (NAS 410/expiry, or Quora image_url_original) —
+    // switch to the live CDN fallback once. Guarded so we don't loop on a dead source.
+    if (videoSrcFallback && !videoFallbackAttempted.current) {
+      videoFallbackAttempted.current = true;
+      setResolvedVideoUrl(videoSrcFallback);
+      return;
+    }
     // No fallback available — stop trying so we don't loop on a dead source.
     setPlaying(false);
     setVideoUnavailable(true);
-  }, [clearVideoStallTimer, isQuora, videoSrcFallback, isTikTok, ad?.tiktokLibraryUrl, fetchFromLibraryUrl]);
+  }, [clearVideoStallTimer, videoSrcFallback, isTikTok, ad?.tiktokLibraryUrl, fetchFromLibraryUrl]);
 
   // 12s without first-frame ⇒ treat as expired. HTMLMediaElement won't always
   // raise `error` for a dead URL (the browser keeps retrying at the network

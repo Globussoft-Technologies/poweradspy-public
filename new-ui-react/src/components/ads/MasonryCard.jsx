@@ -372,7 +372,8 @@ const MasonryCard = ({
       } finally {
         setIsRefreshingVideo(false);
       }
-    } else if (isQuora && ad.videoUrlFallback) {
+    } else if (ad.videoUrlFallback) {
+      // NAS copy 410'd/expired (or Quora primary failed) — switch to the live CDN URL.
       setResolvedVideoUrl(ad.videoUrlFallback);
     } else {
       setIsPlaying(false);

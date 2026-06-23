@@ -317,8 +317,8 @@ const AdDetailModal = ({
       } finally {
         setIsRefreshingVideo(false);
       }
-    } else if (network === "quora" && ad?.videoUrlFallback) {
-      // image_url_original expired — switch to video_url
+    } else if (ad?.videoUrlFallback) {
+      // NAS copy 410'd/expired (or Quora image_url_original) — switch to the live CDN URL.
       setResolvedVideoUrl(ad.videoUrlFallback);
     } else {
       setIsPlaying(false);

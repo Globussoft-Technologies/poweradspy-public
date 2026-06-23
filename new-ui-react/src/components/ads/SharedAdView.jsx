@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Play,
   ThumbsUp,
@@ -119,6 +119,32 @@ const SharedAdView = ({ shareToken }) => {
   const [expired, setExpired] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  // Video URL with NAS→CDN fallback, mirroring MasonryCard/AdDetailModal. The
+  // mapped `ad.videoUrl` is NAS-first; on a 410/expiry we switch to the live
+  // CDN URL (`ad.videoUrlFallback`) once, then give up and mark the video
+  // unavailable so we don't loop on a dead source.
+  const [resolvedVideoUrl, setResolvedVideoUrl] = useState(null);
+  const [videoUnavailable, setVideoUnavailable] = useState(false);
+  const videoFallbackAttempted = useRef(false);
+
+  // Reset video fallback state whenever the underlying ad changes.
+  useEffect(() => {
+    setResolvedVideoUrl(null);
+    setVideoUnavailable(false);
+    videoFallbackAttempted.current = false;
+  }, [ad?.videoUrl]);
+
+  const handleVideoError = () => {
+    if (!videoFallbackAttempted.current && ad?.videoUrlFallback && ad.videoUrlFallback !== (resolvedVideoUrl || ad.videoUrl)) {
+      // NAS copy 410'd/expired — switch to the live CDN URL.
+      videoFallbackAttempted.current = true;
+      setResolvedVideoUrl(ad.videoUrlFallback);
+      return;
+    }
+    // Fallback also failed (or none available) — stop and show the unavailable state.
+    setIsPlaying(false);
+    setVideoUnavailable(true);
+  };
 
   const AMEMBER_LOGIN_URL =
     import.meta.env.VITE_AMEMBER_LOGIN_URL ||
@@ -216,6 +242,7 @@ const SharedAdView = ({ shareToken }) => {
   const badge = AD_TYPE_BADGES[adTypeLower] || AD_TYPE_BADGES.image;
   const TypeIcon = AD_TYPE_ICONS[adTypeLower] || Image;
   const isVideo = adTypeLower === "video";
+  const effectiveVideoUrl = resolvedVideoUrl || ad.videoUrl;
   const isActive = (ad.status || "").toLowerCase() === "active";
   const starRating = ad.popularity ? getStarRating(ad.popularity) : 0;
   const hasCarousel = ad.carouselMedia?.length > 1;
@@ -335,14 +362,16 @@ const SharedAdView = ({ shareToken }) => {
 
             {/* Media */}
             <div className="relative bg-black/30">
-              {isVideo && ad.videoUrl ? (
+              {isVideo && effectiveVideoUrl && !videoUnavailable ? (
                 <div className="relative">
                   {isPlaying ? (
                     <video
-                      src={ad.videoUrl}
+                      key={effectiveVideoUrl}
+                      src={effectiveVideoUrl}
                       controls
                       autoPlay
                       className="w-full max-h-[500px] object-contain"
+                      onError={handleVideoError}
                     />
                   ) : (
                     <div
@@ -372,6 +401,16 @@ const SharedAdView = ({ shareToken }) => {
                       e.target.style.display = "none";
                     }}
                   />
+                  {/* Both NAS and CDN sources failed — surface the dead-video state
+                      over the thumbnail (matches the grid/detail "unavailable" UX). */}
+                  {videoUnavailable && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 pointer-events-none">
+                      <Film size={28} className="text-zinc-300" strokeWidth={1.5} />
+                      <span className="text-[11px] font-medium text-zinc-200 tracking-wide">
+                        Video unavailable
+                      </span>
+                    </div>
+                  )}
                   {/* Carousel navigation */}
                   {hasCarousel && (
                     <>

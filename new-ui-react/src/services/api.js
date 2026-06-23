@@ -225,6 +225,18 @@ const calcEngPerDay = (raw) => {
 export const mapAdToCard = (raw) => {
   const resolvedNetwork = (raw.platform_network || raw.network || PLATFORM_ID_TO_NETWORK[Number(raw.platform)] || '').toLowerCase();
   const isTikTok = resolvedNetwork.toLowerCase() === 'tiktok' || !!raw.video_cover;
+  // NAS-cached copy of the creative — used as the primary source when present
+  // (and the base URL is configured). `liveVideoUrl` is the live CDN URL the
+  // ad shipped with; it's the primary when there's no NAS copy and the runtime
+  // fallback when the NAS copy is missing or 410s/expires. Keep all three views
+  // (MasonryCard, AdDetailModal, AnalyticsModal) resolving through these two so
+  // their video sources never diverge.
+  const nasVideoUrl = (raw.nas_video_url && NAS_VIDEO_BASE_URL)
+    ? `${NAS_VIDEO_BASE_URL}${raw.nas_video_url.startsWith('/') ? '' : '/'}${raw.nas_video_url}`
+    : '';
+  const liveVideoUrl = resolvedNetwork === 'quora'
+    ? (resolveNasUrl(raw.image_url_original || '') || resolveNasUrl(raw.video_url || ''))
+    : (resolveNasUrl(raw.video_url || '') || resolveNasUrl(raw.image_url_original || ''));
   return {
     id: raw.ad_id || raw.sql_id || raw.id,
     advertiser: raw.post_owner || 'Unknown',
@@ -233,19 +245,19 @@ export const mapAdToCard = (raw) => {
     lastSeen: formatDate(raw.last_seen),
     firstSeen: formatDate(raw.first_seen),
     thumbnail: resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || ''))),
-    // Prefer the NAS-cached video when its base URL is configured. If
-    // VITE_NAS_VIDEO_URL is unset, the concat yields a relative `/stream/...`
-    // path that the browser resolves against the current origin and 404s — so
-    // in that case we fall through to image_url_original (which for FB/IG
-    // ad-variant rows is the actual playable CDN URL).
-    videoUrl: (raw.nas_video_url && NAS_VIDEO_BASE_URL)
-      ? `${NAS_VIDEO_BASE_URL}${raw.nas_video_url.startsWith('/') ? '' : '/'}${raw.nas_video_url}`
-      : resolvedNetwork === 'quora'
-        ? resolveNasUrl(raw.image_url_original || '') || resolveNasUrl(raw.video_url || '')
-        : resolveNasUrl(raw.video_url || '') || resolveNasUrl(raw.image_url_original || ''),
-    videoUrlFallback: (!raw.nas_video_url && resolvedNetwork === 'quora' && resolveNasUrl(raw.image_url_original || ''))
-      ? resolveNasUrl(raw.video_url || '')
-      : '',
+    // NAS-cached video first; fall through to the live CDN URL when there's no
+    // NAS copy (or VITE_NAS_VIDEO_URL is unset, which would otherwise yield a
+    // relative `/stream/...` path that 404s against the app origin).
+    videoUrl: nasVideoUrl || liveVideoUrl,
+    // Played when `videoUrl` fails at runtime. When NAS is the primary this is
+    // the live CDN URL, so a NAS 410/expiry transparently falls back to the CDN.
+    // For Quora without a NAS copy the primary is image_url_original and this is
+    // the video_url alternate. Empty when there's no distinct fallback.
+    videoUrlFallback: nasVideoUrl
+      ? liveVideoUrl
+      : (resolvedNetwork === 'quora' && resolveNasUrl(raw.image_url_original || ''))
+        ? resolveNasUrl(raw.video_url || '')
+        : '',
     likes: formatNumber(raw.likes),
     comments: formatNumber(raw.comment || raw.comments),
     views: formatNumber(raw.views),
