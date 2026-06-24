@@ -9,6 +9,7 @@ const { getIntelligenceStats, getTopUsers, purgeOldActivities, getKeywordScrapin
 const { getKeywordTrends, getProjectActivity, getTopKeywords, getSummaryStats: getTrendsSummaryStats, getTotalAdsCount, getItemsList } = require('../controllers/keyword_Trend_ProjectController');
 
 const ELASTIC_FALLBACK_NETWORKS = ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'pinterest', 'quora', 'native', 'gdn', 'google'];
+const MONGO_FALLBACK_NETWORKS = ['user_activity', 'facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'pinterest', 'quora', 'native', 'gdn', 'google', 'tiktok'];
 
 function getElastic(db) {
   // dedicated single user-activity ES connection (shared by frontend + admin)
@@ -18,6 +19,18 @@ function getElastic(db) {
   for (const slug of ELASTIC_FALLBACK_NETWORKS) {
     const elastic = databaseManager.getElastic(slug);
     if (elastic) return elastic;
+  }
+  return null;
+}
+
+function getMongo(db) {
+  // dedicated single user-activity Mongo connection (shared by frontend + admin)
+  const ua = databaseManager.getMongo('user_activity');
+  if (ua) return ua;
+  if (db && db.mongo) return db.mongo;
+  for (const slug of MONGO_FALLBACK_NETWORKS) {
+    const mongo = databaseManager.getMongo(slug);
+    if (mongo) return mongo;
   }
   return null;
 }
@@ -101,7 +114,7 @@ function createAdmin_user_activityRoutes(service) {
     '/intelligence/scraping-history',
     authMiddleware,
     asyncHandler(async (req, res) => {
-      const result = await getKeywordScrapingHistory(req, getElastic(service.db), service.log);
+      const result = await getKeywordScrapingHistory(req, getElastic(service.db), service.log, getMongo(service.db));
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

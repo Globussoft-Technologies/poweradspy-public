@@ -1,24 +1,16 @@
 'use strict';
 
-const config = require('../../../config');
-const { MongoClient } = require('mongodb');
+const networks = require('../../../config/networks');
+const databaseManager = require('../../../database/DatabaseManager');
 const { formatTimestampString, convertToUnixSeconds, getTimestampField } = require('../helpers/searchIntelligenceHelpers');
-const { json } = require('express');
 
-// Platform-specific index mapping for Elasticsearch
-const PLATFORM_INDEX_MAP = {
-  facebook: 'search_mix',
-  instagram: 'instagram_search_mix',
-  google: 'google_ads_data',
-  gdn: 'gdn_search_mix',
-  tiktok: 'tiktok_ads',
-  linkedin: 'linkedin_ads_data',
-  youtube: 'youtube_ads_data',
-  reddit: 'reddit_search_mix',
-  pinterest: 'pinterest_search_mix',
-  quora: 'quora_search_mix',
-  native: 'native_search_mix_v2',
-};
+// Platform-specific index mapping for Elasticsearch — sourced from config/networks.js
+// so index names are never hard-coded in this file.
+const PLATFORM_INDEX_MAP = Object.fromEntries(
+  Object.entries(networks)
+    .filter(([, cfg]) => cfg?.database?.elastic?.index)
+    .map(([slug, cfg]) => [slug, cfg.database.elastic.index])
+);
 
 // Platform-specific field mappings for keyword/advertiser/domain searches
 const PLATFORM_FIELD_MAPPINGS = {
@@ -198,15 +190,23 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
 
   for (const platform of platforms) {
     try {
-      const indexName = PLATFORM_INDEX_MAP[platform.toLowerCase()] || 'search_mix';
-      const platformConfig = PLATFORM_FIELD_MAPPINGS[platform.toLowerCase()];
+      const platformName = platform.toLowerCase();
+      const indexName = PLATFORM_INDEX_MAP[platformName] || 'search_mix';
+      const platformConfig = PLATFORM_FIELD_MAPPINGS[platformName];
 
       if (!platformConfig) {
         logger?.warn?.('[fetchAdsCountByPlatform] Unknown platform:', platform);
         continue;
       }
 
-      const platformName = platform.toLowerCase();
+      // Each platform lives on its own Elasticsearch cluster in production.
+      // Prefer the per-network pooled client; fall back to the supplied client.
+      const platformElastic = databaseManager.getElastic(platformName) || elastic;
+      if (!platformElastic) {
+        logger?.warn?.('[fetchAdsCountByPlatform] No ES client for platform:', platform);
+        continue;
+      }
+
       const timestampField = getTimestampField(platformName);
 
       let startStr = formatTimestampString(JSON.stringify(startTime));
@@ -292,7 +292,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
 
       logger?.info?.('[fetchAdsCountByPlatform] Query for platform:', { platform, index: indexName, searchType, searchValue });
 
-      const esResult = await elastic.search(esQuery);
+      const esResult = await platformElastic.search(esQuery);
       const hits = esResult.hits || esResult.body?.hits;
       const count = typeof hits.total === 'object' ? hits.total.value : hits.total;
       totalCount += (count || 0);
@@ -306,31 +306,15 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
   return totalCount;
 }
 
-// Query keyword scraping history from MongoDB
-async function queryKeywordScrapingHistory(searchType, searchValue) {
-  const mongoUri = config.databases?.mongo?.uri;
-  let mongoDatabase = config.databases?.mongo?.database;
-
-  let dbFromUri = null;
-  if (mongoUri) {
-    const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
-    if (match) {
-      dbFromUri = match[1];
-    }
-  }
-
-  const finalDatabase = dbFromUri || mongoDatabase;
-
-  if (!mongoUri || !finalDatabase) {
+// Query keyword scraping history from MongoDB using the shared DatabaseManager connection.
+// `mongo` is the connection object returned by DatabaseManager.getMongo('user_activity').
+async function queryKeywordScrapingHistory(mongo, searchType, searchValue) {
+  if (!mongo || !mongo.collection) {
     return null;
   }
 
   try {
-    const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
-    await client.connect();
-
-    const db = client.db(finalDatabase);
-    const collection = db.collection('keyword_searches');
+    const collection = mongo.collection('keyword_searches');
     const normalizedValue = searchValue.toLowerCase();
 
     let matchedEntry = await collection.findOne({
@@ -352,7 +336,6 @@ async function queryKeywordScrapingHistory(searchType, searchValue) {
       });
     }
 
-    await client.close();
     return matchedEntry;
   } catch (err) {
     return null;

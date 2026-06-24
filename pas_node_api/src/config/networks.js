@@ -43,6 +43,13 @@ module.exports = {
     slug: 'user_activity',
     enabled: true,
     database: {
+      mongo: {
+        enabled:  toBool(netVal(netCfg.user_activity?.mongo, 'enabled',  'UA_MONGO_ENABLED',   true)),
+        poolSize: netVal(netCfg.user_activity?.mongo, 'poolSize', 'UA_MONGO_POOL_SIZE', config.databases.mongo.poolSize),
+        // In dev the user-activity MongoDB lives on the shared mongo server + database.
+        database: netVal(netCfg.user_activity?.mongo, 'database', 'UA_MONGO_DATABASE',  config.databases.mongo.database || 'pas_dev', true),
+        uri:      netVal(netCfg.user_activity?.mongo, 'uri',      'UA_MONGO_URI',       config.databases.mongo.uri,                    true),
+      },
       elastic: {
         enabled: toBool(netVal(netCfg.user_activity?.elastic, 'enabled', 'UA_ELASTIC_ENABLED', true)),
         index:   netVal(netCfg.user_activity?.elastic, 'index', 'UA_ELASTIC_INDEX', 'user_activities'),

@@ -1,42 +1,29 @@
-﻿'use strict';
+'use strict';
 
-const { MongoClient } = require('mongodb');
-const config = require('../../../config');
 const { getAggs } = require('../helpers/searchIntelligenceHelpers');
 const databaseManager = require('../../../database/DatabaseManager');
 const { fetchAdsCountByPlatform } = require('../queries/searchIntelligenceQueries');
+
+// Resolve a shared Mongo connection for the keyword_searches collection.
+// If the caller passed one in, use it; otherwise borrow the user_activity pool.
+function getKeywordSearchesCollection(mongo) {
+  const conn = mongo || databaseManager.getMongo('user_activity');
+  if (!conn || !conn.collection) return null;
+  return conn.collection('keyword_searches');
+}
 
 // ─── GET /intelligence/keyword-trends ───────────────────────────────────────
 // Query params: type (1=keyword, 2=advertiser, 3=domain, all=all), page, size
 // Returns: keywords/advertisers/domains with scraping status, ad counts, pagination
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function getKeywordTrends(req, elastic, logger) {
- 
-  let client = null;
+async function getKeywordTrends(req, elastic, logger, mongo) {
   try {
-    // Get MongoDB connection the same way as queryKeywordScrapingHistory
-    const mongoUri = config.databases?.mongo?.uri;
-    let mongoDatabase = config.databases?.mongo?.database;
-
-    let dbFromUri = null;
-    if (mongoUri) {
-      const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
-      if (match) {
-        dbFromUri = match[1];
-      }
-    }
-
-    const finalDatabase = dbFromUri || mongoDatabase;
-
-    if (!mongoUri || !finalDatabase) {
+    const collection = getKeywordSearchesCollection(mongo);
+    if (!collection) {
       return { code: 500, message: 'MongoDB not available' };
     }
 
-    client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
-    await client.connect();
-    const mongoDb = client.db(finalDatabase);
-   
     const { type = 'all', page = 0, size = 10, sort_by = 'createdAt', status, search_value } = req.query;
 
     const pageNum = Math.max(0, Number(page));
@@ -55,9 +42,6 @@ async function getKeywordTrends(req, elastic, logger) {
     if (typeNum === undefined) {
       return { code: 400, message: 'Invalid type. Use: keyword, advertiser, domain, or all' };
     }
-
-    // Fetch from keyword_searches collection
-    const collection = mongoDb.collection('keyword_searches');
 
     // Build query filter based on type and status
     let filter = typeNum !== null ? { type: typeNum } : {};
@@ -232,12 +216,8 @@ async function getKeywordTrends(req, elastic, logger) {
       },
     };
   } catch (err) {
-  
+    logger?.error?.('[keyword_Trend_ProjectController] getKeywordTrends error:', err);
     return { code: 500, message: 'Internal server error', error: err.message };
-  } finally {
-    if (client) {
-      await client.close();
-    }
   }
 }
 
@@ -330,29 +310,12 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
 // Returns: list of all unique items (keywords/advertisers/domains) for dropdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function getItemsList(req, elastic, logger) {
-  let client = null;
+async function getItemsList(req, elastic, logger, mongo) {
   try {
-    const mongoUri = config.databases?.mongo?.uri;
-    let mongoDatabase = config.databases?.mongo?.database;
-
-    let dbFromUri = null;
-    if (mongoUri) {
-      const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
-      if (match) {
-        dbFromUri = match[1];
-      }
-    }
-
-    const finalDatabase = dbFromUri || mongoDatabase;
-
-    if (!mongoUri || !finalDatabase) {
+    const collection = getKeywordSearchesCollection(mongo);
+    if (!collection) {
       return { code: 500, message: 'MongoDB not available' };
     }
-
-    client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
-    await client.connect();
-    const mongoDb = client.db(finalDatabase);
 
     const { type = 1 } = req.query;
     const typeNum = Number(type);
@@ -361,8 +324,6 @@ async function getItemsList(req, elastic, logger) {
       return { code: 400, message: 'Invalid type. Use: 1 (keyword), 2 (advertiser), or 3 (domain)' };
     }
 
-    // Fetch all items of specified type from MongoDB
-    const collection = mongoDb.collection('keyword_searches');
     const items = await collection
       .find({ type: typeNum })
       .sort({ searchCount: -1 })  // Sort by most searched first
@@ -404,10 +365,6 @@ async function getItemsList(req, elastic, logger) {
   } catch (err) {
     logger?.error?.('[getItemsList] Error:', err);
     return { code: 500, message: 'Internal server error', error: err.message };
-  } finally {
-    if (client) {
-      await client.close();
-    }
   }
 }
 
@@ -416,29 +373,12 @@ async function getItemsList(req, elastic, logger) {
 // Returns: total ads count for all items of given type with per-platform breakdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function getTotalAdsCount(req, elastic, logger) {
-  let client = null;
+async function getTotalAdsCount(req, elastic, logger, mongo) {
   try {
-    const mongoUri = config.databases?.mongo?.uri;
-    let mongoDatabase = config.databases?.mongo?.database;
-
-    let dbFromUri = null;
-    if (mongoUri) {
-      const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
-      if (match) {
-        dbFromUri = match[1];
-      }
-    }
-
-    const finalDatabase = dbFromUri || mongoDatabase;
-
-    if (!mongoUri || !finalDatabase) {
+    const collection = getKeywordSearchesCollection(mongo);
+    if (!collection) {
       return { code: 500, message: 'MongoDB not available' };
     }
-
-    client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
-    await client.connect();
-    const mongoDb = client.db(finalDatabase);
 
     const { type = 1 } = req.query;
     const typeNum = Number(type);

@@ -702,7 +702,7 @@ async function purgeOldActivities(req, elastic, logger) {
 
 // Helper: Platform-specific field mappings for keyword/advertiser/domain searches
 
-async function getKeywordScrapingHistory(req, elastic, logger) {
+async function getKeywordScrapingHistory(req, elastic, logger, mongo) {
   try {
     const { keyword, advertiser, domain, type } = req.query;
     logger?.info?.('[getKeywordScrapingHistory] Query:', { keyword, advertiser, domain, type });
@@ -725,7 +725,7 @@ async function getKeywordScrapingHistory(req, elastic, logger) {
 
    
     // Fetch from MongoDB using query helper
-    const matchedEntry = await queryKeywordScrapingHistory(searchType, searchValue);
+    const matchedEntry = await queryKeywordScrapingHistory(mongo, searchType, searchValue);
    
 
     if (!matchedEntry) {
