@@ -27,6 +27,10 @@ const NET_COLOR = {
   fb: "#1877f2", insta: "#e1306c", gdn: "#34a853", native: "#0ea5e9", yt: "#ff0000",
   gt: "#ea4335", linkedin: "#0a66c2", pint: "#e60023", quora: "#b92b27", reddit: "#ff4500", tiktok: "#111111",
 };
+const TREE_LABEL = {
+  adImage: "Images", adVideo: "Videos", otherMultiMedia: "Other media",
+  thumbnail: "Thumbs", postowner: "Logos", blackHatAd: "BlackHat", whiteHatAd: "WhiteHat",
+};
 
 const fmtBytes = (b) => {
   if (b == null || !Number.isFinite(b)) return "—";
@@ -38,6 +42,7 @@ const fmtBytes = (b) => {
   return `${s}${b} B`;
 };
 const fmtDay = (d) => (d ? d.slice(5) : "");
+const fmtNum = (n) => (n == null || !Number.isFinite(n) ? "—" : n.toLocaleString());
 
 const KpiTile = ({ label, value, accent = "#1f296a", sub }) => (
   <div className="flex flex-col justify-between rounded-[14px] border border-[#e6e9f5] bg-white px-5 py-4 shadow-sm min-w-[160px]">
@@ -46,6 +51,24 @@ const KpiTile = ({ label, value, accent = "#1f296a", sub }) => (
     {sub ? <span className="text-[12px] text-[#9aa2c0]">{sub}</span> : null}
   </div>
 );
+
+const MiniKpi = ({ label, value, sub, accent = "#1f296a" }) => (
+  <div className="rounded-[12px] border border-[#eef1fb] bg-[#fafbff] px-4 py-2.5 min-w-[140px]">
+    <div className="text-[11px] font-[600] text-[#7a83a8] uppercase tracking-wide">{label}</div>
+    <div className="text-[20px] font-[700] leading-tight" style={{ color: accent }}>{value}</div>
+    {sub ? <div className="text-[11px] text-[#9aa2c0]">{sub}</div> : null}
+  </div>
+);
+
+const INTAKE_STATUS = {
+  active: ["#16a34a", "#eafaf0", "Active"],
+  stalled: ["#cf1322", "#fff1f0", "Stalled"],
+  idle: ["#9aa2c0", "#f1f3fb", "Idle"],
+};
+const StatusBadge = ({ status }) => {
+  const [c, bg, label] = INTAKE_STATUS[status] || INTAKE_STATUS.idle;
+  return <span className="inline-block rounded-full px-2 py-[2px] text-[11px] font-[600]" style={{ color: c, background: bg }}>{label}</span>;
+};
 
 const NasStorage = () => {
   const dispatch = useDispatch();
@@ -74,6 +97,7 @@ const NasStorage = () => {
   const storage = nas?.storage || null;
   const perNetwork = nas?.perNetwork || null;
   const daily = nas?.daily || [];
+  const intake = nas?.intake || null;
 
   const netData = useMemo(() => {
     if (!perNetwork?.sizes) return [];
@@ -88,6 +112,33 @@ const NasStorage = () => {
       .map((d) => ({ date: fmtDay(d.date), gb: +(d.growthBytes / 1e9).toFixed(2) })),
     [daily]
   );
+
+  const intakeRows = useMemo(() => {
+    if (!intake?.networks) return [];
+    return Object.entries(intake.networks)
+      .map(([k, v]) => ({ key: k, name: NET_LABEL[k] || k, ...v }))
+      .sort((a, b) => b.filesToday - a.filesToday);
+  }, [intake]);
+
+  const intakeTrees = useMemo(() => {
+    if (!intake) return [];
+    const present = new Set();
+    Object.values(intake.networks || {}).forEach((n) =>
+      Object.entries(n.trees || {}).forEach(([t, e]) => { if (e.today || e.d1 || e.d2) present.add(t); })
+    );
+    return (intake.trees || []).filter((t) => present.has(t));
+  }, [intake]);
+
+  const hourData = useMemo(
+    () => (intake?.byHour ? Array.from({ length: 24 }, (_, h) => ({ h: String(h), files: intake.byHour[h] || 0 })) : []),
+    [intake]
+  );
+
+  const pace = useMemo(() => {
+    const proj = intake?.totals?.projFiles, y = intake?.totals?.filesD1;
+    if (!proj || !y) return null;
+    return Math.round((proj / y - 1) * 100);
+  }, [intake]);
 
   const pct = storage?.pctUsed ?? 0;
 
@@ -158,6 +209,100 @@ const NasStorage = () => {
           />
         </div>
       </div>
+
+      {/* ingest today — per-network/per-tree file intake (matrix) */}
+      {intake ? (
+        <div className="rounded-[14px] border border-[#e6e9f5] bg-white px-5 py-4 shadow-sm mb-5">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <h2 className="text-[16px] font-[600] text-[#1f296a]">Ingest today — files landing on NAS</h2>
+            <span className="text-[12px] text-[#9aa2c0]">
+              {intake.today}{intake.tz ? ` (${intake.tz})` : ""}
+              {intake.elapsedSec ? ` · ${(intake.elapsedSec / 3600).toFixed(1)}h elapsed` : ""}
+              {intake.computedAt ? ` · scanned ${new Date(intake.computedAt).toLocaleTimeString()}` : ""}
+            </span>
+          </div>
+
+          <div className="flex gap-3 flex-wrap mb-4">
+            <MiniKpi label="Files today" value={fmtNum(intake.totals?.filesToday)} />
+            <MiniKpi label="Data today" value={fmtBytes(intake.totals?.bytesToday)} accent="#7c3aed" />
+            <MiniKpi label="Projected (full day)" value={fmtNum(intake.totals?.projFiles)} sub={fmtBytes(intake.totals?.projBytes)} />
+            <MiniKpi
+              label="vs yesterday"
+              value={pace == null ? "—" : `${pace >= 0 ? "+" : ""}${pace}%`}
+              accent={pace == null ? "#1f296a" : pace >= 0 ? "#16a34a" : "#cf1322"}
+              sub={`${fmtNum(intake.totals?.filesD1)} yest.`}
+            />
+          </div>
+
+          {hourData.some((d) => d.files > 0) ? (
+            <div className="mb-3">
+              <div className="text-[12px] text-[#9aa2c0] mb-1">Files per hour (today, all networks)</div>
+              <ResponsiveContainer width="100%" height={92}>
+                <BarChart data={hourData} margin={{ left: 0, right: 8, top: 4 }}>
+                  <XAxis dataKey="h" tick={{ fontSize: 10 }} interval={1} />
+                  <YAxis hide />
+                  <RTooltip formatter={(v) => `${fmtNum(v)} files`} labelFormatter={(h) => `${h}:00`} />
+                  <Bar dataKey="files" fill="#1f296a" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : null}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px] border-collapse">
+              <thead>
+                <tr className="text-[#7a83a8] border-b border-[#eef1fb]">
+                  <th className="text-left py-2 pr-3 font-[600]">Network</th>
+                  {intakeTrees.map((t) => <th key={t} className="text-right px-2 py-2 font-[600]">{TREE_LABEL[t] || t}</th>)}
+                  <th className="text-right px-2 py-2 font-[700]">Today</th>
+                  <th className="text-right pl-3 py-2 font-[600]">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {intakeRows.map((r) => (
+                  <tr key={r.key} className="border-b border-[#f4f6fd]">
+                    <td className="py-2 pr-3 font-[600] text-[#1f296a] whitespace-nowrap">
+                      <span className="inline-block w-2 h-2 rounded-full mr-2 align-middle" style={{ background: NET_COLOR[r.key] || "#1f296a" }} />
+                      {r.name}
+                    </td>
+                    {intakeTrees.map((t) => {
+                      const e = r.trees?.[t];
+                      const v = e?.today || 0;
+                      return (
+                        <td
+                          key={t}
+                          className="text-right px-2 py-2 tabular-nums"
+                          style={{ color: v ? "#1f296a" : "#c7cce0" }}
+                          title={e ? `${fmtNum(v)} files · ${fmtBytes(e.todayBytes)} · prev days ${fmtNum(e.d1)} / ${fmtNum(e.d2)}` : ""}
+                        >
+                          {v ? fmtNum(v) : "·"}
+                        </td>
+                      );
+                    })}
+                    <td className="text-right px-2 py-2 font-[700] tabular-nums">{fmtNum(r.filesToday)}</td>
+                    <td className="text-right pl-3 py-2"><StatusBadge status={r.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="text-[#1f296a] font-[700] border-t-2 border-[#eef1fb]">
+                  <td className="py-2 pr-3">Total</td>
+                  {intakeTrees.map((t) => {
+                    const sum = intakeRows.reduce((s, r) => s + (r.trees?.[t]?.today || 0), 0);
+                    return <td key={t} className="text-right px-2 py-2 tabular-nums">{sum ? fmtNum(sum) : "·"}</td>;
+                  })}
+                  <td className="text-right px-2 py-2 tabular-nums">{fmtNum(intake.totals?.filesToday)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-[14px] border border-[#e6e9f5] bg-white px-5 py-4 shadow-sm mb-5 text-[13px] text-[#9aa2c0]">
+          Ingest matrix is computed hourly on the NAS — it will appear here after the first scan completes.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* per-network breakdown */}

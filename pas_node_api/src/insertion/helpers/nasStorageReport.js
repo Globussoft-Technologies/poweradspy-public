@@ -19,6 +19,7 @@ async function buildNasReport({ days = 30, refresh = false } = {}) {
   let storage = null;
   let storageError = null;
   let perNetwork = null;
+  let intake = null;
 
   if (nasAdminClient.isConfigured()) {
     try {
@@ -29,6 +30,9 @@ async function buildNasReport({ days = 30, refresh = false } = {}) {
     }
     // per-network is best-effort: null until the first daily du completes; never blocks the report.
     try { perNetwork = await nasAdminClient.getPerNetworkSizes(); } catch (e) { /* leave null */ }
+    // intake (today's files/bytes per network/tree) is best-effort too: null until the first hourly
+    // scan completes; never blocks the report.
+    try { intake = await nasAdminClient.getIntake(); } catch (e) { /* leave null */ }
   } else {
     storageError = 'NAS admin SSH not configured (insertion.nas.adminHost/User/Pass)';
   }
@@ -40,6 +44,7 @@ async function buildNasReport({ days = 30, refresh = false } = {}) {
     storage,
     storageError,
     perNetwork,
+    intake,
     daily,
     points: daily.length,
     windowDays: win,

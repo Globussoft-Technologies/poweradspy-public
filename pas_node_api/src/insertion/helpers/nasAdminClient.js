@@ -25,6 +25,38 @@ const PN_FILE = '/tmp/nas_per_network_du.txt';
 const PN_CACHE_MS = 5 * 60 * 1000;
 let pnCache = { at: 0, data: null };
 
+// --- Per-network/per-tree file-INTAKE matrix: files/bytes written today + a 2-day baseline + a
+// today-by-hour split. Like per-network du, the scan stats the current-month dirs (100k-700k files
+// per tree) so it is far too slow per-request: an hourly cron kicks it detached on the NAS (writes
+// INTAKE_FILE atomically) and getIntake() just reads that file cheaply. "Today" grows through the
+// day, hence hourly (vs the once-daily du).
+const INTAKE_FILE = '/tmp/nas_intake.txt';
+const INTAKE_LOCK = '/tmp/nas_intake.lock';
+const INTAKE_SCRIPT = '/tmp/nas_intake_scan.sh';
+const INTAKE_CACHE_MS = 5 * 60 * 1000;
+let intakeCache = { at: 0, data: null };
+
+// Canonical media-tree column order for the matrix; the FE renders only the trees that have data.
+const INTAKE_TREES = ['adImage', 'adVideo', 'otherMultiMedia', 'thumbnail', 'postowner', 'blackHatAd', 'whiteHatAd'];
+
+// Static scan (MONTH/dates resolved at runtime via `date`). Emits, per network/tree:
+//   D <net> <tree> <YYYY-MM-DD> <files> <bytes>   (today + the 2 prior days)
+//   H <net> <tree> <hour> <files>                 (today only)
+// base64'd before shipping over SSH so the awk quoting/backslashes survive intact.
+const INTAKE_SCAN_SH = `ROOT=${nas.adminMount || '/mnt/nfs'}/poweradspy-NAS
+MONTH=$(date +%Y%m); TODAY=$(date +%Y-%m-%d); SINCE=$(date -d '2 days ago' +%Y-%m-%d)
+EL=$(( $(date +%s) - $(date -d "$TODAY 00:00:00" +%s) ))
+echo "META computedEpoch=$(date +%s) today=$TODAY tz=$(date +%Z) elapsedSec=$EL sinceDay=$SINCE"
+for n in fb gdn gt insta linkedin native pint quora reddit tiktok yt; do
+  [ -d "$ROOT/$n" ] || continue
+  for tree in $(ls -1 "$ROOT/$n" 2>/dev/null); do
+    d="$ROOT/$n/$tree/$MONTH"; [ -d "$d" ] || continue
+    find "$d" -maxdepth 1 -type f -newermt "$SINCE 00:00:00" -printf '%TY-%Tm-%Td %TH %s\\n' 2>/dev/null | \\
+    awk -v net="$n" -v tree="$tree" -v today="$TODAY" '{dd=$1;cf[dd]++;cb[dd]+=$3;if(dd==today)hh[$2+0]++} END{for(x in cf)printf "D %s %s %s %d %d\\n",net,tree,x,cf[x],cb[x]; for(k=0;k<24;k++)if(hh[k])printf "H %s %s %d %d\\n",net,tree,k,hh[k]}'
+  done
+done`;
+const INTAKE_SCAN_B64 = Buffer.from(INTAKE_SCAN_SH).toString('base64');
+
 function isConfigured() {
   return !!(nas.adminHost && nas.adminUser && nas.adminPass);
 }
@@ -145,4 +177,112 @@ async function getPerNetworkSizes(force = false) {
   return data;
 }
 
-module.exports = { getStorage, isConfigured, kickPerNetworkDu, getPerNetworkSizes };
+/**
+ * Kick the per-network/per-tree intake scan in the BACKGROUND (fire-and-forget). The scan stats the
+ * current-month dirs to count files/bytes written per day — too slow per-request, so it runs detached
+ * and getIntake() reads its result. A PID lockfile guards against overlapping scans and self-heals
+ * (a stale lock whose PID is dead is ignored). Returns 'kicked' or 'busy'.
+ */
+async function kickIntakeScan() {
+  if (!isConfigured()) throw new Error('NAS admin SSH not configured');
+  const cmd =
+    `printf %s ${INTAKE_SCAN_B64} | base64 -d > ${INTAKE_SCRIPT} && `
+    + `if [ -e ${INTAKE_LOCK} ] && kill -0 "$(cat ${INTAKE_LOCK} 2>/dev/null)" 2>/dev/null; then echo busy; else `
+    + `nohup bash -c 'echo $$ > ${INTAKE_LOCK}; bash ${INTAKE_SCRIPT} > ${INTAKE_FILE}.tmp 2>/dev/null `
+    + `&& mv -f ${INTAKE_FILE}.tmp ${INTAKE_FILE}; rm -f ${INTAKE_LOCK}' >/dev/null 2>&1 & echo kicked; fi`;
+  const out = (await sshExec(cmd, 15000)).trim();
+  log.info('NAS intake scan kick', { result: out });
+  return out;
+}
+
+function shiftDay(ymd, delta) {
+  const dt = new Date(`${ymd}T00:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return null;
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Parse the D/H scan output into the intake-matrix payload, or null if not yet computed. */
+function parseIntake(text) {
+  if (!text || !text.trim()) return null;
+  let meta = null;
+  const D = {};      // D[net][tree][day] = { files, bytes }
+  const byHour = {}; // fleet today: hour -> files
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('META ')) {
+      meta = {};
+      for (const kv of line.slice(5).split(/\s+/)) {
+        const i = kv.indexOf('=');
+        if (i > 0) meta[kv.slice(0, i)] = kv.slice(i + 1);
+      }
+    } else if (line.startsWith('D ')) {
+      const p = line.split(/\s+/);  // D net tree day files bytes
+      if (p.length < 6) continue;
+      const net = D[p[1]] || (D[p[1]] = {});
+      const tree = net[p[2]] || (net[p[2]] = {});
+      tree[p[3]] = { files: +p[4], bytes: +p[5] };
+    } else if (line.startsWith('H ')) {
+      const p = line.split(/\s+/);  // H net tree hour files
+      if (p.length < 5) continue;
+      byHour[+p[3]] = (byHour[+p[3]] || 0) + (+p[4]);
+    }
+  }
+  if (!meta || !meta.today) return null;
+  const today = meta.today;
+  const d1 = shiftDay(today, -1);
+  const d2 = shiftDay(today, -2);
+  const networks = {};
+  const totals = { filesToday: 0, bytesToday: 0, filesD1: 0, filesD2: 0 };
+  for (const net of Object.keys(D)) {
+    const trees = {};
+    let filesToday = 0, bytesToday = 0, filesD1 = 0, filesD2 = 0;
+    for (const tree of Object.keys(D[net])) {
+      const td = D[net][tree];
+      const e0 = td[today] || { files: 0, bytes: 0 };
+      const e1 = td[d1] || { files: 0, bytes: 0 };
+      const e2 = td[d2] || { files: 0, bytes: 0 };
+      trees[tree] = { today: e0.files, todayBytes: e0.bytes, d1: e1.files, d2: e2.files };
+      filesToday += e0.files; bytesToday += e0.bytes; filesD1 += e1.files; filesD2 += e2.files;
+    }
+    const status = filesToday > 0 ? 'active' : ((filesD1 > 0 || filesD2 > 0) ? 'stalled' : 'idle');
+    networks[net] = { trees, filesToday, bytesToday, filesD1, filesD2, status };
+    totals.filesToday += filesToday; totals.bytesToday += bytesToday;
+    totals.filesD1 += filesD1; totals.filesD2 += filesD2;
+  }
+  const elapsedSec = parseInt(meta.elapsedSec, 10) || null;
+  totals.projFiles = elapsedSec ? Math.round((totals.filesToday * 86400) / elapsedSec) : null;
+  totals.projBytes = elapsedSec ? Math.round((totals.bytesToday * 86400) / elapsedSec) : null;
+  return {
+    computedAt: meta.computedEpoch ? new Date(parseInt(meta.computedEpoch, 10) * 1000).toISOString() : null,
+    today,
+    tz: meta.tz || null,
+    elapsedSec,
+    networks,
+    trees: INTAKE_TREES,
+    byHour,
+    totals,
+  };
+}
+
+/**
+ * Read the latest intake scan (cheap — just cats INTAKE_FILE) parsed into the matrix payload.
+ * Cached INTAKE_CACHE_MS. Returns null until the first scan completes; never throws to the report.
+ */
+async function getIntake(force = false) {
+  if (!force && intakeCache.data && (Date.now() - intakeCache.at) < INTAKE_CACHE_MS) return intakeCache.data;
+  if (!isConfigured()) return null;
+  let out;
+  try {
+    out = await sshExec(`cat ${INTAKE_FILE} 2>/dev/null || true`, 15000);
+  } catch (e) {
+    log.warn('NAS intake read failed', { error: e.message });
+    return intakeCache.data; // serve last-known on a transient SSH error
+  }
+  const parsed = parseIntake(out);
+  if (!parsed) return intakeCache.data; // not computed yet → keep prior value (likely null)
+  intakeCache = { at: Date.now(), data: parsed };
+  return parsed;
+}
+
+module.exports = { getStorage, isConfigured, kickPerNetworkDu, getPerNetworkSizes, kickIntakeScan, getIntake };

@@ -236,6 +236,17 @@ async function createApp() {
     }
   }
 
+  // NAS intake scan cron — hourly, kicks a background per-network/per-tree file-intake scan so the
+  // NAS-storage report can show today's ingest (files/bytes per network) + a baseline. Worker-1 only.
+  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+    try {
+      const { initNasIntakeScanCron } = require('./jobs/nasIntakeScanCron');
+      initNasIntakeScanCron();
+    } catch (error) {
+      log.error('Failed to initialize NAS intake scan cron', { error: error.message });
+    }
+  }
+
   // Keyword ad-notification cron (additive, own config toggle keywordSearch.notify.enabled).
   // Worker-1 only to avoid duplicate jobs in cluster mode.
   if ((!process.env.WORKER_ID || process.env.WORKER_ID === '1')) {
