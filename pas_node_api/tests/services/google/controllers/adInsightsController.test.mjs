@@ -144,8 +144,20 @@ describe("services/google/controllers/adInsightsController > getGoogleOutgoings"
   });
 });
 
+// Helper: build a `terms(country.keyword) → cardinality(id)` agg response from
+// a simple { countryName: distinctAdCount } map.
+function mkCountryAgg(countByCountry, shape = 'flat') {
+  const buckets = Object.entries(countByCountry).map(([key, n]) => ({
+    key,
+    doc_count: n,
+    unique_ads: { value: n },
+  }));
+  const body = { aggregations: { by_country: { buckets } } };
+  return shape === 'body' ? { body } : body;
+}
+
 describe("services/google/controllers/adInsightsController > getAdvertiserCountryData", () => {
-  function mkDb({ metaRow = null, esHits = [], countryRows = [], availableYearBuckets = [] } = {}) {
+  function mkDb({ metaRow = null, countryAgg = {}, countryRows = [], availableYearBuckets = [], aggShape = 'flat' } = {}) {
     let sqlCall = 0;
     return {
       sql: { query: vi.fn(async (sql) => {
@@ -160,7 +172,8 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
           if (params.body.aggs?.years) {
             return { aggregations: { years: { buckets: availableYearBuckets } } };
           }
-          return { hits: { hits: esHits } };
+          // fetchCountryAgg uses a by_country terms agg
+          return mkCountryAgg(countryAgg, aggShape);
         }),
       },
     };
@@ -185,10 +198,10 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
       { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
     )).code).toBe(400);
   });
-  it("200 'No data found for this year.' when ES returns no hits", async () => {
+  it("200 'No data found for this year.' when ES returns no buckets", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-06-01" },
-      esHits: [],
+      countryAgg: {},
       availableYearBuckets: [
         { key_as_string: "2024" }, { key_as_string: "2023" }, { key_as_string: "1969" },
       ],
@@ -204,7 +217,7 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
   it("explicit p.year overrides ad_last_seen", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-06-01" },
-      esHits: [],
+      countryAgg: {},
     });
     const out = await getAdvertiserCountryData(
       { body: { google_text_ad_id: "1", year: 2020 }, query: {} }, db, fakeLogger
@@ -214,20 +227,18 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
   it("falls back to current year when no last_seen", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: null },
-      esHits: [],
+      countryAgg: {},
     });
     const out = await getAdvertiserCountryData(
       { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
     );
     expect(out.year).toBe(new Date().getFullYear());
   });
-  it("200 with aggregated country data (docvalue_fields shape)", async () => {
+  it("200 with aggregated country data (terms+cardinality agg) — accurate counts, no 10k cap", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [
-        { fields: { "id": [1], "country.keyword": ["germany", "Czechia"] } },
-        { fields: { "id": [2], "country.keyword": ["germany"] } },
-      ],
+      // germany 25,000 distinct ads (above the old 10k pull cap), czechia 1
+      countryAgg: { germany: 25000, czechia: 1 },
       countryRows: [
         { nicename: "germany", country: "Germany", iso: "DE" },
       ],
@@ -237,48 +248,36 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
     );
     expect(out.code).toBe(200);
     expect(out.data).toHaveLength(2);
-    // Germany has 2 ads, so it sorts first
+    // Germany has the most ads, so it sorts first
     expect(out.data[0].country).toBe("Germany");
-    expect(out.data[0].ad_count).toBe(2);
+    // Count is the agg cardinality — NOT capped at 10,000 as the old _source pull was
+    expect(out.data[0].ad_count).toBe(25000);
   });
-  it("supports _source shape (date-range variant)", async () => {
+  it("iso fixup applied to agg buckets (czechia → CZ)", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [
-        { _source: { "id": 1, "country": "italy" } },
-      ],
+      countryAgg: { czechia: 3 },
+      countryRows: [{ nicename: "czechia", country: "Czechia", iso: null }],
+    });
+    const out = await getAdvertiserCountryData(
+      { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
+    );
+    expect(out.data[0].iso).toBe("CZ");
+  });
+  it("ES agg response in body.* shape still parsed", async () => {
+    const db = mkDb({
+      metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
+      countryAgg: { italy: 4 },
       countryRows: [],
+      aggShape: 'body',
     });
     const out = await getAdvertiserCountryData(
       { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
     );
     expect(out.data[0].country).toBe("Italy");
+    expect(out.data[0].ad_count).toBe(4);
   });
-  it("non-array country normalized to single-element array", async () => {
-    const db = mkDb({
-      metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [{ fields: { "id": [1], "country.keyword": "japan" } }],
-    });
-    const out = await getAdvertiserCountryData(
-      { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
-    );
-    expect(out.data[0].country).toBe("Japan");
-  });
-  it("hit missing adId is skipped", async () => {
-    const db = mkDb({
-      metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [
-        { fields: { "country.keyword": ["x"] } }, // no ad id
-        { fields: { "id": [1], "country.keyword": ["spain"] } },
-      ],
-    });
-    const out = await getAdvertiserCountryData(
-      { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
-    );
-    expect(out.data).toHaveLength(1);
-    expect(out.data[0].country).toBe("Spain");
-  });
-  it("ES rejection → empty hits → 'No data found'", async () => {
+  it("ES rejection on country agg → empty buckets → 'No data found'", async () => {
     const db = {
       sql: { query: vi.fn(async () => [{ post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" }]) },
       elastic: { search: vi.fn(async () => { throw new Error("es-down"); }) },
@@ -288,7 +287,7 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
     );
     expect(out.message).toBe("No data found for this year.");
   });
-  it("batchCountryLookup SQL throw → empty isoMap, country names used as-is", async () => {
+  it("batchCountryLookup SQL throw → empty isoMap, bucket key used as-is", async () => {
     let sqlCall = 0;
     const db = {
       sql: { query: vi.fn(async () => {
@@ -296,9 +295,10 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
         if (sqlCall === 1) return [{ post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" }];
         throw new Error("lookup-fail");
       })},
-      elastic: { search: vi.fn(async () => ({ hits: { hits: [
-        { fields: { "id": [1], "country.keyword": ["france"] } }
-      ]}}))},
+      elastic: { search: vi.fn(async (params) => {
+        if (params.body.aggs?.years) return { aggregations: { years: { buckets: [] } } };
+        return mkCountryAgg({ france: 2 });
+      })},
     };
     const out = await getAdvertiserCountryData(
       { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
@@ -306,64 +306,26 @@ describe("services/google/controllers/adInsightsController > getAdvertiserCountr
     expect(out.data[0].country).toBe("France");
     expect(out.data[0].iso).toBeNull();
   });
-  it("hit with no countries is skipped", async () => {
+  it("bucket with zero unique_ads is skipped", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [
-        { fields: { "id": [1] /* no country */ } },
-        { fields: { "id": [2], "country.keyword": ["spain"] } },
-      ],
+      countryAgg: { ghostland: 0, spain: 2 },
     });
     const out = await getAdvertiserCountryData(
       { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
     );
     expect(out.data).toHaveLength(1);
+    expect(out.data[0].country).toBe("Spain");
   });
-  it("countryMap with falsy country entries skipped", async () => {
+  it("no buckets → data: []", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [
-        { fields: { "id": [1], "country.keyword": ["", null, "germany"] } },
-      ],
-    });
-    const out = await getAdvertiserCountryData(
-      { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
-    );
-    expect(out.data).toHaveLength(1);
-    expect(out.data[0].country).toBe("Germany");
-  });
-  it("aggregateCountryData returns null when no country buckets produced", async () => {
-    const db = mkDb({
-      metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [{ fields: { "id": [1] /* no country at all */ } }],
+      countryAgg: {},
     });
     const out = await getAdvertiserCountryData(
       { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
     );
     expect(out.data).toEqual([]);
-  });
-  it("ES returns body.hits shape → fallback fires (line 269 right operand)", async () => {
-    let sqlCall = 0;
-    const db = {
-      sql: { query: vi.fn(async () => {
-        sqlCall++;
-        if (sqlCall === 1) return [{ post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" }];
-        return [{ nicename: "germany", country: "Germany", iso: "DE" }];
-      })},
-      elastic: {
-        search: vi.fn(async (params) => {
-          if (params.body.aggs?.years) return { aggregations: { years: { buckets: [] } } };
-          return { body: { hits: { hits: [
-            { fields: { "id": [1], "country.keyword": ["germany"] } },
-          ]}}};
-        }),
-      },
-    };
-    const out = await getAdvertiserCountryData(
-      { body: { google_text_ad_id: "1" }, query: {} }, db, fakeLogger
-    );
-    expect(out.code).toBe(200);
-    expect(out.data.map(d => d.country)).toContain("Germany");
   });
 });
 
@@ -391,10 +353,10 @@ describe("services/google/controllers/adInsightsController > getAdvertiserInsigh
       { body: { post_owner_id: 5, from_date: "2024-01-01", to_date: "2024-12-31" }, query: {} }, db, fakeLogger
     )).code).toBe(400);
   });
-  it("country type: 400 when ES returns 0 hits", async () => {
+  it("country type: 400 when ES returns 0 buckets", async () => {
     const db = {
       sql: { query: vi.fn(async () => [{ post_owner_name: "Brand" }]) },
-      elastic: { search: vi.fn(async () => ({ hits: { hits: [] } })) },
+      elastic: { search: vi.fn(async () => mkCountryAgg({})) },
     };
     const out = await getAdvertiserInsightsByDateRange(
       { body: { post_owner_id: 5, from_date: "2024-01-01", to_date: "2024-12-31" }, query: {} }, db, fakeLogger
@@ -410,9 +372,7 @@ describe("services/google/controllers/adInsightsController > getAdvertiserInsigh
         if (sqlCall === 1) return [{ post_owner_name: "Brand" }];
         return []; // batchCountryLookup returns empty
       })},
-      elastic: { search: vi.fn(async () => ({ hits: { hits: [
-        { _source: { "id": 1, "country": "germany" } }
-      ]}}))},
+      elastic: { search: vi.fn(async () => mkCountryAgg({ germany: 7 })) },
     };
     const out = await getAdvertiserInsightsByDateRange(
       { body: { post_owner_id: 5, from_date: "2024-01-01", to_date: "2024-12-31", type: "country" }, query: {} },
@@ -420,8 +380,9 @@ describe("services/google/controllers/adInsightsController > getAdvertiserInsigh
     );
     expect(out.code).toBe(200);
     expect(out.data[0].country).toBe("Germany");
+    expect(out.data[0].ad_count).toBe(7);
   });
-  it("country type: data null fallback to [] in response", async () => {
+  it("country type: all-zero buckets → 'No data found' / [] in response", async () => {
     let sqlCall = 0;
     const db = {
       sql: { query: vi.fn(async () => {
@@ -429,13 +390,22 @@ describe("services/google/controllers/adInsightsController > getAdvertiserInsigh
         if (sqlCall === 1) return [{ post_owner_name: "Brand" }];
         return [];
       })},
-      elastic: { search: vi.fn(async () => ({ hits: { hits: [
-        { _source: { "id": 1 /* no country */ } }
-      ]}}))},
+      elastic: { search: vi.fn(async () => mkCountryAgg({ ghostland: 0 })) },
     };
     const out = await getAdvertiserInsightsByDateRange(
       { body: { post_owner_id: 5, from_date: "2024-01-01", to_date: "2024-12-31" }, query: {} }, db, fakeLogger
     );
+    expect(out.data).toEqual([]);
+  });
+  it("ES rejection on country agg → 400 'No data found'", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [{ post_owner_name: "Brand" }]) },
+      elastic: { search: vi.fn(async () => { throw new Error("es-down"); }) },
+    };
+    const out = await getAdvertiserInsightsByDateRange(
+      { body: { post_owner_id: 5, from_date: "2024-01-01", to_date: "2024-12-31" }, query: {} }, db, fakeLogger
+    );
+    expect(out.code).toBe(400);
     expect(out.data).toEqual([]);
   });
   it("unsupported type → 400", async () => {
@@ -449,7 +419,7 @@ describe("services/google/controllers/adInsightsController > getAdvertiserInsigh
     );
     expect(out).toEqual({ code: 400, message: "Insight type 'lcs' not supported for this platform." });
   });
-  it("body.hits fallback in ES result", async () => {
+  it("body.* agg shape fallback in ES result", async () => {
     let sqlCall = 0;
     const db = {
       sql: { query: vi.fn(async () => {
@@ -457,9 +427,7 @@ describe("services/google/controllers/adInsightsController > getAdvertiserInsigh
         if (sqlCall === 1) return [{ post_owner_name: "Brand" }];
         return [];
       })},
-      elastic: { search: vi.fn(async () => ({
-        body: { hits: { hits: [{ _source: { "id": 1, "country": "japan" } }] } }
-      }))},
+      elastic: { search: vi.fn(async () => mkCountryAgg({ japan: 3 }, 'body')) },
     };
     const out = await getAdvertiserInsightsByDateRange(
       { body: { post_owner_id: 5, from_date: "2024-01-01", to_date: "2024-12-31" }, query: {} }, db, fakeLogger

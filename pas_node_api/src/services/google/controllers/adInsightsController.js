@@ -77,8 +77,6 @@ async function getGoogleOutgoings(req, db, logger) {
 
 // ─── 3. Advertiser-level helpers ────────────────────────
 
-// ─── 3. Advertiser-level helpers ────────────────────────
-
 const AD_META_SQL = `
   SELECT gta.last_seen, gtapo.post_owner_name, gta.post_owner_id
   FROM google_text_ad gta
@@ -86,6 +84,17 @@ const AD_META_SQL = `
   WHERE gta.id = ?
   LIMIT 1
 `;
+
+// Country is a small, bounded dimension (~250 ISO countries worldwide), so a
+// terms bucket of 500 covers the entire universe with zero truncation. We do
+// NOT aggregate on post_owner_name (it's a text-analyzed field used only for
+// the match_phrase filter) — only on `country.keyword`, which is the
+// aggregatable sub-field the search builder already aggregates/sorts on
+// (GoogleSearchQueryBuilder wrapWithCountryBoost / collapse). `id` is the ad's
+// dedup unit and is aggregatable (used in the search builder's `cardinality`
+// + `collapse`).
+const COUNTRY_TERMS_SIZE = 500;
+const ID_CARDINALITY_PRECISION = 40000;
 
 function getYearRange(year) {
   return {
@@ -101,6 +110,13 @@ function getCustomDateRange(from, to) {
     lte: `${to} 23:59:59`,
     format: "yyyy-MM-dd' 'HH:mm:ss",
   };
+}
+
+// Both ES 6.8 (`res.aggregations`) and the 7.x client wrapper
+// (`res.body.aggregations`) shapes are tolerated, mirroring the dual-shape
+// reads used elsewhere in this controller / adSearchController.
+function readAggs(esResult) {
+  return esResult?.aggregations || esResult?.body?.aggregations || null;
 }
 
 async function fetchAvailableYears(elastic, index, filter) {
@@ -132,9 +148,7 @@ async function fetchAvailableYears(elastic, index, filter) {
       },
     });
 
-    const buckets =
-      (esResult.aggregations || esResult.body?.aggregations)?.years?.buckets ||
-      [];
+    const buckets = readAggs(esResult)?.years?.buckets || [];
 
     return buckets
       .map(b => parseInt(b.key_as_string, 10))
@@ -145,44 +159,63 @@ async function fetchAvailableYears(elastic, index, filter) {
   }
 }
 
-async function aggregateCountryData(db, hits) {
-  if (!hits || hits.length === 0) return null;
+// Scalable, non-truncated advertiser-country aggregation.
+// Replaces the previous size:10000 `_source`/docvalue pull + JS `Set`
+// bucketing, which truncated advertisers with >10k ads. A single
+// `terms(country.keyword)` → `cardinality(id)` aggregation returns one bucket
+// per country with an accurate distinct-ad count regardless of advertiser
+// size, transferring only a few KB.
+async function fetchCountryAgg(elastic, index, filterClauses) {
+  const esResult = await elastic.search({
+    index,
+    // We only need the aggregation, never hits.
+    filter_path: 'aggregations.by_country.buckets',
+    body: {
+      size: 0,
+      track_total_hits: false,
+      query: { bool: { filter: filterClauses } },
+      aggs: {
+        by_country: {
+          terms: {
+            field: 'country.keyword',
+            size: COUNTRY_TERMS_SIZE,
+            order: { unique_ads: 'desc' },
+          },
+          aggs: {
+            // distinct ad ids in this country — the JS-Set equivalent.
+            unique_ads: {
+              cardinality: { field: 'id', precision_threshold: ID_CARDINALITY_PRECISION },
+            },
+          },
+        },
+      },
+    },
+  });
 
-  const countryMap = {};
-  for (const hit of hits) {
-    // Support both shapes:
-    //   - _source path (legacy): hit._source.id / hit._source.country
-    //   - docvalue_fields path: hit.fields.id[0] / hit.fields['country.keyword']
-    // docvalue_fields always returns arrays even for single values, so we
-    // unwrap on read. The advertiser-country main query was switched to
-    // docvalue_fields for perf; getAdvertiserInsightsByDateRange still uses
-    // _source so this helper handles both.
-    const src = hit._source;
-    const f = hit.fields;
-    const adId = src ? src.id : f?.id?.[0];
-    if (!adId) continue;
+  return readAggs(esResult)?.by_country?.buckets || [];
+}
 
-    let countries = src ? src.country : (f?.['country.keyword'] || f?.country);
-    if (!countries) continue;
-    if (!Array.isArray(countries)) countries = [countries];
+// Map ES terms-agg buckets → the legacy response shape:
+//   [{ country, iso, ad_ids, ad_count }]
+// `ad_ids` is kept (empty) for response-shape compatibility — the only
+// consumer (new-ui-react transformAdvertiserCountry) reads `ad_count` first
+// and only falls back to `ad_ids.length`, so a populated `ad_count` is
+// sufficient and the per-country id list is no longer materialised.
+async function aggregateCountryBuckets(db, buckets) {
+  if (!buckets || buckets.length === 0) return null;
 
-    for (const country of countries) {
-      if (!country) continue;
-      if (!countryMap[country]) countryMap[country] = new Set();
-      countryMap[country].add(adId);
-    }
-  }
+  const names = buckets.map(b => b.key).filter(Boolean);
+  if (names.length === 0) return null;
 
-  if (Object.keys(countryMap).length === 0) return null;
-
-  const allCountryNames = Object.keys(countryMap);
-  const isoMap = await batchCountryLookup(db, allCountryNames);
+  const isoMap = await batchCountryLookup(db, names);
 
   const result = [];
-  const countryEntries = Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size);
+  for (const b of buckets) {
+    const name = b.key;
+    if (!name) continue;
+    const adCount = b.unique_ads?.value ?? b.doc_count ?? 0;
+    if (!adCount) continue;
 
-  for (const [name, idSet] of countryEntries) {
-    const adIds = [...idSet];
     const lookup = isoMap.get(name);
     let country = lookup?.country || name;
     let iso = lookup?.iso || null;
@@ -190,9 +223,13 @@ async function aggregateCountryData(db, hits) {
     iso = fixCountryIso(country, iso);
     if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
 
-    result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });
+    result.push({ country, iso, ad_ids: [], ad_count: adCount });
   }
-  return result;
+
+  // terms agg already orders by unique_ads desc, but re-sort defensively in
+  // case the lookup collapsed names.
+  result.sort((a, b) => b.ad_count - a.ad_count);
+  return result.length > 0 ? result : null;
 }
 
 async function batchCountryLookup(db, names) {
@@ -236,58 +273,37 @@ async function getAdvertiserCountryData(req, db, logger) {
   const index = 'google_ads_data';
 
   const advertiserFilter = { match_phrase: { post_owner_name: postOwnerName } };
-  const [availableYears, esResult] = await Promise.allSettled([
+  const filterClauses = [advertiserFilter, { range: { last_seen: dateRange } }];
+
+  const [availableYears, countryAgg] = await Promise.allSettled([
     fetchAvailableYears(db.elastic, index, advertiserFilter),
-    // docvalue_fields + _source:false reads `id` and country from ES doc
-    // values (columnar) instead of materialising the JSON _source per hit.
-    // We request both `country` and `country.keyword` because the index may
-    // map `country` as keyword-only (then `country` has doc_values) or as
-    // text+keyword (then `country.keyword` does). ES silently ignores any
-    // non-existent field request, so asking for both is safe and lets the
-    // aggregateCountryData fallback chain pick whichever one was populated.
-    db.elastic.search({
-      index,
-      filter_path: 'hits.hits.fields',
-      body: {
-        size: 10000,
-        track_total_hits: false,
-        _source: false,
-        docvalue_fields: ['id', 'country', 'country.keyword'],
-        query: {
-          bool: {
-            filter: [
-              advertiserFilter,
-              { range: { last_seen: dateRange } },
-            ],
-          },
-        },
-      },
-    }),
+    // Scalable terms+cardinality aggregation — no 10k hit cap.
+    fetchCountryAgg(db.elastic, index, filterClauses),
   ]);
 
-  const hits = (esResult.status === 'fulfilled') ?
-    (esResult.value.hits || esResult.value.body?.hits)?.hits : [];
-  
-  if (!hits || hits.length === 0) {
-     return { 
-       code: 200, 
-       message: 'No data found for this year.', 
-       post_owner_id: postOwnerId, 
-       year: adYear, 
-       available_years: availableYears.status === 'fulfilled' ? availableYears.value : [], 
-       data: [] 
-     };
+  const years = availableYears.status === 'fulfilled' ? availableYears.value : [];
+  const buckets = countryAgg.status === 'fulfilled' ? countryAgg.value : [];
+
+  if (!buckets || buckets.length === 0) {
+    return {
+      code: 200,
+      message: 'No data found for this year.',
+      post_owner_id: postOwnerId,
+      year: adYear,
+      available_years: years,
+      data: [],
+    };
   }
 
-  const data = await aggregateCountryData(db, hits);
+  const data = await aggregateCountryBuckets(db, buckets);
 
-  return { 
-    code: 200, 
-    message: 'Advertiser country data fetched.', 
-    post_owner_id: postOwnerId, 
-    year: adYear, 
-    available_years: availableYears.status === 'fulfilled' ? availableYears.value : [], 
-    data: data || [] 
+  return {
+    code: 200,
+    message: 'Advertiser country data fetched.',
+    post_owner_id: postOwnerId,
+    year: adYear,
+    available_years: years,
+    data: data || [],
   };
 }
 
@@ -317,26 +333,22 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   const targetType = (type || 'country').toLowerCase();
 
   if (targetType === 'country') {
-    const esResult = await db.elastic.search({
-      index,
-      body: {
-        size: 10000,
-        _source: ['id', 'country'],
-        query: {
-          bool: {
-            filter: [
-              { match_phrase: { post_owner_name: postOwnerName } },
-              { range: { last_seen: dateRange } },
-            ],
-          },
-        },
-      },
-    });
+    const filterClauses = [
+      { match_phrase: { post_owner_name: postOwnerName } },
+      { range: { last_seen: dateRange } },
+    ];
 
-    const hits = (esResult.hits || esResult.body?.hits)?.hits;
-    if (!hits || hits.length === 0) return { code: 400, message: 'No data found.', ...base, data: [] };
+    let buckets = [];
+    try {
+      buckets = await fetchCountryAgg(db.elastic, index, filterClauses);
+    } catch (err) {
+      if (logger) logger.error('Error in getAdvertiserInsightsByDateRange country agg', { error: err.message });
+      return { code: 400, message: 'No data found.', ...base, data: [] };
+    }
 
-    const data = await aggregateCountryData(db, hits);
+    if (!buckets || buckets.length === 0) return { code: 400, message: 'No data found.', ...base, data: [] };
+
+    const data = await aggregateCountryBuckets(db, buckets);
     return { code: 200, message: 'Advertiser country data fetched.', ...base, data: data || [] };
   }
 
