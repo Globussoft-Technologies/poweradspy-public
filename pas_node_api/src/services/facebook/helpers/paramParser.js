@@ -124,7 +124,7 @@ function withCdn(url) {
     return cleaned[0] || '';
   }
   if (trimmed.startsWith('http')) return trimmed;
-  trimmed = trimmed.replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|pas-dev\/stream|pas-prod\/stream)\//i, '/');
+  trimmed = trimmed.replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|PowerAdspy|pas-dev\/stream|pas-prod\/stream)\//i, '/');
   return CDN_BASE + (trimmed.startsWith('/') ? trimmed : '/' + trimmed);
 }
 
