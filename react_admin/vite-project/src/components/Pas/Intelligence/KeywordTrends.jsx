@@ -598,7 +598,13 @@ const KeywordTrends = ({ onDataReady }) => {
                                     <strong>End:</strong> {endTime}
                                   </div>
                                   <div style={{ fontSize: "10px", color: "#374151", fontWeight: 500 }}>
-                                    <strong>Ads:</strong> {h.adsCount ?? 0}
+                                    <strong>Ads:</strong> {h.adsCount === 0 ? (
+                                      <span style={{ display: "inline-block", background: "#fecaca", color: "#991b1b", padding: "2px 6px", borderRadius: "3px", fontSize: "10px", fontWeight: 600, marginLeft: "4px" }}>
+                                        no ads found
+                                      </span>
+                                    ) : (
+                                      <span style={{ marginLeft: "4px" }}>{h.adsCount ?? 0}</span>
+                                    )}
                                   </div>
                                 </div>
                               );
@@ -614,8 +620,16 @@ const KeywordTrends = ({ onDataReady }) => {
                       <td style={{ padding: "10px 12px", textAlign: "center", color: "#ef4444", fontWeight: 500 }}>
                         {failedCount}
                       </td>
-                      <td style={{ padding: "10px 12px", textAlign: "center", color: "#111827", fontWeight: 600 }}>
-                        {totalAds.toLocaleString()}
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        {totalAds === 0 ? (
+                          <span style={{ display: "inline-block", background: "#fecaca", color: "#991b1b", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                            no ads found
+                          </span>
+                        ) : (
+                          <span style={{ color: "#111827", fontWeight: 600 }}>
+                            {totalAds.toLocaleString()}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

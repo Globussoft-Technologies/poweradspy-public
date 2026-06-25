@@ -1379,7 +1379,6 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                     const isFailed = !item.status || item.status === 'no_ads_found' || item.status === 'failed' || item.status === 'error';
                     const rowBg = isFailed ? "#fff5f5" : "white";
                     const rowBorder = isFailed ? "3px solid #dc2626" : "1px solid #f3f4f6";
-                    const adsCountDisplay = item.adsCount === 0 ? "No ads found" : (item.adsCount ?? "-");
 
                     return (
                       <div key={idx} style={{ display: "grid", gridTemplateColumns: "110px 110px 130px 130px 80px 80px 100px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", borderLeft: rowBorder, backgroundColor: rowBg, textAlign: "center" }}>
@@ -1387,7 +1386,15 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                         <span style={{ fontSize: "11px", color: "#374151", textTransform: "capitalize" }}>{item.network || "-"}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{startTime}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{endTime}</span>
-                        <span style={{ fontSize: "11px", color: "#374151", fontWeight: 500 }}>{adsCountDisplay}</span>
+                        <span>
+                          {item.adsCount === 0 ? (
+                            <span style={{ display: "inline-block", background: "#fecaca", color: "#991b1b", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                              no ads found
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: "11px", color: "#374151", fontWeight: 500 }}>{item.adsCount ?? "-"}</span>
+                          )}
+                        </span>
                         <span style={{ fontSize: "10px", padding: "4px 8px", borderRadius: "4px", background: statusBg, color: statusColor, fontWeight: 600, border: "1px solid #fca5a5" }}>
                           {statusText}
                         </span>

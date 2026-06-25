@@ -993,11 +993,12 @@ async function exportKeywordTrendsPDF(data) {
         const startTime = h.startTime ? new Date(h.startTime).toLocaleString() : "-";
         const endTime = h.endTime ? new Date(h.endTime).toLocaleString() : "-";
         const ads = h.adsCount ?? 0;
+        const adsText = ads === 0 ? "Ads: no ads found" : `Ads: ${ads}`;
 
         clippedText(pdf, pdfSafe(`Date: ${date}`), COL_X[5]+5, histY + 12.68, histColW);
         clippedText(pdf, pdfSafe(`Start: ${startTime}`), COL_X[5]+5, histY + 21.58, histColW);
         clippedText(pdf, pdfSafe(`End: ${endTime}`), COL_X[5]+5, histY + 30.42, histColW);
-        clippedText(pdf, pdfSafe(`Ads: ${ads}`), COL_X[5]+5, histY + 39.33, histColW);
+        clippedText(pdf, pdfSafe(adsText), COL_X[5]+5, histY + 39.33, histColW);
 
         histY += itemSpacing + gapBetweenItems;
       });
@@ -1015,8 +1016,19 @@ async function exportKeywordTrendsPDF(data) {
     pdf.text(String(failedCount), COL_X[7]+8, textBaseY);
 
     // ADS COUNT
-    pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(17,24,39);
-    pdf.text(String(totalAds), COL_X[8]+8, textBaseY);
+    if (totalAds === 0) {
+      // Draw red badge for "no ads found"
+      const badgeW = 47;
+      const badgeH = 14;
+      const badgeX = COL_X[8] + 2;
+      const badgeY = textBaseY - 6;
+      roundedRect(pdf, badgeX, badgeY, badgeW, badgeH, 2, "#fecaca");
+      pdf.setFont("helvetica","bold"); pdf.setFontSize(7); pdf.setTextColor(153,27,27);
+      pdf.text("no ads found", badgeX + 2, badgeY + 10);
+    } else {
+      pdf.setFont("helvetica","bold"); pdf.setFontSize(9); pdf.setTextColor(17,24,39);
+      pdf.text(String(totalAds), COL_X[8]+8, textBaseY);
+    }
 
     curY += thisRowH;
   });
