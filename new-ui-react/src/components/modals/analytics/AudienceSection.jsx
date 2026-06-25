@@ -1,7 +1,7 @@
-import { Heart, Zap, Copy, Users } from 'lucide-react';
+import { Heart, Zap, Copy, Users, Info } from 'lucide-react';
 import { useTheme } from '../../../hooks/useTheme';
 
-const AudienceSection = ({ interests = [], behaviours = [], loading = false }) => {
+const AudienceSection = ({ interests = [], behaviours = [], confidenceScore = null, loading = false }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
@@ -10,6 +10,13 @@ const AudienceSection = ({ interests = [], behaviours = [], loading = false }) =
 
   const audience = { interests: interestList, behaviour: behaviourList };
   const hasData = interestList.length > 0 || behaviourList.length > 0;
+
+  // confidence_score may arrive as a 0–100 percentage (get-data API) or a 0–1
+  // fraction (older cached docs). Normalise both to a whole-number percentage.
+  const confNum = Number(confidenceScore);
+  const confidencePct = Number.isFinite(confNum) && confNum > 0
+    ? Math.round(confNum <= 1 ? confNum * 100 : confNum)
+    : null;
 
   const categories = [
     { key: 'interests', label: 'INTERESTS', icon: Heart, color: 'pink' },
@@ -24,8 +31,23 @@ const AudienceSection = ({ interests = [], behaviours = [], loading = false }) =
 
   return (
     <div className="px-6">
-      <h3 className="flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 text-white/90">
+      <h3 className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? 'text-gray-800' : 'text-white/90'}`}>
         <Users size={16} className="opacity-60" />Target Audience
+        {confidencePct != null && (
+          <span className="relative group/conf inline-flex items-center">
+            <Info
+              size={15}
+              className={`cursor-help transition-opacity opacity-70 hover:opacity-100 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`}
+            />
+            <span
+              className={`absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-60 px-3 py-2 rounded-lg text-[11px] font-medium normal-case tracking-normal leading-snug text-center shadow-xl border opacity-0 group-hover/conf:opacity-100 pointer-events-none transition-opacity z-50 ${
+                isLight ? 'bg-gray-900 text-white border-gray-700' : 'bg-[#1a1a1a] text-white/90 border-white/10'
+              }`}
+            >
+              Based on analytics, the estimated targeting confidence score is {confidencePct}%.
+            </span>
+          </span>
+        )}
       </h3>
       {loading ? (
         <div className={`rounded-xl border py-12 flex items-center justify-center ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-white/[0.02] border-white/5'}`}>

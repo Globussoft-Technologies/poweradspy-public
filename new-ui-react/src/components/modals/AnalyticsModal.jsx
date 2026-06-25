@@ -1663,6 +1663,7 @@ const AnalyticsModal = ({
               <AudienceSection
                 interests={audience.interests}
                 behaviours={audience.behaviours}
+                confidenceScore={audience.confidenceScore}
                 loading={audience.loading}
               />
             )}

@@ -8491,6 +8491,75 @@ paths:
                     code: 400
                     message: "Error in getAdDetailsData: <reason>"
 
+  /api/v1/common/get-instagram-ad-details/{adId}:
+    get:
+      tags: [Common]
+      summary: Lightweight Instagram ad details card by ad ID
+      description: |
+        Node port of the Instagram app's PHP `AdDetails@getAdDetailsData`. Same shape
+        as the Facebook `get-ad-details` endpoint, but looks the ad up in the
+        `instagram_search_mix` Elasticsearch index by `instagram_ad.id` and returns a
+        trimmed card: `title`, `text`, `newsfeed_description`, `image_url`, `category`,
+        `subcategory`.
+
+        - **IMAGE** ads use `new_nas_image_url`; everything else falls back to
+          `thumbnail_url`. The chosen path is prefixed with the `NAS_URL_FE` env value.
+        - **No auth** — the original PHP route carried no auth middleware.
+        - **Always responds HTTP 200** (mirrors Laravel `response()->json()`); the real
+          status is in the body `code` (`200` = found, `404` = no ad, `400` = error).
+      security: []
+      parameters:
+        - name: adId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Instagram ad id (`instagram_ad.id`).
+          example: "9876543210"
+      responses:
+        '200':
+          description: |
+            Always HTTP 200. Inspect the body `code`: `200` = found, `404` = no ad for
+            the given id, `400` = error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Data Fetched Successfully }
+                  data:
+                    type: object
+                    properties:
+                      title: { type: string, example: "New Drop" }
+                      text: { type: string, example: "Shop the latest collection" }
+                      newsfeed_description: { type: string, example: "Out now" }
+                      image_url: { type: string, example: "https://nas.example.com/insta/9/img.jpg" }
+                      category: { type: string, example: "Fashion" }
+                      subcategory: { type: string, example: "Footwear" }
+              examples:
+                found:
+                  summary: Ad found
+                  value:
+                    code: 200
+                    message: Data Fetched Successfully
+                    data:
+                      title: "New Drop"
+                      text: "Shop the latest collection"
+                      newsfeed_description: "Out now"
+                      image_url: "https://nas.example.com/insta/9/img.jpg"
+                      category: "Fashion"
+                      subcategory: "Footwear"
+                notFound:
+                  summary: No ad for the given id
+                  value:
+                    code: 404
+                    message: No data found for the given ad_id
+                error:
+                  summary: Lookup error
+                  value:
+                    code: 400
+                    message: "Error in getAdDetailsData: <reason>"
+
   /api/v1/common/authunticate-php-api:
     get:
       tags: [Common]
@@ -8539,6 +8608,230 @@ paths:
                 malformed:
                   summary: Malformed token
                   value: { code: 400, message: Malformed token }
+
+  /api/v1/common/store-bahaviour-data:
+    post:
+      tags: [Common]
+      summary: Push audience-targeting data for one ad (write-once)
+      description: |
+        Node port of the Laravel `store-bahaviour-data` endpoint. Writes the
+        audience-targeting fields (`interests`, `behaviors`, `confidence_score`) onto a
+        single ad document in the network's `search_mix` Elasticsearch index.
+
+        **Write-once** — only fields that are not already present on the doc are written;
+        existing values are never overwritten (mirrors PHP). If all fields already exist
+        the call returns `400 "Fields already exist, no update needed."`.
+
+        The network is resolved from `network` (body or query), then the `platform`
+        header, defaulting to `facebook`. Supported: `facebook`, `instagram`. No auth.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [adId]
+              properties:
+                adId:
+                  oneOf: [{ type: integer }, { type: string }]
+                  description: Ad id to update (`ad_id` is also accepted as an alias).
+                  example: 1234567890
+                ad_id:
+                  oneOf: [{ type: integer }, { type: string }]
+                  description: Alias for `adId`.
+                network:
+                  type: string
+                  enum: [facebook, instagram]
+                  default: facebook
+                  description: Target network. May also be sent as the `platform` header.
+                interestBehaviour:
+                  type: object
+                  description: The targeting payload to write.
+                  properties:
+                    interests:
+                      type: array
+                      items: { type: object }
+                      description: Interest-targeting entries.
+                    behaviors:
+                      type: array
+                      items: { type: object }
+                      description: Behaviour-targeting entries.
+                    confidence_score:
+                      type: number
+                      example: 0.87
+            example:
+              adId: 1234567890
+              network: facebook
+              interestBehaviour:
+                interests: [{ id: "6003107902433", name: "Association football (Soccer)" }]
+                behaviors: [{ id: "6002714895372", name: "Frequent travelers" }]
+                confidence_score: 0.87
+      responses:
+        '200':
+          description: Fields written
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Fields added successfully }
+        '400':
+          description: Unsupported network, missing `adId`, or all fields already present
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                alreadyExists:
+                  value: { code: 400, message: "Fields already exist, no update needed." }
+                missingId:
+                  value: { code: 400, message: "adId is required" }
+                badNetwork:
+                  value: { code: 400, message: 'Unsupported network "twitter". Supported: facebook, instagram' }
+        '404':
+          description: Ad not found in the index
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: 404, message: ad not found }
+        '503':
+          description: Elasticsearch not available for the network
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Unexpected error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/common/insert-interest-behaviour:
+    get:
+      tags: [Common]
+      summary: Backfill targeting for a batch of ads (cron puller)
+      description: |
+        Node port of the Laravel `insert-interest-behaviour` cron. Claims the next batch
+        of **10** ad ids past a file-based checkpoint (`data/interestBehaviour.<net>.txt`)
+        from the network's `<net>_ad` SQL table — only ads whose `last_seen` is within the
+        last **6 months** and `id >` checkpoint — fetches each ad's targeting data from the
+        external service, and **backfills the missing** `interests`/`behaviors` fields in ES
+        (write-once; `confidence_score` is ignored by this puller, mirroring PHP).
+
+        The checkpoint advances up-front so a mid-batch failure doesn't re-process the
+        whole batch. Requires the `INTEREST_BEHAVIOUR_TOKEN` env var. No auth.
+      security: []
+      parameters:
+        - name: network
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [facebook, instagram]
+            default: facebook
+          description: Target network (may also be sent as the `platform` header).
+      responses:
+        '200':
+          description: Batch processed; returns the ids that were claimed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Fields added successfully }
+                  ids:
+                    type: array
+                    items: { type: integer }
+                    example: [1001, 1002, 1003]
+        '400':
+          description: Unsupported network, or no ad ids left to process
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 400 }
+                  message: { type: string, example: No ad IDs found to update }
+                  ids: { type: array, items: { type: integer }, example: [] }
+        '503':
+          description: '`INTEREST_BEHAVIOUR_TOKEN` not configured, or SQL/ES unavailable'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 503 }
+                  message: { type: string, example: INTEREST_BEHAVIOUR_TOKEN is not configured }
+                  ids: { type: array, items: { type: integer }, example: [] }
+        '500':
+          description: Unexpected error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/common/update-interest-behaviour:
+    get:
+      tags: [Common]
+      summary: Refresh / clean up targeting for ads that already have it (cron)
+      description: |
+        Node port of the Laravel `update-interest-behaviour` cron. Walks the backlog of
+        ads that **already have** targeting (`exists: interests`) and were last seen before
+        the refresh cutoff (env `INTEREST_BEHAVIOUR_REFRESH_BEFORE`, default
+        `2026-03-16 00:00:00`), oldest id first, in batches of **10**. For each ad it
+        re-fetches from the targeting service and:
+
+        - **has data** → overwrites `interests`/`behaviors`/`confidence_score` (refresh)
+        - **no data** → removes those fields (cleanup; the ad's audience panel then hides)
+        - **auth/transient error** → leaves the ad untouched (never deletes on a transient failure)
+
+        Uses a SEPARATE checkpoint from the puller (`data/interest_last_ad_id.<net>.txt`)
+        that only advances on a successful refresh. Requires `INTEREST_BEHAVIOUR_TOKEN`. No auth.
+      security: []
+      parameters:
+        - name: network
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [facebook, instagram]
+            default: facebook
+          description: Target network (may also be sent as the `platform` header).
+      responses:
+        '200':
+          description: Batch processed; per-outcome counters returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: Interest and behaviour updated for batch }
+                  refreshed: { type: integer, example: 7 }
+                  removed: { type: integer, example: 2 }
+                  skipped: { type: integer, example: 1 }
+                  next_checkpoint: { type: integer, nullable: true, example: 1098 }
+        '400':
+          description: Unsupported network
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: No ads left to update in this batch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: 404, message: No ads to update }
+        '503':
+          description: '`INTEREST_BEHAVIOUR_TOKEN` not configured, or ES unavailable'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Unexpected error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ═══════════════════════════════════════════
   # HEALTH
