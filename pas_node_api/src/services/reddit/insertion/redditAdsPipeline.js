@@ -11,7 +11,7 @@
 const config = require('../../../config');
 const repo = require('./repository');
 const { validateRedditAds } = require('./validate');
-const { normalizeRedditAds, checkVersion } = require('./normalize');
+const { normalizeRedditAds, checkVersion, parseOtherMultimedia } = require('./normalize');
 const { buildSearchMixDoc } = require('./esDocBuilder');
 const api = require('../../../insertion/helpers/apiClients');
 const media = require('../../../insertion/helpers/mediaUpload');
@@ -282,6 +282,27 @@ async function uploadAdMedia(sql, ad, redditAdId, variantId, network, existingIm
       } catch (err) {
         console.error(`❌ Failed to update ad image path:`, err.message);
       }
+    }
+  }
+
+  // ── Carousel / other_multimedia: upload each extra image/video to NAS and
+  // persist the JSON array into reddit_ad_image_video. ES (getJoinedAd → indexAd)
+  // already reads ad_image_video and emits it as reddit_ad_image_video.othermedia.
+  // Faithful to legacy RedditUserController (other_multimedia → upload_multiple_*).
+  const adTypeUpper = String(ad.type).toUpperCase();
+  const om = parseOtherMultimedia(ad.other_multimedia);
+  if (om.present && (adTypeUpper === 'IMAGE' || adTypeUpper === 'VIDEO')) {
+    try {
+      const mm = await media.uploadMultimedia(om.images, adTypeUpper, redditAdId, network);
+      await repo.upsertAdImageVideo(sql, {
+        reddit_ad_id: redditAdId,
+        ad_type: adTypeUpper,
+        ad_image_video: mm.ad_image_video,
+      });
+      mediaPaths.multimedia = mm.ad_image_video;
+      console.log(`✅ Stored ${om.images.length} other_multimedia item(s) for ad ${redditAdId}`);
+    } catch (err) {
+      console.error(`❌ Failed to upload other_multimedia for ad ${redditAdId}:`, err.message);
     }
   }
 

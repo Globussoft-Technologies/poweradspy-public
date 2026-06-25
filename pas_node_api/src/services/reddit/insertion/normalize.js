@@ -36,6 +36,26 @@ function checkVersion(platform, version) {
   return null;
 }
 
+/**
+ * Parse `other_multimedia` (carousel) into an array of image/video URLs.
+ * Faithful to the legacy RedditUserController split order: `||,` → `||` → `|`,
+ * else a single element. Empty/whitespace entries are dropped.
+ * @returns {{present: boolean, images: string[]}}
+ */
+function parseOtherMultimedia(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return { present: false, images: [] };
+  }
+  const s = String(value);
+  let parts;
+  if (s.includes('||,')) parts = s.split('||,');
+  else if (s.includes('||')) parts = s.split('||');
+  else if (s.includes('|')) parts = s.split('|');
+  else parts = [s];
+  const images = parts.map((x) => x.trim()).filter((x) => x.length > 0);
+  return { present: images.length > 0, images };
+}
+
 function normalizeRedditAds(ad) {
   const out = { ...ad };
 
@@ -79,4 +99,4 @@ function normalizeRedditAds(ad) {
   return out;
 }
 
-module.exports = { normalizeRedditAds, checkVersion };
+module.exports = { normalizeRedditAds, checkVersion, parseOtherMultimedia };

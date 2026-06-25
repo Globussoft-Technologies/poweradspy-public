@@ -139,6 +139,26 @@ async function updateRedditAdVariants(exec, data, adInternalId) {
   ));
 }
 
+// ── reddit_ad_image_video (carousel / other_multimedia) ──────────────────
+// One row per ad holding the JSON array of NAS paths for extra images/videos.
+// Mirrors facebook_ad_image_video upsert. ES reads ad_image_video → othermedia.
+async function upsertAdImageVideo(exec, d) {
+  if (!d || !d.reddit_ad_id) return 0;
+  const existing = rows(await exec.query(
+    'SELECT id FROM reddit_ad_image_video WHERE reddit_ad_id = ? LIMIT 1', [d.reddit_ad_id]
+  ));
+  if (existing.length) {
+    return affected(await exec.query(
+      'UPDATE reddit_ad_image_video SET ad_type = ?, ad_image_video = ? WHERE reddit_ad_id = ?',
+      [d.ad_type ?? null, d.ad_image_video ?? null, d.reddit_ad_id]
+    ));
+  }
+  return affected(await exec.query(
+    'INSERT INTO reddit_ad_image_video (reddit_ad_id, ad_type, ad_image_video) VALUES (?, ?, ?)',
+    [d.reddit_ad_id, d.ad_type ?? null, d.ad_image_video ?? null]
+  ));
+}
+
 // ── reddit_ad_post_owners ───────────────────────────────────────────────
 async function getPostOwnerByName(exec, name) {
   return found(await exec.query('SELECT id, ads_count, post_owner_image, original_post_owner_image, image_updated FROM reddit_ad_post_owners WHERE post_owner_name = ? LIMIT 1', [name]));
@@ -330,6 +350,7 @@ module.exports = {
   withTransaction, stripNulls,
   getAdByAdId, insertRedditAd, updateRedditAd, deleteAdCascade, getJoinedAd,
   insertRedditAdVariants, updateRedditAdVariants,
+  upsertAdImageVideo,
   getPostOwnerByName, upsertPostOwner, updatePostOwnerImagePath,
   insertMetaData, updateMetaData,
   getUserByRedditId,
