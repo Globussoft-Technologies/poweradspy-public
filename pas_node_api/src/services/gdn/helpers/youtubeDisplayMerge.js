@@ -91,7 +91,7 @@ function isDisplayMergeApplicable(p, sort, from, size) {
   return !!(yt && yt.elastic);
 }
 
-/** Build the optional shared-filter clauses (keyword / advertiser / country / seen-range). */
+/** Build the optional shared-filter clauses (keyword / advertiser / country / seen / post-date / domain-date ranges). */
 function buildSharedFilters(p) {
   const must = [];
   const filter = [];
@@ -114,13 +114,24 @@ function buildSharedFilters(p) {
       bool: { should: countries.map(c => ({ match: { countries: c } })), minimum_should_match: 1 },
     });
   }
-  if (Array.isArray(p.seen_btn_sort) && p.seen_btn_sort.length === 2) {
-    const lower = Number(p.seen_btn_sort[1]);
-    const upper = Number(p.seen_btn_sort[0]);
+  // Date-range filters. Each *_btn_sort arrives as [upperTs, lowerTs] in epoch
+  // seconds. The GDN main query applies these to the GDN side; mirror them here
+  // so the merged-in YouTube DISPLAY total is bounded by the same window —
+  // otherwise the YouTube side stays unfiltered and inflates the merged count
+  // (e.g. a Post Date filter would otherwise count every DISPLAY ad regardless
+  // of date). YouTube ES date fields are mapped as epoch_second.
+  const dateRange = (btn, field) => {
+    if (!Array.isArray(btn) || btn.length !== 2) return;
+    const lower = Number(btn[1]);
+    const upper = Number(btn[0]);
     if (Number.isFinite(lower) && Number.isFinite(upper)) {
-      filter.push({ range: { last_seen: { gte: lower, lte: upper } } });
+      filter.push({ range: { [field]: { gte: lower, lte: upper, format: 'epoch_second' } } });
     }
-  }
+  };
+  dateRange(p.seen_btn_sort, 'last_seen');
+  dateRange(p.post_date_btn_sort, 'post_date');
+  dateRange(p.domain_date_btn_sort, 'domain_registration_date');
+
   return { must, filter };
 }
 
