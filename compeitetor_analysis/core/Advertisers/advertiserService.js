@@ -5,6 +5,36 @@ import { esClient, esServers, checkElasticsearchHealth } from "../../utils/Elast
 // import {client} from "../../utils/Elasticsearch.js";
 import Response from "../../utils/response.js";
 
+// Storage prefixes packed into upstream image paths. We strip these so the
+// stored value becomes a clean, base-agnostic path; the frontend prepends its
+// own CDN/base URL. Mirrors the path-cleaning in pas_node_api's withCdn(), but
+// intentionally does NOT prepend a base here.
+// NOTE: "PowerAdspy/n2" must precede the bare "PowerAdspy" branch so the longer
+// prefix wins (regex alternation is ordered); otherwise "/PowerAdspy/n2/..."
+// would only lose "/PowerAdspy/" and keep a stray "n2/".
+const STORAGE_PREFIX_RE = /^\/?(PowerAdspy\/n2|PowerAdspy-Dev|PowerAdspy|pas-dev\/stream|pas-prod\/stream)\//i;
+
+/**
+ * Normalize an upstream image path into a clean, base-relative path so the
+ * frontend can apply its own base URL. Already-absolute (http...) URLs are
+ * returned untouched. Some rows pack a primary + fallback URL separated by
+ * "||" — we split, clean each, and return the first reachable one.
+ */
+function cleanImagePath(url) {
+  if (!url || typeof url !== "string") return url;
+  let trimmed = url.trim();
+  if (trimmed.includes("||")) {
+    const cleaned = trimmed
+      .split("||")
+      .map((s) => cleanImagePath(s.trim()))
+      .filter(Boolean);
+    return cleaned[0] || "";
+  }
+  if (trimmed.startsWith("http")) return trimmed;
+  trimmed = trimmed.replace(STORAGE_PREFIX_RE, "/");
+  return trimmed.startsWith("/") ? trimmed : "/" + trimmed;
+}
+
 class AdvertiserService {
   constructor() {
     this.esClient = esClient;
@@ -1379,9 +1409,13 @@ class AdvertiserService {
               const result = await client.search(params);
 
               const longestAds =
-                result.hits?.hits?.map((hit) => ({
-                  ...hit._source,
-                })) || [];
+                result.hits?.hits?.map((hit) => {
+                  const source = { ...hit._source };
+                  if (source.new_nas_image_url) {
+                    source.new_nas_image_url = cleanImagePath(source.new_nas_image_url);
+                  }
+                  return source;
+                }) || [];
 
               /* v8 ignore start -- the per-server index list is exhaustively dispatched here; the non-matching branch is unreachable */
               if (index === "search_mix") {
