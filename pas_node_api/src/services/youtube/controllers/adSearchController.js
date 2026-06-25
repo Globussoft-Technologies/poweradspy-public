@@ -96,19 +96,23 @@ async function enrichAndFilterRows(rows, db, esIndex, typeField, nasField) {
     });
     const hits = result.hits || result.body?.hits;
     const esMap = new Map((hits?.hits || []).map(h => [String(h._source['ad_id']), h._source]));
-    return rows.filter(row => {
+    // Keep every matched ad so rendered cards == search total. IMAGE/DISPLAY ads
+    // without a usable NAS image are flagged preview_unavailable (frontend placeholder).
+    return rows.map(row => {
       const src = esMap.get(String(row.ad_id)) || {};
       const adType = src[typeField] || row.type || '';
-      const nasUrl = src[nasField] || '';
+      const rawNas = src[nasField] || '';
+      const nasUrl = rawNas && !String(rawNas).includes('DefaultImage') ? rawNas : '';
       if (adType === 'IMAGE' || adType === 'DISPLAY') {
         if (nasUrl) {
           row.image_video_url = nasUrl;
           row.image_url_original = nasUrl;
-          return true;
+        } else {
+          row.image_video_url = '';
+          row.preview_unavailable = true;
         }
-        return false;
       }
-      return true;
+      return row;
     });
   } catch (err) {
     return rows;

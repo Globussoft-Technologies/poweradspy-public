@@ -250,7 +250,13 @@ export const mapAdToCard = (raw) => {
     date: formatDate(raw.post_date),
     lastSeen: formatDate(raw.last_seen),
     firstSeen: formatDate(raw.first_seen),
-    thumbnail: resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || ''))),
+    // IMAGE ads whose NAS image isn't ready yet are flagged preview_unavailable by the
+    // backend — show a placeholder (don't fall back to an expiring source URL). The real
+    // image appears once NAS is populated (the next search sends image_video_url again).
+    thumbnail: raw.preview_unavailable === true
+      ? ''
+      : resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || ''))),
+    previewUnavailable: raw.preview_unavailable === true,
     // NAS-cached video first; fall through to the live CDN URL when there's no
     // NAS copy (or VITE_NAS_VIDEO_URL is unset, which would otherwise yield a
     // relative `/stream/...` path that 404s against the app origin).

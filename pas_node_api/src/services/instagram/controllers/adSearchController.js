@@ -157,26 +157,30 @@ async function enrichAndFilterRows(rows, db, esIndex, typeField) {
       body: {
         query: { terms: { 'instagram_ad.id': ids.map(Number) } },
         size: ids.length,
-        _source: ['new_nas_image_url', 'nas_video_url', typeField, 'instagram_ad.id'],
+        _source: ['new_nas_image_url', 'instagram_ad.s3_path', 'nas_video_url', typeField, 'instagram_ad.id'],
       },
     });
     const hits = result.hits || result.body?.hits;
     const esMap = new Map((hits?.hits || []).map(h => [String(h._source['instagram_ad.id']), h._source]));
 
-    return rows.filter(row => {
+    // Keep every matched ad so rendered cards == search total. IMAGE ads without a
+    // usable NAS image are flagged preview_unavailable (frontend shows a placeholder).
+    return rows.map(row => {
       const src = esMap.get(String(row.ad_id)) || {};
       const adType = src[typeField] || row.type || '';
-      const nasUrl = src.new_nas_image_url || '';
+      const rawNas = src.new_nas_image_url || src['instagram_ad.s3_path'] || '';
+      const nasUrl = rawNas && !String(rawNas).includes('DefaultImage') ? rawNas : '';
 
       if (adType === 'IMAGE') {
         if (nasUrl) {
           row.image_video_url = nasUrl;
           row.image_url_original = nasUrl;
-          return true;
+        } else {
+          row.image_video_url = '';
+          row.preview_unavailable = true;
         }
-        return false; // IMAGE without NAS url → filter out
       }
-      return true; // non-IMAGE → keep as-is
+      return row;
     });
   } catch (err) {
     // If ES fails, return rows as-is — don't break favourite/hidden page

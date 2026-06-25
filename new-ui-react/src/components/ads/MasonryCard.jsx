@@ -659,7 +659,7 @@ const MasonryCard = ({
                 </>
               ) : (
                 <>
-                  {!imgError && (
+                  {!imgError && !ad.previewUnavailable && (
                     <img
                       key={`${currentImg}_${imgRetryCount}`}
                       src={currentImg}
@@ -672,10 +672,10 @@ const MasonryCard = ({
                       }`}
                     />
                   )}
-                  {isImageLoading && !imgError && (
+                  {isImageLoading && !imgError && !ad.previewUnavailable && (
                     <div className="absolute inset-0 z-20 media-shimmer pointer-events-none" />
                   )}
-                  {imgError && (
+                  {(imgError || ad.previewUnavailable) && (
                     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-900/70 to-zinc-800/40 pointer-events-none">
                       <ImageIcon
                         size={28}

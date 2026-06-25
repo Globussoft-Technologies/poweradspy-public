@@ -84,7 +84,10 @@ function dedupeRows(rows) {
 
 /**
  * Enrich SQL ad rows with NAS image URL from ES.
- * Filters out IMAGE ads that don't have a NAS url.
+ * Keeps EVERY matched ad so the rendered list equals the search total (no count/
+ * card mismatch). IMAGE ads without a usable NAS image (upload pending/failed) are
+ * kept but flagged `preview_unavailable` so the frontend shows a placeholder; once
+ * the NAS image is populated, the next search renders the real image.
  * Non-IMAGE ads pass through untouched.
  */
 async function enrichAndFilterRows(rows, db, esIndex, typeField) {
@@ -96,26 +99,30 @@ async function enrichAndFilterRows(rows, db, esIndex, typeField) {
       body: {
         query: { terms: { 'facebook_ad.id': ids.map(Number) } },
         size: ids.length,
-        _source: ['new_nas_image_url', 'nas_video_url', typeField, 'facebook_ad.id'],
+        _source: ['new_nas_image_url', 'facebook_ad.s3_path', 'nas_video_url', typeField, 'facebook_ad.id'],
       },
     });
     const hits = result.hits || result.body?.hits;
     const esMap = new Map((hits?.hits || []).map(h => [String(h._source['facebook_ad.id']), h._source]));
 
-    return rows.filter(row => {
+    return rows.map(row => {
       const src = esMap.get(String(row.ad_id)) || {};
       const adType = src[typeField] || row.type || '';
-      const nasUrl = src.new_nas_image_url || '';
+      const rawNas = src.new_nas_image_url || src['facebook_ad.s3_path'] || '';
+      const nasUrl = rawNas && !String(rawNas).includes('DefaultImage') ? rawNas : '';
 
       if (adType === 'IMAGE') {
         if (nasUrl) {
           row.image_video_url = nasUrl;
           row.image_url_original = nasUrl;
-          return true;
+        } else {
+          // No usable NAS image (upload pending/failed) — keep the ad, flag it so
+          // the frontend renders a "Preview unavailable" placeholder instead of dropping.
+          row.image_video_url = '';
+          row.preview_unavailable = true;
         }
-        return false; // IMAGE without NAS url → filter out
       }
-      return true; // non-IMAGE → keep as-is
+      return row; // keep every ad so count == rendered cards
     });
   } catch (err) {
     // If ES fails, return rows as-is — don't break favourite/hidden page

@@ -20,6 +20,7 @@ import {
   Film,
   Layers,
   Image,
+  ImageOff,
   Monitor,
   Search,
   Type,
@@ -122,6 +123,7 @@ const AdCard = ({
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState(null);
   const [isRefreshingVideo, setIsRefreshingVideo] = useState(false);
   const [videoRefreshFailed, setVideoRefreshFailed] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
   const videoRefreshAttempted = useRef(false);
 
   const effectiveVideoUrl = resolvedVideoUrl || ad.videoUrl;
@@ -230,19 +232,24 @@ const AdCard = ({
           />
         ) : (
           <>
-            <img
-              src={ad.thumbnail || ""}
-              alt={ad.title}
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (isVideo) onAnalytics?.(ad);
-                else setShowLightbox(true);
-              }}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90 group-hover:opacity-100 cursor-pointer"
-            />
+            {(ad.previewUnavailable || !ad.thumbnail || imgFailed) ? (
+              <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 text-gray-400 select-none">
+                <ImageOff size={26} />
+                <span className="text-[11px] font-medium">Preview unavailable</span>
+              </div>
+            ) : (
+              <img
+                src={ad.thumbnail}
+                alt={ad.title}
+                onError={() => setImgFailed(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isVideo) onAnalytics?.(ad);
+                  else setShowLightbox(true);
+                }}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90 group-hover:opacity-100 cursor-pointer"
+              />
+            )}
             {isVideo && (
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none flex items-center justify-center">
                 <button
