@@ -410,6 +410,11 @@ const config = {
     tokenTable: getVal(fileConfig.notifications?.tokenTable, 'NOTIFICATIONS_TOKEN_TABLE') || 'am_user_action',
     inAppTable: getVal(fileConfig.notifications?.inAppTable, 'NOTIFICATIONS_INAPP_TABLE') || 'ad_notifications',
   },
+
+  adminUserActivity: {
+    username: getVal(fileConfig.adminUserActivity?.username, 'PAS_ADMIN_USERNAME'),
+    password: getVal(fileConfig.adminUserActivity?.password, 'PAS_ADMIN_PASSWORD'),
+  },
 };
 
 

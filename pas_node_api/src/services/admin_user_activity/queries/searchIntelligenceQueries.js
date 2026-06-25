@@ -285,19 +285,17 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
       const esQuery = {
         index: indexName,
         body: {
-          size: 0,
           query: baseQuery
         }
       };
 
       logger?.info?.('[fetchAdsCountByPlatform] Query for platform:', { platform, index: indexName, searchType, searchValue });
 
-      const esResult = await platformElastic.search(esQuery);
-      const hits = esResult.hits || esResult.body?.hits;
-      const count = typeof hits.total === 'object' ? hits.total.value : hits.total;
-      totalCount += (count || 0);
-   
-      logger?.info?.('[fetchAdsCountByPlatform] Results:', { platform, count: count || 0 });
+      const esResult = await elastic.count(esQuery);
+      const count = esResult.count || esResult.body?.count || 0;
+      totalCount += count;
+
+      logger?.info?.('[fetchAdsCountByPlatform] Results:', { platform, count });
     } catch (err) {
       logger?.warn?.('[fetchAdsCountByPlatform] Failed for platform:', platform, 'Error:', err.message);
     }

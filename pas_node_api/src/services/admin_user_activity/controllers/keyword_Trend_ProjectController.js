@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const { getAggs } = require('../helpers/searchIntelligenceHelpers');
 const databaseManager = require('../../../database/DatabaseManager');
@@ -388,7 +388,6 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
     }
 
     // Fetch all keywords/advertisers/domains of given type
-    const collection = mongoDb.collection('keyword_searches');
     const docs = await collection.find({ type: typeNum }).toArray();
 
     if (docs.length === 0) {
@@ -417,6 +416,21 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
     let totalAdsCount = 0;
     const keywordBreakdown = [];
 
+    // For domains: fetch all keywords that reference each domain
+    let domainKeywordMap = {};
+    if (typeNum === 3) {
+      const allKeywords = await collection.find({ type: 1 }).toArray();
+      for (const keyword of allKeywords) {
+        const domains = keyword.networks || [];
+        for (const domain of domains) {
+          if (!domainKeywordMap[domain]) {
+            domainKeywordMap[domain] = [];
+          }
+          domainKeywordMap[domain].push(keyword);
+        }
+      }
+    }
+
     for (const doc of docs) {
       const searchValue = doc.value;
       const platforms = doc.networks || [];
@@ -437,16 +451,37 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
           const endTime = run.endTime || new Date().toISOString();
           const runStartDate = new Date(startTime);
 
-          const adsCount = await fetchAdsCountByPlatform(
-            elastic,
-            runPlatforms,
-            null,
-            searchValue,
-            typeNum,
-            logger,
-            startTime,
-            endTime
-          );
+          // For domains: fetch ads from keywords on this domain instead of the domain itself
+          let adsCount = 0;
+          if (typeNum === 3) {
+            // typeNum 3 = domain: aggregate ads from keywords on this domain
+            const keywordsOnDomain = domainKeywordMap[searchValue] || [];
+            for (const keyword of keywordsOnDomain) {
+              const keywordAds = await fetchAdsCountByPlatform(
+                elastic,
+                runPlatforms,
+                null,
+                keyword.value,  // Use the keyword value, not domain
+                1,  // Search as keyword type
+                logger,
+                startTime,
+                endTime
+              );
+              adsCount += (keywordAds || 0);
+            }
+          } else {
+            // For keywords/advertisers: fetch directly
+            adsCount = await fetchAdsCountByPlatform(
+              elastic,
+              runPlatforms,
+              null,
+              searchValue,
+              typeNum,
+              logger,
+              startTime,
+              endTime
+            );
+          }
 
           const count = adsCount || 0;
 
@@ -515,10 +550,6 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
   } catch (err) {
     logger?.error?.('[getTotalAdsCount] Error:', err);
     return { code: 500, message: 'Internal server error', error: err.message };
-  } finally {
-    if (client) {
-      await client.close();
-    }
   }
 }
 
@@ -839,30 +870,12 @@ async function getTopKeywords(req, elastic, logger) {
 // Returns: total, completed_scraping, under_scraping, not_went_scrapping counts
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function getSummaryStats(req, elastic, logger) {
-  
-  let client = null;
+async function getSummaryStats(req, elastic, logger, mongo) {
   try {
-    const mongoUri = config.databases?.mongo?.uri;
-    let mongoDatabase = config.databases?.mongo?.database;
-
-    let dbFromUri = null;
-    if (mongoUri) {
-      const match = mongoUri.match(/\/([a-zA-Z0-9_-]+)(\?|$)/);
-      if (match) {
-        dbFromUri = match[1];
-      }
-    }
-
-    const finalDatabase = dbFromUri || mongoDatabase;
-
-    if (!mongoUri || !finalDatabase) {
+    const collection = getKeywordSearchesCollection(mongo);
+    if (!collection) {
       return { code: 500, message: 'MongoDB not available' };
     }
-
-    client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 5000 });
-    await client.connect();
-    const mongoDb = client.db(finalDatabase);
 
     const { type = 'keyword', date_range = 'all' } = req.query;
 
@@ -886,8 +899,6 @@ async function getSummaryStats(req, elastic, logger) {
       const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
       dateFilter = { createdAt: { $gte: startOfDay, $lt: endOfDay } };
     }
-
-    const collection = mongoDb.collection('keyword_searches');
 
     // Single aggregation pipeline with $facet for parallel calculation
     const pipeline = [
@@ -1110,12 +1121,7 @@ async function getSummaryStats(req, elastic, logger) {
       },
     };
   } catch (err) {
-    
     return { code: 500, message: 'Internal server error', error: err.message };
-  } finally {
-    if (client) {
-      await client.close();
-    }
   }
 }
 

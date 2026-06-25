@@ -1,8 +1,9 @@
 # Intelligence Manifest
 ## Complete Documentation of Intelligence APIs & Logic
-**Last Updated:** 2026-06-19  
+**Last Updated:** 2026-06-23  
 **Service:** admin_user_activity  
-**Status:** Production Ready
+**Status:** Production Ready  
+**Total APIs:** 15 endpoints
 
 ---
 
@@ -34,19 +35,25 @@ All routes are under `/api/v1/admin_user_activity/` prefix and require authentic
 | 7 | `/intelligence/keyword-trends` | GET | getKeywordTrends | Keywords/advertisers/domains with history |
 | 8 | `/intelligence/scraping-history` | GET | getKeywordScrapingHistory | 30-day scraping history for keywords |
 | 9 | `/intelligence/projects` | GET | getProjectActivity | Project-related user activities |
-| 10 | `/intelligence/total-ads-count` | GET | getTotalAdsCount | **NEW:** Total ads count by type (today vs all-time) |
+| 10 | `/intelligence/total-ads-count` | GET | getTotalAdsCount | Total ads count by type (today vs all-time) |
+| 11 | `/intelligence/top-keywords` | GET | getTopKeywords | Top 10 keywords based on search count |
+| 12 | `/intelligence/summary-stats` | GET | getTrendsSummaryStats | Summary statistics for keyword trends |
+| 13 | `/intelligence/items-list` | GET | getItemsList | Unique items (keywords/advertisers/domains) for dropdown |
+| 14 | `/purge-old-activities` | GET | purgeOldActivities | Delete user_activities docs older than 90 days |
+| 15 | `/nas-storage` | GET | buildNasReport | NAS capacity & per-network storage breakdown |
 
 ---
 
 ## Overview
 
 The intelligence system provides comprehensive user activity analytics, search trends, and behavioral insights. It consists of:
-- **3 main intelligence controllers** with 11+ functions
-- **10 API endpoints** for analytics, trends, and ad counting
+- **3 main intelligence controllers** with 15+ functions
+- **15 API endpoints** for analytics, trends, and ad counting
 - **Complex aggregation queries** with multi-level filtering
 - **Real-time scraping history tracking** with MongoDB integration
 - **User anomaly detection** (high-volume flagging)
 - **Per-keyword ads counting** with platform breakdown
+- **Maintenance utilities** for activity purging and storage monitoring
 
 ---
 
@@ -734,6 +741,217 @@ With per-platform breakdown for each category.
 
 ---
 
+### 10. Top Keywords
+**Endpoint:** `GET /api/v1/admin_user_activity/intelligence/top-keywords`  
+**Controller:** `keyword_Trend_ProjectController.js::getTopKeywords()`  
+**Status:** Production Ready
+
+#### Purpose
+Fetches top 10 keywords based on search count from user_activities Elasticsearch index.
+
+#### Response Structure
+```json
+{
+  "code": 200,
+  "data": {
+    "keywords": [
+      {
+        "keyword": "best headphones",
+        "count": 567
+      },
+      {
+        "keyword": "wireless earbuds",
+        "count": 456
+      }
+    ]
+  }
+}
+```
+
+#### Key Features
+- Simple aggregation query on Elasticsearch
+- Top 10 most searched keywords only
+- Counts based on search frequency
+
+#### Implementation Details
+- Uses terms aggregation on search.keyword field
+- Returns top results sorted by count descending
+
+---
+
+### 11. Summary Statistics for Keyword Trends
+**Endpoint:** `GET /api/v1/admin_user_activity/intelligence/summary-stats`  
+**Controller:** `keyword_Trend_ProjectController.js::getTrendsSummaryStats()`  
+**Status:** Production Ready
+
+#### Purpose
+Fetches comprehensive summary statistics for keyword trends dashboard including total, completed, under scraping, and not scraped counts.
+
+#### Response Structure
+```json
+{
+  "code": 200,
+  "data": {
+    "total_keywords": 2156,
+    "completed": 1234,
+    "under_scraping": 45,
+    "not_went": 234,
+    "failed": 12,
+    "statistics": {
+      "completion_rate": 57,
+      "success_rate": 98
+    }
+  }
+}
+```
+
+#### Key Features
+- MongoDB aggregation for scraping status
+- Multiple status tracking (completed, under scraping, failed, not scraped)
+- Statistics calculation for dashboard display
+
+#### Query Parameters
+- `type` (optional): Filter by type (1=keyword, 2=advertiser, 3=domain)
+- `status` (optional): Filter by scraping status
+
+---
+
+### 12. Items List (Dropdown Filter)
+**Endpoint:** `GET /api/v1/admin_user_activity/intelligence/items-list`  
+**Controller:** `keyword_Trend_ProjectController.js::getItemsList()`  
+**Status:** Production Ready
+
+#### Purpose
+Returns list of all unique items (keywords, advertisers, or domains) for dropdown filter with search count.
+
+#### Response Structure
+```json
+{
+  "code": 200,
+  "data": {
+    "items": [
+      {
+        "id": "60f7a3c4b5d8e9f1a2b3c4d5",
+        "value": "headphones",
+        "count": 567
+      },
+      {
+        "id": "60f7a3c4b5d8e9f1a2b3c4d6",
+        "value": "earbuds",
+        "count": 456
+      }
+    ]
+  }
+}
+```
+
+#### Key Features
+- MongoDB aggregation for unique items
+- Search count sorting (most popular first)
+- Type-specific filtering (keyword/advertiser/domain)
+- Supports item search filtering
+
+#### Query Parameters
+- `type` (required): 1=keyword, 2=advertiser, 3=domain
+- `search_value` (optional): Filter items by value
+
+#### Implementation Details
+- Queries MongoDB keyword_searches collection
+- Sorts by searchCount descending
+- Returns up to 100 items (configurable)
+
+---
+
+### 13. Purge Old Activities
+**Endpoint:** `GET /api/v1/admin_user_activity/purge-old-activities`  
+**Controller:** `searchIntelligenceController.js::purgeOldActivities()`  
+**Status:** Production Ready
+
+#### Purpose
+Deletes user_activities documents older than 90 days from Elasticsearch. Supports dry-run mode for preview.
+
+#### Response Structure
+```json
+{
+  "code": 200,
+  "data": {
+    "deleted_count": 15234,
+    "dry_run": false,
+    "timestamp": "2026-06-23T14:30:00Z"
+  }
+}
+```
+
+#### Key Features
+- Bulk delete of old documents
+- Dry-run preview mode (no actual deletion)
+- Safe cleanup for storage management
+- Timestamp tracking for audit trail
+
+#### Query Parameters
+- `dry_run` (optional): Set to "true" for preview without deletion (default: false)
+
+#### Implementation Details
+- Uses Elasticsearch range query for date filtering
+- Bulk delete API for efficient removal
+- Logs deletion count for monitoring
+
+---
+
+### 14. NAS Storage Report
+**Endpoint:** `GET /api/v1/admin_user_activity/nas-storage`  
+**Controller:** `nasStorageReport.js::buildNasReport()`  
+**Status:** Production Ready
+
+#### Purpose
+Retrieves NAS capacity (total/used/free) with per-network storage breakdown and day-over-day growth for storage monitoring dashboard.
+
+#### Response Structure
+```json
+{
+  "code": 200,
+  "data": {
+    "total_capacity_gb": 1000,
+    "used_gb": 650,
+    "free_gb": 350,
+    "usage_percent": 65,
+    "per_network": [
+      {
+        "network": "facebook",
+        "used_gb": 250,
+        "usage_percent": 25,
+        "growth_gb": 5.2
+      },
+      {
+        "network": "instagram",
+        "used_gb": 200,
+        "usage_percent": 20,
+        "growth_gb": 3.8
+      }
+    ]
+  }
+}
+```
+
+#### Key Features
+- Real-time NAS capacity checking
+- Per-network storage breakdown
+- Day-over-day growth tracking
+- Fresh data retrieval option
+- Support for configurable time windows
+
+#### Query Parameters
+- `days` (optional): Number of days to analyze (1-150, default: 30)
+- `refresh` (optional): Set to "1" to force fresh df read (bypasses cache)
+
+#### Implementation Details
+- Calls system `df` command for capacity data
+- Analyzes storage directories per network
+- Calculates growth by comparing against previous day
+- Results may be cached (check `refresh` param)
+
+---
+
 ## Core Logic Breakdown
 
 ### Time Window Resolution (`resolveTimeWindow()`)
@@ -1202,6 +1420,7 @@ logger?.info?.(`Query completed in ${duration}ms`);
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-06-23 | Documented 5 additional endpoints: top-keywords, summary-stats, items-list, purge-old-activities, nas-storage (total 15 endpoints) |
 | 1.1 | 2026-06-19 | Added total-ads-count endpoint with keyword breakdown |
 | 1.0 | 2026-06-18 | Initial production release (8 endpoints) |
 

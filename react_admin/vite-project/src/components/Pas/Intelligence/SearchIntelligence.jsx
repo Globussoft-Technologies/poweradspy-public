@@ -571,7 +571,7 @@ async function exportProjectsPDF(data) {
   const { jsPDF } = await import("jspdf");
   const { rows, applied, total, dateLabel } = data;
 
-  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
   const MARGIN = 24;
@@ -631,7 +631,7 @@ async function exportProjectsPDF(data) {
   };
 
   // Columns: TIMESTAMP | USER | TYPE | BRANDS | COMPETITORS | MEMBER NAME | MEMBER EMAIL | EXPORTED COMPETITORS
-  const COL_W = [85, 130, 120, 90, 100, 100, 110, 0];
+  const COL_W = [75, 110, 90, 85, 100, 100, 110, 0];
   COL_W[7] = availW - COL_W.reduce((s, v) => s + v, 0);
   const COL_X = COL_W.reduce((acc, w, i) => { acc.push(i===0 ? MARGIN : acc[i-1]+COL_W[i-1]); return acc; }, []);
   const HEADERS = ["TIMESTAMP", "USER", "TYPE", "BRANDS", "COMPETITORS", "MEMBER NAME", "MEMBER EMAIL", "EXPORTED COMPETITORS"];
@@ -710,9 +710,9 @@ async function exportProjectsPDF(data) {
 
     // MEMBER NAME
     let memberName = "-";
-    if (row.method === "add_member") {
+    if (row.project_type === "add_member") {
       memberName = row.member_name ?? "-";
-    } else if (row.method === "delete_member") {
+    } else if (row.project_type === "delete_member") {
       memberName = row.delete_member_name ?? "-";
     }
     pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(17,24,39);
@@ -720,16 +720,16 @@ async function exportProjectsPDF(data) {
 
     // MEMBER EMAIL
     let memberEmail = "-";
-    if (row.method === "add_member") {
+    if (row.project_type === "add_member") {
       memberEmail = row.member_email ?? "-";
-    } else if (row.method === "delete_member") {
+    } else if (row.project_type === "delete_member") {
       memberEmail = row.delete_member_email ?? "-";
     }
     pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(17,24,39);
     clippedText(pdf, pdfSafe(memberEmail), COL_X[6]+4, textBaseY, COL_W[6]-8);
 
     // EXPORTED COMPETITORS
-    const exportedComps = (row.method === "export_competitors" && row.exported_Competitors)
+    const exportedComps = (row.project_type === "export_competitors" && row.exported_Competitors)
       ? (Array.isArray(row.exported_Competitors) ? row.exported_Competitors : row.exported_Competitors.split(', ').filter(Boolean))
       : [];
     const exCompTop = curY + (thisRowH - (exportedComps.length||1) * (TAG_ROW_H+TAG_GAP) + TAG_GAP) / 2;

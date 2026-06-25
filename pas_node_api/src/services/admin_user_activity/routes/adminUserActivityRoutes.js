@@ -2,8 +2,9 @@
 
 const { Router } = require('express');
 const { asyncHandler } = require('../../../middleware/errorHandler');
-const { authMiddleware, generateToken } = require('../../../middleware/auth');
+const { authMiddleware } = require('../../../middleware/auth');
 const databaseManager = require('../../../database/DatabaseManager');
+const { adminLogin } = require('../controllers/authController');
 const { getAllSearches, getFilterOptions, getSummaryStats: getSearchesSummaryStats } = require('../controllers/userActivitySearchController');
 const { getIntelligenceStats, getTopUsers, purgeOldActivities, getKeywordScrapingHistory } = require('../controllers/searchIntelligenceController');
 const { getKeywordTrends, getProjectActivity, getTopKeywords, getSummaryStats: getTrendsSummaryStats, getTotalAdsCount, getItemsList } = require('../controllers/keyword_Trend_ProjectController');
@@ -42,14 +43,8 @@ function createAdmin_user_activityRoutes(service) {
   router.post(
     '/login',
     asyncHandler(async (req, res) => {
-      const { username, password } = req.body;
-      const adminUser = process.env.PAS_ADMIN_USERNAME || 'Admin';
-      const adminPass = process.env.PAS_ADMIN_PASSWORD || 'Admin@123';
-      if (!username || !password || username !== adminUser || password !== adminPass) {
-        return res.status(400).json({ code: 400, message: 'Username or password incorrect' });
-      }
-      const token = generateToken({ user_name: username, role: 'admin' });
-      return res.json({ code: 200, message: 'Logged in successfully.', data: { token } });
+      const result = await adminLogin(req, res, service.log);
+      return res.status(result.code).json(result);
     })
   );
 
