@@ -214,7 +214,12 @@ async function searchAds(req, db, logger) {
   builder.setFrom(from).setSize(size).setSortField(sort.field).setSortMethod(sort.order).setIpBasedCountry(p.ipBasedCountry || 'NA');
 
   // Search text fields
-  if (p.keyword)    builder.setKeyword(p.keyword);
+  // Keyword box: the text fields are edge_ngram analyzed, so a raw match/phrase
+  // over-matches any shared prefix (a "hair" search returned "Haier" fridges /
+  // "HR Solutions"). Resolve each word to the exact stemmed token the index
+  // stored and term/span-match it (same approach as built_with/funnel below).
+  // `exact_search` (frontend "Search Precisely") switches AND-of-words →
+  // adjacent-phrase. Resolution needs the index name; done after esIndexLander.
   if (p.advertiser) builder.setPostOwnerName(p.advertiser);
   if (p.domain)     builder.setUrl(p.domain);
 
@@ -246,6 +251,15 @@ async function searchAds(req, db, logger) {
   // built_with / built_with_analytics_tracking are edge_ngram analyzed, so we
   // resolve each value to the exact stemmed token before term-matching it.
   const esIndexLander = db.elastic?.indexName || 'google_ads_data';
+  if (p.keyword) {
+    const kwWords = String(p.keyword).replace(/"/g, '').trim().split(/\s+/).filter(Boolean);
+    if (kwWords.length) {
+      builder.setKeyword(p.keyword); // legacy fallback if token resolution yields nothing
+      builder.setKeywordTokens(await resolveLongestTokens(db.elastic, esIndexLander, 'text', kwWords, logger));
+      // "Search Precisely" — frontend sends exact_search 0/1 (also honour quoted input)
+      builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true || String(p.keyword).includes('"'));
+    }
+  }
   if (p.ecommerce)       builder.setBuiltWith(await resolveLongestTokens(db.elastic, esIndexLander, 'built_with', ensureArray(p.ecommerce), logger));
   if (p.track)           builder.setTrack(ensureArray(p.track));
   if (p.source)          builder.setSource(ensureArray(p.source));

@@ -99,6 +99,22 @@ class GoogleSearchQueryBuilder {
     this._params.keyword = v;
     return this;
   }
+  // Pre-resolved per-word "longest tokens" for the keyword box — each entry is
+  // the fully stemmed whole word the index actually stored (resolved upstream
+  // via landerTokenResolver against the `text` field's analyzer). When set,
+  // these are term/span-matched instead of running the raw keyword back through
+  // the field's edge_ngram analyzer. See _getKeywordEnv for the why.
+  setKeywordTokens(v) {
+    this._params.keywordTokens = Array.isArray(v) ? v.filter(Boolean) : null;
+    return this;
+  }
+  // Frontend "Search Precisely" (payload `exact_search` 0/1). When true, the
+  // keyword words must appear adjacent + in order (phrase). When false, every
+  // word must merely be present (AND). See _getKeywordEnv.
+  setExactSearch(v) {
+    this._params.exactSearch = !!v;
+    return this;
+  }
   setPostOwnerName(v) {
     this._params.postOwnerName = v;
     return this;
@@ -243,31 +259,80 @@ class GoogleSearchQueryBuilder {
   // ─── Clause generators ──
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
-    // target_keyword intentionally excluded: it's the advertiser's bidding
-    // keyword (targeting metadata), not ad content. Searching it from the
-    // main keyword box surfaces irrelevant ads whose copy doesn't mention
-    // the term but whose advertiser bids on it. Filter-style targeting
-    // lookup is still available via setTargetKeyword() / _getTargetKeywordEnv.
-    //
-    // NOTE on the "Borosil matches Hubspot" issue: those fields are mapped
-    // with an edge-ngram analyzer that expands a query like "hubspot" into
-    // Synonym(h, hu, hub, hubsp, hubspot) at search time, so any doc whose
-    // text contains an 'h'-prefixed token (e.g. "https" in a URL) matches.
-    // We attempted to fix this with `analyzer: 'standard'` at search time,
-    // but the index-time analyzer doesn't always store the full word as a
-    // token (max_gram appears to be shorter than typical search words), so
-    // common searches (e.g. "Myntra") returned zero results. The right fix
-    // is mapping-side (set the field's search_analyzer to a non-edge-ngram
-    // analyzer, or add a `.keyword`/`_exactly` sub-field for exact lookups)
-    // — which is out of scope for this query-only refactor.
     const fields = [
       "text",
       "title",
       "newsfeed_description",
       "news_feed_description",
     ];
+    // target_keyword intentionally excluded: it's the advertiser's bidding
+    // keyword (targeting metadata), not ad content. Searching it from the
+    // main keyword box surfaces irrelevant ads whose copy doesn't mention
+    // the term but whose advertiser bids on it. Filter-style targeting
+    // lookup is still available via setTargetKeyword() / _getTargetKeywordEnv.
+    //
+    // ROOT CAUSE of the relevance bug: `text/title/newsfeed_description` are
+    // analyzed with `custom_analyzer`, whose `autocomplete` token-filter is an
+    // edge_ngram (min_gram=1, max_gram=20). At search time "hair" expands to
+    // Synonym(h, hai, hair) — all at one position — so a phrase/match clause
+    // matched ANY doc sharing a leading character ("Hair" search pulled in
+    // "Haier" fridges, "HR Solutions", "Hosting", etc.).
+    //
+    // FIX (query-only, no mapping/reindex — mirrors landerTokenResolver used
+    // for built_with/funnel): the controller pre-resolves each query word to
+    // the LONGEST token its own analyzer produced (the fully-stemmed whole
+    // word, e.g. "solutions" -> "soluti") and passes them via setKeywordTokens.
+    // We then term/span-match those exact tokens so ES never re-expands them
+    // into the over-matching ngram prefixes.
+    const tokens = this._params.keywordTokens;
+    if (tokens && tokens.length) {
+      // Single word → exact stemmed-token match across the fields.
+      if (tokens.length === 1) {
+        return asMust({
+          bool: {
+            should: fields.map((f) => ({ term: { [f]: tokens[0] } })),
+            minimum_should_match: 1,
+          },
+        });
+      }
+      // "Search Precisely" (exact_search=1): the words must appear as a true
+      // consecutive phrase, in order (slop:0). This is what makes precise mode
+      // exact — e.g. "car insurance" matches "Car Insurance" but NOT "Care
+      // Health Insurance" (stemmed "care"->"car" with a word in between).
+      // OR across the fields.
+      if (this._params.exactSearch) {
+        return asMust({
+          bool: {
+            should: fields.map((f) => ({
+              span_near: {
+                clauses: tokens.map((tok) => ({ span_term: { [f]: tok } })),
+                slop: 0,
+                in_order: true,
+              },
+            })),
+            minimum_should_match: 1,
+          },
+        });
+      }
+      // Default: every word must be present (AND), each matched across fields.
+      return asMust({
+        bool: {
+          must: tokens.map((tok) => ({
+            bool: {
+              should: fields.map((f) => ({ term: { [f]: tok } })),
+              minimum_should_match: 1,
+            },
+          })),
+        },
+      });
+    }
+
+    // Fallback (no pre-resolved tokens): keep the legacy phrase behaviour so any
+    // caller that only calls setKeyword() still works. This path still runs
+    // through the edge_ngram analyzer and over-matches — the controllers now
+    // always resolve tokens, so it's only a safety net.
+    const kw = this._params.keyword;
+    if (!kw) return null;
     if (kw.includes('"')) {
       return asMust({
         multi_match: { query: kw.replace(/"/g, ""), type: "phrase", fields },
