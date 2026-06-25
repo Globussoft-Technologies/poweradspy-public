@@ -1253,7 +1253,7 @@ async function trackUserActivity(payload, meta) {
   /* v8 ignore stop */
 
   const body = { ...common, ...extra };
-  console.log('[UserActivity] payload:', JSON.stringify(body, null, 2));
+
   const formBody = Object.entries(body)
     .filter(([, v]) => v !== null && v !== undefined)
     .flatMap(([k, v]) => {
@@ -1310,7 +1310,7 @@ export function trackProjectEvent(method, fields = {}) {
     })
     .join('&');
   const url = `${PAS_API_BASE}/api/v1/frontend_user_activity/user-activity-project`;
-  console.log('[trackProjectEvent] posting to', url, 'token:', !!getPASToken(), 'body:', formBody);
+
   fetch(url, {
     method: 'POST',
     headers: {

@@ -4,7 +4,7 @@ import { useTheme } from "../../../hooks/useTheme";
 
 const NAS_BASE_URL = import.meta.env.VITE_NAS_BASE_URL;
 //  const NAS_BASE_URL = 'https://content-dev.poweradspy.com';
-console.log("NAS_BASE_URL:", NAS_BASE_URL);
+
 
 function parseScreenshotUrl(raw) {
   if (!raw) return null;

@@ -108,7 +108,6 @@ const AdCard = ({
   onToggleFavourite,
   onAnalytics,
 }) => {
-  console.log(ad);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showLightbox, setShowLightbox] = useState(false);
   const [showMenu, setShowMenu] = useState(false);

@@ -458,60 +458,94 @@ function buildAllSearchesQuery(params) {
   if (platform && platform !== 'Any') filters.push({ match: { 'network': { query: platform.toLowerCase(), operator: 'or' } } });
   if (ad_type && ad_type !== 'Any') filters.push({ term: { 'filter.ad_type.keyword': ad_type } });
   if (country && country !== '') filters.push({ term: { 'user.current_country.keyword': country } });
-  if (keyword && keyword !== '') filters.push({ match: { 'search.keyword': { query: keyword, operator: 'and' } } });
-  if (advertiser && advertiser !== '') filters.push({ match: { 'search.advertiser': { query: advertiser, operator: 'and' } } });
-  if (domain && domain !== '') filters.push({ match: { 'search.domain': { query: domain, operator: 'and' } } });
 
-  // Activity type filter
+  // Activity type filter — supports comma-separated values for multiple types (OR logic)
+  const selectedTypes = [];
   if (activity_type && activity_type !== '') {
-    if (activity_type === 'keyword') {
-      filters.push({ exists: { field: 'search.keyword' } });
-    } else if (activity_type === 'advertiser') {
-      filters.push({ exists: { field: 'search.advertiser' } });
-    } else if (activity_type === 'domain') {
-      filters.push({ exists: { field: 'search.domain' } });
-    } else if (activity_type === 'filters') {
-      filters.push({ bool: { should: [
-        { exists: { field: 'filter.country' } },
-        { exists: { field: 'filter.countries' } },
-        { exists: { field: 'filter.gender' } },
-        { exists: { field: 'filter.ad_type' } },
-        { exists: { field: 'filter.ad_categories' } },
-        { exists: { field: 'filter.ad_subCategories' } },
-        { exists: { field: 'filter.status' } },
-        { exists: { field: 'filter.sort_by' } },
-        { exists: { field: 'filter.platform' } },
-        { exists: { field: 'filter.native_network' } },
-        { exists: { field: 'filter.ctr' } },
-        { exists: { field: 'filter.budget' } },
-      ], minimum_should_match: 1 } });
-    } else if (activity_type === 'other_activity') {
-      filters.push({ bool: { should: [
-        { exists: { field: 'dashboard.exportsAds' } },
-        { exists: { field: 'favourite_ad_id' } },
-        { exists: { field: 'unfavourite_ad_id' } },
-        { exists: { field: 'download.ad_id' } },
-        { exists: { field: 'hide_ad_id' } },
-        { exists: { field: 'unhide_ad_id' } },
-        { exists: { field: 'hide_advertiser_id' } },
-        { exists: { field: 'unhide_advertiser_id' } },
-        { exists: { field: 'dashboard.show_original' } },
-        { exists: { field: 'user.language_name' } },
-        { exists: { field: 'vieworiginal.ad_id' } },
-      ], minimum_should_match: 1 } });
-    } else if (activity_type === 'sorting_filters') {
-      filters.push({ bool: { should: [
-        { exists: { field: 'dashboard.newest_sort' } },
-        { exists: { field: 'dashboard.running_longest_sort' } },
-        { exists: { field: 'dashboard.last_seen_sort' } },
-        { exists: { field: 'dashboard.domain_sort' } },
-        { exists: { field: 'dashboard.likes_sort' } },
-        { exists: { field: 'dashboard.comments_sort' } },
-        { exists: { field: 'dashboard.shares_sort' } },
-        { exists: { field: 'dashboard.popularity_sort' } },
-        { exists: { field: 'dashboard.impressions_sort' } },
-        { exists: { field: 'dashboard.views_sort' } },
-      ], minimum_should_match: 1 } });
+    selectedTypes.push(...activity_type.split(',').map(t => t.trim()).filter(Boolean));
+  }
+
+  // Text filters (keyword, advertiser, domain) only apply if:
+  // 1. No activity type is selected (show all), OR
+  // 2. The corresponding activity type is selected
+  const showAllActivityTypes = selectedTypes.length === 0;
+  const textFilterClauses = [];
+
+  if (keyword && keyword !== '' && (showAllActivityTypes || selectedTypes.includes('keyword'))) {
+    textFilterClauses.push({ match: { 'search.keyword': { query: keyword, operator: 'and' } } });
+  }
+  if (advertiser && advertiser !== '' && (showAllActivityTypes || selectedTypes.includes('advertiser'))) {
+    textFilterClauses.push({ match: { 'search.advertiser': { query: advertiser, operator: 'and' } } });
+  }
+  if (domain && domain !== '' && (showAllActivityTypes || selectedTypes.includes('domain'))) {
+    textFilterClauses.push({ match: { 'search.domain': { query: domain, operator: 'and' } } });
+  }
+
+  // If multiple text filters are active, combine them with OR logic
+  if (textFilterClauses.length > 1) {
+    filters.push({ bool: { should: textFilterClauses, minimum_should_match: 1 } });
+  } else if (textFilterClauses.length === 1) {
+    filters.push(textFilterClauses[0]);
+  }
+
+  // Build activity type filter
+  if (selectedTypes.length > 0) {
+    const shouldClauses = [];
+
+    for (const type of selectedTypes) {
+      if (type === 'keyword') {
+        shouldClauses.push({ exists: { field: 'search.keyword' } });
+      } else if (type === 'advertiser') {
+        shouldClauses.push({ exists: { field: 'search.advertiser' } });
+      } else if (type === 'domain') {
+        shouldClauses.push({ exists: { field: 'search.domain' } });
+      } else if (type === 'filters') {
+        shouldClauses.push({ bool: { should: [
+          { exists: { field: 'filter.country' } },
+          { exists: { field: 'filter.countries' } },
+          { exists: { field: 'filter.gender' } },
+          { exists: { field: 'filter.ad_type' } },
+          { exists: { field: 'filter.ad_categories' } },
+          { exists: { field: 'filter.ad_subCategories' } },
+          { exists: { field: 'filter.status' } },
+          { exists: { field: 'filter.sort_by' } },
+          { exists: { field: 'filter.platform' } },
+          { exists: { field: 'filter.native_network' } },
+          { exists: { field: 'filter.ctr' } },
+          { exists: { field: 'filter.budget' } },
+        ], minimum_should_match: 1 } });
+      } else if (type === 'other_activity') {
+        shouldClauses.push({ bool: { should: [
+          { exists: { field: 'dashboard.exportsAds' } },
+          { exists: { field: 'favourite_ad_id' } },
+          { exists: { field: 'unfavourite_ad_id' } },
+          { exists: { field: 'download.ad_id' } },
+          { exists: { field: 'hide_ad_id' } },
+          { exists: { field: 'unhide_ad_id' } },
+          { exists: { field: 'hide_advertiser_id' } },
+          { exists: { field: 'unhide_advertiser_id' } },
+          { exists: { field: 'dashboard.show_original' } },
+          { exists: { field: 'user.language_name' } },
+          { exists: { field: 'vieworiginal.ad_id' } },
+        ], minimum_should_match: 1 } });
+      } else if (type === 'sorting_filters') {
+        shouldClauses.push({ bool: { should: [
+          { exists: { field: 'dashboard.newest_sort' } },
+          { exists: { field: 'dashboard.running_longest_sort' } },
+          { exists: { field: 'dashboard.last_seen_sort' } },
+          { exists: { field: 'dashboard.domain_sort' } },
+          { exists: { field: 'dashboard.likes_sort' } },
+          { exists: { field: 'dashboard.comments_sort' } },
+          { exists: { field: 'dashboard.shares_sort' } },
+          { exists: { field: 'dashboard.popularity_sort' } },
+          { exists: { field: 'dashboard.impressions_sort' } },
+          { exists: { field: 'dashboard.views_sort' } },
+        ], minimum_should_match: 1 } });
+      }
+    }
+
+    if (shouldClauses.length > 0) {
+      filters.push({ bool: { should: shouldClauses, minimum_should_match: 1 } });
     }
   }
 

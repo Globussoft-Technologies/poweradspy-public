@@ -446,9 +446,9 @@ const KeywordTrends = ({ onDataReady }) => {
                 <col style={{ width: "40px" }} />
                 <col style={{ width: "14%" }} />
                 <col style={{ width: "13%" }} />
+                <col style={{ width: "15%" }} />
                 <col style={{ width: "12%" }} />
-                <col style={{ width: "14%" }} />
-                <col style={{ width: "28%" }} />
+                <col style={{ width: "27%" }} />
                 <col style={{ width: "8%" }} />
                 <col style={{ width: "6%" }} />
                 <col style={{ width: "7%" }} />
@@ -457,7 +457,7 @@ const KeywordTrends = ({ onDataReady }) => {
                 <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
                   {[
                     "#", TYPE_TABS.find((t) => t.key === typeTab)?.label.toUpperCase(),
-                    "SEARCHED DATE", "PLATFORMS", "STATUS", "HISTORY",
+                    "SEARCHED DATE", "SEARCHED PLATFORMS", "STATUS", "SCRAPING HISTORY",
                     "CRAWLED", "FAILED", "ADS COUNT"
                   ].map((h) => (
                     <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
@@ -679,11 +679,6 @@ const KeywordTrends = ({ onDataReady }) => {
               style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: typeTab === tab.key ? "1px solid #e5e7eb" : "1px solid transparent", cursor: "pointer", background: typeTab === tab.key ? "white" : "transparent", color: typeTab === tab.key ? "#111827" : "#6b7280", boxShadow: "none" }}
             >
               {tab.label}
-              {scrapingStats?.totalItems > 0 && typeTab === tab.key && (
-                <span style={{ marginLeft: "6px", fontSize: "11px", fontWeight: 600, color: typeTab === tab.key ? "#4338ca" : "#9ca3af" }}>
-                  {scrapingStats.totalItems}
-                </span>
-              )}
             </button>
           ))}
         </div>

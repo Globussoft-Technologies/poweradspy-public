@@ -37,7 +37,7 @@ const EMPTY = {
   toDate: todayStr(),   toTime: "23:59",
   includedUsers: [], excludedUsers: [],  // Will be populated with globussoft.in emails after filterOptions load
   keyword: "", advertiser: "", domain: "",
-  platform: "", activityType: "keyword",  // Default to keyword filter
+  platform: "", activityTypes: ["keyword"],  // Array of selected activity types - default to keyword
 };
 
 const ACTIVITY_TYPES = [
@@ -118,11 +118,8 @@ const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, st
   );
 };
 
-// ── Multi-select include/exclude user input ───────────────────────────────────
-const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] }) => {
-  // Determine initial mode based on whether there are excluded or included users
-  const initialMode = excluded.length > 0 ? "exclude" : (included.length > 0 ? "include" : "exclude");
-  const [mode, setMode]   = useState(initialMode);
+// ── Single user input (for include or exclude only) ──────────────────────────────
+const SingleUserInput = ({ users = [], onChange, options = [], mode = 'include', placeholder = 'email or .domain...', otherUsers = [], onOtherUsersChange }) => {
   const [query, setQuery] = useState("");
   const [open, setOpen]   = useState(false);
   const wrapRef           = useRef(null);
@@ -133,25 +130,11 @@ const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] 
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const allSelected = [...included, ...excluded];
-
-  // Domain chips already added (e.g. ".com", ".in")
-  const domainChips = [...included, ...excluded].filter((v) => !v.includes('@'));
-
-  const matchesDomainChip = (email, chip) => {
-    const emailLower = email.toLowerCase();
-    const atIdx = emailLower.indexOf('@');
-    if (atIdx === -1) return false;
-    const domain = emailLower.slice(atIdx + 1);
-    const pat = chip.startsWith('.') ? chip.slice(1).toLowerCase() : chip.toLowerCase();
-    return domain === pat || domain.endsWith(`.${pat}`);
-  };
-
-  // Show suggestions: all options EXCEPT those already selected (excluded/included)
+  // Show suggestions: all options EXCEPT those already selected
   const filtered = (query
     ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
     : options
-  ).filter((o) => !allSelected.includes(o)).slice(0, 30);
+  ).filter((o) => !users.includes(o)).slice(0, 30);
 
   const addEntry = (val) => {
     const v = val.trim();
@@ -160,100 +143,79 @@ const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] 
     const isDomain = v.startsWith('.') || (!v.includes('@') && v.includes('.'));
 
     if (isDomain) {
-      // Expand domain to all matching emails from options
-      // Pattern ".com" or "globussoft.in" → match email domain part
       const pat = v.startsWith('.') ? v.slice(1).toLowerCase() : v.toLowerCase();
       const matches = options.filter((o) => {
         const emailLower = o.toLowerCase();
         const atIdx = emailLower.indexOf('@');
         if (atIdx === -1) return false;
-        const domain = emailLower.slice(atIdx + 1); // e.g. "globussoft.in"
+        const domain = emailLower.slice(atIdx + 1);
         return domain === pat || domain.endsWith(`.${pat}`);
-      }).filter((o) => !allSelected.includes(o));
-      const toAdd = matches.length > 0 ? matches : [v]; // fall back to pattern if no matches
-      if (mode === "include") onChange({ includedUsers: [...included, ...toAdd], excludedUsers: excluded });
-      else                    onChange({ includedUsers: included, excludedUsers: [...excluded, ...toAdd] });
+      }).filter((o) => !users.includes(o));
+      const toAdd = matches.length > 0 ? matches : [v];
+      const newUsers = [...users, ...toAdd];
+      onChange(newUsers);
+
+      // Remove from other list if present
+      const updatedOther = otherUsers.filter((u) => !toAdd.includes(u));
+      if (updatedOther.length !== otherUsers.length && onOtherUsersChange) {
+        onOtherUsersChange(updatedOther);
+      }
     } else {
-      if (allSelected.includes(v)) { setQuery(""); return; }
-      if (mode === "include") onChange({ includedUsers: [...included, v], excludedUsers: excluded });
-      else                    onChange({ includedUsers: included, excludedUsers: [...excluded, v] });
+      if (users.includes(v)) { setQuery(""); return; }
+      const newUsers = [...users, v];
+      onChange(newUsers);
+
+      // Remove from other list if present
+      if (otherUsers.includes(v) && onOtherUsersChange) {
+        onOtherUsersChange(otherUsers.filter((u) => u !== v));
+      }
     }
     setQuery("");
     setOpen(false);
   };
 
-  const removeIncluded = (v) => onChange({ includedUsers: included.filter((x) => x !== v), excludedUsers: excluded });
-  const removeExcluded = (v) => onChange({ includedUsers: included, excludedUsers: excluded.filter((x) => x !== v) });
+  const removeUser = (v) => onChange(users.filter((x) => x !== v));
 
   const inputStyle = {
     border: "none", outline: "none", fontSize: "12px", color: "#374151",
     background: "transparent", minWidth: "100px", flex: 1, padding: "2px 4px",
   };
 
-  const hasAny = included.length > 0 || excluded.length > 0;
-  const showDropdown = open && (filtered.length > 0 || query.trim() || hasAny);
+  const bgColor = mode === "include" ? "#dcfce7" : "#fee2e2";
+  const textColor = mode === "include" ? "#15803d" : "#dc2626";
+  const borderColor = mode === "include" ? "#bbf7d0" : "#fecaca";
+
+  const showDropdown = open && (filtered.length > 0 || query.trim() || users.length > 0);
 
   return (
     <div ref={wrapRef} style={{ position: "relative", width: "100%" }}>
-      {/* Box — only mode toggle + input + summary badge */}
       <div
-        style={{ border: "1px solid #d1d5db", borderRadius: "6px", background: "white", padding: "4px 6px", cursor: "text", display: "flex", alignItems: "center", gap: "4px", minHeight: "32px" }}
+        style={{ border: "1px solid #d1d5db", borderRadius: "6px", background: "white", padding: "4px 6px", cursor: "text", display: "flex", alignItems: "center", gap: "4px", minHeight: "32px", flexWrap: "wrap" }}
         onClick={() => setOpen(true)}
       >
-        {/* Mode toggle */}
-        <button
-          onMouseDown={(e) => {
-            e.preventDefault(); e.stopPropagation();
-            setMode((m) => {
-              const next = m === "include" ? "exclude" : "include";
-              const all = [...included, ...excluded];
-              if (all.length > 0) {
-                if (next === "exclude") onChange({ includedUsers: [], excludedUsers: all });
-                else                   onChange({ includedUsers: all, excludedUsers: [] });
-              }
-              return next;
-            });
-          }}
-          style={{
-            fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", border: "none",
-            cursor: "pointer", flexShrink: 0,
-            background: mode === "include" ? "#dcfce7" : "#fee2e2",
-            color:      mode === "include" ? "#15803d" : "#dc2626",
-          }}
-        >
-          {mode === "include" ? "+ Include" : "− Exclude"}
-        </button>
-
-        {/* Summary badge when chips exist */}
-        {hasAny && (
-          <span style={{ fontSize: "11px", color: "#374151", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: "4px", padding: "2px 7px", whiteSpace: "nowrap", flexShrink: 0 }}>
-            {[
-              included.length > 0 ? `+${included.length}` : null,
-              excluded.length > 0 ? `−${excluded.length}` : null,
-            ].filter(Boolean).join(" / ")}
+        {users.length > 0 && (
+          <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: bgColor, color: textColor, border: `1px solid ${borderColor}`, whiteSpace: "nowrap" }}>
+            {mode === "include" ? "+" : "−"}{users.length}
           </span>
         )}
 
-        {/* Text input */}
         <input
           value={query}
           autoComplete="new-password"
-          placeholder={hasAny ? "add more..." : "email or .domain..."}
+          placeholder={users.length > 0 ? "add more..." : placeholder}
           style={inputStyle}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && query.trim()) { addEntry(query); }
-            if (e.key === "Backspace" && !query) {
-              if (excluded.length > 0) removeExcluded(excluded[excluded.length - 1]);
-              else if (included.length > 0) removeIncluded(included[included.length - 1]);
+            if (e.key === "Backspace" && !query && users.length > 0) {
+              removeUser(users[users.length - 1]);
             }
             if (e.key === "Escape") setOpen(false);
           }}
         />
       </div>
 
-      {/* Dropdown — selected chips at top, then suggestions */}
       {showDropdown && (
         <div style={{
           position: "absolute", top: "100%", left: 0, zIndex: 999,
@@ -261,53 +223,39 @@ const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] 
           boxShadow: "0 4px 16px rgba(0,0,0,0.10)", maxHeight: "300px", overflowY: "auto",
           marginTop: "2px", minWidth: "100%", width: "max-content", maxWidth: "380px",
         }}>
-
-          {/* Selected chips section */}
-          {hasAny && (
+          {users.length > 0 && (
             <div style={{ padding: "8px 10px", borderBottom: "1px solid #e5e7eb" }}>
-              {/* Header row with action buttons */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
                 <span style={{ fontSize: "10px", fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Selected ({included.length + excluded.length})
+                  Selected ({users.length})
                 </span>
                 <button
-                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onChange({ includedUsers: [], excludedUsers: [] }); }}
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onChange([]); }}
                   style={{ fontSize: "10px", padding: "2px 8px", borderRadius: "4px", border: "1px solid #e5e7eb", background: "#f9fafb", color: "#6b7280", cursor: "pointer", whiteSpace: "nowrap" }}
                 >
                   ✕ Clear all
                 </button>
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-              {included.map((v) => (
-                <span key={`inc-${v}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "#dcfce7", color: "#15803d", border: "1px solid #bbf7d0", borderRadius: "4px", fontSize: "11px", padding: "2px 6px", whiteSpace: "nowrap" }}>
-                  <span style={{ fontSize: "9px", fontWeight: 700 }}>+</span>{v}
-                  <span onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeIncluded(v); }} style={{ cursor: "pointer", marginLeft: "2px", fontSize: "10px", color: "#16a34a" }}>×</span>
-                </span>
-              ))}
-              {excluded.map((v) => (
-                <span key={`exc-${v}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "#fee2e2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "4px", fontSize: "11px", padding: "2px 6px", whiteSpace: "nowrap" }}>
-                  <span style={{ fontSize: "9px", fontWeight: 700 }}>−</span>{v}
-                  <span onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeExcluded(v); }} style={{ cursor: "pointer", marginLeft: "2px", fontSize: "10px", color: "#dc2626" }}>×</span>
-                </span>
-              ))}
+                {users.map((v) => (
+                  <span key={v} style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: bgColor, color: textColor, border: `1px solid ${borderColor}`, borderRadius: "4px", fontSize: "11px", padding: "2px 6px", whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: "9px", fontWeight: 700 }}>{mode === "include" ? "+" : "−"}</span>{v}
+                    <span onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeUser(v); }} style={{ cursor: "pointer", marginLeft: "2px", fontSize: "10px", color: textColor }}>×</span>
+                  </span>
+                ))}
               </div>
             </div>
           )}
 
-          {/* "Add as include/exclude" for typed value not in list */}
           {query.trim() && !filtered.includes(query.trim()) && (
             <div
               onMouseDown={(e) => { e.preventDefault(); addEntry(query); }}
-              style={{ padding: "7px 12px", fontSize: "12px", cursor: "pointer", borderBottom: "1px solid #f3f4f6",
-                color: mode === "include" ? "#15803d" : "#dc2626",
-                background: mode === "include" ? "#f0fdf4" : "#fff1f2",
-              }}
+              style={{ padding: "7px 12px", fontSize: "12px", cursor: "pointer", borderBottom: "1px solid #f3f4f6", color: textColor, background: mode === "include" ? "#f0fdf4" : "#fff1f2" }}
             >
               {mode === "include" ? "+" : "−"} {mode} "{query.trim()}"
             </div>
           )}
 
-          {/* Suggestions */}
           {filtered.map((opt) => (
             <div
               key={opt}
@@ -316,7 +264,7 @@ const UserMultiSelect = ({ included = [], excluded = [], onChange, options = [] 
               onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
             >
-              <span style={{ fontSize: "10px", marginRight: "6px", color: mode === "include" ? "#15803d" : "#dc2626", fontWeight: 700 }}>
+              <span style={{ fontSize: "10px", marginRight: "6px", color: textColor, fontWeight: 700 }}>
                 {mode === "include" ? "+" : "−"}
               </span>
               {opt}
@@ -789,7 +737,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           if (f.advertiser)           params.set("advertiser", f.advertiser);
           if (f.domain)               params.set("domain",     f.domain);
           if (f.platform)             params.set("platform",   f.platform);
-          if (f.activityType)         params.set("activity_type", f.activityType);
+          if (f.activityTypes?.length > 0) params.set("activity_type", f.activityTypes.join(","));
           return params;
         };
 
@@ -812,7 +760,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
           advertiser: applied.advertiser,
           domain: applied.domain,
           platform: applied.platform,
-          activity_type: applied.activityType,
+          activity_types: applied.activityTypes?.join(','),
         });
 
         // Fetch both in parallel
@@ -876,6 +824,17 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   const handleApply = useCallback((patch) => {
     setDraft((currentDraft) => {
       const next = patch ? { ...currentDraft, ...patch } : { ...currentDraft };
+
+      // Auto-select activity types based on filled text fields
+      if (patch) {
+        const updatedTypes = new Set();
+        // Only add types that have non-empty values in the final state
+        if (next.keyword && next.keyword !== '') updatedTypes.add('keyword');
+        if (next.advertiser && next.advertiser !== '') updatedTypes.add('advertiser');
+        if (next.domain && next.domain !== '') updatedTypes.add('domain');
+        next.activityTypes = Array.from(updatedTypes);
+      }
+
       if (next.dateRange === "Custom") {
         const from = new Date(`${next.fromDate}T${next.fromTime}:00`);
         const to   = new Date(`${next.toDate}T${next.toTime}:59`);
@@ -936,8 +895,8 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       clear: () => clearChip({ domain: "" }) },
     applied.platform     && { key: "platform",   label: `Platform: ${applied.platform}`,
       clear: () => clearChip({ platform: "" }) },
-    applied.activityType && { key: "activityType", label: `Activity: ${ACTIVITY_TYPES.find(a => a.key === applied.activityType)?.label || applied.activityType}`,
-      clear: () => clearChip({ activityType: "" }) },
+    applied.activityTypes?.length > 0 && { key: "activityTypes", label: `Activity: ${applied.activityTypes.map(t => ACTIVITY_TYPES.find(a => a.key === t)?.label || t).join(", ")}`,
+      clear: () => clearChip({ activityTypes: [] }) },
   ].filter(Boolean);
 
   // Expose live data for native PDF export
@@ -958,6 +917,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
     if (rows.length === 0) return (
       <tr><td colSpan={10} style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>No search events found.</td></tr>
     );
+
+    // Determine which activity types to show
+    const showAllActivityTypes = applied.activityTypes?.length === 0;
+    const showKeyword = showAllActivityTypes || applied.activityTypes?.includes('keyword');
+    const showAdvertiser = showAllActivityTypes || applied.activityTypes?.includes('advertiser');
+    const showDomain = showAllActivityTypes || applied.activityTypes?.includes('domain');
+
     return rows.map((row, i) => {
       const { initials, color } = getAvatarProps(row.email);
       return (
@@ -980,17 +946,23 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               </span>
             </div>
           </td>
-          <td style={{ padding: "10px 12px", overflow: "hidden" }}>
-            <span style={{ display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "12px" }}>
-              {row.keyword ?? "—"}
-            </span>
-          </td>
-          <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {row.advertiser ?? "—"}
-          </td>
-          <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {row.domain ?? "—"}
-          </td>
+          {showKeyword && (
+            <td style={{ padding: "10px 12px", overflow: "hidden" }}>
+              <span style={{ display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "12px" }}>
+                {row.keyword ?? "—"}
+              </span>
+            </td>
+          )}
+          {showAdvertiser && (
+            <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {row.advertiser ?? "—"}
+            </td>
+          )}
+          {showDomain && (
+            <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {row.domain ?? "—"}
+            </td>
+          )}
           <td style={{ padding: "10px 12px", overflow: "visible", minWidth: forceExpand ? "600px" : "200px", verticalAlign: "top" }}>
             {row.platform ? (
               <PlatformCell platforms={String(row.platform).split(',').map(p => p.trim()).filter(Boolean)} isExport={forceExpand} />
@@ -1037,7 +1009,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       {/* Filter row — hidden during PDF export */}
       <div style={{ display: forceExpand ? "none" : "block", background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "16px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px", alignItems: "end" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "12px", alignItems: "end" }}>
 
           {/* Date Range */}
           <div style={fieldStyle}>
@@ -1059,16 +1031,31 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
             </select>
           </div>
 
-          {/* User — multi-select include/exclude */}
+          {/* Include Users */}
           <div style={fieldStyle}>
-            <label style={labelStyle}>User</label>
-            <UserMultiSelect
-              included={draft.includedUsers ?? []}
-              excluded={draft.excludedUsers ?? []}
+            <label style={labelStyle}>Include Users</label>
+            <SingleUserInput
+              users={draft.includedUsers ?? []}
               options={filterOptions.users}
-              onChange={(patch) => {
-                handleApply(patch);
-              }}
+              mode="include"
+              placeholder="email or .domain..."
+              otherUsers={draft.excludedUsers ?? []}
+              onChange={(users) => handleApply({ includedUsers: users })}
+              onOtherUsersChange={(users) => handleApply({ excludedUsers: users })}
+            />
+          </div>
+
+          {/* Exclude Users */}
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Exclude Users</label>
+            <SingleUserInput
+              users={draft.excludedUsers ?? []}
+              options={filterOptions.users}
+              mode="exclude"
+              placeholder="email or .domain..."
+              otherUsers={draft.includedUsers ?? []}
+              onChange={(users) => handleApply({ excludedUsers: users })}
+              onOtherUsersChange={(users) => handleApply({ includedUsers: users })}
             />
           </div>
 
@@ -1127,24 +1114,32 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
 
         </div>
 
-        {/* Activity Type Buttons */}
+        {/* Activity Type Buttons — toggle multiple selections */}
         <div style={{ marginTop: "12px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
           <span style={{ fontSize: "12px", fontWeight: 600, color: "#374151", marginRight: "4px" }}>Filter by Activity:</span>
           <button
-            onClick={() => clearChip({ activityType: "" })}
-            style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: draft.activityType === "" ? "1px solid #4338ca" : "1px solid #d1d5db", cursor: "pointer", background: draft.activityType === "" ? "#4338ca" : "white", color: draft.activityType === "" ? "white" : "#374151" }}
+            onClick={() => clearChip({ activityTypes: [] })}
+            style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: draft.activityTypes?.length === 0 ? "1px solid #4338ca" : "1px solid #d1d5db", cursor: "pointer", background: draft.activityTypes?.length === 0 ? "#4338ca" : "white", color: draft.activityTypes?.length === 0 ? "white" : "#374151" }}
           >
             All
           </button>
-          {ACTIVITY_TYPES.map((act) => (
-            <button
-              key={act.key}
-              onClick={() => applyImmediate({ activityType: act.key })}
-              style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: draft.activityType === act.key ? "1px solid #4338ca" : "1px solid #d1d5db", cursor: "pointer", background: draft.activityType === act.key ? "#4338ca" : "white", color: draft.activityType === act.key ? "white" : "#374151" }}
-            >
-              {act.label}
-            </button>
-          ))}
+          {ACTIVITY_TYPES.map((act) => {
+            const isSelected = draft.activityTypes?.includes(act.key);
+            return (
+              <button
+                key={act.key}
+                onClick={() => {
+                  const newTypes = isSelected
+                    ? draft.activityTypes.filter((t) => t !== act.key)
+                    : [...(draft.activityTypes || []), act.key];
+                  applyImmediate({ activityTypes: newTypes });
+                }}
+                style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, border: isSelected ? "1px solid #4338ca" : "1px solid #d1d5db", cursor: "pointer", background: isSelected ? "#4338ca" : "white", color: isSelected ? "white" : "#374151" }}
+              >
+                {act.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1236,11 +1231,24 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
-                {["TIMESTAMP", "USER", "KEYWORD", "ADVERTISER", "DOMAIN", "PLATFORM", "AD COUNT", "KEYWORD STATUS", "FILTERS APPLIED", "OTHER ACTIVITY"].map((h) => (
-                  <th key={h} style={{ padding: h === "AD COUNT" ? "10px 6px" : "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
-                    {h}
-                  </th>
-                ))}
+                {(() => {
+                  const showAllActivityTypes = applied.activityTypes?.length === 0;
+                  const showKeyword = showAllActivityTypes || applied.activityTypes?.includes('keyword');
+                  const showAdvertiser = showAllActivityTypes || applied.activityTypes?.includes('advertiser');
+                  const showDomain = showAllActivityTypes || applied.activityTypes?.includes('domain');
+
+                  const headers = ["TIMESTAMP", "USER"];
+                  if (showKeyword) headers.push("KEYWORD");
+                  if (showAdvertiser) headers.push("ADVERTISER");
+                  if (showDomain) headers.push("DOMAIN");
+                  headers.push("PLATFORM", "AD COUNT", "KEYWORD STATUS", "FILTERS APPLIED", "OTHER ACTIVITY");
+
+                  return headers.map((h) => (
+                    <th key={h} style={{ padding: h === "AD COUNT" ? "10px 6px" : "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
+                      {h}
+                    </th>
+                  ));
+                })()}
               </tr>
             </thead>
             <tbody>
@@ -1352,7 +1360,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                     if (item.status === 'success' || item.status === 'completed') {
                       statusBg = "#d1fae5";
                       statusColor = "#065f46";
-                      statusText = "✓ OK";
+                      statusText = "✓ Completed";
                     } else if (item.status === 'no_ads_found') {
                       statusBg = "#fee2e2";
                       statusColor = "#991b1b";
@@ -1371,6 +1379,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                     const isFailed = !item.status || item.status === 'no_ads_found' || item.status === 'failed' || item.status === 'error';
                     const rowBg = isFailed ? "#fff5f5" : "white";
                     const rowBorder = isFailed ? "3px solid #dc2626" : "1px solid #f3f4f6";
+                    const adsCountDisplay = item.adsCount === 0 ? "No ads found" : (item.adsCount ?? "-");
 
                     return (
                       <div key={idx} style={{ display: "grid", gridTemplateColumns: "110px 110px 130px 130px 80px 80px 100px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", borderLeft: rowBorder, backgroundColor: rowBg, textAlign: "center" }}>
@@ -1378,7 +1387,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                         <span style={{ fontSize: "11px", color: "#374151", textTransform: "capitalize" }}>{item.network || "-"}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{startTime}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{endTime}</span>
-                        <span style={{ fontSize: "11px", color: "#374151", fontWeight: 500 }}>{item.adsCount ?? "-"}</span>
+                        <span style={{ fontSize: "11px", color: "#374151", fontWeight: 500 }}>{adsCountDisplay}</span>
                         <span style={{ fontSize: "10px", padding: "4px 8px", borderRadius: "4px", background: statusBg, color: statusColor, fontWeight: 600, border: "1px solid #fca5a5" }}>
                           {statusText}
                         </span>
