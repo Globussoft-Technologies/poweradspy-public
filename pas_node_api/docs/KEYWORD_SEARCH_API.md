@@ -1,10 +1,18 @@
 # Keyword-Search API
 
-Two endpoints. **API 1** (frontend) stores a search. **API 2** (scraper) is the single
+Three endpoints. **API 1** (frontend) stores a search. **API 2** (scraper) is the single
 endpoint a plugin calls in a loop to submit finished results and claim the next terms.
+**API 3** bulk-inserts **synthetic** (manually-inserted) keywords. All share the one
+`keyword_searches` collection.
 
 > Design details: [KEYWORD_SEARCH_REVAMP_MANIFEST.md](./KEYWORD_SEARCH_REVAMP_MANIFEST.md).
 > All behaviour is controlled by `config.keywordSearch` in `config.json`.
+
+> **Synthetic keywords** are stored in the same collection + doc shape as user searches,
+> distinguished only by `users: null` + `userInfos: null` (real docs always carry arrays).
+> A later user search on the same term enriches the existing doc automatically (no
+> duplicate). A config-driven **HARD capacity cap** (`config.keywordSearch.cleanup`,
+> default 100k each for user-searched & synthetic) auto-deletes on insert — see the bottom.
 
 ---
 
@@ -23,6 +31,7 @@ All paths below are under `/api/v1/common`.
 |----------|------|
 | `POST /keyword-search` (store) | **JWT required** — `Authorization: Bearer <token>` header (or `authToken` cookie in a browser). |
 | `POST /keyword-search/work` (scraper) | **No JWT.** Must send the `x-scraper-name` header (the plugin's own unique name). |
+| `POST /keyword-search/synthetic` (bulk insert) | **No JWT** (internal bulk-load, like `work`). |
 
 ---
 
@@ -118,6 +127,16 @@ and hands the **next** term. The scraper does **not** track `docId`/`scrapeId` a
 - **priority** (`priority:true`): only terms re-searched on the frontend; each is handed
   out once, then goes quiet until searched again.
 
+**Synthetic-only claim (opt-in):** send `users: null` (or `userInfos: null`) in the body to
+claim **only synthetic** (manually-inserted, not-yet-user-searched) keywords. Omit it for the
+normal pool — existing behaviour is unchanged. The response echoes `synthetic: true`.
+
+**Google priority ordering (network-specific):** for `network: "google"`, a normal **daily**
+claim (no `priority` flag) serves terms in a fixed order on **every** hit — **priority**
+(`networkState.google.isActive:true`) first, then **user-searched**, then **synthetic**. The
+status transitions are identical to the existing flow (priority flips `isActive`; daily sets
+`dailyClaimDate`). Every other network — and any explicit `priority:true` — is unchanged.
+
 **The loop (size = 1):**
 
 ```jsonc
@@ -195,6 +214,84 @@ and hands the **next** term. The scraper does **not** track `docId`/`scrapeId` a
 
 ---
 
+## API 3 — Insert synthetic keywords (bulk)
+
+```
+POST /api/v1/common/keyword-search/synthetic
+```
+
+Bulk-load manually-inserted ("synthetic") keywords from a **CSV file** or **JSON**. No JWT.
+Stored in the same collection + doc shape as user searches, marked `users: null` +
+`userInfos: null`, deduped **case-insensitively** by the unique `(type, valueNorm)` index via
+`$setOnInsert` (an existing doc — user *or* synthetic — is **never** modified).
+
+**`network` is MANDATORY** (no default). It can be a single slug, a comma list, or `all`,
+supplied per-item, as a CSV `network` column, or as a batch field. It populates the doc's
+`networks` + `networkState`. Items with no/invalid network are skipped; a request with none
+valid → `400`.
+
+### Option A — JSON
+
+```
+Content-Type: application/json
+```
+
+| Form | Example |
+|------|---------|
+| array of strings (+ batch `network`) | `{ "network": "facebook", "keywords": ["cat", "dog"] }` or `["cat","dog"]` with batch network |
+| array of objects (per-item `network`/`type`) | `[ { "value": "cat", "network": "facebook,instagram" }, { "value": "ad", "type": 2, "network": "google" } ]` |
+
+`value` (alias `keyword`/`term`) is required per item; optional `type` (default keyword/1) and
+`country`/`user_id`. Top-level `type`/`network` are batch defaults; per-item overrides win.
+
+### Option B — CSV file (multipart/form-data)
+
+Field name **`file`** (≤ `syntheticMaxUploadMb`, default 50 MB, streamed). One keyword per
+line, **or** a header row with a `keyword` (or `value`) column (+ optional `type`/`network`
+columns). A batch `network`/`type` text field supplies the default when a row omits it.
+
+```csv
+keyword,network
+running shoes,facebook
+gym bag,"facebook,instagram"
+```
+
+**Response `200`**
+
+```json
+{
+  "code": 200,
+  "message": "synthetic keywords stored",
+  "data": { "received": 3, "unique": 2, "inserted": 2, "duplicatesIgnored": 0, "skippedNoNetwork": 0, "cleanup": { "category": "synthetic", "total": 2, "deleted": 0 } }
+}
+```
+
+- `inserted` = new docs; `duplicatesIgnored` = already present / duplicate within the batch
+  (case-insensitive); `skippedNoNetwork` = items dropped for a missing/invalid network;
+  `cleanup` = the cap-enforcement summary (see below).
+- `400` when no keywords are supplied, or when **no** keyword had a valid network.
+
+---
+
+## Capacity cap (auto-deletion)
+
+`config.keywordSearch.cleanup` keeps each category within a **hard** cap, enforced **inline
+when new data is inserted** (no cron) and only when a new doc was actually added:
+
+| key | default | meaning |
+|-----|---------|---------|
+| `applyTo` | `"both"` | `both` \| `user` \| `synthetic` \| `none` (disable) |
+| `userCap` | `100000` | max user-searched docs |
+| `syntheticCap` | `100000` | max synthetic docs |
+
+When a category is over cap, the **oldest** docs are deleted to return to exactly the cap —
+**already-scraped docs first** (`scrapping_status` present), falling back to the oldest
+not-yet-scraped only if still over. A synthetic bulk insert trims the synthetic category; a
+new user search trims the user category. (`config.json` is environment-specific; the caps
+also work from the `config/index.js` defaults.)
+
+---
+
 ## Quick test with curl
 
 ```bash
@@ -221,6 +318,20 @@ curl -s -X POST "$BASE/api/v1/common/keyword-search/work" \
 curl -s -X POST "$BASE/api/v1/common/keyword-search/work" \
   -H "x-scraper-name: ig-plugin-01" -H "Content-Type: application/json" \
   -d '{"type":"keyword","network":"instagram"}'
+
+# 5. Insert synthetic keywords (JSON) — network is mandatory
+curl -s -X POST "$BASE/api/v1/common/keyword-search/synthetic" \
+  -H "Content-Type: application/json" \
+  -d '{"network":"facebook","keywords":["running shoes","Running Shoes","gym bag"]}'
+
+# 6. Insert synthetic keywords from a CSV file (field name = file)
+printf 'keyword,network\nrunning shoes,facebook\ngym bag,instagram\n' > kw.csv
+curl -s -X POST "$BASE/api/v1/common/keyword-search/synthetic" -F "file=@kw.csv" -F "network=facebook"
+
+# 7. Claim ONLY synthetic keywords (users:null), and google priority-first ordering
+curl -s -X POST "$BASE/api/v1/common/keyword-search/work" \
+  -H "x-scraper-name: g-plugin-01" -H "Content-Type: application/json" \
+  -d '{"type":"keyword","network":"google","users":null}'
 ```
 
 ---

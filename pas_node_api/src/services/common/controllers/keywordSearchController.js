@@ -719,11 +719,13 @@ async function insertSyntheticKeywords(req, res) {
     }
 
     // Auto-deletion on insert: only when new docs were actually added (count grew). Non-fatal
-    // — a cleanup error must never fail an insert that already succeeded.
-    let cleanup;
+    // — a cleanup error must never fail an insert that already succeeded. `cleanup` is ALWAYS
+    // an object so the response shape is consistent (a bare `let cleanup;` would be undefined
+    // and JSON.stringify would DROP the key when nothing was inserted).
+    let cleanup = { category: 'synthetic', deleted: 0, skipped: 'no new keywords inserted' };
     if (inserted > 0) {
       try { cleanup = await enforceCap('synthetic'); }
-      catch (e) { log.warn('synthetic cap enforcement failed', { error: e.message }); }
+      catch (e) { log.warn('synthetic cap enforcement failed', { error: e.message }); cleanup = { category: 'synthetic', deleted: 0, error: e.message }; }
     }
 
     return res.json({

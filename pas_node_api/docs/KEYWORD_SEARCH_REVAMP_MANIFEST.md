@@ -422,3 +422,63 @@ required. Still exported for an explicit cron/admin trigger if desired.
       90 days).
 - [ ] `behaviour` endpoint contract (§7 end).
 - [ ] Notification-cron migration plan (§8.2).
+
+---
+
+## 10. Synthetic keywords, Google ordering & capacity cap (2026-06 additions — IMPLEMENTED)
+
+Three additive changes layered on the store above. **The §6 store and §7 work flows are
+unchanged** except where noted; all new behaviour is new code paths / opt-in flags.
+
+Files: `keywordSearchController.js` (`insertSyntheticKeywords`, `enforceCap`,
+`buildClaimAttempts`), `helpers/keywordInput.js` (CSV/JSON parse), routes in
+`commonRoutes.js`. Config: `config.keywordSearch.cleanup` + `synthetic*` keys.
+
+### 10.1 Synthetic (manually-inserted) keywords
+- **Identity marker = `users: null` + `userInfos: null`.** Real (user-searched) docs always
+  carry arrays (even `[]`), so the null pair is unambiguous — **no new field added.**
+- **`POST /api/v1/common/keyword-search/synthetic`** (no JWT, internal). CSV file
+  (field `file`, ≤ `syntheticMaxUploadMb`, streamed) **or** JSON (array / `{keywords:[]}` /
+  objects). Deduped case-insensitively by the unique `(type, valueNorm)` index via a
+  **`$setOnInsert`-only** `bulkWrite` upsert → an existing doc (user *or* synthetic) is
+  **never** clobbered.
+- **`network` is MANDATORY** (no default; removed the earlier `all` default) — per-item,
+  CSV column, or batch field. It fills the doc's `networks` + `networkState.<net>.{isActive:
+  false}` (daily-crawlable, out of the priority queue until real demand). Items with no/invalid
+  network → skipped (`skippedNoNetwork`); none valid → `400`.
+- Synthetic doc shape = a fresh store doc with empty user data: `searchCount:0`,
+  `lastSearchedAt:null`, `searchDates:[]`, `userCount:0`, `users:null`, `userInfos:null`.
+
+### 10.2 Enrichment (no store change)
+A user later searching a synthetic term hits the §6 upsert on the same `(type, valueNorm)`;
+its `$ifNull(['$users', []])` / `$ifNull(['$userInfos', []])` turn `null → [] → [user]`, so
+the doc "becomes" a normal user doc — no special-casing, no duplicate.
+
+### 10.3 Synthetic-only claim + Google ordering on `/work`
+- **Synthetic-only:** body `users:null` (or `userInfos:null`) restricts the claim to synthetic
+  docs (`filter.userInfos = null`). Absent/non-null → unchanged pool. Response echoes
+  `synthetic`.
+- **Google-only ordering:** for `network:"google"`, a normal **daily** claim serves
+  **priority → user-searched → synthetic** on every hit, via `buildClaimAttempts()` (an ordered
+  list of atomic `findOneAndUpdate` attempts; first hit wins). Status transitions are
+  identical to §7 (priority flips `isActive`; daily sets `dailyClaimDate`). Every other network
+  and any explicit `priority:true` are byte-identical to before. (`isActive` and
+  `dailyClaimDate` are independent gates — a doc can be `isActive:true` *and* already
+  daily-claimed — so a re-searched google term can serve once via priority and once via daily
+  per day, exactly as the two existing modes already behaved.)
+
+### 10.4 Hard capacity cap (`config.keywordSearch.cleanup`) — answers §5 scale question
+- `applyTo` (`both`|`user`|`synthetic`|`none`), `userCap` (100k), `syntheticCap` (100k).
+- Enforced **INLINE on insert (no cron)**, and only when a new doc was actually added
+  (`upsertedCount > 0` on store; `inserted > 0` on synthetic) — so repeat searches skip it.
+  Non-fatal (a cleanup error never fails the insert).
+- Over cap → delete the **oldest** docs to reach the cap exactly, **already-scraped first**
+  (`scrapping_status.0` exists), falling back to oldest not-yet-scraped only if still over
+  (so pending keywords are kept to be scraped before deletion).
+- Categories: user = `{$or:[{users:{$ne:null}},{userInfos:{$ne:null}}]}`, synthetic =
+  `{users:null, userInfos:null}`.
+
+Resolves §9 "one collection vs two" for now: **one collection**, bounded by the hard cap
+instead of a side table.
+
+See [KEYWORD_SEARCH_API.md](./KEYWORD_SEARCH_API.md) for the request/response contracts.

@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "PAS — Keyword Search API",
-    "description": "Two endpoints. (1) Store a search (frontend, JWT). (2) The single scraper 'work' endpoint — the scraper just hits it in a loop with x-scraper-name; the server auto-closes the previous term (by name) and gives the next. No docId/scrapeId, no adsCount. Set baseUrl, token, scraperName before running.",
+    "description": "Endpoints over the keyword_searches store. (1) Store a search (frontend, JWT). (2) The single scraper 'work' endpoint — hit it in a loop with x-scraper-name; the server auto-closes the previous term (by name) and gives the next. (3) Insert SYNTHETIC keywords in bulk (CSV or JSON, network mandatory) — same collection + doc shape, marked users=null + userInfos=null. The /work claim also supports a synthetic-only mode (users:null) and, for the GOOGLE network, serves priority → user-searched → synthetic on every hit. A config-driven HARD cap (config.keywordSearch.cleanup, default 100k each for user-searched & synthetic) auto-deletes oldest scraped-first on insert. Set baseUrl, token, scraperName before running.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -147,6 +147,86 @@
           "raw": "{\n  \"type\": [\"keyword\", \"advertiser\"],\n  \"network\": [\"facebook\", \"instagram\"]\n}"
         },
         "description": "type and network may be arrays (or comma lists). The pool is the union of every type x network pair; each returned value carries its own concrete type+network, so a single value may come from facebook OR instagram and be a keyword OR an advertiser. Add \"priority\": true for the same behaviour in priority mode."
+      }
+    },
+    {
+      "name": "8. Insert synthetic keywords (JSON)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/synthetic",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "synthetic"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"network\": \"facebook\",\n  \"type\": 1,\n  \"keywords\": [\"running shoes\", \"Running Shoes\", \"gym bag\"]\n}"
+        },
+        "description": "Bulk-insert manually-inserted (synthetic) keywords. NO JWT (internal). `network` is MANDATORY (batch field here, or per-item, or a CSV column) — it fills the doc's networks/networkState. Deduped case-insensitively by (type,valueNorm) via $setOnInsert (never clobbers an existing doc) — 'running shoes' and 'Running Shoes' collapse to one. Stored in the SAME collection + shape as user searches but with users=null + userInfos=null. JSON forms: [\"a\",\"b\"], {\"keywords\":[...]}, or [{\"value\":\"a\",\"network\":\"facebook\"}]. Response: { received, unique, inserted, duplicatesIgnored, skippedNoNetwork, cleanup }. Missing/invalid network → item skipped (skippedNoNetwork); none valid → 400."
+      }
+    },
+    {
+      "name": "9. Insert synthetic keywords (CSV file)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/synthetic",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "synthetic"]
+        },
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": [] },
+            { "key": "network", "value": "facebook", "type": "text" },
+            { "key": "type", "value": "1", "type": "text" }
+          ]
+        },
+        "description": "Same endpoint via CSV upload (field name MUST be 'file', ≤50 MB, streamed). CSV = one keyword per line, OR a header row with a 'keyword' (or 'value') column (+ optional 'type'/'network' columns). The batch 'network'/'type' text fields here are the defaults when a row omits them. network is mandatory (batch field or per-row column). Pick a .csv in the 'file' row before sending."
+      }
+    },
+    {
+      "name": "10. Work: synthetic-only (claim only manually-inserted)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-scraper-name", "value": "{{scraperName}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/work",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "work"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"facebook\",\n  \"users\": null\n}"
+        },
+        "description": "Opt-in synthetic-only claim: send users:null (or userInfos:null) to claim ONLY synthetic (not-yet-user-searched) keywords — those with users/userInfos null. Omit it for the normal pool (unchanged). Response echoes synthetic:true."
+      }
+    },
+    {
+      "name": "11. Work: google daily (priority → user → synthetic ordering)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-scraper-name", "value": "{{scraperName}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/common/keyword-search/work",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "common", "keyword-search", "work"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"keyword\",\n  \"network\": \"google\"\n}"
+        },
+        "description": "GOOGLE-only: a normal daily claim (NO priority flag) serves terms in order on every hit — priority (networkState.google.isActive:true) first, then user-searched, then synthetic. Status transitions are unchanged (priority flips isActive; daily sets dailyClaimDate). Every other network and explicit priority:true are unchanged."
       }
     }
   ]

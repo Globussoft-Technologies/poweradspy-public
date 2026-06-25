@@ -415,14 +415,18 @@ describe("cleanup runs on insert only when a new doc was added", () => {
     expect(col.calls.deleteMany.length).toBe(1);
   });
 
-  it("synthetic insert with only duplicates (inserted 0) → NO cleanup runs", async () => {
+  it("synthetic insert with only duplicates (inserted 0) → cap not run, but cleanup STILL present (A1)", async () => {
     const col = makeCol({ existing: new Set(["dup"]), counts: { synthetic: 100002 } });
     installMongo(col);
     const res = mockRes();
     await insertSyntheticKeywords({ body: { keywords: ["dup"], network: "facebook" } }, res);
     expect(res.body.data.inserted).toBe(0);
-    expect(res.body.data.cleanup).toBeUndefined();
-    expect(col.calls.countDocuments.length).toBe(0); // enforceCap never entered
+    expect(col.calls.countDocuments.length).toBe(0); // enforceCap (cap query) never entered — no new docs
+    // A1 regression: cleanup must survive JSON serialization even when nothing was inserted
+    // (a bare `let cleanup;` would be undefined → JSON.stringify drops the key).
+    const serialized = JSON.parse(JSON.stringify(res.body.data));
+    expect(serialized).toHaveProperty("cleanup");
+    expect(serialized.cleanup).toMatchObject({ deleted: 0 });
   });
 
   it("store new keyword → enforces the USER cap; repeat search → does not", async () => {

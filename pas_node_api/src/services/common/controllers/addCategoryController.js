@@ -79,7 +79,12 @@ const PLATFORM_CONFIG = {
   google: {
     service:      'google',
     index:        resolveIndex('google'),
-    idField:      'ad_id',
+    idField:      'ad_id',          // ad lookup key (newCatInsertion matches on this)
+    // google_ads_data is the only flat index with BOTH a distinct internal PK (`id`)
+    // and the Google ad identifier (`ad_id`). getDescriptionDetails paginates on the
+    // monotonic `id` and surfaces `ad_id` separately; everywhere else id === ad_id.
+    descIdField:  'id',             // getDescriptionDetails pagination + response `id`
+    adIdField:    'ad_id',          // getDescriptionDetails response `ad_id`
     textField:    'ad_text',
     titleField:   'ad_title',
     ownerField:   'post_owner',
@@ -200,15 +205,18 @@ async function getDescriptionDetails(req, res) {
   try {
     // GDN is on gdn_search_mix_v2 — resolve the env-correct index from the live ES client, not the config-immune static map.
     const esIndex = ((cfg.service === 'gdn' || cfg.service === 'native') && service.db.elastic.indexName) ? service.db.elastic.indexName : cfg.index;
+    // Pagination cursor: usually the same field as the ad lookup key, but Google
+    // paginates on its distinct internal PK (`id`) while looking ads up by `ad_id`.
+    const pageField = cfg.descIdField || cfg.idField;
     const esResult = await service.db.elastic.search({
       index: esIndex,
       body: {
         from: 0,
         size: limit,
-        sort: [{ [cfg.idField]: 'asc' }],
+        sort: [{ [pageField]: 'asc' }],
         query: {
           bool: {
-            must: [{ range: { [cfg.idField]: { gt: exVal } } }],
+            must: [{ range: { [pageField]: { gt: exVal } } }],
           },
         },
       },
@@ -219,7 +227,9 @@ async function getDescriptionDetails(req, res) {
       const src = hit._source;
       const row = {};
 
-      row.id                    = src[cfg.idField];
+      row.id                    = src[pageField];
+      // Only platforms whose index keeps id and ad_id distinct (Google) carry both.
+      if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
       row.ad_text               = src[cfg.textField]     ?? null;
       row.ad_title              = src[cfg.titleField]    ?? null;
       row.post_owner_name       = src[cfg.ownerField]    ?? null;
