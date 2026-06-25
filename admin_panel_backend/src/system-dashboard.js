@@ -142,27 +142,37 @@ async function networkRollup(net, fromSql, toSql, platform) {
   const dbName = process.env[cfg.env];
   if (!dbName) return { net, rows: [] };
 
-  // YouTube systems live in youtube_ad.system_id (proxmox machines) — its
-  // activities table is stale; youtube_ad has no account_id/is_unique/platform.
+  // YouTube systems live in youtube_ad.system_id (proxmox machines). Match the
+  // network card EXACTLY, per system: ads = last_seen-in-window (the "total"
+  // metric), unique = created_date-in-window (= /get-count's unique for youtube).
+  // So per-system ads now SUM to the card (minus ads whose system_id is blank).
   if (net === 'youtube') {
     const sql = `SELECT system_id, 0 AS accounts, '' AS account_ids,
-        COUNT(*) AS ads, 0 AS unique_ads, MAX(last_seen) AS last_active
+        SUM(last_seen BETWEEN ? AND ?) AS ads,
+        SUM(created_date BETWEEN ? AND ?) AS unique_ads,
+        MAX(last_seen) AS last_active
       FROM youtube_ad
-      WHERE created_date BETWEEN ? AND ? AND system_id IS NOT NULL AND system_id <> ''
+      WHERE ((last_seen BETWEEN ? AND ?) OR (created_date BETWEEN ? AND ?))
+        AND system_id IS NOT NULL AND system_id <> ''
       GROUP BY system_id`;
-    const rows = await queryDatabase(cfg.db_id, dbName, sql, [fromSql, toSql]);
+    const p = [fromSql, toSql, fromSql, toSql, fromSql, toSql, fromSql, toSql];
+    const rows = await queryDatabase(cfg.db_id, dbName, sql, p);
     return { net, rows: rows || [] };
   }
 
   // GDN/Native systems = the proxmox MACHINES (gdn_crawl_quality.host), NOT the
   // activities table — there system_id is the ISP/proxy (e.g. "decodo-isp"), not
   // a system. Both gdn & native crawl data live in one table (gdnpro_v2.
-  // gdn_crawl_quality) with total_gdn_ads / total_native_ads columns, so both
-  // read from the GDN pool (db_id 5). last_crawled is the activity timestamp.
+  // gdn_crawl_quality). The ad tables have NO host column, so the dedup'd /get-
+  // count number can't be split per host; we use last_*_ads (ads each machine
+  // found on its LAST crawl, in the window) — a sane per-host figure. NOT the
+  // dedup'd network total, so per-host will not sum to the card. last_crawled is
+  // the activity timestamp. (total_*_ads was a LIFETIME counter → 500k+ nonsense.)
   if (net === 'gdn' || net === 'native') {
-    const adCol = net === 'gdn' ? 'total_gdn_ads' : 'total_native_ads';
+    const adCol = net === 'gdn' ? 'last_gdn_ads' : 'last_native_ads';
     const sql = `SELECT host AS system_id, 0 AS accounts, '' AS account_ids,
-        COALESCE(SUM(${adCol}),0) AS ads, 0 AS unique_ads, MAX(last_crawled) AS last_active
+        COALESCE(SUM(${adCol}),0) AS ads, 0 AS unique_ads,
+        COUNT(*) AS urls, MAX(last_crawled) AS last_active
       FROM gdn_crawl_quality
       WHERE last_crawled BETWEEN ? AND ? AND host IS NOT NULL AND host <> ''
       GROUP BY host`;
@@ -207,6 +217,39 @@ async function buildAccountBridge(range) {
     }
   }
   return acctToSystem;
+}
+
+// The FULL FLEET of account-running machines — the same set Crawler Insight's
+// "Total Systems" counts. DB activities only show systems that scraped in the
+// window; many facebook/instagram machines have monitored accounts but no ads
+// today. Those come from Prometheus (scroll_plugin_counter_total accounts),
+// bridged to their system_id via account_id (fallback: the hostname). Only the
+// account-based networks — crawl machines (gdn/native/youtube/gtext) are handled
+// by their own rollups. Returns system_id -> { accounts:Set, networks:Set }.
+async function buildFleet(acctToSystem) {
+  const fleet = new Map();
+  try {
+    const pc = await instantQuery(`count by (account_id, server_name, network) (scroll_plugin_counter_total{mode="${mode}"})`);
+    for (const s of (pc.data?.result || [])) {
+      const m = s.metric || {};
+      const network = (m.network || '').toLowerCase();
+      if (!network || ['youtube', 'gtext', 'gdn', 'native'].includes(network)) continue;
+      const acct = m.account_id != null ? String(m.account_id) : '';
+      const realAcct = acct && acct !== '-' && acct !== 'N/A';
+      const host = m.server_name || '';
+      // A network-tagged Prometheus series IS a real crawler machine for that
+      // network — keep it even if its account_id is blank, so e.g. Reddit's
+      // machine shows (idle, 0 accounts) when it logged no activity today.
+      // Only a series with NO hostname AND no bridged account is true noise.
+      const sys = (realAcct && acctToSystem.get(acct)) || host || null;
+      if (!sys) continue;
+      let f = fleet.get(sys);
+      if (!f) { f = { accounts: new Set(), networks: new Set() }; fleet.set(sys, f); }
+      if (realAcct) f.accounts.add(acct);
+      f.networks.add(network);
+    }
+  } catch (e) { console.error('dashboard buildFleet failed:', e.message); }
+  return fleet;
 }
 
 // system_id -> [hostnames] via Prometheus scroll_plugin_counter_total.account_id.
@@ -395,7 +438,7 @@ async function overview(req, res) {
 
   // 2b) Prometheus enrichment (all fail-safe) — heartbeat, specs, AND live "now" activity.
   const [hostMap, liveAccts, cpuMap, ramMap, nowRateByHost,
-         cycles5m, ytProc5m, gdnCap5m, nativeCap5m, pluginEvt5m] = await Promise.all([
+         cycles5m, ytProc5m, gdnCap5m, nativeCap5m, pluginEvt5m, fleet] = await Promise.all([
     buildHostMap(acctToSystem),
     liveAccountIds(),
     hostGauge('cpu_utilization'),
@@ -406,6 +449,7 @@ async function overview(req, res) {
     fleetIncrease('gdn_ads_captured_total', '5m'),     // GDN captured last 5m
     fleetIncrease('native_ads_captured_total', '5m'),  // Native captured last 5m
     fleetIncrease('plugin_event_total', '5m'),         // plugin events last 5m
+    buildFleet(acctToSystem),                          // full account-machine fleet (Crawler-Insight parity)
   ]);
 
   const nowMs = Date.now();
@@ -424,6 +468,7 @@ async function overview(req, res) {
       const ads = toNum(r.ads);
       const uniq = toNum(r.unique_ads);
       const accts = toNum(r.accounts);
+      const urls = toNum(r.urls);   // gdn/native: crawl_quality URLs this machine crawled
       const acctIds = (r.account_ids ? String(r.account_ids).split(',') : []).filter(Boolean);
       const lastActive = r.last_active ? new Date(r.last_active).getTime() : 0;
       if (lastActive && (!lastNet || lastActive > lastNet)) lastNet = lastActive;
@@ -431,15 +476,15 @@ async function overview(req, res) {
 
       let s = systems.get(sid);
       if (!s) {
-        s = { system_id: sid, networks: [], accounts: 0, ads: 0, unique_ads: 0,
+        s = { system_id: sid, networks: [], accounts: 0, ads: 0, unique_ads: 0, urls: 0,
               last_active_ms: 0, account_ids: new Set(), perNetwork: {} };
         systems.set(sid, s);
       }
       if (!s.networks.includes(net)) s.networks.push(net);
-      s.accounts += accts; s.ads += ads; s.unique_ads += uniq;
+      s.accounts += accts; s.ads += ads; s.unique_ads += uniq; s.urls += urls;
       if (lastActive > s.last_active_ms) s.last_active_ms = lastActive;
       acctIds.forEach(a => s.account_ids.add(a));
-      s.perNetwork[net] = { accounts: accts, ads, unique_ads: uniq,
+      s.perNetwork[net] = { accounts: accts, ads, unique_ads: uniq, urls,
         last_active: lastActive ? new Date(lastActive).toISOString() : null };
 
       // per-network "active now"?
@@ -451,6 +496,33 @@ async function overview(req, res) {
       unique_ads: nUnique, active_systems: nActive,
       last_active: lastNet ? new Date(lastNet).toISOString() : null,
     };
+  }
+
+  // 3b) Add the rest of the account-machine FLEET (Crawler-Insight parity): every
+  // machine with monitored accounts, even if it produced no ads in the window.
+  // They render as Idle with their account count — so Total Systems matches the
+  // Crawler Insight "System Analytics" total instead of only-active-today.
+  for (const [sys, f] of fleet) {
+    const existing = systems.get(sys);
+    if (existing) {
+      f.accounts.forEach(a => existing.account_ids.add(a));
+      existing.accounts = Math.max(existing.accounts, f.accounts.size);  // monitored count
+      for (const net of f.networks) if (!existing.networks.includes(net)) existing.networks.push(net);
+      continue;
+    }
+    const s = { system_id: sys, networks: [...f.networks], accounts: f.accounts.size,
+      ads: 0, unique_ads: 0, last_active_ms: 0, account_ids: new Set(f.accounts), perNetwork: {} };
+    for (const net of f.networks) s.perNetwork[net] = { accounts: f.accounts.size, ads: 0, unique_ads: 0, last_active: null };
+    systems.set(sys, s);
+  }
+
+  // recompute per-network system + account counts from the FULL set so the
+  // network cards agree with the grid (ads/unique stay = /get-count below).
+  for (const net of NET_KEYS) {
+    if (!networkSummary[net]) networkSummary[net] = { network: net, systems: 0, accounts: 0, ads: 0, unique_ads: 0, active_systems: 0, last_active: null };
+    const inNet = [...systems.values()].filter(s => s.networks.includes(net));
+    networkSummary[net].systems = inNet.length;
+    networkSummary[net].accounts = inNet.reduce((x, s) => x + (s.accounts || 0), 0);
   }
 
   // 4) Finalize per-system rows + status + host/cpu/ram.
@@ -481,6 +553,7 @@ async function overview(req, res) {
       accounts: s.accounts,
       ads: s.ads,
       unique_ads: s.unique_ads,
+      urls: s.urls || 0,
       last_active: s.last_active_ms ? new Date(s.last_active_ms).toISOString() : null,
       last_active_ago_sec: s.last_active_ms ? Math.round((nowMs - s.last_active_ms) / 1000) : null,
       active,
