@@ -254,10 +254,19 @@ async function searchAds(req, db, logger) {
   if (p.keyword) {
     const kwWords = String(p.keyword).replace(/"/g, '').trim().split(/\s+/).filter(Boolean);
     if (kwWords.length) {
-      builder.setKeyword(p.keyword); // legacy fallback if token resolution yields nothing
-      builder.setKeywordTokens(await resolveLongestTokens(db.elastic, esIndexLander, 'text', kwWords, logger));
-      // "Search Precisely" — frontend sends exact_search 0/1 (also honour quoted input)
-      builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true || String(p.keyword).includes('"'));
+      builder.setKeyword(p.keyword); // always set raw keyword (legacy fallback)
+      // Short-word guard: the longest-token term-match over-matches 3-char words
+      // that are prefixes of common words ("bus"->"business", "car"->"care/card")
+      // — the edge_ngram index stores "bus" as a token of "business" too, and no
+      // non-ngram field is populated to disambiguate. Only apply the precise token
+      // match when at least one word is >=4 chars; otherwise fall back to the
+      // legacy phrase behaviour (no worse than before). Multi-word queries with a
+      // >=4 word ("bus tickets") still use it — the long word constrains the short.
+      if (kwWords.some((w) => w.length >= 4)) {
+        builder.setKeywordTokens(await resolveLongestTokens(db.elastic, esIndexLander, 'text', kwWords, logger));
+        // "Search Precisely" — frontend sends exact_search 0/1 (also honour quoted input)
+        builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true || String(p.keyword).includes('"'));
+      }
     }
   }
   if (p.ecommerce)       builder.setBuiltWith(await resolveLongestTokens(db.elastic, esIndexLander, 'built_with', ensureArray(p.ecommerce), logger));

@@ -1,0 +1,117 @@
+{
+  "_comment": "google_ads_data_v2 — optimized mapping+settings for ES 6.8. Designed from the live diagnostic (206M docs / 219GB / edge_ngram bloat). Key wins: (1) content fields use a clean standard+lowercase+asciifolding analyzer (NO edge_ngram) → fixes hair->Haier over-match AND shrinks the index → fast. (2) dynamic:false → no more auto-ngram field explosion. (3) URLs/display fields are keyword/index:false instead of ngram'd text. (4) all exact-code filters are keyword → term filters. Reindex with _id = source.id to dedup the ~8.6M duplicates for free. After cutover, GoogleSearchQueryBuilder uses match(AND)/match_phrase instead of the longest-token hack, and can drop the redundant collapse+cardinality (id becomes unique).",
+
+  "settings": {
+    "index": {
+      "number_of_shards": "4",
+      "number_of_replicas": "0",
+      "codec": "best_compression",
+      "refresh_interval": "30s",
+      "max_inner_result_window": "10000",
+      "translog": { "durability": "async", "flush_threshold_size": "512mb" },
+      "merge": { "scheduler": { "max_thread_count": "4", "max_merge_count": "6", "auto_throttle": "true" } },
+      "analysis": {
+        "normalizer": {
+          "lowercase_normalizer": { "type": "custom", "filter": ["lowercase"] }
+        },
+        "analyzer": {
+          "content_analyzer": {
+            "type": "custom",
+            "tokenizer": "standard",
+            "filter": ["lowercase", "asciifolding"]
+          }
+        }
+      }
+    }
+  },
+
+  "mappings": {
+    "doc": {
+      "dynamic": false,
+      "_comment_dynamic": "false = unknown fields are stored in _source but NOT indexed (no more accidental edge_ngram fields). Keeps the live insert working even if it sends an unmapped key.",
+
+      "properties": {
+        "id":   { "type": "long" },
+        "ad_id":{ "type": "keyword", "normalizer": "lowercase_normalizer" },
+
+        "post_date":  { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "first_seen": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "last_seen":  { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "firstSeenOnDesktop": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "firstSeenOnAndroid": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "firstSeenOnIos":     { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "lastSeenOnDesktop":  { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "domain_registered_date": { "type": "date", "format": "yyyy-MM-dd" },
+        "clickbank_processed_date": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd" },
+
+        "source": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "status": { "type": "integer" },
+        "platform": { "type": "integer" },
+        "days_running": { "type": "integer" },
+        "target_page": { "type": "integer" },
+        "ad_ranking": { "type": "long" },
+        "destination_scraper_status": { "type": "integer" },
+        "redirect_destination_url_source": { "type": "integer" },
+
+        "_comment_content": "THE FIX: searchable ad copy on a clean analyzer (no edge_ngram, no stemming). match(AND) for default, match_phrase for Search Precisely. .kw = whole-value exact.",
+        "title": { "type": "text", "analyzer": "content_analyzer", "fields": { "kw": { "type": "keyword", "ignore_above": 1024, "normalizer": "lowercase_normalizer" } } },
+        "text":  { "type": "text", "analyzer": "content_analyzer", "fields": { "kw": { "type": "keyword", "ignore_above": 1024, "normalizer": "lowercase_normalizer" } } },
+        "newsfeed_description":  { "type": "text", "analyzer": "content_analyzer" },
+        "news_feed_description": { "type": "text", "analyzer": "content_analyzer" },
+        "ad_title": { "type": "text", "analyzer": "content_analyzer" },
+        "ad_text":  { "type": "text", "analyzer": "content_analyzer" },
+
+        "_comment_owner": "advertiser: word-match (text) + .kw for exact/prefix/sort.",
+        "post_owner_name":  { "type": "text", "analyzer": "content_analyzer", "fields": { "kw": { "type": "keyword", "ignore_above": 512, "normalizer": "lowercase_normalizer" } } },
+        "post_owner_lower": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+
+        "_comment_filters": "exact-code filters → keyword (term/terms in filter context = fastest). Most have tiny cardinality (type=3, source=2, position=2).",
+        "type": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "ad_position": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "ad_sub_position": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "country": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "state":   { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "city":    { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "domain":  { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "target_keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "lang_detect": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "built_with": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "built_with_analytics_tracking": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "affiliate_data": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "funnel": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "category": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "subCategory": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "screenshot_url": { "type": "keyword", "ignore_above": 1024 },
+        "version": { "type": "keyword", "ignore_above": 64 },
+
+        "_comment_urls": "URLs: keyword (no analyzer) so wildcard works WITHOUT the huge edge_ngram cost. Prefer matching `domain` (clean keyword, 99.9% filled) over *wildcard* on these where possible.",
+        "destination_url": { "type": "keyword", "ignore_above": 2048 },
+        "url":             { "type": "keyword", "ignore_above": 2048 },
+        "redirect_url":    { "type": "keyword", "ignore_above": 2048 },
+        "redirect_urls":   { "type": "keyword", "ignore_above": 2048 },
+        "source_url":      { "type": "keyword", "ignore_above": 2048 },
+        "url_destination": { "type": "keyword", "ignore_above": 2048 },
+        "url_redirects":   { "type": "keyword", "ignore_above": 2048 },
+        "final_url":       { "type": "keyword", "ignore_above": 2048 },
+        "g_temp_url":      { "type": "keyword", "ignore_above": 2048 },
+
+        "_comment_nas": "new_nas_image_url MUST stay indexed (queried via exists + empty-check in the IMAGE_MUST_NOT filter). In v2 reference `new_nas_image_url` directly (drop the .keyword subfield in the query).",
+        "new_nas_image_url": { "type": "keyword", "ignore_above": 1024 },
+
+        "_comment_display": "display-only (returned in _source, never searched) → index:false saves space + speed.",
+        "image_url":          { "type": "keyword", "index": false, "doc_values": false },
+        "image_url_original": { "type": "keyword", "index": false, "doc_values": false },
+        "image_video_url":    { "type": "keyword", "index": false, "doc_values": false },
+        "post_owner_image":   { "type": "keyword", "index": false, "doc_values": false },
+        "png_file":           { "type": "keyword", "index": false, "doc_values": false },
+        "blackhat_path":      { "type": "keyword", "index": false, "doc_values": false },
+        "white_ad_lander":    { "type": "keyword", "index": false, "doc_values": false },
+        "white_ad_screenshot":{ "type": "keyword", "index": false, "doc_values": false },
+        "html_whitehat_lander_text":     { "type": "text", "index": false },
+        "html_res_blackhat_lander_text": { "type": "text", "index": false },
+        "_comment_html_dc": "SEARCHED by GoogleSearchQueryBuilder._getHtmlContentEnv → must stay searchable text (not index:false). Only ~2 docs filled today, so cost is ~nil.",
+        "html_dc_blackhat_lander_text":  { "type": "text", "analyzer": "content_analyzer" }
+      }
+    }
+  }
+}

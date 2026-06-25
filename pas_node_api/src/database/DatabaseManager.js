@@ -205,9 +205,20 @@ class DatabaseManager {
    * Networks with identical keys share the same Client.
    */
   _esClientCacheKey(elasticConfig) {
-    const node = (elasticConfig.node || '').replace(/\/+$/, '');
+    const node = this._normalizeEsNodes(elasticConfig.node).join(',');
     const user = elasticConfig.auth?.username || '';
     return `${node}|${user}`;
+  }
+
+  /**
+   * Normalize the configured ES node into an array of clean URLs.
+   * Accepts a single string, a comma/space-separated string, or an array —
+   * so config can list multiple nodes (coordination is round-robined across
+   * them, spreading the coordinating-node CPU off a single overloaded host).
+   */
+  _normalizeEsNodes(node) {
+    const arr = Array.isArray(node) ? node : String(node || '').split(/[,\s]+/);
+    return arr.map((u) => String(u).trim().replace(/\/+$/, '')).filter(Boolean);
   }
 
   /**
@@ -245,14 +256,21 @@ class DatabaseManager {
     // Resolve config section for timeouts
     const cfgSection = config.databases[dbConfigKey] || config.databases.elastic;
 
+    // Support one OR many nodes. With >1, the client round-robins every
+    // request's coordinating node across them, so coordination/reduce load is
+    // shared instead of pinning a single host (e.g. the master/app-facing node).
+    const nodes = this._normalizeEsNodes(elasticConfig.node);
     const clientOptions = {
-      node: elasticConfig.node,
+      ...(nodes.length > 1 ? { nodes } : { node: nodes[0] }),
       maxRetries: cfgSection.maxRetries || 3,
       requestTimeout: cfgSection.requestTimeoutMs || 30000,
       sniffOnStart: false,
       // Bounded HTTP agent to limit open sockets / file descriptors
-      agent: this._createBoundedAgent(elasticConfig.node),
+      agent: this._createBoundedAgent(nodes[0]),
     };
+    if (nodes.length > 1) {
+      log.info(`[${slug}] Elasticsearch using ${nodes.length} nodes (round-robin): ${nodes.join(', ')}`);
+    }
 
     // Only add auth if username is provided
     if (elasticConfig.auth && elasticConfig.auth.username) {

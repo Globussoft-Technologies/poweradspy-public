@@ -114,6 +114,15 @@ function buildSharedFilters(p) {
       bool: { should: countries.map(c => ({ match: { countries: c } })), minimum_should_match: 1 },
     });
   }
+  // Category / sub-category — mirror youtube SearchMixQueryBuilder
+  // (_getAdCategoryEnv / _getSubCategoryEnv) so the DISPLAY ads merged in here
+  // are filtered by the SAME category as the GDN/YouTube queries. Without this
+  // the YouTube DISPLAY side stayed unfiltered and leaked uncategorized/default
+  // ads under `network:youtube` whenever a category filter was active.
+  const cats = ensureArr(p.adcategory);
+  if (cats.length) filter.push({ terms: { 'youtube.category.keyword': cats } });
+  const subs = ensureArr(p.subCategory);
+  if (subs.length) filter.push({ terms: { 'youtube.subCategory.keyword': subs } });
   // Date-range filters. Each *_btn_sort arrives as [upperTs, lowerTs] in epoch
   // seconds. The GDN main query applies these to the GDN side; mirror them here
   // so the merged-in YouTube DISPLAY total is bounded by the same window —

@@ -90,9 +90,14 @@ async function getTopAds(req, db, logger) {
   if (p.keyword) {
     const kwWords = String(p.keyword).replace(/"/g, '').trim().split(/\s+/).filter(Boolean);
     if (kwWords.length) {
-      builder.setKeyword(p.keyword); // legacy fallback if token resolution yields nothing
-      builder.setKeywordTokens(await resolveLongestTokens(db.elastic, esIndexLander, 'text', kwWords, logger));
-      builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true || String(p.keyword).includes('"'));
+      builder.setKeyword(p.keyword); // always set raw keyword (legacy fallback)
+      // Short-word guard (see adSearchController for the full why): only apply the
+      // precise longest-token match when a word is >=4 chars; 3-char prefix words
+      // ("bus"/"car"/"app") fall back to legacy phrase so they don't regress.
+      if (kwWords.some((w) => w.length >= 4)) {
+        builder.setKeywordTokens(await resolveLongestTokens(db.elastic, esIndexLander, 'text', kwWords, logger));
+        builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true || String(p.keyword).includes('"'));
+      }
     }
   }
   if (p.ecommerce)       builder.setBuiltWith(await resolveLongestTokens(db.elastic, esIndexLander, 'built_with', ensureArray(p.ecommerce), logger));
