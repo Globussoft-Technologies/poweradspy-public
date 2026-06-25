@@ -298,6 +298,33 @@ const config = {
     staleSweepIntervalSec: getVal(fileConfig.keywordSearch?.staleSweepIntervalSec, 'KEYWORD_SEARCH_STALE_SWEEP_SEC', toInt) || 120,
     staleSweepBatch: getVal(fileConfig.keywordSearch?.staleSweepBatch, 'KEYWORD_SEARCH_STALE_SWEEP_BATCH', toInt) || 100,
 
+    // Synthetic (manually-inserted) keywords — additive bulk-insert endpoint. Stored in the
+    // SAME keyword_searches collection + doc shape, deduped by the unique (type,valueNorm)
+    // index via $setOnInsert (never clobbers an existing doc). Marked solely by users=null +
+    // userInfos=null (real docs always carry arrays); a later user search enriches them via
+    // the unchanged store flow ($ifNull turns null→[]→[user]). `network` is MANDATORY in the
+    // payload (no default) — it populates the doc's networks + networkState.
+    syntheticDefaultType: getVal(fileConfig.keywordSearch?.syntheticDefaultType, 'KEYWORD_SEARCH_SYNTHETIC_DEFAULT_TYPE', toInt) || 1,
+    syntheticMaxUploadMb: getVal(fileConfig.keywordSearch?.syntheticMaxUploadMb, 'KEYWORD_SEARCH_SYNTHETIC_MAX_UPLOAD_MB', toInt) || 50,
+    syntheticInsertChunk: getVal(fileConfig.keywordSearch?.syntheticInsertChunk, 'KEYWORD_SEARCH_SYNTHETIC_INSERT_CHUNK', toInt) || 2000,
+
+    // Auto-deletion (HARD capacity cap). Independently keeps each category at ≤ its cap
+    // (`userCap` / `syntheticCap`). When over cap, the OLDEST docs are deleted, preferring
+    // already-scraped docs first; if those aren't enough, the oldest not-yet-scraped docs are
+    // deleted too, so the count always returns to exactly the cap. Enforced INLINE when new
+    // data is inserted (synthetic bulk insert / a new user search); `applyTo` selects the
+    // categories (or 'none' to disable). No cron.
+    cleanup: {
+      // Which categories the cap applies to: 'both' | 'user' | 'synthetic' | 'none'.
+      // 'none' disables auto-deletion entirely. Invalid values fall back to 'both'.
+      applyTo: (() => {
+        const v = String(getVal(fileConfig.keywordSearch?.cleanup?.applyTo, 'KEYWORD_SEARCH_CLEANUP_APPLY_TO') || 'both').trim().toLowerCase();
+        return ['both', 'user', 'synthetic', 'none'].includes(v) ? v : 'both';
+      })(),
+      userCap: getVal(fileConfig.keywordSearch?.cleanup?.userCap, 'KEYWORD_SEARCH_USER_CAP', toInt) || 100000,
+      syntheticCap: getVal(fileConfig.keywordSearch?.cleanup?.syntheticCap, 'KEYWORD_SEARCH_SYNTHETIC_CAP', toInt) || 100000,
+    },
+
     // Ad-count notification cron — scans terms scraped today, checks Elasticsearch for
     // matching ads per network, records a notification when count >= adsCountThreshold.
     notify: {
@@ -313,43 +340,6 @@ const config = {
       userScanLimit: getVal(fileConfig.keywordSearch?.notify?.userScanLimit, 'KEYWORD_SEARCH_NOTIFY_USER_SCAN_LIMIT', toInt) || 100,
       pollIntervalSec: getVal(fileConfig.keywordSearch?.notify?.pollIntervalSec, 'KEYWORD_SEARCH_NOTIFY_POLL_SEC', toInt) || 60,
     },
-  },
-
-  // ─── Google search-audit keyword store (MongoDB) ───
-  // Backs GET get-search-audit-keywords (crawler pull) + POST insert-search-audit-keywords
-  // (CSV/JSON bulk insert). Lives in the SAME Mongo DB as keyword_searches (so the
-  // google user-search import is a same-connection cross-collection read). Dedupe is a
-  // unique index on keywordNorm (lowercased+trimmed); the collection is capped at maxCount.
-  googleKeywordAudit: {
-    enabled: getVal(fileConfig.googleKeywordAudit?.enabled, 'GKA_ENABLED', toBool) !== false,
-    mongoSlug: getVal(fileConfig.googleKeywordAudit?.mongoSlug, 'GKA_MONGO_SLUG') || 'facebook',
-    database: getVal(fileConfig.googleKeywordAudit?.database, 'GKA_DATABASE') || '',
-    collection: getVal(fileConfig.googleKeywordAudit?.collection, 'GKA_COLLECTION') || 'google_audit_keywords',
-    metaCollection: getVal(fileConfig.googleKeywordAudit?.metaCollection, 'GKA_META_COLLECTION') || 'google_audit_meta',
-    // Hard ceiling — on insert and on cron, the oldest rows beyond this are deleted.
-    maxCount: getVal(fileConfig.googleKeywordAudit?.maxCount, 'GKA_MAX_COUNT', toInt) || 100000,
-    // GET crawler: batch size + which statuses are "crawlable" (0=pending, 2=re-crawl).
-    crawlBatchSize: getVal(fileConfig.googleKeywordAudit?.crawlBatchSize, 'GKA_CRAWL_BATCH', toInt) || 5,
-    crawlStatuses: (() => {
-      const val = getVal(fileConfig.googleKeywordAudit?.crawlStatuses, 'GKA_CRAWL_STATUSES');
-      if (!val) return [0, 2];
-      try { return (Array.isArray(val) ? val : JSON.parse(val)).map((n) => parseInt(n, 10)).filter(Number.isFinite); } catch { return [0, 2]; }
-    })(),
-    // POST upload limits.
-    maxUploadMb: getVal(fileConfig.googleKeywordAudit?.maxUploadMb, 'GKA_MAX_UPLOAD_MB', toInt) || 50,
-    insertChunkSize: getVal(fileConfig.googleKeywordAudit?.insertChunkSize, 'GKA_INSERT_CHUNK', toInt) || 2000,
-    // Import of google user-searched keywords from the existing keyword_searches collection.
-    sourceCollection: getVal(fileConfig.googleKeywordAudit?.sourceCollection, 'GKA_SOURCE_COLLECTION') || 'keyword_searches',
-    importType: getVal(fileConfig.googleKeywordAudit?.importType, 'GKA_IMPORT_TYPE', toInt) || 1, // 1 = keyword
-    importNetwork: getVal(fileConfig.googleKeywordAudit?.importNetwork, 'GKA_IMPORT_NETWORK') || 'google',
-    importBatch: getVal(fileConfig.googleKeywordAudit?.importBatch, 'GKA_IMPORT_BATCH', toInt) || 2000,
-    importMaxBatches: getVal(fileConfig.googleKeywordAudit?.importMaxBatches, 'GKA_IMPORT_MAX_BATCHES', toInt) || 50,
-    // Synchronous dual-write: when a google keyword is stored in keyword_searches, also
-    // upsert it into google_audit_keywords in the same request (deduped). Default ON.
-    syncFromUserSearch: getVal(fileConfig.googleKeywordAudit?.syncFromUserSearch, 'GKA_SYNC_FROM_USER_SEARCH', toBool) !== false,
-    // Enforce the cap inline on the dual-write, but only when a NEW row was actually
-    // inserted (so dedupe hits cost nothing). Default ON to keep the collection at ≤maxCount.
-    syncEnforceCap: getVal(fileConfig.googleKeywordAudit?.syncEnforceCap, 'GKA_SYNC_ENFORCE_CAP', toBool) !== false,
   },
 
   sendgrid: {

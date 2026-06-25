@@ -22,7 +22,7 @@ const { syncCategory, syncAllCategories } = require('../controllers/categoryCont
 const { getDescriptionDetails, newCatInsertion } = require('../controllers/addCategoryController');
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
-const { storeKeywordSearch, scraperWork } = require('../controllers/keywordSearchController');
+const { storeKeywordSearch, scraperWork, insertSyntheticKeywords } = require('../controllers/keywordSearchController');
 const { unscoredCreatives, storeCreativeScore, storeRunReport, getRunReports } = require('../controllers/creativeScoreController');
 const { getUserKeywordAdNotifications, markKeywordAdNotificationRead } = require('../controllers/keywordAdNotificationController');
 const { getNotifications, markNotificationsRead } = require('../controllers/notificationController');
@@ -44,6 +44,11 @@ const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware } = require('../../../middleware/planAccess');
 const validator = require('../../../middleware/validator');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+const multer = require('multer');
+const config = require('../../../config');
 
 const searchSchema = {
   body: {
@@ -51,6 +56,31 @@ const searchSchema = {
     page_size: { type: 'number' },
   },
 };
+
+// CSV upload for the synthetic keyword bulk-insert → temp file on disk, streamed + parsed,
+// then unlinked by the controller. Size capped at config.keywordSearch.syntheticMaxUploadMb.
+const SYNTHETIC_KW_TMP = path.join(os.tmpdir(), 'pas-synthetic-keywords');
+function ensureSyntheticKwTmp() { try { fs.mkdirSync(SYNTHETIC_KW_TMP, { recursive: true }); } catch { /* ignore */ } }
+ensureSyntheticKwTmp();
+const syntheticKwUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { ensureSyntheticKwTmp(); cb(null, SYNTHETIC_KW_TMP); },
+    filename: (_req, file, cb) => cb(null, `kw_${Date.now()}_${Math.round(process.hrtime()[1])}${path.extname(file.originalname || '') || '.csv'}`),
+  }),
+  limits: { fileSize: (config.keywordSearch.syntheticMaxUploadMb || 50) * 1024 * 1024 },
+}).single('file');
+// Run multer but turn its errors (e.g. file too large) into a clean 4xx instead of a throw.
+// For non-multipart (JSON) requests multer is a no-op pass-through.
+function syntheticKwUploadMw(req, res, next) {
+  syntheticKwUpload(req, res, (err) => {
+    if (!err) return next();
+    const tooBig = err.code === 'LIMIT_FILE_SIZE';
+    return res.status(tooBig ? 413 : 400).json({
+      code: tooBig ? 413 : 400,
+      message: tooBig ? `CSV exceeds the ${config.keywordSearch.syntheticMaxUploadMb || 50} MB limit.` : `Upload error: ${err.message}`,
+    });
+  });
+}
 
 const router = Router();
 
@@ -193,6 +223,17 @@ router.post(
 router.post(
   '/keyword-search/work',
   asyncHandler(scraperWork)
+);
+
+// API 3 — POST /api/v1/common/keyword-search/synthetic — bulk-insert synthetic keywords
+// (manually inserted) via a CSV file (field "file") OR JSON. Stored in the same collection
+// + doc shape, deduped (case-insensitive) by (type,valueNorm); marked by users=null +
+// userInfos=null. NO JWT (internal bulk-load, like keyword-search/work). Additive — does
+// not touch the store/work flow.
+router.post(
+  '/keyword-search/synthetic',
+  syntheticKwUploadMw,
+  asyncHandler(insertSyntheticKeywords)
 );
 
 // ─── AI creative scoring — internal/scorer endpoints (NO JWT, like keyword-search/work) ───
