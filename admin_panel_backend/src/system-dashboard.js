@@ -180,27 +180,61 @@ async function networkRollup(net, fromSql, toSql, platform) {
     return { net, rows: rows || [] };
   }
 
-  const params = [fromSql, toSql];
-  let platClause = '';
-  if (Array.isArray(platform) && platform.length) {
-    platClause = ` AND platform IN (${platform.map(() => '?').join(',')})`;
-    params.push(...platform);
+  // Account networks (fb/insta/linkedin/reddit/quora) + gtext: use the SAME
+  // source Crawler Insight uses — the <net>_ad table joined to <net>_users
+  // (adCountAcrossSelectedNetworks, required=null) — so systems + accounts MATCH
+  // Crawler Insight exactly. The activities log was sparse and undercounted.
+  const from = fromSql.slice(0, 10);
+  const to = toSql.slice(0, 10);
+  const plat = (Array.isArray(platform) && platform.length === 1) ? Number(platform[0]) : null;
+  const adRows = await adCountAcrossSelectedNetworks({ from, to }, [net], null, plat).catch(() => []);
+  const m = new Map();   // system_id -> { accounts:Set, ads }
+  for (const r of (adRows || [])) {
+    const sys = r?.system_name;
+    if (!sys) continue;
+    const acct = (r.account_id != null && r.account_id !== 'N/A') ? String(r.account_id) : null;
+    let e = m.get(sys);
+    if (!e) { e = { accounts: new Set(), ads: 0 }; m.set(sys, e); }
+    if (acct) e.accounts.add(acct);
+    e.ads += toNum(r.unqiue_ads);
   }
-  const acctSel = cfg.hasAccount
-    ? 'COUNT(DISTINCT account_id) AS accounts, GROUP_CONCAT(DISTINCT account_id) AS account_ids'
-    : "0 AS accounts, '' AS account_ids";
+  const rows = [...m].map(([sys, e]) => ({
+    system_id: sys, accounts: e.accounts.size, account_ids: [...e.accounts].join(','),
+    ads: e.ads, unique_ads: 0, last_active: null,
+  }));
+  return { net, rows };
+}
 
-  const sql = `SELECT system_id,
-      ${acctSel},
-      COUNT(*) AS ads,
-      COALESCE(SUM(is_unique),0) AS unique_ads,
-      MAX(created_at) AS last_active
-    FROM \`${cfg.acts}\`
-    WHERE created_at BETWEEN ? AND ?${platClause}
-    GROUP BY system_id`;
+// CRITICAL — the metrics exporter restarts ~hourly, so the raw counters RESET
+// and an INSTANT query only sees whatever reported since the last restart (a tiny
+// fraction of the fleet). That is why the system/account count came out far below
+// Crawler Insight. The fix: read `increase(metric[2d])`, which sums across resets,
+// so EVERY machine/account active in the last 2 days is captured. Configurable via
+// FLEET_WINDOW. These 2d-range reads are heavier, so they are cached (~5 min) — the
+// fleet membership changes slowly, and it also keeps Prometheus load low.
+const FLEET_WIN = process.env.FLEET_WINDOW || '24h';
 
-  const rows = await queryDatabase(cfg.db_id, dbName, sql, params);
-  return { net, rows: rows || [] };
+// Per-account fleet series over the 2d window: [{ acct, host=system_id, net }].
+// SOURCE = account_active_hb_total, whose server_name IS the system_id (PAS####)
+// — NOT scroll_plugin_counter_total: scroll is so high-cardinality that
+// increase(scroll[2d]) TIMES OUT on prod, while increase(account_active_hb_total
+// [2d]) returns the full fleet in ~1s. increase[2d] also survives the ~hourly
+// exporter restarts. Cached so the query runs once per few minutes.
+async function scrollSeries() {
+  const ck = `dash_fleetseries_${FLEET_WIN}`;
+  const cached = cache.get(ck);
+  if (cached) return cached;
+  let rows = [];
+  try {
+    const pc = await instantQuery(`count by (account_id, server_name, network) (increase(account_active_hb_total{mode="${mode}"}[${FLEET_WIN}]))`);
+    rows = (pc.data?.result || []).map((s) => ({
+      acct: s.metric?.account_id != null ? String(s.metric.account_id) : '',
+      host: s.metric?.server_name || '',
+      net: (s.metric?.network || '').toLowerCase(),
+    }));
+  } catch (e) { console.error('dashboard scrollSeries failed:', e.message); }
+  cache.set(ck, rows, 300);
+  return rows;
 }
 
 // account_id -> system_id bridge (for hostname + heartbeat status).
@@ -219,6 +253,32 @@ async function buildAccountBridge(range) {
   return acctToSystem;
 }
 
+// account_id -> SYSTEM_ID from the heartbeat metric. CRITICAL: the two Prometheus
+// metrics label the same machine differently — scroll_plugin_counter_total uses
+// the machine HOSTNAME ("GBSBHL1201-PC") while account_active_hb_total uses the
+// logical SYSTEM_ID ("PAS1201") — the same id the DB uses. The DB bridge only
+// covers accounts active in the window, so most monitored accounts fell back to
+// the hostname and the SAME machine got counted twice (PAS1201 + GBSBHL1201-PC),
+// breaking the system count vs Crawler Insight. This bridge maps EVERY monitored
+// account to its real system_id so the whole fleet collapses to clean system_ids.
+async function buildHbBridge() {
+  const ck = `dash_hbbridge_${FLEET_WIN}`;
+  const cached = cache.get(ck);
+  if (cached) return cached;
+  const map = new Map();
+  try {
+    // increase[2d] — survive the hourly exporter restarts (see FLEET_WIN note).
+    const r = await instantQuery(`count by (account_id, server_name) (increase(account_active_hb_total{mode="${mode}"}[${FLEET_WIN}]))`);
+    for (const s of (r.data?.result || [])) {
+      const acct = s.metric?.account_id != null ? String(s.metric.account_id) : '';
+      const sys = s.metric?.server_name || '';
+      if (acct && acct !== '-' && acct !== 'N/A' && sys && !map.has(acct)) map.set(acct, sys);
+    }
+  } catch (e) { console.error('dashboard buildHbBridge failed:', e.message); }
+  cache.set(ck, map, 300);
+  return map;
+}
+
 // The FULL FLEET of account-running machines — the same set Crawler Insight's
 // "Total Systems" counts. DB activities only show systems that scraped in the
 // window; many facebook/instagram machines have monitored accounts but no ads
@@ -228,40 +288,27 @@ async function buildAccountBridge(range) {
 // by their own rollups. Returns system_id -> { accounts:Set, networks:Set }.
 async function buildFleet(acctToSystem) {
   const fleet = new Map();
-  try {
-    const pc = await instantQuery(`count by (account_id, server_name, network) (scroll_plugin_counter_total{mode="${mode}"})`);
-    for (const s of (pc.data?.result || [])) {
-      const m = s.metric || {};
-      const network = (m.network || '').toLowerCase();
-      if (!network || ['youtube', 'gtext', 'gdn', 'native'].includes(network)) continue;
-      const acct = m.account_id != null ? String(m.account_id) : '';
-      const realAcct = acct && acct !== '-' && acct !== 'N/A';
-      const host = m.server_name || '';
-      // A network-tagged Prometheus series IS a real crawler machine for that
-      // network — keep it even if its account_id is blank, so e.g. Reddit's
-      // machine shows (idle, 0 accounts) when it logged no activity today.
-      // Only a series with NO hostname AND no bridged account is true noise.
-      const sys = (realAcct && acctToSystem.get(acct)) || host || null;
-      if (!sys) continue;
-      let f = fleet.get(sys);
-      if (!f) { f = { accounts: new Set(), networks: new Set() }; fleet.set(sys, f); }
-      if (realAcct) f.accounts.add(acct);
-      f.networks.add(network);
-    }
-  } catch (e) { console.error('dashboard buildFleet failed:', e.message); }
+  for (const { acct, host, net: network } of await scrollSeries()) {
+    if (!network || ['youtube', 'gtext', 'gdn', 'native'].includes(network)) continue;
+    const realAcct = acct && acct !== '-' && acct !== 'N/A';
+    // A network-tagged series IS a real crawler machine — keep it even with a
+    // blank account (e.g. Reddit's machine shows idle). Bridge the account to its
+    // clean system_id; fall back to the hostname only when there is no bridge.
+    const sys = (realAcct && acctToSystem.get(acct)) || host || null;
+    if (!sys) continue;
+    let f = fleet.get(sys);
+    if (!f) { f = { accounts: new Set(), networks: new Set() }; fleet.set(sys, f); }
+    if (realAcct) f.accounts.add(acct);
+    f.networks.add(network);
+  }
   return fleet;
 }
 
-// system_id -> [hostnames] via Prometheus scroll_plugin_counter_total.account_id.
+// system_id -> [hostnames] via the (cached, 2d) scroll series + account bridge.
 async function buildHostMap(acctToSystem) {
   const sysToHosts = {};
   try {
-    // Aggregate server-side to the only labels we read (account_id, server_name). Without this the
-    // raw query returns every plugin_id×country×network series (tens of MB) → event-loop-blocking parse.
-    const pc = await instantQuery(`count by (account_id, server_name) (scroll_plugin_counter_total{mode="${mode}"})`);
-    for (const s of (pc.data?.result || [])) {
-      const host = s.metric?.server_name;
-      const acct = s.metric?.account_id != null ? String(s.metric.account_id) : '';
+    for (const { acct, host } of await scrollSeries()) {
       const sys = acctToSystem.get(acct);
       if (!host || !sys) continue;
       (sysToHosts[sys] = sysToHosts[sys] || new Set()).add(host);
@@ -278,9 +325,13 @@ async function buildHostMap(acctToSystem) {
 // name display + wiring the existing account status-timeline (which filters by
 // account_name + server_name).
 async function buildAccountPromMap() {
+  const ck = `dash_acctprommap_${FLEET_WIN}`;
+  const cached = cache.get(ck);
+  if (cached) return cached;
   const map = new Map();
   try {
-    const r = await instantQuery(`count by (account_id, account_name, server_name) (scroll_plugin_counter_total{mode="${mode}"})`);
+    // increase[2d] so names resolve for the whole fleet, not just post-restart.
+    const r = await instantQuery(`count by (account_id, account_name, server_name) (increase(scroll_plugin_counter_total{mode="${mode}"}[${FLEET_WIN}]))`);
     for (const s of (r.data?.result || [])) {
       const id = s.metric?.account_id;
       if (id == null) continue;
@@ -290,6 +341,7 @@ async function buildAccountPromMap() {
       }
     }
   } catch (e) { /* non-fatal */ }
+  cache.set(ck, map, 300);
   return map;
 }
 
@@ -425,7 +477,14 @@ async function overview(req, res) {
 
   // 2a) account→system bridge (for hostname + status). ES gives the headline
   // ad counts (below); per-system numbers come from the DB activities rollup.
-  const acctToSystem = await buildAccountBridge(range).catch(() => new Map());
+  // Enrich the DB bridge (window-only) with the heartbeat bridge (every monitored
+  // account → its real system_id), so the fleet collapses to clean system_ids
+  // (PAS####) instead of splitting one machine across its hostname too.
+  const [acctToSystem, hbBridge] = await Promise.all([
+    buildAccountBridge(range).catch(() => new Map()),
+    buildHbBridge().catch(() => new Map()),
+  ]);
+  for (const [acct, sys] of hbBridge) if (!acctToSystem.has(acct)) acctToSystem.set(acct, sys);
 
   // Total + Unique ads per network — the SAME query Crawler Insight's
   // /get-count uses (dynamicCountFilter), so the numbers match exactly. Honors
@@ -632,6 +691,24 @@ async function overview(req, res) {
   return res.json(payload);
 }
 
+// account_ids heartbeating under one system (server_name == system_id) over the
+// fleet window — the monitored accounts, even those with no ads in the window.
+// Lets the drill match the grid (which counts heartbeat accounts via buildFleet)
+// instead of showing "no account activity" for a system that IS being monitored.
+function _promLabel(v) { return String(v == null ? '' : v).replace(/[\\"\n]/g, ''); }
+async function heartbeatAccountsForSystem(systemId) {
+  const out = [];
+  try {
+    const r = await instantQuery(`count by (account_id, network) (increase(account_active_hb_total{mode="${mode}",server_name="${_promLabel(systemId)}"}[${FLEET_WIN}]))`);
+    for (const s of (r.data?.result || [])) {
+      const id = s.metric?.account_id;
+      if (id == null || id === '-' || id === 'N/A') continue;
+      out.push({ account_id: String(id), network: (s.metric?.network || '').toLowerCase() });
+    }
+  } catch (e) { /* non-fatal */ }
+  return out;
+}
+
 // ---- system drill: per-account breakdown for one system ------------------
 //
 // POST /dashboard/system  { system_id, range, platform? }
@@ -659,12 +736,10 @@ async function systemDrill(req, res) {
     const cfg = NETS[net];
     const dbName = process.env[cfg.env];
     if (!dbName) return;
-    const params = [system_id, fromSql, toSql];
-    let platClause = '';
-    if (Array.isArray(platform) && platform.length) {
-      platClause = ` AND platform IN (${platform.map(() => '?').join(',')})`;
-      params.push(...platform);
-    }
+    // gdn/native systems are proxmox machines — they open the crawl benchmark
+    // (gdnBenchmark), never this per-account drill — so skip their heavy queries.
+    if (net === 'gdn' || net === 'native') return;
+    const plat = (Array.isArray(platform) && platform.length === 1) ? Number(platform[0]) : null;
     try {
       if (net === 'youtube') {
         // youtube systems come from youtube_ad.system_id (proxmox machines)
@@ -688,43 +763,59 @@ async function systemDrill(req, res) {
           }));
         } catch (e) { /* feed is best-effort */ }
       } else if (cfg.hasAccount) {
-        const sql = `SELECT account_id, COUNT(*) AS ads, COALESCE(SUM(is_unique),0) AS unique_ads,
-            MAX(created_at) AS last_active
-          FROM \`${cfg.acts}\`
-          WHERE system_id = ? AND created_at BETWEEN ? AND ?${platClause}
-          GROUP BY account_id ORDER BY ads DESC`;
-        const rows = await queryDatabase(cfg.db_id, dbName, sql, params);
-        let nAds = 0, nUniq = 0, last = 0;
-        for (const r of (rows || [])) {
-          const la = r.last_active ? new Date(r.last_active).getTime() : 0;
-          nAds += toNum(r.ads); nUniq += toNum(r.unique_ads); if (la > last) last = la;
-          accounts.push({
-            account_id: r.account_id, network: net,
-            ads: toNum(r.ads), unique_ads: toNum(r.unique_ads),
-            last_active: la ? new Date(la).toISOString() : null,
-            last_active_ago_sec: la ? Math.round((nowMs - la) / 1000) : null,
-          });
+        // SAME source as the overview grid — the <net>_ad table joined to
+        // <net>_users (adCountAcrossSelectedNetworks), filtered to this system.
+        // The activities log was sparse, so systems that DID produce ads showed
+        // "no account activity" here. account_name comes from the join.
+        const adRows = await adCountAcrossSelectedNetworks({ from: fromDay, to: toDay }, [net], null, plat).catch(() => []);
+        const agg = new Map();   // account_id -> { ads, name }
+        for (const r of (adRows || [])) {
+          if (String(r?.system_name) !== String(system_id)) continue;
+          const acct = (r.account_id != null && r.account_id !== 'N/A') ? String(r.account_id) : null;
+          if (!acct) continue;
+          let e = agg.get(acct);
+          if (!e) { e = { ads: 0, name: (r.account_name && r.account_name !== 'N/A') ? r.account_name : null }; agg.set(acct, e); }
+          e.ads += toNum(r.unqiue_ads);
         }
-        if ((rows || []).length) {
-          perNetwork.push({ network: net, accounts: rows.length, ads: nAds, unique_ads: nUniq,
-            last_active: last ? new Date(last).toISOString() : null });
+        let nAds = 0;
+        for (const [acct, e] of agg) {
+          nAds += e.ads;
+          accounts.push({ account_id: acct, network: net, ads: e.ads, unique_ads: 0,
+            name: e.name, last_active: null, last_active_ago_sec: null });
+        }
+        if (agg.size) {
+          perNetwork.push({ network: net, accounts: agg.size, ads: nAds, unique_ads: 0, last_active: null });
         }
       } else {
-        const sql = `SELECT COUNT(*) AS ads, COALESCE(SUM(is_unique),0) AS unique_ads, MAX(created_at) AS last_active
-          FROM \`${cfg.acts}\`
-          WHERE system_id = ? AND created_at BETWEEN ? AND ?${platClause}`;
-        const rows = await queryDatabase(cfg.db_id, dbName, sql, params);
-        const r = rows && rows[0];
-        if (r && toNum(r.ads) > 0) {
-          const la = r.last_active ? new Date(r.last_active).getTime() : 0;
-          perNetwork.push({ network: net, accounts: 0, ads: toNum(r.ads), unique_ads: toNum(r.unique_ads),
-            last_active: la ? new Date(la).toISOString() : null });
+        // system-only networks (gtext) — same adCount source as the overview.
+        const adRows = await adCountAcrossSelectedNetworks({ from: fromDay, to: toDay }, [net], null, plat).catch(() => []);
+        let nAds = 0;
+        for (const r of (adRows || [])) {
+          if (String(r?.system_name) !== String(system_id)) continue;
+          nAds += toNum(r.unqiue_ads);
+        }
+        if (nAds > 0) {
+          perNetwork.push({ network: net, accounts: 0, ads: nAds, unique_ads: 0, last_active: null });
         }
       }
     } catch (e) {
       console.error(`system drill ${net} failed:`, e.message);
     }
   }));
+
+  // Idle monitored accounts: heartbeating under this system (server_name=
+  // system_id) but with no ads in the window — so the drill's account list
+  // matches the grid's count (which includes the heartbeat fleet) instead of
+  // showing "no account activity" for a system that IS being monitored.
+  try {
+    const have = new Set(accounts.map(a => String(a.account_id)));
+    for (const { account_id, network } of await heartbeatAccountsForSystem(system_id)) {
+      if (have.has(account_id)) continue;
+      have.add(account_id);
+      accounts.push({ account_id, network: network || null, ads: 0, unique_ads: 0,
+        name: null, last_active: null, last_active_ago_sec: null });
+    }
+  } catch (e) { /* non-fatal */ }
 
   // ---- enrich accounts: name + country (DB users) + live + prom keys -------
   const [promAcct, liveAccts] = await Promise.all([
@@ -763,7 +854,7 @@ async function systemDrill(req, res) {
     const u = userMaps[a.network]?.get(String(a.account_id));
     const p = promAcct.get(String(a.account_id));
     const dbName = u?.name && String(u.name).trim() && u.name !== 'N/A' ? u.name : null;
-    a.name = dbName || p?.account_name || null;
+    a.name = dbName || a.name || p?.account_name || null;
     a.country = u?.country || null;
     a.live = liveAccts.has(String(a.account_id));   // heartbeat NOW (Prometheus)
     if (a.live) liveCount++;

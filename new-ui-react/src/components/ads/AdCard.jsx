@@ -176,6 +176,14 @@ const AdCard = ({
   const isVideo = adTypeLower === "video";
   const isActive = (ad.status || "").toLowerCase() === "active";
 
+  // Don't render ads whose media never stored. When the source image can't be fetched the
+  // backend falls back to a "DefaultImage" placeholder (e.g. .../stream/DefaultImage.jpg);
+  // we hide those cards instead of showing an empty/placeholder preview. (Return is after
+  // all hooks so the rules of hooks are preserved.)
+  if (typeof ad.thumbnail === "string" && ad.thumbnail.includes("DefaultImage")) {
+    return null;
+  }
+
   return (
     <div
       className={`notranslate group cursor-pointer flex flex-col rounded-xl border overflow-hidden transition-all duration-200 hover:shadow-xl hover:shadow-black/20 relative`}

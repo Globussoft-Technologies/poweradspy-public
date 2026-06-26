@@ -102,6 +102,31 @@ function normalizeLibrary(ad) {
 
 // ── INSERT path ──────────────────────────────────────────────────────────────────
 async function insertPath(ctx, n, { translation, network }) {
+  // Media gate: download the primary media up-front and REJECT the ad if the image
+  // (IMAGE) or thumbnail (VIDEO) can't be fetched — we won't store a DefaultImage
+  // placeholder. The bytes are reused after commit (no second download).
+  const primaryUrl = n.image_video_url ?? n.ad_image;
+  const fetched = await media.fetchPrimaryMedia(
+    { type: n.type, imageUrl: primaryUrl, videoUrl: primaryUrl, thumbnailUrl: n.thumbnail_url },
+    network,
+  );
+  if (!fetched.ok) {
+    return rejected(422, fetched.reason === 'thumbnail'
+      ? 'The video thumbnail could not be downloaded, so the ad was not inserted.'
+      : 'The ad image could not be downloaded, so the ad was not inserted.', {
+      field: fetched.reason === 'thumbnail' ? 'thumbnail_url' : 'image_video_url',
+      hint: 'The source media URL is unreachable or expired — re-capture the ad with a fresh media URL and resend.',
+    });
+  }
+  try {
+    return await insertPathInner(ctx, n, { translation, network, fetched });
+  } catch (err) {
+    media.cleanupFetched(fetched); // free pre-downloaded temp bytes if the insert threw before they were consumed
+    throw err;
+  }
+}
+
+async function insertPathInner(ctx, n, { translation, network, fetched }) {
   const { db, log } = ctx;
   const sql = db.sql;
 
@@ -250,7 +275,7 @@ async function insertPath(ctx, n, { translation, network }) {
   // After commit: post-owner image + ad media (image/video + carousel) in PARALLEL, off the transaction.
   const [, mediaPaths] = await Promise.all([
     saveOwnerImage(sql, result.postOwnerId, n.post_owner_image, network).catch(() => null),
-    uploadAdMediaAndSaveVariant(sql, n, result.facebookAdId, result.variantId, network),
+    uploadAdMediaAndSaveVariant(sql, n, result.facebookAdId, result.variantId, network, fetched),
   ]);
   result.mediaPaths = mediaPaths;
 
@@ -339,24 +364,30 @@ function buildLibraryAdRow(n, ids) {
   return row;
 }
 
-async function uploadAdMedia(n, facebookAdId, network) {
+// `fetched` (from media.fetchPrimaryMedia) is passed on the INSERT path so the primary
+// media is uploaded from the already-downloaded temp bytes (no second download).
+async function uploadAdMedia(n, facebookAdId, network, fetched) {
   const out = {};
   const primaryUrl = n.image_video_url ?? n.ad_image;
   const om = parseOtherMultimedia(n.other_multimedia);
 
   const [primary, multimedia] = await Promise.all([
-    n.type === 'VIDEO'
-      ? Promise.all([
-          media.uploadVideo(primaryUrl, facebookAdId, network).catch(() => null),
-          media.uploadThumbnail(n.thumbnail_url, facebookAdId, network).catch(() => null),
-        ]).then(([vid, thumb]) => ({ vid, thumb }))
-      : media.uploadImage(primaryUrl, facebookAdId, network).catch(() => null).then((img) => ({ img })),
+    fetched
+      ? media.storePrimaryFromTemp(fetched, facebookAdId, network)
+      : n.type === 'VIDEO'
+        ? Promise.all([
+            media.uploadVideo(primaryUrl, facebookAdId, network).catch(() => null),
+            media.uploadThumbnail(n.thumbnail_url, facebookAdId, network).catch(() => null),
+          ]).then(([vid, thumb]) => ({ vid, thumb }))
+        : media.uploadImage(primaryUrl, facebookAdId, network).catch(() => null).then((img) => ({ img })),
     om.present && om.images.length
       ? media.uploadMultimedia(om.images, n.type, facebookAdId, network).catch(() => null)
       : Promise.resolve(null),
   ]);
 
-  if (n.type === 'VIDEO') {
+  if (fetched) {
+    Object.assign(out, primary);
+  } else if (n.type === 'VIDEO') {
     if (primary.vid) out.nas_video_url = primary.vid.drive_video_url;
     if (primary.thumb) out.image_url = primary.thumb.image_video_url;
   } else if (primary.img) {
@@ -368,8 +399,8 @@ async function uploadAdMedia(n, facebookAdId, network) {
 }
 
 /** Upload ad media (after commit) + persist variant image_url + carousel images. */
-async function uploadAdMediaAndSaveVariant(sql, n, facebookAdId, variantId, network) {
-  const mediaPaths = await uploadAdMedia(n, facebookAdId, network);
+async function uploadAdMediaAndSaveVariant(sql, n, facebookAdId, variantId, network, fetched) {
+  const mediaPaths = await uploadAdMedia(n, facebookAdId, network, fetched);
   if (mediaPaths.image_url) {
     await repo.updateVariant(sql, { image_url: mediaPaths.image_url, image_url_original: n.image_video_url ?? n.ad_image }, variantId).catch(() => {});
   }

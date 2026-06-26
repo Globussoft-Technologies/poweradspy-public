@@ -69,6 +69,31 @@ function normalizeLibrary(ad) {
 
 // ── INSERT ───────────────────────────────────────────────────────────────────────
 async function insertPath(ctx, n, { translation }) {
+  // Media gate: download the primary media up-front and REJECT the ad if the image
+  // (IMAGE) or thumbnail (VIDEO) can't be fetched — we won't store a DefaultImage
+  // placeholder. The bytes are reused after commit (no second download).
+  const primaryUrl = n.image_video_url ?? n.ad_image;
+  const fetched = await media.fetchPrimaryMedia(
+    { type: n.type, imageUrl: primaryUrl, videoUrl: primaryUrl, thumbnailUrl: n.thumbnail_url },
+    NETWORK,
+  );
+  if (!fetched.ok) {
+    return rejected(422, fetched.reason === 'thumbnail'
+      ? 'The video thumbnail could not be downloaded, so the ad was not inserted.'
+      : 'The ad image could not be downloaded, so the ad was not inserted.', {
+      field: fetched.reason === 'thumbnail' ? 'thumbnail_url' : 'image_video_url',
+      hint: 'The source media URL is unreachable or expired — re-capture the ad with a fresh media URL and resend.',
+    });
+  }
+  try {
+    return await insertPathInner(ctx, n, { translation, fetched });
+  } catch (err) {
+    media.cleanupFetched(fetched); // free pre-downloaded temp bytes if the insert threw before they were consumed
+    throw err;
+  }
+}
+
+async function insertPathInner(ctx, n, { translation, fetched }) {
   const { db, log } = ctx;
   const sql = db.sql;
 
@@ -177,7 +202,7 @@ async function insertPath(ctx, n, { translation }) {
 
   const [, mediaPaths] = await Promise.all([
     saveOwnerImage(sql, result.postOwnerId, n.post_owner_image, NETWORK).catch(() => null),
-    uploadAdMediaAndSaveVariant(sql, n, result.instagramAdId, result.variantId),
+    uploadAdMediaAndSaveVariant(sql, n, result.instagramAdId, result.variantId, fetched),
   ]);
   result.mediaPaths = mediaPaths;
 
@@ -257,19 +282,26 @@ function buildLibraryAdRow(n, ids) {
   return row;
 }
 
-async function uploadAdMediaAndSaveVariant(sql, n, adId, _variantId) {
+// `fetched` (from media.fetchPrimaryMedia) is passed on the INSERT path so the primary
+// media is uploaded from the already-downloaded temp bytes (no second download). The
+// UPDATE path calls this without `fetched`, so it downloads as before.
+async function uploadAdMediaAndSaveVariant(sql, n, adId, _variantId, fetched) {
   const out = {};
   const primaryUrl = n.image_video_url ?? n.ad_image;
   const om = parseOtherMultimedia(n.other_multimedia);
   // PHP: other_multimedia is stored ONLY for type IMAGE (VIDEO branch is commented out).
   const doMultimedia = n.type === 'IMAGE' && om.present && om.images.length;
   const [primary, multimedia] = await Promise.all([
-    n.type === 'VIDEO'
-      ? Promise.all([media.uploadVideo(primaryUrl, adId, NETWORK).catch(() => null), media.uploadThumbnail(n.thumbnail_url, adId, NETWORK).catch(() => null)]).then(([vid, thumb]) => ({ vid, thumb }))
-      : media.uploadImage(primaryUrl, adId, NETWORK).catch(() => null).then((img) => ({ img })),
+    fetched
+      ? media.storePrimaryFromTemp(fetched, adId, NETWORK)
+      : n.type === 'VIDEO'
+        ? Promise.all([media.uploadVideo(primaryUrl, adId, NETWORK).catch(() => null), media.uploadThumbnail(n.thumbnail_url, adId, NETWORK).catch(() => null)]).then(([vid, thumb]) => ({ vid, thumb }))
+        : media.uploadImage(primaryUrl, adId, NETWORK).catch(() => null).then((img) => ({ img })),
     doMultimedia ? media.uploadMultimedia(om.images, n.type, adId, NETWORK).catch(() => null) : Promise.resolve(null),
   ]);
-  if (n.type === 'VIDEO') {
+  if (fetched) {
+    Object.assign(out, primary);
+  } else if (n.type === 'VIDEO') {
     if (primary.vid) out.nas_video_url = primary.vid.drive_video_url;
     if (primary.thumb) out.image_url = primary.thumb.image_video_url;
   } else if (primary.img) { out.image_url = primary.img.image_video_url; out.new_nas_image_url = primary.img.nas_path; }

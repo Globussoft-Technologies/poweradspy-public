@@ -148,6 +148,75 @@ async function uploadMultimedia(urls, type, id, network) {
 }
 
 /**
+ * Download an ad's PRIMARY media to temp file(s) BEFORE insertion, so a pipeline can
+ * REJECT the ad when the gating media can't be fetched — instead of storing a
+ * /DefaultImage.jpg placeholder. The bytes are reused by storePrimaryFromTemp() after
+ * commit, so there is NO second download.
+ *
+ * Gating rule (product decision): IMAGE ads gate on the image; VIDEO ads gate on the
+ * THUMBNAIL (that's what shows in search results) — the video file itself is allowed to
+ * fail / defer to the retry queue. Any other type (TEXT, …) is never gated.
+ *
+ * @param {{type?:string, imageUrl?:string, videoUrl?:string, thumbnailUrl?:string}} m
+ * @param {string} [network]
+ * @returns {Promise<{ok:boolean, type:string, image?:string|null, video?:string|null,
+ *                     thumb?:string|null, reason?:string}>}
+ *   ok=false → the caller should reject (reason: 'image' | 'thumbnail'). On success the
+ *   temp paths MUST be handed to storePrimaryFromTemp (which uploads + cleans up) or freed
+ *   with cleanupFetched.
+ */
+async function fetchPrimaryMedia(m = {}, network = '') {
+  const type = String(m.type || '').toUpperCase();
+  if (type === 'VIDEO') {
+    const [video, thumb] = await Promise.all([
+      downloadToTemp(m.videoUrl, 'mp4'),
+      downloadToTemp(m.thumbnailUrl, 'webp', network),
+    ]);
+    if (!thumb) { cleanup(video); return { ok: false, type, reason: 'thumbnail' }; }
+    return { ok: true, type, video, thumb };
+  }
+  if (type === 'IMAGE') {
+    const image = await downloadToTemp(m.imageUrl, 'webp', network);
+    if (!image) return { ok: false, type, reason: 'image' };
+    return { ok: true, type, image };
+  }
+  // No gated media for other types — nothing pre-downloaded.
+  return { ok: true, type };
+}
+
+/**
+ * Upload the media pre-downloaded by fetchPrimaryMedia() to NAS using the now-known ad id,
+ * returning the SAME keyed shape the pipelines build for the primary media, and cleaning up
+ * the temp files. Safe to call with a non IMAGE/VIDEO `fetched` (returns {}).
+ */
+async function storePrimaryFromTemp(fetched, id, network) {
+  const out = {};
+  if (!fetched) return out;
+  try {
+    if (fetched.type === 'VIDEO') {
+      const [vid, thumb] = await Promise.all([
+        fetched.video ? storeInNas('VIDEO', fetched.video, id, network, `${id}`).catch(() => null) : Promise.resolve(null),
+        fetched.thumb ? storeInNas('THUMBNAIL', fetched.thumb, id, network, `${id}`).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (vid) out.nas_video_url = vid;
+      if (thumb) out.image_url = thumb;
+    } else if (fetched.type === 'IMAGE' && fetched.image) {
+      const nasPath = await storeInNas('IMAGE', fetched.image, id, network, `${id}`).catch(() => null);
+      if (nasPath) { out.image_url = nasPath; out.new_nas_image_url = nasPath; }
+    }
+  } finally {
+    cleanupFetched(fetched);
+  }
+  return out;
+}
+
+/** Unlink any temp files held by a fetchPrimaryMedia() result (reject / error paths). Idempotent. */
+function cleanupFetched(fetched) {
+  if (!fetched) return;
+  cleanup(fetched.image); cleanup(fetched.video); cleanup(fetched.thumb);
+}
+
+/**
  * Inspect the media paths produced for an ad and return a simple, caller-facing
  * warning string when the media could NOT be stored (NAS not configured / upload
  * failed / default placeholder). Returns null when media is fine.
@@ -169,4 +238,5 @@ function mediaIssueWarning(paths = {}, type) {
 module.exports = {
   uploadPostOwner, uploadImage, uploadThumbnail, uploadVideo, uploadMultimedia,
   downloadToTemp, mediaIssueWarning, DEFAULT_IMAGE, DEFAULT_VIDEO,
+  fetchPrimaryMedia, storePrimaryFromTemp, cleanupFetched,
 };

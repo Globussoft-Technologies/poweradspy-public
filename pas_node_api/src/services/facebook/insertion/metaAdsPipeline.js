@@ -145,9 +145,36 @@ async function resolveUser(sql, ad, log) {
 
 // ── INSERT path (PHP 371-1613) ──────────────────────────────────────────────────
 async function insertPath(ctx, rawAd, { userId, translation, network }) {
+  const n = normalizeMetaAds(rawAd);
+
+  // Media gate: download the primary media up-front and REJECT the ad if the image
+  // (IMAGE) or thumbnail (VIDEO) can't be fetched — we won't store a DefaultImage
+  // placeholder. The bytes are reused after commit (no second download); cleaned up
+  // by storePrimaryFromTemp on success, or by cleanupFetched on any error/reject path.
+  const fetched = await media.fetchPrimaryMedia(
+    { type: n.type, imageUrl: n.image_video_url, videoUrl: n.image_video_url, thumbnailUrl: n.thumbnail_url },
+    network,
+  );
+  if (!fetched.ok) {
+    return rejected(422, fetched.reason === 'thumbnail'
+      ? 'The video thumbnail could not be downloaded, so the ad was not inserted.'
+      : 'The ad image could not be downloaded, so the ad was not inserted.', {
+      field: fetched.reason === 'thumbnail' ? 'thumbnail_url' : 'image_video_url',
+      hint: 'The source media URL is unreachable or expired — re-capture the ad with a fresh media URL and resend.',
+    });
+  }
+
+  try {
+    return await insertPathInner(ctx, n, { userId, translation, network, fetched });
+  } catch (err) {
+    media.cleanupFetched(fetched); // free pre-downloaded temp bytes if the insert threw before they were consumed
+    throw err;
+  }
+}
+
+async function insertPathInner(ctx, n, { userId, translation, network, fetched }) {
   const { db, log } = ctx;
   const sql = db.sql;
-  const n = normalizeMetaAds(rawAd);
 
   // language detect (skipped in dev, like PHP APP_ENV check)
   let languageId = 0;
@@ -279,7 +306,7 @@ async function insertPath(ctx, rawAd, { userId, translation, network }) {
   // off the transaction connection. This is the biggest latency win.
   const [, mediaPaths] = await Promise.all([
     saveOwnerImage(sql, result.postOwnerId, n.post_owner_image, network).catch(() => null),
-    uploadAdMediaAndSaveVariant(sql, n, result.facebookAdId, result.variantId, network),
+    uploadAdMediaAndSaveVariant(sql, n, result.facebookAdId, result.variantId, network, fetched),
   ]);
   result.mediaPaths = mediaPaths;
 
@@ -292,8 +319,8 @@ async function insertPath(ctx, rawAd, { userId, translation, network }) {
 }
 
 /** Upload ad media (after commit) and persist variant image_url. Returns the media paths. */
-async function uploadAdMediaAndSaveVariant(sql, n, facebookAdId, variantId, network) {
-  const mediaPaths = await uploadAdMedia(n, facebookAdId, network);
+async function uploadAdMediaAndSaveVariant(sql, n, facebookAdId, variantId, network, fetched) {
+  const mediaPaths = await uploadAdMedia(n, facebookAdId, network, fetched);
   if (mediaPaths.image_url) {
     await repo.updateVariant(sql, { image_url: mediaPaths.image_url, image_url_original: n.image_video_url }, variantId).catch(() => {});
   }
@@ -514,24 +541,33 @@ async function insertMetaData(tx, n, facebookAdId) {
   });
 }
 
-async function uploadAdMedia(n, facebookAdId, network) {
+// `fetched` (from media.fetchPrimaryMedia) is passed on the INSERT path so the primary
+// media is uploaded from the already-downloaded temp bytes (no second download). The
+// UPDATE path calls this without `fetched`, so it downloads as before.
+async function uploadAdMedia(n, facebookAdId, network, fetched) {
   const out = {};
   const om = parseOtherMultimedia(n.other_multimedia);
 
   // primary media + carousel/other-multimedia run in PARALLEL
   const [primary, multimedia] = await Promise.all([
-    n.type === 'VIDEO'
-      ? Promise.all([
-          media.uploadVideo(n.image_video_url, facebookAdId, network).catch(() => null),
-          media.uploadThumbnail(n.thumbnail_url, facebookAdId, network).catch(() => null),
-        ]).then(([vid, thumb]) => ({ vid, thumb }))
-      : media.uploadImage(n.image_video_url, facebookAdId, network).catch(() => null).then((img) => ({ img })),
+    fetched
+      ? media.storePrimaryFromTemp(fetched, facebookAdId, network)
+      : n.type === 'VIDEO'
+        ? Promise.all([
+            media.uploadVideo(n.image_video_url, facebookAdId, network).catch(() => null),
+            media.uploadThumbnail(n.thumbnail_url, facebookAdId, network).catch(() => null),
+          ]).then(([vid, thumb]) => ({ vid, thumb }))
+        : media.uploadImage(n.image_video_url, facebookAdId, network).catch(() => null).then((img) => ({ img })),
     om.present && om.images.length
       ? media.uploadMultimedia(om.images, n.type, facebookAdId, network).catch(() => null)
       : Promise.resolve(null),
   ]);
 
-  if (n.type === 'VIDEO') {
+  if (fetched) {
+    // storePrimaryFromTemp already returns the mapped { image_url, new_nas_image_url } /
+    // { nas_video_url, image_url } shape.
+    Object.assign(out, primary);
+  } else if (n.type === 'VIDEO') {
     if (primary.vid) out.nas_video_url = primary.vid.drive_video_url;
     if (primary.thumb) out.image_url = primary.thumb.image_video_url;
   } else if (primary.img) {
