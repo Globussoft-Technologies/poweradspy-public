@@ -181,11 +181,7 @@ const PLATFORM_FIELD_MAPPINGS = {
 // Fetch ads count from platform-specific indices
 // Supports keyword, advertiser, and domain searches with time range filtering
 async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue, searchType, logger, startTime = null, endTime = null) {
-  if (!elastic || !platforms || platforms.length === 0) {
-    logger?.info?.('[fetchAdsCountByPlatform] Early return: elastic=' + !!elastic + ', platforms=' + (platforms ? platforms.length : 0));
-    return 0;
-  }
-
+  
   let totalCount = 0;
 
   for (const platform of platforms) {
@@ -291,7 +287,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
 
       logger?.info?.('[fetchAdsCountByPlatform] Query for platform:', { platform, index: indexName, searchType, searchValue });
 
-      const esResult = await elastic.count(esQuery);
+      const esResult = await platformElastic.count(esQuery);
       const count = esResult.count || esResult.body?.count || 0;
       totalCount += count;
 
@@ -302,6 +298,156 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
   }
 
   return totalCount;
+}
+
+// Batch fetch ads counts for a single keyword/advertiser/domain across multiple time windows
+// Optimized for platform-wise history fetching - returns counts per platform per time window
+// Input: keyword, platforms, array of time windows with startTime and endTime
+// Output: { [platform]: { [timeWindowKey]: adsCount } }
+async function fetchAdsCountBatchByPlatform(elastic, platforms, searchValue, searchType, timeWindows, logger) {
+  const resultsMap = {}; // { platform: { timeWindowKey: count } }
+
+  // Initialize structure for each platform
+  for (const platform of platforms) {
+    resultsMap[platform.toLowerCase()] = {};
+  }
+
+  // Build promises for all platform × timeWindow combinations
+  const promises = [];
+  const promiseMetadata = [];
+
+  for (const platform of platforms) {
+    const platformName = platform.toLowerCase();
+    const indexName = PLATFORM_INDEX_MAP[platformName] || 'search_mix';
+    const platformConfig = PLATFORM_FIELD_MAPPINGS[platformName];
+
+    if (!platformConfig) {
+      logger?.warn?.('[fetchAdsCountBatchByPlatform] Unknown platform:', platform);
+      continue;
+    }
+
+    const platformElastic = databaseManager.getElastic(platformName) || elastic;
+    if (!platformElastic) {
+      logger?.warn?.('[fetchAdsCountBatchByPlatform] No ES client for platform:', platform);
+      continue;
+    }
+
+    const timestampField = getTimestampField(platformName);
+    const searchTypeStr = String(searchType);
+
+    // For each time window, create a query promise
+    for (const timeWindow of timeWindows) {
+      const { startTime, endTime, key: timeWindowKey } = timeWindow;
+
+      let startStr = formatTimestampString(JSON.stringify(startTime));
+      let endStr = formatTimestampString(JSON.stringify(endTime));
+
+      // For LinkedIn and YouTube: convert to Unix seconds
+      if (platformName === 'linkedin' || platformName === 'youtube') {
+        startStr = convertToUnixSeconds(startStr);
+        endStr = convertToUnixSeconds(endStr);
+      }
+
+      // Build range query with platform-specific timestamp field
+      const baseQuery = {
+        bool: {
+          filter: [
+            { range: { [timestampField]: { gte: startStr, lte: endStr } } }
+          ],
+          must: []
+        }
+      };
+
+      // Add search-specific filter based on type
+      if (searchTypeStr === '1') {
+        // Keyword search
+        const keywordFields = platformConfig.keyword;
+        if (keywordFields && keywordFields.length > 0) {
+          baseQuery.bool.must.push({
+            multi_match: {
+              query: searchValue,
+              type: 'phrase',
+              fields: keywordFields
+            }
+          });
+        }
+      } else if (searchTypeStr === '2') {
+        // Advertiser search
+        const advertiserFields = platformConfig.advertiser;
+        if (advertiserFields && advertiserFields.length > 0) {
+          baseQuery.bool.must.push({
+            multi_match: {
+              query: searchValue,
+              type: 'phrase',
+              fields: advertiserFields
+            }
+          });
+        }
+      } else if (searchTypeStr === '3') {
+        // Domain search
+        const domainField = platformConfig.domain;
+        if (domainField) {
+          let domain;
+          try {
+            const parsed = new URL(searchValue.startsWith('http') ? searchValue : `http://${searchValue}`);
+            domain = parsed.hostname;
+          } catch {
+            domain = searchValue.split('/')[0];
+          }
+          baseQuery.bool.must.push({
+            wildcard: {
+              [domainField]: `*${domain}*`
+            }
+          });
+        }
+      }
+
+      if (baseQuery.bool.must.length === 0) {
+        logger?.warn?.('[fetchAdsCountBatchByPlatform] No search clause for type:', searchType);
+        continue;
+      }
+
+      const esQuery = {
+        index: indexName,
+        body: {
+          query: baseQuery
+        }
+      };
+
+      // Store metadata for result mapping
+      promiseMetadata.push({
+        platform: platformName,
+        timeWindowKey: timeWindowKey
+      });
+      
+
+      // Add query promise to array
+      promises.push(
+        platformElastic.count(esQuery).catch(err => {
+          logger?.warn?.('[fetchAdsCountBatchByPlatform] Failed for platform', platformName, 'timeWindow', timeWindowKey, 'Error:', err.message);
+          return null;
+        })
+      );
+    }
+  }
+
+  // Execute all queries in parallel
+  logger?.info?.('[fetchAdsCountBatchByPlatform] Executing', promises.length, 'parallel ES queries');
+  const esResults = await Promise.all(promises);
+
+  // Process results and populate resultsMap
+  for (let i = 0; i < esResults.length; i++) {
+    const result = esResults[i];
+    const metadata = promiseMetadata[i];
+
+    if (!result) continue; // Skip failed queries
+
+    const count = result.count || result.body?.count || 0;
+    resultsMap[metadata.platform][metadata.timeWindowKey] = count;
+  }
+
+  logger?.info?.('[fetchAdsCountBatchByPlatform] Completed batch queries');
+  return resultsMap;
 }
 
 // Query keyword scraping history from MongoDB using the shared DatabaseManager connection.
@@ -577,9 +723,9 @@ function buildAllSearchesQuery(params) {
   };
 }
 
-
 module.exports = {
   fetchAdsCountByPlatform,
+  fetchAdsCountBatchByPlatform,
   queryKeywordScrapingHistory,
   buildKeywordTrendsQuery,
   parseKeywordTrendsResults,

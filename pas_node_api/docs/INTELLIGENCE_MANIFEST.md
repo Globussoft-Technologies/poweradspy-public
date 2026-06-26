@@ -1,9 +1,10 @@
 # Intelligence Manifest
 ## Complete Documentation of Intelligence APIs & Logic
-**Last Updated:** 2026-06-23  
+**Last Updated:** 2026-06-26  
 **Service:** admin_user_activity  
 **Status:** Production Ready  
 **Total APIs:** 15 endpoints
+**Latest Change:** Added `users: { $ne: null }` filter to keyword-trends, items-list, summary-stats endpoints
 
 ---
 
@@ -434,58 +435,87 @@ Same as `getAllSearches()`:
 ### 6. Keyword Trends
 **Endpoint:** `GET /api/v1/admin_user_activity/intelligence/keyword-trends`  
 **Controller:** `keyword_Trend_ProjectController.js::getKeywordTrends()`  
-**Lines:** 1-193  
+**Lines:** 20-222  
 **Status:** Production Ready
 
 #### Purpose
-Tracks trending keywords, advertisers, or domains with growth metrics.
+Tracks trending keywords, advertisers, or domains with growth metrics. Only includes items where users field is not null.
 
 #### Response Structure
 ```json
 {
   "code": 200,
   "data": {
-    "type": "keyword",
-    "trends": [
+    "keywords": [
       {
-        "term": "best headphones 2026",
-        "count": 567,
-        "trend_direction": "up",
-        "percentage_change": 23,
-        "days_tracked": 30
-      },
-      {
-        "term": "wireless earbuds",
-        "count": 456,
-        "trend_direction": "down",
-        "percentage_change": -8,
-        "days_tracked": 30
+        "keyword": "best headphones",
+        "platform": ["facebook", "instagram", "google"],
+        "searchedDate": "18/06/2026",
+        "history": [
+          {
+            "date": "2026-06-18",
+            "status": "completed",
+            "startTime": "2026-06-18T08:00:00Z",
+            "endTime": "2026-06-18T08:15:30Z",
+            "network": "facebook",
+            "adsCount": 342
+          }
+        ]
       }
-    ],
-    "total_unique": 2156,
-    "period": "30 days"
+    ]
+  },
+  "meta": {
+    "page": 0,
+    "size": 10,
+    "total": 256,
+    "total_pages": 26
   }
 }
 ```
 
 #### Key Features
-- **Type Flexibility:** keyword, advertiser, domain, or all
-- **Sorting Options:** By count (frequency) or growth (trend percentage)
-- **Configurable Size:** Default 20, max 100 results
-- **Growth Calculation:** Compares current vs previous period
-- **Multi-Period Analysis:** 7, 30, 90 day windows
+- **Type Flexibility:** keyword (1), advertiser (2), domain (3), or all
+- **User Filter:** Excludes keywords with `users: null` (MongoDB condition: `{ users: { $ne: null } }`)
+- **Status-Based Filtering:** totalcompleted, totalnotwent, totalunderscrapping, totalfailed, todaycompleted, todaynotwent, todayunderscrapping, todayfailed
+- **Search-Value Filter:** Optional exact match filtering
+- **Sorting Options:** createdAt, count (searchCount), lastSearchedAt
+- **Pagination:** 0-based page, configurable size (max 100)
+- **Enrichment:** Fetches ads count from Elasticsearch for each scraping run
 
 #### Query Parameters
 - `type` (optional): "keyword" | "advertiser" | "domain" | "all" (default: keyword)
-- `sort_by` (optional): "count" | "growth" (default: count)
-- `size` (optional): Number of results (default: 20, max: 100)
-- `date_range` (optional): "Last 7 days" | "Last 30 days" | "Last 90 days"
+- `sort_by` (optional): "createdAt" | "count" | "recent" | "lastSearchedAt" (default: createdAt)
+- `page` (optional): 0-based page number (default: 0)
+- `size` (optional): Page size (default: 10, max: 100)
+- `status` (optional): Filter by scraping status
+- `search_value` (optional): Exact match on value field
+
+#### Filtering Details
+**Base Filter (Applied to All Queries):**
+```javascript
+{ 
+  type: typeNum,
+  users: { $ne: null }  // Exclude items with null users
+}
+```
+
+**Status Filters (if provided):**
+- `totalkeywords`: All keywords
+- `totalcompleted`: Has completed scraping with status="completed"
+- `totalnotwent`: Never went for scrapping (no scrapping_status)
+- `totalunderscrapping`: Currently under scrapping (startTime exists, no endTime)
+- `totalfailed`: Has scraping failure (status="failed")
+- `todaycompleted`: Completed scraping today
+- `todaynotwent`: Searched today but never went for scrapping
+- `todayunderscrapping`: Currently under scrapping today
+- `todayfailed`: Failed scraping today
 
 #### Implementation Details
-- Uses `buildKeywordTrendsQuery()` query builder
-- Fetches trends from entire database (not time-limited except date_range param)
-- Cardinality aggregation for unique count
-- Percentage change calculated from period comparison
+- Base filter includes `users: { $ne: null }` at line 47
+- Status filtering applied to merged filter object
+- Uses `enrichKeywordsWithAds()` for ads count fetching per history entry
+- Sequential Elasticsearch queries per scraping run to get ad counts
+- Handles both normalized and exact value lookups
 
 ---
 
@@ -781,54 +811,112 @@ Fetches top 10 keywords based on search count from user_activities Elasticsearch
 
 ### 11. Summary Statistics for Keyword Trends
 **Endpoint:** `GET /api/v1/admin_user_activity/intelligence/summary-stats`  
-**Controller:** `keyword_Trend_ProjectController.js::getTrendsSummaryStats()`  
-**Status:** Production Ready
+**Controller:** `keyword_Trend_ProjectController.js::getSummaryStats()`  
+**Lines:** 931-1184  
+**Status:** Production Ready  
+**Updated:** 2026-06-26
 
 #### Purpose
-Fetches comprehensive summary statistics for keyword trends dashboard including total, completed, under scraping, and not scraped counts.
+Fetches comprehensive summary statistics for keyword trends dashboard including total, completed, under scraping, not scraped, and failed counts. Returns both today's stats and all-time stats. Only includes items where users field is not null.
 
 #### Response Structure
 ```json
 {
   "code": 200,
   "data": {
-    "total_keywords": 2156,
-    "completed": 1234,
+    "today_total": 45,
+    "today_completed_scraping": 32,
+    "today_under_scraping": 8,
+    "today_not_went_scrapping": 5,
+    "today_failed_scraping": 2,
+    "total": 2156,
+    "completed_scraping": 1234,
     "under_scraping": 45,
-    "not_went": 234,
-    "failed": 12,
-    "statistics": {
-      "completion_rate": 57,
-      "success_rate": 98
-    }
+    "not_went_scrapping": 234,
+    "failed_scraping": 12
+  },
+  "meta": {
+    "date_range": "all_and_today",
+    "type": "keyword"
   }
 }
 ```
 
 #### Key Features
-- MongoDB aggregation for scraping status
-- Multiple status tracking (completed, under scraping, failed, not scraped)
-- Statistics calculation for dashboard display
+- **Dual Reporting:** Today's stats + All-time stats in single response
+- **User Filter:** Excludes keywords with `users: null` at aggregation pipeline level
+- **MongoDB Aggregation:** Uses `$facet` for parallel multi-level calculations
+- **Multiple Status Tracking:** completed, under_scraping, failed, not_went_scrapping
+- **Date Range Support:** Separate today calculations with UTC date boundaries
 
 #### Query Parameters
-- `type` (optional): Filter by type (1=keyword, 2=advertiser, 3=domain)
-- `status` (optional): Filter by scraping status
+- `type` (optional): "keyword" | "advertiser" | "domain" (default: "keyword")
+- `date_range` (optional): "all" (always returns both today and all-time)
+
+#### Filtering Details
+**All-Time Pipeline Match (Line 964-968):**
+```javascript
+{
+  $match: {
+    type: typeNum,
+    users: { $ne: null },  // Exclude items with null users
+    ...dateFilter  // Empty object for all-time
+  }
+}
+```
+
+**Today Pipeline Match (Line 1059-1062):**
+```javascript
+{
+  $match: {
+    type: typeNum,
+    users: { $ne: null }   // Exclude items with null users
+  }
+}
+```
+
+**Today's Total Count Filters:**
+- Created today, OR
+- Searched today (searchDates has entry >= today's start)
+
+**Completed Today:**
+- Has scrapping_status with status="completed" AND date equals today
+
+**Under Scraping Today:**
+- Has scrapping_status with date=today, startTime exists, endTime missing
+
+**Not Went Today:**
+- Searched today but no scrapping_status entries
+
+**Failed Today:**
+- Has scrapping_status with status="failed" AND date equals today
+
+#### Implementation Details
+- Uses MongoDB aggregation pipeline with `$facet` for parallel calculations
+- Two separate pipelines: one for all-time, one for today
+- Base filter includes `users: { $ne: null }` to exclude null users
+- UTC date comparison for today boundary (midnight UTC)
+- Counts extracted from facet results with fallback to 0
 
 ---
 
 ### 12. Items List (Dropdown Filter)
 **Endpoint:** `GET /api/v1/admin_user_activity/intelligence/items-list`  
 **Controller:** `keyword_Trend_ProjectController.js::getItemsList()`  
-**Status:** Production Ready
+**Lines:** 313-369  
+**Status:** Production Ready  
+**Updated:** 2026-06-26
 
 #### Purpose
-Returns list of all unique items (keywords, advertisers, or domains) for dropdown filter with search count.
+Returns list of all unique items (keywords, advertisers, or domains) for dropdown filter with search count. Only includes items where users field is not null.
 
 #### Response Structure
 ```json
 {
   "code": 200,
   "data": {
+    "type": 1,
+    "type_label": "keywords",
     "items": [
       {
         "id": "60f7a3c4b5d8e9f1a2b3c4d5",
@@ -840,25 +928,40 @@ Returns list of all unique items (keywords, advertisers, or domains) for dropdow
         "value": "earbuds",
         "count": 456
       }
-    ]
+    ],
+    "total": 2156
   }
 }
 ```
 
 #### Key Features
-- MongoDB aggregation for unique items
-- Search count sorting (most popular first)
-- Type-specific filtering (keyword/advertiser/domain)
-- Supports item search filtering
+- **MongoDB Aggregation:** Fetches all unique items directly from MongoDB
+- **User Filter:** Excludes items with `users: null` at query level
+- **Sort by Popularity:** Sorted by searchCount descending
+- **Type-Specific:** Separate lists for keywords (1), advertisers (2), domains (3)
+- **Fast Dropdown:** No pagination, returns all items
+- **Type Labels:** Includes human-readable type label in response
 
 #### Query Parameters
 - `type` (required): 1=keyword, 2=advertiser, 3=domain
-- `search_value` (optional): Filter items by value
+- Must be one of valid type numbers
+
+#### Filtering Details
+**Query Filter (Line 328):**
+```javascript
+{
+  type: typeNum,
+  users: { $ne: null }  // Exclude items with null users
+}
+```
 
 #### Implementation Details
 - Queries MongoDB keyword_searches collection
-- Sorts by searchCount descending
-- Returns up to 100 items (configurable)
+- Applies user filter at find() stage
+- Sorts by searchCount descending (most searched first)
+- Returns empty array with total=0 if no items match
+- Maps documents to output format with id, value, count
+- Type label derived from typeNum (1→keywords, 2→advertisers, 3→domains)
 
 ---
 
@@ -1420,6 +1523,7 @@ logger?.info?.(`Query completed in ${duration}ms`);
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3 | 2026-06-26 | Added `users: { $ne: null }` filter to 3 APIs: keyword-trends, items-list, summary-stats. Excludes keywords/advertisers/domains with null users field. Updated documentation with filtering details and MongoDB aggregation pipelines. |
 | 1.2 | 2026-06-23 | Documented 5 additional endpoints: top-keywords, summary-stats, items-list, purge-old-activities, nas-storage (total 15 endpoints) |
 | 1.1 | 2026-06-19 | Added total-ads-count endpoint with keyword breakdown |
 | 1.0 | 2026-06-18 | Initial production release (8 endpoints) |

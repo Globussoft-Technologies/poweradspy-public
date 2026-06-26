@@ -355,6 +355,23 @@ export const mapAdToCard = (raw) => {
       return Number.isFinite(n) && n > 0 ? n : null;
     })(),
     runningDays: (() => {
+      // Running days = (last_seen − post_date), computed on the frontend
+      // irrespective of the backend's stored days_running (which is seeded to 1
+      // at insert and only recomputed on re-scrape). `post > 0` rejects the
+      // 0000-00-00 / year-1 date sentinels (their getTime() is <= 0).
+      if (raw.post_date && raw.last_seen) {
+        const post = new Date(raw.post_date).getTime();
+        const last = new Date(raw.last_seen).getTime();
+        if (!isNaN(post) && post > 0 && !isNaN(last) && last >= post) {
+          // Whole calendar-day difference. The timestamps carry a time-of-day, so
+          // Math.ceil would over-count by a day (23.x → 24); flooring each to its
+          // day boundary gives the plain date subtraction (May 26 → Jun 18 = 23).
+          const dayMs = 1000 * 60 * 60 * 24;
+          const diffDays = Math.floor(last / dayMs) - Math.floor(post / dayMs);
+          return diffDays === 0 ? 1 : diffDays;
+        }
+      }
+      // Fallbacks: backend days_running, then (last_seen − first_seen).
       if (raw.days_running != null && raw.days_running !== '') {
         const parsed = Number(raw.days_running);
         if (parsed > 0) return parsed;

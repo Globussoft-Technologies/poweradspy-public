@@ -125,6 +125,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
   const [users, setUsers]               = useState([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError]     = useState(null);
+  const [usersMeta, setUsersMeta]       = useState(null);
 
   // Helper: Convert period label to date range
   const getPeriodDates = (period, customFrom, customTo) => {
@@ -282,8 +283,10 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
     })
       .then((r) => r.json())
       .then((json) => {
-        if (json.code === 200) setUsers(json.data.users ?? []);
-        else setUsersError(json.message || "Failed to load users");
+        if (json.code === 200) {
+          setUsers(json.data.users ?? []);
+          setUsersMeta(json.meta ?? null);
+        } else setUsersError(json.message || "Failed to load users");
       })
       .catch((e) => { if (e.name !== "AbortError") setUsersError("Failed to load users"); })
       .finally(() => setUsersLoading(false));
@@ -609,9 +612,20 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
         </div>
       </div>
 
-      {/* Stat cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
-        {statCards.map((s) => (
+      {/* Stat cards with header message */}
+      <div style={{ marginBottom: "24px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+          <div>
+            <p style={{ fontSize: "13px", fontWeight: 600, color: "#374151", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>
+              Activity Overview
+            </p>
+            <p style={{ fontSize: "11px", color: "#6b7280", marginBottom: 0 }}>
+              Comparing current period with previous period to identify trends and anomalies
+            </p>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px" }}>
+          {statCards.map((s) => (
           <div key={s.label} style={{ background: "#f3f4f6", borderRadius: "10px", padding: "16px 20px 20px 20px" }}>
             <p style={{ fontSize: "28px", fontWeight: 700, lineHeight: 1.2, color: s.colorHex ?? "#111827", margin: 0 }}>{s.value}</p>
             <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", letterSpacing: "0.05em", marginTop: "4px", marginBottom: 0 }}>{s.label}</p>
@@ -628,12 +642,23 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
             )}
           </div>
         ))}
+        </div>
       </div>
 
       {/* Section title — always visible including PDF */}
-      <p style={{ fontSize: "13px", fontWeight: 600, color: "#374151", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: forceExpand ? "12px" : "6px", marginTop: "8px" }}>
-        Top Users By Search Volume
-      </p>
+      <div style={{ marginTop: "8px", marginBottom: forceExpand ? "12px" : "6px" }}>
+        <p style={{ fontSize: "13px", fontWeight: 600, color: "#374151", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>
+          Top Users By Search Volume
+        </p>
+        <p style={{ fontSize: "11px", color: "#6b7280", marginBottom: 0 }}>
+          Ranked by total number of searches conducted within the selected time period
+          {usersMeta && (() => {
+            const minCount = usersMeta.min_threshold ?? 0;
+            const maxCount = usersMeta.max_count ?? 0;
+            return ` • Search range: ${minCount.toLocaleString()} – ${maxCount.toLocaleString()} searches`;
+          })()}
+        </p>
+      </div>
 
       {/* Controls row — hidden during PDF export (buttons don't render in html2canvas) */}
       <div style={{ display: forceExpand ? "none" : "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: "12px", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
@@ -1012,9 +1037,14 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                               <div style={{ background: "#f9fafb", borderRadius: "8px", padding: "16px" }}>
-                                <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>
-                                  Search Summary
-                                </p>
+                                <div style={{ marginBottom: "12px" }}>
+                                  <p style={{ fontSize: "11px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>
+                                    Search Summary
+                                  </p>
+                                  <p style={{ fontSize: "10px", color: "#9ca3af", marginBottom: 0 }}>
+                                    Most frequently searched keywords, advertisers, domains, and filters by this user
+                                  </p>
+                                </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                                   {[
                                     ["Total Searches", formatNumber(user.doc_count ?? user.search_count)],

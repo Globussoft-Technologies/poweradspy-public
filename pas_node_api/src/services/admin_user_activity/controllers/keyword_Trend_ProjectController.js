@@ -2,7 +2,7 @@
 
 const { getAggs } = require('../helpers/searchIntelligenceHelpers');
 const databaseManager = require('../../../database/DatabaseManager');
-const { fetchAdsCountByPlatform } = require('../queries/searchIntelligenceQueries');
+const { fetchAdsCountByPlatform, fetchAdsCountBatchByPlatform } = require('../queries/searchIntelligenceQueries');
 
 // Resolve a shared Mongo connection for the keyword_searches collection.
 // If the caller passed one in, use it; otherwise borrow the user_activity pool.
@@ -44,7 +44,7 @@ async function getKeywordTrends(req, elastic, logger, mongo) {
     }
 
     // Build query filter based on type and status
-    let filter = typeNum !== null ? { type: typeNum } : {};
+    let filter = typeNum !== null ? { type: typeNum, users: { $ne: null } } : { users: { $ne: null } };
 
     // Add search_value filter if provided (exact match on value field)
     if (search_value) {
@@ -325,7 +325,7 @@ async function getItemsList(req, elastic, logger, mongo) {
     }
 
     const items = await collection
-      .find({ type: typeNum })
+      .find({ type: typeNum, users: { $ne: null } })
       .sort({ searchCount: -1 })  // Sort by most searched first
       .toArray();
 
@@ -387,8 +387,66 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
       return { code: 400, message: 'Invalid type. Use: 1 (keyword), 2 (advertiser), or 3 (domain)' };
     }
 
-    // Fetch all keywords/advertisers/domains of given type
-    const docs = await collection.find({ type: typeNum }).toArray();
+    // Fetch all keywords/advertisers/domains of given type using optimized aggregation
+    // Filter: users: { $ne: null } - exclude documents with null users
+    const docs = await collection.aggregate([
+      {
+        $match: {
+          type: typeNum,
+          users: { $ne: null }
+        }
+      },
+      {
+        $unwind: '$scrapping_status'
+      },
+      {
+        $group: {
+          _id: {
+            network: '$scrapping_status.network',
+            value: '$value'
+          },
+          valueNorm: { $first: '$valueNorm' },
+          historyCount: { $sum: 1 },
+          scrappingHistory: {
+            $push: {
+              startTime: {
+                $dateToString: {
+                  format: '%Y-%m-%d %H:%M:%S',
+                  date: '$scrapping_status.startTime'
+                }
+              },
+              endTime: {
+                $dateToString: {
+                  format: '%Y-%m-%d %H:%M:%S',
+                  date: '$scrapping_status.endTime'
+                }
+              },
+              startTimeMs: {
+                $convert: {
+                  input: '$scrapping_status.startTime',
+                  to: 'long',
+                  onError: 0
+                }
+              },
+              endTimeMs: {
+                $convert: {
+                  input: '$scrapping_status.endTime',
+                  to: 'long',
+                  onError: 0
+                }
+              }
+            }
+          },
+          networks: { $addToSet: '$scrapping_status.network' }
+        }
+      },
+      {
+        $sort: {
+          '_id.network': 1,
+          '_id.value': 1
+        }
+      }
+    ]).toArray();
 
     if (docs.length === 0) {
       return {
@@ -416,119 +474,121 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
     let totalAdsCount = 0;
     const keywordBreakdown = [];
 
-    // For domains: fetch all keywords that reference each domain
-    let domainKeywordMap = {};
-    if (typeNum === 3) {
-      const allKeywords = await collection.find({ type: 1 }).toArray();
-      for (const keyword of allKeywords) {
-        const domains = keyword.networks || [];
-        for (const domain of domains) {
-          if (!domainKeywordMap[domain]) {
-            domainKeywordMap[domain] = [];
-          }
-          domainKeywordMap[domain].push(keyword);
-        }
-      }
-    }
+    // Fetch all keywords in PARALLEL (not sequential)
+    const keywordPromises = docs.map(async (doc) => {
+      const searchValue = doc._id.value;  // keyword/advertiser/domain name
+      const network = doc._id.network;
+      const platforms = doc.networks || [network];
+      const scrapingHistory = doc.scrappingHistory || [];
 
-    for (const doc of docs) {
-      const searchValue = doc.value;
-      const platforms = doc.networks || [];
-      const scrapingHistory = doc.scrapping_status || [];
-
-      if (scrapingHistory.length === 0) continue;
+      if (scrapingHistory.length === 0) return null;
 
       let keywordTodayCount = 0;
       let keywordTotalCount = 0;
       const keywordTodayPlatforms = {};
       const keywordTotalPlatforms = {};
 
-      // Fetch ads for each scraping run
-      for (const run of scrapingHistory) {
-        try {
-          const runPlatforms = run.network ? [run.network] : platforms;
-          const startTime = run.startTime;
-          const endTime = run.endTime || new Date().toISOString();
-          const runStartDate = new Date(startTime);
+      try {
+        // Build time windows array for batch fetching
+        const timeWindows = scrapingHistory.map(run => ({
+          startTime: run.startTime,
+          endTime: run.endTime,
+          key: `${run.startTimeMs}-${run.endTimeMs}`
+        }));
 
-          // For domains: fetch ads from keywords on this domain instead of the domain itself
-          let adsCount = 0;
-          if (typeNum === 3) {
-            // typeNum 3 = domain: aggregate ads from keywords on this domain
-            const keywordsOnDomain = domainKeywordMap[searchValue] || [];
-            for (const keyword of keywordsOnDomain) {
-              const keywordAds = await fetchAdsCountByPlatform(
-                elastic,
-                runPlatforms,
-                null,
-                keyword.value,  // Use the keyword value, not domain
-                1,  // Search as keyword type
-                logger,
-                startTime,
-                endTime
-              );
-              adsCount += (keywordAds || 0);
-            }
-          } else {
-            // For keywords/advertisers: fetch directly
-            adsCount = await fetchAdsCountByPlatform(
-              elastic,
-              runPlatforms,
-              null,
-              searchValue,
-              typeNum,
-              logger,
-              startTime,
-              endTime
-            );
-          }
+        // Batch fetch ads counts for all time windows in parallel
+        const batchResults = await fetchAdsCountBatchByPlatform(
+          elastic,
+          platforms,
+          searchValue,
+          typeNum,
+          timeWindows,
+          logger
+        );
 
-          const count = adsCount || 0;
+        // Process each scraping run using pre-fetched batch results
+        for (const run of scrapingHistory) {
+          try {
+            const runPlatforms = run.network ? [run.network] : platforms;
+            const startTime = run.startTime;
+            const runStartDate = new Date(startTime);
+            const timeWindowKey = `${run.startTimeMs}-${run.endTimeMs}`;
 
-          // Check if this run is from today
-          const isToday = runStartDate >= todayStart && runStartDate < todayEnd;
-
-          if (isToday) {
-            keywordTodayCount += count;
-            todayAdsCount += count;
+            // Lookup ads count from batch results
+            let adsCount = 0;
             for (const platform of runPlatforms) {
-              if (!keywordTodayPlatforms[platform]) {
-                keywordTodayPlatforms[platform] = 0;
-              }
-              keywordTodayPlatforms[platform] += count;
-              if (!todayPlatformAdsCount[platform]) {
-                todayPlatformAdsCount[platform] = 0;
-              }
-              todayPlatformAdsCount[platform] += count;
+              adsCount += (batchResults[platform] && batchResults[platform][timeWindowKey]) || 0;
             }
-          } else {
-            keywordTotalCount += count;
-            totalAdsCount += count;
-            for (const platform of runPlatforms) {
-              if (!keywordTotalPlatforms[platform]) {
-                keywordTotalPlatforms[platform] = 0;
+
+            const count = adsCount || 0;
+
+            // Check if this run is from today
+            const isToday = runStartDate >= todayStart && runStartDate < todayEnd;
+
+            if (isToday) {
+              keywordTodayCount += count;
+              for (const platform of runPlatforms) {
+                if (!keywordTodayPlatforms[platform]) {
+                  keywordTodayPlatforms[platform] = 0;
+                }
+                keywordTodayPlatforms[platform] += count;
               }
-              keywordTotalPlatforms[platform] += count;
-              if (!totalPlatformAdsCount[platform]) {
-                totalPlatformAdsCount[platform] = 0;
+            } else {
+              keywordTotalCount += count;
+              for (const platform of runPlatforms) {
+                if (!keywordTotalPlatforms[platform]) {
+                  keywordTotalPlatforms[platform] = 0;
+                }
+                keywordTotalPlatforms[platform] += count;
               }
-              totalPlatformAdsCount[platform] += count;
             }
+          } catch (err) {
+            logger?.warn?.('[getTotalAdsCount] Failed to fetch ads for run:', run, err.message);
           }
-        } catch (err) {
-          logger?.warn?.('[getTotalAdsCount] Failed to fetch ads for run:', run, err.message);
         }
+
+        // Return keyword result
+        if (keywordTodayCount > 0 || keywordTotalCount > 0) {
+          return {
+            keyword: searchValue,
+            today_ads_count: keywordTodayCount,
+            total_ads_count: keywordTotalCount,
+            today_per_platform: keywordTodayPlatforms,
+            total_per_platform: keywordTotalPlatforms
+          };
+        }
+
+        return null;
+      } catch (err) {
+        logger?.warn?.('[getTotalAdsCount] Failed to process keyword:', searchValue, err.message);
+        return null;
+      }
+    });
+
+    // Wait for all keywords to complete
+    const allKeywordResults = await Promise.all(keywordPromises);
+
+    // Process results and aggregate
+    for (const keywordResult of allKeywordResults) {
+      if (!keywordResult) continue;
+
+      todayAdsCount += keywordResult.today_ads_count;
+      totalAdsCount += keywordResult.total_ads_count;
+      keywordBreakdown.push(keywordResult);
+
+      // Aggregate platform counts
+      for (const platform in keywordResult.today_per_platform) {
+        if (!todayPlatformAdsCount[platform]) {
+          todayPlatformAdsCount[platform] = 0;
+        }
+        todayPlatformAdsCount[platform] += keywordResult.today_per_platform[platform];
       }
 
-      // Add to keyword breakdown if has any ads
-      if (keywordTodayCount > 0 || keywordTotalCount > 0) {
-        keywordBreakdown.push({
-          keyword: searchValue,
-          today_ads_count: keywordTodayCount,
-          total_ads_count: keywordTotalCount,
-          today_per_platform: keywordTodayPlatforms,
-          total_per_platform: keywordTotalPlatforms
-        });
+      for (const platform in keywordResult.total_per_platform) {
+        if (!totalPlatformAdsCount[platform]) {
+          totalPlatformAdsCount[platform] = 0;
+        }
+        totalPlatformAdsCount[platform] += keywordResult.total_per_platform[platform];
       }
     }
 
@@ -543,7 +603,7 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
         type_label: typeLabel,
         today_per_platform: todayPlatformAdsCount,
         total_per_platform: totalPlatformAdsCount,
-        items_count: docs.length,
+        items_count: keywordBreakdown.length,
         breakdown: keywordBreakdown
       }
     };
@@ -905,6 +965,7 @@ async function getSummaryStats(req, elastic, logger, mongo) {
       {
         $match: {
           type: typeNum,
+          users: { $ne: null },
           ...dateFilter,
         }
       },
@@ -998,7 +1059,8 @@ async function getSummaryStats(req, elastic, logger, mongo) {
     const todayPipeline = [
       {
         $match: {
-          type: typeNum
+          type: typeNum,
+          users: { $ne: null }
         }
       },
       {

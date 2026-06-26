@@ -1030,11 +1030,16 @@ const AnalyticsModal = ({
     const shares = a.share || a.shares || 0;
     const comments = a.comments || 0;
     const popularity = a.popularity || 0;
-    const start = a.first_seen || a.post_date ? new Date(a.first_seen || a.post_date) : null;
-    const end = a.last_seen ? new Date(a.last_seen) : null;
-    const runningDays = (start && end && !isNaN(start) && !isNaN(end))
-      ? Math.max(1, Math.round((end - start) / 86400000))
-      : null;
+    // Running days = last_seen − post_date (post > 0 rejects the date sentinels);
+    // fall back to first_seen → last_seen when post_date is missing/invalid.
+    const end = a.last_seen ? new Date(a.last_seen).getTime() : NaN;
+    const postT = a.post_date ? new Date(a.post_date).getTime() : NaN;
+    const firstT = a.first_seen ? new Date(a.first_seen).getTime() : NaN;
+    const dayMs = 86400000;
+    const wholeDays = (a, b) => Math.max(1, Math.floor(b / dayMs) - Math.floor(a / dayMs));
+    const runningDays = (!isNaN(postT) && postT > 0 && !isNaN(end) && end >= postT)
+      ? wholeDays(postT, end)
+      : ((!isNaN(firstT) && !isNaN(end)) ? wholeDays(firstT, end) : null);
     const items = [];
     if (likes) items.push({ key: 'likes', label: 'Likes', value: likes, icon: <ThumbsUp size={13} className="lucide lucide-thumbs-up text-indigo-400" /> });
     if (comments) items.push({ key: 'comments', label: 'Comments', value: comments, icon: <MessageCircle size={13} className="lucide lucide-message-circle text-yellow-500" /> });
@@ -1183,7 +1188,26 @@ const AnalyticsModal = ({
       },
       {
         label: "RUNNING DAYS",
-        value: (d.days_running || ctx.runningDays) ? `${d.days_running || ctx.runningDays} days` : "—",
+        // Running days = last_seen − post_date, computed from the same `d` dates shown
+        // above (epoch or datetime string), irrespective of the backend days_running.
+        value: (() => {
+          const toMs = (val) => {
+            if (!val) return NaN;
+            const s = String(val).trim();
+            if (/^\d{9,13}$/.test(s)) { const num = Number(s); return num < 1e10 ? num * 1000 : num; }
+            return Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
+          };
+          const last = toMs(d.last_seen);
+          const post = toMs(d.post_date);
+          if (!isNaN(post) && post > 0 && !isNaN(last) && last >= post) {
+            // Whole calendar-day difference (floor each to its day boundary), so a
+            // time-of-day in the timestamps doesn't round the count up by a day.
+            const dayMs = 86400000;
+            const diff = Math.floor(last / dayMs) - Math.floor(post / dayMs);
+            return `${Math.max(1, diff)} days`;
+          }
+          return ctx.runningDays ? `${ctx.runningDays} days` : "—";
+        })(),
         icon: Clock,
         color: "text-orange-400",
       },

@@ -1031,9 +1031,9 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
             </select>
           </div>
 
-          {/* Include Users */}
+          {/* Search Users */}
           <div style={fieldStyle}>
-            <label style={labelStyle}>Include Users</label>
+            <label style={labelStyle}>Search Users</label>
             <SingleUserInput
               users={draft.includedUsers ?? []}
               options={filterOptions.users}
