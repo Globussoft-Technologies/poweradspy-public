@@ -520,6 +520,7 @@ LinkedinSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'new_nas_image_url',
   'redirect_urls',
   'duration',
+  'ad_language',
 ];
 
 module.exports = LinkedinSearchQueryBuilder;

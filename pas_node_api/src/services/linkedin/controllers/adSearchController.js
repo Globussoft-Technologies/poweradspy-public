@@ -3,6 +3,7 @@
 const LinkedinSearchQueryBuilder = require('../builders/LinkedinSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 // Shared SQL fragment for fetching full ad details by IDs
 const AD_DETAIL_SELECT = `
@@ -399,6 +400,9 @@ ORDER BY FIELD(linkedin_ad.id, ${placeholders})
         const rawRows = await db.sql.query(sql, [...adIds, ...adIds]);
         const sqlRows = dedupeRows(rawRows);
 
+        // ISO → language-name map for resolving ES ad_language (e.g. 'en' → 'English')
+        const langMap = await getLanguageMap(db.sql);
+
         // Build ES lookup map
         const esMap = new Map(
           esHits.map(hit => {
@@ -416,6 +420,11 @@ ORDER BY FIELD(linkedin_ad.id, ${placeholders})
           // Overlay NAS image URL
           if (src.new_nas_image_url) {
             row.image_video_url = src.new_nas_image_url;
+          }
+
+          // Language from ES ad_language ISO (e.g. 'en' → 'English')
+          if (src['ad_language']) {
+            row.language = resolveLanguageName(langMap, src['ad_language']);
           }
 
           // Merge live ES engagement data

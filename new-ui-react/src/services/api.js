@@ -359,14 +359,26 @@ export const mapAdToCard = (raw) => {
       // irrespective of the backend's stored days_running (which is seeded to 1
       // at insert and only recomputed on re-scrape). `post > 0` rejects the
       // 0000-00-00 / year-1 date sentinels (their getTime() is <= 0).
+      //
+      // Reddit (and other epoch-based sources) ship the dates as UNIX_TIMESTAMP
+      // seconds, not a date string — same as formatDate() above. `new Date(secs)`
+      // would read them as milliseconds and land in Jan 1970, making running days
+      // ≈ "days since the epoch" (e.g. 20609). Normalise to ms first.
+      const toMs = (val) => {
+        if (val == null || val === '') return NaN;
+        if (typeof val === 'number') return val < 1e10 ? val * 1000 : val;
+        const s = String(val).trim();
+        if (/^\d{9,13}$/.test(s)) { const n = Number(s); return n < 1e10 ? n * 1000 : n; }
+        return new Date(s).getTime();
+      };
+      const dayMs = 1000 * 60 * 60 * 24;
       if (raw.post_date && raw.last_seen) {
-        const post = new Date(raw.post_date).getTime();
-        const last = new Date(raw.last_seen).getTime();
+        const post = toMs(raw.post_date);
+        const last = toMs(raw.last_seen);
         if (!isNaN(post) && post > 0 && !isNaN(last) && last >= post) {
           // Whole calendar-day difference. The timestamps carry a time-of-day, so
           // Math.ceil would over-count by a day (23.x → 24); flooring each to its
           // day boundary gives the plain date subtraction (May 26 → Jun 18 = 23).
-          const dayMs = 1000 * 60 * 60 * 24;
           const diffDays = Math.floor(last / dayMs) - Math.floor(post / dayMs);
           return diffDays === 0 ? 1 : diffDays;
         }
@@ -377,10 +389,10 @@ export const mapAdToCard = (raw) => {
         if (parsed > 0) return parsed;
       }
       if (raw.first_seen && raw.last_seen) {
-        const first = new Date(raw.first_seen).getTime();
-        const last = new Date(raw.last_seen).getTime();
+        const first = toMs(raw.first_seen);
+        const last = toMs(raw.last_seen);
         if (!isNaN(first) && !isNaN(last)) {
-          const diffDays = Math.ceil(Math.abs(last - first) / (1000 * 60 * 60 * 24));
+          const diffDays = Math.ceil(Math.abs(last - first) / dayMs);
           return diffDays === 0 ? 1 : diffDays;
         }
       }
