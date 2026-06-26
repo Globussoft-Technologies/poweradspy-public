@@ -25,7 +25,7 @@ the whole of June 15.
 | `range` | yes (all metrics) | `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }` |
 | `platform` | only `metric=platform` | plugin code or array, e.g. `12` or `[3,10,12,15]`. Omit → every platform |
 | `groupBy` | only `metric=new` | `type`, `ad_position`, or `source` |
-| `stage` | only `metric=processed` | `destination`, `screenshot`, or `builtwith` |
+| `stage` | only `metric=processed` | `destination`, `screenshot`, `builtwith`, `ocr`, or `ocb` |
 
 Plugin codes: **3** = User Plugin, **10** = Scroll Plugin, **12** = Python Crawler, **15** = Meta Ad Library.
 
@@ -95,6 +95,7 @@ Without `platform` → all plugins as buckets:
 ```
 
 ### `processed` — pipeline-stage counts (needs `stage`)
+`destination`/`screenshot`/`builtwith` read `<net>_ad_meta_data`; `ocr`/`ocb` read `<net>_ad_variants`.
 ```json
 { "network": "youtube", "metric": "processed", "range": { "from": "2026-06-15", "to": "2026-06-15" }, "stage": "builtwith" }
 ```
@@ -118,6 +119,8 @@ Without `platform` → all plugins as buckets:
 | Destination URLs Processed | `metric: "processed"`, `stage: "destination"` |
 | Google ScreenShot Processed | `metric: "processed"`, `stage: "screenshot"` |
 | Builtwith Processed | `metric: "processed"`, `stage: "builtwith"` |
+| OCR Processed | `metric: "processed"`, `stage: "ocr"` |
+| OCB Processed | `metric: "processed"`, `stage: "ocb"` |
 
 ---
 
@@ -130,7 +133,7 @@ Without `platform` → all plugins as buckets:
 - `metric "<x>" requires range { from, to }`
 - `Invalid groupBy. Allowed: type, ad_position, source`
 - `platform must be an integer or array of integers`
-- `metric "processed" requires stage. Allowed: destination, screenshot, builtwith`
+- `metric "processed" requires stage. Allowed: destination, screenshot, builtwith, ocr, ocb`
 
 `500` with `{ "error": "Internal Server Error" }` — database/server failure.
 

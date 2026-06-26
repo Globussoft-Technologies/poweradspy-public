@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   ThumbsUp,
   MessageCircle,
@@ -473,6 +473,36 @@ const GooglePreview = ({ platform, ad, position, adType, fill }) => {
   }
 
   // Google Search Ad — no media, so content fills
+  return <GoogleSearchAd ad={ad} fill={fill} />;
+};
+
+/**
+ * GoogleSearchAd — SERP-style text ad. The description is clamped to two lines
+ * by default; a Read More affordance is shown only when that clamp actually
+ * hides text (measured via scrollHeight vs clientHeight). On both surfaces —
+ * the modal Original Preview (fill=false) and the grid "Show Original" preview
+ * (fill=true) — the toggle expands the copy in place. Google search ad copy is
+ * short (bounded description length), so the full text fits within the card's
+ * existing height; no need to grow the masonry cell or defer to the modal.
+ */
+const GoogleSearchAd = ({ ad, fill }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [isClamped, setIsClamped] = useState(false);
+  const textRef = useRef(null);
+  const description = ad.subtitle || ad.title || "";
+
+  // Show the toggle only when the 2-line clamp is genuinely hiding text.
+  // Skipped while expanded so toggling open doesn't make the button vanish.
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el || expanded) return;
+    const measure = () => setIsClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [description, expanded]);
+
   return (
     <div
       className={`bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col p-4 ${fill ? "w-full h-full" : "max-w-[400px] mx-auto"}`}
@@ -498,9 +528,30 @@ const GooglePreview = ({ platform, ad, position, adType, fill }) => {
       <h3 className="text-[16px] text-blue-700 font-medium leading-snug mb-1 hover:underline cursor-pointer">
         {ad.title}
       </h3>
-      <p className="text-[13px] text-gray-600 line-clamp-2 leading-relaxed flex-1">
-        {ad.subtitle || ad.title}
+      {/* No flex-1 here: under flex layout it would stretch the box and break
+          the scrollHeight/clientHeight clamp detection. `mt-auto` on the
+          keywords row keeps them pinned to the bottom of the card. */}
+      <p
+        ref={textRef}
+        className={`text-[13px] text-gray-600 leading-relaxed ${expanded ? "" : "line-clamp-2"}`}
+      >
+        {description}
       </p>
+      {(isClamped || expanded) && (
+        <button
+          type="button"
+          onClick={(e) => {
+            // Expand in place on both surfaces. stopPropagation keeps the grid
+            // preview's card-level onClick (which opens the detail modal) from
+            // also firing — the copy is short enough to fit the existing card.
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          className="self-start mt-1 text-[12px] font-semibold text-blue-700 hover:underline focus:outline-none"
+        >
+          {expanded ? "Show Less" : "Read More"}
+        </button>
+      )}
       {ad.keywords && (
         <div className="flex flex-wrap gap-1.5 mt-auto pt-2.5">
           {ad.keywords

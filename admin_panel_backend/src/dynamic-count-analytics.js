@@ -25,7 +25,7 @@ const queryDatabase = require('../db-connections/connection');
  *       platform  → { total } (with `platform`) or { total, buckets:[{platform,count}] }
  *                   — plugin cards / DS "New Ads per Platform"
  *       processed → { total } — requires `stage` — DS "Destination URLs / Google
- *                   ScreenShot / Builtwith Processed"
+ *                   ScreenShot / Builtwith / OCR / OCB Processed"
  *   range     { from, to } (YYYY-MM-DD) — required. Applied as
  *             [from 00:00:00, (to+1) 00:00:00) = 12am->12am.
  *   platform  optional, metric=platform only — plugin code (int) or array, e.g.
@@ -34,7 +34,9 @@ const queryDatabase = require('../db-connections/connection');
  *   groupBy   optional, metric=new only — type | ad_position | source. Returns the
  *             per-bucket breakdown (always on first_seen, matching DS).
  *   stage     required for metric=processed — destination | screenshot | builtwith
- *             (DS white_lander_date / screenshot_date / built_with_date).
+ *             | ocr | ocb. destination/screenshot/builtwith read <net>_ad_meta_data
+ *             (white_lander_date / screenshot_date / built_with_date); ocr/ocb read
+ *             <net>_ad_variants (ocr_updated_date / object_update_date).
  *
  *   NOTE: the lifetime whole-table "Total Ads" count is NOT served here — it
  *   comes from Elasticsearch (fast, with the displayable-media filter) via
@@ -60,17 +62,17 @@ const queryDatabase = require('../db-connections/connection');
 //                      counts the FK for bing/facebook/linkedin, `id` for the rest).
 //   db_id            → prod server index (see db-connections/connection.js).
 const DB_DATA = {
-    bing:      { main: 'bing_text_ad',   meta: 'bing_text_ad_meta_data',   firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'bing_text_ad_id', metaCountCol: 'bing_text_ad_id', db_id: 10, index: process.env.BING_DATABASE },
-    facebook:  { main: 'facebook_ad',    meta: 'facebook_ad_meta_data',    firstSeen: 'first_seen',   created: 'created_date', platformOnMain: true,  platformCountCol: 'id',              metaCountCol: 'facebook_ad_id',  db_id: 0,  index: process.env.FB_DATABASE },
-    gdn:       { main: 'gdn_ad',         meta: 'gdn_ad_meta_data',         firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 5,  index: process.env.GDN_DATABASE },
-    google:    { main: 'google_text_ad', meta: 'google_text_ad_meta_data', firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 9,  index: process.env.GT_DATABASE },
-    instagram: { main: 'instagram_ad',   meta: 'instagram_ad_meta_data',   firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 8,  index: process.env.INSTA_DATABASE },
-    linkedin:  { main: 'linkedin_ad',    meta: 'linkedin_ad_meta_data',    firstSeen: 'first_seen',   created: 'created_at',   platformOnMain: false, platformCountCol: 'linkedin_ad_id',  metaCountCol: 'linkedin_ad_id',  db_id: 2,  index: process.env.LINKEDIN_DATABASE },
-    native:    { main: 'native_ad',      meta: 'native_ad_meta_data',      firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 3,  index: process.env.NATIVE_DATABASE },
-    pinterest: { main: 'pinterest_ad',   meta: 'pinterest_ad_meta_data',   firstSeen: 'created_date', created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 6,  index: process.env.PINT_DATABASE },
-    quora:     { main: 'quora_ad',       meta: 'quora_ad_meta_data',       firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 7,  index: process.env.QUORA_DATABASE },
-    reddit:    { main: 'reddit_ad',      meta: 'reddit_ad_meta_data',      firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 4,  index: process.env.REDDIT_DATABASE },
-    youtube:   { main: 'youtube_ad',     meta: 'youtube_ad_meta_data',     firstSeen: 'created_date', created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 1,  index: process.env.YT_DATABASE },
+    bing:      { main: 'bing_text_ad',   meta: 'bing_text_ad_meta_data',   variants: 'bing_text_ad_variants',   firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'bing_text_ad_id', metaCountCol: 'bing_text_ad_id', db_id: 10, index: process.env.BING_DATABASE },
+    facebook:  { main: 'facebook_ad',    meta: 'facebook_ad_meta_data',    variants: 'facebook_ad_variants',    firstSeen: 'first_seen',   created: 'created_date', platformOnMain: true,  platformCountCol: 'id',              metaCountCol: 'facebook_ad_id',  db_id: 0,  index: process.env.FB_DATABASE },
+    gdn:       { main: 'gdn_ad',         meta: 'gdn_ad_meta_data',         variants: 'gdn_ad_variants',         firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 5,  index: process.env.GDN_DATABASE },
+    google:    { main: 'google_text_ad', meta: 'google_text_ad_meta_data', variants: 'google_text_ad_variants', firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 9,  index: process.env.GT_DATABASE },
+    instagram: { main: 'instagram_ad',   meta: 'instagram_ad_meta_data',   variants: 'instagram_ad_variants',   firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 8,  index: process.env.INSTA_DATABASE },
+    linkedin:  { main: 'linkedin_ad',    meta: 'linkedin_ad_meta_data',    variants: 'linkedin_ad_variants',    firstSeen: 'first_seen',   created: 'created_at',   platformOnMain: false, platformCountCol: 'linkedin_ad_id',  metaCountCol: 'linkedin_ad_id',  db_id: 2,  index: process.env.LINKEDIN_DATABASE },
+    native:    { main: 'native_ad',      meta: 'native_ad_meta_data',      variants: 'native_ad_variants',      firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 3,  index: process.env.NATIVE_DATABASE },
+    pinterest: { main: 'pinterest_ad',   meta: 'pinterest_ad_meta_data',   variants: 'pinterest_ad_variants',   firstSeen: 'created_date', created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 6,  index: process.env.PINT_DATABASE },
+    quora:     { main: 'quora_ad',       meta: 'quora_ad_meta_data',       variants: 'quora_ad_variants',       firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 7,  index: process.env.QUORA_DATABASE },
+    reddit:    { main: 'reddit_ad',      meta: 'reddit_ad_meta_data',      variants: 'reddit_ad_variants',      firstSeen: 'first_seen',   created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 4,  index: process.env.REDDIT_DATABASE },
+    youtube:   { main: 'youtube_ad',     meta: 'youtube_ad_meta_data',     variants: 'youtube_ad_variants',     firstSeen: 'created_date', created: 'created_date', platformOnMain: false, platformCountCol: 'id',              metaCountCol: 'id',              db_id: 1,  index: process.env.YT_DATABASE },
 };
 
 const METRICS = new Set(['range', 'new', 'active', 'platform', 'processed']);
@@ -78,19 +80,18 @@ const METRICS = new Set(['range', 'new', 'active', 'platform', 'processed']);
 // metric=new breakdowns — DS groups these on the MAIN table by first_seen (all networks).
 const GROUP_FIELDS = new Set(['type', 'ad_position', 'source']);
 
-// metric=processed — DS counts meta-table rows whose <dateCol> falls in the window.
-const PROCESSED_DATE = {
-    destination: 'white_lander_date', // "Destination URLs Processed"
-    screenshot:  'screenshot_date',   // "Google ScreenShot Processed"
-    builtwith:   'built_with_date',   // "Builtwith Processed"
-};
-
-// LinkedIn splits the processed stages across dedicated tables; every other
-// network keeps all three on <net>_ad_meta_data (the cfg.meta default).
-const LINKEDIN_PROCESSED_TABLES = {
-    destination: 'linkedin_ad_lander',
-    screenshot:  'linkedin_ad_meta_data',
-    builtwith:   'linkedin_ad_built_with',
+// metric=processed — DS pipeline-stage counts. Each stage knows its date column,
+// which per-network table it lives on (`tableKey` → cfg.meta or cfg.variants), and
+// LinkedIn's dedicated table (LinkedIn splits these across its own tables). The
+// COUNT() column is always the per-network metaCountCol.
+//   destination / screenshot / builtwith → <net>_ad_meta_data
+//   ocr / ocb                             → <net>_ad_variants
+const PROCESSED_STAGES = {
+    destination: { dateCol: 'white_lander_date',  tableKey: 'meta',     linkedinTable: 'linkedin_ad_lander' },        // "Destination URLs Processed"
+    screenshot:  { dateCol: 'screenshot_date',    tableKey: 'meta',     linkedinTable: 'linkedin_ad_meta_data' },     // "Google ScreenShot Processed"
+    builtwith:   { dateCol: 'built_with_date',    tableKey: 'meta',     linkedinTable: 'linkedin_ad_built_with' },    // "Builtwith Processed"
+    ocr:         { dateCol: 'ocr_updated_date',   tableKey: 'variants', linkedinTable: 'linkedin_ad_ocr_ocb_details' }, // "OCR Processed"
+    ocb:         { dateCol: 'object_update_date', tableKey: 'variants', linkedinTable: 'linkedin_ad_ocr_ocb_details' }, // "OCB Processed"
 };
 
 // DS uses an exclusive next-midnight upper bound (`col < day+1`). Add one calendar
@@ -190,8 +191,8 @@ const dynamicCountFilter = async (req, res) => {
         if (groupBy && !GROUP_FIELDS.has(groupBy)) {
             return res.status(400).json({ message: `Invalid groupBy. Allowed: ${[...GROUP_FIELDS].join(', ')}` });
         }
-        if (metric === 'processed' && !PROCESSED_DATE[stage]) {
-            return res.status(400).json({ message: `metric "processed" requires stage. Allowed: ${Object.keys(PROCESSED_DATE).join(', ')}` });
+        if (metric === 'processed' && !PROCESSED_STAGES[stage]) {
+            return res.status(400).json({ message: `metric "processed" requires stage. Allowed: ${Object.keys(PROCESSED_STAGES).join(', ')}` });
         }
 
         const hasRange = Boolean(range && range.from && range.to);
@@ -269,14 +270,12 @@ const dynamicCountFilter = async (req, res) => {
                 return ok(res, { total, buckets });
             }
             case 'processed': {
-                // DS pipeline-stage counts: COUNT(<fk>) FROM <meta> WHERE <stageDate> in window.
-                // LinkedIn keeps each stage on its own table; everyone else uses cfg.meta.
-                const dateCol = PROCESSED_DATE[stage];
-                const table = (network === 'linkedin')
-                    ? LINKEDIN_PROCESSED_TABLES[stage]
-                    : cfg.meta;
+                // DS pipeline-stage counts: COUNT(<fk>) FROM <stage table> WHERE <stageDate> in window.
+                // Table is meta or variants per stage; LinkedIn keeps each stage on its own table.
+                const spec = PROCESSED_STAGES[stage];
+                const table = (network === 'linkedin') ? spec.linkedinTable : cfg[spec.tableKey];
                 const sql = `SELECT COUNT(${cfg.metaCountCol}) AS cnt FROM ${table}
-                             WHERE ${dateCol} >= ? AND ${dateCol} < ?`;
+                             WHERE ${spec.dateCol} >= ? AND ${spec.dateCol} < ?`;
                 const rows = await run(sql, win);
                 return ok(res, { total: num(rows) });
             }

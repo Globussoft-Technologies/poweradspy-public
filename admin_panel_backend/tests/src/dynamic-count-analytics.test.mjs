@@ -261,6 +261,26 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
     }
   });
 
+  it("metric=processed ocr/ocb count the <net>_ad_variants table on their date columns", async () => {
+    queryDatabaseSpy.mockReset().mockResolvedValueOnce([{ cnt: 7 }]);
+    const resR = mockRes();
+    await dynamicCountFilter({ body: { network: "reddit", metric: "processed", range: RANGE, stage: "ocr" } }, resR);
+    expect(norm(queryDatabaseSpy.mock.calls[0][2])).toBe(
+      "SELECT COUNT(id) AS cnt FROM reddit_ad_variants WHERE ocr_updated_date >= ? AND ocr_updated_date < ?");
+    expect(resR.json.mock.calls[0][0].data).toEqual({ total: 7 });
+
+    queryDatabaseSpy.mockReset().mockResolvedValueOnce([{ cnt: 0 }]);
+    const resB = mockRes();
+    await dynamicCountFilter({ body: { network: "reddit", metric: "processed", range: RANGE, stage: "ocb" } }, resB);
+    expect(norm(queryDatabaseSpy.mock.calls[0][2])).toBe(
+      "SELECT COUNT(id) AS cnt FROM reddit_ad_variants WHERE object_update_date >= ? AND object_update_date < ?");
+
+    queryDatabaseSpy.mockReset().mockResolvedValueOnce([{ cnt: 0 }]);
+    const resF = mockRes();
+    await dynamicCountFilter({ body: { network: "facebook", metric: "processed", range: RANGE, stage: "ocr" } }, resF);
+    expect(norm(queryDatabaseSpy.mock.calls[0][2])).toContain("SELECT COUNT(facebook_ad_id) AS cnt FROM facebook_ad_variants");
+  });
+
   it("processed on facebook/bing count the FK, not id", async () => {
     queryDatabaseSpy.mockResolvedValueOnce([{ cnt: 0 }]);
     const resF = mockRes();
@@ -270,16 +290,18 @@ describe("src/dynamic-count-analytics > dynamicCountFilter", () => {
 
   it("processed on linkedin routes each stage to its dedicated table, COUNT(fk)", async () => {
     const expected = {
-      destination: "linkedin_ad_lander",
-      screenshot: "linkedin_ad_meta_data",
-      builtwith: "linkedin_ad_built_with",
+      destination: { table: "linkedin_ad_lander",          dateCol: "white_lander_date" },
+      screenshot:  { table: "linkedin_ad_meta_data",       dateCol: "screenshot_date" },
+      builtwith:   { table: "linkedin_ad_built_with",      dateCol: "built_with_date" },
+      ocr:         { table: "linkedin_ad_ocr_ocb_details", dateCol: "ocr_updated_date" },
+      ocb:         { table: "linkedin_ad_ocr_ocb_details", dateCol: "object_update_date" },
     };
-    for (const [stage, table] of Object.entries(expected)) {
+    for (const [stage, { table, dateCol }] of Object.entries(expected)) {
       queryDatabaseSpy.mockReset().mockResolvedValueOnce([{ cnt: 0 }]);
       const res = mockRes();
       await dynamicCountFilter({ body: { network: "linkedin", metric: "processed", range: RANGE, stage } }, res);
       expect(norm(queryDatabaseSpy.mock.calls[0][2])).toBe(
-        `SELECT COUNT(linkedin_ad_id) AS cnt FROM ${table} WHERE ${stage === "builtwith" ? "built_with_date" : stage === "screenshot" ? "screenshot_date" : "white_lander_date"} >= ? AND ${stage === "builtwith" ? "built_with_date" : stage === "screenshot" ? "screenshot_date" : "white_lander_date"} < ?`);
+        `SELECT COUNT(linkedin_ad_id) AS cnt FROM ${table} WHERE ${dateCol} >= ? AND ${dateCol} < ?`);
     }
   });
 

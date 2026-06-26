@@ -13,6 +13,13 @@
  *       filter, i.e. it is IMAGE with no `new_nas_image_url`, or VIDEO with no
  *       `Thumbnail`.
  *
+ *       ALSO flagged unhealthy: DUPLICATE documents — two or more docs sharing the
+ *       same `facebook_ad.id`. The search query collapses on `facebook_ad.id`, so
+ *       the extra copies are invisible in the result rows, but `hits.total`
+ *       (which the UI shows as the ad count) counts them pre-collapse. That makes
+ *       the displayed count run ahead of the rendered cards. The redundant copies
+ *       (doc_count − 1 per id) are deletable; one doc per id is kept.
+ *
  *   • MySQL (db = FB_DATABASE, tables facebook_ad + facebook_ad_image_video)
  *       Source of truth = facebook_ad_image_video (per audit decision). An ad is
  *       "unhealthy" when it has NO row there (missing media) or its row's
@@ -35,6 +42,8 @@
  *     --run=es|sql|both     run that audit immediately, print + log, then exit
  *     --samples=N           number of sample rows/docs per factor (default 5)
  *     --timeout=MS          per-ES/MySQL-operation timeout (default 45000)
+ *     --noDup               skip the ES duplicate-document scan (faster ES audit)
+ *     --dupPageSize=N       composite page size for the duplicate scan (default 10000)
  */
 
 'use strict';
@@ -76,6 +85,13 @@ const args = Object.fromEntries(
   })
 );
 const SAMPLE_SIZE = Math.max(1, parseInt(args.samples, 10) || 5);
+
+// Duplicate-document scan controls. The scan composite-paginates every
+// facebook_ad.id bucket — heavier than the plain counts — so it can be skipped
+// with --noDup. Page size is capped at 10000 (ES composite/max_buckets ceiling);
+// lower it if a cluster rejects the page with a "too_many_buckets" error.
+const SCAN_DUPLICATES = !args.noDup;
+const DUP_PAGE_SIZE = Math.min(10000, Math.max(100, parseInt(args.dupPageSize, 10) || 10000));
 
 // Where detailed reports are written. Deliberately NOT logs/ — that folder is
 // git-ignored, so VS Code hides the files. This folder is committed-visible.
@@ -143,6 +159,102 @@ async function esSamples(query, size = SAMPLE_SIZE) {
   }));
 }
 
+// Raw aggregation/search passthrough — returns the full ES response body so the
+// caller can read `.aggregations` / `.hits`. (searchAllInstances swallows errors
+// and returns {}, so a missing `.data` means the search failed.)
+async function esAgg(body, label) {
+  const res = await withTimeout(searchAllInstances(FB.esIndex, body, FB.esId, 'search'), label);
+  if (!res || res.data === undefined) throw new Error(`${label} returned no data (search failed — see log above)`);
+  return res.data;
+}
+
+// Composite-paginate every `facebook_ad.id` bucket to find ids backed by more
+// than one document. Each redundant copy (doc_count − 1 per id) is a deletable
+// duplicate: the search collapses on facebook_ad.id so the extras never render,
+// but they inflate the pre-collapse hits.total the UI shows as the ad count.
+// Composite pagination keeps memory flat (one page at a time) and is exact —
+// unlike a cardinality agg, which is approximate above 40k distinct values.
+async function findDuplicates() {
+  let after = null;
+  let pages = 0;
+  let scannedDocs = 0;   // sum of doc_count over ALL ids (should equal index total)
+  let distinctIds = 0;   // number of distinct facebook_ad.id values
+  let extraDocs = 0;     // sum(doc_count − 1) over duplicated ids — what deletion removes
+  let docsInvolved = 0;  // sum(doc_count) over duplicated ids only
+  const duplicatedIds = []; // [{ id, count }] for every id with count > 1 (full set, for deletion)
+
+  for (;;) {
+    const body = {
+      size: 0,
+      aggs: {
+        dup: {
+          composite: {
+            size: DUP_PAGE_SIZE,
+            sources: [{ fbid: { terms: { field: 'facebook_ad.id' } } }],
+            ...(after ? { after } : {}),
+          },
+        },
+      },
+    };
+    const data = await esAgg(body, `ES duplicate scan (page ${pages + 1})`);
+    const agg = data.aggregations && data.aggregations.dup;
+    const buckets = (agg && agg.buckets) || [];
+    if (!buckets.length) break;
+
+    for (const b of buckets) {
+      distinctIds += 1;
+      scannedDocs += b.doc_count;
+      if (b.doc_count > 1) {
+        duplicatedIds.push({ id: b.key.fbid, count: b.doc_count });
+        extraDocs += b.doc_count - 1;
+        docsInvolved += b.doc_count;
+      }
+    }
+
+    pages += 1;
+    if (pages % 20 === 0) {
+      info(`…scanned ${fmt(scannedDocs)} docs / ${fmt(distinctIds)} distinct ids — ${fmt(extraDocs)} duplicate copies so far`);
+    }
+
+    after = agg.after_key;
+    if (!after) break;
+  }
+
+  return {
+    scannedDocs,
+    distinctIds,
+    duplicatedIdCount: duplicatedIds.length,
+    extraDocs,
+    docsInvolved,
+    duplicatedIds,
+  };
+}
+
+// Pull the actual docs for a few duplicated ids so the report shows the colliding
+// copies (same fbId on multiple ES _id rows). Mapped to the standard ES-sample
+// shape so it flows through the existing print + "ES Samples" sheet unchanged.
+async function esDuplicateSamples(ids) {
+  if (!ids || !ids.length) return [];
+  const body = {
+    size: Math.max(50, ids.length * 10), // headroom for each id's copies
+    _source: ['facebook_ad.id', 'facebook_ad.type', 'facebook_ad.last_seen',
+      'new_nas_image_url', 'Thumbnail', 'facebook_ad_url.url'],
+    sort: [{ 'facebook_ad.id': 'asc' }, { 'facebook_ad.last_seen': 'desc' }],
+    query: { terms: { 'facebook_ad.id': ids } },
+  };
+  const res = await withTimeout(searchAllInstances(FB.esIndex, body, FB.esId, 'search'), 'ES duplicate samples');
+  const hits = (res && res.data && res.data.hits && res.data.hits.hits) || [];
+  return hits.map((h) => ({
+    _id: h._id,
+    ad_id: h._source && h._source['facebook_ad.id'],
+    type: h._source && h._source['facebook_ad.type'],
+    last_seen: h._source && h._source['facebook_ad.last_seen'],
+    new_nas_image_url: (h._source && h._source['new_nas_image_url']) ?? null,
+    Thumbnail: (h._source && h._source['Thumbnail']) ?? null,
+    url: (h._source && h._source['facebook_ad_url.url']) ?? null,
+  }));
+}
+
 // The exact filter the frontend applies, plus the two failure modes that make
 // an ad non-displayable.
 const Q_DISPLAYABLE = { bool: { filter: getDisplayableMediaFilter('facebook') } };
@@ -173,13 +285,53 @@ async function runEsAudit() {
   // samples per factor
   for (const f of factors) f.samples = await esSamples(f.query);
 
+  // ── Duplicate-document factor (same facebook_ad.id on >1 doc) ───────────────
+  // Independent of the displayable-media filter: a duplicate copy may itself be
+  // displayable or not. It's flagged unhealthy because the extra copies inflate
+  // the pre-collapse count and are redundant. Skippable with --noDup.
+  let duplicates = null;
+  if (SCAN_DUPLICATES) {
+    sub('Scanning for duplicate documents (same facebook_ad.id) — composite sweep…');
+    const dup = await findDuplicates();
+    const dupSampleIds = dup.duplicatedIds.slice(0, SAMPLE_SIZE).map((d) => d.id);
+
+    // Docs the composite sweep can't see: a `terms` source skips documents with
+    // NO value for facebook_ad.id (it has no missing_bucket). They ARE in
+    // match_all (total) but NOT in scannedDocs, so they explain any
+    // (total − scanned) gap. They're their own defect — an ad doc with no id
+    // can't be collapsed and can't join to SQL — so we surface them, but do NOT
+    // fold them into `deletable` (their nature is unknown without inspection).
+    const missingAdId = await esCount({ bool: { must_not: [{ exists: { field: 'facebook_ad.id' } }] } });
+
+    factors.push({
+      key: 'DUPLICATE_DOC',
+      label: 'Redundant duplicate doc (same facebook_ad.id — keep 1, remove the rest)',
+      count: dup.extraDocs,
+      samples: await esDuplicateSamples(dupSampleIds),
+    });
+    duplicates = {
+      scannedDocs: dup.scannedDocs,   // docs WITH an ad id = distinctIds + extraDocs
+      distinctIds: dup.distinctIds,
+      duplicatedIds: dup.duplicatedIdCount,
+      extraDocs: dup.extraDocs,
+      docsInvolved: dup.docsInvolved,
+      missingAdId,                     // docs with NO ad id (total = scannedDocs + missingAdId)
+      ids: dup.duplicatedIds, // full [{id,count}] set — the delete target
+    };
+  }
+
   const report = {
     store: 'elasticsearch',
     index: FB.esIndex,
     total,
     displayable: displayableCount,
     unhealthy,
+    // Total docs deletion would remove: non-displayable + redundant duplicate
+    // copies. The two sets can overlap (a duplicate copy may also be
+    // non-displayable), so this is an upper bound, not a strict sum.
+    deletable: unhealthy + (duplicates ? duplicates.extraDocs : 0),
     typeDistribution: { IMAGE: typeImage, VIDEO: typeVideo, OTHER: total - typeImage - typeVideo },
+    duplicates,
     factors,
   };
 
@@ -190,7 +342,16 @@ async function runEsAudit() {
 function printEsReport(r) {
   info(`Total docs ............. ${fmt(r.total)}`);
   info(`Displayable (passes) ... ${fmt(r.displayable)}  (${pct(r.displayable, r.total)})`);
-  (r.unhealthy ? bad : ok)(`Unhealthy (fails) ...... ${fmt(r.unhealthy)}  (${pct(r.unhealthy, r.total)})`);
+  (r.unhealthy ? bad : ok)(`Non-displayable ........ ${fmt(r.unhealthy)}  (${pct(r.unhealthy, r.total)})`);
+  if (r.duplicates) {
+    const d = r.duplicates;
+    info(`Docs with an ad id ..... ${fmt(d.scannedDocs)}  (= ${fmt(d.distinctIds)} distinct ids + ${fmt(d.extraDocs)} duplicate copies)`);
+    (d.missingAdId ? bad : ok)(`Docs with NO ad id ..... ${fmt(d.missingAdId)}  (skipped by the dup sweep; total = with-id + no-id)`);
+    (d.extraDocs ? bad : ok)(`Duplicate copies ....... ${fmt(d.extraDocs)}  across ${fmt(d.duplicatedIds)} ad id(s) that have >1 doc`);
+    info(`Total deletable ........ ${fmt(r.deletable)}  (non-displayable + duplicate copies; sets may overlap)`);
+  } else {
+    warn('Duplicate scan skipped (--noDup).');
+  }
   info(`Type split ............. IMAGE ${fmt(r.typeDistribution.IMAGE)} | VIDEO ${fmt(r.typeDistribution.VIDEO)} | OTHER ${fmt(r.typeDistribution.OTHER)}`);
   for (const f of r.factors) {
     sub(`[ES] ${f.label}: ${fmt(f.count)}`);
@@ -384,8 +545,18 @@ function buildSheets(rep) {
     summary.push(['Metric', 'Value']);
     summary.push(['Total docs', r.total]);
     summary.push(['Displayable (passes)', r.displayable]);
-    summary.push(['Unhealthy (fails)', r.unhealthy]);
-    summary.push(['Unhealthy %', pctNum(r.unhealthy, r.total)]);
+    summary.push(['Non-displayable', r.unhealthy]);
+    summary.push(['Non-displayable %', pctNum(r.unhealthy, r.total)]);
+    if (r.duplicates) {
+      // Self-reconciling: Total docs = Docs with an ad id + Docs with NO ad id;
+      // Docs with an ad id = Distinct ad ids + Duplicate copies.
+      summary.push(['Docs with an ad id (scanned)', r.duplicates.scannedDocs]);
+      summary.push(['Docs with NO ad id', r.duplicates.missingAdId]);
+      summary.push(['Distinct ad ids', r.duplicates.distinctIds]);
+      summary.push(['Duplicated ad ids (count>1)', r.duplicates.duplicatedIds]);
+      summary.push(['Duplicate copies (extra docs)', r.duplicates.extraDocs]);
+    }
+    if (typeof r.deletable === 'number') summary.push(['Total deletable', r.deletable]);
     summary.push(['Type: IMAGE', r.typeDistribution.IMAGE]);
     summary.push(['Type: VIDEO', r.typeDistribution.VIDEO]);
     summary.push(['Type: OTHER', r.typeDistribution.OTHER]);
@@ -422,6 +593,13 @@ function buildSheets(rep) {
     sheets.push({ name: 'ES Samples', rows });
   }
 
+  // ---- ES Duplicates (full deletable id set: keep 1 per id, remove extra_copies)
+  if (rep.elasticsearch && rep.elasticsearch.duplicates && rep.elasticsearch.duplicates.ids.length) {
+    const rows = [['facebook_ad.id', 'doc_count', 'extra_copies (deletable)']];
+    rep.elasticsearch.duplicates.ids.forEach((d) => rows.push([d.id, d.count, d.count - 1]));
+    sheets.push({ name: 'ES Duplicates', rows });
+  }
+
   // ---- SQL Samples ----
   if (rep.mysql) {
     const rows = [['Factor', 'id', 'ad_id', 'type', 'last_seen']];
@@ -443,13 +621,16 @@ function deleteFlow() {
   warn('Deletion is DISABLED in this build (audit-only mode).');
   info('When enabled it will target the same ads this audit flags:');
   info(`  • ES : docs in "${FB.esIndex}" failing the displayable-media filter`);
+  info(`  • ES : duplicate docs (same facebook_ad.id) — keep 1 per id, remove the extra copies`);
   info(`  • SQL: ${FB.mainTable} rows with no / empty ${FB.mediaTable} media (+ cascading child rows)`);
   info('');
   info('To enable later: set ENABLE_DELETE=true, connect with a write-capable DB');
   info('user, and implement the guarded deletion in deleteFlow(). It must:');
   info('  1) re-run the audit to get a fresh target set,');
   info('  2) require typing the exact confirmation phrase + dry-run preview,');
-  info('  3) batch deletes and log every removed id.');
+  info('  3) batch deletes and log every removed id,');
+  info('  4) for duplicates, keep exactly one doc per facebook_ad.id (the newest by');
+  info('     last_seen — the copy collapse surfaces) and delete only the others.');
   if (!ENABLE_DELETE) { bad('ENABLE_DELETE is false → aborting without any writes.'); return; }
   // NOTE: real deletion intentionally not implemented yet.
   bad('Delete path not implemented. Aborting.');
@@ -478,7 +659,7 @@ ${'═'.repeat(78)}
   ES index: ${FB.esIndex}   |   DB: ${FB.database}   |   samples/factor: ${SAMPLE_SIZE}
 ${'═'.repeat(78)}
   Every audit is auto-saved to diagnostics/audit-reports/ (JSON + Excel).
-  1) Run ES audit       (Elasticsearch displayable-media filter)
+  1) Run ES audit       (displayable-media filter + duplicate-doc scan${SCAN_DUPLICATES ? '' : ' [--noDup: off]'})
   2) Run SQL audit      (facebook_ad / facebook_ad_image_video)
   3) Run BOTH           (full report)
   4) Re-export last report (audit-reports/)

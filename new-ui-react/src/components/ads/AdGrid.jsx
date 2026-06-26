@@ -646,7 +646,7 @@ const AdGrid = ({
         let height;
         if (isVertical) height = 700;
         else if (isSideColumn) height = 90;
-        else if (isGoogleSearch) height = 220 + (ad.keywords ? 40 : 0);
+        else if (isGoogleSearch) height = 240 + (ad.keywords ? 40 : 0);
         else if (isPinterest) height = 520;
         else if (isYtBanner) height = 340;
         else if (platform === "reddit") height = 560;
