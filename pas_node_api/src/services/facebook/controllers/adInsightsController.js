@@ -14,17 +14,29 @@ function fixCountryIso(country, iso) {
 }
 
 /**
+ * Normalize country name to title case.
+ */
+function normalizeCountryName(name) {
+  return name
+    .toLowerCase()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
  * Batch-fetch ISO codes for multiple country names in a single query.
  * Returns a Map: nicename → { country, iso }
  */
 async function batchCountryLookup(db, names) {
   if (!db.sql || !names || names.length === 0) return new Map();
   const uniqueNames = [...new Set(names)];
-  const placeholders = uniqueNames.map(() => '?').join(',');
+  const normalizedNames = uniqueNames.map(normalizeCountryName);
+  const placeholders = normalizedNames.map(() => '?').join(',');
   try {
     const rows = await db.sql.query(
       `SELECT nicename, name AS country, iso FROM country_data WHERE nicename IN (${placeholders})`,
-      uniqueNames
+      normalizedNames
     );
     const map = new Map();
     if (rows) {
@@ -850,8 +862,9 @@ async function aggregateCountryData(db, hits) {
   const result = [];
   for (const [name, idSet] of Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size)) {
     const adIds = [...idSet];
-    const lookup = isoMap.get(name);
-    let country = lookup?.country || name;
+    const normalizedName = normalizeCountryName(name);
+    const lookup = isoMap.get(normalizedName);
+    let country = lookup?.country || normalizedName;
     let iso = fixCountryIso(country, lookup?.iso || null);
     if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
     result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });

@@ -394,6 +394,25 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      <style>{`
+        input[type="date"],
+        input[type="time"] {
+          color-scheme: light;
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator,
+        input[type="time"]::-webkit-calendar-picker-indicator {
+          filter: invert(1) brightness(0.6);
+          cursor: pointer;
+          width: 18px;
+          height: 18px;
+        }
+        input[type="date"]::-webkit-outer-spin-button,
+        input[type="date"]::-webkit-inner-spin-button,
+        input[type="time"]::-webkit-outer-spin-button,
+        input[type="time"]::-webkit-inner-spin-button {
+          display: none;
+        }
+      `}</style>
       {/* Period selectors for stats cards */}
       <div style={{ display: forceExpand ? "none" : "flex", alignItems: "center", gap: "20px", marginBottom: "16px", flexWrap: "wrap" }}>
         {/* Current Period Selector */}
@@ -718,7 +737,19 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
                       min={getMinDate()}
                       max={customTo || getTodayISO()}
                       onChange={(e) => setCustomFrom(e.target.value)}
-                      style={{ border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 10px", fontSize: "12px", color: "#374151", outline: "none", width: "100%" }}
+                      style={{
+                        border: "1px solid #d1d5db",
+                        borderRadius: "6px",
+                        padding: "8px 12px",
+                        fontSize: "12px",
+                        color: "#111827",
+                        outline: "none",
+                        width: "100%",
+                        background: "white",
+                        boxSizing: "border-box",
+                        fontWeight: 500,
+                        caretColor: "#6366f1"
+                      }}
                     />
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
@@ -729,7 +760,19 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
                       min={customFrom || getMinDate()}
                       max={getTodayISO()}
                       onChange={(e) => setCustomTo(e.target.value)}
-                      style={{ border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 10px", fontSize: "12px", color: "#374151", outline: "none", width: "100%" }}
+                      style={{
+                        border: "1px solid #d1d5db",
+                        borderRadius: "6px",
+                        padding: "8px 12px",
+                        fontSize: "12px",
+                        color: "#111827",
+                        outline: "none",
+                        width: "100%",
+                        background: "white",
+                        boxSizing: "border-box",
+                        fontWeight: 500,
+                        caretColor: "#6366f1"
+                      }}
                     />
                   </div>
                   <p style={{ fontSize: "11px", color: "#9ca3af", margin: 0 }}>

@@ -1007,6 +1007,25 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <style>{`
+        input[type="date"],
+        input[type="time"] {
+          color-scheme: light;
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator,
+        input[type="time"]::-webkit-calendar-picker-indicator {
+          filter: invert(1) brightness(0.6);
+          cursor: pointer;
+          width: 18px;
+          height: 18px;
+        }
+        input[type="date"]::-webkit-outer-spin-button,
+        input[type="date"]::-webkit-inner-spin-button,
+        input[type="time"]::-webkit-outer-spin-button,
+        input[type="time"]::-webkit-inner-spin-button {
+          display: none;
+        }
+      `}</style>
       {/* Filter row — hidden during PDF export */}
       <div style={{ display: forceExpand ? "none" : "block", background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "12px", alignItems: "end" }}>

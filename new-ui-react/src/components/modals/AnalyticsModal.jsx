@@ -1711,7 +1711,7 @@ const AnalyticsModal = ({
             )}
 
             {/* Social Engagements — Facebook, Instagram, YouTube, LinkedIn, Reddit & TikTok */}
-            {['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok'].includes(ctx.platform) && (
+            {['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok'].includes(ctx.platform) && !((['facebook', 'instagram'].includes(ctx.platform) && adDetailsData?.platform === 15)) && (
               <SocialEngagements
                 adId={ad?.id}
                 adLcs={insights.lcs}
