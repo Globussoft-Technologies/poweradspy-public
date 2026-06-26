@@ -265,6 +265,17 @@ async function updatePath(ctx, rawAd, { userId, translation, existingId }) {
   }
 
   const carryOver = await fetchCarryOver(ctx, adId);
+
+  // Re-attempt the VIDEO on re-seen if the stored video is missing / DefaultImage (legacy DefaultImage.mp4).
+  // Reads the old ES doc (carryOver); only when the image gate didn't already re-upload, and only when
+  // broken — a good video is left untouched (just stats). The worker re-downloads + writes nas_video_url to ES.
+  if (n.type === 'VIDEO' && n.image_video_url && !Object.keys(mediaPaths).length) {
+    const sv = String(carryOver.nas_video_url || '');
+    if (!sv || sv.includes('DefaultImage')) {
+      delete carryOver.nas_video_url;
+      media.uploadVideo(n.image_video_url, adId, NETWORK);
+    }
+  }
   await deleteEsDoc(ctx, adId).catch(() => {});
   await indexAd(ctx, adId, n, { instagramAdId: adId, mediaPaths, carryOver }).catch((e) => log.warn('ES reindex failed', { error: e.message }));
   api.adgptInsert(buildAdgptPayload(n, { instagramAdId: adId }));

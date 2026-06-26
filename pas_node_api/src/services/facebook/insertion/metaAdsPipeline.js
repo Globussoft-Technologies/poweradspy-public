@@ -406,6 +406,19 @@ async function updatePath(ctx, rawAd, { userId, translation, existingId, network
 
   // ── ES: carry over cron-populated fields from the old doc, then delete + re-index ──
   const carryOver = await fetchCarryOver(ctx, facebookAdId);
+
+  // Re-attempt the VIDEO on re-seen if the stored video is missing / DefaultImage (e.g. legacy
+  // DefaultImage.mp4). Reads the old ES doc (carryOver); only when the image gate didn't already
+  // re-upload, and only when broken — a good video is left untouched (just stats, no re-download). The
+  // background download-queue re-downloads + writes nas_video_url to ES (no SQL schema change).
+  if (n.type === 'VIDEO' && n.image_video_url && !Object.keys(mediaPaths).length) {
+    const sv = String(carryOver.nas_video_url || '');
+    if (!sv || sv.includes('DefaultImage')) {
+      delete carryOver.nas_video_url;                // don't re-persist the placeholder on reindex
+      media.uploadVideo(n.image_video_url, facebookAdId, network);
+    }
+  }
+
   await deleteEsDoc(ctx, facebookAdId).catch(() => {});
   await indexAd(ctx, facebookAdId, n, { facebookAdId, mediaPaths, carryOver }, network).catch((e) => log.warn('ES reindex failed', { error: e.message }));
   api.adgptInsert(buildAdgptPayload(n, { facebookAdId }));

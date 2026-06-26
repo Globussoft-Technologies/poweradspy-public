@@ -129,6 +129,30 @@ logger.createChild = (serviceName, extraMeta = {}) => {
   return logger.child({ service: serviceName, ...extraMeta });
 };
 
+// ─── Dedicated NAS-media diagnostics log (own file, short retention) ─────────────
+// One JSON line per media store FAILURE / deferral, keyed by adId, so we can answer
+// "why didn't THIS ad's image/video store?" — just grep nas-media-<date>.log by the ad id.
+// Retention is short (default 2 days, config.insertion.nas.logMaxDays) since it's purely diagnostic.
+logger.nasMedia = winston.createLogger({
+  level: 'info',
+  defaultMeta: { env: config.env },
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
+    winston.format.json()
+  ),
+  transports: [
+    new DailyRotateFile({
+      dirname: path.resolve(config.log?.dir || 'logs'),
+      filename: 'nas-media-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: (config.insertion && config.insertion.nas && config.insertion.nas.logMaxDays) || '2d',
+      zippedArchive: false,
+    }),
+  ],
+  exitOnError: false,
+});
+
 /**
  * Express request logging middleware.
  * Wraps each request in an AsyncLocalStorage context so ALL logs

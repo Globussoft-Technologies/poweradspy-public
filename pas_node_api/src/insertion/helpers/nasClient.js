@@ -4,52 +4,50 @@
  * nasClient — shared NAS media-upload helper.
  *
  * COMMON helper used by ALL networks (Facebook, Instagram, …). Faithful port of
- * PHP helper::StoreInNAS2. The only intentional change: the `network` is a
- * PARAMETER (PHP hard-coded 'facebook') so every network reuses this one helper.
+ * PHP helper::StoreInNAS2, with an ordered transport FALLBACK CHAIN
+ * (config.insertion.nas.uploadTransport, default ['http','sftp']): each upload tries the transports
+ * in order until one succeeds — HTTP first (fast: a 183MB mp4 uploaded in ~50s in testing), falling
+ * back to SFTP (direct NAS write) if HTTP fails. Same chain for image AND video.
  *
- * Behaviour:
- *   - ALL types (image AND video) → POST to {mediaUrl}/{bucket}/upload (Bearer token;
- *     multipart: key, file). The key is sent WITHOUT an extension and the file WITH its
- *     real extension (from the downloaded file's Content-Type); the NAS validates and
- *     appends the extension — we never hard-code mp4/jpg. VIDEO subfolder = "adVideo/"
- *     (the old dedicated nas-video-api endpoint is no longer used).
- *   - Returns the stored path the NAS returns, or '/DefaultImage.jpg' on any failure
- *     (never throws — mirrors PHP).
+ * Timing (independent of transport):
+ *   - SMALL media (image / thumbnail / postowner / carousel-image) → uploaded IN-REQUEST (sub-second).
+ *   - VIDEO (ad video / carousel-video) → ALWAYS deferred to the durable retry queue and uploaded by
+ *     the background sweep. Even fast HTTP is ~50s for a large file (≈3.5min for 800MB), and the insert
+ *     must answer in ms — so video bytes are persisted and the response returns the predicted path now.
  *
- * Settings come from config.insertion.nas (config.json → env). Nothing here is
- * network-specific except the `network` argument.
+ * Either way the ad references a DETERMINISTIC predicted path immediately (the key is fixed → the
+ * stored path is fixed), so no ES/SQL patch is needed once the upload lands.
+ *
+ * Returns the stored path, or '/DefaultImage.jpg' ('/DefaultImage.mp4' handled by the video caller)
+ * on failure. Never throws (mirrors PHP).
  */
 
 const fs = require('fs');
 const path = require('path');
-const FormData = require('form-data');
-const axios = require('axios');
-const https = require('https');
 const config = require('../../config');
 const logger = require('../../logger');
 const { enqueueFailedUpload } = require('./nasUploadQueue');
 const sftpPool = require('./nasSftpPool');
+const { httpUpload, uploadUrlFor } = require('./nasHttpUpload');
 
 const log = logger.createChild('nas-client');
 
-// The NAS media host (media.globussoft.com) is behind Cloudflare and intermittently
-// returns transient 5xx/429 (origin overloaded). We try a couple of QUICK in-request
-// attempts (short timeout so the API never waits long); if they all fail we DON'T block
-// — we hand the bytes to the durable retry queue and return the deterministic predicted
-// path, so the ad references the eventual file and a background cron finishes the upload.
+/** One JSON line to the dedicated NAS-media diagnostics log (keyed by adId). Never throws. */
+function nasMediaFail({ adId, network, type, stage, reason, key }) {
+  try { logger.nasMedia.warn('media not stored', { adId: adId == null ? undefined : String(adId), network, type, stage, reason, key }); } catch { /* ignore */ }
+}
+
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
-const UPLOAD_MAX_ATTEMPTS = 2;     // in-request attempts before deferring to the queue
+const UPLOAD_MAX_ATTEMPTS = 2;     // in-request HTTP attempts before deferring to the queue
 const UPLOAD_RETRY_BASE_MS = 300;  // backoff between in-request attempts
-// Short per-attempt timeout so a slow/down NAS can't stall the insertion response.
-// (Downloads still use the full nas.timeoutMs.) Override via config.insertion.nas.uploadTimeoutMs.
-const UPLOAD_TIMEOUT_MS = config.insertion.nas.uploadTimeoutMs || 10000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const DEFAULT_IMAGE = '/DefaultImage.jpg';
 
+// File extensions treated as VIDEO (so a video inside other_multimedia routes like a video, not an image).
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v', 'avi', 'mkv', 'mpeg', 'mpg', '3gp', 'ogv']);
+
 // Per-network NAS key prefix — from the Media Upload API doc (Network → NAS Folder).
-// Falls back to the network slug if not listed. The multipart `network` field still
-// carries the full slug (e.g. 'facebook') — only the storage key prefix differs.
 const NAS_KEY_PREFIX = {
   facebook: 'fb',
   instagram: 'insta',
@@ -77,13 +75,6 @@ const TYPE_SUBFOLDER = {
   BLACKHAT: 'blackHatAd/',
 };
 
-function nasAgent() {
-  // PHP uses verify:false. Honour config.insertion.nas.verifyTls.
-  return config.insertion.nas.verifyTls
-    ? undefined
-    : new https.Agent({ keepAlive: true, rejectUnauthorized: false });
-}
-
 /** YYYYMM for the upload key, in UTC (matches PHP date('Ym') intent for grouping). */
 function yearMonth() {
   const d = new Date();
@@ -102,79 +93,138 @@ function resolveBucket() {
   return config.env === 'production' ? 'pas-prod' : 'pas-dev';
 }
 
+/** Is a file extension a video? */
+function isVideoExt(ext) {
+  return VIDEO_EXTS.has(String(ext || '').toLowerCase());
+}
+
+/** Master ON/OFF per media category (config.insertion.nas.store). Default true. */
+function storeEnabled(category) {
+  const s = config.insertion.nas.store || {};
+  return category === 'video' ? s.video !== false : s.image !== false;
+}
+
+/** Normalise a configured transport token to a canonical name, or null if unknown. */
+function normTransport(t) {
+  const x = String(t || '').toLowerCase();
+  if (x === 'sftp') return 'sftp';
+  if (x === 'http') return 'http';
+  if (x === 'httporigin' || x === 'http-origin' || x === 'origin') return 'httpOrigin';
+  return null;
+}
+
+/** Is a transport actually configured/usable right now? */
+function transportUsable(t) {
+  const nas = config.insertion.nas;
+  if (t === 'sftp') return sftpPool.isConfigured();
+  if (t === 'httpOrigin') return !!nas.originUrl;
+  return !!nas.mediaUrl; // http
+}
+
+/**
+ * The ordered, de-duplicated, USABLE transport chain (config.insertion.nas.uploadTransport, default
+ * ['http','sftp']). Each upload tries these in order until one succeeds. Never empty: if nothing the
+ * config lists is usable, falls back to whatever IS configured so media is never silently dropped.
+ */
+function transportChain() {
+  const raw = config.insertion.nas.uploadTransport;
+  const list = (Array.isArray(raw) ? raw : ['http', 'sftp']).map(normTransport).filter(Boolean);
+  const seen = new Set();
+  const chain = list.filter((t) => transportUsable(t) && !seen.has(t) && seen.add(t));
+  if (chain.length) return chain;
+  // Nothing configured matched — use any usable transport as a last resort.
+  return ['http', 'httpOrigin', 'sftp'].filter(transportUsable);
+}
+
 /**
  * Upload a local file to NAS.
  *
  * @param {string} type        - IMAGE | VIDEO | THUMBNAIL | POSTOWNER | OTHERMULTIMEDIA | LANDERS | WHITEHAT | BLACKHAT
  * @param {string} filePath    - absolute path to the local file to upload
  * @param {string|number} adId - the ad id (NAS groups by adId)
- * @param {string} network     - network slug, e.g. 'facebook' (replaces PHP hard-coded value)
- * @param {string} [keyBaseName] - desired stored filename WITHOUT extension (id-based, e.g. the
- *                                 facebook_ad id or `postowner_<id>_0_<ts>`). Defaults to the temp
- *                                 file's name. The NAS key uses `<keyBaseName>.jpg`.
- * @returns {Promise<string>}   - stored path, or '/DefaultImage.jpg' on failure
+ * @param {string} network     - network slug, e.g. 'facebook'
+ * @param {string} [keyBaseName] - desired stored filename WITHOUT extension (id-based). Defaults to the
+ *                                 temp file's name.
+ * @returns {Promise<string>}   - stored path, or '/DefaultImage.jpg' (null for VIDEO) on failure
  */
-async function storeInNas(type, filePath, adId, network, keyBaseName) {
+async function storeInNas(type, filePath, adId, network, keyBaseName, opts = {}) {
   const folder = String(type || '').toUpperCase();
-  const { nas } = config.insertion;
 
   try {
     if (!filePath || !fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
       log.error('NAS upload: file missing or empty', { filePath });
+      nasMediaFail({ adId, network, type: folder, stage: 'upload', reason: 'temp file missing/empty (download failed upstream)' });
       return DEFAULT_IMAGE;
     }
 
-    // NAS key segments allow only A-Z a-z 0-9 '.' '_' '-'. Strip anything else
-    // (e.g. a ':' in a GDN ad_id like "d:be3e..."). Mirrors PHP StoreInNAS
-    // str_replace(':','') + the NAS key validator. Numeric ids are unaffected.
+    // NAS key segments allow only A-Z a-z 0-9 '.' '_' '-'. Strip anything else.
     const baseName = String(keyBaseName || path.parse(filePath).name).replace(/[^A-Za-z0-9._-]/g, '');
 
-    // ── Unified NAS media endpoint (images AND video — same place we store thumbnails) ──
-    // VIDEO now goes here too (subfolder adVideo/) instead of the old dedicated
-    // nas-video-api endpoint. We send the key WITHOUT an extension and the file WITH
-    // its real extension (set by the downloader from the file's Content-Type); the NAS
-    // validates that extension and appends it — so we never hard-code mp4/jpg, and a
-    // video in other_multimedia stays a video. On failure VIDEO returns null (so
-    // uploadVideo falls back to its video default); other types fall back to the image.
-    const failVal = folder === 'VIDEO' ? null : DEFAULT_IMAGE;
-    if (!sftpPool.isConfigured()) {
-      log.error('NAS SFTP not configured (config.insertion.nas.sftpHost / sftpUser / sftpPass)');
-      return failVal;
-    }
     const subfolder = TYPE_SUBFOLDER[folder] || 'adImage/';
     const keyPrefix = NAS_KEY_PREFIX[network] || network;
     const fileExt = path.parse(filePath).ext.replace(/^\./, '').toLowerCase();
     const fileName = fileExt ? `${baseName}.${fileExt}` : baseName;
     const key = `${keyPrefix}/${subfolder}${yearMonth()}/${baseName}`;
-    // ── Direct-to-NAS SFTP write — no Cloudflare, no ~100MB body cap. ──
-    // The Cloudflare-fronted media endpoint 413s any body >~100MB, so large fb/insta videos could
-    // never upload and piled up on this box's disk (took prod down 2026-06-21). The SFTP user is
-    // chrooted to the bucket stream root, so writing `<key>.<ext>` lands exactly where the CDN
-    // serves /<bucket>/stream/<key>.<ext> — the deterministic path the ad references.
-    const remoteKey = `${key}.${fileExt}`;
+    // Deterministic predicted path — the CDN serves /<bucket>/stream/<key>.<ext>, which is exactly
+    // where every transport lands the file. Returned on defer so the ad references it immediately.
     const storedPath = `/${resolveBucket()}/stream/${key}.${fileExt}`;
-    // Video can be 100s of MB — NEVER upload it inside the insert request (it would hold an SFTP
-    // pool slot for minutes and stall inserts under fb/insta load). Defer video straight to the
-    // durable queue and return the deterministic path; the parallel background sweep uploads it.
-    // Images are small, so upload them in-request.
-    if ((folder === 'VIDEO' || folder === 'OTHERMULTIMEDIA') && fileExt) {
-      if (enqueueFailedUpload({ filePath, url: remoteKey, key, fileName })) return storedPath;
+    // VIDEO falls back to null (the video caller substitutes its own default); everything else → image default.
+    const failVal = folder === 'VIDEO' ? null : DEFAULT_IMAGE;
+
+    // Category drives in-request-vs-deferred (NOT transport — the chain is the same for both). VIDEO is
+    // always video; a video file inside other_multimedia is treated as video too (large + slow upload).
+    const category = (folder === 'VIDEO' || (folder === 'OTHERMULTIMEDIA' && isVideoExt(fileExt))) ? 'video' : 'image';
+
+    // Master kill-switch: when this media category is disabled (config.insertion.nas.store), do NOT upload,
+    // do NOT queue, write NO file. Just return the fallback so the ad saves without this media.
+    if (!storeEnabled(category)) {
       return failVal;
     }
-    try {
-      await sftpPool.putFile(filePath, remoteKey);
-      return storedPath;
-    } catch (err) {
-      // Transient SFTP failure — persist the bytes and let the background cron retry over SFTP,
-      // returning the deterministic path now so the ad references the eventual file. Needs a real
-      // extension; else fall back to the default.
-      if (fileExt && enqueueFailedUpload({ filePath, url: remoteKey, key, fileName })) {
-        log.warn('NAS SFTP write deferred to retry queue', { error: err.message, key, storedPath });
-        return storedPath;
+    const chain = transportChain();
+
+    // ── VIDEO in-request: never upload here (even fast HTTP is ~50s for a large file) — defer to the
+    // durable queue. The BACKGROUND download worker passes opts.background=true and uploads INLINE below
+    // instead, so video bytes don't all pile up in nas-pending (only genuine upload failures buffer). ──
+    if (category === 'video' && !opts.background) {
+      if (fileExt && enqueueFailedUpload({ filePath, transports: chain, key, fileName, ext: fileExt })) return storedPath;
+      log.error('NAS video defer failed (no ext or queue full)', { key });
+      nasMediaFail({ adId, network, type: folder, stage: 'upload', reason: 'video could not be queued (no ext / queue full)', key });
+      return failVal;
+    }
+
+    // ── Upload INLINE, walking the transport chain (HTTP first, SFTP fallback). Small media in-request;
+    // video only here when called by the background worker (uses the long background timeout). ──
+    const upTimeout = (category === 'video' || opts.background) ? (config.insertion.nas.queueUploadTimeoutMs || 30 * 60 * 1000) : undefined;
+    let lastErr;
+    for (const transport of chain) {
+      try {
+        if (transport === 'sftp') {
+          await sftpPool.putFile(filePath, `${key}.${fileExt}`);
+          return storedPath;
+        }
+        // 'http' / 'httpOrigin' — a couple of quick attempts before falling through to the next transport.
+        const url = uploadUrlFor(transport);
+        if (!url) { lastErr = `transport '${transport}' not configured`; continue; }
+        for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+          const r = await httpUpload(filePath, url, key, fileName, upTimeout);
+          if (r.ok) return r.path;        // NAS-returned path (same format as storedPath)
+          lastErr = `http status=${r.status}`;
+          if (RETRYABLE_STATUS.has(r.status) && attempt < UPLOAD_MAX_ATTEMPTS) { await sleep(UPLOAD_RETRY_BASE_MS * attempt); continue; }
+          break; // non-retryable status → try the next transport in the chain
+        }
+      } catch (err) {
+        lastErr = err.message; // network/timeout/SFTP error → try the next transport
       }
-      log.error('NAS SFTP write failed', { error: err.message, key });
-      return failVal;
     }
+    // Whole chain failed in-request — persist the bytes + return the predicted path so the ad references
+    // the eventual file and the cron finishes the upload (no re-download → expiry-proof).
+    if (fileExt && enqueueFailedUpload({ filePath, transports: chain, key, fileName, ext: fileExt })) {
+      log.warn('NAS upload deferred to retry queue (chain exhausted)', { lastErr, key, storedPath });
+      return storedPath;
+    }
+    log.error('NAS upload failed (chain exhausted)', { lastErr, key });
+    nasMediaFail({ adId, network, type: folder, stage: 'upload', reason: `upload failed (all transports): ${lastErr}`, key });
+    return failVal;
   } catch (err) {
     log.error('Error in NAS upload', { error: err.message });
     return folder === 'VIDEO' ? null : DEFAULT_IMAGE;
@@ -183,12 +233,9 @@ async function storeInNas(type, filePath, adId, network, keyBaseName) {
 
 /**
  * Resolve a stored (relative) NAS media path into an absolute servable URL, using the
- * SAME base (config.insertion.nas.mediaUrl) these files were uploaded to. Additive helper
- * consumed by the OCR/OCB lease endpoints. Already-absolute URLs (http/https) are returned
- * unchanged. Empty/falsy → returned as-is.
- *
- * @param {string} storedPath - relative path stored in the DB (e.g. '/pas-dev/.../x.jpg')
- * @returns {string} absolute URL, or the input unchanged when it can't/needn't be resolved
+ * SAME base (config.insertion.nas.mediaUrl) these files were uploaded to.
+ * @param {string} storedPath
+ * @returns {string}
  */
 function resolveMediaUrl(storedPath) {
   if (!storedPath) return storedPath;

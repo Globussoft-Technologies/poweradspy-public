@@ -235,6 +235,39 @@ const config = {
       sftpUser: getVal(fileConfig.insertion?.nas?.sftpUser, 'NAS_SFTP_USER') || '',
       sftpPass: getVal(fileConfig.insertion?.nas?.sftpPass, 'NAS_SFTP_PASS') || '',
       sftpPoolSize: getVal(fileConfig.insertion?.nas?.sftpPoolSize, 'NAS_SFTP_POOL', toInt) || 5,
+      // Master ON/OFF per media type. video=false → never download/upload/queue ad video (thumbnails
+      // still store — they're images). image=false → skip images/thumbnails/postowner/carousel too.
+      // Default true; false only when explicitly set to false in config.json or env NAS_STORE_*.
+      store: {
+        image: fileConfig.insertion?.nas?.store?.image !== false && process.env.NAS_STORE_IMAGE !== 'false',
+        video: fileConfig.insertion?.nas?.store?.video !== false && process.env.NAS_STORE_VIDEO !== 'false',
+      },
+      // Ordered upload-transport fallback chain for ALL media (try each until one succeeds).
+      // 'http' (Cloudflare mediaUrl), 'httpOrigin' (direct originUrl, no Cloudflare cap), 'sftp' (direct NAS).
+      uploadTransport: (() => {
+        const v = fileConfig.insertion?.nas?.uploadTransport ?? process.env.NAS_TRANSPORT_CHAIN;
+        if (Array.isArray(v)) return v;
+        if (typeof v === 'string' && v.trim()) {
+          try { const p = JSON.parse(v); if (Array.isArray(p)) return p; } catch { /* not json */ }
+          return v.split(',').map((s) => s.trim()).filter(Boolean);
+        }
+        return ['http', 'sftp'];
+      })(),
+      // Direct origin base for the 'httpOrigin' transport (bypasses Cloudflare's body cap for large video).
+      originUrl: getVal(fileConfig.insertion?.nas?.originUrl, 'NAS_ORIGIN_URL') || '',
+      // Per-attempt timeout for an IN-REQUEST upload (small images). Keep short so a slow NAS can't
+      // stall the insertion response. Downloads use timeoutMs; background video uses queueUploadTimeoutMs.
+      uploadTimeoutMs: getVal(fileConfig.insertion?.nas?.uploadTimeoutMs, 'NAS_UPLOAD_TIMEOUT_MS', toInt) || 15000,
+      // Per-attempt timeout for a BACKGROUND queue upload (large video). Default 30 min — runs off-request.
+      queueUploadTimeoutMs: getVal(fileConfig.insertion?.nas?.queueUploadTimeoutMs, 'NAS_QUEUE_UPLOAD_TIMEOUT_MS', toInt) || 1800000,
+      // HARD cap (GB) on the data/nas-pending retry queue — prevents it filling the API box disk
+      // (the 2026-06-21 outage). 0 = no cap.
+      pendingMaxGB: getVal(fileConfig.insertion?.nas?.pendingMaxGB, 'NAS_PENDING_MAX_GB', toInt) ?? 10,
+      // Download attempts (with backoff) before a remote media URL is given up — fixes the one-shot
+      // video download that placeholdered ~20% of video ads.
+      downloadRetries: getVal(fileConfig.insertion?.nas?.downloadRetries, 'NAS_DOWNLOAD_RETRIES', toInt) || 3,
+      // Retention for the dedicated NAS-media diagnostics log (logs/nas-media-<date>.log). maxFiles syntax.
+      logMaxDays: getVal(fileConfig.insertion?.nas?.logMaxDays, 'NAS_LOG_MAX_DAYS') || '2d',
       // NAS admin SSH (read-only) — used ONLY by the admin NAS-storage report to run `df` for
       // total/used/free. Separate from the chrooted sftpUser (no shell). config.json → env NAS_ADMIN_*.
       adminHost: getVal(fileConfig.insertion?.nas?.adminHost, 'NAS_ADMIN_HOST') || '',
