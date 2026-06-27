@@ -82,6 +82,9 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
   const runs = num((await one(g, 'SELECT COALESCE(SUM(total_crawls),0) c FROM gdn_crawl_quality')).c);
   const ah = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
   const nh = num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
+  // 24h ad counts — the live dashboard reads gdn_24h/native_24h from this /live payload (was missing -> tile stuck at 0).
+  const ah24 = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date >= NOW()-INTERVAL 24 HOUR')).c);
+  const nh24 = num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date >= NOW()-INTERVAL 24 HOUR')).c);
   const todayNew = num((await one(g,
     'SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=CURDATE()', [sid])).c);
   const act = await all(g,
@@ -92,7 +95,7 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
     : null;
   const profiles = num((await one(g,
     'SELECT COUNT(*) c FROM gdn_crawl_quality WHERE last_crawled > (NOW()-INTERVAL 45 SECOND) AND provider=?', [sid])).c);
-  return { live, pages, db: { creatives, runs }, ads_hr: ah + nh, gdn_hr: ah, native_hr: nh, today_new: todayNew, fleet, profiles };
+  return { live, pages, db: { creatives, runs }, ads_hr: ah + nh, gdn_hr: ah, native_hr: nh, gdn_24h: ah24, native_24h: nh24, today_new: todayNew, fleet, profiles };
 }
 
 // ---------------- OVERVIEW ----------------
