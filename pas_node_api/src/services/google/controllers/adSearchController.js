@@ -3,7 +3,6 @@
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
-const { resolveLongestTokens } = require('../helpers/landerTokenResolver');
 
 /**
  * Google ad search — mirrors SearchController::getAdsHandlerO.
@@ -213,13 +212,12 @@ async function searchAds(req, db, logger) {
   const builder = new GoogleSearchQueryBuilder(db.elastic?.indexName);
   builder.setFrom(from).setSize(size).setSortField(sort.field).setSortMethod(sort.order).setIpBasedCountry(p.ipBasedCountry || 'NA');
 
-  // Search text fields
-  // Keyword box: the text fields are edge_ngram analyzed, so a raw match/phrase
-  // over-matches any shared prefix (a "hair" search returned "Haier" fridges /
-  // "HR Solutions"). Resolve each word to the exact stemmed token the index
-  // stored and term/span-match it (same approach as built_with/funnel below).
-  // `exact_search` (frontend "Search Precisely") switches AND-of-words →
-  // adjacent-phrase. Resolution needs the index name; done after esIndexLander.
+  // Search text fields. v2 index is on the clean content_analyzer (no edge_ngram),
+  // so match/match_phrase is exact ("bus" no longer hits "business", "hair" no
+  // longer hits "Haier"). exact_search (frontend "Search Precisely") + quoted
+  // input → phrase match; applies to keyword AND advertiser.
+  builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true);
+  if (p.keyword)    builder.setKeyword(p.keyword);
   if (p.advertiser) builder.setPostOwnerName(p.advertiser);
   if (p.domain)     builder.setUrl(p.domain);
 
@@ -247,32 +245,12 @@ async function searchAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: tsToDate(p.post_date_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.post_date_btn_sort[0], '23:59:59') });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) { const tsToDay = ts => new Date(Number(ts) * 1000).toISOString().slice(0, 10); builder.setDomainDate({ lower_date: tsToDay(p.domain_date_btn_sort[1]), upper_date: tsToDay(p.domain_date_btn_sort[0]) }); }
 
-  // Lander properties
-  // built_with / built_with_analytics_tracking are edge_ngram analyzed, so we
-  // resolve each value to the exact stemmed token before term-matching it.
-  const esIndexLander = db.elastic?.indexName || 'google_ads_data';
-  if (p.keyword) {
-    const kwWords = String(p.keyword).replace(/"/g, '').trim().split(/\s+/).filter(Boolean);
-    if (kwWords.length) {
-      builder.setKeyword(p.keyword); // always set raw keyword (legacy fallback)
-      // Short-word guard: the longest-token term-match over-matches 3-char words
-      // that are prefixes of common words ("bus"->"business", "car"->"care/card")
-      // — the edge_ngram index stores "bus" as a token of "business" too, and no
-      // non-ngram field is populated to disambiguate. Only apply the precise token
-      // match when at least one word is >=4 chars; otherwise fall back to the
-      // legacy phrase behaviour (no worse than before). Multi-word queries with a
-      // >=4 word ("bus tickets") still use it — the long word constrains the short.
-      if (kwWords.some((w) => w.length >= 4)) {
-        builder.setKeywordTokens(await resolveLongestTokens(db.elastic, esIndexLander, 'text', kwWords, logger));
-        // "Search Precisely" — frontend sends exact_search 0/1 (also honour quoted input)
-        builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true || String(p.keyword).includes('"'));
-      }
-    }
-  }
-  if (p.ecommerce)       builder.setBuiltWith(await resolveLongestTokens(db.elastic, esIndexLander, 'built_with', ensureArray(p.ecommerce), logger));
+  // Lander properties — v2 fields are clean keyword (lowercase_normalizer), so
+  // term-match the raw values directly (no token resolution needed).
+  if (p.ecommerce)       builder.setBuiltWith(ensureArray(p.ecommerce));
   if (p.track)           builder.setTrack(ensureArray(p.track));
   if (p.source)          builder.setSource(ensureArray(p.source));
-  if (p.funnel)          builder.setFunnel(await resolveLongestTokens(db.elastic, esIndexLander, 'built_with_analytics_tracking', ensureArray(p.funnel), logger));
+  if (p.funnel)          builder.setFunnel(ensureArray(p.funnel));
   if (p.affiliate)       builder.setAffiliate(ensureArray(p.affiliate));
   if (p.market_platform) builder.setMarketPlatform(ensureArray(p.market_platform));
 

@@ -88,11 +88,9 @@ const AD_META_SQL = `
 // Country is a small, bounded dimension (~250 ISO countries worldwide), so a
 // terms bucket of 500 covers the entire universe with zero truncation. We do
 // NOT aggregate on post_owner_name (it's a text-analyzed field used only for
-// the match_phrase filter) — only on `country.keyword`, which is the
-// aggregatable sub-field the search builder already aggregates/sorts on
-// (GoogleSearchQueryBuilder wrapWithCountryBoost / collapse). `id` is the ad's
-// dedup unit and is aggregatable (used in the search builder's `cardinality`
-// + `collapse`).
+// the match_phrase filter) — only on `country`, which on the v2 index is a
+// keyword field directly (aggregatable; no `.keyword` sub-field). `id` is the
+// ad's unique key (ES _id), aggregatable for the distinct-ad cardinality.
 const COUNTRY_TERMS_SIZE = 500;
 const ID_CARDINALITY_PRECISION = 40000;
 
@@ -162,7 +160,7 @@ async function fetchAvailableYears(elastic, index, filter) {
 // Scalable, non-truncated advertiser-country aggregation.
 // Replaces the previous size:10000 `_source`/docvalue pull + JS `Set`
 // bucketing, which truncated advertisers with >10k ads. A single
-// `terms(country.keyword)` → `cardinality(id)` aggregation returns one bucket
+// `terms(country)` → `cardinality(id)` aggregation returns one bucket
 // per country with an accurate distinct-ad count regardless of advertiser
 // size, transferring only a few KB.
 async function fetchCountryAgg(elastic, index, filterClauses) {
@@ -177,7 +175,7 @@ async function fetchCountryAgg(elastic, index, filterClauses) {
       aggs: {
         by_country: {
           terms: {
-            field: 'country.keyword',
+            field: 'country',
             size: COUNTRY_TERMS_SIZE,
             order: { unique_ads: 'desc' },
           },
@@ -270,7 +268,7 @@ async function getAdvertiserCountryData(req, db, logger) {
 
   const adYear = p.year || (adLastSeen ? new Date(adLastSeen).getFullYear() : new Date().getFullYear());
   const dateRange = getYearRange(adYear);
-  const index = 'google_ads_data';
+  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
 
   const advertiserFilter = { match_phrase: { post_owner_name: postOwnerName } };
   const filterClauses = [advertiserFilter, { range: { last_seen: dateRange } }];
@@ -327,7 +325,7 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
 
   const dateRange = getCustomDateRange(from_date, to_date);
   const base = { from_date, to_date, post_owner_id };
-  const index = 'google_ads_data';
+  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
 
   // For Google/GDN etc, we only support country in this specific request context
   const targetType = (type || 'country').toLowerCase();

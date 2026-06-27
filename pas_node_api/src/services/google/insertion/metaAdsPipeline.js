@@ -238,6 +238,8 @@ async function updatePath(ctx, rawAd, { translation, existingId, network }) {
 async function indexAd(ctx, result, n, { translation, imageUrl, source }) {
   const { db } = ctx;
   if (!db.elastic) return;
+  // Live index from the configured client (cutover = config change); ES_INDEX is the fallback.
+  const esIndex = db.elastic.indexName || ES_INDEX;
   const data = buildFlatInsertData(n, result, { translation, imageUrl, source });
   const doc = buildDoc(META_INSERT_COLUMNS, data, {
     extra: {
@@ -247,17 +249,21 @@ async function indexAd(ctx, result, n, { translation, imageUrl, source }) {
       image_video_url: imageUrl ?? null,
     },
   });
-  // de-dup: reuse existing _id if a doc already exists for this id
+  // de-dup: reuse an existing _id if a doc already exists for this id; otherwise pin
+  // the ES _id to the internal google_text_ad.id so a re-index OVERWRITES instead of
+  // creating a second auto-_id doc (the ~8.6M-duplicate cause). A brand-new id can't
+  // already exist in ES, so this is collision-free.
   let _id;
-  try { _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, result.googleTextAdId))); } catch { /* ignore */ }
-  await db.elastic.index({ index: doc.index, type: doc.type, id: _id || undefined, body: doc.body });
+  try { _id = firstHitId(await db.elastic.search(searchIdQuery(esIndex, result.googleTextAdId))); } catch { /* ignore */ }
+  await db.elastic.index({ index: esIndex, type: doc.type, id: _id || String(result.googleTextAdId), body: doc.body });
 }
 
 // ── ES update (UPDATE) — partial doc, carrying over existing _source fields ────
 async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, mergedKeywords, lastSeen, daysRunning, network }) {
   const { db } = ctx;
   if (!db.elastic) return;
-  const found = await db.elastic.search(searchIdQuery(ES_INDEX, googleTextAdId));
+  const esIndex = db.elastic.indexName || ES_INDEX;
+  const found = await db.elastic.search(searchIdQuery(esIndex, googleTextAdId));
   const _id = firstHitId(found);
   const src = firstHitSource(found) || {};
 
@@ -286,11 +292,13 @@ async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, 
   if (newNas) { doc.new_nas_image_url = newNas; doc.image_video_url = newNas; }
 
   if (_id) {
-    await db.elastic.update({ index: ES_INDEX, type: 'doc', id: _id, body: { doc } });
+    await db.elastic.update({ index: esIndex, type: 'doc', id: _id, body: { doc } });
   } else {
-    // No existing doc → index a fresh flat doc (recovery; SQL already updated).
+    // No existing doc → index a fresh flat doc (recovery; SQL already updated). Pin
+    // the ES _id to the internal id so a transient search miss can't spawn a second
+    // auto-_id doc → no new duplicates.
     const full = buildDoc(META_INSERT_COLUMNS, { ...src, ...doc }, { extra: { new_nas_image_url: newNas ?? null, image_video_url: newNas ?? null } });
-    await db.elastic.index({ index: full.index, type: full.type, body: full.body });
+    await db.elastic.index({ index: esIndex, type: full.type, id: String(googleTextAdId), body: full.body });
   }
 }
 

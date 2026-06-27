@@ -3,7 +3,6 @@
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
-const { resolveLongestTokens } = require('../helpers/landerTokenResolver');
 
 const AD_DETAIL_SELECT = `
     google_text_ad.id                                       AS id,
@@ -54,9 +53,10 @@ async function getTopAds(req, db, logger) {
   const builder = new GoogleSearchQueryBuilder(db.elastic?.indexName);
   builder.setFrom(from).setSize(size).setSortField(sort.field).setSortMethod(sort.order).setIpBasedCountry(p.ipBasedCountry || 'NA');
 
-  // Search text fields
-  // Keyword resolution (edge_ngram over-match fix) is done after esIndexLander
-  // is available — see below. exact_search switches AND-of-words → phrase.
+  // Search text fields — v2 clean content_analyzer (no edge_ngram). exact_search
+  // (frontend "Search Precisely") + quoted input → phrase; applies to keyword + advertiser.
+  builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true);
+  if (p.keyword)          builder.setKeyword(p.keyword);
   if (p.advertiser || p.advertisername) builder.setPostOwnerName(p.advertiser || p.advertisername);
   if (p.domain || p.domainname)        builder.setUrl(p.domain || p.domainname);
 
@@ -83,27 +83,11 @@ async function getTopAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: p.post_date_btn_sort[0], upper_date: p.post_date_btn_sort[1] });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) builder.setDomainDate({ lower_date: p.domain_date_btn_sort[0], upper_date: p.domain_date_btn_sort[1] });
 
-  // Lander properties
-  // built_with / built_with_analytics_tracking are edge_ngram analyzed, so we
-  // resolve each value to the exact stemmed token before term-matching it.
-  const esIndexLander = db.elastic?.indexName || 'google_ads_data';
-  if (p.keyword) {
-    const kwWords = String(p.keyword).replace(/"/g, '').trim().split(/\s+/).filter(Boolean);
-    if (kwWords.length) {
-      builder.setKeyword(p.keyword); // always set raw keyword (legacy fallback)
-      // Short-word guard (see adSearchController for the full why): only apply the
-      // precise longest-token match when a word is >=4 chars; 3-char prefix words
-      // ("bus"/"car"/"app") fall back to legacy phrase so they don't regress.
-      if (kwWords.some((w) => w.length >= 4)) {
-        builder.setKeywordTokens(await resolveLongestTokens(db.elastic, esIndexLander, 'text', kwWords, logger));
-        builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true || String(p.keyword).includes('"'));
-      }
-    }
-  }
-  if (p.ecommerce)       builder.setBuiltWith(await resolveLongestTokens(db.elastic, esIndexLander, 'built_with', ensureArray(p.ecommerce), logger));
+  // Lander properties — v2 clean keyword fields → term-match raw values directly.
+  if (p.ecommerce)       builder.setBuiltWith(ensureArray(p.ecommerce));
   if (p.track)           builder.setTrack(ensureArray(p.track));
   if (p.source)          builder.setSource(ensureArray(p.source));
-  if (p.funnel)          builder.setFunnel(await resolveLongestTokens(db.elastic, esIndexLander, 'built_with_analytics_tracking', ensureArray(p.funnel), logger));
+  if (p.funnel)          builder.setFunnel(ensureArray(p.funnel));
   if (p.affiliate)       builder.setAffiliate(ensureArray(p.affiliate));
   if (p.market_platform) builder.setMarketPlatform(ensureArray(p.market_platform));
 

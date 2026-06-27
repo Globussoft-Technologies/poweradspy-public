@@ -15,24 +15,26 @@ async function getAdsCount(req, db, logger) {
               { terms: { status: [1] } },
             ],
             must_not: [
-              // Exclude IMAGE ads without NAS image
+              // Exclude IMAGE ads without NAS image. v2: `type` is keyword+
+              // normalizer (lowercased) and new_nas_image_url is a plain keyword
+              // (no `.keyword` sub-field).
               {
                 bool: {
                   must: [
-                    { term: { type: 'IMAGE' } },
+                    { term: { type: 'image' } },
                     {
                       bool: {
                         should: [
                           { bool: { must_not: [{ exists: { field: 'new_nas_image_url' } }] } },
-                          { term: { 'new_nas_image_url.keyword': '' } },
+                          { term: { new_nas_image_url: '' } },
                         ],
                       },
                     },
                   ],
                 },
               },
-              // Exclude ORGANIC SEARCH
-              { query_string: { default_field: 'type', query: '"ORGANIC SEARCH"' } },
+              // Exclude ORGANIC SEARCH (term on the lowercased keyword field).
+              { term: { type: 'organic search' } },
             ],
           },
         },

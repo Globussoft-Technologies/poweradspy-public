@@ -34,8 +34,9 @@ async function processDelete(ref, ctx) {
 
     if (db.elastic) {
       try {
-        const _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, internalId)));
-        if (_id) await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: _id });
+        const esIndex = db.elastic.indexName || ES_INDEX;
+        const _id = firstHitId(await db.elastic.search(searchIdQuery(esIndex, internalId)));
+        if (_id) await db.elastic.delete({ index: esIndex, type: 'doc', id: _id });
       } catch (e) {
         log.warn('gtext ES delete failed (SQL row already removed)', { id: internalId, error: e.message });
       }

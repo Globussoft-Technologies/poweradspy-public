@@ -75,7 +75,7 @@ async function getAdDetails(req, db, logger) {
     if (db.elastic) {
       try {
         const esResult = await db.elastic.search({
-          index: 'google_ads_data',
+          index: db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data',
           body: { query: { bool: { filter: { terms: { id: [parseInt(p.ad_id, 10)] } } } } },
         });
         const hits = esResult.hits || esResult.body?.hits;

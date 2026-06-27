@@ -9,6 +9,11 @@
  * `target_keyword` is fanned into an array (split on `|`) by esDocBuilder.
  */
 
+// Default/fallback index name. The LIVE index is resolved at runtime from the
+// network's elastic client (`db.elastic.indexName`, which is built from config) in
+// the insert/update/delete pipelines — the SAME convention the search controllers
+// use. So a cutover is just a config change (e.g. google_ads_data_v2 on the new
+// server); this constant only applies when no client index is available.
 const ES_INDEX = 'google_ads_data';
 
 // Flat keys, in PHP order. esDocBuilder maps each from the in-memory data object.
