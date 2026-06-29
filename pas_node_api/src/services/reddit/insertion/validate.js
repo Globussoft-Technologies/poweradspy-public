@@ -6,41 +6,55 @@
  */
 
 const { validationError } = require('../../../insertion/helpers/responses');
+const { isNullLike, normalizeNullLike } = require('../../../insertion/helpers/util');
+
+function isEmptyLike(v) {
+  return isNullLike(v) || (typeof v === 'string' && v.trim() === '');
+}
 
 function validateRedditAds(data) {
   const errors = [];
-  const type = String(data.type).toUpperCase();
+
+  // Sanitize stringified null / empty values before validation.
+  for (const key of Object.keys(data)) {
+    if (Array.isArray(data[key])) {
+      data[key] = data[key].map(normalizeNullLike).filter((v) => !isNullLike(v));
+    } else if (typeof data[key] === 'string') {
+      data[key] = normalizeNullLike(data[key]);
+    }
+  }
+
+  const type = isEmptyLike(data.type) ? '' : String(data.type).toUpperCase();
 
   // REQUIRED fields
-  if (!data.type || !['IMAGE', 'VIDEO', 'TEXT'].includes(type)) {
+  if (!type || !['IMAGE', 'VIDEO', 'TEXT'].includes(type)) {
     errors.push('The type must be one of: IMAGE, VIDEO, TEXT.');
   }
-  if (!data.ad_id || String(data.ad_id).trim() === '') {
+  if (isEmptyLike(data.ad_id)) {
     errors.push('The ad_id field is required.');
   }
-  if (!data.platform) {
+  if (isEmptyLike(data.platform)) {
     errors.push('The platform field is required.');
   }
-  if (!data.ad_position || String(data.ad_position).trim() === '') {
+  if (isEmptyLike(data.ad_position)) {
     errors.push('The ad_position field is required.');
   }
-  if (!data.version || String(data.version).trim() === '') {
+  if (isEmptyLike(data.version)) {
     errors.push('The version field is required.');
   }
-  if (!data.source || !['desktop', 'android', 'ios'].includes(String(data.source).toLowerCase())) {
+  if (isEmptyLike(data.source) || !['desktop', 'android', 'ios'].includes(String(data.source).toLowerCase())) {
     errors.push('The source must be one of: desktop, android, ios.');
   }
-  if (!data.reddit_id || String(data.reddit_id).trim() === '') {
+  if (isEmptyLike(data.reddit_id)) {
     errors.push('The reddit_id field is required.');
   }
-  if (!data.country || String(data.country).trim() === '') {
+  if (isEmptyLike(data.country)) {
     errors.push('The country field is required.');
   }
 
   // Image required for IMAGE type
   if (type === 'IMAGE') {
-    const hasImage = (data.image_url && String(data.image_url).trim() !== '') ||
-                     (data.image_video_url && String(data.image_video_url).trim() !== '');
+    const hasImage = !isEmptyLike(data.image_url) || !isEmptyLike(data.image_video_url);
     if (!hasImage) {
       errors.push('IMAGE type ads require an image_url or image_video_url.');
     }
@@ -48,14 +62,14 @@ function validateRedditAds(data) {
 
   // Thumbnail required for VIDEO type
   if (type === 'VIDEO') {
-    const hasThumbnail = data.image_video_url && String(data.image_video_url).trim() !== '';
+    const hasThumbnail = !isEmptyLike(data.image_video_url);
     if (!hasThumbnail) {
       errors.push('VIDEO type ads require an image_video_url (thumbnail).');
     }
   }
 
   // IP address validation (if provided)
-  if (data.ip_address && data.ip_address !== '' && !isValidIp(data.ip_address)) {
+  if (!isEmptyLike(data.ip_address) && !isValidIp(data.ip_address)) {
     errors.push('The ip_address must be a valid IP address.');
   }
 

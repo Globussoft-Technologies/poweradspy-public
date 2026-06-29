@@ -5,7 +5,7 @@
  * Faithful port of PHP urldecode, epoch conversion, and other cleanup.
  */
 
-const { toInt } = require('../../../insertion/helpers/util');
+const { toInt, sanitizePayload } = require('../../../insertion/helpers/util');
 
 function cleanStr(s) {
   return typeof s === 'string' ? s.trim() : String(s ?? '').trim();
@@ -21,7 +21,7 @@ function epochToDateTime(epoch) {
 }
 
 function normalizeQuoraAds(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
 
   // Coerce numeric fields with defaults (matching PHP behavior)
   out.likes = ad.likes === null || ad.likes === '' || ad.likes === undefined ? 0 : toInt(ad.likes, 0);

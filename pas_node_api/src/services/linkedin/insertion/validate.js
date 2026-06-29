@@ -41,9 +41,11 @@ const META_ADS_RULES = {
 
 // ── Rule engine (copied from gtext validate.js + a `url` check) ────────────────
 const { validationError } = require('../../../insertion/helpers/responses');
+const { isNullLike, normalizeNullLike } = require('../../../insertion/helpers/util');
 
 const isMissing = (v) => v === undefined;
-const isEmpty = (v) => v === null || v === '' || (Array.isArray(v) && v.length === 0);
+const isEmpty = (v) =>
+  isNullLike(v) || (Array.isArray(v) && v.length === 0) || (typeof v === 'string' && v.trim() === '');
 // Laravel `url`: must be a well-formed http(s) URL. Lenient — only checked when present & non-empty.
 const URL_RE = /^https?:\/\/[^\s]+$/i;
 
@@ -59,7 +61,14 @@ function validate(data, rules) {
   const errors = [];
   for (const [field, ruleStr] of Object.entries(rules)) {
     const tokens = ruleStr.split('|');
-    const value = data[field];
+    let value = data[field];
+
+    // Treat stringified null / empty string as actual null before validation.
+    if (Array.isArray(value)) {
+      value = value.map(normalizeNullLike).filter((v) => !isNullLike(v));
+    } else if (typeof value === 'string') {
+      value = normalizeNullLike(value);
+    }
 
     const nullable = tokens.includes('nullable');
     if (nullable && value === null) continue;

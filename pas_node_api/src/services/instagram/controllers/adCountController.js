@@ -30,29 +30,50 @@ async function getAdsCount(req, db, logger) {
               {
                 bool: {
                   should: [
-                    // IMAGE ads must have NAS image URL
+                    // IMAGE / STORIES ads must have a real NAS image URL
                     {
                       bool: {
                         filter: [
-                          { term: { 'instagram_ad.type.keyword': 'IMAGE' } },
+                          { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
                           { exists: { field: 'new_nas_image_url' } }
+                        ],
+                        must_not: [
+                          { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } }
                         ]
                       }
                     },
-                    // VIDEO ads must have thumbnail
+                    // VIDEO ads must have a real thumbnail
                     {
                       bool: {
                         filter: [
                           { term: { 'instagram_ad.type.keyword': 'VIDEO' } },
                           { exists: { field: 'thumbnail' } }
+                        ],
+                        must_not: [
+                          { wildcard: { 'thumbnail.keyword': { value: '*DefaultImage*' } } }
                         ]
                       }
                     },
-                    // All other types (not IMAGE, not VIDEO) pass through
+                    // All other types need new_nas_image_url or othermedia, none may be DefaultImage
                     {
                       bool: {
                         must_not: [
-                          { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO'] } }
+                          { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } }
+                        ],
+                        filter: [
+                          {
+                            bool: {
+                              should: [
+                                { exists: { field: 'new_nas_image_url' } },
+                                { exists: { field: 'othermedia' } }
+                              ],
+                              minimum_should_match: 1
+                            }
+                          }
+                        ],
+                        must_not: [
+                          { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+                          { wildcard: { 'othermedia.keyword': { value: '*DefaultImage*' } } }
                         ]
                       }
                     }

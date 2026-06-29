@@ -7,7 +7,7 @@
  * (see ../../../../KT-GTEXT-MIGRATION.md §1,§5). Note: last_seen is forced to now() (PHP).
  */
 
-const { epochToDateTime, nowDateTime } = require('../../../insertion/helpers/util');
+const { epochToDateTime, nowDateTime, sanitizePayload } = require('../../../insertion/helpers/util');
 
 function urldecode(s) {
   if (typeof s !== 'string') return s;
@@ -60,7 +60,7 @@ function checkGates(ad) {
  * Returns a NEW object.
  */
 function normalizeGtextAd(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
   for (const k of Object.keys(out)) if (typeof out[k] === 'string') out[k] = out[k].trim();
 
   out.ad_text = out.ad_text ? urldecode(out.ad_text) : '';

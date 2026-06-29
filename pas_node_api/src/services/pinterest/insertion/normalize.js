@@ -10,6 +10,8 @@
  *   - media URLs can be multiple, separated by ||, ||, or |
  */
 
+const { sanitizePayload } = require('../../../insertion/helpers/util');
+
 const URL_DECODE_FIELDS = ['ad_text', 'newsfeed_description', 'destination_url', 'ad_title', 'target_keyword'];
 
 function urldecode(s) {
@@ -60,7 +62,7 @@ function parseOtherMultimedia(value) {
 }
 
 function normalizePinterestAd(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
 
   // Normalize type to uppercase for DB ENUM('IMAGE','VIDEO')
   // Accepts: Image, Video, IMAGE, VIDEO, image, video

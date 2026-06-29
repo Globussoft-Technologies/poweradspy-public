@@ -148,7 +148,7 @@ async function insertRedditAd(sql, db, ad, userId, translationData, ctx) {
       if (thumbnailUrl) {
         try {
           const uploadResult = await media.uploadThumbnail(thumbnailUrl, redditAdId, 'reddit');
-          nasImagePath = uploadResult.image_video_url;
+          nasImagePath = uploadResult?.image_video_url || null;
           console.log(`✅ Uploaded thumbnail for VIDEO ad ${redditAdId}: ${nasImagePath}`);
         } catch (err) {
           console.warn(`⚠️ Thumbnail upload failed for ad ${redditAdId}: ${err.message}`);
@@ -159,7 +159,7 @@ async function insertRedditAd(sql, db, ad, userId, translationData, ctx) {
       if (imageUrl) {
         try {
           const uploadResult = await media.uploadImage(imageUrl, redditAdId, 'reddit');
-          nasImagePath = uploadResult.nas_path;
+          nasImagePath = uploadResult?.nas_path || null;
           console.log(`✅ Uploaded image for ad ${redditAdId}: ${nasImagePath}`);
         } catch (err) {
           console.warn(`⚠️ Image upload failed for ad ${redditAdId}: ${err.message}`);
@@ -230,7 +230,7 @@ async function uploadAdMedia(sql, ad, redditAdId, variantId, network, existingIm
     if (thumbnailUrl) {
       try {
         const result = await media.uploadThumbnail(thumbnailUrl, redditAdId, network);
-        const nasPath = result.image_video_url;
+        const nasPath = result?.image_video_url;
         mediaPaths.image_url = nasPath;
 
         if (nasPath && nasPath !== media.DEFAULT_IMAGE) {

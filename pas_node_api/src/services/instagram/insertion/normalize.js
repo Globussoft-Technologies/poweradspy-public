@@ -5,6 +5,8 @@
  * (urldecode, =v1: fix, &amp; fix, other_multimedia split). Dates are handled in the pipeline.
  */
 
+const { sanitizePayload } = require('../../../insertion/helpers/util');
+
 const URL_DECODE_FIELDS = ['ad_text', 'news_feed_description', 'destination_url', 'initial_url', 'image_video_url', 'ad_title', 'post_owner_image', 'ad_url', 'meta_ad_url'];
 
 function urldecode(s) {
@@ -29,7 +31,7 @@ function parseOtherMultimedia(value) {
 
 /** Apply common decode/coercions; returns a NEW object. */
 function normalizeInsta(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
   if (out.post_owner_image === 'null') out.post_owner_image = null;
   for (const f of URL_DECODE_FIELDS) {
     if (out[f] !== undefined && out[f] !== null) out[f] = urldecode(out[f]);

@@ -8,6 +8,8 @@
  * so each rule is independently testable and easy to tweak.
  */
 
+const { sanitizePayload } = require('../../../insertion/helpers/util');
+
 const URL_DECODE_FIELDS = [
   'ad_text', 'news_feed_description', 'destination_url', 'initial_url',
   'image_video_url', 'ad_title', 'post_owner_image', 'ad_url',
@@ -83,7 +85,7 @@ function fixAmp(s) {
  * Returns a NEW object (does not mutate input).
  */
 function normalizeMetaAds(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
 
   // post_owner_image string "null" → null
   if (out.post_owner_image === 'null') out.post_owner_image = null;

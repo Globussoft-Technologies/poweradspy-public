@@ -79,4 +79,42 @@ function latin1SafeCols(obj) {
   return obj;
 }
 
-module.exports = { nowDateTime, today, epochToDateTime, toInt, ensureUtf8mb3Compatible, truncateChars, latin1Safe, latin1SafeCols };
+/** Treat string "null"/"NULL" and empty string as actual null. */
+function isNullLike(v) {
+  if (v === undefined || v === null) return true;
+  if (typeof v === 'string') {
+    const t = v.trim();
+    return t === '' || t.toLowerCase() === 'null';
+  }
+  return false;
+}
+
+/** Convert null-like scalars to null; pass everything else through. */
+function normalizeNullLike(v) {
+  return isNullLike(v) ? null : v;
+}
+
+/**
+ * Recursively sanitize an insertion payload:
+ *  - scalar "null" / "" → null
+ *  - arrays have null-like entries removed (but the array key stays)
+ *  - objects are traversed recursively.
+ */
+function sanitizePayload(v) {
+  if (Array.isArray(v)) {
+    return v.map(sanitizePayload).filter((x) => !isNullLike(x));
+  }
+  if (v && typeof v === 'object' && !(v instanceof Date)) {
+    const out = {};
+    for (const [k, val] of Object.entries(v)) {
+      out[k] = sanitizePayload(val);
+    }
+    return out;
+  }
+  return normalizeNullLike(v);
+}
+
+module.exports = {
+  nowDateTime, today, epochToDateTime, toInt, ensureUtf8mb3Compatible, truncateChars,
+  latin1Safe, latin1SafeCols, isNullLike, normalizeNullLike, sanitizePayload,
+};

@@ -13,7 +13,11 @@ async function getAdsByAdvertiser(req, db, logger) {
     const skipNum = Number(skip) || 0;
     const offset = skipNum * takeNum;
 
-    const sql = `SELECT ${AD_DETAIL_SELECT} ${AD_DETAIL_JOINS} WHERE google_text_ad.id = ? LIMIT ${takeNum} OFFSET ${offset}`;
+    const sql = `SELECT ${AD_DETAIL_SELECT},
+      google_text_ad.type AS type,
+      google_text_ad_post_owners.post_owner_name AS post_owner,
+      google_text_ad_post_owners.post_owner_image AS post_owner_image
+      ${AD_DETAIL_JOINS} WHERE google_text_ad.id = ? LIMIT ${takeNum} OFFSET ${offset}`;
     const result = await db.sql.query(sql, [Number(ad_id)]);
     const rows = Array.isArray(result[0]) ? result[0] : result;
 
@@ -29,7 +33,7 @@ async function getAdsByAdvertiser(req, db, logger) {
           const hit = esRes.body?.hits?.hits?.[0]?._source || esRes.hits?.hits?.[0]?._source;
           if (hit) {
             for (const [esKey, responseKey] of Object.entries(ES_FIELD_MAP)) {
-              if (hit[esKey] !== undefined && hit[esKey] !== null) {
+              if (hit[esKey] !== undefined && hit[esKey] !== null && hit[esKey] !== '') {
                 const val = hit[esKey];
                 row[responseKey] = Array.isArray(val) ? val.join(', ') : val;
               }

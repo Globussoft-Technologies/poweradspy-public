@@ -15,7 +15,7 @@ async function quoraAdsData(req, db, logger) {
 
   const payload = Array.isArray(body) ? body : Array.isArray(body?.ads) ? body.ads : body;
 
-  const out = await engine.run(payload, (ad) => processQuoraAd(ad, ctx));
+  const out = await engine.run(payload, (ad) => processQuoraAd(ad, ctx), ctx);
 
   if (out.batch) {
     const { total, ok: okCount, failed } = out.summary;

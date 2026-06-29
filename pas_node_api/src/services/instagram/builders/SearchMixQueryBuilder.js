@@ -36,33 +36,55 @@ const {
 
 const DEFAULT_IG_INDEX = igNet?.database?.elastic?.index || process.env.IG_ELASTIC_INDEX || 'search_mix';
 
+const DEFAULT_IMAGE_WILDCARD = { value: '*DefaultImage*' };
 const EXTRA_CONDITION = [
   {
     bool: {
       should: [
-        // IMAGE / STORIES — must have a NAS image URL
+        // IMAGE / STORIES — must have a NAS image URL (no DefaultImage)
         {
           bool: {
             filter: [
               { terms:  { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
               { exists: { field: 'new_nas_image_url' } },
             ],
+            must_not: [
+              { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
+            ],
           },
         },
-        // VIDEO — must have a thumbnail
+        // VIDEO — must have a thumbnail (no DefaultImage)
         {
           bool: {
             filter: [
               { term:   { 'instagram_ad.type.keyword': 'VIDEO' } },
               { exists: { field: 'thumbnail' } },
             ],
+            must_not: [
+              { wildcard: { 'thumbnail.keyword': DEFAULT_IMAGE_WILDCARD } },
+            ],
           },
         },
-        // Everything else (carousel, reel, etc.) — pass through
+        // Everything else (carousel, reel, etc.) — needs new_nas_image_url or othermedia, no DefaultImage
         {
           bool: {
             must_not: [
               { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
+            ],
+            filter: [
+              {
+                bool: {
+                  should: [
+                    { exists: { field: 'new_nas_image_url' } },
+                    { exists: { field: 'othermedia' } },
+                  ],
+                  minimum_should_match: 1,
+                },
+              },
+            ],
+            must_not: [
+              { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
+              { wildcard: { 'othermedia.keyword': DEFAULT_IMAGE_WILDCARD } },
             ],
           },
         },

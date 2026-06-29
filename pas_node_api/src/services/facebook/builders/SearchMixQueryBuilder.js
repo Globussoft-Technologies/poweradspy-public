@@ -50,9 +50,12 @@ const {
 const DEFAULT_FB_INDEX = fbNet?.database?.elastic?.index || process.env.FB_ELASTIC_INDEX || 'search_mix';
 
 /**
- * NAS media filter — IMAGE ads must have new_nas_image_url, VIDEO ads must
- * have Thumbnail. Lives in filter context so ES caches the bool result.
+ * NAS media filter — exclude ads whose displayable media is missing or a
+ * DefaultImage placeholder. IMAGE needs new_nas_image_url, VIDEO needs
+ * Thumbnail, everything else needs at least one of new_nas_image_url/othermedia
+ * and none of them may be a DefaultImage path. Lives in filter context.
  */
+const DEFAULT_IMAGE_WILDCARD = { value: '*DefaultImage*' };
 const EXTRA_CONDITION = [
   {
     bool: {
@@ -63,6 +66,9 @@ const EXTRA_CONDITION = [
               { term:   { 'facebook_ad.type.keyword': 'IMAGE' } },
               { exists: { field: 'new_nas_image_url' } },
             ],
+            must_not: [
+              { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
+            ],
           },
         },
         {
@@ -71,12 +77,30 @@ const EXTRA_CONDITION = [
               { term:   { 'facebook_ad.type.keyword': 'VIDEO' } },
               { exists: { field: 'Thumbnail' } },
             ],
+            must_not: [
+              { wildcard: { 'Thumbnail.keyword': DEFAULT_IMAGE_WILDCARD } },
+            ],
           },
         },
         {
           bool: {
             must_not: [
               { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
+            ],
+            filter: [
+              {
+                bool: {
+                  should: [
+                    { exists: { field: 'new_nas_image_url' } },
+                    { exists: { field: 'othermedia' } },
+                  ],
+                  minimum_should_match: 1,
+                },
+              },
+            ],
+            must_not: [
+              { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
+              { wildcard: { 'othermedia.keyword': DEFAULT_IMAGE_WILDCARD } },
             ],
           },
         },

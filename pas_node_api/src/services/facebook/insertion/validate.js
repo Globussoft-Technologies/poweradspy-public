@@ -76,9 +76,11 @@ const ADS_LIBRARY_RULES = {
 // ── Rule engine ───────────────────────────────────────────────────────────────
 
 const { validationError } = require('../../../insertion/helpers/responses');
+const { isNullLike, normalizeNullLike } = require('../../../insertion/helpers/util');
 
 const isMissing = (v) => v === undefined;
-const isEmpty = (v) => v === null || v === '' || (Array.isArray(v) && v.length === 0);
+const isEmpty = (v) =>
+  isNullLike(v) || (Array.isArray(v) && v.length === 0) || (typeof v === 'string' && v.trim() === '');
 
 const CHECKS = {
   required: (v, _a, f) =>
@@ -88,7 +90,7 @@ const CHECKS = {
   string: (v, _a, f) =>
     !isMissing(v) && v !== null && typeof v !== 'string' ? `The ${f} must be a string.` : null,
   integer: (v, _a, f) =>
-    isMissing(v) || !Number.isInteger(Number(v)) || String(v).trim() === '' ? `The ${f} must be an integer.` : null,
+    isMissing(v) || v === null || !Number.isInteger(Number(v)) || String(v).trim() === '' ? `The ${f} must be an integer.` : null,
   url: (v, _a, f) => (!isMissing(v) && v !== null && !isUrl(v) ? `The ${f} format is invalid.` : null),
   in: (v, arg, f) =>
     !isMissing(v) && v !== null && !arg.split(',').includes(String(v)) ? `The selected ${f} is invalid.` : null,
@@ -107,7 +109,14 @@ function validate(data, rules) {
 
   for (const [field, ruleStr] of Object.entries(rules)) {
     const tokens = ruleStr.split('|');
-    const value = data[field];
+    let value = data[field];
+
+    // Treat stringified null / empty string as actual null before validation.
+    if (Array.isArray(value)) {
+      value = value.map(normalizeNullLike).filter((v) => !isNullLike(v));
+    } else if (typeof value === 'string') {
+      value = normalizeNullLike(value);
+    }
 
     // `nullable`: if the value is explicitly null, skip type/format checks.
     const nullable = tokens.includes('nullable');

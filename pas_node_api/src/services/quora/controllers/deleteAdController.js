@@ -13,7 +13,7 @@ async function deleteAd(req, db, logger) {
 
   const payload = Array.isArray(body) ? body : body;
 
-  const out = await engine.run(payload, (item) => processDelete(item, ctx));
+  const out = await engine.run(payload, (item) => processDelete(item, ctx), ctx);
 
   if (out.batch) {
     const { total, ok: okCount, failed } = out.summary;

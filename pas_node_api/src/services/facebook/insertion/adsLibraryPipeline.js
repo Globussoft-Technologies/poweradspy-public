@@ -295,6 +295,17 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
   const joined = await repo.getJoinedAd(sql, 'facebook_ad.id', facebookAdId);
   const cur = joined[0] || {};
 
+  // Re-upload primary image/thumbnail on re-seen if the stored variant image is missing or a placeholder.
+  let mediaPaths = {};
+  const storedImg = String(cur.image_url || '');
+  if (!storedImg || storedImg.includes('DefaultImage')) {
+    mediaPaths = await uploadAdMedia(n, facebookAdId, network).catch(() => ({}));
+    if (mediaPaths.image_url) {
+      await repo.updateVariantByAdId(sql, { image_url: mediaPaths.image_url, image_url_original: n.image_video_url ?? n.ad_image }, facebookAdId).catch(() => {});
+    }
+    if (mediaPaths.multimedia) await repo.upsertAdImageVideo(sql, mediaPaths.multimedia).catch(() => {});
+  }
+
   // last_seen / days_running / hits
   const lastSeenEpoch = Math.floor(Date.parse(n.last_seen) / 1000) || Math.floor(Date.now() / 1000);
   const postEpoch = Math.floor(Date.parse(cur.post_date) / 1000) || lastSeenEpoch;
@@ -334,7 +345,7 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
   // Re-attempt the VIDEO on re-seen if the stored video is missing / DefaultImage (legacy DefaultImage.mp4).
   // Reads the old ES doc (carryOver); only when broken — a good video is left untouched (just stats). The
   // worker re-downloads + writes nas_video_url to ES. (Library update does no other media re-upload.)
-  if (n.type === 'VIDEO' && (n.image_video_url ?? n.ad_image)) {
+  if (n.type === 'VIDEO' && (n.image_video_url ?? n.ad_image) && !Object.keys(mediaPaths).length) {
     const sv = String(carryOver.nas_video_url || '');
     if (!sv || sv.includes('DefaultImage')) {
       delete carryOver.nas_video_url;
@@ -342,7 +353,7 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
     }
   }
   await deleteEsDoc(ctx, facebookAdId).catch(() => {});
-  await indexAd(ctx, facebookAdId, n, { facebookAdId, carryOver }, network).catch((e) => log.warn('ES reindex failed', { error: e.message }));
+  await indexAd(ctx, facebookAdId, n, { facebookAdId, carryOver, mediaPaths }, network).catch((e) => log.warn('ES reindex failed', { error: e.message }));
   api.adgptInsert(buildAdgptPayload(n, { facebookAdId }));
 
   return updated(facebookAdId);

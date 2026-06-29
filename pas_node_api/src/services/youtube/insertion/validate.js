@@ -47,9 +47,11 @@ const META_ADS_RULES = {
 
 // ── Rule engine (LinkedIn engine + required_unless + sometimes) ───────────────
 const { validationError } = require('../../../insertion/helpers/responses');
+const { isNullLike, normalizeNullLike } = require('../../../insertion/helpers/util');
 
 const isMissing = (v) => v === undefined;
-const isEmpty = (v) => v === null || v === '' || (Array.isArray(v) && v.length === 0);
+const isEmpty = (v) =>
+  isNullLike(v) || (Array.isArray(v) && v.length === 0) || (typeof v === 'string' && v.trim() === '');
 const URL_RE = /^https?:\/\/[^\s]+$/i;
 const IP_RE = /^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/;
 
@@ -84,7 +86,16 @@ function validate(data, rules) {
   const errors = [];
   for (const [field, ruleStr] of Object.entries(rules)) {
     const tokens = ruleStr.split('|');
-    const value = data[field];
+    let value = data[field];
+
+    // Treat stringified null / empty string as actual null before validation.
+    if (!isMissing(value)) {
+      if (Array.isArray(value)) {
+        value = value.map(normalizeNullLike).filter((v) => !isNullLike(v));
+      } else if (typeof value === 'string') {
+        value = normalizeNullLike(value);
+      }
+    }
 
     // `sometimes` → only validate when the key is present
     if (tokens.includes('sometimes') && isMissing(value)) continue;

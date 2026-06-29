@@ -29,6 +29,27 @@ LEFT JOIN google_text_ad_domains     ON google_text_ad.domain_id = google_text_a
 `;
 
 /**
+ * Main-search select — adds the fields that the ES overlay is allowed to miss
+ * (type, post_owner, post_owner_image) so we can fall back to SQL.
+ */
+const MAIN_SEARCH_SELECT = `
+    google_text_ad.id                                       AS id,
+    google_text_ad.id                                       AS ad_id,
+    google_text_ad.post_owner_id                            AS post_owner_id,
+    google_text_ad.type                                     AS type,
+    google_text_ad_post_owners.post_owner_name              AS post_owner,
+    google_text_ad_post_owners.post_owner_image             AS post_owner_image,
+    UNIX_TIMESTAMP(google_text_ad.post_date)                AS post_date,
+    google_text_ad.last_seen                                AS last_seen,
+    google_text_ad.days_running                             AS days_running
+`;
+
+const MAIN_SEARCH_FROM = `
+FROM google_text_ad
+LEFT JOIN google_text_ad_post_owners ON google_text_ad.post_owner_id = google_text_ad_post_owners.id
+`;
+
+/**
  * ES → response field mapping (mirrors PHP $fieldMap in getAdsByOrderByFieldNew).
  */
 const ES_FIELD_MAP = {
@@ -307,17 +328,14 @@ async function searchAds(req, db, logger) {
     if (db.sql) {
       try {
         const ph = adIds.map(() => '?').join(',');
-        // Main-search SQL is a single-table indexed lookup. The 4 JOINs in
-        // AD_DETAIL_JOINS were dead weight here — every ad-detail field
-        // (title, text, post_owner_*, destination_url, etc.) is overlaid
-        // from ES via ES_FIELD_MAP below, so joining post_owners/meta_data/
-        // variants/domains was pure waste. Removing them eliminates row
-        // multiplication and turns this query from a 4-table mash into a
-        // primary-key IN lookup. Favorite/hidden flow (GOOGLE_FAV_SQL) still
-        // uses the JOINs because it really does select from those tables.
+        // Main-search SQL: we only JOIN google_text_ad_post_owners because
+        // the ES overlay sometimes lacks type / post_owner_name. The other
+        // ad-detail fields (title, text, destination_url, etc.) are still
+        // overlaid from ES via ES_FIELD_MAP below. Keeping the join to
+        // post_owners is safe (1:1 via post_owner_id) and cheap.
         const tSql = Date.now();
         const rawRows = await db.sql.query(
-          `SELECT ${AD_DETAIL_SELECT} FROM google_text_ad WHERE google_text_ad.id IN (${ph}) ORDER BY FIELD(google_text_ad.id, ${ph})`,
+          `SELECT ${MAIN_SEARCH_SELECT} ${MAIN_SEARCH_FROM} WHERE google_text_ad.id IN (${ph}) ORDER BY FIELD(google_text_ad.id, ${ph})`,
           [...adIds, ...adIds]
         );
         sqlElapsed = Date.now() - tSql;
@@ -331,9 +349,11 @@ async function searchAds(req, db, logger) {
           if (!esHit) return row;
           const src = esHit._source || {};
 
-          // Overlay ES fields onto SQL row (mirrors PHP $fieldMap)
+          // Overlay ES fields onto SQL row (mirrors PHP $fieldMap).
+          // Skip empty strings so a missing/empty ES value does not wipe
+          // out the SQL fallback for type / post_owner / post_owner_image.
           for (const [esKey, responseKey] of Object.entries(ES_FIELD_MAP)) {
-            if (src[esKey] !== undefined && src[esKey] !== null) {
+            if (src[esKey] !== undefined && src[esKey] !== null && src[esKey] !== '') {
               const val = src[esKey];
               row[responseKey] = Array.isArray(val) ? val.join(', ') : val;
             }

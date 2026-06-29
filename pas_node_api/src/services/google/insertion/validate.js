@@ -43,9 +43,11 @@ const META_ADS_RULES = {
 
 // ── Rule engine (copied from GDN validate.js + required_if) ───────────────────
 const { validationError } = require('../../../insertion/helpers/responses');
+const { isNullLike, normalizeNullLike } = require('../../../insertion/helpers/util');
 
 const isMissing = (v) => v === undefined;
-const isEmpty = (v) => v === null || v === '' || (Array.isArray(v) && v.length === 0);
+const isEmpty = (v) =>
+  isNullLike(v) || (Array.isArray(v) && v.length === 0) || (typeof v === 'string' && v.trim() === '');
 const IP_RE = /^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/;
 
 const CHECKS = {
@@ -53,7 +55,7 @@ const CHECKS = {
   present: (v, _a, f) => (isMissing(v) ? `The ${f} field must be present.` : null),
   string: (v, _a, f) => (!isMissing(v) && v !== null && typeof v !== 'string' ? `The ${f} must be a string.` : null),
   integer: (v, _a, f) =>
-    isMissing(v) || v === null || v === '' ? null : !Number.isInteger(Number(v)) ? `The ${f} must be an integer.` : null,
+    isMissing(v) || v === null || v === '' ? null : (!Number.isInteger(Number(v)) ? `The ${f} must be an integer.` : null),
   ip: (v, _a, f) => (!isMissing(v) && v !== null && v !== '' && !IP_RE.test(String(v)) ? `The ${f} must be a valid IP address.` : null),
   in: (v, arg, f) => (!isMissing(v) && v !== null && v !== '' && !arg.split(',').includes(String(v)) ? `The selected ${f} is invalid.` : null),
   // required_if:otherField,value — required only when data[otherField] === value
@@ -68,7 +70,14 @@ function validate(data, rules) {
   const errors = [];
   for (const [field, ruleStr] of Object.entries(rules)) {
     const tokens = ruleStr.split('|');
-    const value = data[field];
+    let value = data[field];
+
+    // Treat stringified null / empty string as actual null before validation.
+    if (Array.isArray(value)) {
+      value = value.map(normalizeNullLike).filter((v) => !isNullLike(v));
+    } else if (typeof value === 'string') {
+      value = normalizeNullLike(value);
+    }
 
     const nullable = tokens.includes('nullable');
     if (nullable && value === null) continue;

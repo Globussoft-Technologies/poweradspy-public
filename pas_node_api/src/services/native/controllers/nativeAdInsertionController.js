@@ -11,7 +11,7 @@ async function insertAds(req, db, logger) {
   // Accept a single ad object OR { ads: [...] } OR a bare array
   const payload = Array.isArray(body) ? body : Array.isArray(body?.ads) ? body.ads : body;
 
-  const out = await engine.run(payload, (ad) => processNativeAd(ad, ctx));
+  const out = await engine.run(payload, (ad) => processNativeAd(ad, ctx), ctx);
 
   if (out.batch) {
     const { total, ok, failed } = out.summary;

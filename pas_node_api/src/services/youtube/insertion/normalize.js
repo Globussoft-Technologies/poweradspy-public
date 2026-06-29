@@ -8,7 +8,7 @@
  * HH:MM:SS'. last_seen is forced to now() (PHP). type is kept as-is (already uppercase).
  */
 
-const { epochToDateTime, nowDateTime, toInt } = require('../../../insertion/helpers/util');
+const { epochToDateTime, nowDateTime, toInt, sanitizePayload } = require('../../../insertion/helpers/util');
 
 function urldecode(s) {
   if (typeof s !== 'string') return s;
@@ -71,7 +71,7 @@ function splitMultimedia(v) {
 
 /** Apply insertNewYoutubeAds() coercions to a copy of the payload. Returns a NEW object. */
 function normalizeYoutubeAd(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
   // trim all string values unless landing_urls is an array (PHP array_map('trim'))
   if (!Array.isArray(out.landing_urls)) {
     for (const k of Object.keys(out)) if (typeof out[k] === 'string') out[k] = out[k].trim();

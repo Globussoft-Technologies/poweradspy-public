@@ -7,6 +7,7 @@
  */
 
 const { validationError } = require('../../../insertion/helpers/responses');
+const { isNullLike, normalizeNullLike } = require('../../../insertion/helpers/util');
 
 // instaAdsData (POST gramAdsData)
 const INSTA_RULES = {
@@ -85,7 +86,15 @@ function validate(data, rules) {
   const errors = [];
   for (const [field, ruleStr] of Object.entries(rules)) {
     const tokens = ruleStr.split('|');
-    const value = data[field];
+    let value = data[field];
+
+    // Treat stringified null / empty string as actual null before validation.
+    if (Array.isArray(value)) {
+      value = value.map(normalizeNullLike).filter((v) => !isNullLike(v));
+    } else if (typeof value === 'string') {
+      value = normalizeNullLike(value);
+    }
+
     if (tokens.includes('nullable') && value === null) continue;
     for (const token of tokens) {
       if (token === 'nullable') continue;

@@ -191,6 +191,31 @@ logger.requestMiddleware = () => {
   };
 };
 
+// ─── Dedicated insertion-rejection log ─────────────────────────────────────────
+// One JSON line per rejected/errored ad with ad_id + reason so ops can trace why
+// a particular ad was not inserted. Short retention (default 7 days) since it is
+// purely diagnostic and the combined log already has the same entries.
+logger.insertionRejections = winston.createLogger({
+  level: 'info',
+  defaultMeta: { env: config.env },
+  format: winston.format.combine(
+    injectRequestId(),
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
+    winston.format.json()
+  ),
+  transports: [
+    new DailyRotateFile({
+      dirname: path.resolve(config.log?.dir || 'logs'),
+      filename: 'insertion-rejections-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: (config.insertion && config.insertion.rejectionLogMaxDays) || '7d',
+      zippedArchive: false,
+    }),
+  ],
+  exitOnError: false,
+});
+
 // Add 'http' as custom level if not present
 if (!logger.levels.http) {
   logger.levels = {

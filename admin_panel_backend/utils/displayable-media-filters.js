@@ -22,17 +22,42 @@ const FACEBOOK = [
   {
     bool: {
       should: [
-        { bool: { filter: [
-          { term:   { 'facebook_ad.type.keyword': 'IMAGE' } },
-          { exists: { field: 'new_nas_image_url' } },
-        ] } },
-        { bool: { filter: [
-          { term:   { 'facebook_ad.type.keyword': 'VIDEO' } },
-          { exists: { field: 'Thumbnail' } },
-        ] } },
-        { bool: { must_not: [
-          { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
-        ] } },
+        { bool: {
+          filter: [
+            { term:   { 'facebook_ad.type.keyword': 'IMAGE' } },
+            { exists: { field: 'new_nas_image_url' } },
+          ],
+          must_not: [
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+          ],
+        } },
+        { bool: {
+          filter: [
+            { term:   { 'facebook_ad.type.keyword': 'VIDEO' } },
+            { exists: { field: 'Thumbnail' } },
+          ],
+          must_not: [
+            { wildcard: { 'Thumbnail.keyword': { value: '*DefaultImage*' } } },
+          ],
+        } },
+        { bool: {
+          must_not: [
+            { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
+          ],
+          filter: [
+            { bool: {
+              should: [
+                { exists: { field: 'new_nas_image_url' } },
+                { exists: { field: 'othermedia' } },
+              ],
+              minimum_should_match: 1,
+            } },
+          ],
+          must_not: [
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+            { wildcard: { 'othermedia.keyword': { value: '*DefaultImage*' } } },
+          ],
+        } },
       ],
       minimum_should_match: 1,
     },
@@ -43,17 +68,42 @@ const INSTAGRAM = [
   {
     bool: {
       should: [
-        { bool: { filter: [
-          { terms:  { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
-          { exists: { field: 'new_nas_image_url' } },
-        ] } },
-        { bool: { filter: [
-          { term:   { 'instagram_ad.type.keyword': 'VIDEO' } },
-          { exists: { field: 'thumbnail' } },
-        ] } },
-        { bool: { must_not: [
-          { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
-        ] } },
+        { bool: {
+          filter: [
+            { terms:  { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
+            { exists: { field: 'new_nas_image_url' } },
+          ],
+          must_not: [
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+          ],
+        } },
+        { bool: {
+          filter: [
+            { term:   { 'instagram_ad.type.keyword': 'VIDEO' } },
+            { exists: { field: 'thumbnail' } },
+          ],
+          must_not: [
+            { wildcard: { 'thumbnail.keyword': { value: '*DefaultImage*' } } },
+          ],
+        } },
+        { bool: {
+          must_not: [
+            { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
+          ],
+          filter: [
+            { bool: {
+              should: [
+                { exists: { field: 'new_nas_image_url' } },
+                { exists: { field: 'othermedia' } },
+              ],
+              minimum_should_match: 1,
+            } },
+          ],
+          must_not: [
+            { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+            { wildcard: { 'othermedia.keyword': { value: '*DefaultImage*' } } },
+          ],
+        } },
       ],
       minimum_should_match: 1,
     },

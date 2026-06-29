@@ -1,5 +1,7 @@
 'use strict';
 
+const { sanitizePayload } = require('../../../insertion/helpers/util');
+
 const URL_DECODE_FIELDS = ['ad_text', 'newsfeed_description', 'destination_url', 'ad_title', 'post_owner_image'];
 
 function urldecode(s) {
@@ -50,7 +52,7 @@ function checkVersion(platform, version) {
 }
 
 function normalizeNativeAd(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
 
   // network: ucfirst(strtolower)
   if (typeof out.network === 'string') {

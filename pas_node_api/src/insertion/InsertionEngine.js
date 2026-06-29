@@ -19,6 +19,7 @@
  */
 
 const config = require('../config');
+const logger = require('../logger');
 
 /**
  * Run a platform pipeline over one ad or an array of ads.
@@ -38,13 +39,13 @@ async function run(payload, processOne, opts = {}) {
   const isBatch = Array.isArray(payload);
 
   if (!isBatch) {
-    const result = await safeProcess(processOne, payload, 0);
+    const result = await safeProcess(processOne, payload, 0, opts);
     return { batch: false, result };
   }
 
   const concurrency = clampConcurrency(opts.concurrency ?? config.insertion.concurrency);
   const results = await mapWithConcurrency(payload, concurrency, (ad, index) =>
-    safeProcess(processOne, ad, index)
+    safeProcess(processOne, ad, index, opts)
   );
 
   const ok = results.filter((r) => r && r.code >= 200 && r.code < 300).length;
@@ -58,13 +59,44 @@ async function run(payload, processOne, opts = {}) {
 /**
  * Invoke the pipeline for one ad, never throwing — a thrown error becomes a
  * 500 result so a single bad ad cannot crash the request.
+ *
+ * When `opts.log` is supplied, every rejection/server_error is logged with the
+ * ad_id and reason so ops can trace why a particular ad was not inserted.
  */
-async function safeProcess(processOne, ad, index) {
+async function safeProcess(processOne, ad, index, opts = {}) {
+  const network = opts.network || null;
+  // Use the request-scoped child logger if provided, otherwise the shared insertion-rejection logger.
+  const log = opts.log || logger.insertionRejections;
   try {
     const r = await processOne(ad, index);
+    if (r.code >= 400 || r.status === 'rejected' || r.status === 'server_error') {
+      const logPayload = {
+        ad_id: ad?.ad_id ?? null,
+        network,
+        code: r.code,
+        status: r.status,
+        reason: r.message,
+        field: r.field || null,
+        errors: r.errors || null,
+        hint: r.hint || null,
+        error: r.error || null,
+      };
+      if (opts.log) log.warn('insertion ad rejected', logPayload);
+      else logger.insertionRejections.info('insertion ad rejected', logPayload);
+    }
     // tag each result with its position so batch callers can map failures back to input
-    return Array.isArray(ad) ? r : { ...r, index };
+    return { ...r, index };
   } catch (err) {
+    const logPayload = {
+      ad_id: ad?.ad_id ?? null,
+      network,
+      code: 500,
+      status: 'server_error',
+      reason: err.message,
+      error: err.stack || null,
+    };
+    if (opts.log) log.warn('insertion ad server error', logPayload);
+    else logger.insertionRejections.info('insertion ad server error', logPayload);
     return {
       code: 500,
       status: 'server_error',

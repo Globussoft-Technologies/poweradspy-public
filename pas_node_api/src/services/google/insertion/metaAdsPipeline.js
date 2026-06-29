@@ -288,6 +288,11 @@ async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, 
     country: n.country ?? null, state: n.state ?? null, city: n.city ?? null,
     image_url_original: n.ad_image ?? src.image_url_original ?? null,
     platform: toInt(n.platform),
+    // Preserve/refresh owner/type fields that the search overlay relies on.
+    type: n.type ?? cur.type ?? src.type ?? null,
+    post_owner_name: n.post_owner || cur.post_owner_name || src.post_owner_name || null,
+    post_owner_image: cur.post_owner_image || src.post_owner_image || null,
+    post_owner_lower: String(n.post_owner || cur.post_owner_name || src.post_owner_name || '').toLowerCase(),
   };
   if (newNas) { doc.new_nas_image_url = newNas; doc.image_video_url = newNas; }
 
@@ -346,8 +351,8 @@ function buildFlatInsertData(n, result, { translation, imageUrl, source }) {
     title: n.ad_title ?? null, text: n.ad_text ?? null, newsfeed_description: n.newsfeed_description ?? null,
     target_keyword: n.target_keyword ?? null, target_page: n.target_page ?? null,
     image_url: imageUrl ?? null, url: n.destination_url ?? null,
-    post_owner_name: n.post_owner ?? null, post_owner_image: '/DefaultImage.jpg',
-    post_owner_lower: String(n.post_owner ?? '').toLowerCase(),
+    post_owner_name: n.post_owner || null, post_owner_image: '/DefaultImage.jpg',
+    post_owner_lower: n.post_owner ? String(n.post_owner).toLowerCase() : null,
     destination_url: n.destination_url ?? null,
     firstSeenOnDesktop: source === 'desktop' || !n.source ? now : null,
     firstSeenOnAndroid: source === 'android' ? now : null,

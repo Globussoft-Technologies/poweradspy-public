@@ -14,7 +14,7 @@ async function adsLibrary(req, db, logger) {
   const body = req.body;
   const payload = Array.isArray(body) ? body : Array.isArray(body?.ads) ? body.ads : body;
 
-  const out = await engine.run(payload, (ad) => processAdsLibrary(ad, ctx));
+  const out = await engine.run(payload, (ad) => processAdsLibrary(ad, ctx), ctx);
 
   if (out.batch) {
     const { total, ok, failed } = out.summary;

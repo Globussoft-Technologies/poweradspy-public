@@ -176,6 +176,7 @@ async function uploadPostOwner(link, id, network) {
   if (!tmp) { nasMediaFail('download', { adId: id, network, type: 'POSTOWNER', url: link, reason: 'source download failed (expired/blocked URL?)' }); return { post_owner_image: DEFAULT_IMAGE }; }
   try {
     const nasPath = await storeInNas('POSTOWNER', tmp, id, network, `${id}`);
+    if (String(nasPath).includes('DefaultImage')) return null;
     return { post_owner_image: nasPath };
   } finally { cleanup(tmp); }
 }
@@ -186,6 +187,7 @@ async function uploadImage(link, id, network) {
   if (!tmp) { nasMediaFail('download', { adId: id, network, type: 'IMAGE', url: link, reason: 'source download failed (expired/blocked URL?)' }); return { image_video_url: DEFAULT_IMAGE, nas_path: DEFAULT_IMAGE }; }
   try {
     const nasPath = await storeInNas('IMAGE', tmp, id, network, `${id}`);
+    if (String(nasPath).includes('DefaultImage')) return null;
     return { nas_path: nasPath, image_video_url: nasPath };
   } finally { cleanup(tmp); }
 }
@@ -196,6 +198,7 @@ async function uploadThumbnail(thumbnailUrl, id, network) {
   if (!tmp) { nasMediaFail('download', { adId: id, network, type: 'THUMBNAIL', url: thumbnailUrl, reason: 'source download failed (expired/blocked URL?)' }); return { image_video_url: DEFAULT_IMAGE }; }
   try {
     const nasPath = await storeInNas('THUMBNAIL', tmp, id, network, `${id}`);
+    if (String(nasPath).includes('DefaultImage')) return null;
     return { image_video_url: nasPath };
   } finally { cleanup(tmp); }
 }
@@ -230,7 +233,8 @@ async function uploadMultimedia(urls, type, id, network) {
     const tmp = await downloadToTemp(url, 'webp', network);
     if (!tmp) { nasMediaFail('download', { adId: `${id}_${i}`, network, type: 'OTHERMULTIMEDIA', url, reason: 'source download failed (expired/blocked URL?)' }); return DEFAULT_IMAGE; }
     try {
-      return await storeInNas('OTHERMULTIMEDIA', tmp, id, network, `${id}_${i}`);
+      const p = await storeInNas('OTHERMULTIMEDIA', tmp, id, network, `${id}_${i}`);
+      return String(p).includes('DefaultImage') ? null : p;
     } finally { cleanup(tmp); }
   }));
   return { facebook_ad_id: id, ad_type: type, ad_image_video: JSON.stringify(paths) };
@@ -289,11 +293,11 @@ async function storePrimaryFromTemp(fetched, id, network) {
       // download-queue: nas_video_url is left UNSET here and written by the worker only after the bytes
       // are secured — so the ad never carries a fake/placeholder video path, and the insert stays fast.
       const thumb = fetched.thumb ? await storeInNas('THUMBNAIL', fetched.thumb, id, network, `${id}`).catch(() => null) : null;
-      if (thumb) out.image_url = thumb;
+      if (thumb && !String(thumb).includes('DefaultImage')) out.image_url = thumb;
       if (fetched.videoUrl) enqueueVideoDownload({ network, idValue: id, videoUrl: fetched.videoUrl });
     } else if (fetched.type === 'IMAGE' && fetched.image) {
       const nasPath = await storeInNas('IMAGE', fetched.image, id, network, `${id}`).catch(() => null);
-      if (nasPath) { out.image_url = nasPath; out.new_nas_image_url = nasPath; }
+      if (nasPath && !String(nasPath).includes('DefaultImage')) { out.image_url = nasPath; out.new_nas_image_url = nasPath; }
     }
   } finally {
     cleanupFetched(fetched);

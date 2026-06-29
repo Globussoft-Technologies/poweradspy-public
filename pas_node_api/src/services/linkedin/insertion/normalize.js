@@ -13,7 +13,7 @@
  *     first_seen & last_seen are FORCED to now() (PHP: date('Y-m-d H:i:s', time())).
  */
 
-const { epochToDateTime, nowDateTime, toInt } = require('../../../insertion/helpers/util');
+const { epochToDateTime, nowDateTime, toInt, sanitizePayload } = require('../../../insertion/helpers/util');
 
 function urldecode(s) {
   if (typeof s !== 'string') return s;
@@ -81,7 +81,7 @@ function splitMultimedia(v) {
  * Apply adsdata() INSERT-branch coercions to a copy of the payload. Returns a NEW object.
  */
 function normalizeLinkedinAd(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
   for (const k of Object.keys(out)) if (typeof out[k] === 'string') out[k] = out[k].trim();
 
   // type → uppercase ENUM

@@ -21,7 +21,7 @@ async function redditAdsData(req, db, logger) {
   // Accept a single ad object OR { ads: [...] } OR a bare array.
   const payload = Array.isArray(body) ? body : Array.isArray(body?.ads) ? body.ads : body;
 
-  const out = await engine.run(payload, (ad) => processRedditAd(ad, ctx));
+  const out = await engine.run(payload, (ad) => processRedditAd(ad, ctx), ctx);
 
   if (out.batch) {
     const { total, ok, failed } = out.summary;

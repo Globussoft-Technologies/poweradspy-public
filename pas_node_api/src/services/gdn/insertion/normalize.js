@@ -10,6 +10,8 @@
  * of payload — that override lives in the pipeline's row builder, not here.
  */
 
+const { sanitizePayload } = require('../../../insertion/helpers/util');
+
 /** PHP urldecode — decode %XX and '+' → space. Tolerant of malformed input. */
 function urldecode(s) {
   if (typeof s !== 'string') return s;
@@ -62,7 +64,7 @@ function checkVersion(platform, version) {
  * Returns a NEW object (does not mutate input).
  */
 function normalizeGdnAd(ad) {
-  const out = { ...ad };
+  const out = sanitizePayload({ ...ad });
 
   // trim every scalar (PHP array_map trim)
   for (const k of Object.keys(out)) {
