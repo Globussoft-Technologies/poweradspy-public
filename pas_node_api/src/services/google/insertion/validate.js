@@ -23,9 +23,9 @@ const META_ADS_RULES = {
   destination_url: 'required',
   g_temp_url: 'present|nullable',
   ad_id: 'required|string',
-  post_date: 'required|string',
-  first_seen: 'required|string',
-  last_seen: 'required|string',
+  post_date: 'required|epoch',
+  first_seen: 'required|epoch',
+  last_seen: 'required|epoch',
   city: 'present|string|nullable',
   state: 'present|string|nullable',
   country: 'required|string',
@@ -57,6 +57,10 @@ const CHECKS = {
   integer: (v, _a, f) =>
     isMissing(v) || v === null || v === '' ? null : (!Number.isInteger(Number(v)) ? `The ${f} must be an integer.` : null),
   ip: (v, _a, f) => (!isMissing(v) && v !== null && v !== '' && !IP_RE.test(String(v)) ? `The ${f} must be a valid IP address.` : null),
+  epoch: (v, _a, f) =>
+    isMissing(v) || v === null || String(v).trim() === '' || !/^\d+$/.test(String(v)) || Number(v) <= 0
+      ? `The ${f} must be a valid epoch timestamp.`
+      : null,
   in: (v, arg, f) => (!isMissing(v) && v !== null && v !== '' && !arg.split(',').includes(String(v)) ? `The selected ${f} is invalid.` : null),
   // required_if:otherField,value — required only when data[otherField] === value
   required_if: (v, arg, f, data) => {

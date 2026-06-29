@@ -71,6 +71,13 @@ function validateQuoraAds(data) {
     errors.push('The last_seen field is required.');
   }
 
+  // Format validation for URL and epoch fields
+  validateUrlField(errors, data, 'ad_url');
+  validateUrlField(errors, data, 'destination_url');
+  validateEpochField(errors, data, 'post_date');
+  validateEpochField(errors, data, 'first_seen');
+  validateEpochField(errors, data, 'last_seen');
+
   // Image required for IMAGE type ads
   if (type === 'IMAGE') {
     const hasImage = !isEmptyLike(data.image_url) || !isEmptyLike(data.image_video_url);
@@ -103,6 +110,24 @@ function isValidIp(ip) {
 
 function isValidUrl(url) {
   try { new URL(String(url)); return true; } catch { return false; }
+}
+
+function isValidEpoch(v) {
+  if (isEmptyLike(v)) return false;
+  const s = String(v).trim();
+  return /^\d+$/.test(s) && Number(s) > 0;
+}
+
+function validateUrlField(errors, data, field) {
+  if (data[field] !== undefined && !isEmptyLike(data[field]) && !isValidUrl(data[field])) {
+    errors.push(`The ${field} format is invalid (must be a valid URL).`);
+  }
+}
+
+function validateEpochField(errors, data, field) {
+  if (data[field] !== undefined && !isEmptyLike(data[field]) && !isValidEpoch(data[field])) {
+    errors.push(`The ${field} must be a valid epoch timestamp.`);
+  }
 }
 
 module.exports = { validateQuoraAds };

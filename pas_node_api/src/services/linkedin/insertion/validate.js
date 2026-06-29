@@ -23,16 +23,16 @@ const META_ADS_RULES = {
   ad_title: 'present|string|nullable',
   news_feed_description: 'present|string|nullable',
   ad_text: 'present|string|nullable',
-  ad_url: 'required|string',
+  ad_url: 'required|url',
   post_owner: 'required|string',
   post_owner_image: 'present|nullable',
   ad_id: 'required',
   profile_link: 'present',
   platform: 'required',
   version: 'required',
-  post_date: 'required|string',
-  first_seen: 'required|string',
-  last_seen: 'required|string',
+  post_date: 'required|epoch',
+  first_seen: 'required|epoch',
+  last_seen: 'required|epoch',
   city: 'present|string|nullable',
   state: 'present|string|nullable',
   country: 'required|string',
@@ -54,6 +54,10 @@ const CHECKS = {
   present: (v, _a, f) => (isMissing(v) ? `The ${f} field must be present.` : null),
   string: (v, _a, f) => (!isMissing(v) && v !== null && typeof v !== 'string' ? `The ${f} must be a string.` : null),
   url: (v, _a, f) => (!isMissing(v) && v !== null && v !== '' && !URL_RE.test(String(v)) ? `The ${f} format is invalid.` : null),
+  epoch: (v, _a, f) =>
+    isMissing(v) || v === null || String(v).trim() === '' || !/^\d+$/.test(String(v)) || Number(v) <= 0
+      ? `The ${f} must be a valid epoch timestamp.`
+      : null,
   in: (v, arg, f) => (!isMissing(v) && v !== null && v !== '' && !arg.split(',').includes(String(v)) ? `The selected ${f} is invalid.` : null),
 };
 

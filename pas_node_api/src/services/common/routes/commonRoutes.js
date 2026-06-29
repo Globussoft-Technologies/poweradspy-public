@@ -39,6 +39,7 @@ const { getTotalAdCount } = require('../controllers/totalAdCountController');
 const { getRecentAds } = require('../controllers/recentAdsController');
 const { storeBehaviourData, insertInterestBehaviour, updateInterestBehaviour } = require('../controllers/interestBehaviourController');
 const { getAdDetailsData, getInstagramAdDetailsData } = require('../controllers/adDetailsDataController');
+const { patchAdMedia } = require('../controllers/updateAdMediaController');
 const { authunticatePhpApi } = require('../controllers/phpAuthController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
@@ -440,5 +441,10 @@ router.get('/get-instagram-ad-details/:adId', asyncHandler(getInstagramAdDetails
 // the Authorization header (HS512, shared secret). No auth middleware — the
 // endpoint validates the token itself. Always HTTP 200; status is in body `code`.
 router.get('/authunticate-php-api', asyncHandler(authunticatePhpApi));
+
+// PATCH /api/v1/common/ads/media
+// Cross-network media repair: update image, thumbnail, video and/or
+// other_multimedia in both SQL and Elasticsearch for any supported network.
+router.patch('/ads/media', authMiddleware, asyncHandler(patchAdMedia));
 
 module.exports = router;

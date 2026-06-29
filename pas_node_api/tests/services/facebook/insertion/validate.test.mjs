@@ -84,6 +84,31 @@ describe("services/facebook/insertion/validate > validateMetaAds", () => {
     );
   });
 
+  it("rejects invalid URL for ad_url and accepts valid URLs", () => {
+    const out = validateMetaAds({ ...validMetaAd, ad_url: "not-a-url" });
+    expect(out.code).toBe(400);
+    expect(out.errors).toEqual(expect.arrayContaining([expect.stringContaining("ad_url")]));
+
+    expect(validateMetaAds({ ...validMetaAd, ad_url: "https://example.com/ad" })).toEqual({ code: 200 });
+  });
+
+  it("rejects non-epoch values for post_date, first_seen and last_seen", () => {
+    const out = validateMetaAds({
+      ...validMetaAd,
+      post_date: "not-a-date",
+      first_seen: "-1",
+      last_seen: "123.45",
+    });
+    expect(out.code).toBe(400);
+    expect(out.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("post_date"),
+        expect.stringContaining("first_seen"),
+        expect.stringContaining("last_seen"),
+      ])
+    );
+  });
+
   it("rejects stringified null for first_seen, last_seen and country", () => {
     const out = validateMetaAds({
       ...validMetaAd,

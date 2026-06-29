@@ -62,6 +62,28 @@ describe("services/instagram/insertion/validate > validateInsta", () => {
     expect(validateInsta({ ...validInstaAd, country: "null" }).code).toBe(400);
   });
 
+  it("rejects invalid URL for ad_url and accepts valid URLs", () => {
+    expect(validateInsta({ ...validInstaAd, ad_url: "not-a-url" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, ad_url: "https://instagram.com/p/x" })).toEqual({ code: 200 });
+  });
+
+  it("rejects non-epoch values for post_date, first_seen and last_seen", () => {
+    const out = validateInsta({
+      ...validInstaAd,
+      post_date: "not-a-date",
+      first_seen: "-1",
+      last_seen: "123.45",
+    });
+    expect(out.code).toBe(400);
+    expect(out.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("post_date"),
+        expect.stringContaining("first_seen"),
+        expect.stringContaining("last_seen"),
+      ])
+    );
+  });
+
   it("allows nullable present fields to be stringified null", () => {
     const out = validateInsta({
       ...validInstaAd,

@@ -200,6 +200,67 @@ components:
             ok: { type: integer, example: 2 }
             failed: { type: integer, example: 1 }
 
+    AdMediaPatchRequest:
+      type: object
+      required: [network, ad_id]
+      description: |
+        Cross-network media repair payload. At least one of `image`, `thumbnail`,
+        `video` or `other_multimedia` must be supplied. The caller provides the final
+        NAS/remote URL; this endpoint does not download or re-upload media.
+      properties:
+        network:
+          type: string
+          enum: [facebook, instagram, gdn, google, linkedin, youtube, pinterest, native, reddit, quora]
+          example: instagram
+          description: Target ad network.
+        ad_id:
+          type: string
+          example: "DYUPQM5R5AO2E"
+          description: The platform/scraped ad_id stored in the network's SQL table.
+        image:
+          type: string
+          format: uri
+          example: "https://media.globussoft.com/pas-prod/stream/abc.jpg"
+          description: Primary image NAS path. For VIDEO ads this may also serve as the thumbnail preview.
+        thumbnail:
+          type: string
+          format: uri
+          example: "https://media.globussoft.com/pas-prod/stream/abc_thumb.jpg"
+          description: Video thumbnail NAS path. On networks without a separate thumbnail column this updates the primary image URL.
+        video:
+          type: string
+          format: uri
+          example: "https://media.globussoft.com/pas-prod/stream/abc.mp4"
+          description: Video NAS path. Networks with a SQL video column update it; others update the ES video field only.
+        other_multimedia:
+          type: array
+          items:
+            type: string
+            format: uri
+          example:
+            - "https://media.globussoft.com/pas-prod/stream/1.jpg"
+            - "https://media.globussoft.com/pas-prod/stream/2.jpg"
+          description: Carousel / extra media URLs. Stored as a JSON array in the network's image_video table.
+
+    AdMediaPatchResponse:
+      type: object
+      properties:
+        code: { type: integer, example: 200 }
+        status: { type: string, example: ok }
+        message: { type: string, example: Ad media updated successfully. }
+        data:
+          type: object
+          properties:
+            network: { type: string, example: instagram }
+            ad_id: { type: string, example: "DYUPQM5R5AO2E" }
+            internal_id: { type: integer, example: 12345 }
+            type: { type: string, example: VIDEO }
+            sql_updated:
+              type: array
+              items: { type: string }
+              example: [image_url, other_multimedia]
+            es_updated: { type: boolean, example: true }
+
     # Auth
     LoginRequest:
       type: object
@@ -8608,6 +8669,66 @@ paths:
                 malformed:
                   summary: Malformed token
                   value: { code: 400, message: Malformed token }
+
+  /api/v1/common/ads/media:
+    patch:
+      tags: [Common]
+      summary: Patch ad media URLs across any network
+      description: |
+        Updates image, thumbnail, video and/or other_multimedia URLs in both SQL and
+        Elasticsearch for a single ad on any supported network. The caller must already
+        have the final NAS/remote URL; no download or re-upload to NAS is performed.
+
+        - `ad_id` is the platform/scraped ad identifier stored in the network's SQL table
+          (e.g. `DYUPQM5R5AO2E` for Instagram).
+        - At least one media field must be provided.
+        - `other_multimedia` must be an array of URLs.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdMediaPatchRequest'
+      responses:
+        '200':
+          description: SQL and optionally ES were updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdMediaPatchResponse'
+        '400':
+          description: Validation failed (missing network/ad_id or no media fields).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 400 }
+                  status: { type: string, example: rejected }
+                  message: { type: string }
+                  errors: { type: array, items: { type: string } }
+        '404':
+          description: Ad not found for the given network and ad_id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 404 }
+                  message: { type: string }
+        '500':
+          description: Server error while updating SQL or ES.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 500 }
+                  status: { type: string, example: server_error }
+                  message: { type: string }
+                  error: { type: string }
 
   /api/v1/common/store-bahaviour-data:
     post:
