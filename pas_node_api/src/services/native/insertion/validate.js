@@ -18,7 +18,7 @@ const NATIVE_ADS_RULES = {
   ad_id:                'required|string',
   city:                 'present|string|nullable|not_in:N/A,NA',
   state:                'present|string|nullable|not_in:N/A,NA',
-  country:              'present|string|not_in:N/A,NA',   // NOT nullable — cannot be empty
+  country:              'required|string|not_in:N/A,NA',
   ad_position:          'required|string',
   ad_number_position:   'present|integer|nullable',
   ad_text:              'present|string|nullable',

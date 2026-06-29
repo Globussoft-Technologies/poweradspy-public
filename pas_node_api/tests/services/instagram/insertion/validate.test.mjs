@@ -48,9 +48,18 @@ describe("services/instagram/insertion/validate > validateInsta", () => {
     );
   });
 
-  it("treats stringified null for required|nullable date fields as valid null", () => {
-    const out = validateInsta({ ...validInstaAd, post_date: "null" });
-    expect(out).toEqual({ code: 200 });
+  it("rejects stringified null and empty string for post_date, post_owner, ad_url, destination_url, first_seen, last_seen and country", () => {
+    expect(validateInsta({ ...validInstaAd, post_date: "null" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, post_date: "" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, post_date: null }).code).toBe(400);
+
+    expect(validateInsta({ ...validInstaAd, ad_url: "null" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, destination_url: "null" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, post_owner: "" }).code).toBe(400);
+
+    expect(validateInsta({ ...validInstaAd, first_seen: "null" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, last_seen: "" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, country: "null" }).code).toBe(400);
   });
 
   it("allows nullable present fields to be stringified null", () => {

@@ -51,6 +51,24 @@ function validateRedditAds(data) {
   if (isEmptyLike(data.country)) {
     errors.push('The country field is required.');
   }
+  if (isEmptyLike(data.post_owner)) {
+    errors.push('The post_owner field is required.');
+  }
+  if (isEmptyLike(data.ad_url)) {
+    errors.push('The ad_url field is required.');
+  }
+  if (isEmptyLike(data.destination_url)) {
+    errors.push('The destination_url field is required.');
+  }
+  if (isEmptyLike(data.post_date)) {
+    errors.push('The post_date field is required.');
+  }
+  if (isEmptyLike(data.first_seen)) {
+    errors.push('The first_seen field is required.');
+  }
+  if (isEmptyLike(data.last_seen)) {
+    errors.push('The last_seen field is required.');
+  }
 
   // Image required for IMAGE type
   if (type === 'IMAGE') {

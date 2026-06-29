@@ -59,16 +59,51 @@ describe("services/facebook/insertion/validate > validateMetaAds", () => {
     expect(out).toEqual({ code: 200 });
   });
 
-  it("accepts an array that becomes empty after stripping null-likes because country is only present", () => {
+  it("rejects a country array that becomes empty after stripping null-likes", () => {
     const out = validateMetaAds({ ...validMetaAd, country: ["null", ""] });
-    expect(out).toEqual({ code: 200 });
+    expect(out.code).toBe(400);
+    expect(out.errors).toEqual(expect.arrayContaining([expect.stringContaining("country")]));
   });
 
-  it("treats nullable fields with stringified null as valid", () => {
+  it("rejects stringified null for post_date, post_owner, ad_url and destination_url", () => {
     const out = validateMetaAds({
       ...validMetaAd,
       post_date: "null",
+      post_owner: "null",
+      ad_url: "null",
+      destination_url: "null",
+    });
+    expect(out.code).toBe(400);
+    expect(out.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("post_date"),
+        expect.stringContaining("post_owner"),
+        expect.stringContaining("ad_url"),
+        expect.stringContaining("destination_url"),
+      ])
+    );
+  });
+
+  it("rejects stringified null for first_seen, last_seen and country", () => {
+    const out = validateMetaAds({
+      ...validMetaAd,
       first_seen: "null",
+      last_seen: "",
+      country: ["null", ""],
+    });
+    expect(out.code).toBe(400);
+    expect(out.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("first_seen"),
+        expect.stringContaining("last_seen"),
+        expect.stringContaining("country"),
+      ])
+    );
+  });
+
+  it("still allows nullable present text fields to be stringified null", () => {
+    const out = validateMetaAds({
+      ...validMetaAd,
       ad_title: "",
       news_feed_description: "NULL",
     });
