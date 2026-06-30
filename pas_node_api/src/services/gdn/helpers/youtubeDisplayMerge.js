@@ -24,6 +24,7 @@
  */
 
 const databaseManager = require('../../../database/DatabaseManager');
+const { matchFilter } = require('../../common/helpers/esQueryHelpers');
 const {
   AD_DETAIL_SELECT: YT_SELECT,
   AD_DETAIL_JOINS: YT_JOINS,
@@ -140,6 +141,19 @@ function buildSharedFilters(p) {
   dateRange(p.seen_btn_sort, 'last_seen');
   dateRange(p.post_date_btn_sort, 'post_date');
   dateRange(p.domain_date_btn_sort, 'domain_registration_date');
+
+  // Traffic Source — mirror GDN SearchMixQueryBuilder._getSourceEnv().
+  // Without this, merged-in YouTube DISPLAY ads leak through regardless of the
+  // selected source (e.g. an iOS/Desktop ad appears when Android is selected).
+  const srcFilter = matchFilter('source', p.source);
+  if (srcFilter) filter.push(srcFilter);
+
+  // Affiliate Network — mirror YouTube SearchMixQueryBuilder._getAffiliateEnv()
+  // (YouTube DISPLAY ads store affiliate networks in the top-level
+  // `affiliate_networks` field). Without this, the merged YouTube DISPLAY side
+  // stays unfiltered and leaks ads that don't match the selected affiliate.
+  const affFilter = matchFilter('affiliate_networks', p.affiliate);
+  if (affFilter) filter.push(affFilter);
 
   return { must, filter };
 }

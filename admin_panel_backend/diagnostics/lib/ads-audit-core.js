@@ -42,6 +42,7 @@ const readline = require('readline');
 const queryDatabase = require('../../db-connections/connection');
 const searchAllInstances = require('../../es-connections/connection');
 const { writeXlsx } = require('../xlsx-writer');
+const { writeMarkdown, CENTRAL_LOG } = require('./markdown-writer');
 
 // --------------------------------------------------------------------------
 // HARD SAFETY SWITCH. Deletion is intentionally not enabled — every network's
@@ -522,6 +523,12 @@ function makeEngine(cfg) {
     try {
       fs.writeFileSync(`${runBase}.json`, JSON.stringify(lastReport, null, 2), 'utf8');
       fs.writeFileSync(`${runBase}.xlsx`, writeXlsx(buildSheets(lastReport)));
+      const mdPath = writeMarkdown(runBase, lastReport);
+      if (mdPath) {
+        // expose the md path in the report so callers / logs can reference it
+        lastReport.markdownPath = mdPath;
+        lastReport.centralLogPath = path.join(REPORT_DIR, 'central-audit-log.md');
+      }
     } catch (e) {
       bad(`Failed to write report file: ${e.message}`);
       return null;
@@ -543,6 +550,8 @@ function makeEngine(cfg) {
     sub('Detailed report written to:');
     info(`${runBase}.json`);
     info(`${runBase}.xlsx`);
+    info(`${runBase}.md`);
+    info(`Central log: ${CENTRAL_LOG}`);
   }
 
   function exportReport() {

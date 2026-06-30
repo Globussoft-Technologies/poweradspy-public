@@ -57,6 +57,7 @@ const queryDatabase = require('../db-connections/connection');
 const searchAllInstances = require('../es-connections/connection');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
 const { writeXlsx } = require('./xlsx-writer');
+const { writeMarkdown, CENTRAL_LOG } = require('./lib/markdown-writer');
 
 // --------------------------------------------------------------------------
 // HARD SAFETY SWITCH. Deletion is intentionally not enabled yet — this run is
@@ -490,6 +491,11 @@ function writeReport() {
   try {
     fs.writeFileSync(`${runBase}.json`, JSON.stringify(lastReport, null, 2), 'utf8');
     fs.writeFileSync(`${runBase}.xlsx`, writeXlsx(buildSheets(lastReport)));
+    const mdPath = writeMarkdown(runBase, lastReport);
+    if (mdPath) {
+      lastReport.markdownPath = mdPath;
+      lastReport.centralLogPath = path.join(REPORT_DIR, 'central-audit-log.md');
+    }
   } catch (e) {
     bad(`Failed to write report file: ${e.message}`);
     return null;
@@ -511,6 +517,8 @@ function announceRun() {
   sub('Detailed report written to:');
   info(`${runBase}.json`);
   info(`${runBase}.xlsx`);
+  info(`${runBase}.md`);
+  info(`Central log: ${CENTRAL_LOG}`);
 }
 
 // Manual re-export from the menu — writes the in-memory report to a fresh file.

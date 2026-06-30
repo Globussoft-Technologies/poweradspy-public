@@ -120,26 +120,11 @@ import { useTheme } from "../../hooks/useTheme";
 import { useAdInsights } from "../../hooks/useAdInsights";
 import { useInterestBehaviour } from "../../hooks/useInterestBehaviour";
 import { mapAdToCard, resolveNasUrl, fetchFreshTikTokVideoUrl, getVideoEmbedUrl } from '../../services/api';
+import { getStarRating } from "../../constants";
 import he from "he";
 
-// ─── Popularity → Star rating ────────────────────────────────────────
-function toStars(value, maxValue = 100) {
-  const LOW_MAX = 33.34;
-  const MOD_MAX = 35.41;
-  let raw;
-  if (value <= LOW_MAX) {
-    raw = 0.5 + (value / LOW_MAX) * 2.0;
-  } else if (value <= MOD_MAX) {
-    raw = 2.5 + ((value - LOW_MAX) / (MOD_MAX - LOW_MAX)) * 1.0;
-  } else {
-    const capped = Math.min(value, maxValue);
-    raw = 3.5 + ((capped - MOD_MAX) / (maxValue - MOD_MAX)) * 1.5;
-  }
-  return Math.round(raw * 2) / 2;
-}
-
 const StarRating = ({ value, isLight }) => {
-  const rating = toStars(value);
+  const rating = getStarRating(value);
   const stars = [];
   for (let i = 1; i <= 5; i++) {
     if (i <= Math.floor(rating)) {
@@ -171,7 +156,7 @@ const StarRating = ({ value, isLight }) => {
       <span
         className={`text-xs ml-1 tabular-nums ${isLight ? "text-black/30" : "text-white/30"}`}
       >
-        {rating}
+        {rating.toFixed(1)}
       </span>
     </div>
   );
@@ -322,6 +307,18 @@ function getAspectStyle(platform, position, adAspectRatio) {
   if (r === "auto") return {};
   return { aspectRatio: r.replace(":", "/") };
 }
+
+// Render multi-value source fields (e.g. ["android","desktop"]) as a readable,
+// comma-separated list instead of React's default concatenation ("androiddesktop").
+const formatSource = (v) => {
+  if (v == null || v === '' || v === '—') return '';
+  if (Array.isArray(v)) return v.filter(Boolean).join(', ');
+  if (typeof v === 'string') {
+    const cleaned = v.split(/[,|]/).map(s => s.trim()).filter(Boolean);
+    return cleaned.length ? cleaned.join(', ') : '';
+  }
+  return String(v);
+};
 
 const AdTextBlock = ({ text, isLight }) => {
   const [expanded, setExpanded] = useState(false);
@@ -1006,6 +1003,11 @@ const AnalyticsModal = ({
       // detail view. Falling back to `merged.thumbnail` only when there's no
       // original keeps coverage for ads that legitimately had no grid image.
       merged.thumbnail = ad.thumbnail || merged.thumbnail;
+      // Popularity must match the grid/card value so the star rating in this
+      // modal agrees with MasonryCard and AdDetailModal. The analytics SSE
+      // payload can carry a different (or differently-shaped) popularity field,
+      // which would otherwise make the same ad show a different rating here.
+      merged.popularity = ad.popularity ?? merged.popularity;
       if (!merged.tiktokLibraryUrl && ad.tiktokLibraryUrl) merged.tiktokLibraryUrl = ad.tiktokLibraryUrl;
       if (!merged.network && ad.network) merged.network = ad.network;
       return merged;
@@ -1148,7 +1150,7 @@ const AnalyticsModal = ({
         },
         {
           label: "SOURCE",
-          value: tt.source || d.source || "TikTok Ads Manager",
+          value: formatSource(tt.source || d.source) || "TikTok Ads Manager",
           icon: ExternalLink,
           color: "text-[#5f8ae7]",
         },
@@ -1250,7 +1252,7 @@ const AnalyticsModal = ({
       }] : []),
       {
         label: "SOURCE",
-        value: d.source || "—",
+        value: formatSource(d.source) || "—",
         icon: ExternalLink,
         color: "text-[#5f8ae7]",
       },
@@ -1291,9 +1293,11 @@ const AnalyticsModal = ({
       {
         label: "AFFILIATE NETWORK",
         value: (() => {
-          const aff = d.affiliate_data;
+          const aff = d.affiliate_data || d.clickbank_data;
           if (!aff) return "—";
-          return Array.isArray(aff) ? aff.join(", ") : String(aff);
+          const raw = Array.isArray(aff) ? aff.join(", ") : String(aff);
+          // Normalize legacy/lowercase ClickBank spelling for display.
+          return raw.replace(/\bclickbank\b/gi, "ClickBank");
         })(),
         icon: DollarSign,
         color: "text-green-400",

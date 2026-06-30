@@ -23,6 +23,7 @@ const AD_DETAIL_SQL = `
     gdn_ad_domains.domain_registered_date,
     gdn_ad_meta_data.built_with,
     gdn_ad_meta_data.affiliate_data,
+    gdn_ad_meta_data.clickbank_data,
     gdn_ad_meta_data.platform,
     gdn_ad_meta_data.destination_url,
     gdn_ad_meta_data.screenshot_url,
