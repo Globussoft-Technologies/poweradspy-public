@@ -23,13 +23,14 @@ function sentinel(v) {
 
 // ES `date` fields in instagram_search_mix and their mapped formats (verified via mapping).
 // 'datetime' = yyyy-MM-dd HH:mm:ss, 'date' = yyyy-MM-dd, 'iso' = yyyy-MM-ddTHH:mm:ss.
-// NOTE: instagram_ad.created_date is 'datetime' (space form) — the live instagram_search_mix
-// mapping rejects the 'T' (iso) form (it produced the created_date_es_dateparse errors); the
-// 'iso' kind is currently unused (kept for parity with the other network builders).
+// NOTE: instagram_ad.created_date is intentionally NOT indexed here. It is not declared
+// in the PHP instagram_search_mix mapping, so ES dynamically maps it and its inferred
+// format ('strict_date_optional_time||epoch_millis') rejects our 'yyyy-MM-dd HH:mm:ss'
+// literal, causing mapper_parsing_exceptions. Since it is unused in search filters, we
+// simply skip it rather than fight the dynamic mapping.
 const ES_DATE_FIELDS = {
   'instagram_ad.post_date': 'datetime',
   'instagram_ad.last_seen': 'datetime',
-  'instagram_ad.created_date': 'datetime',
   'instagram_ad_meta_data.firstSeenOnDesktop': 'datetime',
   'instagram_ad_meta_data.firstSeenOnAndroid': 'datetime',
   'instagram_ad_meta_data.firstSeenOnIos': 'datetime',

@@ -13,7 +13,7 @@ const ES_INDEX = 'instagram_search_mix';
 // instaAdsData (POST gramAdsData)
 const INSTA_INSERT_COLUMNS = [
   'instagram_ad.id', 'instagram_ad.status', 'instagram_ad.post_date', 'instagram_ad.last_seen', 'instagram_ad.lower_age_seen',
-  'instagram_ad.days_running', 'instagram_ad.likes', 'instagram_ad.comments', 'instagram_ad.shares', 'instagram_ad.created_date',
+  'instagram_ad.days_running', 'instagram_ad.likes', 'instagram_ad.comments', 'instagram_ad.shares',
   'instagram_ad.ad_position', 'instagram_ad.type', 'instagram_user.gender', 'instagram_country_only.country', 'instagram_call_to_action.call_to_action',
   'instagram_ad_variants.title|ru,fr,sp,ge,exactly', 'instagram_ad_variants.text|ru,fr,sp,ge,exactly', 'instagram_ad_variants.newsfeed_description|ru,fr,sp,ge,exactly', 'instagram_ad_url.url',
   'instagram_ad_variants.image_object|ru,fr,sp,exactly', 'instagram_ad_variants.image_celebrity|ru,fr,sp,exactly', 'instagram_ad_variants.image_brand_logo|ru,fr,sp,exactly', 'instagram_ad_variants.image_ocr|ru,fr,sp,exactly',
@@ -26,7 +26,7 @@ const INSTA_INSERT_COLUMNS = [
 // adsLibraryInsert
 const LIBRARY_INSERT_COLUMNS = [
   'instagram_ad.id', 'instagram_ad_meta_data.platform', 'instagram_ad.collation_id', 'instagram_ad.hits', 'instagram_ad.post_date', 'instagram_ad.last_seen', 'instagram_ad.lower_age_seen',
-  'instagram_ad.days_running', 'instagram_ad.created_date',
+  'instagram_ad.days_running',
   'instagram_ad.ad_position', 'instagram_ad.type', 'instagram_country_only.country', 'instagram_call_to_action.call_to_action', 'instagram_ad.first_seen',
   'instagram_ad_variants.title|ru,fr,sp,ge,exactly', 'instagram_ad_variants.text|ru,fr,sp,ge,exactly', 'instagram_ad_variants.newsfeed_description|ru,fr,sp,ge,exactly', 'instagram_ad_url.url', 'instagram_ad_cost_usage_benefit_analysis.est_audience_size_low',
   'instagram_ad_variants.image_object|ru,fr,sp,exactly', 'instagram_ad_variants.image_celebrity|ru,fr,sp,exactly', 'instagram_ad_variants.image_brand_logo|ru,fr,sp,exactly', 'instagram_ad_variants.image_ocr|ru,fr,sp,exactly',
