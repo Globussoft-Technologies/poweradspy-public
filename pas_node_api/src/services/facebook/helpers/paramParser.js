@@ -124,6 +124,12 @@ function withCdn(url) {
     return cleaned[0] || '';
   }
   if (trimmed.startsWith('http')) return trimmed;
+  // Keep /PowerAdspy/fb/{any-single-dir}/{optional YYYY}/filename.ext as-is.
+  // These paths already point to the correct CDN location; stripping the
+  // PowerAdspy prefix would break the asset URL.
+  if (/^\/?PowerAdspy\/fb\/[^/]+\/(\d+\/)?[^/]+\.[^/]+$/i.test(trimmed)) {
+    return CDN_BASE + (trimmed.startsWith('/') ? trimmed : '/' + trimmed);
+  }
   trimmed = trimmed.replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|PowerAdspy|pas-dev\/stream|pas-prod\/stream)\//i, '/');
   return CDN_BASE + (trimmed.startsWith('/') ? trimmed : '/' + trimmed);
 }

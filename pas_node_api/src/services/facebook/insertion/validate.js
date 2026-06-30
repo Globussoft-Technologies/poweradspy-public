@@ -25,18 +25,18 @@ const META_ADS_RULES = {
   comment: 'required|integer',
   share: 'required|integer',
   other_multimedia: 'present|nullable',
-  destination_url: 'required',
+  destination_url: 'nullable',
   initial_url: 'nullable',
   ad_title: 'present|string|nullable',
   news_feed_description: 'present|string|nullable',
   ad_text: 'present|string|nullable',
-  ad_url: 'required|url',
+  ad_url: 'nullable|url',
   post_owner: 'required|string',
   post_owner_image: 'present|nullable',
   ad_id: 'required',
   platform: 'required',
   version: 'required',
-  post_date: 'required|epoch',
+  post_date: 'nullable|epoch',
   first_seen: 'required|epoch',
   last_seen: 'required|epoch',
   city: 'present|string|nullable',
@@ -49,12 +49,12 @@ const ADS_LIBRARY_RULES = {
   type: 'required|in:IMAGE,VIDEO',
   ad_position: 'required|string',
   other_multimedia: 'present|nullable',
-  destination_url: 'required',
+  destination_url: 'nullable',
   initial_url: 'nullable',
   ad_title: 'present|string|nullable',
   news_feed_description: 'present|string|nullable',
   ad_text: 'present|string|nullable',
-  meta_ad_url: 'required|url',
+  meta_ad_url: 'nullable|url',
   post_owner: 'required|string',
   post_owner_image: 'present|nullable',
   ad_id: 'required',
@@ -122,9 +122,9 @@ function validate(data, rules) {
       value = normalizeNullLike(value);
     }
 
-    // `nullable`: if the value is explicitly null, skip type/format checks.
+    // `nullable`: if the value is explicitly null or omitted, skip type/format checks.
     const nullable = tokens.includes('nullable');
-    if (nullable && value === null) continue;
+    if (nullable && (value === null || value === undefined)) continue;
 
     for (const token of tokens) {
       if (token === 'nullable') continue;

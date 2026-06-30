@@ -13,7 +13,7 @@ const PINTEREST_ADS_RULES = {
   ad_title:         'present|string|nullable',
   ad_image:         'present|nullable',
   platform:         'required|integer',
-  destination_url:  'required',
+  destination_url:  'nullable',
   ad_id:            'required|string',
   city:             'present|string|nullable',
   state:            'present|string|nullable',

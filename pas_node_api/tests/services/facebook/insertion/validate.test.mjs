@@ -65,7 +65,7 @@ describe("services/facebook/insertion/validate > validateMetaAds", () => {
     expect(out.errors).toEqual(expect.arrayContaining([expect.stringContaining("country")]));
   });
 
-  it("rejects stringified null for post_date, post_owner, ad_url and destination_url", () => {
+  it("rejects stringified null for post_owner only; ad_url/destination_url/post_date may be null", () => {
     const out = validateMetaAds({
       ...validMetaAd,
       post_date: "null",
@@ -76,12 +76,16 @@ describe("services/facebook/insertion/validate > validateMetaAds", () => {
     expect(out.code).toBe(400);
     expect(out.errors).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("post_date"),
         expect.stringContaining("post_owner"),
-        expect.stringContaining("ad_url"),
-        expect.stringContaining("destination_url"),
       ])
     );
+    expect(out.errors.some((e) => e.includes("post_date") || e.includes("ad_url") || e.includes("destination_url"))).toBe(false);
+  });
+
+  it("allows ad_url, destination_url and post_date to be null or omitted", () => {
+    const { ad_url, destination_url, post_date, ...rest } = validMetaAd;
+    expect(validateMetaAds({ ...rest, ad_url: null, destination_url: null, post_date: null })).toEqual({ code: 200 });
+    expect(validateMetaAds(rest)).toEqual({ code: 200 });
   });
 
   it("rejects invalid URL for ad_url and accepts valid URLs", () => {

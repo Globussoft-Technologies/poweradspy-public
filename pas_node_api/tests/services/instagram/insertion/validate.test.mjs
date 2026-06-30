@@ -48,13 +48,13 @@ describe("services/instagram/insertion/validate > validateInsta", () => {
     );
   });
 
-  it("rejects stringified null and empty string for post_date, post_owner, ad_url, destination_url, first_seen, last_seen and country", () => {
-    expect(validateInsta({ ...validInstaAd, post_date: "null" }).code).toBe(400);
-    expect(validateInsta({ ...validInstaAd, post_date: "" }).code).toBe(400);
-    expect(validateInsta({ ...validInstaAd, post_date: null }).code).toBe(400);
+  it("rejects stringified null and empty string for post_owner, first_seen, last_seen and country; ad_url/destination_url/post_date may be null", () => {
+    expect(validateInsta({ ...validInstaAd, post_date: "null" }).code).toBe(200);
+    expect(validateInsta({ ...validInstaAd, post_date: "" }).code).toBe(200);
+    expect(validateInsta({ ...validInstaAd, post_date: null }).code).toBe(200);
 
-    expect(validateInsta({ ...validInstaAd, ad_url: "null" }).code).toBe(400);
-    expect(validateInsta({ ...validInstaAd, destination_url: "null" }).code).toBe(400);
+    expect(validateInsta({ ...validInstaAd, ad_url: "null" }).code).toBe(200);
+    expect(validateInsta({ ...validInstaAd, destination_url: "null" }).code).toBe(200);
     expect(validateInsta({ ...validInstaAd, post_owner: "" }).code).toBe(400);
 
     expect(validateInsta({ ...validInstaAd, first_seen: "null" }).code).toBe(400);

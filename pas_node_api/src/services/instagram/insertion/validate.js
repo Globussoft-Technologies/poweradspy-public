@@ -15,20 +15,20 @@ const INSTA_RULES = {
   ad_position: 'required|string',
   type: 'required|in:IMAGE,VIDEO,STORIES',
   ad_text: 'present|string|nullable',
-  ad_url: 'required|url',
+  ad_url: 'nullable|url',
   post_owner: 'required|string',
   post_owner_image: 'present|url|nullable',
   ad_title: 'present|string|nullable',
   news_feed_description: 'present|string|nullable',
   platform: 'required',
-  destination_url: 'required',
+  destination_url: 'nullable',
   initial_url: 'nullable',
   likes: 'present|integer',
   comment: 'present|integer',
   share: 'present|integer',
   call_to_action: 'present|nullable',
   image_video_url: 'required|url',
-  post_date: 'required|epoch',
+  post_date: 'nullable|epoch',
   first_seen: 'required|epoch',
   last_seen: 'required|epoch',
   country: 'required|string',
@@ -43,12 +43,12 @@ const LIBRARY_RULES = {
   type: 'required|in:IMAGE,VIDEO',
   ad_position: 'required|string',
   other_multimedia: 'present|nullable',
-  destination_url: 'required',
+  destination_url: 'nullable',
   initial_url: 'nullable',
   ad_title: 'present|string|nullable',
   news_feed_description: 'present|string|nullable',
   ad_text: 'present|string|nullable',
-  meta_ad_url: 'required|url',
+  meta_ad_url: 'nullable|url',
   post_owner: 'required|string',
   post_owner_image: 'present|nullable',
   ad_id: 'required',
@@ -99,7 +99,7 @@ function validate(data, rules) {
       value = normalizeNullLike(value);
     }
 
-    if (tokens.includes('nullable') && value === null) continue;
+    if (tokens.includes('nullable') && (value === null || value === undefined)) continue;
     for (const token of tokens) {
       if (token === 'nullable') continue;
       const [name, arg] = token.split(':');
