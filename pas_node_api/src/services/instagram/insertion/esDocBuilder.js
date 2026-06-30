@@ -42,7 +42,12 @@ function coerceEsDate(v, kind) {
   if (s === null) return null;
   s = s.replace('T', ' ');
   if (s.startsWith('0000-00-00')) return kind === 'date' ? '0001-01-01' : (kind === 'iso' ? '0001-01-01T01:01:01' : '0001-01-01 01:01:01');
-  if (/^\d+$/.test(s)) return null;
+  if (/^\d+$/.test(s)) {
+    // Auto-convert bare epoch (seconds or milliseconds) to the mapped date literal.
+    let n = parseInt(s, 10);
+    if (String(Math.trunc(n)).length > 10) n = Math.trunc(n / 1000);
+    s = new Date(n * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  }
   if (kind === 'date') return s.slice(0, 10);
   if (kind === 'iso') return s.slice(0, 19).replace(' ', 'T');
   return s.slice(0, 19);
