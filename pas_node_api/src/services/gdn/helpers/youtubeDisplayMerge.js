@@ -155,6 +155,40 @@ function buildSharedFilters(p) {
   const affFilter = matchFilter('affiliate_networks', p.affiliate);
   if (affFilter) filter.push(affFilter);
 
+  // Marketing Platform — mirror YouTube SearchMixQueryBuilder._getMarketPlatformEnv()
+  // (YouTube DISPLAY ads store the click chain in `redirect_urls`). Without this,
+  // merged YouTube DISPLAY ads leak through regardless of the selected marketing
+  // platform (e.g. an ad with no Adobe Audience Manager data appears when that
+  // filter is active).
+  const mpValues = ensureArr(p.market_platform).filter(v => v && v !== 'NA');
+  if (mpValues.length) {
+    const should = mpValues.map(v => ({ wildcard: { 'redirect_urls.keyword': { value: `*${v}*` } } }));
+    filter.push({ bool: { should, minimum_should_match: 1 } });
+  }
+
+  // Funnel Type — mirror YouTube SearchMixQueryBuilder._getFunnelEnv()
+  // (YouTube DISPLAY ads store funnel values in the top-level `funnel` field).
+  // Without this, merged YouTube DISPLAY ads leak through regardless of the
+  // selected funnel type (e.g. a non-Builderall ad appears when Builderall is
+  // selected).
+  const funnelFilter = matchFilter('funnel', p.funnel);
+  if (funnelFilter) filter.push(funnelFilter);
+
+  // Ecommerce Platform — mirror YouTube SearchMixQueryBuilder._getBuiltWithEnv()
+  // (YouTube DISPLAY ads store ecommerce values in the top-level
+  // `ecommerce_platform` field). Without this, merged YouTube DISPLAY ads leak
+  // through regardless of the selected ecommerce platform (e.g. a non-Shopify
+  // ad appears when Shopify is selected).
+  const ecommerceFilter = matchFilter('ecommerce_platform', p.ecommerce);
+  if (ecommerceFilter) filter.push(ecommerceFilter);
+
+  // Language — mirror YouTube SearchMixQueryBuilder._getLangDetectEnv()
+  // (YouTube DISPLAY ads store detected language in the top-level `ad_language`
+  // field). Without this, merged YouTube DISPLAY ads leak through regardless of
+  // the selected language (e.g. English ads appear when German is selected).
+  const langFilter = matchFilter('ad_language', p.lang);
+  if (langFilter) filter.push(langFilter);
+
   return { must, filter };
 }
 
@@ -247,7 +281,7 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
             query: { terms: { ad_id: ids.map(Number) } },
             size: ids.length,
             _source: ['ad_id', 'ad_type', 'new_nas_image_url', 'reactions', 'dislikes',
-              'comments', 'views', 'verified', 'countries', 'duration', 'call_to_action'],
+              'comments', 'views', 'verified', 'countries', 'duration', 'call_to_action', 'ad_language'],
           },
         });
         const hh = r.hits || r.body?.hits;
@@ -271,6 +305,7 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       if (src.countries !== undefined) row.countries = src.countries;
       if (src.duration !== undefined) row.days_running = src.duration;
       if (src.call_to_action !== undefined) row.call_to_action = src.call_to_action;
+      if (src.ad_language !== undefined) row.ad_language = src.ad_language;
       return row;
     });
 

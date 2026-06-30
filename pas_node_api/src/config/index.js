@@ -330,6 +330,7 @@ const config = {
     autoRecoverStale: getVal(fileConfig.keywordSearch?.autoRecoverStale, 'KEYWORD_SEARCH_AUTO_RECOVER_STALE', toBool) !== false,
     staleSweepIntervalSec: getVal(fileConfig.keywordSearch?.staleSweepIntervalSec, 'KEYWORD_SEARCH_STALE_SWEEP_SEC', toInt) || 120,
     staleSweepBatch: getVal(fileConfig.keywordSearch?.staleSweepBatch, 'KEYWORD_SEARCH_STALE_SWEEP_BATCH', toInt) || 100,
+    scrappingStatusRetention: getVal(fileConfig.keywordSearch?.scrappingStatusRetention, 'KEYWORD_SEARCH_SCRAPPING_STATUS_RETENTION', toInt) || 200,
 
     // Synthetic (manually-inserted) keywords — additive bulk-insert endpoint. Stored in the
     // SAME keyword_searches collection + doc shape, deduped by the unique (type,valueNorm)
@@ -356,6 +357,13 @@ const config = {
       })(),
       userCap: getVal(fileConfig.keywordSearch?.cleanup?.userCap, 'KEYWORD_SEARCH_USER_CAP', toInt) || 100000,
       syntheticCap: getVal(fileConfig.keywordSearch?.cleanup?.syntheticCap, 'KEYWORD_SEARCH_SYNTHETIC_CAP', toInt) || 100000,
+    },
+
+    // Google-specific keyword-search /work behaviour. When continuousLoop is true, a Google
+    // daily claim that exhausts all tiers automatically resets dailyClaimDate and tries again,
+    // so Google scrapers never sit idle waiting for the next calendar day.
+    google: {
+      continuousLoop: getVal(fileConfig.keywordSearch?.google?.continuousLoop, 'KEYWORD_SEARCH_GOOGLE_CONTINUOUS_LOOP', toBool) !== false,
     },
 
     // Ad-count notification cron — scans terms scraped today, checks Elasticsearch for

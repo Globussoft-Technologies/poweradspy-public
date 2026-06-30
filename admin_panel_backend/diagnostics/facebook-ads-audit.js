@@ -323,6 +323,7 @@ async function runEsAudit() {
 
   const report = {
     store: 'elasticsearch',
+    network: 'facebook',
     index: FB.esIndex,
     total,
     displayable: displayableCount,
@@ -432,6 +433,7 @@ async function runSqlAudit() {
 
   const report = {
     store: 'mysql',
+    network: 'facebook',
     database: FB.database,
     mediaTable: FB.mediaTable,
     total,
@@ -504,11 +506,11 @@ function writeReport() {
 }
 
 function recordEs(es) {
-  lastReport = { generatedAt: new Date().toISOString(), elasticsearch: es, mysql: lastReport?.mysql || null };
+  lastReport = { generatedAt: new Date().toISOString(), network: 'facebook', elasticsearch: es, mysql: lastReport?.mysql || null };
   writeReport();
 }
 function recordSql(sql) {
-  lastReport = { generatedAt: new Date().toISOString(), elasticsearch: lastReport?.elasticsearch || null, mysql: sql };
+  lastReport = { generatedAt: new Date().toISOString(), network: 'facebook', elasticsearch: lastReport?.elasticsearch || null, mysql: sql };
   writeReport();
 }
 

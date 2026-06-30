@@ -454,18 +454,20 @@ A user later searching a synthetic term hits the §6 upsert on the same `(type, 
 its `$ifNull(['$users', []])` / `$ifNull(['$userInfos', []])` turn `null → [] → [user]`, so
 the doc "becomes" a normal user doc — no special-casing, no duplicate.
 
-### 10.3 Synthetic-only claim + Google ordering on `/work`
+### 10.3 Synthetic-only claim + Google ordering + implicit loop on `/work`
 - **Synthetic-only:** body `users:null` (or `userInfos:null`) restricts the claim to synthetic
   docs (`filter.userInfos = null`). Absent/non-null → unchanged pool. Response echoes
   `synthetic`.
 - **Google-only ordering:** for `network:"google"`, a normal **daily** claim serves
   **priority → user-searched → synthetic** on every hit, via `buildClaimAttempts()` (an ordered
-  list of atomic `findOneAndUpdate` attempts; first hit wins). Status transitions are
-  identical to §7 (priority flips `isActive`; daily sets `dailyClaimDate`). Every other network
-  and any explicit `priority:true` are byte-identical to before. (`isActive` and
-  `dailyClaimDate` are independent gates — a doc can be `isActive:true` *and* already
-  daily-claimed — so a re-searched google term can serve once via priority and once via daily
-  per day, exactly as the two existing modes already behaved.)
+  list of atomic `findOneAndUpdate` attempts; first hit wins).
+- **Google-only implicit loop:** when all three tiers are exhausted for the current day, the
+  server automatically clears `networkState.google.dailyClaimDate` for Google docs that are not
+  currently being scraped and retries the same three tiers. This makes Google scrapers loop
+  continuously without requiring any client flag. It is controlled by
+  `config.keywordSearch.google.continuousLoop` (default `true`) and applies only to Google;
+  every other network keeps the once-per-day gate. Status transitions are unchanged (priority
+  flips `isActive`; daily sets `dailyClaimDate`).
 
 ### 10.4 Hard capacity cap (`config.keywordSearch.cleanup`) — answers §5 scale question
 - `applyTo` (`both`|`user`|`synthetic`|`none`), `userCap` (100k), `syntheticCap` (100k).

@@ -374,7 +374,7 @@ class SearchMixQueryBuilder {
     const bw = this._params.builtWith;
     if (!bw || !bw.length) return null;
     return asFilter(multiFieldMatchFilter(
-      ['gdn_ad_meta_data.built_with', 'gdn_ad_meta_data.affiliate_data', 'gdn_ad_meta_data.clickbank_data'],
+      ['gdn_ad_meta_data.built_with', 'gdn_ad_meta_data.affiliate_data'],
       bw
     ));
   }
@@ -395,7 +395,7 @@ class SearchMixQueryBuilder {
     const a = this._params.affiliate;
     if (!a || !a.length) return null;
     return asFilter(multiFieldMatchFilter(
-      ['gdn_ad_meta_data.affiliate_data', 'gdn_ad_meta_data.built_with', 'gdn_ad_meta_data.clickbank_data'],
+      ['gdn_ad_meta_data.affiliate_data', 'gdn_ad_meta_data.built_with'],
       a
     ));
   }

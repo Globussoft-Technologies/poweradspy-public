@@ -10465,7 +10465,7 @@ paths:
           schema:
             type: number
             default: 0
-          description: Fetch ads with id greater than this value
+          description: Fetch ads with cursor/id greater than this value. Use the `cursor` value from the last row of the previous response.
           example: 0
         - in: query
           name: limit
@@ -10488,6 +10488,16 @@ paths:
                     id:
                       type: number
                       example: 123456
+                      description: Platform-native ad identifier. For Google this is the internal PK (`id`), not the public `ad_id`.
+                    cursor:
+                      type: number
+                      example: 123456
+                      description: Stable monotonic pagination cursor — pass this value as the next `exVal`.
+                    ad_id:
+                      type: string
+                      nullable: true
+                      example: "abc123"
+                      description: Public platform ad identifier. Present only for Google because its internal PK (`id`) differs from `ad_id`; on all other platforms `id` already is the public ad id.
                     ad_text:
                       type: string
                       example: "Buy now and save 50%!"
@@ -10521,8 +10531,11 @@ paths:
       summary: Insert or update a category and sync to MongoDB
       description: |
         Inserts or updates a category in the master ES `category` index,
-        updates the ad record in search_mix, then syncs to MongoDB sdui_config
+        updates the ad record in the platform's search_mix index, then syncs to MongoDB sdui_config
         so the React filter dropdown stays up to date.
+        The ad update sets `confidence_score: 0` (mirrors legacy PHP) so the categorized ad is no
+        longer treated as uncategorized by the feed. The response now includes `updated` (boolean)
+        and `warning` (string) so callers can detect when the ad document could not be found or updated.
         Internal endpoint — no auth required.
       requestBody:
         required: true
@@ -10546,8 +10559,8 @@ paths:
                   maxLength: 4
                   example: "1001"
                 ad_id:
-                  type: number
-                  example: 123456
+                  type: string
+                  example: "123456"
                 sub_category:
                   type: string
                   minLength: 5
@@ -10575,8 +10588,17 @@ paths:
                     type: string
                     example: "New category and subcategory inserted successfully"
                   ad_id:
-                    type: number
-                    example: 123456
+                    type: string
+                    example: "123456"
+                  updated:
+                    type: boolean
+                    example: true
+                    description: True when the ad document in the platform index was successfully updated with the category fields and confidence_score.
+                  warning:
+                    type: string
+                    nullable: true
+                    example: "ad_id=123456 not found in search_mix"
+                    description: Present when the ad document could not be found or its update failed. The request still returns 200 because the master category index was processed; callers should check this field to confirm categorization actually reached the ad.
         '400':
           description: Validation failed
           content:
@@ -10738,6 +10760,10 @@ paths:
         - **daily** (default): gate = `networkState.<net>.dailyClaimDate != today`, so a
           term is handed out at most once per day **per network** (facebook done ≠
           instagram done).
+        - **Google implicit loop**: for `network: google`, when all daily tiers are
+          exhausted the server automatically resets `networkState.google.dailyClaimDate`
+          and retries, so Google scrapers loop continuously. No client flag is required.
+          Controlled by `config.keywordSearch.google.continuousLoop`.
 
         Each claim is an atomic `findOneAndUpdate`, so concurrent scrapers always get
         distinct terms. All state is in MongoDB, so a server/scraper restart never breaks

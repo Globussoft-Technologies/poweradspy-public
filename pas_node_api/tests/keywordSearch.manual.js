@@ -201,6 +201,26 @@ async function fresh(col) {
     ok(prevSess.endTime && prevSess.status === 'completed', 'auto: previous term got endTime + status=completed (no adsCount)');
     ok(prevSess.adsCount === undefined, 'auto: no adsCount stored');
 
+    // 9) GOOGLE implicit continuous loop — daily claims reset on exhaustion
+    await fresh(col);
+    await upsert(col, { type: 1, value: 'g1', email: 'a@x.com', network: 'google' });
+    await upsert(col, { type: 1, value: 'g2', email: 'b@x.com', network: 'google' });
+    const g1 = await claim(col, { type: 1, priority: false, network: 'google' });
+    const g2 = await claim(col, { type: 1, priority: false, network: 'google' });
+    ok(g1 && g2, 'google daily: claim two terms');
+    // close both sessions so the reset (which excludes currently-scraping docs) can recycle them
+    await complete(col, { ...g1, status: 'completed', network: 'google' });
+    await complete(col, { ...g2, status: 'completed', network: 'google' });
+    const g3 = await claim(col, { type: 1, priority: false, network: 'google' });
+    ok(g3 === null, 'google daily: pool exhausted same day');
+    // simulate the controller's implicit reset (clear dailyClaimDate for non-scrapping google docs)
+    await col.updateMany(
+      { type: 1, networks: 'google', 'networkState.google.dailyClaimDate': today(), 'networkState.google.lastScrape.status': { $ne: 'scrapping' } },
+      { $unset: { 'networkState.google.dailyClaimDate': '' } }
+    );
+    const gLoop = await claim(col, { type: 1, priority: false, network: 'google' });
+    ok(gLoop && (gLoop.value === 'g1' || gLoop.value === 'g2'), 'google daily: after reset, a previous term is served again');
+
     await col.drop().catch(() => {});
     console.log('\nDone.');
   } catch (e) {

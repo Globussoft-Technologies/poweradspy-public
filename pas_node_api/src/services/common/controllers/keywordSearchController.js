@@ -297,36 +297,77 @@ function buildClaimAttempts({ type, net, isPriority, today, syntheticOnly }) {
   return [daily(syntheticOnly ? { userInfos: null } : {})];
 }
 
+// Reset the Google daily-claim marker so a drained pool can be served again in the same
+// call. We exclude docs that are actively being scraped (lastScrape.status === 'scrapping')
+// so a keyword currently owned by another scraper is not immediately re-claimed.
+async function resetGoogleDailyClaims(col, { type, today }) {
+  const r = await col.updateMany(
+    {
+      type,
+      networks: 'google',
+      'networkState.google.dailyClaimDate': today,
+      'networkState.google.lastScrape.status': { $ne: 'scrapping' },
+    },
+    { $unset: { 'networkState.google.dailyClaimDate': '' } }
+  );
+  if (r.modifiedCount) {
+    log.debug('google daily claims reset for loop', { type, today, resetCount: r.modifiedCount });
+  }
+  return r.modifiedCount;
+}
+
 // ── internal: claim ONE term (atomic) for a network — tries the ordered attempts ──
 async function claimOne(col, { type, net, isPriority, owner, today, now, syntheticOnly }) {
   const lastScrapePath = `networkState.${net}.lastScrape`;
   const attempts = buildClaimAttempts({ type, net, isPriority, today, syntheticOnly });
 
-  for (const a of attempts) {
-    const scrapeId = new ObjectId();
-    // Atomic claim: the per-network gate field is flipped in the same op, so two concurrent
-    // scrapers (same network) can never grab the same doc. A failed attempt (no match)
-    // writes nothing, so we just fall through to the next tier.
-    const doc = await col.findOneAndUpdate(
-      a.filter,
-      {
-        $set: { ...a.setOut, [lastScrapePath]: { date: today, status: 'scrapping', owner } },
-        $push: { scrapping_status: { _id: scrapeId, network: net, type, mode: a.mode, owner, date: today, startTime: now, status: 'scrapping' } },
-      },
-      { sort: { updatedAt: a.sortDir }, returnDocument: 'after' }
-    );
-    if (doc) {
-      // `users` = the rich searcher list ({ id, username, email }) so the scraper knows WHOSE
-      // request this term is. Falls back to emails-only (legacy `users`) if userInfos is absent.
-      return {
-        docId: doc._id, type: doc.type, value: doc.value, network: net, scrapeId, mode: a.mode,
-        users: Array.isArray(doc.userInfos) && doc.userInfos.length
-          ? doc.userInfos
-          : (doc.users || []).map(e => ({ id: null, username: '', email: e })),
-      };
+  async function tryClaim(resetDone = false) {
+    for (const a of attempts) {
+      const scrapeId = new ObjectId();
+      // Atomic claim: the per-network gate field is flipped in the same op, so two concurrent
+      // scrapers (same network) can never grab the same doc. A failed attempt (no match)
+      // writes nothing, so we just fall through to the next tier.
+      const doc = await col.findOneAndUpdate(
+        a.filter,
+        {
+          $set: { ...a.setOut, [lastScrapePath]: { date: today, status: 'scrapping', owner } },
+          $push: {
+            scrapping_status: {
+              $each: [{ _id: scrapeId, network: net, type, mode: a.mode, owner, date: today, startTime: now, status: 'scrapping' }],
+              $slice: -config.keywordSearch.scrappingStatusRetention,
+            },
+          },
+        },
+        { sort: { updatedAt: a.sortDir }, returnDocument: 'after' }
+      );
+      if (doc) {
+        // `users` = the rich searcher list ({ id, username, email }) so the scraper knows WHOSE
+        // request this term is. Falls back to emails-only (legacy `users`) if userInfos is absent.
+        return {
+          docId: doc._id, type: doc.type, value: doc.value, network: net, scrapeId, mode: a.mode,
+          users: Array.isArray(doc.userInfos) && doc.userInfos.length
+            ? doc.userInfos
+            : (doc.users || []).map(e => ({ id: null, username: '', email: e })),
+        };
+      }
     }
+
+    // Google implicit continuous loop: when a daily claim exhausts all tiers, reset the
+    // daily-claim marker and try once more. This is Google-only and does not require any
+    // client flag. Priority mode is unchanged (isActive is never reset here).
+    if (
+      !resetDone &&
+      net === 'google' &&
+      !isPriority &&
+      config.keywordSearch.google?.continuousLoop !== false
+    ) {
+      await resetGoogleDailyClaims(col, { type, today });
+      return tryClaim(true);
+    }
+    return null;
   }
-  return null;
+
+  return tryClaim(false);
 }
 
 // ── internal: complete ONE session by scrapeId (owner-checked) ──────────────

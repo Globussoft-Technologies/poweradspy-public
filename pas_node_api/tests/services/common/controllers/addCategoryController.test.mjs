@@ -74,6 +74,49 @@ describe("addCategoryController > getDescriptionDetails", () => {
       ad_image: "https://x/PowerAdspy/i.png",
     });
   });
+  it("google paginates on internal id and exposes ad_id + cursor separately", async () => {
+    const search = vi.fn(async (params) => {
+      // Assert ES query uses the monotonic internal PK, not the public ad_id.
+      expect(params.body.sort).toEqual([{ id: "asc" }]);
+      expect(params.body.query.bool.must[0].range).toEqual({ id: { gt: 7 } });
+      return { hits: { hits: [{ _source: {
+        id: 42,
+        ad_id: "pub_99",
+        ad_text: "GT",
+        ad_title: "GTitle",
+        post_owner: "GO",
+        newsfeed_description: "GNF",
+      }}]}};
+    });
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "google", exVal: 7, limit: 20 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body[0]).toMatchObject({
+      id: 42,
+      cursor: 42,
+      ad_id: "pub_99",
+      ad_text: "GT",
+      ad_title: "GTitle",
+      post_owner_name: "GO",
+      news_feed_description: "GNF",
+    });
+  });
+  it("non-google platforms have cursor equal to id and no ad_id", async () => {
+    const search = vi.fn(async (params) => {
+      expect(params.body.sort).toEqual([{ "facebook_ad.id": "asc" }]);
+      return { hits: { hits: [{ _source: {
+        "facebook_ad.id": 9,
+        "facebook_ad.type": "TEXT",
+      } }] } };
+    });
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook" }, body: {} }, res);
+    expect(res.body[0].id).toBe(9);
+    expect(res.body[0].cursor).toBe(9);
+    expect(res.body[0].ad_id).toBeUndefined();
+  });
   it("VIDEO row with thumb containing 'PowerAdspy' → keeps thumb", async () => {
     const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
       "facebook_ad.id": 1, "facebook_ad.type": "VIDEO",
@@ -253,7 +296,7 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     return { body: { platform: "facebook", category: "FooCat", category_id: "1234", ad_id: 7, ...overrides } };
   }
 
-  it("inserts new category when none exists + updates ad doc", async () => {
+  it("inserts new category when none exists + updates ad doc with confidence_score", async () => {
     const indexFn = vi.fn(async () => {});
     const updateFn = vi.fn(async () => {});
     setupES({
@@ -265,8 +308,18 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     await newCatInsertion(happyBody(), res);
     expect(res.statusCode).toBe(200);
     expect(res.body.message).toContain("New category");
+    expect(res.body.updated).toBe(true);
+    expect(res.body.warning).toBeUndefined();
     expect(indexFn).toHaveBeenCalledWith(expect.objectContaining({ index: "category" }));
     expect(updateFn).toHaveBeenCalled();
+    const updateCall = updateFn.mock.calls[0][0];
+    expect(updateCall.body.doc).toMatchObject({
+      category_id: "1234",
+      "facebook.category": "FooCat",
+      subCategory_id: null,
+      "facebook.subCategory": null,
+      confidence_score: 0,
+    });
   });
 
   it("inserts new category WITH subcategory", async () => {
@@ -400,18 +453,59 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it("ad doc not found → warns and continues, 200", async () => {
+  it("ad doc not found → warns and continues, 200, updated=false", async () => {
     setupES({ existHits: [], adHits: [] });
     const res = mkRes();
     await newCatInsertion(happyBody(), res);
     expect(res.statusCode).toBe(200);
+    expect(res.body.updated).toBe(false);
+    expect(res.body.warning).toMatch(/not found/);
   });
 
-  it("ad update throws → warn (still 200)", async () => {
+  it("ad update throws → warn, 200, updated=false", async () => {
     setupES({ existHits: [], adHits: [{ _id: "ad" }], updateFn: vi.fn(async () => { throw new Error("upd-fail"); }) });
     const res = mkRes();
     await newCatInsertion(happyBody(), res);
     expect(res.statusCode).toBe(200);
+    expect(res.body.updated).toBe(false);
+    expect(res.body.warning).toMatch(/update failed/);
+  });
+
+  it("ad lookup uses exact term query with string + numeric id", async () => {
+    let capturedAdSearch = null;
+    const search = vi.fn(async (params) => {
+      if (params.index === "category") return { hits: { hits: [] } };
+      capturedAdSearch = params;
+      return { hits: { hits: [{ _id: "ad-1" }] } };
+    });
+    const update = vi.fn(async () => {});
+    const svc = { db: { elastic: { search, index: vi.fn(), update } }, log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
+    serviceRegistry.getService.mockReturnValue(svc);
+    const res = mkRes();
+    await newCatInsertion(happyBody({ ad_id: "13011" }), res);
+    expect(capturedAdSearch).not.toBeNull();
+    expect(capturedAdSearch.body.query.bool.should).toEqual([
+      { term: { "facebook_ad.id": "13011" } },
+      { term: { "facebook_ad.id": 13011 } },
+    ]);
+    expect(capturedAdSearch.body.query.bool.minimum_should_match).toBe(1);
+  });
+
+  it("ad lookup uses only string term for non-numeric ad_id", async () => {
+    let capturedAdSearch = null;
+    const search = vi.fn(async (params) => {
+      if (params.index === "category") return { hits: { hits: [] } };
+      capturedAdSearch = params;
+      return { hits: { hits: [{ _id: "ad-1" }] } };
+    });
+    const update = vi.fn(async () => {});
+    const svc = { db: { elastic: { search, index: vi.fn(), update } }, log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
+    serviceRegistry.getService.mockReturnValue(svc);
+    const res = mkRes();
+    await newCatInsertion(happyBody({ ad_id: "abc123" }), res);
+    expect(capturedAdSearch.body.query.bool.should).toEqual([
+      { term: { "facebook_ad.id": "abc123" } },
+    ]);
   });
 
   it("uses gdnService when platform-specific service missing", async () => {

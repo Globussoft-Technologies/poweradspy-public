@@ -131,11 +131,14 @@ and hands the **next** term. The scraper does **not** track `docId`/`scrapeId` a
 claim **only synthetic** (manually-inserted, not-yet-user-searched) keywords. Omit it for the
 normal pool — existing behaviour is unchanged. The response echoes `synthetic: true`.
 
-**Google priority ordering (network-specific):** for `network: "google"`, a normal **daily**
-claim (no `priority` flag) serves terms in a fixed order on **every** hit — **priority**
-(`networkState.google.isActive:true`) first, then **user-searched**, then **synthetic**. The
-status transitions are identical to the existing flow (priority flips `isActive`; daily sets
-`dailyClaimDate`). Every other network — and any explicit `priority:true` — is unchanged.
+**Google priority ordering + implicit loop (network-specific):** for `network: "google"`, a
+normal **daily** claim (no `priority` flag) serves terms in a fixed order on **every** hit —
+**priority** (`networkState.google.isActive:true`) first, then **user-searched**, then
+**synthetic**. When all three tiers are exhausted for the day, the server **automatically
+resets** `networkState.google.dailyClaimDate` for Google and tries again, so Google scrapers
+never sit idle waiting for the next calendar day. No client flag is required. The status
+transitions are unchanged (priority flips `isActive`; daily sets `dailyClaimDate`). Every
+other network — and any explicit `priority:true` — is unchanged.
 
 **The loop (size = 1):**
 

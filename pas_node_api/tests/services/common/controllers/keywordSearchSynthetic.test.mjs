@@ -46,9 +46,10 @@ function tierOf(filter) {
   return "daily";
 }
 
-function makeCol({ existing = new Set(), claimDoc = null, counts = {}, oldest = {}, oldestAny = {}, tierDocs = null } = {}) {
-  const calls = { bulkWrite: [], findOneAndUpdate: [], updateOne: [], updateMany: [], countDocuments: [], find: [], deleteMany: [] };
+function makeCol({ existing = new Set(), claimDoc = null, counts = {}, oldest = {}, oldestAny = {}, tierDocs = null, tierDocsAfterReset = null } = {}) {
+  const calls = { bulkWrite: [], findOneAndUpdate: [], findOneAndUpdateArgs: [], updateOne: [], updateMany: [], countDocuments: [], find: [], deleteMany: [] };
   let claimsLeft = claimDoc ? 1 : 0;
+  let resetDone = false;
   return {
     calls,
     createIndexes: vi.fn(async () => []),
@@ -57,9 +58,11 @@ function makeCol({ existing = new Set(), claimDoc = null, counts = {}, oldest = 
       const upsertedCount = ops.filter((o) => !existing.has(o.updateOne.filter.valueNorm)).length;
       return { upsertedCount };
     }),
-    findOneAndUpdate: vi.fn(async (filter) => {
+    findOneAndUpdate: vi.fn(async (filter, update, opts) => {
       calls.findOneAndUpdate.push(filter);
-      if (tierDocs) return tierDocs[tierOf(filter)] ?? null; // tier-aware claim simulation
+      calls.findOneAndUpdateArgs.push({ filter, update, opts });
+      const src = resetDone && tierDocsAfterReset ? tierDocsAfterReset : tierDocs;
+      if (src) return src[tierOf(filter)] ?? null; // tier-aware claim simulation
       if (claimsLeft > 0) { claimsLeft--; return claimDoc; }
       return null;
     }),
@@ -67,7 +70,14 @@ function makeCol({ existing = new Set(), claimDoc = null, counts = {}, oldest = 
       calls.updateOne.push({ filter, update, opts });
       return { upsertedCount: existing.has(filter.valueNorm) ? 0 : 1, matchedCount: 1, modifiedCount: 1 };
     }),
-    updateMany: vi.fn(async (filter) => { calls.updateMany.push(filter); return { modifiedCount: 0 }; }),
+    updateMany: vi.fn(async (filter) => {
+      calls.updateMany.push(filter);
+      // Only flag resetDone for the Google daily-claim reset (not auto-closeOwnerSessions).
+      if (filter && filter['networkState.google.dailyClaimDate'] !== undefined) {
+        resetDone = true;
+      }
+      return { modifiedCount: 0 };
+    }),
     countDocuments: vi.fn(async (filter) => { calls.countDocuments.push(filter); return counts[categoryOf(filter)] ?? 0; }),
     deleteMany: vi.fn(async (filter) => { calls.deleteMany.push(filter); return { deletedCount: (filter._id && filter._id.$in ? filter._id.$in.length : 0) }; }),
     find: vi.fn((filter, opts) => {
@@ -303,6 +313,70 @@ describe("scraperWork google ordering (daily, no priority flag)", () => {
     expect(col.calls.findOneAndUpdate.length).toBe(1);
     expect(tierOf(col.calls.findOneAndUpdate[0])).toBe("priority");
     expect(res.body.mode).toBe("priority");
+  });
+
+  it("Google daily implicitly loops when exhausted — resets dailyClaimDate and retries", async () => {
+    // First pass: all 3 tiers miss. After reset, the user tier hits.
+    const col = makeCol({
+      tierDocs: { priority: null, user: null, synthetic: null },
+      tierDocsAfterReset: { priority: null, user: doc("loop-user"), synthetic: null },
+    });
+    installMongo(col);
+    const res = mockRes();
+    await scraperWork(req({ type: "keyword", network: "google" }), res);
+
+    // 3 initial attempts miss; retry stops once the user tier hits (priority miss + user hit)
+    expect(col.calls.findOneAndUpdate.length).toBe(5);
+    const resetFilters = col.calls.updateMany.filter((f) => f['networkState.google.dailyClaimDate'] !== undefined);
+    expect(resetFilters.length).toBe(1);
+    expect(res.body.count).toBe(1);
+    expect(res.body.data[0].value).toBe("loop-user");
+
+    // Reset must be Google-only and exclude currently-scraping docs
+    expect(resetFilters[0]).toMatchObject({
+      type: 1,
+      networks: "google",
+      "networkState.google.dailyClaimDate": expect.any(String),
+      "networkState.google.lastScrape.status": { $ne: "scrapping" },
+    });
+  });
+
+  it("Google daily loop is disabled when continuousLoop is false", async () => {
+    const saved = config.keywordSearch.google.continuousLoop;
+    try {
+      config.keywordSearch.google.continuousLoop = false;
+      const col = makeCol({ tierDocs: { priority: null, user: null, synthetic: null } });
+      installMongo(col);
+      const res = mockRes();
+      await scraperWork(req({ type: "keyword", network: "google" }), res);
+      expect(col.calls.findOneAndUpdate.length).toBe(3); // 3 tiers, no retry
+      const resetFilters = col.calls.updateMany.filter((f) => f['networkState.google.dailyClaimDate'] !== undefined);
+      expect(resetFilters.length).toBe(0);
+      expect(res.body.count).toBe(0);
+    } finally {
+      config.keywordSearch.google.continuousLoop = saved;
+    }
+  });
+
+  it("Non-Google networks do NOT reset dailyClaimDate when exhausted", async () => {
+    const col = makeCol({ tierDocs: { daily: null } });
+    installMongo(col);
+    const res = mockRes();
+    await scraperWork(req({ type: "keyword", network: "facebook" }), res);
+    expect(col.calls.findOneAndUpdate.length).toBe(1);
+    const resetFilters = col.calls.updateMany.filter((f) => f['networkState.google.dailyClaimDate'] !== undefined);
+    expect(resetFilters.length).toBe(0);
+    expect(res.body.count).toBe(0);
+  });
+
+  it("claim slices scrapping_status to the configured retention", async () => {
+    const col = makeCol({ tierDocs: { priority: doc("p") } });
+    installMongo(col);
+    const res = mockRes();
+    await scraperWork(req({ type: "keyword", network: "google" }), res);
+    const { update } = col.calls.findOneAndUpdateArgs[0];
+    expect(update.$push.scrapping_status.$slice).toBe(-config.keywordSearch.scrappingStatusRetention);
+    expect(Array.isArray(update.$push.scrapping_status.$each)).toBe(true);
   });
 });
 

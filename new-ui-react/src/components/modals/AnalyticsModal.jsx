@@ -19,6 +19,17 @@ const MARKETING_PLATFORM_IMGS = {
   'xg4ken.com': mpKenshoo,
 };
 
+const MARKET_PLATFORMS = [
+  { match: 'demdex.net',    title: 'Adobe Audience Manager' },
+  { match: 'branch',        title: 'Branch' },
+  { match: 'conversionx.co',title: 'Conversionx' },
+  { match: 'doubleclick',   title: 'Google Marketing Platform' },
+  { match: 'ow.ly',         title: 'Hootsuite' },
+  { match: 'hubs.ly',       title: 'Hubspot' },
+  { match: 'xg4ken.com',    title: 'Kenshoo' },
+  { match: 'agkn.com',      title: 'Neustar' },
+];
+
 import ecBigCommerce from "../../assets/ecommercePlatform/BigCommerce.png";
 import ecDemandware from "../../assets/ecommercePlatform/Demandware.png";
 import ecPrestaShop from "../../assets/ecommercePlatform/PrestaShop.png";
@@ -115,6 +126,7 @@ import {
   X,
   FileText,
   Youtube,
+  Megaphone,
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import { useAdInsights } from "../../hooks/useAdInsights";
@@ -319,6 +331,55 @@ const formatSource = (v) => {
   }
   return String(v);
 };
+
+// Detect marketing platforms from the same URL sources the backend filter uses
+// (gdn_ad_url, gdn_ad_outgoing_links, gdn_ad_meta_data). Returns display titles.
+function detectMarketingPlatforms(d, ad, insights) {
+  const outgoing = Array.isArray(insights?.outgoingLinks)
+    ? insights.outgoingLinks[0]
+    : insights?.outgoingLinks;
+  const mpUrlObj = d?.market_platform_urls || ad?.marketPlatformUrls || {};
+
+  // GDN stores the redirect chain as a pipe-separated string; YouTube stores it
+  // as an array in the `redirect_urls` ES field. Normalize both to flat strings.
+  const asUrlStrings = (v) => {
+    if (Array.isArray(v)) return v.filter(Boolean).map(String);
+    if (typeof v === 'string' && v) return v.split('||').map(s => s.trim()).filter(Boolean);
+    return [];
+  };
+
+  const mpRedirects      = asUrlStrings(mpUrlObj?.url_redirects);
+  const mpRedirectUrlsArr = asUrlStrings(mpUrlObj?.redirect_urls);
+  const topLevelRedirects = asUrlStrings(d?.redirect_urls);
+
+  const urlsToCheck = [
+    d?.destination_url, d?.url, d?.redirect_url, d?.final_url, d?.source_url,
+    outgoing?.source_url, outgoing?.redirect_url, outgoing?.final_url,
+    mpUrlObj?.destination_url,
+    mpUrlObj?.url_destination,
+    mpUrlObj?.source_url,
+    mpUrlObj?.redirect_url,
+    mpUrlObj?.final_url,
+    ...mpRedirects,
+    ...mpRedirectUrlsArr,
+    ...topLevelRedirects,
+  ].filter(Boolean);
+  if (Array.isArray(d?.urlArray)) {
+    d.urlArray.forEach(u => u?.url && urlsToCheck.push(u.url));
+  }
+  const seen = new Set();
+  const titles = [];
+  for (const url of urlsToCheck) {
+    const lower = url.toLowerCase();
+    for (const mp of MARKET_PLATFORMS) {
+      if (lower.includes(mp.match) && !seen.has(mp.match)) {
+        seen.add(mp.match);
+        titles.push(mp.title);
+      }
+    }
+  }
+  return titles;
+}
 
 const AdTextBlock = ({ text, isLight }) => {
   const [expanded, setExpanded] = useState(false);
@@ -1215,7 +1276,7 @@ const AnalyticsModal = ({
       },
       {
         label: "AD LANGUAGE",
-        value: d.language || d.lang || d.adLanguage || "—",
+        value: d.language || d.lang || d.adLanguage || d.ad_language || "—",
         icon: Globe,
         color: "text-[#6b99ff]",
       },
@@ -1293,7 +1354,7 @@ const AnalyticsModal = ({
       {
         label: "AFFILIATE NETWORK",
         value: (() => {
-          const aff = d.affiliate_data || d.clickbank_data;
+          const aff = d.affiliate_data;
           if (!aff) return "—";
           const raw = Array.isArray(aff) ? aff.join(", ") : String(aff);
           // Normalize legacy/lowercase ClickBank spelling for display.
@@ -1303,12 +1364,63 @@ const AnalyticsModal = ({
         color: "text-green-400",
       },
       {
+        label: "MARKETING PLATFORM",
+        value: (() => {
+          const platforms = detectMarketingPlatforms(d, ad, insights);
+          return platforms.length ? platforms.join(", ") : "—";
+        })(),
+        renderValue: (value) => {
+          if (value === "—") return "—";
+          const platforms = value.split(", ");
+          return (
+            <div className="flex flex-wrap justify-end gap-1 max-w-[75%]">
+              {platforms.map((name, i) => (
+                <span
+                  key={i}
+                  className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border leading-tight ${
+                    isLight
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                      : "bg-indigo-500/10 border-indigo-400/30 text-indigo-300"
+                  }`}
+                  title={name}
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          );
+        },
+        icon: Megaphone,
+        color: "text-indigo-400",
+      },
+      {
         label: "ECOMMERCE PLATFORM",
         value: (() => {
           const ec = d.built_with;
           if (!ec) return "—";
           return Array.isArray(ec) ? ec.join(", ") : String(ec);
         })(),
+        renderValue: (value) => {
+          if (value === "—") return "—";
+          const items = value.split(", ");
+          return (
+            <div className="flex flex-wrap justify-end gap-1 max-w-[75%]">
+              {items.map((name, i) => (
+                <span
+                  key={i}
+                  className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border leading-tight ${
+                    isLight
+                      ? "bg-sky-50 border-sky-200 text-sky-700"
+                      : "bg-sky-500/10 border-sky-400/30 text-sky-300"
+                  }`}
+                  title={name}
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          );
+        },
         icon: BarChart3,
         color: "text-sky-400",
       },
@@ -1319,6 +1431,27 @@ const AnalyticsModal = ({
           if (!funnel) return "—";
           return Array.isArray(funnel) ? funnel.join(", ") : String(funnel);
         })(),
+        renderValue: (value) => {
+          if (value === "—") return "—";
+          const items = value.split(", ");
+          return (
+            <div className="flex flex-wrap justify-end gap-1 max-w-[75%]">
+              {items.map((name, i) => (
+                <span
+                  key={i}
+                  className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border leading-tight ${
+                    isLight
+                      ? "bg-amber-50 border-amber-200 text-amber-700"
+                      : "bg-amber-500/10 border-amber-400/30 text-amber-300"
+                  }`}
+                  title={name}
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          );
+        },
         icon: Zap,
         color: "text-amber-400",
       },
@@ -1439,16 +1572,6 @@ const AnalyticsModal = ({
               {/* Marketing Platform + Ecommerce Platform + Funnel logos below advertiser name */}
               {(() => {
                 // --- Marketing Platform logos (detected from URLs) ---
-                const MARKET_PLATFORMS = [
-                  { match: 'demdex.net',    title: 'Adobe Audience Manager',    file: 'demdex.net' },
-                  { match: 'branch',        title: 'Branch',                    file: 'branch' },
-                  { match: 'conversionx.co',title: 'Conversionx',              file: 'conversionx.co' },
-                  { match: 'doubleclick',   title: 'Google Marketing Platform', file: 'doubleclick' },
-                  { match: 'ow.ly',         title: 'Hootsuite',                 file: 'ow.ly' },
-                  { match: 'hubs.ly',       title: 'Hubspot',                   file: 'hubs.ly' },
-                  { match: 'xg4ken.com',    title: 'Kenshoo',                   file: 'xg4ken.com' },
-                  { match: 'agkn.com',      title: 'Neustar',                   file: 'agkn.com' },
-                ];
                 const outgoing = Array.isArray(insights.outgoingLinks) ? insights.outgoingLinks[0] : insights.outgoingLinks;
                 const mpUrlObj = d?.market_platform_urls || ad?.marketPlatformUrls || {};
                 const mpRedirects = (mpUrlObj?.url_redirects || '').split('||').map(s => s.trim()).filter(Boolean);
@@ -1660,6 +1783,8 @@ const AnalyticsModal = ({
                             {regionExpanded ? "less" : "..."}
                           </button>
                         </div>
+                      ) : item.renderValue ? (
+                        item.renderValue(item.value)
                       ) : (
                         <span
                           className={`text-[14px] font-semibold truncate max-w-[60%] ${isLight ? "text-gray-900" : "text-white/85"}`}

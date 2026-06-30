@@ -182,6 +182,11 @@ const PLATFORM_CONFIG = {
  * Queries the platform-specific ES index for ads with id > exVal, returns
  * a normalised array used for AI category mapping.
  *
+ * Each row includes a `cursor` field that is the stable, monotonic value to pass
+ * as the next `exVal`. For most platforms `cursor === id`. For Google the index
+ * has a distinct internal PK (`id`) and a public `ad_id`; `cursor` is the internal
+ * `id` so pagination is stable, while `ad_id` is returned separately for ad lookup.
+ *
  * Query/body params: platform (required), exVal (default 0), limit (default 150)
  */
 async function getDescriptionDetails(req, res) {
@@ -228,6 +233,9 @@ async function getDescriptionDetails(req, res) {
       const row = {};
 
       row.id                    = src[pageField];
+      // Stable pagination cursor: the exact value the caller should send back as
+      // the next `exVal`. This is always the field the ES sort/range used.
+      row.cursor                = src[pageField];
       // Only platforms whose index keeps id and ad_id distinct (Google) carry both.
       if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
       row.ad_text               = src[cfg.textField]     ?? null;
@@ -493,19 +501,29 @@ async function newCatInsertion(req, res) {
 
     // ── Step 2: Update the ad record in the platform's search_mix index ──
     const esForPlat = platService?.db?.elastic || gdnService.db.elastic;
-    // GDN is on gdn_search_mix_v2 — resolve the env-correct index from the live ES client, not the config-immune static map.
-    const esIndex = ((platCfg.service === 'gdn' || platCfg.service === 'native') && esForPlat?.indexName) ? esForPlat.indexName : platCfg.index;
+    // Prefer the live ES client's indexName when available (handles gdn_search_mix_v2,
+    // native_search_mix_v2, or any future index cutover), fall back to config.
+    const esIndex = (esForPlat?.indexName) ? esForPlat.indexName : platCfg.index;
+    let adUpdated = false;
+    let adWarning = null;
     try {
-      gdnService.log?.info(`[newCatInsertion] searching index="${platCfg.index}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
+      gdnService.log?.info(`[newCatInsertion] searching index="${esIndex}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
+
+      // Build exact-ID lookup: some platforms index the id as long (facebook_ad.id),
+      // others as keyword (google.ad_id). term queries are exact and faster than match.
+      const adIdStr     = String(ad_id);
+      const adIdNum     = Number(ad_id);
+      const adIdNumValid = !Number.isNaN(adIdNum) && String(adIdNum) === adIdStr;
+      const shouldClauses = [{ term: { [platCfg.idField]: adIdStr } }];
+      if (adIdNumValid) shouldClauses.push({ term: { [platCfg.idField]: adIdNum } });
+
       const adSearch = await esForPlat.search({
         index: esIndex,
         body:  {
           query: {
             bool: {
-              should: [
-                { match: { [platCfg.idField]: Number(ad_id) } },
-                { match: { [platCfg.idField]: String(ad_id) } },
-              ],
+              should: shouldClauses,
+              minimum_should_match: 1,
             },
           },
         },
@@ -517,6 +535,8 @@ async function newCatInsertion(req, res) {
           [categoryField]:    category,
           subCategory_id:     subCategoryId || null,
           [subCategoryField]: subCategory   || null,
+          // Mirrors legacy PHP: a human-assigned category is marked as certain.
+          confidence_score:   0,
         };
         // Version-aware: 6.x needs type 'doc' (matches PHP: 'type' => 'doc'),
         // TikTok's ES 8.1 is typeless and would reject an explicit type.
@@ -524,13 +544,17 @@ async function newCatInsertion(req, res) {
           index: esIndex,
           id:    adHits[0]._id,
           body:  { doc: updateDoc },
+          refresh: 'wait_for',
         }));
-        gdnService.log?.info(`[newCatInsertion] ${platCfg.index} updated for ad_id=${ad_id}`);
+        adUpdated = true;
+        gdnService.log?.info(`[newCatInsertion] ${esIndex} updated for ad_id=${ad_id}`);
       } else {
-        gdnService.log?.warn(`[newCatInsertion] ad_id=${ad_id} not found in ${platCfg.index} — skipping update`);
+        adWarning = `ad_id=${ad_id} not found in ${esIndex}`;
+        gdnService.log?.warn(`[newCatInsertion] ${adWarning} — skipping update`);
       }
     } catch (updateErr) {
-      gdnService.log?.warn(`[newCatInsertion] ${platCfg.index} update failed for ad_id=${ad_id}: ${updateErr.message}`);
+      adWarning = `update failed for ad_id=${ad_id}: ${updateErr.message}`;
+      gdnService.log?.warn(`[newCatInsertion] ${adWarning}`);
     }
 
     // ── Step 3: Sync to MongoDB sdui_config (fire-and-forget) ───────────
@@ -557,8 +581,10 @@ async function newCatInsertion(req, res) {
       }
     });
 
-    gdnService.log?.info(`[newCatInsertion] Processed ad_id=${ad_id}, category=${category}, sub=${subCategory}`);
-    return res.status(200).json({ code: 200, message, ad_id });
+    gdnService.log?.info(`[newCatInsertion] Processed ad_id=${ad_id}, category=${category}, sub=${subCategory}, updated=${adUpdated}`);
+    const response = { code: 200, message, ad_id, updated: adUpdated };
+    if (adWarning) response.warning = adWarning;
+    return res.status(200).json(response);
 
   } catch (err) {
     return res.status(500).json({ code: 500, error: err.message });
