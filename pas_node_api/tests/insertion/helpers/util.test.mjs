@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const { isNullLike, normalizeNullLike, sanitizePayload } = require("../../../src/insertion/helpers/util");
+const { isNullLike, normalizeNullLike, sanitizePayload, latin1SafeUrl, latin1SafeUrlCols } = require("../../../src/insertion/helpers/util");
 
 describe("insertion/helpers/util > isNullLike", () => {
   it("returns true for undefined, null, empty string and case-insensitive 'null'", () => {
@@ -67,5 +67,41 @@ describe("insertion/helpers/util > sanitizePayload", () => {
     expect(out.count).toBe(42);
     expect(out.zero).toBe(0);
     expect(out.flag).toBe(false);
+  });
+});
+
+describe("insertion/helpers/util > latin1SafeUrl", () => {
+  it("leaves a pure-ASCII URL untouched", () => {
+    const url = "https://example.com/p?utm_term=sale-2026&id=120247975582120006";
+    expect(latin1SafeUrl(url)).toBe(url);
+  });
+
+  it("percent-encodes CJK so the result is pure latin1 and fully recoverable", () => {
+    const decoded = "utm_term=Image-UK-现货-260626"; // post-urldecode value that broke the insert
+    const safe = latin1SafeUrl(decoded);
+    expect(/^[\x00-\xFF]*$/.test(safe)).toBe(true); // binds to a latin1 column
+    expect(safe).toBe("utm_term=Image-UK-%E7%8E%B0%E8%B4%A7-260626");
+    expect(decodeURIComponent(safe)).toBe(decoded); // no data loss
+  });
+
+  it("encodes astral chars (emoji) without splitting the surrogate pair", () => {
+    expect(latin1SafeUrl("a😀b")).toBe("a%F0%9F%98%80b");
+  });
+
+  it("passes non-string / nullish values through unchanged", () => {
+    expect(latin1SafeUrl(null)).toBeNull();
+    expect(latin1SafeUrl(undefined)).toBeUndefined();
+    expect(latin1SafeUrl(123)).toBe(123);
+  });
+});
+
+describe("insertion/helpers/util > latin1SafeUrlCols", () => {
+  it("sanitizes only destination_url / initial_url and leaves other columns alone", () => {
+    const obj = { destination_url: "x/现货", initial_url: "y/现货", title: "现货 copy", id: 7 };
+    latin1SafeUrlCols(obj);
+    expect(obj.destination_url).toBe("x/%E7%8E%B0%E8%B4%A7");
+    expect(obj.initial_url).toBe("y/%E7%8E%B0%E8%B4%A7");
+    expect(obj.title).toBe("现货 copy"); // utf8mb4 text columns must NOT be mangled
+    expect(obj.id).toBe(7);
   });
 });

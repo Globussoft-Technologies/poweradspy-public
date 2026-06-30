@@ -29,7 +29,7 @@ const affected  = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRo
 const found    = (r) => (rows(r).length ? { code: 200, data: rows(r) } : { code: 400, data: null });
 const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 
-const { latin1SafeCols } = require('../../../insertion/helpers/util');
+const { latin1SafeCols, latin1SafeUrlCols } = require('../../../insertion/helpers/util');
 
 // ── native_ad ──────────────────────────────────────────────────────────────────
 
@@ -364,7 +364,9 @@ async function updateNativeAdCountryOnlyCount(exec, id) {
 // ── native_ad_meta_data ───────────────────────────────────────────────────────
 
 async function insertNativeAdMetaData(exec, d) {
-  const clean = stripNulls(d);
+  // destination_url is a latin1 column; percent-encode CJK/emoji in the urldecoded URL so it
+  // binds without the collation error instead of rolling back the ad.
+  const clean = latin1SafeUrlCols(stripNulls(d));
   const cols  = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO native_ad_meta_data (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,

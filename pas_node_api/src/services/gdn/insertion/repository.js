@@ -15,7 +15,7 @@
  *   - updateX → affected row count (number)
  */
 
-const { latin1SafeCols } = require('../../../insertion/helpers/util');
+const { latin1SafeCols, latin1SafeUrlCols } = require('../../../insertion/helpers/util');
 
 // ── Transaction helper (relaxes strict sql_mode for the insertion connection) ──
 async function withTransaction(sql, fn) {
@@ -317,7 +317,9 @@ async function bumpAdCountryOnlyCount(exec, id) {
 
 // ── gdn_ad_meta_data ────────────────────────────────────────────────────────────
 async function insertMetaData(exec, data) {
-  const clean = stripNulls(data);
+  // destination_url is a latin1 column; percent-encode CJK/emoji in the urldecoded URL so it
+  // binds without the collation error instead of rolling back the ad.
+  const clean = latin1SafeUrlCols(stripNulls(data));
   const cols = Object.keys(clean);
   return affected(await exec.query(
     `INSERT INTO gdn_ad_meta_data (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,

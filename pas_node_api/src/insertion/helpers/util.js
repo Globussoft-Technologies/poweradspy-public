@@ -54,6 +54,46 @@ function latin1Safe(value) {
 }
 
 /**
+ * latin1-bind a URL while PRESERVING it. The `*_ad_meta_data.destination_url` /
+ * `initial_url` columns are latin1, but they carry real destination URLs whose query
+ * params can legitimately contain CJK/emoji (e.g. `utm_term=现货`). After normalize()
+ * urldecodes the field, those code points become a utf8mb4 JS string that mysql2 can't
+ * bind to the latin1 column → 'Conversion from collation utf8mb4_unicode_ci into
+ * latin1_swedish_ci impossible for parameter', which rolls the whole insert back and
+ * silently drops the ad.
+ *
+ * Unlike latin1Safe (which STRIPS — fine for image-path columns), this percent-encodes
+ * only the out-of-latin1 code points, so the stored value is pure ASCII (binds cleanly)
+ * AND remains a valid, fully-recoverable URL. ASCII URLs pass through untouched.
+ * Non-string / nullish values pass through unchanged.
+ */
+function latin1SafeUrl(value) {
+  if (typeof value !== 'string') return value;
+  let out = '';
+  for (const ch of value) { // iterate by code point so astral chars (emoji) aren't split
+    if (ch.codePointAt(0) <= 0xFF) out += ch;
+    else { try { out += encodeURIComponent(ch); } catch { /* drop unencodable surrogate */ } }
+  }
+  return out;
+}
+
+/** The latin1 URL columns on the `*_ad_meta_data` tables (and instagram_ad_analytics). */
+const LATIN1_URL_COLS = ['destination_url', 'initial_url'];
+
+/**
+ * In-place latin1SafeUrl the known latin1 URL columns of an insert/update payload, so
+ * the meta-data INSERT (inside the txn → would lose the ad) can't throw the collation
+ * error on a CJK/emoji destination URL. Returns the same object for chaining.
+ */
+function latin1SafeUrlCols(obj, cols = LATIN1_URL_COLS) {
+  if (!obj || typeof obj !== 'object') return obj;
+  for (const k of cols) {
+    if (typeof obj[k] === 'string') obj[k] = latin1SafeUrl(obj[k]);
+  }
+  return obj;
+}
+
+/**
  * The latin1-charset columns on every network's `*_ad_variants` table. These are all
  * image / URL / path / size columns — binding a utf8mb4 param (emoji/CJK/accented char)
  * into one of them makes mysql2 throw the collation error and the whole insert rolls back,
@@ -116,5 +156,5 @@ function sanitizePayload(v) {
 
 module.exports = {
   nowDateTime, today, epochToDateTime, toInt, ensureUtf8mb3Compatible, truncateChars,
-  latin1Safe, latin1SafeCols, isNullLike, normalizeNullLike, sanitizePayload,
+  latin1Safe, latin1SafeCols, latin1SafeUrl, latin1SafeUrlCols, isNullLike, normalizeNullLike, sanitizePayload,
 };

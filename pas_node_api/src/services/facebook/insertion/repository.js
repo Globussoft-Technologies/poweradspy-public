@@ -47,7 +47,7 @@ async function withTransaction(sql, fn) {
   }
 }
 
-const { truncateChars, latin1Safe, latin1SafeCols } = require('../../../insertion/helpers/util');
+const { truncateChars, latin1Safe, latin1SafeCols, latin1SafeUrl, latin1SafeUrlCols } = require('../../../insertion/helpers/util');
 
 const rows = (r) => (Array.isArray(r) ? r : []);
 const firstId = (r) => (r && r.insertId ? r.insertId : 0);
@@ -404,7 +404,9 @@ async function getMetaData(exec, facebookAdId) {
   return found(await exec.query('SELECT facebook_ad_id FROM facebook_ad_meta_data WHERE facebook_ad_id = ? LIMIT 1', [facebookAdId]));
 }
 async function insertMetaData(exec, data) {
-  const clean = stripNulls(data);
+  // destination_url / initial_url are latin1 columns; percent-encode any CJK/emoji in the
+  // (urldecoded) URL so it binds without the collation error instead of rolling back the ad.
+  const clean = latin1SafeUrlCols(stripNulls(data));
   const cols = Object.keys(clean);
   return affected(await exec.query(
     `INSERT INTO facebook_ad_meta_data (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -420,7 +422,7 @@ async function updateMetaBuiltWith(exec, facebookAdId, builtWithStatus) {
 async function updateMetaInitialUrl(exec, facebookAdId, initialUrl) {
   return affected(await exec.query(
     'UPDATE facebook_ad_meta_data SET initial_url = ? WHERE facebook_ad_id = ?',
-    [initialUrl, facebookAdId]
+    [latin1SafeUrl(initialUrl), facebookAdId]
   ));
 }
 

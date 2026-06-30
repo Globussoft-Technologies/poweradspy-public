@@ -6,7 +6,7 @@
  * Conventions: getX → {code,data}; insertX → id; updateX → affected. `exec` is db.sql or a tx.
  */
 
-const { truncateChars, latin1Safe, latin1SafeCols } = require('../../../insertion/helpers/util');
+const { truncateChars, latin1Safe, latin1SafeCols, latin1SafeUrl, latin1SafeUrlCols } = require('../../../insertion/helpers/util');
 
 const rows = (r) => (Array.isArray(r) ? r : []);
 const firstId = (r) => (r && r.insertId ? r.insertId : 0);
@@ -250,7 +250,7 @@ async function updateVariantByAdId(exec, data, adId) {
 async function insertAnalytics(exec, d) {
   return firstId(await exec.query(
     'INSERT INTO instagram_ad_analytics (instagram_ad_id, likes, comments, shares, popularity, impression, engagement_rate, date, hits, initial_url) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    [d.instagram_ad_id, d.likes ?? 0, d.comments ?? 0, d.shares ?? 0, d.popularity ?? 0, d.impression ?? 0, d.engagement_rate ?? 0, d.date, d.hits ?? 1, d.initial_url ?? null]
+    [d.instagram_ad_id, d.likes ?? 0, d.comments ?? 0, d.shares ?? 0, d.popularity ?? 0, d.impression ?? 0, d.engagement_rate ?? 0, d.date, d.hits ?? 1, latin1SafeUrl(d.initial_url) ?? null]
   ));
 }
 async function updateAnalytics(exec, data, id) {
@@ -343,7 +343,9 @@ async function getMetaData(exec, adId) {
   return found(await exec.query('SELECT id FROM instagram_ad_meta_data WHERE instagram_ad_id = ? LIMIT 1', [adId]));
 }
 async function insertMetaData(exec, data) {
-  const clean = stripNulls(data);
+  // destination_url is a latin1 column; percent-encode CJK/emoji in the urldecoded URL so it
+  // binds without the collation error instead of rolling back the ad.
+  const clean = latin1SafeUrlCols(stripNulls(data));
   // initial_url no longer lives on instagram_ad_meta_data (moved to instagram_ad_analytics).
   // Drop it defensively so this INSERT never references the meta column.
   delete clean.initial_url;
@@ -362,7 +364,7 @@ async function updateMetaBuiltWith(exec, adId, builtWithStatus) {
 async function updateAnalyticsInitialUrl(exec, adId, initialUrl) {
   return affected(await exec.query(
     'UPDATE instagram_ad_analytics SET initial_url = ? WHERE instagram_ad_id = ?',
-    [initialUrl, adId]
+    [latin1SafeUrl(initialUrl), adId]
   ));
 }
 
