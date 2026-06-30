@@ -242,7 +242,17 @@ function resolveMediaUrl(storedPath) {
   if (/^https?:\/\//i.test(storedPath)) return storedPath;
   const base = config.insertion.nas.mediaUrl;
   if (!base) return storedPath;
-  return joinUrl(base, storedPath);
+  // Legacy rows store the old `/PowerAdspy(/n2|-Dev)?/…` prefix, but those files now
+  // live under `/<bucket>/stream/…` on the NAS. Rewrite the legacy prefix so old
+  // OCR/OCB-queued ads (every network shares this resolver) resolve to the real file
+  // instead of an unreachable `…/PowerAdspy/n2/…` URL. Modern `/<bucket>/stream/…`
+  // paths don't match and pass through unchanged. `/n2` variant is listed first so it
+  // is stripped whole (not left as a stray `n2/`).
+  const bucket = config.insertion.nas.bucket;
+  const resolved = bucket
+    ? storedPath.replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|PowerAdspy)\//i, `/${bucket}/stream/`)
+    : storedPath;
+  return joinUrl(base, resolved);
 }
 
 module.exports = { storeInNas, resolveMediaUrl, DEFAULT_IMAGE, TYPE_SUBFOLDER };

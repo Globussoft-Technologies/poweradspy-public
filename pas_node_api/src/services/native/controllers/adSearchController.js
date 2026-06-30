@@ -38,7 +38,8 @@ const AD_DETAIL_SELECT = `
     (SELECT GROUP_CONCAT(DISTINCT net.network)
      FROM native_ad_network nan
      JOIN networks net ON nan.network_id = net.id
-     WHERE nan.native_ad_id = native_ad.id)          AS ad_network
+     WHERE nan.native_ad_id = native_ad.id)          AS ad_network,
+    languages.name                                  AS language
 `;
 
 const AD_DETAIL_JOINS = `
@@ -53,6 +54,8 @@ LEFT JOIN native_ad_outgoing_links
     ON native_ad.id = native_ad_outgoing_links.native_ad_id
 LEFT JOIN native_ad_domains
     ON native_ad.domain_id = native_ad_domains.id
+LEFT JOIN languages
+    ON native_ad.language_id = languages.id
 `;
 
 /**
@@ -90,6 +93,7 @@ function mapEsSourceToAd(src) {
     domain_registered_date:       src['native_ad_domains.domain_registered_date']   || null,
     country:                      src['native_country_only.country']                 || null,
     ad_network:                   src['networks.network']                            || null,
+    language:                     src['native_ad.language']                          || null,
   };
 }
 
