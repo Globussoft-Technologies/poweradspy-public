@@ -77,8 +77,11 @@ function latin1SafeUrl(value) {
   return out;
 }
 
-/** The latin1 URL columns on the `*_ad_meta_data` tables (and instagram_ad_analytics). */
-const LATIN1_URL_COLS = ['destination_url', 'initial_url'];
+/** The latin1 URL columns on the `*_ad_meta_data` tables (and instagram_ad_analytics).
+ *  ad_url / meta_ad_url are the ad landing/library URLs — same CJK/emoji-in-query-param risk as
+ *  destination_url; insertMetaData writes them raw, so omitting them threw the collation-500 that
+ *  was the #1 facebook insert-reject (2026-07-01). */
+const LATIN1_URL_COLS = ['destination_url', 'initial_url', 'ad_url', 'meta_ad_url'];
 
 /**
  * In-place latin1SafeUrl the known latin1 URL columns of an insert/update payload, so
