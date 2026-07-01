@@ -80,6 +80,16 @@ import fnLeadpages from "../../assets/funnels/leadpages.png";
 import fnOptimizepress from "../../assets/funnels/optimizepress.png";
 import fnSamcart from "../../assets/funnels/samcart.png";
 import fnWishpond from "../../assets/funnels/wishpond.png";
+import afAwin from "../../assets/afiliate_network/awin.png";
+import afCj from "../../assets/afiliate_network/cj.png";
+import afClickbank from "../../assets/afiliate_network/ClickBank.png";
+import afClicksco from "../../assets/afiliate_network/clicksco.png";
+import afDigistore24 from "../../assets/afiliate_network/digistore24.png";
+import afImpact from "../../assets/afiliate_network/impact.png";
+import afMaxbounty from "../../assets/afiliate_network/maxbounty.png";
+import afPartnerstack from "../../assets/afiliate_network/partnerstack.png";
+import afRakuten from "../../assets/afiliate_network/rakuten.png";
+import afShareasale from "../../assets/afiliate_network/shareasale.png";
 
 const DM_MP_IMGS = {
   'agkn.com': mpAgkn, 'branch': mpBranch, 'conversionx.co': mpConversionx,
@@ -107,6 +117,20 @@ const DM_FN_IMGS = {
   'kajabi': fnKajabi, 'kartra': fnKartra, 'keap': fnKeap, 'landingi': fnLandingi,
   'leadpages': fnLeadpages, 'optimizepress': fnOptimizepress, 'samcart': fnSamcart,
   'wishpond': fnWishpond,
+};
+const DM_AF_IMGS = {
+  'awin': afAwin,
+  'clickbank': afClickbank,
+  'clicksco': afClicksco,
+  'commissionjunction': afCj,
+  'cj': afCj,
+  'cjaffiliate': afCj,
+  'digistore24': afDigistore24,
+  'impact': afImpact,
+  'maxbounty': afMaxbounty,
+  'partnerstack': afPartnerstack,
+  'rakuten': afRakuten,
+  'shareasale': afShareasale,
 };
 
 const PLATFORM_ICONS = {
@@ -922,7 +946,13 @@ const AdDetailModal = ({
                     const src = DM_FN_IMGS[name.toLowerCase().replace(/\s+/g, '')];
                     return src ? { key: `fn_${name}`, src, title: name } : null;
                   }).filter(Boolean);
-                  const allLogos = [...mpLogos, ...ecLogos, ...fnLogos];
+                  const afRaw = ad.affiliateData;
+                  const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
+                  const afLogos = afList.map(name => {
+                    const src = DM_AF_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                    return src ? { key: `af_${name}`, src, title: name } : null;
+                  }).filter(Boolean);
+                  const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];
                   if (allLogos.length === 0) return null;
                   return (
                     <div className="flex items-center gap-1.5 flex-wrap mt-1">

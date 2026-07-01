@@ -413,6 +413,7 @@ export const mapAdToCard = (raw) => {
     hideType: raw.ad_type ?? raw.hideType ?? null,
     builtWith: raw.built_with || null,
     builtWithFunnel: raw.built_with_analytics_tracking || null,
+    affiliateData: raw.affiliate_data || null,
     marketPlatformUrls: (() => {
       const v = raw.market_platform_urls;
       if (!v) return null;

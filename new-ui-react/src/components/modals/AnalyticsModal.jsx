@@ -85,6 +85,32 @@ const FUNNEL_IMGS = {
   'wishpond': fnWishpond,
 };
 
+import afAwin from "../../assets/afiliate_network/awin.png";
+import afCj from "../../assets/afiliate_network/cj.png";
+import afClickbank from "../../assets/afiliate_network/ClickBank.png";
+import afClicksco from "../../assets/afiliate_network/clicksco.png";
+import afDigistore24 from "../../assets/afiliate_network/digistore24.png";
+import afImpact from "../../assets/afiliate_network/impact.png";
+import afMaxbounty from "../../assets/afiliate_network/maxbounty.png";
+import afPartnerstack from "../../assets/afiliate_network/partnerstack.png";
+import afRakuten from "../../assets/afiliate_network/rakuten.png";
+import afShareasale from "../../assets/afiliate_network/shareasale.png";
+
+const AFFILIATE_IMGS = {
+  'awin': afAwin,
+  'clickbank': afClickbank,
+  'clicksco': afClicksco,
+  'commissionjunction': afCj,
+  'cj': afCj,
+  'cjaffiliate': afCj,
+  'digistore24': afDigistore24,
+  'impact': afImpact,
+  'maxbounty': afMaxbounty,
+  'partnerstack': afPartnerstack,
+  'rakuten': afRakuten,
+  'shareasale': afShareasale,
+};
+
 import {
   BarChart,
   Bar,
@@ -973,6 +999,34 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   );
 };
 
+const OwnerAvatar = ({ imageUrl, ownerName, isLight }) => {
+  const [imgError, setImgError] = useState(false);
+  const letter = (ownerName || "K")[0];
+
+  if (!imageUrl || imgError) {
+    return (
+      <div
+        className={`w-8 h-8 rounded-lg items-center justify-center text-xs font-black shrink-0 flex ${
+          isLight
+            ? "bg-[#3762c1]/10 text-[#335296]"
+            : "bg-[#3762c1]/10 text-[#6b99ff]"
+        }`}
+      >
+        {letter}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={imageUrl}
+      alt=""
+      className="w-8 h-8 rounded-lg object-cover shrink-0"
+      onError={() => setImgError(true)}
+    />
+  );
+};
+
 const AnalyticsModal = ({
   ad,
   onClose,
@@ -1542,26 +1596,11 @@ const AnalyticsModal = ({
             <div className="space-y-4">
               {/* Advertiser */}
               <div className="flex items-center gap-2.5">
-                {d?.post_owner_image || ad?.advertiserImage ? (
-                  <img
-                    src={
-                      d?.post_owner_image
-                        ? `${NAS_BASE_URL}${d.post_owner_image}`
-                        : ad?.advertiserImage
-                    }
-                    alt=""
-                    className="w-8 h-8 rounded-lg object-cover shrink-0"
-                    onError={(e) => {
-                      e.target.style.display = "none";
-                      e.target.nextSibling.style.display = "flex";
-                    }}
-                  />
-                ) : null}
-                <div
-                  className={`w-8 h-8 rounded-lg items-center justify-center text-xs font-black shrink-0 ${d?.post_owner_image || ad?.advertiserImage ? "hidden" : "flex"} ${isLight ? "bg-[#3762c1]/10 text-[#335296]" : "bg-[#3762c1]/10 text-[#6b99ff]"}`}
-                >
-                  {(d?.post_owner || ad?.post_owner || ad?.advertiser || "K")[0]}
-                </div>
+                <OwnerAvatar
+                  imageUrl={resolveNasUrl(d?.post_owner_image) || ad?.advertiserImage || null}
+                  ownerName={d?.post_owner || ad?.post_owner || ad?.advertiser}
+                  isLight={isLight}
+                />
                 <span
                   className={`text-[18px] font-semibold block truncate min-w-0 ${isLight ? "text-gray-800" : "text-white/90"}`}
                 >
@@ -1623,7 +1662,15 @@ const AnalyticsModal = ({
                   return src ? { key: `fn_${name}`, src, title: name } : null;
                 }).filter(Boolean);
 
-                const allLogos = [...mpLogos, ...ecLogos, ...fnLogos];
+                // --- Affiliate network logos (from affiliate_data) ---
+                const afRaw = d.affiliate_data || ad?.affiliateData;
+                const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
+                const afLogos = afList.map(name => {
+                  const src = AFFILIATE_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                  return src ? { key: `af_${name}`, src, title: name } : null;
+                }).filter(Boolean);
+
+                const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];
                 if (allLogos.length === 0) return null;
 
                 return (
@@ -1678,21 +1725,37 @@ const AnalyticsModal = ({
 
               {/* Description */}
               <div>
-                {(d?.ad_text ||
-                  ad?.ad_text ||
-                  ad?.subtitle ||
-                  ad?.description) && (
+                {(d?.ad_text || ad?.adText || ad?.description) && (
                   <AdTextBlock
                     text={he.decode(
-                      d?.ad_text ||
-                      ad?.ad_text ||
-                      ad?.subtitle ||
-                      ad?.description
+                      d?.ad_text || ad?.adText || ad?.description || ""
                     )}
                     isLight={isLight}
                   />
                 )}
               </div>
+
+              {/* News Feed Description */}
+              {(d?.newsfeed_description || d?.news_feed_description) && (
+                <div>
+                  <h4
+                    className={`text-[11px] font-bold uppercase tracking-wider mb-1 ${
+                      isLight ? "text-gray-500" : "text-white/50"
+                    }`}
+                  >
+                    News Feed Description
+                  </h4>
+                  <p
+                    className={`text-[13px] leading-relaxed ${
+                      isLight ? "text-black/70" : "text-white/70"
+                    }`}
+                  >
+                    {he.decode(
+                      d?.newsfeed_description || d?.news_feed_description || ""
+                    )}
+                  </p>
+                </div>
+              )}
 
               {/* Google keywords */}
               {ctx.platform === "google" && ctx.keywords && (

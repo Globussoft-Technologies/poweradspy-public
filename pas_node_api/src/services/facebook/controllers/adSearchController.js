@@ -551,6 +551,10 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
           if (src['facebook_ad.days_running'] !== undefined) row.days_running = src['facebook_ad.days_running'];
           if (src['facebook_call_to_actions.action'] !== undefined) row.call_to_action = src['facebook_call_to_actions.action'];
 
+          // Affiliate data from ES only
+          if (src['facebook_ad_meta_data.affiliate_data'] !== undefined) {
+            row.affiliate_data = src['facebook_ad_meta_data.affiliate_data'];
+          }
           // Popularity from ES (json with current/max)
           if (src['facebook_ad.popularity']?.current !== undefined) {
             row.popularity = JSON.stringify({

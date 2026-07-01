@@ -61,6 +61,18 @@ function dedupeRows(rows) {
 
 // ─── Favorite / Hidden search helpers ───────────────────
 
+function getEsValue(src, path) {
+  if (!src || typeof src !== 'object') return undefined;
+  if (src[path] !== undefined) return src[path];
+  const parts = path.split('.');
+  let val = src;
+  for (const part of parts) {
+    if (val == null) return undefined;
+    val = val[part];
+  }
+  return val;
+}
+
 async function enrichAndFilterRows(rows, db, esIndex, typeField, nasField) {
   if (!db.elastic || rows.length === 0) return rows;
   try {
@@ -74,11 +86,15 @@ async function enrichAndFilterRows(rows, db, esIndex, typeField, nasField) {
       },
     });
     const hits = result.hits || result.body?.hits;
-    const esMap = new Map((hits?.hits || []).map(h => [String(h._source['reddit_ad.id']), h._source]));
+    const esMap = new Map((hits?.hits || []).map(h => {
+      const src = h._source || {};
+      const id = getEsValue(src, 'reddit_ad.id') || h._id;
+      return [String(id), src];
+    }));
     return rows.filter(row => {
       const src = esMap.get(String(row.ad_id)) || {};
-      const adType = src[typeField] || row.type || '';
-      const nasUrl = src[nasField] || '';
+      const adType = getEsValue(src, typeField) || row.type || '';
+      const nasUrl = getEsValue(src, nasField) || '';
       if (adType === 'IMAGE') {
         if (nasUrl) {
           row.image_video_url = nasUrl;
