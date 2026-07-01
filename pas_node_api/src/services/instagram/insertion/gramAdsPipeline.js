@@ -20,7 +20,7 @@ const { ES_INDEX, INSTA_INSERT_COLUMNS } = require('./esColumns');
 const { upsertPostOwner, saveOwnerImage } = require('./postOwner');
 const api = require('../../../insertion/helpers/apiClients');
 const media = require('../../../insertion/helpers/mediaUpload');
-const { nowDateTime, today, epochToDateTime, toInt } = require('../../../insertion/helpers/util');
+const { nowDateTime, today, epochToDateTime, toInt, latin1SafeUrl } = require('../../../insertion/helpers/util');
 const { ok, updated, rejected, serverError } = require('../../../insertion/helpers/responses');
 
 const NETWORK = 'instagram';
@@ -192,7 +192,7 @@ async function insertPathInner(ctx, n, { userId, translation, fetched }) {
     // meta_data + ad_url
     await insertMetaData(tx, n, instagramAdId);
     if (n.destination_url) {
-      await tx.query('INSERT INTO instagram_ad_url (instagram_ad_id, url_type, url) VALUES (?,?,?)', [instagramAdId, 'D', n.destination_url]).catch(() => {});
+      await tx.query('INSERT INTO instagram_ad_url (instagram_ad_id, url_type, url) VALUES (?,?,?)', [instagramAdId, 'D', latin1SafeUrl(n.destination_url)]).catch(() => {}); // instagram_ad_url.url is latin1 (#669)
     }
 
     // translation

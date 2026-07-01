@@ -40,6 +40,16 @@ const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]
 // Strip out-of-latin1 code points so a value binds to a latin1 column without mysql2 throwing
 // ER_IMPOSSIBLE_STRING_CONVERSION (used for the latin1 youtube_country geo cols — see facebook fix e5f819d9c).
 const latin1Safe = (v) => (typeof v === 'string' ? v.replace(/[^\x00-\xFF]/g, '') : v);
+// latin1SafeUrl: percent-encode out-of-latin1 (lossless) for the legacy latin1 URL cols
+// (youtube_ad_meta_data.destination_url, youtube_ad_variants.video_url_original/thumbnail_url/...). See #669.
+const latin1SafeUrl = (v) => {
+  if (typeof v !== 'string') return v;
+  let out = '';
+  for (const ch of v) { if (ch.codePointAt(0) <= 0xFF) out += ch; else { try { out += encodeURIComponent(ch); } catch { /* drop */ } } }
+  return out;
+};
+const LATIN1_URL_COLS = ['destination_url', 'initial_url', 'ad_url', 'meta_ad_url'];
+const latin1SafeUrlCols = (obj, cols = LATIN1_URL_COLS) => { if (obj && typeof obj === 'object') for (const k of cols) if (typeof obj[k] === 'string') obj[k] = latin1SafeUrl(obj[k]); return obj; };
 
 // ── youtube_ad ──────────────────────────────────────────────────────────────
 async function getAdByAdId(exec, adId) {
@@ -227,9 +237,10 @@ async function insertVariant(exec, d) {
   const clean = stripNulls({
     youtube_ad_id: d.youtube_ad_id,
     title: d.title ?? null, text: d.text ?? null, newsfeed_description: d.newsfeed_description ?? null,
-    video_url_original: d.video_url_original ?? null, video_url: d.video_url ?? null,
-    channal_url: d.channal_url ?? null, tags: d.tags ?? null,
-    thumbnail_url_original: d.thumbnail_url_original ?? null, thumbnail_url: d.thumbnail_url ?? null,
+    // latin1 URL cols → percent-encode out-of-latin1 (lossless) so a CJK/emoji URL can't roll back the ad (#669)
+    video_url_original: latin1SafeUrl(d.video_url_original) ?? null, video_url: latin1SafeUrl(d.video_url) ?? null,
+    channal_url: latin1SafeUrl(d.channal_url) ?? null, tags: d.tags ?? null,
+    thumbnail_url_original: latin1SafeUrl(d.thumbnail_url_original) ?? null, thumbnail_url: latin1SafeUrl(d.thumbnail_url) ?? null,
   });
   const cols = Object.keys(clean);
   return firstId(await exec.query(
@@ -294,7 +305,7 @@ async function bumpAdCountryOnlyCount(exec, id) {
 
 // ── youtube_ad_meta_data ──────────────────────────────────────────────────────
 async function insertMetaData(exec, data) {
-  const clean = stripNulls(data);
+  const clean = latin1SafeUrlCols(stripNulls(data), ['destination_url']); // youtube_ad_meta_data.destination_url is latin1; ad_url is utf8mb4 (verified) — #669
   const cols = Object.keys(clean);
   return affected(await exec.query(
     `INSERT INTO youtube_ad_meta_data (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,

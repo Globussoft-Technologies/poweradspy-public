@@ -42,6 +42,14 @@ const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRow
 const found = (r) => (rows(r).length ? { code: 200, data: rows(r) } : { code: 400, data: null });
 const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 
+// latin1 guard — linkedin_ad_variants.image_url_original / image_url are latin1 (verified on the live
+// linkedin DB; the linkedin_ad_meta_data URL cols are utf8mb4 so they need no guard). Strip out-of-latin1
+// code points so a CJK/emoji image URL can't throw ER_IMPOSSIBLE_STRING_CONVERSION and roll back the whole
+// ad txn. Kept local because this repo is self-contained. See fb fix e5f819d9c / #669.
+const latin1Safe = (v) => (typeof v === 'string' ? v.replace(/[^\x00-\xFF]/g, '') : v);
+const LATIN1_VARIANT_COLS = ['image_url_original', 'image_url', 'old_image_url', 'image_object', 'image_celebrity', 'image_brand_logo', 'ad_image_size'];
+const latin1SafeCols = (obj, cols = LATIN1_VARIANT_COLS) => { if (obj && typeof obj === 'object') for (const k of cols) if (typeof obj[k] === 'string') obj[k] = latin1Safe(obj[k]); return obj; };
+
 // ── linkedin_ad ───────────────────────────────────────────────────────────────
 async function getAdByAdId(exec, adId) {
   return found(await exec.query('SELECT id FROM linkedin_ad WHERE ad_id = ? LIMIT 1', [adId]));
@@ -242,11 +250,11 @@ async function getDomainRegisteredDate(exec, domainId) {
 
 // ── linkedin_ad_variants ───────────────────────────────────────────────────────
 async function insertVariant(exec, d) {
-  const clean = stripNulls({
+  const clean = latin1SafeCols(stripNulls({
     linkedin_ad_id: d.linkedin_ad_id,
     title: d.title ?? '', text: d.text ?? '', newsfeed_description: d.newsfeed_description ?? '',
     image_url_original: d.image_url_original ?? null, image_url: d.image_url ?? null,
-  });
+  })); // guard latin1 image_url_original
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO linkedin_ad_variants (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -254,6 +262,7 @@ async function insertVariant(exec, d) {
   ));
 }
 async function updateVariantByAdId(exec, data, linkedinAdId) {
+  latin1SafeCols(data); // guard latin1 image_url_original on the update path
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE linkedin_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE linkedin_ad_id = ?`,
@@ -305,7 +314,7 @@ async function bumpAdUserCount(exec, id) {
 
 // ── linkedin_ad_meta_data ──────────────────────────────────────────────────────
 async function insertMetaData(exec, data) {
-  const clean = stripNulls(data);
+  const clean = stripNulls(data); // linkedin_ad_meta_data ad_url/destination_url are utf8mb4 (verified) — no latin1 guard needed
   const cols = Object.keys(clean);
   return affected(await exec.query(
     `INSERT INTO linkedin_ad_meta_data (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,

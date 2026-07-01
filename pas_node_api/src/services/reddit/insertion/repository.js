@@ -11,6 +11,21 @@ const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRow
 const found = (r) => (rows(r).length ? { code: 200, data: rows(r) } : { code: 400, data: null });
 const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 
+// latin1 guards — reddit_ad_meta_data.destination_url, reddit_ad_variants.image_url_original/image_url,
+// reddit_ad_post_owners.post_owner_name and reddit_country.city/state/country are latin1 (verified on the
+// live reddit DB; reddit_ad_meta_data.ad_url is utf8mb4). Sanitize out-of-latin1 code points so they can't
+// throw ER_IMPOSSIBLE_STRING_CONVERSION and roll back the whole ad txn. Local (self-contained repo). #669.
+const latin1Safe = (v) => (typeof v === 'string' ? v.replace(/[^\x00-\xFF]/g, '') : v);
+const latin1SafeUrl = (v) => {
+  if (typeof v !== 'string') return v;
+  let out = '';
+  for (const ch of v) { if (ch.codePointAt(0) <= 0xFF) out += ch; else { try { out += encodeURIComponent(ch); } catch { /* drop */ } } }
+  return out;
+};
+const latin1SafeUrlCols = (obj, cols) => { if (obj && typeof obj === 'object') for (const k of cols) if (typeof obj[k] === 'string') obj[k] = latin1SafeUrl(obj[k]); return obj; };
+const LATIN1_VARIANT_COLS = ['image_url_original', 'image_url', 'old_image_url', 'image_object', 'image_celebrity', 'image_brand_logo', 'ad_image_size'];
+const latin1SafeCols = (obj, cols = LATIN1_VARIANT_COLS) => { if (obj && typeof obj === 'object') for (const k of cols) if (typeof obj[k] === 'string') obj[k] = latin1Safe(obj[k]); return obj; };
+
 async function withTransaction(sql, fn) {
   const conn = await sql.getConnection();
   const tx = { query: async (q, p) => { const [r] = await conn.execute(q, p); return r; } };
@@ -123,7 +138,7 @@ async function getJoinedAd(exec, whereVal) {
 
 // ── reddit_ad_variants ──────────────────────────────────────────────────
 async function insertRedditAdVariants(exec, data) {
-  const clean = stripNulls(data);
+  const clean = latin1SafeCols(stripNulls(data)); // guard latin1 image_url_original/image_url
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO reddit_ad_variants (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -132,6 +147,7 @@ async function insertRedditAdVariants(exec, data) {
 }
 
 async function updateRedditAdVariants(exec, data, adInternalId) {
+  latin1SafeCols(data); // guard latin1 image_url_original on the update path
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE reddit_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE reddit_ad_id = ?`,
@@ -165,7 +181,7 @@ async function getPostOwnerByName(exec, name) {
 }
 
 async function upsertPostOwner(exec, data) {
-  const name = String(data.post_owner_name).trim();
+  const name = latin1Safe(String(data.post_owner_name).trim()); // reddit_ad_post_owners.post_owner_name is latin1 (#669)
   const existing = await getPostOwnerByName(exec, name);
 
   if (existing.code === 200) {
@@ -191,7 +207,7 @@ async function updatePostOwnerImagePath(exec, postOwnerId, imagePath) {
 
 // ── reddit_ad_meta_data ────────────────────────────────────────────────
 async function insertMetaData(exec, data) {
-  const clean = stripNulls(data);
+  const clean = latin1SafeUrlCols(stripNulls(data), ['destination_url']); // destination_url is latin1; ad_url is utf8mb4 (#669)
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO reddit_ad_meta_data (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -200,6 +216,7 @@ async function insertMetaData(exec, data) {
 }
 
 async function updateMetaData(exec, data, adInternalId) {
+  latin1SafeUrlCols(data, ['destination_url']); // guard latin1 destination_url on the update path
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE reddit_ad_meta_data SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE reddit_ad_id = ?`,
@@ -299,12 +316,14 @@ async function getDomain(exec, domain) {
 async function getCountry(exec, { city, state, country }) {
   return found(await exec.query(
     'SELECT id FROM reddit_country WHERE country = ? AND (city = ? OR city IS NULL) AND (state = ? OR state IS NULL) LIMIT 1',
-    [country, city || null, state || null]
+    // latin1 geo cols — strip so the WHERE binds match insertCountry's stored values (#669)
+    [latin1Safe(country), latin1Safe(city) || null, latin1Safe(state) || null]
   ));
 }
 
 async function insertCountry(exec, data) {
   const clean = stripNulls(data);
+  for (const k of ['city', 'state', 'country']) if (typeof clean[k] === 'string') clean[k] = latin1Safe(clean[k]); // latin1 geo cols (#669)
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO reddit_country (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,

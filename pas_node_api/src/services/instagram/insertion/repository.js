@@ -441,7 +441,7 @@ async function setLibPageAdId(exec, adId, instagramAdId) {
 
 // ── instagram_ad_cost_usage_benefit_analysis (lib) ──────────────────────────────
 async function insertCostUsage(exec, data) {
-  const clean = stripNulls(data);
+  const clean = latin1SafeUrlCols(stripNulls(data)); // instagram_ad_cost_usage_benefit_analysis.meta_ad_url is latin1 (#669)
   const cols = Object.keys(clean);
   return affected(await exec.query(
     `INSERT INTO instagram_ad_cost_usage_benefit_analysis (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,

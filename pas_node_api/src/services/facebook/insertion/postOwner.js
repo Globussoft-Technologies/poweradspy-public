@@ -16,7 +16,7 @@
 
 const repo = require('./repository');
 const media = require('../../../insertion/helpers/mediaUpload');
-const { toInt } = require('../../../insertion/helpers/util');
+const { toInt, latin1SafeUrl } = require('../../../insertion/helpers/util');
 
 function verifiedFlag(n) {
   return n.verified === 1 || n.verified === '1' ? 1 : 0;
@@ -43,6 +43,12 @@ async function saveOwnerImage(exec, ownerId, imageUrl, network) {
  * @returns {Promise<number>} post_owner id
  */
 async function upsertPostOwner(tx, n, network, opts = {}) {
+  // post_owner_image / original_post_owner_image are latin1 URL cols (verified on the live fb DB);
+  // post_owner_name is utf8mb4 → SAFE, leave it RAW so CJK/Cyrillic page names are preserved. A
+  // >U+00FF image URL binds utf8mb4 → mysql2 throws ER_IMPOSSIBLE_STRING_CONVERSION inside the ad
+  // txn → the whole ad rolls back. Percent-encode the image URLs (lossless); saveOwnerImage still
+  // fetches the raw URL below.
+  const ownerImage = latin1SafeUrl(n.post_owner_image);
   const lower = String(n.post_owner ?? '').toLowerCase();
   const existing = await repo.getPostOwner(tx, lower);
   const verified = verifiedFlag(n);
@@ -51,15 +57,15 @@ async function upsertPostOwner(tx, n, network, opts = {}) {
   if (existing.code !== 200) {
     ownerId = await repo.insertPostOwner(tx, {
       post_owner_name: n.post_owner,
-      post_owner_image: n.post_owner_image,
-      original_post_owner_image: n.post_owner_image,
+      post_owner_image: ownerImage,
+      original_post_owner_image: ownerImage,
       ads_count: 1,
       verified,
     });
   } else {
     ownerId = existing.data[0].id;
     const update = { ads_count: toInt(existing.data[0].ads_count) + 1, verified };
-    if (n.post_owner_image) update.original_post_owner_image = n.post_owner_image;
+    if (n.post_owner_image) update.original_post_owner_image = ownerImage;
     await repo.updatePostOwner(tx, update, ownerId);
   }
 

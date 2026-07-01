@@ -29,6 +29,14 @@ const affected  = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRo
 const found     = (r) => (rows(r).length ? { code: 200, data: rows(r) } : { code: 400, data: null });
 const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 
+// latin1 guards — pinterest_country.city/state/country and pinterest_ad_variants.image_url_original/
+// image_url are latin1 (verified on the live pinterest DB). Strip out-of-latin1 code points so a CJK/
+// Cyrillic place name or image URL can't throw ER_IMPOSSIBLE_STRING_CONVERSION and roll back the whole
+// ad txn. Kept local because this repo is self-contained. See fb fix e5f819d9c / #669.
+const latin1Safe = (v) => (typeof v === 'string' ? v.replace(/[^\x00-\xFF]/g, '') : v);
+const LATIN1_VARIANT_COLS = ['image_url_original', 'image_url', 'old_image_url', 'image_object', 'image_celebrity', 'image_brand_logo', 'ad_image_size'];
+const latin1SafeCols = (obj, cols = LATIN1_VARIANT_COLS) => { if (obj && typeof obj === 'object') for (const k of cols) if (typeof obj[k] === 'string') obj[k] = latin1Safe(obj[k]); return obj; };
+
 // ── pinterest_ad ───────────────────────────────────────────────────────────────
 
 async function getAdByAdId(exec, adId) {
@@ -160,14 +168,15 @@ async function insertCountryOnly(exec, country) {
 async function getCountry(exec, city, state, country) {
   return found(await exec.query(
     'SELECT id FROM pinterest_country WHERE city <=> ? AND state <=> ? AND country <=> ? LIMIT 1',
-    [city ?? null, state ?? null, country ?? null]
+    // latin1 geo cols — strip out-of-latin1 so the SELECT binds; insertCountry strips identically → dedup stays consistent (#669)
+    [latin1Safe(city) ?? null, latin1Safe(state) ?? null, latin1Safe(country) ?? null]
   ));
 }
 
 async function insertCountry(exec, d) {
   return firstId(await exec.query(
     'INSERT INTO pinterest_country (city, state, country, country_only_id, status) VALUES (?,?,?,?,?)',
-    [d.city ?? null, d.state ?? null, d.country ?? null, d.country_only_id ?? null, 1]
+    [latin1Safe(d.city) ?? null, latin1Safe(d.state) ?? null, latin1Safe(d.country) ?? null, d.country_only_id ?? null, 1]
   ));
 }
 
@@ -184,7 +193,7 @@ async function insertDomain(exec, domain) {
 // ── pinterest_ad_variants ─────────────────────────────────────────────────────
 
 async function insertPinterestAdVariant(exec, d) {
-  const clean = stripNulls({
+  const clean = latin1SafeCols(stripNulls({
     pinterest_ad_id:      d.pinterest_ad_id,
     title:                d.title                ?? '',
     text:                 d.text                 ?? '',
@@ -192,7 +201,7 @@ async function insertPinterestAdVariant(exec, d) {
     image_url:            d.image_url            ?? null,
     image_url_original:   d.image_url_original   ?? null,
     target_keyword:       d.target_keyword       ?? null,
-  });
+  })); // guard latin1 image_url_original/image_url
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO pinterest_ad_variants (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -201,6 +210,7 @@ async function insertPinterestAdVariant(exec, d) {
 }
 
 async function updatePinterestAdVariant(exec, data, adId) {
+  latin1SafeCols(data); // guard latin1 image_url_original on the update path
   const cols = Object.keys(data);
   return affected(await exec.query(
     `UPDATE pinterest_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE pinterest_ad_id = ?`,
