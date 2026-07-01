@@ -401,13 +401,18 @@ export const mapAdToCard = (raw) => {
     cta: raw.call_to_action || '',
     keywords: raw.tags || raw.keyword || '',
     aspectRatio: isTikTok ? '9:16' : deriveAspectRatio(raw),
-    adLanguage: raw.language || raw.ad_language || raw.lang_detect || '',
+    adLanguage: raw.lang_detect || raw.language || raw.ad_language || '',
     adBudget: raw.ad_budget || raw.avg_ad_budget || raw.budget || null,
     lowerBudget: raw.lowerBudget != null ? Number(raw.lowerBudget) : null,
     upperBudget: raw.upperBudget != null ? Number(raw.upperBudget) : null,
     engRate: calcEngRate(raw),
     engPerDay: calcEngPerDay(raw),
     industry: raw.industry || '',
+    category: (() => {
+      const c = raw.category || raw.ad_category || '';
+      const s = String(c).trim();
+      return s && s.toLowerCase() !== 'default' ? s : '';
+    })(),
     budget: raw.budget ?? null,
     ctr: raw.ctr ?? null,
     hideType: raw.ad_type ?? raw.hideType ?? null,

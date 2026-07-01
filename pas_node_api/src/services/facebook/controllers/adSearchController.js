@@ -550,6 +550,7 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
           if (src['facebook_ad.impression'] !== undefined) row.impression = src['facebook_ad.impression'];
           if (src['facebook_ad.days_running'] !== undefined) row.days_running = src['facebook_ad.days_running'];
           if (src['facebook_call_to_actions.action'] !== undefined) row.call_to_action = src['facebook_call_to_actions.action'];
+          if (src['lang_detect'] !== undefined) row.lang_detect = src['lang_detect'];
 
           // Affiliate data from ES only
           if (src['facebook_ad_meta_data.affiliate_data'] !== undefined) {

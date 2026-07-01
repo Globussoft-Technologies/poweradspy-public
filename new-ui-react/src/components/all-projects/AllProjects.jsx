@@ -282,9 +282,6 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       : null,
   );
   const [contentRefId, setContentRefId] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
-
-  const rowsPerPage = 10;
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [openGeoId, setOpenGeoId] = useState(null);
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
@@ -856,7 +853,6 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       setSelectedProjectId(projectId);
       setWebsiteLink("");
       setSelectedKeywords([]);
-      setCurrentPage(1);
       setViewState(4);
       trackProjectEvent('Project-click', { project_name: normalizedAdvertiser });
 
@@ -977,7 +973,6 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     // Switching to another project ends any in-progress generate buffer.
     setIsPreparingCompetitors(false);
     setSelectedProjectId(id);
-    setCurrentPage(1);
     setOpenDropdownId(null);
     setOpenGeoId(null);
     setViewState(4);
@@ -1520,17 +1515,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     (sum, c) => sum + (c.isMonitored ? c.totalAds : 0),
     0,
   );
-  const totalPages = Math.ceil(filteredCompetitors.length / rowsPerPage);
-  const paginatedCompetitors = filteredCompetitors.slice(
-    (currentPage - 1) * rowsPerPage,
-    currentPage * rowsPerPage,
-  );
-
-  // Keep pagination valid when deletions shrink the list below the current page.
-  useEffect(() => {
-    const tp = Math.max(1, Math.ceil(filteredCompetitors.length / rowsPerPage));
-    if (currentPage > tp) setCurrentPage(tp);
-  }, [filteredCompetitors.length, currentPage]);
+  const paginatedCompetitors = filteredCompetitors;
 
   return (
     <div className="flex-1 h-full overflow-y-auto bg-theme-bg p-8 text-theme-text custom-scrollbar">
@@ -1893,7 +1878,6 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                       value={competitorSearch}
                       onChange={(e) => {
                         setCompetitorSearch(e.target.value);
-                        setCurrentPage(1);
                       }}
                       className="pl-8 pr-3 py-2.5 rounded-lg text-[11px] bg-theme-bg border border-theme-border text-theme-text placeholder:text-theme-text-muted focus:outline-none focus:border-[#3759a3]/50 w-64"
                     />
@@ -1912,18 +1896,24 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     if (!comps.length) return;
                     const headers = [
                       "Competitor",
-                      "Impressions",
-                      "Popularity",
+                      "Monitoring Status",
+                      "Avg Impression",
+                      "Popularity %",
                       "Total Ads",
+                      "Recent Activity (Today)",
                       "Platforms",
-                      "Budget",
+                      "Top Countries",
+                      "Estimated Total Ad Budget ($)",
                     ];
                     const rows = comps.map((c) => [
                       c.name || "",
+                      c.isMonitored ? "Enabled" : "Disabled",
                       c.impressions || "0",
                       c.popularity || "0%",
                       c.totalAds || "0",
+                      c.todayAds ?? "0",
                       (c.platforms || []).join(" | "),
+                      (c.countries || []).join(" | "),
                       c.budget || "$0",
                     ]);
                     const csv = [headers, ...rows]
@@ -1997,9 +1987,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   </table>
                 </div>
               ) : (
-                <div className="overflow-x-auto min-h-[400px]">
+                <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[1050px]">
-                    <thead>
+                    <thead className="sticky top-0 z-10 bg-theme-bg">
                       <tr className="border-b border-theme-border text-[13px] tracking-wide text-theme-text-muted bg-theme-bg/20">
                         <th className="px-6 py-4 font-semibold">Competitors</th>
                         <th className="px-4 py-4 font-semibold text-center">
@@ -2397,6 +2387,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                       ))}
                     </tbody>
                   </table>
+
                   {paginatedCompetitors.length === 0 && (
                     <div className="p-24 text-center">
                       {activeProject?.isGenerating || isPreparingCompetitors ? (
@@ -2432,40 +2423,6 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 </div>
               )}
 
-              {totalPages > 1 && (
-                <div className="px-6 py-4 border-t border-theme-border bg-theme-bg/30 flex items-center justify-between">
-                  <span className="text-sm font-medium text-theme-text-muted">
-                    Showing {(currentPage - 1) * rowsPerPage + 1} to{" "}
-                    {Math.min(
-                      currentPage * rowsPerPage,
-                      filteredCompetitors.length,
-                    )}{" "}
-                    of {filteredCompetitors.length}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
-                      className="px-3 py-1.5 bg-theme-card border border-theme-border rounded-lg text-sm font-semibold disabled:opacity-50 text-white"
-                    >
-                      Prev
-                    </button>
-                    <div className="px-4 text-sm font-bold text-theme-text-muted">
-                      Page <span className="text-white">{currentPage}</span> of{" "}
-                      {totalPages}
-                    </div>
-                    <button
-                      onClick={() =>
-                        setCurrentPage((p) => Math.min(totalPages, p + 1))
-                      }
-                      disabled={currentPage === totalPages}
-                      className="px-3 py-1.5 bg-theme-card border border-theme-border rounded-lg text-sm font-semibold disabled:opacity-50 text-white"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>

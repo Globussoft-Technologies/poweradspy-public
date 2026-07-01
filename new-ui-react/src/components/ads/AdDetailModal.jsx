@@ -285,6 +285,19 @@ const AdDetailModal = ({
   const [hideMenuPos, setHideMenuPos] = useState({ top: 0, left: 0 });
   const hideButtonRef = React.useRef(null);
 
+  const displayLanguage = (() => {
+    const raw = (ad?.adLanguage || "").trim();
+    if (!raw) return "—";
+    // Try ISO code → full name (e.g. "sv" → "Swedish", "en" → "English")
+    try {
+      const names = new Intl.DisplayNames(['en'], { type: 'language' });
+      const name = names.of(raw);
+      if (name && name.toLowerCase() !== raw.toLowerCase()) return name;
+    } catch {}
+    // Already a full name (e.g. "english", "swedish") — just capitalize
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  })();
+
   // Image-loaded gate so the user sees a spinner instead of the browser's
   // top-to-bottom progressive JPEG render while bytes arrive.
   const [imgLoaded, setImgLoaded] = useState(false);
@@ -1368,7 +1381,7 @@ const AdDetailModal = ({
                       className="font-medium flex items-center gap-1"
                       style={{ color: "var(--color-text-secondary)" }}
                     >
-                      <Globe size={9} /> {ad.adLanguage || "—"}
+                      <Globe size={9} /> {displayLanguage}
                     </span>
                   </>
                 )}
@@ -1583,7 +1596,7 @@ const AdDetailModal = ({
           color: "var(--color-text-secondary)",
         }}
       >
-        <Globe size={10} /> {ad.adLanguage || "—"}
+        <Globe size={10} /> {displayLanguage}
       </span>
     </>
   )}

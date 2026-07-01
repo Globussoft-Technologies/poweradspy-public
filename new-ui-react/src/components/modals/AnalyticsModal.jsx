@@ -1387,8 +1387,8 @@ const AnalyticsModal = ({
         label: "CATEGORY",
         value: (() => {
           const p = ctx.platform;
-          const cat = ad?.[`${p}.category`] || d[`${p}.category`] || d.ad_category || d.category || ad?.category;
-          if (!cat) return "—";
+          const cat = processedAd?.category || ad?.[`${p}.category`] || d[`${p}.category`] || d.ad_category || d.category || ad?.category;
+          if (!cat || String(cat).trim().toLowerCase() === 'default') return "—";
           return Array.isArray(cat) ? cat.join(", ") : String(cat);
         })(),
         icon: Layers,
