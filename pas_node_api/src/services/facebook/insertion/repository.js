@@ -246,18 +246,24 @@ async function upsertCountryOnly(exec, names) {
 async function getCountry(exec, where) {
   // where: { city, state, country } — coalesce to '' to match insertCountry's NOT NULL '' values,
   // so the dedup lookup finds the existing row (else a city-less ad re-inserts → UNIQUE country.triple).
+  // latin1Safe: the country.city/state/country columns are latin1; a localized (CJK/Cyrillic/Arabic)
+  // place name binds utf8mb4 → mysql2 throws ER_IMPOSSIBLE_STRING_CONVERSION and the WHOLE ad txn
+  // rolls back (this was the #1 facebook collation-500). Strip to latin1 so it binds; insertCountry
+  // strips identically so the dedup stays consistent.
   return found(await exec.query(
     'SELECT id FROM country WHERE city <=> ? AND state <=> ? AND country <=> ? LIMIT 1',
-    [where.city ?? '', where.state ?? '', where.country ?? '']
+    [latin1Safe(where.city) ?? '', latin1Safe(where.state) ?? '', latin1Safe(where.country) ?? '']
   ));
 }
 async function insertCountry(exec, d) {
   const country = Array.isArray(d.country) ? d.country.join(',') : d.country;
   // country.city/state/country are NOT NULL with no default — coalesce to '' so a city/state-less
   // ad (e.g. country-only targeting) can't throw "Column 'city' cannot be null".
+  // latin1Safe: these columns are latin1 — strip out-of-latin1 place names so the INSERT binds
+  // (see getCountry) and stays byte-identical to the dedup lookup.
   return firstId(await exec.query(
     'INSERT INTO country (city, state, country, country_only_id) VALUES (?,?,?,?)',
-    [d.city ?? '', d.state ?? '', country ?? '', d.country_only_id ?? null]
+    [latin1Safe(d.city) ?? '', latin1Safe(d.state) ?? '', latin1Safe(country) ?? '', d.country_only_id ?? null]
   ));
 }
 

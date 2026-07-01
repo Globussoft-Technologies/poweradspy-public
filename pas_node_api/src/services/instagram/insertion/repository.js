@@ -209,7 +209,9 @@ async function getCountry(exec, where) {
   // existing row (else a city-less ad re-inserts → UNIQUE instagram_country.triple).
   return found(await exec.query(
     'SELECT id FROM instagram_country WHERE city <=> ? AND state <=> ? AND country <=> ? LIMIT 1',
-    [where.city ?? '', where.state ?? '', where.country ?? '']
+    // latin1Safe: instagram_country.city/state/country are latin1 — a CJK/Cyrillic place name would
+    // throw ER_IMPOSSIBLE_STRING_CONVERSION and roll back the whole ad txn (see facebook fix e5f819d9c).
+    [latin1Safe(where.city) ?? '', latin1Safe(where.state) ?? '', latin1Safe(where.country) ?? '']
   ));
 }
 async function insertCountry(exec, d) {
@@ -218,7 +220,7 @@ async function insertCountry(exec, d) {
   // city/state-less ad can't throw "Column 'city' cannot be null".
   return firstId(await exec.query(
     'INSERT INTO instagram_country (city, state, country, country_only_id) VALUES (?,?,?,?)',
-    [d.city ?? '', d.state ?? '', country ?? '', d.country_only_id ?? null]
+    [latin1Safe(d.city) ?? '', latin1Safe(d.state) ?? '', latin1Safe(country) ?? '', d.country_only_id ?? null]
   ));
 }
 

@@ -29,7 +29,7 @@ const affected  = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRo
 const found    = (r) => (rows(r).length ? { code: 200, data: rows(r) } : { code: 400, data: null });
 const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 
-const { latin1SafeCols, latin1SafeUrlCols } = require('../../../insertion/helpers/util');
+const { latin1Safe, latin1SafeCols, latin1SafeUrlCols } = require('../../../insertion/helpers/util');
 
 // ── native_ad ──────────────────────────────────────────────────────────────────
 
@@ -193,14 +193,15 @@ async function insertCountryOnly(exec, country) {
 async function getCountry(exec, city, state, country) {
   return found(await exec.query(
     'SELECT id FROM native_country WHERE city <=> ? AND state <=> ? AND country <=> ? LIMIT 1',
-    [city ?? null, state ?? null, country ?? null]
+    // latin1Safe: native_country.city/state/country are latin1 — see facebook fix e5f819d9c.
+    [latin1Safe(city) ?? null, latin1Safe(state) ?? null, latin1Safe(country) ?? null]
   ));
 }
 
 async function insertCountry(exec, d) {
   return firstId(await exec.query(
     'INSERT INTO native_country (city, state, country, country_only_id, status) VALUES (?,?,?,?,?)',
-    [d.city ?? null, d.state ?? null, d.country ?? null, d.country_only_id ?? null, 1]
+    [latin1Safe(d.city) ?? null, latin1Safe(d.state) ?? null, latin1Safe(d.country) ?? null, d.country_only_id ?? null, 1]
   ));
 }
 

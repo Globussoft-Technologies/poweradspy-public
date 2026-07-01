@@ -37,6 +37,9 @@ const firstId = (r) => (r && r.insertId ? r.insertId : 0);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 const found = (r) => (rows(r).length ? { code: 200, data: rows(r) } : { code: 400, data: null });
 const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
+// Strip out-of-latin1 code points so a value binds to a latin1 column without mysql2 throwing
+// ER_IMPOSSIBLE_STRING_CONVERSION (used for the latin1 youtube_country geo cols — see facebook fix e5f819d9c).
+const latin1Safe = (v) => (typeof v === 'string' ? v.replace(/[^\x00-\xFF]/g, '') : v);
 
 // ── youtube_ad ──────────────────────────────────────────────────────────────
 async function getAdByAdId(exec, adId) {
@@ -197,13 +200,13 @@ async function insertCountryOnly(exec, country) {
 async function getCountry(exec, where) {
   return found(await exec.query(
     'SELECT id FROM youtube_country WHERE city <=> ? AND state <=> ? AND country <=> ? LIMIT 1',
-    [where.city ?? null, where.state ?? null, where.country ?? null]
+    [latin1Safe(where.city) ?? null, latin1Safe(where.state) ?? null, latin1Safe(where.country) ?? null]
   ));
 }
 async function insertCountry(exec, d) {
   return firstId(await exec.query(
     'INSERT INTO youtube_country (city, state, country, country_only_id, status) VALUES (?,?,?,?,1)',
-    [d.city ?? null, d.state ?? null, d.country ?? null, d.country_only_id ?? null]
+    [latin1Safe(d.city) ?? null, latin1Safe(d.state) ?? null, latin1Safe(d.country) ?? null, d.country_only_id ?? null]
   ));
 }
 
