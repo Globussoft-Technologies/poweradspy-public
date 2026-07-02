@@ -1055,6 +1055,7 @@ const AnalyticsModal = ({
   const [creativeClosed, setCreativeClosed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [regionExpanded, setRegionExpanded] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -1383,7 +1384,7 @@ const AnalyticsModal = ({
       },
       {
         label: "DOMAIN",
-        value: d.domain || ad?.domain || "—",
+        value: (d.domain && d.domain !== "null" ? d.domain : null) || (ad?.domain && ad.domain !== "null" ? ad.domain : null) || "—",
         icon: Globe,
         color: "text-cyan-400",
       },
@@ -1757,21 +1758,32 @@ const AnalyticsModal = ({
               {(d?.newsfeed_description || d?.news_feed_description) && (
                 <div>
                   <h4
-                    className={`text-[11px] font-bold uppercase tracking-wider mb-1 ${
-                      isLight ? "text-gray-500" : "text-white/50"
+                    className={`text-[11px] font-bold uppercase tracking-wider mb-2 flex items-center gap-2 ${
+                      isLight ? "text-gray-700" : "text-white/80"
                     }`}
                   >
+                    <MessageCircle size={14} className={isLight ? "text-gray-500" : "text-white/50"} />
                     News Feed Description
                   </h4>
                   <p
-                    className={`text-[13px] leading-relaxed ${
+                    className={`text-[13px] leading-relaxed transition-all ${
                       isLight ? "text-black/70" : "text-white/70"
-                    }`}
+                    } ${!descExpanded ? "line-clamp-4" : ""}`}
                   >
                     {he.decode(
                       d?.newsfeed_description || d?.news_feed_description || ""
                     )}
                   </p>
+                  <button
+                    onClick={() => setDescExpanded(!descExpanded)}
+                    className={`text-xs font-semibold mt-2 transition-colors ${
+                      isLight
+                        ? "text-blue-600 hover:text-blue-700"
+                        : "text-blue-400 hover:text-blue-300"
+                    }`}
+                  >
+                    {descExpanded ? "Read Less" : "Read More"}
+                  </button>
                 </div>
               )}
 

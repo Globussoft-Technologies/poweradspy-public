@@ -852,8 +852,9 @@ async function aggregateCountryData(db, hits) {
     if (!Array.isArray(countries)) countries = [countries];
     for (const country of countries) {
       if (!country) continue;
-      if (!countryMap[country]) countryMap[country] = new Set();
-      countryMap[country].add(adId);
+      const normalizedKey = normalizeCountryName(country);
+      if (!countryMap[normalizedKey]) countryMap[normalizedKey] = new Set();
+      countryMap[normalizedKey].add(adId);
     }
   }
   if (Object.keys(countryMap).length === 0) return null;
@@ -862,9 +863,8 @@ async function aggregateCountryData(db, hits) {
   const result = [];
   for (const [name, idSet] of Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size)) {
     const adIds = [...idSet];
-    const normalizedName = normalizeCountryName(name);
-    const lookup = isoMap.get(normalizedName);
-    let country = lookup?.country || normalizedName;
+    const lookup = isoMap.get(name);
+    let country = lookup?.country || name;
     let iso = fixCountryIso(country, lookup?.iso || null);
     if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
     result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });

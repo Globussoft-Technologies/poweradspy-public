@@ -33,7 +33,6 @@ const AD_DETAIL_SQL = `
     quora_ad_meta_data.white_ad_lander,
     quora_ad_image_video.ad_image_video AS ad_image_video,
     quora_call_to_action.call_to_action AS call_to_action,
-    quora_category.category_name AS category,
     quora_ad_variants.title AS ad_title,
     quora_ad_variants.text AS ad_text,
     quora_ad_variants.newsfeed_description AS news_feed_description,
@@ -52,7 +51,6 @@ const AD_DETAIL_SQL = `
   FROM quora_ad
   LEFT JOIN quora_ad_meta_data ON quora_ad.id = quora_ad_meta_data.quora_ad_id
   LEFT JOIN quora_ad_domain ON quora_ad.domain_id = quora_ad_domain.id
-  LEFT JOIN quora_category ON quora_ad.category_id = quora_category.id
   LEFT JOIN quora_ad_image_video ON quora_ad.id = quora_ad_image_video.quora_ad_id
   LEFT JOIN quora_call_to_action ON quora_ad.call_to_action_id = quora_call_to_action.id
   LEFT JOIN quora_ad_url ON quora_ad.id = quora_ad_url.quora_ad_id

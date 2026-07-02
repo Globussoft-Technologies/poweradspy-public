@@ -308,7 +308,18 @@ class SearchMixQueryBuilder {
   _getSourceEnv() {
     const src = this._params.source;
     if (!src || !src.length) return null;
-    return asFilter(matchFilter('source', src));
+    const sources = [];
+    for (const s of src) {
+      if (s === 'all') {
+        sources.push('desktop', 'ios', 'android');
+      } else if (s) {
+        sources.push(s);
+      }
+    }
+    const unique = [...new Set(sources)];
+    if (!unique.length) return null;
+    if (unique.length === 3) return null;
+    return asFilter(matchFilter('source', unique));
   }
 
   _getFunnelEnv() {

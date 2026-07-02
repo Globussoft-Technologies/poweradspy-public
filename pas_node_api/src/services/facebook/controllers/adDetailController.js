@@ -3,7 +3,6 @@ require("dotenv").config()
 
 
 const { normalizeParams, cleanAdsData } = require('../helpers/paramParser');
-const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 // SQL query to get ad details with all JOINs (mirrors PHP getJoindAds)
 const AD_DETAIL_SQL = `
@@ -90,6 +89,9 @@ const COUNTRY_ISO_SQL = `
 
 // Country name from ISO code
 const COUNTRY_NAME_SQL = `SELECT name FROM country_data WHERE iso = ?`;
+
+// Language name from ISO code
+const LANGUAGE_NAME_SQL = `SELECT name FROM languages WHERE iso = ?`;
 
 /**
  * Fix known country ISO mapping quirks (mirrors PHP logic).
@@ -232,8 +234,14 @@ async function getAdDetails(req, db, logger) {
 
           // Language from ES lang_detect ISO
           if (source['lang_detect']) {
-            const langMap = await getLanguageMap(db.sql);
-            adData.language = resolveLanguageName(langMap, source['lang_detect']);
+            try {
+              const langRows = await db.sql.query(LANGUAGE_NAME_SQL, [source['lang_detect']]);
+              if (langRows && langRows.length > 0 && langRows[0].name) {
+                adData.language = langRows[0].name;
+              }
+            } catch {
+              // If lookup fails, keep original language
+            }
           }
 
           // AI creative-quality scores (flat top-level ES keys written by creativeScoreController)
