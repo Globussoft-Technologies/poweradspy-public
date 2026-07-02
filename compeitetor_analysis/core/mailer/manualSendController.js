@@ -14,6 +14,7 @@ import {
   sendCompetitorMailForEmail,
   sendDataReportForEmail,
 } from "./manualSendService.js";
+import { sendKeywordNotifyForEmail } from "./keywordNotifyService.js";
 
 class ManualSendController {
   /**
@@ -87,6 +88,42 @@ class ManualSendController {
     } catch (e) {
       logger.error(`sendDataReport endpoint: ${e.message}`);
       return res.send(Response.failResp("Unexpected error sending data report", e.message));
+    }
+  }
+
+  /**
+   * POST /api/email-analytics/send-keyword-notify  { email }
+   *
+   * Admin/testing send of the keyword-alert digest to ONE email. The email must
+   * already have rows in keyword_ad_notifications (else 404 — nothing to notify).
+   * Unlike the cron, this does NOT delete the rows (testing path).
+   */
+  async sendKeywordNotify(req, res) {
+    try {
+      const email = String(req?.body?.email || "").trim();
+      if (!email) {
+        return res.send(Response.validationFailResp("email is required", ""));
+      }
+      const result = await sendKeywordNotifyForEmail(email);
+      if (!result.ok && result.code === "no_terms") {
+        return res.status(404).send({
+          statusCode: 404,
+          body: { status: "failed", error: "no keyword notifications in db for this email" },
+        });
+      }
+      if (!result.ok) {
+        return res.send(Response.userFailResp(
+          "Failed to send keyword notification",
+          result.error || result.code
+        ));
+      }
+      return res.send(Response.userSuccessResp(
+        `Keyword alert sent to ${result.sentTo}`,
+        { sentTo: result.sentTo, terms: result.terms, mailStatus: result.code }
+      ));
+    } catch (e) {
+      logger.error(`sendKeywordNotify endpoint: ${e.message}`);
+      return res.send(Response.failResp("Unexpected error sending keyword notification", e.message));
     }
   }
 }

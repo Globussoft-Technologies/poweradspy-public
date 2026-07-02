@@ -64,6 +64,23 @@ const IMAGE_MUST_NOT = {
   },
 };
 
+/**
+ * Marketing-platform label → domain substring.
+ * Mirrors the detection logic in frontend_user_activity/controllers/userActivityController.js.
+ * Searching `domain` for these substrings is fast (low cardinality) and relevant,
+ * instead of scanning every unique URL with a leading wildcard.
+ */
+const MARKET_PLATFORM_DOMAIN_PATTERNS = {
+  'adobe audience manager': 'demdex.net',
+  'branch':                 'branch',
+  'conversionx':            'conversionx',
+  'google marketing platform': 'doubleclick',
+  'hootsuite':              'ow.ly',
+  'hubspot':                'hubs.ly',
+  'kenshoo':                'xg4ken.com',
+  'neustar':                'agkn.com',
+};
+
 class GoogleSearchQueryBuilder {
   constructor(indexName) {
     this._indexName = indexName || DEFAULT_GOOG_INDEX;
@@ -244,21 +261,51 @@ class GoogleSearchQueryBuilder {
   _getTrackEnv() {
     const t = this._params.track;
     if (!t || !t.length) return null;
+    // Emergency CPU guard: track used to fan out over the high-cardinality `url`
+    // keyword field with a leading wildcard. We now search only the much smaller
+    // `domain` field, which still matches tracker/platform domains (e.g. voluum,
+    // binom, appsflyer) and keeps the rest of search alive.
+    const values = this._safeWildcardValues(t);
+    if (!values.length) return null;
     return asFilter({
-      bool: { should: t.map((v) => ({ wildcard: { url: `*${String(v).toLowerCase()}*` } })), minimum_should_match: 1 },
+      bool: { should: values.map((v) => ({ wildcard: { domain: { value: `*${v}*` } } })), minimum_should_match: 1 },
     });
   }
 
   _getMarketPlatformEnv() {
     const m = this._params.marketPlatform;
     if (!m || !m.length) return null;
-    const fields = ["url_destination", "url_redirects", "source_url", "redirect_url", "final_url", "destination_url"];
-    const should = [];
-    for (const v of m) {
-      const value = `*${v}*`;
-      for (const f of fields) should.push({ wildcard: { [f]: { value } } });
+    // Emergency CPU guard: the previous query fanned out over 6 URL keyword
+    // fields with leading wildcards, killing the ES cluster.
+    // We now resolve the platform label to its known domain substring (e.g.
+    // "Hubspot" -> "hubs.ly", "Google Marketing Platform" -> "doubleclick")
+    // and search only the much smaller `domain` field.
+    const values = this._safeWildcardValues(m);
+    if (!values.length) return null;
+    const patterns = [];
+    for (const v of values) {
+      const p = MARKET_PLATFORM_DOMAIN_PATTERNS[v] || v.replace(/\s+/g, '');
+      if (p && p.length >= 2) patterns.push(p);
     }
-    return asFilter({ bool: { should, minimum_should_match: 1 } });
+    if (!patterns.length) return null;
+    return asFilter({
+      bool: { should: patterns.map((p) => ({ wildcard: { domain: { value: `*${p}*` } } })), minimum_should_match: 1 },
+    });
+  }
+
+  /** Sanitise wildcard inputs so one UI selection can't enumerate the whole term dict. */
+  _safeWildcardValues(raw) {
+    const MAX_VALUES = 10;
+    const MIN_LEN = 3;
+    const values = (Array.isArray(raw) ? raw : [raw])
+      .map((v) => String(v).toLowerCase().trim())
+      .filter((v) => v.length >= MIN_LEN)
+      .slice(0, MAX_VALUES);
+    if (Array.isArray(raw) && raw.length > MAX_VALUES) {
+      // eslint-disable-next-line no-console
+      console.warn(`[GoogleSearchQueryBuilder] wildcard input truncated from ${raw.length} to ${MAX_VALUES} values`);
+    }
+    return values;
   }
 
   // Fields not present on the v2 Google index → no-op (avoid querying unmapped
@@ -387,6 +434,11 @@ class GoogleSearchQueryBuilder {
       sort,
       query: partBody,
       _source: GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS,
+      // Per-request CPU circuit-breaker. Normal searches finish in ms so this never
+      // trips and results are unchanged; it only caps a pathological query so one
+      // request can't peg the ES CPU indefinitely — ES returns what it found.
+      // Tune without redeploy via GOOG_ES_TIMEOUT (e.g. "3s"); default 5s.
+      timeout: process.env.GOOG_ES_TIMEOUT || '5s',
       ...paginationDefaults(),
     };
 
@@ -425,7 +477,6 @@ GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "category",
   "subCategory",
   "days_running",
-  "lang_detect",
 ];
 
 module.exports = GoogleSearchQueryBuilder;

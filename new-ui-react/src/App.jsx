@@ -1329,6 +1329,15 @@ const App = () => {
       window.history.replaceState({}, '', '/');
       return;
     }
+    // Keyword deep link (e.g. from the keyword-notification email):
+    //   /?keyword=insurance  → run a keyword search for that term. Optional
+    // &platform= pre-selects a network; omitted → search across all networks.
+    const keyword = params.get('keyword');
+    if (keyword) {
+      handleSearch(keyword, 'keyword', platform || undefined);
+      window.history.replaceState({}, '', '/');
+      return;
+    }
     // Platform-only deep link (e.g. from the daily data-report email):
     //   /?platform=instagram  → pre-select Instagram, land on the default
     // ads view. No advertiser is searched; we just set the network filter.

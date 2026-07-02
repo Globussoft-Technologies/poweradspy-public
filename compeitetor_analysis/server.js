@@ -13,6 +13,7 @@ import cors from "cors";
 import http from "node:http";
 import { initSocket } from "./utils/socket.js";
 import { initDataReportCron } from "./core/mailer/dataReportCron.js";
+import { initKeywordNotifyCron } from "./core/mailer/keywordNotifyCron.js";
 
 const app = express();
 app.use(cors({
@@ -94,6 +95,11 @@ const startServer = async () => {
 
     // Daily data-report cron (03:00 IST). No-op unless config `cron` is true.
     initDataReportCron();
+
+    // Keyword/advertiser notification cron — its OWN switch. No-op unless
+    // `keyword_notify_cron` is true AND `keyword_notify_schedule` is set
+    // (e.g. "10am" / "15m"). Independent of the data-report `cron` flag.
+    initKeywordNotifyCron();
   } catch (error) {
     Logger.error(`Failed to start server: ${error.message}`);
     process.exit(1);

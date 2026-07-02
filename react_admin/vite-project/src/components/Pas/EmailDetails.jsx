@@ -41,6 +41,7 @@ const MAIL_TYPES = [
   { key: "", label: "All mails" },
   { key: "competitorUpdate", label: "Competitor Update" },
   { key: "dataReport", label: "Data Report" },
+  { key: "keywordNotification", label: "Keyword Alerts" },
 ];
 
 const STATUS_META = {
@@ -781,7 +782,9 @@ const EmailDetails = () => {
   // so axios throws on those; for everything else we inspect the body and
   // synthesise an error so the call-sites can use a single try/catch.
   const sendByType = useCallback(async (mailType, email) => {
-    const path = mailType === "dataReport" ? "send-data-report" : "send-competitor";
+    const path = mailType === "dataReport" ? "send-data-report"
+      : mailType === "keywordNotification" ? "send-keyword-notify"
+      : "send-competitor";
     const res = await axios.post(`${MANUAL_SEND_API}/email-analytics/${path}`, { email });
     const env = res.data || {};
     const innerStatus = env.statusCode || env.body?.statusCode || 200;
@@ -796,6 +799,12 @@ const EmailDetails = () => {
 
   const resendRow = useCallback(async (row) => {
     if (!row?.send_id || !row?.to) return;
+    // Keyword-alert digests are built from live per-user rows that are deleted
+    // once mailed — there's no single-recipient resend for them.
+    if (row.mail_type === "keywordNotification") {
+      toast.error("Keyword alerts can't be resent individually — they're sent by the scheduled run.");
+      return;
+    }
     setResendingIds((prev) => { const n = new Set(prev); n.add(row.send_id); return n; });
     // Optimistic: flip the row's status pill to "queued" while the request is
     // in flight. The next auto-refresh tick will replace it with the real
@@ -829,6 +838,8 @@ const EmailDetails = () => {
       const reason = e?.response?.data?.body?.error || e?.response?.data?.error || e?.message || "Send failed";
       if (composerType === "competitorUpdate" && status === 404) {
         toast.error(`${email} doesn't exist in our system — cannot send competitor mail`);
+      } else if (composerType === "keywordNotification" && status === 404) {
+        toast.error(`${email} has no keyword notifications in the DB — nothing to send`);
       } else {
         toast.error(`Send failed: ${reason}`);
       }
@@ -882,7 +893,7 @@ const EmailDetails = () => {
           "Date":           ts ? new Date(ts).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "",
           "Time":           ts ? new Date(ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }) : "",
           "To":             r.to || "",
-          "Type":           r.mail_type === "dataReport" ? "Data Report" : "Competitor",
+          "Type":           r.mail_type === "dataReport" ? "Data Report" : r.mail_type === "keywordNotification" ? "Keyword Alert" : "Competitor",
           "Status":         (STATUS_META[r.status]?.label) || r.status || "",
           "Failure reason": r.failure_reason || "",
           "Message ID":     r.sendgrid_message_id || "",
@@ -1030,8 +1041,7 @@ const EmailDetails = () => {
   // Active summary block = the chosen mail type, or `total` when "All".
   const activeSummary = useMemo(() => {
     if (!summary) return null;
-    if (mailType === "competitorUpdate") return summary.byType?.competitorUpdate;
-    if (mailType === "dataReport") return summary.byType?.dataReport;
+    if (mailType && summary.byType?.[mailType]) return summary.byType[mailType];
     return summary.total;
   }, [summary, mailType]);
 
@@ -1325,7 +1335,7 @@ const EmailDetails = () => {
                       <TableCell className="px-6 truncate" title={r.to}>{r.to}</TableCell>
                       <TableCell className="px-6 whitespace-nowrap">
                         <span className="px-2 py-1 rounded-md text-[11px] font-semibold bg-[#eef2fb] text-[#1540a4]">
-                          {r.mail_type === "dataReport" ? "Data Report" : "Competitor"}
+                          {r.mail_type === "dataReport" ? "Data Report" : r.mail_type === "keywordNotification" ? "Keyword Alert" : "Competitor"}
                         </span>
                       </TableCell>
                       <TableCell className="px-6"><StatusPill status={r.status} /></TableCell>
@@ -1469,8 +1479,9 @@ const EmailDetails = () => {
                 <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Mail type</label>
                 <div className="flex gap-2">
                   {[
-                    { key: "competitorUpdate", label: "Competitor", hint: "Validated against user_details" },
-                    { key: "dataReport",       label: "Data Report", hint: "No validation — any email" },
+                    { key: "competitorUpdate",    label: "Competitor",   hint: "Validated against user_details" },
+                    { key: "dataReport",          label: "Data Report",  hint: "No validation — any email" },
+                    { key: "keywordNotification", label: "Keyword Alert", hint: "Email must have rows in keyword_ad_notifications; testing send — rows are NOT deleted" },
                   ].map((t) => {
                     const active = composerType === t.key;
                     return (
@@ -1490,6 +1501,8 @@ const EmailDetails = () => {
                 <p className="text-[11px] text-gray-400 mt-2">
                   {composerType === "competitorUpdate"
                     ? "Competitor mails are built from the user's own monitored brands. If this email isn't in our DB, the server returns 404 and no mail is sent."
+                    : composerType === "keywordNotification"
+                    ? "Sends the keyword-alert digest. The email must already have rows in keyword_ad_notifications (else 404). Testing path — the rows are NOT deleted, so you can re-send."
                     : "Data Report has no DB check — any email is accepted."}
                 </p>
               </div>
@@ -1584,6 +1597,8 @@ const EmailDetails = () => {
                     <p className="text-gray-400 text-[11px] mb-1">Snapshot</p>
                     {selected.mail_type === "dataReport" ? (
                       <p className="text-gray-700">Today: <b>{fmtNum(selected.meta.todayTotal)}</b> new · All-time: <b>{fmtNum(selected.meta.allTime)}</b></p>
+                    ) : selected.mail_type === "keywordNotification" ? (
+                      <p className="text-gray-700"><b>{fmtNum(selected.meta.top ?? selected.meta.terms)}</b> tracked term{(selected.meta.top ?? selected.meta.terms) === 1 ? "" : "s"} with new ads</p>
                     ) : (
                       <div>
                         <p className="text-gray-600 mb-2">

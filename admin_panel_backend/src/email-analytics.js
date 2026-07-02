@@ -30,7 +30,7 @@ async function cached(key, fn, bypass) {
 
 const LOG = "email_send_log";
 const EVT = "email_send_events";
-const TYPES = ["competitorUpdate", "dataReport"];
+const TYPES = ["competitorUpdate", "dataReport", "keywordNotification"];
 const STATUS_KEYS = ["queued", "sent", "delivered", "opened", "bounced", "spam", "unsubscribed", "failed", "skipped"];
 
 const db = () => mongoose.connection.db;
@@ -94,7 +94,9 @@ async function summary(req, res) {
         { $group: { _id: { mail_type: "$mail_type", status: "$status" }, c: { $sum: 1 } } },
       ]).toArray();
 
-      const byType = { competitorUpdate: blankCounts(), dataReport: blankCounts() };
+      // Derived from TYPES so a new mail-type (e.g. keywordNotification) is
+      // picked up automatically — no per-type lines to keep in sync.
+      const byType = TYPES.reduce((o, t) => ((o[t] = blankCounts()), o), {});
       const total = blankCounts();
       for (const r of rows) {
         const t = r._id.mail_type, st = r._id.status, c = r.c;
@@ -112,13 +114,12 @@ async function summary(req, res) {
         createdAt: w.createdAt,
         event_type: { $in: ["unsubscribe", "group_unsubscribe"] },
       });
-      byType.competitorUpdate.unsubscribed = unsubCount;
-      byType.dataReport.unsubscribed = unsubCount;
+      for (const t of TYPES) byType[t].unsubscribed = unsubCount;
       total.unsubscribed = unsubCount;
 
       // Click metrics (same window). `clicked` = emails with ≥1 tracked click
       // (matches the log's hasClicks filter); `clicks` = total clicks summed.
-      for (const o of [byType.competitorUpdate, byType.dataReport, total]) { o.clicked = 0; o.clicks = 0; }
+      for (const o of [...Object.values(byType), total]) { o.clicked = 0; o.clicks = 0; }
       const clickRows = await db().collection(LOG).aggregate([
         { $match: { ...match, click_count: { $gt: 0 } } },
         { $group: { _id: "$mail_type", emails: { $sum: 1 }, clicks: { $sum: "$click_count" } } },
@@ -128,8 +129,7 @@ async function summary(req, res) {
         total.clicked += r.emails; total.clicks += r.clicks;
       }
 
-      withRates(byType.competitorUpdate);
-      withRates(byType.dataReport);
+      for (const t of TYPES) withRates(byType[t]);
       withRates(total);
       return { window: w, byType, total };
     }, String(req.query.fresh) === "true");

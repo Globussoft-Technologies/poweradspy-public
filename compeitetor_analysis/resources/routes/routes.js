@@ -5,6 +5,7 @@ import dashboardController from "../../core/Dashboard/dashboardController.js";
 import monitorController from "../../core/Competitors/monitorController.js"
 import emailController from "../../core/mailer/emailController.js";
 import dataReportController from "../../core/mailer/dataReportController.js";
+import keywordNotifyController from "../../core/mailer/keywordNotifyController.js";
 import { handleSendgridWebhook, recordUnsubscribeEvent } from "../../core/mailer/sendgridWebhookController.js";
 import advertiserController from "../../core/Advertisers/advertiserController.js";
 import memberController from "../../core/Members/memberController.js";
@@ -27,6 +28,13 @@ router.get("/data-report/subscribers", dataReportController.subscribers);
 router.get("/data-report/contacts", dataReportController.contacts);
 router.get("/data-report/recipients", dataReportController.recipients);
 
+// ── Keyword / advertiser notification (NEW) — mails users their tracked terms
+//    that picked up new ads (source: keyword_ad_notifications). Config-driven
+//    cron; these routes are for manual run / preview / schedule inspection. ──
+router.post("/keyword-notify/run", keywordNotifyController.run);
+router.get("/keyword-notify/preview", keywordNotifyController.preview);
+router.get("/keyword-notify/schedule", keywordNotifyController.schedule);
+
 // SendGrid Event Webhook (public — no auth; SendGrid posts delivery events here)
 router.post("/webhooks/sendgrid", handleSendgridWebhook);
 
@@ -39,6 +47,7 @@ router.post("/email-events/unsubscribe", recordUnsubscribeEvent);
 //    See docs/MEMBER_CC_MANIFEST.md §8.
 router.post("/email-analytics/send-competitor",  manualSendController.sendCompetitor);
 router.post("/email-analytics/send-data-report", manualSendController.sendDataReport);
+router.post("/email-analytics/send-keyword-notify", manualSendController.sendKeywordNotify);
 
 // Admin-panel members overview (read-only, joins members + brand_cc_members
 // + email_send_log[member_brand]). Public to match the existing read-only
