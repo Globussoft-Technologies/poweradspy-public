@@ -236,7 +236,14 @@ async function updatePath(ctx, rawAd, { userId, translation, existingId }) {
 
   const lastSeen = nowDateTime();
   const daysRunning = computeDaysRunning(cur.first_seen ?? cur.post_date, Math.floor(Date.now() / 1000));
-  await repo.updateInstagramAd(sql, { last_seen: lastSeen, days_running: daysRunning }, adId);
+  // post_date write-once backfill: set only if DB has none and the crawler now sends a real one.
+  const curPostEpoch = Date.parse(cur.post_date);
+  const backfillPostDate = !(Number.isFinite(curPostEpoch) && curPostEpoch > 0) && n.post_date;
+  await repo.updateInstagramAd(sql, {
+    last_seen: lastSeen,
+    days_running: daysRunning,
+    ...(backfillPostDate ? { post_date: epochToDateTime(n.post_date) } : {}),
+  }, adId);
 
   // analytics + facebook_ad LCS/impression/popularity
   if (['FEED', 'VIDEOFEED', 'SIDE', 'STORIES'].includes(String(n.ad_position).replace(/\s/g, '').toUpperCase())) {
@@ -314,7 +321,7 @@ function buildInstaAdRow(n, ids) {
     discoverer_user_id: ids.userId || 0,
     likes: toInt(n.likes), comments: toInt(n.comment), shares: toInt(n.share),
     source: n.source ?? 'desktop',
-    post_date: epochToDateTime(n.post_date), first_seen: nowDateTime(), last_seen: nowDateTime(),
+    post_date: n.post_date ? epochToDateTime(n.post_date) : null, first_seen: nowDateTime(), last_seen: nowDateTime(),
     days_running: 1,
     lower_age_seen: toInt(n.lower_age), upper_age_seen: toInt(n.upper_age),
     type: ids.type, ad_id: n.ad_id, ad_position: n.ad_position,

@@ -33,10 +33,11 @@ function nowDateTime() {
 }
 
 // PHP: date('Y-m-d H:i:s', $postData["post_date"] / 1000) — post_date is in milliseconds
+// post_date only: null when the crawler sends none/invalid — never fabricate now().
 function msToDateTime(v) {
-  if (v === undefined || v === null || v === '') return nowDateTime();
+  if (v === undefined || v === null || v === '') return null;
   const ms = parseInt(String(v), 10);
-  if (!Number.isFinite(ms) || ms <= 0) return nowDateTime();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
 }
 

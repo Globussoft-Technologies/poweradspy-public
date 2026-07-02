@@ -361,7 +361,14 @@ async function updatePath(ctx, rawAd, { userId, translation, existingId, network
   // ── last_seen / days_running ──
   const lastSeenEpoch = toInt(n.last_seen) || Math.floor(Date.now() / 1000);
   const daysRunning = computeDaysRunning(cur.first_seen ?? cur.post_date, lastSeenEpoch);
-  await repo.updateFacebookAd(sql, { last_seen: epochToDateTime(lastSeenEpoch), days_running: daysRunning }, facebookAdId);
+  // post_date write-once backfill: set only if DB has none and the crawler now sends a real one.
+  const curPostEpoch = Date.parse(cur.post_date);
+  const backfillPostDate = !(Number.isFinite(curPostEpoch) && curPostEpoch > 0) && n.post_date;
+  await repo.updateFacebookAd(sql, {
+    last_seen: epochToDateTime(lastSeenEpoch),
+    days_running: daysRunning,
+    ...(backfillPostDate ? { post_date: epochToDateTime(n.post_date) } : {}),
+  }, facebookAdId);
 
   // ── post_owner verified ──
   if ((n.verified === 1 || n.verified === '1') && toInt(cur.post_owner_id)) {
@@ -508,7 +515,7 @@ function buildFacebookAdRow(n, ids) {
     likes: toInt(n.likes), comments: toInt(n.comment), shares: toInt(n.share),
     source: n.source ?? 'desktop',
     // facebook_ad.post_date/first_seen/last_seen are DATETIME columns → store as 'YYYY-MM-DD HH:MM:SS'
-    post_date: epochToDateTime(n.post_date), first_seen: epochToDateTime(n.first_seen), last_seen: epochToDateTime(n.last_seen),
+    post_date: n.post_date ? epochToDateTime(n.post_date) : null, first_seen: epochToDateTime(n.first_seen), last_seen: epochToDateTime(n.last_seen),
     days_running: 1,
     lower_age_seen: n.lower_age ?? null, upper_age_seen: n.upper_age ?? null,
     type: n.type, platform: toInt(n.platform), ad_id: n.ad_id, ad_position: adPosition,

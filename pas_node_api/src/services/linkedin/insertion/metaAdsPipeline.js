@@ -305,6 +305,9 @@ async function updatePath(ctx, rawAd, { network, existingId, userId }) {
   const lastSeen = nowDateTime();
   const daysRunning = computeDaysRunning(cur.first_seen, lastSeen);
   const adUpdate = { last_seen: lastSeen, days_running: daysRunning, likes: n.likes, comments: n.comment, followers: n.followers };
+  // post_date write-once backfill: set only if DB has none and the crawler now sends a real one.
+  const curPostEpoch = Date.parse(cur.post_date);
+  if (!(Number.isFinite(curPostEpoch) && curPostEpoch > 0) && n.post_date) adUpdate.post_date = n.post_date;
   await repo.updateLinkedinAd(sql, adUpdate, linkedinAdId);
 
   // analytics (new daily row)
@@ -397,7 +400,7 @@ function buildLinkedinAdRow(n, ids) {
     discoverer_user_id: ids.userId ?? null,
     likes: toInt(n.likes), comments: toInt(n.comment), followers: toInt(n.followers),
     source: ids.source || 'desktop',
-    post_date: n.post_date || now, first_seen: now, last_seen: now,
+    post_date: n.post_date ?? null, first_seen: now, last_seen: now,
     type: n.type, ad_id: n.ad_id, ad_position: n.ad_position, days_running: 1,
     language_id: ids.languageId || 0,
     impression: ids.impression ?? 0,

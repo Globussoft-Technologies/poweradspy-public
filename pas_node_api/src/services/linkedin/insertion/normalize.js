@@ -120,8 +120,9 @@ function normalizeLinkedinAd(ad) {
   out.city = out.city ?? '';
 
   // dates: post_date from epoch (10-digit) → datetime; first/last seen forced to now (PHP)
+  // post_date: null when the crawler sends none — never fabricate now().
   out.post_date = (out.post_date !== undefined && out.post_date !== null && out.post_date !== '')
-    ? epochToDateTime(out.post_date) : nowDateTime();
+    ? epochToDateTime(out.post_date) : null;
   out.first_seen = nowDateTime();
   out.last_seen = nowDateTime();
 

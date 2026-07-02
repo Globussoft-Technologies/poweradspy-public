@@ -30,7 +30,6 @@ const { ok, updated, rejected, serverError } = require('../../../insertion/helpe
 
 const DEFAULT_AD_IMAGE = '/bydefault_ads.jpg';
 const DEFAULT_OWNER_IMAGE = '/DefaultImage.jpg';
-const ZERO_DATE = '0000-00-00 00:00:00';
 const IMAGE_TYPES = new Set(['IMAGE', 'DISPLAY']);
 
 async function processMetaAd(ad, ctx) {
@@ -247,9 +246,13 @@ async function updatePath(ctx, rawAd, { network, existingId }) {
   // last_seen / days_running + refreshed engagement
   const lastSeen = nowDateTime();
   const daysRunning = computeDaysRunning(cur.first_seen, lastSeen);
+  // post_date write-once backfill: set only if DB has none and the crawler now sends a real one.
+  const curPostEpoch = Date.parse(cur.post_date);
+  const backfillPostDate = !(Number.isFinite(curPostEpoch) && curPostEpoch > 0) && n.post_date;
   await repo.updateYoutubeAd(sql, {
     last_seen: lastSeen, days_running: daysRunning,
     likes: n.likes, dislikes: n.dislike, comments: n.comment, views: n.views,
+    ...(backfillPostDate ? { post_date: n.post_date } : {}),
   }, youtubeAdId);
 
   // analytics (new daily row)
@@ -339,7 +342,7 @@ function buildYoutubeAdRow(n, ids) {
     type: n.type, ad_position: n.ad_position,
     likes: toInt(n.likes), dislikes: toInt(n.dislike), comments: toInt(n.comment), views: toInt(n.views),
     lower_age_seen: toInt(n.lower_age, 18), upper_age_seen: toInt(n.upper_age, 65),
-    post_date: (n.post_date === '' ? ZERO_DATE : (n.post_date || now)),
+    post_date: n.post_date ?? null,
     first_seen: n.first_seen || now, last_seen: now,
     days_running: 1, status: 1, hits: 0, source: n.source || 'desktop',
     affiliate_ad: 0, redirect_destination_url_source: 0, reward_status: 0,

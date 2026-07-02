@@ -182,7 +182,14 @@ async function updatePath(ctx, rawAd, { translation, existingId, network }) {
   // last_seen / days_running
   const lastSeen = nowDateTime();
   const daysRunning = computeDaysRunning(cur.first_seen, lastSeen);
-  await repo.updateGoogleTextAd(sql, { last_seen: lastSeen, days_running: daysRunning }, googleTextAdId);
+  // post_date write-once backfill: set only if DB has none and the crawler now sends a real one.
+  const curPostEpoch = Date.parse(cur.post_date);
+  const backfillPostDate = !(Number.isFinite(curPostEpoch) && curPostEpoch > 0) && n.post_date;
+  await repo.updateGoogleTextAd(sql, {
+    last_seen: lastSeen,
+    days_running: daysRunning,
+    ...(backfillPostDate ? { post_date: n.post_date } : {}),
+  }, googleTextAdId);
 
   // country_only + country + ad_countries/_only (bump-or-insert)
   let countryOnlyId = null;
@@ -313,7 +320,7 @@ function buildGtextAdRow(n, ids) {
     ad_id: n.ad_id, language_id: 0, post_owner_updated: 0, variants_count: 0,
     type: n.type, ad_position: n.ad_position, ad_sub_position: n.ad_sub_position ?? null,
     ad_number_position: n.ad_number_position ?? null,
-    post_date: n.post_date || ids.now, first_seen: n.first_seen || ids.now, last_seen: ids.now,
+    post_date: n.post_date ?? null, first_seen: n.first_seen || ids.now, last_seen: ids.now,
     days_running: 1, status: 1, source: n.source || 'desktop',
     affiliate_ad: 0, redirect_destination_url_source: 0, reward_status: 0,
     domain_id: ids.domainId ?? null, country_id: ids.countryId ?? null, country_only_id: ids.countryOnlyId ?? null,
@@ -342,7 +349,7 @@ function buildMetaRow(n, googleTextAdId, now, source) {
 function buildFlatInsertData(n, result, { translation, imageUrl, source }) {
   const now = nowDateTime();
   return {
-    id: result.googleTextAdId, ad_id: n.ad_id, post_date: n.post_date || now, status: 1,
+    id: result.googleTextAdId, ad_id: n.ad_id, post_date: n.post_date ?? null, status: 1,
     first_seen: n.first_seen || now, last_seen: now, source: n.source ?? null, days_running: 1,
     ad_ranking: n.ad_ranking ?? null, ad_position: n.ad_position ?? null, ad_sub_position: n.ad_sub_position ?? null,
     type: n.type ?? null,

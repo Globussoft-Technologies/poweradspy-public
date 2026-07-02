@@ -15,7 +15,7 @@ const { normalizeRedditAds, checkVersion, parseOtherMultimedia } = require('./no
 const { buildSearchMixDoc } = require('./esDocBuilder');
 const api = require('../../../insertion/helpers/apiClients');
 const media = require('../../../insertion/helpers/mediaUpload');
-const { toInt } = require('../../../insertion/helpers/util');
+const { toInt, epochToDateTime } = require('../../../insertion/helpers/util');
 const { ok, rejected, serverError } = require('../../../insertion/helpers/responses');
 const { upsertPostOwner, saveOwnerImage } = require('./postOwner');
 
@@ -119,13 +119,25 @@ async function insertRedditAd(sql, db, ad, userId, translationData, ctx) {
     const p = (n) => String(n).padStart(2, '0');
     const nowDt = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`;
 
+    // post_date: null unless the crawler sent a real positive epoch — never fabricate now()/1970.
+    const rawPostEpoch = parseInt(ad.post_date, 10);
+    const postDate = (Number.isFinite(rawPostEpoch) && rawPostEpoch > 0) ? epochToDateTime(ad.post_date) : null;
+    const firstSeen = epochToDateTime(ad.first_seen) || nowDt;
+    const lastSeen = epochToDateTime(ad.last_seen) || nowDt;
+    const postDateEpoch = Math.floor(Date.parse(postDate) / 1000);
+    const firstSeenEpoch = Math.floor(Date.parse(firstSeen) / 1000);
+    const lastSeenEpoch = Math.floor(Date.parse(lastSeen) / 1000);
+    const startEpoch = (postDateEpoch > 0) ? postDateEpoch : firstSeenEpoch;
+    const daysRunning = Math.max(1, Math.floor((lastSeenEpoch - startEpoch) / 86400));
+
     const adRow = {
       ad_id: ad.ad_id || null,
       discoverer_user_id: userId,
       type: String(ad.type).toUpperCase(),
-      post_date: nowDt,
-      first_seen: nowDt,
-      last_seen: nowDt,
+      post_date: postDate,
+      first_seen: firstSeen,
+      last_seen: lastSeen,
+      days_running: daysRunning,
       created_date: nowDt,
       post_owner_id: postOwnerId,
       ad_position: ad.ad_position || null,
@@ -317,10 +329,27 @@ async function updateRedditAd(sql, db, ad, redditAdId, translationData, ctx) {
     const p = (n) => String(n).padStart(2, '0');
     const nowDt = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`;
 
+    const joined = await repo.getJoinedAd(tx, redditAdId);
+    const cur = (joined && joined[0]) || {};
+
+    const lastSeen = epochToDateTime(ad.last_seen) || nowDt;
+    const lastSeenEpoch = Math.floor(Date.parse(lastSeen) / 1000);
+    const postDateEpoch = Math.floor(Date.parse(cur.post_date) / 1000);
+    const firstSeenEpoch = Math.floor(Date.parse(cur.first_seen) / 1000) || lastSeenEpoch;
+    const startEpoch = (postDateEpoch > 0) ? postDateEpoch : firstSeenEpoch;
+    const daysRunning = Math.max(1, Math.floor((lastSeenEpoch - startEpoch) / 86400));
+
+    // post_date write-once backfill: set only if DB has none (postDateEpoch not > 0)
+    // and the crawler now sends a real positive epoch. Never overwrite an existing one.
+    const inPostEpoch = parseInt(ad.post_date, 10);
+    const backfillPostDate = !(postDateEpoch > 0) && Number.isFinite(inPostEpoch) && inPostEpoch > 0;
+
     await repo.updateRedditAd(tx, {
       type: String(ad.type).toUpperCase(),
-      last_seen: nowDt,
+      last_seen: lastSeen,
+      days_running: daysRunning,
       ad_position: ad.ad_position || null,
+      ...(backfillPostDate ? { post_date: epochToDateTime(ad.post_date) } : {}),
     }, redditAdId);
 
     await repo.updateRedditAdVariants(tx, {

@@ -33,8 +33,6 @@ function versionLessThan(a, b) {
   return false;
 }
 
-const DISCOVERY_NO_POSTDATE = ['SEARCHFEED_DISCOVERY', 'HOMEFEED_DISCOVERY', 'COMPANION'];
-
 /**
  * Entry gates from insertNewYoutubeAds (before the main insert):
  *   - ad_position == SHORTS AND destination_url == ""        → 400
@@ -105,12 +103,9 @@ function normalizeYoutubeAd(ad) {
   out.display_link = String(out.type) === 'RESPONSIVE' ? (out.display_link ?? null) : null;
 
   // dates (epoch seconds → datetime)
-  const discoveryImage = DISCOVERY_NO_POSTDATE.includes(String(out.ad_position)) && String(out.type) === 'IMAGE';
-  if (out.post_date !== undefined && out.post_date !== null && out.post_date !== '') {
-    out.post_date = epochToDateTime(out.post_date);
-  } else {
-    out.post_date = discoveryImage ? '' : nowDateTime();
-  }
+  // post_date: null when the crawler sends none — never fabricate now()/zero-date.
+  out.post_date = (out.post_date !== undefined && out.post_date !== null && out.post_date !== '')
+    ? epochToDateTime(out.post_date) : null;
   out.first_seen = (out.first_seen !== undefined && out.first_seen !== null && out.first_seen !== '') ? epochToDateTime(out.first_seen) : nowDateTime();
   out.last_seen = nowDateTime();
 

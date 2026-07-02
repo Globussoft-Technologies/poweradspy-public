@@ -603,8 +603,6 @@ const AdDetailsActivity = ({ targetSiteData, isLight }) => {
   );
 };
 
-const NAS_BASE_URL = import.meta.env.VITE_NAS_BASE_URL;
-
 // ─── Creative Preview: thumbnail + video playback ─────────────────────
 const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActiveIndex }) => {
   // Backend splits carousel ads across two fields: the cover image lands in
@@ -1301,7 +1299,14 @@ const AnalyticsModal = ({
       },
       {
         label: "POST DATE",
-        value: fmtDate(d.post_date),
+        // Old rows can carry the epoch-0 (1970-01-01), zero-date (0000-00-00) or ES sentinel
+        // (0001-01-01) when the crawler never supplied a real publish date — show "—" (no date)
+        // instead of the garbage value.
+        value: (() => {
+          const pd = fmtDate(d.post_date);
+          if (!pd || pd === '—' || pd.startsWith('1970-01-01') || pd.startsWith('0000-00-00') || pd.startsWith('0001-01-01')) return '—';
+          return pd;
+        })(),
         icon: Hash,
         color: "text-purple-400",
       },
@@ -1318,11 +1323,14 @@ const AnalyticsModal = ({
           };
           const last = toMs(d.last_seen);
           const post = toMs(d.post_date);
-          if (!isNaN(post) && post > 0 && !isNaN(last) && last >= post) {
+          // Prefer last_seen − post_date; when post_date is missing/invalid (null/1970),
+          // fall back to last_seen − first_seen.
+          const start = (!isNaN(post) && post > 0) ? post : toMs(d.first_seen);
+          if (!isNaN(start) && start > 0 && !isNaN(last) && last >= start) {
             // Whole calendar-day difference (floor each to its day boundary), so a
             // time-of-day in the timestamps doesn't round the count up by a day.
             const dayMs = 86400000;
-            const diff = Math.floor(last / dayMs) - Math.floor(post / dayMs);
+            const diff = Math.floor(last / dayMs) - Math.floor(start / dayMs);
             return `${Math.max(1, diff)} days`;
           }
           return ctx.runningDays ? `${ctx.runningDays} days` : "—";

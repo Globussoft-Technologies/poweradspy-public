@@ -312,8 +312,14 @@ async function updatePath(ctx, n, { existingId, network }) {
   const firstSeen = adRow.data?.[0]?.first_seen ?? n.first_seen;
   const daysRunning = computeDaysRunning(firstSeen, n.last_seen);
 
-  // Update ad row
-  await repo.updatePinterestAd(sql, { last_seen: n.last_seen, days_running: daysRunning }, adId);
+  // Update ad row (post_date write-once backfill: only if DB has none and crawler now sends one)
+  const curPostEpoch = Date.parse(adRow.data?.[0]?.post_date);
+  const backfillPostDate = !(Number.isFinite(curPostEpoch) && curPostEpoch > 0) && n.post_date;
+  await repo.updatePinterestAd(sql, {
+    last_seen: n.last_seen,
+    days_running: daysRunning,
+    ...(backfillPostDate ? { post_date: n.post_date } : {}),
+  }, adId);
 
   // Country upsert (split comma-separated list; each country gets its own row)
   const countryList = parseCountries(n.country);

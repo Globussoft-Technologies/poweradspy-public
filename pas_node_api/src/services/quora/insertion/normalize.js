@@ -60,8 +60,10 @@ function normalizeQuoraAds(ad) {
 
   // Epoch to datetime conversion (extract first 10 chars, convert to seconds)
   if (ad.post_date) {
+    // Only convert a real positive epoch. A missing/zero/invalid post_date must stay
+    // null — never fabricate the epoch-0 sentinel (1970-01-01) via epochToDateTime(0).
     const epoch = parseInt(String(ad.post_date).substring(0, 10), 10);
-    out.post_date = epochToDateTime(epoch);
+    out.post_date = (Number.isFinite(epoch) && epoch > 0) ? epochToDateTime(epoch) : null;
   }
   if (ad.first_seen) {
     const epoch = parseInt(String(ad.first_seen).substring(0, 10), 10);

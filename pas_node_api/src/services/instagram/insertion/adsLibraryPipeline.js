@@ -58,8 +58,8 @@ function normalizeLibrary(ad) {
   }
   n.first_seen = toDateTime(n.first_seen) || nowDateTime();
   n.last_seen = toDateTime(n.last_seen) || nowDateTime();
-  // PHP: post_date = payload or '0000-00-00 00:00:00'
-  n.post_date = (n.post_date !== undefined && n.post_date !== null && n.post_date !== '') ? toDateTime(n.post_date) : '0000-00-00 00:00:00';
+  // post_date: null when the crawler sends none — never fabricate the 0000-00-00 sentinel.
+  n.post_date = (n.post_date !== undefined && n.post_date !== null && n.post_date !== '') ? toDateTime(n.post_date) : null;
   n.views = toInt(n.views, 0);
   n.impressions_low = toInt(n.impressions_low, 0);
   n.impressions_high = toInt(n.impressions_high, 0);
@@ -222,9 +222,18 @@ async function updatePath(ctx, n, { translation, existingId }) {
   const cur = joined[0] || {};
 
   const lastSeenEpoch = Math.floor(Date.parse(n.last_seen) / 1000) || Math.floor(Date.now() / 1000);
-  const postEpoch = Math.floor(Date.parse(cur.post_date) / 1000) || lastSeenEpoch;
-  const daysRunning = Math.max(1, Math.floor((lastSeenEpoch - postEpoch) / 86400));
-  await repo.updateInstagramAd(sql, { last_seen: n.last_seen, days_running: daysRunning, hits: toInt(cur.hits) + 1 }, adId);
+  const postDateEpoch = Math.floor(Date.parse(cur.post_date) / 1000);
+  const firstSeenEpoch = Math.floor(Date.parse(cur.first_seen) / 1000) || lastSeenEpoch;
+  const startEpoch = (postDateEpoch > 0) ? postDateEpoch : firstSeenEpoch;
+  const daysRunning = Math.max(1, Math.floor((lastSeenEpoch - startEpoch) / 86400));
+  // post_date write-once backfill: set only if DB has none and the crawler now sends a real one.
+  const backfillPostDate = !(postDateEpoch > 0) && n.post_date;
+  await repo.updateInstagramAd(sql, {
+    last_seen: n.last_seen,
+    days_running: daysRunning,
+    hits: toInt(cur.hits) + 1,
+    ...(backfillPostDate ? { post_date: n.post_date } : {}),
+  }, adId);
 
   if (n.verified === 1 || n.verified === '1') await repo.updatePostOwner(sql, { verified: 1 }, toInt(cur.post_owner_id)).catch(() => {});
 

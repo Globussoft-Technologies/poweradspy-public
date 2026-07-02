@@ -76,7 +76,8 @@ function normalizeGtextAd(ad) {
   out.state = out.state ?? '';
   out.city = out.city ?? '';
   // dates: post_date/first_seen from epoch → 'YYYY-MM-DD HH:MM:SS'; last_seen forced to now (PHP).
-  out.post_date = (out.post_date !== undefined && out.post_date !== null && out.post_date !== '') ? epochToDateTime(out.post_date) : nowDateTime();
+  // post_date: null when the crawler sends none — never fabricate now().
+  out.post_date = (out.post_date !== undefined && out.post_date !== null && out.post_date !== '') ? epochToDateTime(out.post_date) : null;
   out.first_seen = (out.first_seen !== undefined && out.first_seen !== null && out.first_seen !== '') ? epochToDateTime(out.first_seen) : nowDateTime();
   out.last_seen = nowDateTime();
   // ad_image: spaces → '+' (CDN urls); empty → null

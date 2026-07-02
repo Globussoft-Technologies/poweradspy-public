@@ -88,7 +88,8 @@ function normalizeLibrary(ad) {
   // dates: UNIX → datetime, default now
   n.first_seen = n.first_seen ? epochToDateTime(n.first_seen) : nowDateTime();
   n.last_seen = n.last_seen ? epochToDateTime(n.last_seen) : nowDateTime();
-  n.post_date = n.post_date ? epochToDateTime(n.post_date) : n.first_seen;
+  // post_date: null when the crawler sends none — don't fall back to first_seen.
+  n.post_date = n.post_date ? epochToDateTime(n.post_date) : null;
   // numeric nulls
   if (n.meta_ad_id === undefined || n.meta_ad_id === null || n.meta_ad_id === '') n.meta_ad_id = null;
   n.views = toInt(n.views, 0);
@@ -308,9 +309,18 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
 
   // last_seen / days_running / hits
   const lastSeenEpoch = Math.floor(Date.parse(n.last_seen) / 1000) || Math.floor(Date.now() / 1000);
-  const postEpoch = Math.floor(Date.parse(cur.post_date) / 1000) || lastSeenEpoch;
-  const daysRunning = Math.max(1, Math.floor((lastSeenEpoch - postEpoch) / 86400));
-  await repo.updateFacebookAd(sql, { last_seen: n.last_seen, days_running: daysRunning, hits: toInt(cur.hits) + 1 }, facebookAdId);
+  const postDateEpoch = Math.floor(Date.parse(cur.post_date) / 1000);
+  const firstSeenEpoch = Math.floor(Date.parse(cur.first_seen) / 1000) || lastSeenEpoch;
+  const startEpoch = (postDateEpoch > 0) ? postDateEpoch : firstSeenEpoch;
+  const daysRunning = Math.max(1, Math.floor((lastSeenEpoch - startEpoch) / 86400));
+  // post_date write-once backfill: set only if DB has none and the crawler now sends a real one.
+  const backfillPostDate = !(postDateEpoch > 0) && n.post_date;
+  await repo.updateFacebookAd(sql, {
+    last_seen: n.last_seen,
+    days_running: daysRunning,
+    hits: toInt(cur.hits) + 1,
+    ...(backfillPostDate ? { post_date: n.post_date } : {}),
+  }, facebookAdId);
 
   // post owner verified
   if (n.verified === 1 || n.verified === '1') {

@@ -325,10 +325,21 @@ async function updateQuoraAd(sql, db, ad, internalId, translationData, ctx) {
 
   try {
     return await repo.withTransaction(sql, async (tx) => {
+      // Fetch current row to compute days_running with post_date fallback
+      const joined = await repo.getJoinedAd(tx, internalId);
+      const cur = (joined && joined[0]) || {};
+
       // Update main ad row
       const adType = (ad.type || 'IMAGE').toUpperCase();
+      const lastSeenEpoch = Math.floor(Date.parse(ad.last_seen) / 1000) || Math.floor(Date.now() / 1000);
+      const postDateEpoch = Math.floor(Date.parse(cur.post_date) / 1000);
+      const firstSeenEpoch = Math.floor(Date.parse(cur.first_seen) / 1000) || lastSeenEpoch;
+      const startEpoch = (postDateEpoch > 0) ? postDateEpoch : firstSeenEpoch;
+      const daysRunning = Math.max(1, Math.floor((lastSeenEpoch - startEpoch) / 86400));
+
       const adUpdate = {
         last_seen: ad.last_seen || null,
+        days_running: daysRunning,
         likes: ad.likes || 0,
         comments: ad.comment || 0,
         shares: ad.share || 0,
@@ -337,6 +348,13 @@ async function updateQuoraAd(sql, db, ad, internalId, translationData, ctx) {
         lower_age_seen: ad.lower_age || 0,
         upper_age_seen: ad.upper_age || 0,
       };
+
+      // post_date is write-once: backfill only when the stored value is missing or the
+      // epoch-0 sentinel (postDateEpoch computed above) and the crawler now supplies a
+      // real one. Never overwrite an existing post_date.
+      if (!(postDateEpoch > 0) && ad.post_date) {
+        adUpdate.post_date = ad.post_date;
+      }
 
       await repo.updateQuoraAd(tx, adUpdate, internalId);
 
