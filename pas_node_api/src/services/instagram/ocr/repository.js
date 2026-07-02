@@ -15,6 +15,8 @@
  *   instagram_ad           (join only, for type IN ('IMAGE','STORIES'))
  */
 
+const { latin1SafeCols } = require('../../../insertion/helpers/util');
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
@@ -74,6 +76,12 @@ async function getVariantByAdId(exec, adId) {
 
 /** PHP updateData(): UPDATE instagram_ad_variants ... WHERE instagram_ad_id = ?. Skips undefined keys. */
 async function updateVariant(exec, adId, data) {
+  // The OCR label columns (image_object / image_celebrity / image_brand_logo)
+  // on instagram_ad_variants are latin1. OCR text can carry emoji/CJK/accented
+  // chars (utf8mb4) → binding one throws ER_IMPOSSIBLE_STRING_CONVERSION (3988)
+  // and rolls the whole UPDATE back, dropping the OCR result. Strip >U+00FF from
+  // those latin1 columns first (same helper the insertion repos use).
+  latin1SafeCols(data);
   const cols = Object.keys(data).filter((k) => data[k] !== undefined);
   if (!cols.length) return 0;
   const sql = `UPDATE instagram_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE instagram_ad_id = ?`;
