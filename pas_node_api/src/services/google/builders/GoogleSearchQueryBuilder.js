@@ -425,6 +425,7 @@ GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "category",
   "subCategory",
   "days_running",
+  "lang_detect",
 ];
 
 module.exports = GoogleSearchQueryBuilder;

@@ -527,6 +527,7 @@ SearchMixQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'gdn_ad_outgoing_links.final_url',
   'gdn_country_only.country',
   'new_nas_image_url',
+  'lang_detect',
 ];
 
 module.exports = SearchMixQueryBuilder;

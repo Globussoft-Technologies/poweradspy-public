@@ -24,7 +24,8 @@
  */
 
 const databaseManager = require('../../../database/DatabaseManager');
-const { matchFilter } = require('../../common/helpers/esQueryHelpers');
+const { matchFilter, multiFieldMatchFilter } = require('../../common/helpers/esQueryHelpers');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 const {
   AD_DETAIL_SELECT: YT_SELECT,
   AD_DETAIL_JOINS: YT_JOINS,
@@ -109,12 +110,12 @@ function buildSharedFilters(p) {
   if (p.advertiser) {
     must.push({ match_phrase: { post_owner: String(p.advertiser) } });
   }
-  const countries = ensureArr(p.country);
-  if (countries.length) {
-    filter.push({
-      bool: { should: countries.map(c => ({ match: { countries: c } })), minimum_should_match: 1 },
-    });
-  }
+  // Country — mirror YouTube SearchMixQueryBuilder._getCountryEnv()
+  // (YouTube DISPLAY ads store countries in the top-level `countries` array).
+  // Use multiFieldMatchFilter to stay byte-for-byte consistent with the native
+  // YouTube query path.
+  const countryFilter = multiFieldMatchFilter(['countries'], p.country);
+  if (countryFilter) filter.push(countryFilter);
   // Category / sub-category — mirror youtube SearchMixQueryBuilder
   // (_getAdCategoryEnv / _getSubCategoryEnv) so the DISPLAY ads merged in here
   // are filtered by the SAME category as the GDN/YouTube queries. Without this
@@ -291,6 +292,13 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       }
     }
 
+    // Language map for resolving ES `ad_language` codes → names. Mirrors
+    // youtube adDetailController's overlay — without also overriding `row.language`,
+    // the stale `youtube_ad.language_id` join (read via YT_SELECT) would win in
+    // mapAdToCard's `raw.language || raw.ad_language` priority on the frontend.
+    let langMap = null;
+    try { langMap = await getLanguageMap(yt.sql); } catch (_) { langMap = null; }
+
     const shaped = rows.map(row => {
       const src = esMap.get(String(row.ad_id)) || {};
       if (src.new_nas_image_url) {
@@ -305,7 +313,10 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       if (src.countries !== undefined) row.countries = src.countries;
       if (src.duration !== undefined) row.days_running = src.duration;
       if (src.call_to_action !== undefined) row.call_to_action = src.call_to_action;
-      if (src.ad_language !== undefined) row.ad_language = src.ad_language;
+      if (src.ad_language !== undefined) {
+        row.ad_language = src.ad_language;
+        if (langMap) row.language = resolveLanguageName(langMap, src.ad_language);
+      }
       return row;
     });
 

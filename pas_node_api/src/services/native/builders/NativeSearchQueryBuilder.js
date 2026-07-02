@@ -570,6 +570,7 @@ NativeSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'native_country_only.country',
   'networks.network',
   'new_nas_image_url',
+  'lang_detect',
 ];
 
 module.exports = NativeSearchQueryBuilder;

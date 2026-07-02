@@ -19,7 +19,7 @@ const { getAdInsights: qrAdInsights } = require('../controllers/quoraCommonInsig
 const { getAdInsights: ttAdInsights } = require('../controllers/tiktokCommonInsightsController');
 const { createShareLink, getSharedAd } = require('../controllers/shareAdController');
 const { syncCategory, syncAllCategories } = require('../controllers/categoryController');
-const { getDescriptionDetails, newCatInsertion } = require('../controllers/addCategoryController');
+const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta } = require('../controllers/addCategoryController');
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
 const { storeKeywordSearch, scraperWork, insertSyntheticKeywords } = require('../controllers/keywordSearchController');
@@ -318,6 +318,23 @@ router.get(
 router.post(
   '/newCatInsertion',
   asyncHandler(newCatInsertion)
+);
+
+// GET /api/v1/common/getAdCategory?platform=facebook&ad_id=13011
+// Single-ad read-back — returns the ad's currently-stored category/sub_category so the
+// classifier can verify a newCatInsertion write attached. No auth — internal only.
+router.get(
+  '/getAdCategory',
+  asyncHandler(getAdCategory)
+);
+
+// POST /api/v1/common/ai-meta
+// Dedicated AI-Meta enrichment write path (AI_META_API_PAYLOAD_SPEC.md, Option B).
+// Validates the ai_meta payload and writes it onto the ad's `ai` ES field. Decoupled
+// from category classification. No auth — internal only.
+router.post(
+  '/ai-meta',
+  asyncHandler(insertAiMeta)
 );
 
 // GET /api/v1/common/image-proxy?url=...

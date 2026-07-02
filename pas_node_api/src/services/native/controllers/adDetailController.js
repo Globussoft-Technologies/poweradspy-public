@@ -26,7 +26,6 @@ const AD_DETAIL_SQL = `
     native_ad_meta_data.destination_url,
     native_ad_meta_data.ad_url,
     native_ad_meta_data.redirect_url,
-    native_ad_meta_data.tracker_url,
     native_ad_meta_data.screenshot_url,
     native_ad_meta_data.version,
     native_ad_meta_data.firstSeenOnDesktop,

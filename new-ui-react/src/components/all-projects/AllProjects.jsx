@@ -1567,7 +1567,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     >
                       <Trash2 size={16} />
                     </button>
-                    <h3 className="text-xl font-bold text-white mb-1 group-hover:text-[#6b99ff] transition-colors mt-2 capitalize">
+                    <h3
+                      title={proj.advertiser}
+                      className="text-xl font-bold text-white mb-1 group-hover:text-[#6b99ff] transition-colors mt-2 capitalize break-words line-clamp-2 pr-8"
+                    >
                       {proj.advertiser}
                     </h3>
                     <div className="flex items-center gap-1.5 text-sm text-theme-text-muted">

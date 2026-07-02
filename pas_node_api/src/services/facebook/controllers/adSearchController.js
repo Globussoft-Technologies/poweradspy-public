@@ -3,6 +3,7 @@
 const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
@@ -511,6 +512,11 @@ async function searchAds(req, db, logger) {
       esHits.map(hit => [String(hit._source['facebook_ad.id']), hit])
     );
 
+    let langMap = null;
+    if (db.sql) {
+      try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+    }
+
     let finalAds = [];
     if (db.sql) {
       try {
@@ -550,7 +556,9 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
           if (src['facebook_ad.impression'] !== undefined) row.impression = src['facebook_ad.impression'];
           if (src['facebook_ad.days_running'] !== undefined) row.days_running = src['facebook_ad.days_running'];
           if (src['facebook_call_to_actions.action'] !== undefined) row.call_to_action = src['facebook_call_to_actions.action'];
-          if (src['lang_detect'] !== undefined) row.lang_detect = src['lang_detect'];
+
+          // Language from ES lang_detect ISO (mirrors adDetailController override)
+          if (src['lang_detect'] && langMap) row.language = resolveLanguageName(langMap, src['lang_detect']);
 
           // Affiliate data from ES only
           if (src['facebook_ad_meta_data.affiliate_data'] !== undefined) {

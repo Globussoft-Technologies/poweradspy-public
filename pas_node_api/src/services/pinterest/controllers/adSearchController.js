@@ -28,7 +28,8 @@ const AD_DETAIL_SELECT = `
     pinterest_ad_variants.image_url                     AS image_video_url,
     pinterest_ad_variants.image_url_original            AS image_url_original,
     pinterest_ad_variants.target_keyword                AS target_keyword,
-    pinterest_ad_outgoing_links.redirect_url            AS redirect_url
+    pinterest_ad_outgoing_links.redirect_url            AS redirect_url,
+    languages.name                                      AS language
 `;
 
 const AD_DETAIL_JOINS = `
@@ -38,6 +39,7 @@ LEFT JOIN pinterest_ad_meta_data   ON pinterest_ad.id = pinterest_ad_meta_data.p
 LEFT JOIN pinterest_ad_variants    ON pinterest_ad.id = pinterest_ad_variants.pinterest_ad_id
 LEFT JOIN pinterest_ad_domains     ON pinterest_ad.domain_id = pinterest_ad_domains.id
 LEFT JOIN pinterest_ad_outgoing_links ON pinterest_ad.id = pinterest_ad_outgoing_links.pinterest_ad_id
+LEFT JOIN languages                ON pinterest_ad.language_id = languages.id
 `;
 
 function dedupeRows(rows) {

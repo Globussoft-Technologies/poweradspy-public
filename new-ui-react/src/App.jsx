@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 
 // Hooks & Services
 import { useSDUI } from "./hooks/useSDUI";
+import { findCategoryOptions } from "./utils/categoryTaxonomy";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import {
@@ -189,6 +190,11 @@ const App = () => {
   // ── SDUI State ───────────────────────────────────────────────────────
   const sdui = useSDUI();
   const { theme, colors } = useTheme();
+
+  // Category taxonomy (major category → subcategories) from the SDUI config.
+  // Passed to AnalyticsModal so it can show ALL major categories an ad's
+  // subcategory belongs to, not just the single one stored on the ad.
+  const categoryOptions = useMemo(() => findCategoryOptions(sdui.config), [sdui.config]);
 
   // Apply guest UI state to SDUI once loaded
   const guestInitApplied = useRef(false);
@@ -1610,6 +1616,7 @@ const App = () => {
 
       <AnalyticsModal
         ad={selectedAdForAnalytics}
+        categoryOptions={categoryOptions}
         onClose={closeAnalyticsModal}
         onPrev={() => {
           const idx = visibleAds.findIndex(

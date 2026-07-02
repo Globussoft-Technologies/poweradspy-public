@@ -159,6 +159,7 @@ import { useAdInsights } from "../../hooks/useAdInsights";
 import { useInterestBehaviour } from "../../hooks/useInterestBehaviour";
 import { mapAdToCard, resolveNasUrl, fetchFreshTikTokVideoUrl, getVideoEmbedUrl } from '../../services/api';
 import { getStarRating } from "../../constants";
+import { resolveAdCategories } from "../../utils/categoryTaxonomy";
 import he from "he";
 
 const StarRating = ({ value, isLight }) => {
@@ -1029,6 +1030,7 @@ const OwnerAvatar = ({ imageUrl, ownerName, isLight }) => {
 
 const AnalyticsModal = ({
   ad,
+  categoryOptions = [],
   onClose,
   onPrev,
   onNext,
@@ -1389,6 +1391,14 @@ const AnalyticsModal = ({
           const p = ctx.platform;
           const cat = processedAd?.category || ad?.[`${p}.category`] || d[`${p}.category`] || d.ad_category || d.category || ad?.category;
           if (!cat || String(cat).trim().toLowerCase() === 'default') return "—";
+          const sub = ad?.[`${p}.subCategory`] || d[`${p}.subCategory`] || d.subCategory || ad?.subCategory;
+          // An ad stores a single major category, but its subcategory may belong
+          // to several (e.g. "Higher education" → "Education" and "Education and
+          // Careers"). Show every major category the subcategory falls under, not
+          // just the one stored on the ad. Falls back to the stored value when the
+          // taxonomy is unavailable or has no match.
+          const cats = resolveAdCategories(cat, sub, categoryOptions);
+          if (cats.length) return cats.join(", ");
           return Array.isArray(cat) ? cat.join(", ") : String(cat);
         })(),
         icon: Layers,

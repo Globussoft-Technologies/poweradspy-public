@@ -3,11 +3,13 @@
 const NativeSearchQueryBuilder = require('../builders/NativeSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 // Shared SQL fragment for fetching full native ad details by IDs
 const AD_DETAIL_SELECT = `
     native_ad.id                                    AS id,
     native_ad.id                                    AS ad_id,
+    'native'                                        AS platform_network,
     native_ad.type                                  AS type,
     native_ad.ad_position                           AS ad_position,
     native_ad.ad_sub_position                       AS ad_sub_position,
@@ -31,6 +33,7 @@ const AD_DETAIL_SELECT = `
     native_ad_outgoing_links.final_url              AS final_url,
     native_ad_domains.domain                        AS domain,
     native_ad_domains.domain_registered_date        AS domain_registered_date,
+    languages.name                                  AS language,
     (SELECT GROUP_CONCAT(DISTINCT nc.country)
      FROM native_ad_countries_only naco
      JOIN native_country_only nc ON naco.country_only_id = nc.id
@@ -94,6 +97,7 @@ function mapEsSourceToAd(src) {
     country:                      src['native_country_only.country']                 || null,
     ad_network:                   src['networks.network']                            || null,
     language:                     src['native_ad.language']                          || null,
+    platform_network:             'native',
   };
 }
 
@@ -434,22 +438,29 @@ ORDER BY FIELD(native_ad.id, ${placeholders})
       finalAds = esHits.map(hit => mapEsSourceToAd(hit._source || {}));
     }
 
-      const esMap2 = new Map(esHits.map(hit => [String(hit._source['native_ad.id'] || hit._id), hit._source]));
-      finalAds = finalAds.map(ad => {
-        const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
-        return {
-          ...ad,
-          market_platform_urls: {
-            url_destination: src['native_ad_url.url_destination']         || null,
-            source_url:      src['native_ad_outgoing_links.source_url']   || null,
-            redirect_url:    src['native_ad_outgoing_links.redirect_url'] || null,
-            final_url:       src['native_ad_outgoing_links.final_url']    || null,
-            url_redirects:   src['native_ad_url.url_redirects']           || null,
-            redirect_urls:   src['native_ad_meta_data.redirect_url']      || null,
-            destination_url: src['native_ad_meta_data.destination_url']   || null,
-          },
-        };
-      });
+    let langMap = null;
+    if (db.sql) {
+      try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+    }
+
+    const esMap2 = new Map(esHits.map(hit => [String(hit._source['native_ad.id'] || hit._id), hit._source]));
+    finalAds = finalAds.map(ad => {
+      const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+      const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : ad.language;
+      return {
+        ...ad,
+        language,
+        market_platform_urls: {
+          url_destination: src['native_ad_url.url_destination']         || null,
+          source_url:      src['native_ad_outgoing_links.source_url']   || null,
+          redirect_url:    src['native_ad_outgoing_links.redirect_url'] || null,
+          final_url:       src['native_ad_outgoing_links.final_url']    || null,
+          url_redirects:   src['native_ad_url.url_redirects']           || null,
+          redirect_urls:   src['native_ad_meta_data.redirect_url']      || null,
+          destination_url: src['native_ad_meta_data.destination_url']   || null,
+        },
+      };
+    });
 
 
     return {

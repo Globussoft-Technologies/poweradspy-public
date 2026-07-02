@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ExternalLink, ShieldCheck, Monitor } from "lucide-react"; // Monitor kept for section header
 import { useTheme } from "../../../hooks/useTheme";
 
@@ -36,6 +36,21 @@ const LanderDetails = ({ screenshotUrl }) => {
   const isLight = theme === "light";
   const resolvedUrl = parseScreenshotUrl(screenshotUrl);
   const [hasError, setHasError] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Set timeout to hide if image doesn't load within 5 seconds
+  useEffect(() => {
+    if (!resolvedUrl) {
+      setIsLoading(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (isLoading) {
+        setHasError(true);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [resolvedUrl, isLoading]);
 
   // processing.gif or null/empty means screenshot not ready
   const isProcessing =
@@ -44,7 +59,8 @@ const LanderDetails = ({ screenshotUrl }) => {
       screenshotUrl.includes("processing.gif")) ||
     (typeof screenshotUrl === "string" && screenshotUrl.includes("[null]"));
 
-  if (isProcessing || hasError) return null;
+  // Hide if no valid URL, processing, or image failed to load
+  if (isProcessing || hasError || !resolvedUrl) return null;
 
   return (
     <div className="px-6">
@@ -97,6 +113,7 @@ const LanderDetails = ({ screenshotUrl }) => {
             className="w-full opacity-90 group-hover:opacity-100 transition-opacity duration-300"
             style={{ display: "block" }}
             onError={() => setHasError(true)}
+            onLoad={() => setIsLoading(false)}
           />
         </div>
       </div>

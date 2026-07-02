@@ -3,6 +3,7 @@
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 /**
  * Google ad search — mirrors SearchController::getAdsHandlerO.
@@ -382,11 +383,23 @@ async function searchAds(req, db, logger) {
       logger.warn('Slow Google search request', { es_ms: esElapsed, sql_ms: sqlElapsed, total_ms: totalMs, hits: esHits.length });
     }
     
+    // Language map for resolving ES `lang_detect` codes → names. google_text_ad
+    // has no languages/language_id join in the list SQL above (unlike gdn/
+    // youtube), so without this overlay the list response has no `language`
+    // field at all — mirrors adDetailController's overlay so list results
+    // agree with the detail/analytics views.
+    let langMap = null;
+    if (db.sql) {
+      try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+    }
+
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['id'] || hit._source['ad_id'] || hit._id), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+      const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : ad.language;
       return {
         ...ad,
+        language,
         market_platform_urls: {
           url_destination: src['url_destination'] || null,
           source_url:      src['source_url']      || null,

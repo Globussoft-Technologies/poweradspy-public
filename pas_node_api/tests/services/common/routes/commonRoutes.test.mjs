@@ -3,11 +3,12 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 const expressPath = require.resolve("express");
-const routes = { get: {}, post: {} };
+const routes = { get: {}, post: {}, patch: {} };
 function FakeRouter() {
   return {
     get: vi.fn((path, ...rest) => { routes.get[path] = rest; }),
     post: vi.fn((path, ...rest) => { routes.post[path] = rest; }),
+    patch: vi.fn((path, ...rest) => { routes.patch[path] = rest; }),
   };
 }
 require.cache[expressPath] = { id: expressPath, filename: expressPath, loaded: true, exports: { Router: FakeRouter } };

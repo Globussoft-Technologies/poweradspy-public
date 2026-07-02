@@ -58,6 +58,115 @@ components:
   # ─── Reusable schemas ─────────────────────────────────────
   schemas:
 
+    # AI-Meta enrichment (AI_META_API_PAYLOAD_SPEC.md v1.1)
+    AiMeta:
+      type: object
+      description: |
+        AI-generated meta labels for an ad. `status` is always required. The core labels
+        (`ad_type`, `intent`, `hook`, `product_type`, `language`) are required only when
+        `status` is `success` or `partial`; for `failed`/`queued` only `status` is needed
+        and any present fields are still format-validated. On `success`/`partial` the whole
+        `ai` object on the ad is replaced (overwrite); on `failed`/`queued` only `ai.status`
+        is updated so prior good labels are preserved.
+      required: [status]
+      properties:
+        ad_type:
+          type: string
+          enum: [testimonial, ugc, before_after, demonstration, comparison, problem_solution, explainer, listicle, promotional, lifestyle, educational, announcement, storytelling, carousel, meme, other]
+          example: testimonial
+        intent:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            type: string
+            enum: [awareness, consideration, conversion, lead_generation, traffic, app_install, engagement, retargeting, community_building, recruitment, other]
+          example: [conversion, awareness]
+        hook:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            type: string
+            enum: [scarcity, urgency, social_proof, authority, fear, curiosity, discount, pain_point, aspiration, transformation, convenience, novelty, fomo, comparison, emotion, other]
+          example: [social_proof, urgency]
+        product_type:
+          type: string
+          enum: [physical_product, digital_product, service, software, subscription, course, event, job_opportunity, donation, other]
+          example: physical_product
+        offers:
+          type: array
+          maxItems: 3
+          description: Omit if no offer. `value` is required and 0–100 for percentage_discount, required and ≥0 for flat_discount, otherwise null. Duplicate type allowed only if value differs.
+          items:
+            type: object
+            required: [type]
+            properties:
+              type:
+                type: string
+                enum: [percentage_discount, flat_discount, free_trial, free_shipping, buy_one_get_one, bundle_offer, coupon, cashback, financing, consultation, demo, limited_time_offer, other]
+              value:
+                type: number
+                nullable: true
+          example: [{ type: percentage_discount, value: 25 }]
+        language:
+          type: string
+          enum: [en, hi, es, fr, de, pt, ar, zh, ja, ko, ru, other]
+          example: en
+        colors:
+          type: array
+          minItems: 1
+          maxItems: 5
+          description: Named controlled vocabulary only (no hex). Order matters — index 0 is most dominant.
+          items:
+            type: string
+            enum: [red, blue, green, yellow, orange, purple, pink, black, white, gray, brown, gold, silver, multicolor]
+          example: [blue, white, black]
+        ocr:
+          type: string
+          maxLength: 2000
+          description: Verbatim in-image text (newlines allowed, other control chars rejected).
+          example: "Happy Being — 25% off creatine gummies. Shop now."
+        object:
+          type: array
+          maxItems: 10
+          description: Detected objects/entities. Lowercase singular nouns, open vocabulary.
+          items: { type: string }
+          example: [bottle, gummies, hand]
+        celebrity:
+          type: array
+          maxItems: 5
+          description: Recognized public figures (best-effort, usually empty).
+          items: { type: string }
+          example: []
+        brand:
+          type: string
+          maxLength: 100
+          description: The single primary advertised brand.
+          example: "Happy Being"
+        brand_logos:
+          type: array
+          maxItems: 10
+          description: All brands/logos seen in the creative (superset of `brand`).
+          items: { type: string }
+          example: ["Happy Being"]
+        offering:
+          type: string
+          maxLength: 200
+          description: Free-text description of what is being sold (no newlines).
+          example: "creatine gummies"
+        category:
+          type: string
+          description: Mirrors top-level major_category so ES can filter on ai.category.
+          example: "Consumer Packaged Goods"
+        sub_category:
+          type: string
+          example: "Vitamins and Supplements"
+        status:
+          type: string
+          enum: [success, partial, failed, queued]
+          example: success
+
     # Insertion
     MetaAdInsert:
       type: object
@@ -10515,10 +10624,45 @@ paths:
                       example: "50% OFF"
                     ad_image:
                       type: string
-                      example: "/PowerAdspy/images/abc.jpg"
+                      nullable: true
+                      description: Resolvable CDN URL (the stored `/PowerAdspy/n2/…` prefix is rewritten to the configured CDN base). For native, falls back to `image_url_original` when the NAS creative is missing.
+                      example: "https://media.globussoft.com/pas-prod/stream/native/adImage/abc.jpg"
                     thumbnail:
                       type: string
-                      example: "/PowerAdspy/thumbs/abc.jpg"
+                      nullable: true
+                      description: Resolvable CDN URL for VIDEO thumbnails.
+                      example: "https://media.globussoft.com/pas-prod/stream/facebook/thumbnail/abc.jpg"
+                    image_url_original:
+                      type: string
+                      nullable: true
+                      description: Original scraped image URL (native only) — a fallback creative source for backlog ads whose NAS copy was never stored.
+                    category:
+                      type: string
+                      nullable: true
+                      description: Read-back of the ad's stored category (`${platform}.category`) so the classifier can verify a prior newCatInsertion write and skip already-categorized ads.
+                      example: "Retail"
+                    sub_category:
+                      type: string
+                      nullable: true
+                      example: "eCommerce"
+                    category_id:
+                      type: string
+                      nullable: true
+                      example: "1234"
+                    subcategory_id:
+                      type: string
+                      nullable: true
+                      example: "12340001"
+                    confidence_score:
+                      type: number
+                      nullable: true
+                      description: 0 when a human/AI category has been assigned.
+                      example: 0
+                    ai:
+                      nullable: true
+                      allOf:
+                        - $ref: '#/components/schemas/AiMeta'
+                      description: Read-back of any stored AI-Meta enrichment (null if none).
         '400':
           description: Invalid or missing platform
         '503':
@@ -10572,7 +10716,15 @@ paths:
                   maxLength: 8
                   example: "10010001"
                   description: Must start with category_id. Required if sub_category is provided
-                  
+                ai_meta:
+                  description: |
+                    Optional AI-Meta enrichment (Option A). Validated and written onto the ad's `ai`
+                    field. Additive — an invalid `ai_meta` never fails the category write; it is
+                    reported back via `ai_meta_status: validation_error` + `ai_meta_errors`. For a
+                    strict standalone write use POST /api/v1/common/ai-meta.
+                  allOf:
+                    - $ref: '#/components/schemas/AiMeta'
+
       responses:
         '200':
           description: Category processed successfully
@@ -10586,6 +10738,7 @@ paths:
                     example: 200
                   message:
                     type: string
+                    description: Reflects the master category/subcategory index (backward compatible).
                     example: "New category and subcategory inserted successfully"
                   ad_id:
                     type: string
@@ -10594,6 +10747,42 @@ paths:
                     type: boolean
                     example: true
                     description: True when the ad document in the platform index was successfully updated with the category fields and confidence_score.
+                  ad_status:
+                    type: string
+                    enum: [inserted, updated, unchanged, not_found, error]
+                    example: inserted
+                    description: What happened to the AD record specifically (distinct from `message`, which is about the master taxonomy) — `inserted` (no prior category), `updated` (changed), `unchanged` (already identical), `not_found`, or `error`.
+                  ad_category:
+                    type: string
+                    example: "Technology"
+                  ad_sub_category:
+                    type: string
+                    nullable: true
+                    example: "Software"
+                  previous_category:
+                    type: string
+                    nullable: true
+                    description: The category the ad held before this write (present only when it had one).
+                    example: "Retail"
+                  ai_meta_status:
+                    type: string
+                    nullable: true
+                    enum: [stored, status_only, validation_error, ad_not_found, error]
+                    description: Present only when an `ai_meta` object was supplied. `stored` (labels written), `status_only` (failed/queued — only ai.status recorded), `validation_error`, `ad_not_found`, or `error`.
+                    example: stored
+                  ai_meta_stored_fields:
+                    type: array
+                    items: { type: string }
+                    description: The ai_meta keys written (present when ai_meta_status=stored/status_only).
+                    example: [ad_type, intent, hook, product_type, language, status]
+                  ai_meta_errors:
+                    type: array
+                    description: Field-level validation errors (present when ai_meta_status=validation_error).
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string, example: "ai_meta.ad_type" }
+                        message: { type: string, example: "ad_type is required" }
                   warning:
                     type: string
                     nullable: true
@@ -10616,6 +10805,146 @@ paths:
           description: Category ID/name mismatch or server error
         '503':
           description: ES not available
+
+  /api/v1/common/getAdCategory:
+    get:
+      tags:
+        - Category (Internal)
+      summary: Read back an ad's stored category / sub_category (+ ai_meta)
+      description: |
+        Single-ad read-back so the classifier can verify a prior newCatInsertion write
+        attached, without paging the whole getDescriptionDetails feed. Matched on the same
+        per-platform primary key newCatInsertion updates (`ad_id` for google/youtube,
+        `<net>_ad.id` elsewhere). Internal endpoint — no auth required.
+      parameters:
+        - in: query
+          name: platform
+          required: true
+          schema:
+            type: string
+            enum: [facebook, instagram, youtube, gdn, google, native, linkedin, quora, reddit, pinterest, tiktok]
+          example: facebook
+        - in: query
+          name: ad_id
+          required: true
+          schema:
+            type: string
+          example: "13011"
+      responses:
+        '200':
+          description: The ad's currently-stored category data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  platform: { type: string, example: facebook }
+                  ad_id: { type: string, example: "13011" }
+                  category: { type: string, nullable: true, example: "Retail" }
+                  sub_category: { type: string, nullable: true, example: "eCommerce" }
+                  category_id: { type: string, nullable: true, example: "1234" }
+                  subcategory_id: { type: string, nullable: true, example: "12340001" }
+                  confidence_score: { type: number, nullable: true, example: 0 }
+                  ai:
+                    nullable: true
+                    allOf:
+                      - $ref: '#/components/schemas/AiMeta'
+        '400':
+          description: Invalid/missing platform or missing ad_id
+        '404':
+          description: Ad not found in the platform index
+        '503':
+          description: ES not available for the given platform
+
+  /api/v1/common/ai-meta:
+    post:
+      tags:
+        - Category (Internal)
+      summary: Write AI-Meta enrichment labels onto an ad (dedicated endpoint, Option B)
+      description: |
+        Standalone, strict AI-Meta write path (AI_META_API_PAYLOAD_SPEC.md). Validates the
+        payload and writes it onto the ad's `ai` field. Decoupled from category classification
+        — it never touches `${platform}.category`. On `success`/`partial` the whole `ai` object
+        is replaced; on `failed`/`queued` only `ai.status` is set (prior labels preserved).
+        Internal endpoint — no auth required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id, network, ai_meta]
+              properties:
+                ad_id:
+                  type: string
+                  description: Must match the ad id from the GET feed.
+                  example: "48979890"
+                network:
+                  type: string
+                  enum: [facebook, instagram, youtube, gdn, google, native, linkedin, quora, reddit, pinterest, tiktok]
+                  example: instagram
+                major_category:
+                  type: string
+                  nullable: true
+                  description: Optional — the endpoint stores only ai_meta; category classification stays on newCatInsertion.
+                sub_category:
+                  type: string
+                  nullable: true
+                ai_meta:
+                  $ref: '#/components/schemas/AiMeta'
+      responses:
+        '200':
+          description: AI-Meta labels stored (or status recorded for failed/queued)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  ad_id: { type: string, example: "48979890" }
+                  message: { type: string, example: "AI-Meta labels stored successfully" }
+                  stored_fields:
+                    type: array
+                    items: { type: string }
+                    example: [ad_type, intent, hook, product_type, offers, language, colors, ocr, object, celebrity, brand, brand_logos, offering, category, sub_category, status]
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: false }
+                  ad_id: { type: string, nullable: true, example: "48979890" }
+                  error:
+                    type: object
+                    properties:
+                      code: { type: string, example: VALIDATION_ERROR }
+                      message: { type: string, example: "Request validation failed" }
+                      details:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            field: { type: string, example: "ai_meta.ad_type" }
+                            message: { type: string, example: "ad_type is required" }
+        '404':
+          description: Ad not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: false }
+                  ad_id: { type: string, example: "48979890" }
+                  error:
+                    type: object
+                    properties:
+                      code: { type: string, example: AD_NOT_FOUND }
+                      message: { type: string, example: "Ad with id '48979890' does not exist" }
+        '503':
+          description: ES not available for the given network
 
   /api/v1/common/internal/category/sync-all:
     post:

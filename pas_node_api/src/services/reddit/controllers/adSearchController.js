@@ -31,7 +31,8 @@ const AD_DETAIL_SELECT = `
     reddit_ad_variants.image_url_original           AS image_url_original,
     reddit_ad_variants.tags                         AS tags,
     reddit_ad_image_video.ad_image_video            AS ad_image_video,
-    reddit_call_to_action.call_to_action            AS call_to_action
+    reddit_call_to_action.call_to_action            AS call_to_action,
+    languages.name                                  AS language
 `;
 
 const AD_DETAIL_JOINS = `
@@ -48,6 +49,8 @@ LEFT JOIN reddit_ad_domain
     ON reddit_ad.domain_id = reddit_ad_domain.id
 LEFT JOIN reddit_call_to_action
     ON reddit_ad.call_to_action_id = reddit_call_to_action.id
+LEFT JOIN languages
+    ON reddit_ad.language_id = languages.id
 `;
 
 function dedupeRows(rows) {

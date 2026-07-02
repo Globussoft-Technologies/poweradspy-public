@@ -75,7 +75,7 @@ const TIKTOK_AD_SOURCE_FIELDS = [
   'sql_id', 'likes', 'comments', 'shares', 'ctr', 'popularity',
   'impression', 'ad_title', 'video_url', 'video_cover',
   'post_owner_id', 'library_url', 'industry',
-  'post_owner', 'last_seen', 'budget', 'days_running',
+  'post_owner', 'last_seen', 'budget', 'days_running', 'language',
 ];
 
 /**

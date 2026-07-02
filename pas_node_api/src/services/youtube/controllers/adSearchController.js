@@ -3,6 +3,7 @@
 const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 // ─── SQL fragments ───────────────────────────────────────────────────────────
 //
@@ -365,6 +366,14 @@ async function searchAds(req, db, logger) {
     const adIds = esHits.map(hit => hit._source['ad_id']);
     let finalAds = [];
 
+    // Language map for resolving ES `ad_language` codes → names. Mirrors
+    // adDetailController's overlay so list results agree with the detail/
+    // analytics views instead of showing the stale `youtube_ad.language_id` join.
+    let langMap = null;
+    if (db.sql) {
+      try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+    }
+
     if (db.sql) {
       try {
         const placeholders = adIds.map(() => '?').join(',');
@@ -423,8 +432,10 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['ad_id']), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+      const language = (src['ad_language'] && langMap) ? resolveLanguageName(langMap, src['ad_language']) : ad.language;
       return {
         ...ad,
+        language,
         market_platform_urls: {
           redirect_urls: src['redirect_urls'] || null,
         },

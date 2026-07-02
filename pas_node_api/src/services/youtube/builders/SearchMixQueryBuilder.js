@@ -450,6 +450,7 @@ class SearchMixQueryBuilder {
 SearchMixQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'ad_id',
   'ad_type',
+  'ad_language',
   'reactions',
   'dislikes',
   'comments',

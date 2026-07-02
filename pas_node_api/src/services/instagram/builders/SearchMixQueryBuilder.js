@@ -522,6 +522,36 @@ class SearchMixQueryBuilder {
     });
   }
 
+  _getSourceExclusionEnv() {
+    const src = this._params.source;
+    if (!src || !src.length) return null;
+    const fieldMap = {
+      desktop: 'instagram_ad_meta_data.firstSeenOnDesktop',
+      ios: 'instagram_ad_meta_data.firstSeenOnIos',
+      android: 'instagram_ad_meta_data.firstSeenOnAndroid',
+    };
+    const fields = [];
+    for (const s of src) {
+      if (s === 'all') {
+        fields.push(fieldMap.desktop, fieldMap.ios, fieldMap.android);
+      } else if (fieldMap[s]) {
+        fields.push(fieldMap[s]);
+      }
+    }
+    const unique = [...new Set(fields)];
+    if (!unique.length) return null;
+    const DEFAULT_TIMESTAMP = '0001-01-01 01:01:01';
+    return {
+      ctx: 'must_not',
+      clause: {
+        bool: {
+          should: unique.map(f => ({ term: { [f]: DEFAULT_TIMESTAMP } })),
+          minimum_should_match: 1,
+        },
+      },
+    };
+  }
+
   _getFunnelEnv() {
     const f = this._params.funnel;
     if (!f || !f.length) return null;
@@ -652,6 +682,7 @@ class SearchMixQueryBuilder {
       '_getBuiltWithEnv',
       '_getTrackEnv',
       '_getSourceEnv',
+      '_getSourceExclusionEnv',
       '_getFunnelEnv',
       '_getAffiliateEnv',
       '_getMarketPlatformEnv',

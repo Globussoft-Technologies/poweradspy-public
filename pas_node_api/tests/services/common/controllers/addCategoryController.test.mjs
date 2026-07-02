@@ -15,9 +15,19 @@ require.cache[catCtrlPath] = {
   exports: { syncCategory },
 };
 
-const { getDescriptionDetails, newCatInsertion } = require(
+const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta } = require(
   "../../../../src/services/common/controllers/addCategoryController"
 );
+
+const VALID_AI_META = {
+  ad_type: "testimonial",
+  intent: ["conversion"],
+  hook: ["social_proof"],
+  product_type: "physical_product",
+  language: "en",
+  colors: ["blue", "white"],
+  status: "success",
+};
 
 function mkRes() {
   const r = { statusCode: 200, body: null };
@@ -624,5 +634,273 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     await newCatInsertion(happyBody(), res);
     // No category found → goes into "new category" insert path → calls .index
     expect(svc.db.elastic.index).toHaveBeenCalled();
+  });
+});
+
+describe("addCategoryController > getDescriptionDetails > category read-back (Issue 1)", () => {
+  it("returns stored category/sub_category + ids + confidence_score", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "facebook_ad.id": 5,
+      "facebook.category": "Retail",
+      "facebook.subCategory": "eCommerce",
+      category_id: "1234",
+      subCategory_id: "12340001",
+      confidence_score: 0,
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook" }, body: {} }, res);
+    expect(res.body[0]).toMatchObject({
+      category: "Retail",
+      sub_category: "eCommerce",
+      category_id: "1234",
+      subcategory_id: "12340001",
+      confidence_score: 0,
+    });
+  });
+
+  it("uncategorized ad → category/sub_category null", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: { "facebook_ad.id": 5 } }] } }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook" }, body: {} }, res);
+    expect(res.body[0].category).toBeNull();
+    expect(res.body[0].sub_category).toBeNull();
+  });
+});
+
+describe("addCategoryController > getDescriptionDetails > native image fallback (Issue 3)", () => {
+  it("IMAGE with no NAS url falls back to image_url_original", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "native_ad.id": 9,
+      "native_ad.type": "IMAGE",
+      // no native_ad.nas_url
+      image_url_original: "https://cdn.example/creative.jpg",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
+    expect(res.body[0].ad_image).toBe("https://cdn.example/creative.jpg");
+    expect(res.body[0].image_url_original).toBe("https://cdn.example/creative.jpg");
+  });
+
+  it("IMAGE prefers NAS url over original when both present", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "native_ad.id": 9,
+      "native_ad.type": "IMAGE",
+      "native_ad.nas_url": "https://cdn.example/nas.jpg",
+      image_url_original: "https://cdn.example/orig.jpg",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
+    expect(res.body[0].ad_image).toBe("https://cdn.example/nas.jpg");
+  });
+});
+
+describe("addCategoryController > newCatInsertion > ad_status (Issue 1)", () => {
+  function setupES({ existHits, adHits, updateFn }) {
+    const search = vi.fn(async (params) => {
+      if (params.index === "category") return { hits: { hits: existHits } };
+      return { hits: { hits: adHits } };
+    });
+    const svc = { db: { elastic: { search, index: vi.fn(async () => {}), update: updateFn || vi.fn(async () => {}) } }, log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
+    serviceRegistry.getService.mockReturnValue(svc);
+    return svc;
+  }
+  const body = (o = {}) => ({ body: { platform: "facebook", category: "FooCat", category_id: "1234", ad_id: 7, ...o } });
+
+  it("ad with no prior category → ad_status inserted", async () => {
+    setupES({ existHits: [], adHits: [{ _id: "ad-1", _source: {} }] });
+    const res = mkRes();
+    await newCatInsertion(body(), res);
+    expect(res.body.ad_status).toBe("inserted");
+    expect(res.body.updated).toBe(true);
+  });
+
+  it("ad with a different prior category → ad_status updated + previous_category", async () => {
+    setupES({ existHits: [], adHits: [{ _id: "ad-1", _source: { "facebook.category": "OldCat" } }] });
+    const res = mkRes();
+    await newCatInsertion(body(), res);
+    expect(res.body.ad_status).toBe("updated");
+    expect(res.body.previous_category).toBe("OldCat");
+  });
+
+  it("ad already holding the identical category → ad_status unchanged", async () => {
+    setupES({ existHits: [], adHits: [{ _id: "ad-1", _source: { "facebook.category": "FooCat" } }] });
+    const res = mkRes();
+    await newCatInsertion(body(), res);
+    expect(res.body.ad_status).toBe("unchanged");
+  });
+
+  it("ad not found → ad_status not_found", async () => {
+    setupES({ existHits: [], adHits: [] });
+    const res = mkRes();
+    await newCatInsertion(body(), res);
+    expect(res.body.ad_status).toBe("not_found");
+    expect(res.body.updated).toBe(false);
+  });
+});
+
+describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", () => {
+  it("400 for unsupported platform", async () => {
+    const res = mkRes();
+    await getAdCategory({ query: { platform: "xx", ad_id: 1 }, body: {} }, res);
+    expect(res.statusCode).toBe(400);
+  });
+  it("400 when ad_id missing", async () => {
+    const res = mkRes();
+    await getAdCategory({ query: { platform: "facebook" }, body: {} }, res);
+    expect(res.statusCode).toBe(400);
+  });
+  it("503 when no ES", async () => {
+    serviceRegistry.getService.mockReturnValue(null);
+    const res = mkRes();
+    await getAdCategory({ query: { platform: "facebook", ad_id: 1 }, body: {} }, res);
+    expect(res.statusCode).toBe(503);
+  });
+  it("404 when ad not found", async () => {
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: vi.fn(async () => ({ hits: { hits: [] } })) }));
+    const res = mkRes();
+    await getAdCategory({ query: { platform: "facebook", ad_id: 1 }, body: {} }, res);
+    expect(res.statusCode).toBe(404);
+  });
+  it("200 returns stored category for the ad", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _id: "x", _source: {
+      "facebook.category": "Retail", "facebook.subCategory": "eCommerce",
+      category_id: "1234", subCategory_id: "12340001", confidence_score: 0,
+      ai: { ad_type: "testimonial", status: "success" },
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getAdCategory({ query: { platform: "facebook", ad_id: "13011" }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({
+      platform: "facebook", ad_id: "13011",
+      category: "Retail", sub_category: "eCommerce",
+      category_id: "1234", subcategory_id: "12340001", confidence_score: 0,
+      ai: { ad_type: "testimonial", status: "success" },
+    });
+  });
+});
+
+describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)", () => {
+  function esWithAd(adHits, updateFn) {
+    const search = vi.fn(async () => ({ hits: { hits: adHits } }));
+    const svc = { db: { elastic: { search, update: updateFn || vi.fn(async () => {}), index: vi.fn() } }, log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
+    serviceRegistry.getService.mockReturnValue(svc);
+    return svc;
+  }
+
+  it("400 VALIDATION_ERROR when ad_id/network/ai_meta missing", async () => {
+    const res = mkRes();
+    await insertAiMeta({ body: {} }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    const fields = res.body.error.details.map((d) => d.field);
+    expect(fields).toEqual(expect.arrayContaining(["ad_id", "network", "ai_meta"]));
+  });
+
+  it("400 for unsupported network", async () => {
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "1", network: "myspace", ai_meta: VALID_AI_META } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.details.some((d) => d.field === "network")).toBe(true);
+  });
+
+  it("400 surfaces ai_meta field errors (spec §6.2)", async () => {
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "1", network: "instagram", ai_meta: { status: "success", colors: ["teal"] } } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.details.some((d) => d.field.startsWith("ai_meta"))).toBe(true);
+  });
+
+  it("404 AD_NOT_FOUND when ad absent", async () => {
+    esWithAd([]);
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META } }, res);
+    expect(res.statusCode).toBe(404);
+    expect(res.body.error.code).toBe("AD_NOT_FOUND");
+  });
+
+  it("503 when ES unavailable", async () => {
+    serviceRegistry.getService.mockReturnValue(null);
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "1", network: "instagram", ai_meta: VALID_AI_META } }, res);
+    expect(res.statusCode).toBe(503);
+  });
+
+  it("200 success writes ai object (replace) + returns stored_fields", async () => {
+    const updateFn = vi.fn(async () => {});
+    esWithAd([{ _id: "ad-1" }], updateFn);
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.stored_fields).toEqual(expect.arrayContaining(["ad_type", "status"]));
+    // painless script writes with replace=true for success
+    const call = updateFn.mock.calls[0][0];
+    expect(call.body.script.params.replace).toBe(true);
+    expect(call.body.script.params.ai.ad_type).toBe("testimonial");
+  });
+
+  it("200 queued records status only (replace=false)", async () => {
+    const updateFn = vi.fn(async () => {});
+    esWithAd([{ _id: "ad-1" }], updateFn);
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: { status: "queued" } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(updateFn.mock.calls[0][0].body.script.params.replace).toBe(false);
+    expect(res.body.message).toMatch(/preserved/);
+  });
+});
+
+describe("addCategoryController > newCatInsertion + ai_meta (Option A)", () => {
+  function setupES({ existHits = [], adHits, updateFn }) {
+    const search = vi.fn(async (params) => {
+      if (params.index === "category") return { hits: { hits: existHits } };
+      return { hits: { hits: adHits } };
+    });
+    const svc = { db: { elastic: { search, index: vi.fn(async () => {}), update: updateFn || vi.fn(async () => {}) } }, log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
+    serviceRegistry.getService.mockReturnValue(svc);
+    return svc;
+  }
+  const body = (o = {}) => ({ body: { platform: "facebook", category: "FooCat", category_id: "1234", ad_id: 7, ...o } });
+
+  it("valid ai_meta is stored alongside category", async () => {
+    const updateFn = vi.fn(async () => {});
+    setupES({ adHits: [{ _id: "ad-1", _source: {} }], updateFn });
+    const res = mkRes();
+    await newCatInsertion(body({ ai_meta: VALID_AI_META }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ai_meta_status).toBe("stored");
+    expect(res.body.ai_meta_stored_fields).toEqual(expect.arrayContaining(["ad_type", "status"]));
+    // two updates: category doc-merge + ai script
+    const hasAiScript = updateFn.mock.calls.some((c) => c[0].body.script && c[0].body.script.params.ai);
+    expect(hasAiScript).toBe(true);
+  });
+
+  it("invalid ai_meta does NOT fail the category write (validation_error)", async () => {
+    setupES({ adHits: [{ _id: "ad-1", _source: {} }] });
+    const res = mkRes();
+    await newCatInsertion(body({ ai_meta: { status: "success" /* missing required */ } }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.updated).toBe(true);              // category still written
+    expect(res.body.ai_meta_status).toBe("validation_error");
+    expect(res.body.ai_meta_errors.length).toBeGreaterThan(0);
+  });
+
+  it("ai_meta with ad not found → ad_not_found", async () => {
+    setupES({ adHits: [] });
+    const res = mkRes();
+    await newCatInsertion(body({ ai_meta: VALID_AI_META }), res);
+    expect(res.body.ai_meta_status).toBe("ad_not_found");
+  });
+
+  it("no ai_meta → response unchanged (no ai_meta fields)", async () => {
+    setupES({ adHits: [{ _id: "ad-1", _source: {} }] });
+    const res = mkRes();
+    await newCatInsertion(body(), res);
+    expect(res.body.ai_meta_status).toBeUndefined();
   });
 });

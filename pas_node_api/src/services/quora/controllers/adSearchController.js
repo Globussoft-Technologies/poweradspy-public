@@ -29,7 +29,8 @@ const AD_DETAIL_SELECT = `
     quora_ad_variants.video_url                     AS video_url,
     quora_ad_variants.tags                          AS tags,
     quora_ad_image_video.ad_image_video             AS ad_image_video,
-    quora_call_to_action.call_to_action             AS call_to_action
+    quora_call_to_action.call_to_action             AS call_to_action,
+    languages.name                                  AS language
 `;
 
 const AD_DETAIL_JOINS = `
@@ -40,6 +41,7 @@ LEFT JOIN quora_ad_meta_data   ON quora_ad.id = quora_ad_meta_data.quora_ad_id
 LEFT JOIN quora_ad_variants    ON quora_ad.id = quora_ad_variants.quora_ad_id
 LEFT JOIN quora_ad_domain      ON quora_ad.domain_id = quora_ad_domain.id
 LEFT JOIN quora_call_to_action ON quora_ad.call_to_action_id = quora_call_to_action.id
+LEFT JOIN languages            ON quora_ad.language_id = languages.id
 `;
 
 function dedupeRows(rows) {

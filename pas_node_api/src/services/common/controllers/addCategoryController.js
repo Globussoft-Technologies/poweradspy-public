@@ -2,7 +2,88 @@
 
 const serviceRegistry = require('../../ServiceRegistry');
 const networksConfig = require('../../../config/networks');
+const config = require('../../../config');
 const { syncCategory } = require('./categoryController');
+const { validateAiMeta } = require('../helpers/aiMetaValidator');
+
+// NAS/CDN base that turns a stored NAS path into a fetchable URL (config.json cdn.baseUrl
+// or CDN_BASE_URL env; e.g. https://media.globussoft.com/pas-prod/stream). Mirrors the
+// creativeScoreController `served()` helper and the FE resolveNasUrl.
+const CDN_BASE = ((config && config.cdn && config.cdn.baseUrl) || process.env.CDN_BASE_URL || '').replace(/\/+$/, '');
+
+/**
+ * Turn a stored creative value into a fetchable http(s) URL. Already-absolute values
+ * pass through untouched (youtube). NAS-relative paths (e.g. `/PowerAdspy/n2/native/adImage/…`)
+ * get their mount prefix stripped and the CDN base prepended, so the classifier receives
+ * the resolvable `https://media.globussoft.com/pas-prod/stream/…` path directly instead of
+ * having to rewrite `/PowerAdspy/n2/` itself (Issue "Minor" in the backend fix prompt).
+ * Returns null for empty input so callers can emit a clean `null`.
+ */
+function served(v) {
+  if (!v || typeof v !== 'string') return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (!CDN_BASE) return v;
+  const t = v.replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|pas-dev\/stream|pas-prod\/stream)\//i, '/');
+  return CDN_BASE + (t.startsWith('/') ? t : '/' + t);
+}
+
+/**
+ * Exact-ID ad lookup shared by newCatInsertion (to update) and getAdCategory (to read
+ * back). Some platforms index the id as a long (facebook_ad.id), others as a keyword
+ * (google.ad_id) — so we try both the string and numeric term. Returns the first ES hit
+ * (with `_source`) or null.
+ *
+ * @param {object} esForPlat  the platform's ES client (service.db.elastic)
+ * @param {string} esIndex    resolved index name
+ * @param {string} idField    the ad's primary-key field for this platform
+ * @param {string|number} adId
+ */
+async function findAdDoc(esForPlat, esIndex, idField, adId) {
+  const adIdStr      = String(adId);
+  const adIdNum      = Number(adId);
+  const adIdNumValid = !Number.isNaN(adIdNum) && String(adIdNum) === adIdStr;
+  const shouldClauses = [{ term: { [idField]: adIdStr } }];
+  if (adIdNumValid) shouldClauses.push({ term: { [idField]: adIdNum } });
+
+  const adSearch = await esForPlat.search({
+    index: esIndex,
+    body:  { query: { bool: { should: shouldClauses, minimum_should_match: 1 } } },
+  });
+  const adHits = (adSearch.hits || adSearch.body?.hits)?.hits || [];
+  return adHits[0] || null;
+}
+
+/**
+ * Write a validated `ai_meta` object onto the ad's ES doc under the `ai` field
+ * (see AI_META_API_PAYLOAD_SPEC.md §7 mapping).
+ *
+ * Idempotency / partial policy (product decision):
+ *   - status `success`|`partial` → replace the whole `ai` object (overwrite).
+ *   - status `failed`|`queued`   → don't clobber prior good labels; only set `ai.status`
+ *     (or write the minimal object if the ad had no `ai` yet).
+ *
+ * Uses a painless script so the replace-vs-merge choice happens atomically server-side.
+ *
+ * @returns {'stored'|'status_only'} what was written
+ */
+async function writeAiMeta(esForPlat, esIndex, docId, normalized, status) {
+  const replace = status === 'success' || status === 'partial';
+  await esForPlat.update(withEsType(esForPlat, {
+    index: esIndex,
+    id:    docId,
+    body: {
+      script: {
+        source: 'if (params.replace) { ctx._source.ai = params.ai; } '
+              + 'else { if (ctx._source.ai == null) { ctx._source.ai = params.ai; } '
+              + 'else { ctx._source.ai.status = params.status; } }',
+        lang:   'painless',
+        params: { replace, ai: normalized, status: status ?? null },
+      },
+    },
+    refresh: 'wait_for',
+  }));
+  return replace ? 'stored' : 'status_only';
+}
 
 /**
  * Resolve a platform's ES index name from config.json (via the shared networks
@@ -105,6 +186,9 @@ const PLATFORM_CONFIG = {
     newsFeedField:'native_ad_translation.news_feed_description',
     typeField:    'native_ad.type',
     imageNasField:'native_ad.nas_url',
+    // Fallback creative source when the NAS copy was never stored (Issue 3): the
+    // original scraped image URL is kept top-level on the native ES doc.
+    imageOrigField:'image_url_original',
     thumbField:   null,
     destPageField:'native_ad_html_lander_content.html_dc_blackhat_lander_text',
   },
@@ -243,6 +327,20 @@ async function getDescriptionDetails(req, res) {
       row.post_owner_name       = src[cfg.ownerField]    ?? null;
       row.news_feed_description = src[cfg.newsFeedField] ?? null;
 
+      // Read-back of the stored AI/human category so the classifier can verify a
+      // prior newCatInsertion write actually attached and skip already-categorised
+      // ads (Issue 1). Fields mirror exactly what newCatInsertion writes onto the ad:
+      // the literal dotted `${platform}.category` / `${platform}.subCategory` keys plus
+      // the flat `category_id` / `subCategory_id` / `confidence_score`.
+      row.category      = src[`${platform}.category`]    ?? null;
+      row.sub_category  = src[`${platform}.subCategory`] ?? null;
+      row.category_id   = src.category_id    ?? null;
+      row.subcategory_id = src.subCategory_id ?? null;
+      if (src.confidence_score !== undefined) row.confidence_score = src.confidence_score;
+      // Read-back of any stored AI-Meta enrichment so the classifier can verify a prior
+      // /ai-meta (or newCatInsertion+ai_meta) write and skip already-enriched ads.
+      row.ai = src.ai ?? null;
+
       if (src[cfg.ocrField] !== undefined) row.ocr = src[cfg.ocrField];
       if (cfg.destPageField && src[cfg.destPageField] !== undefined) {
         row.destination_page_text = src[cfg.destPageField];
@@ -250,13 +348,21 @@ async function getDescriptionDetails(req, res) {
 
       const adType   = src[cfg.typeField] || '';
       const nasValue = src[cfg.imageNasField] || '';
+      // Original scraped image URL, where the platform keeps one (native). Surfaced
+      // both as a fallback for ad_image and on its own so the classifier can recover
+      // backlog ads whose NAS creative was never stored (Issue 3).
+      const origValue = cfg.imageOrigField ? (src[cfg.imageOrigField] || '') : '';
+      if (cfg.imageOrigField) row.image_url_original = served(origValue) ?? null;
 
       if (adType === 'IMAGE') {
-        row.ad_image = nasValue || null;
+        // Prefer the stored NAS copy; fall back to the original scraped URL when the
+        // NAS creative is missing. served() returns a resolvable CDN URL (no more
+        // client-side /PowerAdspy/n2 rewrite).
+        row.ad_image = served(nasValue) ?? served(origValue) ?? null;
       }
       if (adType === 'VIDEO' && cfg.thumbField) {
         const thumb = src[cfg.thumbField] || '';
-        row.thumbnail = thumb || null;
+        row.thumbnail = served(thumb) ?? null;
       }
 
       return row;
@@ -310,6 +416,7 @@ async function newCatInsertion(req, res) {
       ad_id,
       sub_category:  subCategory,
       subcategory_id: subCategoryId,
+      ai_meta:       aiMeta,
     } = req.body;
 
     const platform = (platformRaw || '').toLowerCase().trim();
@@ -506,30 +613,27 @@ async function newCatInsertion(req, res) {
     const esIndex = (esForPlat?.indexName) ? esForPlat.indexName : platCfg.index;
     let adUpdated = false;
     let adWarning = null;
+    // Distinguishes what happened to the AD record (separate from the master-category
+    // `message` above): the ad category was newly set ('inserted'), changed from a
+    // previous value ('updated'), was already identical ('unchanged'), or the ad could
+    // not be located ('not_found').
+    let adCategoryStatus = 'not_found';
+    let adPreviousCategory = null;
+    let adDocId = null;   // captured for the optional ai_meta write below
     try {
       gdnService.log?.info(`[newCatInsertion] searching index="${esIndex}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
 
-      // Build exact-ID lookup: some platforms index the id as long (facebook_ad.id),
-      // others as keyword (google.ad_id). term queries are exact and faster than match.
-      const adIdStr     = String(ad_id);
-      const adIdNum     = Number(ad_id);
-      const adIdNumValid = !Number.isNaN(adIdNum) && String(adIdNum) === adIdStr;
-      const shouldClauses = [{ term: { [platCfg.idField]: adIdStr } }];
-      if (adIdNumValid) shouldClauses.push({ term: { [platCfg.idField]: adIdNum } });
+      const adHit = await findAdDoc(esForPlat, esIndex, platCfg.idField, ad_id);
+      if (adHit) {
+        adDocId = adHit._id;
+        // Compare against the ad's current category to classify insert vs update vs no-op.
+        const prevSrc = adHit._source || {};
+        const prevCat = prevSrc[categoryField]    ?? null;
+        const prevSub = prevSrc[subCategoryField] ?? null;
+        adPreviousCategory = prevCat;
+        const sameValue = prevCat === category && (prevSub ?? null) === (subCategory ?? null);
+        adCategoryStatus = prevCat == null ? 'inserted' : (sameValue ? 'unchanged' : 'updated');
 
-      const adSearch = await esForPlat.search({
-        index: esIndex,
-        body:  {
-          query: {
-            bool: {
-              should: shouldClauses,
-              minimum_should_match: 1,
-            },
-          },
-        },
-      });
-      const adHits = (adSearch.hits || adSearch.body?.hits)?.hits || [];
-      if (adHits.length > 0) {
         const updateDoc = {
           category_id,
           [categoryField]:    category,
@@ -540,21 +644,49 @@ async function newCatInsertion(req, res) {
         };
         // Version-aware: 6.x needs type 'doc' (matches PHP: 'type' => 'doc'),
         // TikTok's ES 8.1 is typeless and would reject an explicit type.
+        // A doc-merge update overwrites any prior category, so re-POSTing a
+        // different category replaces the old one (Issue 1 acceptance criterion).
         await esForPlat.update(withEsType(esForPlat, {
           index: esIndex,
-          id:    adHits[0]._id,
+          id:    adHit._id,
           body:  { doc: updateDoc },
           refresh: 'wait_for',
         }));
         adUpdated = true;
-        gdnService.log?.info(`[newCatInsertion] ${esIndex} updated for ad_id=${ad_id}`);
+        gdnService.log?.info(`[newCatInsertion] ${esIndex} ${adCategoryStatus} for ad_id=${ad_id}`);
       } else {
         adWarning = `ad_id=${ad_id} not found in ${esIndex}`;
         gdnService.log?.warn(`[newCatInsertion] ${adWarning} — skipping update`);
       }
     } catch (updateErr) {
+      adCategoryStatus = 'error';
       adWarning = `update failed for ad_id=${ad_id}: ${updateErr.message}`;
       gdnService.log?.warn(`[newCatInsertion] ${adWarning}`);
+    }
+
+    // ── Step 2b: Optional AI-Meta enrichment (Option A) ─────────────────
+    // Additive: when the caller includes an `ai_meta` object we validate + write it
+    // onto the same ad doc's `ai` field. This never fails the category write — an
+    // invalid ai_meta is reported back as `ai_meta_status='validation_error'` while
+    // the category result stands. The dedicated POST /ai-meta endpoint (Option B) is
+    // the strict path that 400s on invalid payloads.
+    let aiMetaResult = null;
+    if (aiMeta !== undefined && aiMeta !== null) {
+      const { errors: aiErrors, normalized: aiNormalized, storedFields, status: aiStatus } = validateAiMeta(aiMeta);
+      if (aiErrors.length > 0) {
+        aiMetaResult = { ai_meta_status: 'validation_error', ai_meta_errors: aiErrors };
+      } else if (!adDocId) {
+        aiMetaResult = { ai_meta_status: 'ad_not_found' };
+      } else {
+        try {
+          const written = await writeAiMeta(esForPlat, esIndex, adDocId, aiNormalized, aiStatus);
+          aiMetaResult = { ai_meta_status: written, ai_meta_stored_fields: storedFields };
+          gdnService.log?.info(`[newCatInsertion] ai_meta ${written} for ad_id=${ad_id} (status=${aiStatus})`);
+        } catch (aiErr) {
+          aiMetaResult = { ai_meta_status: 'error', ai_meta_error: aiErr.message };
+          gdnService.log?.warn(`[newCatInsertion] ai_meta write failed for ad_id=${ad_id}: ${aiErr.message}`);
+        }
+      }
     }
 
     // ── Step 3: Sync to MongoDB sdui_config (fire-and-forget) ───────────
@@ -581,9 +713,22 @@ async function newCatInsertion(req, res) {
       }
     });
 
-    gdnService.log?.info(`[newCatInsertion] Processed ad_id=${ad_id}, category=${category}, sub=${subCategory}, updated=${adUpdated}`);
-    const response = { code: 200, message, ad_id, updated: adUpdated };
+    gdnService.log?.info(`[newCatInsertion] Processed ad_id=${ad_id}, category=${category}, sub=${subCategory}, updated=${adUpdated}, ad_status=${adCategoryStatus}`);
+    const response = {
+      code: 200,
+      // `message` reflects the master-category/subcategory index (backward compatible).
+      message,
+      ad_id,
+      updated: adUpdated,
+      // `ad_status` reflects what happened to the AD record specifically, so the
+      // classifier can tell "inserted" / "updated" / "unchanged" / "not_found" apart.
+      ad_status: adCategoryStatus,
+      ad_category: category,
+      ad_sub_category: subCategory || null,
+    };
+    if (adPreviousCategory != null) response.previous_category = adPreviousCategory;
     if (adWarning) response.warning = adWarning;
+    if (aiMetaResult) Object.assign(response, aiMetaResult);
     return res.status(200).json(response);
 
   } catch (err) {
@@ -591,4 +736,132 @@ async function newCatInsertion(req, res) {
   }
 }
 
-module.exports = { getDescriptionDetails, newCatInsertion };
+/**
+ * GET /getAdCategory?platform=<net>&ad_id=<id>
+ *
+ * Lightweight single-ad read-back so the classifier can verify a newCatInsertion
+ * write attached without paging the whole getDescriptionDetails feed (Issue 1).
+ * Returns the ad's currently-stored category/sub_category (+ ids + confidence_score),
+ * matched on the same per-platform primary key newCatInsertion updates.
+ */
+async function getAdCategory(req, res) {
+  const platform = (req.query.platform || req.body?.platform || '').toLowerCase().trim();
+  const adId     = req.query.ad_id ?? req.body?.ad_id;
+
+  const cfg = PLATFORM_CONFIG[platform];
+  if (!cfg) {
+    return res.status(400).json({
+      code: 400,
+      message: `Unsupported platform: ${platform}. Valid: ${Object.keys(PLATFORM_CONFIG).join(', ')}`,
+    });
+  }
+  if (adId === undefined || adId === null || adId === '') {
+    return res.status(400).json({ code: 400, message: 'ad_id is required' });
+  }
+
+  const service = serviceRegistry.getService(cfg.service);
+  const es = service?.db?.elastic;
+  if (!es) {
+    return res.status(503).json({ code: 503, message: `ES not available for platform: ${platform}` });
+  }
+
+  const esIndex = es.indexName || cfg.index;
+  try {
+    const adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+    if (!adHit) {
+      return res.status(404).json({ code: 404, message: `ad_id=${adId} not found in ${esIndex}`, ad_id: adId, platform });
+    }
+    const src = adHit._source || {};
+    return res.status(200).json({
+      code:            200,
+      platform,
+      ad_id:           adId,
+      category:        src[`${platform}.category`]    ?? null,
+      sub_category:    src[`${platform}.subCategory`] ?? null,
+      category_id:     src.category_id    ?? null,
+      subcategory_id:  src.subCategory_id ?? null,
+      confidence_score: src.confidence_score ?? null,
+      ai:              src.ai ?? null,
+    });
+  } catch (err) {
+    service.log?.error(`[getAdCategory] platform=${platform} ad_id=${adId} error: ${err.message}`);
+    return res.status(500).json({ code: 500, message: 'Some Error Occured', error: err.message });
+  }
+}
+
+/**
+ * POST /ai-meta  (Option B — dedicated AI-Meta enrichment endpoint)
+ *
+ * Standalone, spec-conformant write path for AI-generated meta labels
+ * (AI_META_API_PAYLOAD_SPEC.md §2/§3/§6). Decoupled from category classification:
+ * it writes only the ad's `ai` object, never touches `${platform}.category`.
+ *
+ * Body: { ad_id, network, major_category?, sub_category?, ai_meta:{…} }
+ * Responses follow §6 exactly (success / 400 VALIDATION_ERROR / 404 AD_NOT_FOUND).
+ */
+async function insertAiMeta(req, res) {
+  const body     = req.body || {};
+  const adId     = body.ad_id;
+  const platform = (body.network || body.platform || '').toLowerCase().trim();
+
+  // ── Top-level validation (spec §2) ──────────────────────────────────
+  const details = [];
+  if (adId === undefined || adId === null || adId === '')
+    details.push({ field: 'ad_id', message: 'ad_id is required' });
+  if (!platform)
+    details.push({ field: 'network', message: 'network is required' });
+  else if (!PLATFORM_CONFIG[platform])
+    details.push({ field: 'network', message: `'${platform}' is not a supported network. Valid: ${Object.keys(PLATFORM_CONFIG).join(', ')}` });
+  if (body.ai_meta === undefined || body.ai_meta === null)
+    details.push({ field: 'ai_meta', message: 'ai_meta is required' });
+
+  // ai_meta field-level validation (spec §3)
+  let normalized, storedFields, aiStatus, aiErrors = [];
+  if (body.ai_meta !== undefined && body.ai_meta !== null) {
+    ({ errors: aiErrors, normalized, storedFields, status: aiStatus } = validateAiMeta(body.ai_meta));
+    details.push(...aiErrors);
+  }
+
+  if (details.length > 0) {
+    return res.status(400).json({
+      success: false,
+      ad_id:   adId ?? null,
+      error:   { code: 'VALIDATION_ERROR', message: 'Request validation failed', details },
+    });
+  }
+
+  const cfg = PLATFORM_CONFIG[platform];
+  const service = serviceRegistry.getService(cfg.service);
+  const es = service?.db?.elastic;
+  if (!es) {
+    return res.status(503).json({ success: false, ad_id: adId, error: { code: 'ES_UNAVAILABLE', message: `ES not available for network: ${platform}` } });
+  }
+  const esIndex = es.indexName || cfg.index;
+
+  try {
+    const adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+    if (!adHit) {
+      return res.status(404).json({
+        success: false,
+        ad_id:   adId,
+        error:   { code: 'AD_NOT_FOUND', message: `Ad with id '${adId}' does not exist` },
+      });
+    }
+
+    const written = await writeAiMeta(es, esIndex, adHit._id, normalized, aiStatus);
+    service.log?.info(`[insertAiMeta] ${written} for ad_id=${adId} network=${platform} status=${aiStatus}`);
+    return res.status(200).json({
+      success: true,
+      ad_id:   adId,
+      message: written === 'stored'
+        ? 'AI-Meta labels stored successfully'
+        : `AI-Meta status recorded (${aiStatus}); existing labels preserved`,
+      stored_fields: storedFields,
+    });
+  } catch (err) {
+    service.log?.error(`[insertAiMeta] network=${platform} ad_id=${adId} error: ${err.message}`);
+    return res.status(500).json({ success: false, ad_id: adId, error: { code: 'INTERNAL_ERROR', message: err.message } });
+  }
+}
+
+module.exports = { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta };

@@ -3,6 +3,7 @@
 const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 const {
   isDisplayMergeApplicable,
   getYoutubeDisplayHits,
@@ -239,6 +240,16 @@ async function enrichGdnHits(esHits, db, logger) {
   const adIds = esHits.map(hit => getEsId(hit._source)).filter(Boolean);
   let finalAds = [];
 
+  // Language map for resolving ES `lang_detect` codes → names. Loaded once,
+  // then reused below to override the stale `gdn_ad.language_id` join —
+  // mirrors adDetailController's overlay so list results agree with the
+  // detail/analytics views instead of showing whatever language was detected
+  // at insertion time.
+  let langMap = null;
+  if (db.sql) {
+    try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+  }
+
   if (db.sql && adIds.length > 0) {
     try {
       const placeholders = adIds.map(() => '?').join(',');
@@ -283,8 +294,10 @@ ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
   const esMap2 = new Map(esHits.map(hit => [String(getEsId(hit._source)), hit._source]));
   finalAds = finalAds.map(ad => {
     const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+    const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : ad.language;
     return {
       ...ad,
+      language,
       market_platform_urls: {
         url_destination: src['gdn_ad_url.url_destination']         || null,
         source_url:      src['gdn_ad_outgoing_links.source_url']   || null,
