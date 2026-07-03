@@ -39,6 +39,8 @@ import {
   trackEvent,
 } from "../../services/api";
 import { downloadAdAsPdf } from "../../services/adPdf";
+import { useTheme } from "../../hooks/useTheme";
+import { iconColorClass } from "../../utils/iconColors";
 
 import metaIcon from "../../assets/meta.svg";
 import fbIcon from "../../assets/fb.png";
@@ -215,11 +217,11 @@ const formatStat = (val) => {
 const STAT_ORDER = ["impressions", "views", "likes", "comments", "shares", "ctr"];
 
 const STAT_CONFIG = {
-  impressions: { label: "Impressions", Icon: TrendingUp,        color: "text-[#a78bfa]" },
+  impressions: { label: "Impressions", Icon: TrendingUp,        color: "text-violet-400" },
   views:       { label: "Views",       Icon: Eye,               color: "text-slate-400" },
   likes:       { label: "Likes",       Icon: ThumbsUp,          color: "text-[#6b99ff]" },
-  comments:    { label: "Comments",    Icon: MessageCircle,     color: "text-yellow-500" },
-  shares:      { label: "Shares",      Icon: Share2,            color: "text-green-500" },
+  comments:    { label: "Comments",    Icon: MessageCircle,     color: "text-yellow-400" },
+  shares:      { label: "Shares",      Icon: Share2,            color: "text-emerald-400" },
   ctr:         { label: "CTR",         Icon: MousePointerClick, color: "text-cyan-400" },
 };
 
@@ -278,6 +280,12 @@ const MasonryCard = ({
   const isTextImageAd = adTypeLower === "text-image";
   const isActive = (ad.status || "").toLowerCase() === "active";
   const hasMediaOverlay = !isTextOnlyAd && !isBannerAd && !isTextImageAd;
+
+  // In light theme the card surface flips to white (index.css remaps bg-[#0f111a]),
+  // so the bright dark-theme stat-icon colors read as washed-out — darken them via
+  // the shared iconColorClass, same as AnalyticsModal's rows.
+  const { theme } = useTheme();
+  const isLight = theme === "light";
 
   const [imgError, setImgError] = useState(false);
   const [advImgError, setAdvImgError] = useState(false);
@@ -595,7 +603,10 @@ const MasonryCard = ({
                     </span>
                   )}
                 </div>
-                <h3 className="text-[17px] font-medium leading-snug text-blue-700 line-clamp-2 group-hover:underline">
+                {/* Plain text, not a link: the Google text-ad title must not
+                    read as a clickable link (no blue link color or hover
+                    underline). The card itself remains clickable to open detail. */}
+                <h3 className="text-[17px] font-medium leading-snug text-gray-900 line-clamp-2">
                   {currentTitle || ad.ad_title || ad.title || "Text Ad"}
                 </h3>
                 {ad.ad_text && (
@@ -1128,7 +1139,7 @@ const MasonryCard = ({
                     key={s.key}
                     className="relative group/stat inline-flex items-center gap-1.5"
                   >
-                    <Icon size={13} className={`flex-shrink-0 ${s.color}`} />
+                    <Icon size={13} className={`flex-shrink-0 ${iconColorClass(s.color, isLight)}`} />
                     <span className="text-[12px] font-bold text-zinc-100">
                       {s.value}
                     </span>

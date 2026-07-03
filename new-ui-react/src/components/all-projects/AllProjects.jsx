@@ -2447,19 +2447,19 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
           <div className="bg-theme-card border border-theme-border rounded-2xl w-full max-w-sm flex flex-col shadow-2xl overflow-hidden shadow-red-500/10 mb-10 text-center p-8 relative">
             <button
               onClick={() => setProjectToDelete(null)}
-              className="absolute top-4 right-4 text-theme-text-muted hover:text-white transition-colors p-2 hover:bg-theme-bg rounded-lg"
+              className="absolute top-4 right-4 text-theme-text-muted hover:text-theme-text transition-colors p-2 hover:bg-theme-bg rounded-lg"
             >
               <X size={18} />
             </button>
             <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-5 border border-red-500/20">
               <AlertTriangle size={32} className="text-red-400" />
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">
+            <h2 className="text-2xl font-bold text-theme-text mb-2">
               Delete Advertiser?
             </h2>
             <p className="text-theme-text-muted text-sm mb-8">
               Are you sure you want to permanently delete{" "}
-              <span className="text-white font-bold capitalize">
+              <span className="text-theme-text font-bold capitalize break-words">
                 {projectToDelete.advertiser || projectToDelete.name}
               </span>{" "}
               and all its tracked intelligence? This cannot be undone.
@@ -2467,7 +2467,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             <div className="flex gap-3 w-full">
               <button
                 onClick={() => setProjectToDelete(null)}
-                className="flex-1 py-2.5 rounded-xl font-bold bg-theme-bg border border-theme-border text-white hover:bg-theme-bg/80 transition-colors"
+                className="flex-1 py-2.5 rounded-xl font-bold bg-theme-bg border border-theme-border text-theme-text hover:bg-theme-bg/80 transition-colors"
               >
                 Cancel
               </button>

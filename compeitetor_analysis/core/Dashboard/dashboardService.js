@@ -993,7 +993,15 @@ const getAdvertiserAdCount = async (advertiser) => {
 
 
           const countryPromises = relevantCntry.map(({index, countryField}) => {
-            const finalField = `${countryField}.keyword`;
+            // google_ads_data.country is keyword-typed directly (no `.keyword`
+            // sub-field), so `country.keyword` returns empty buckets. Facebook/
+            // Instagram `*_country_only.country` is text WITH a `.keyword`
+            // sub-field, so it needs the suffix. Append `.keyword` only when the
+            // field isn't already keyword-aggregatable.
+            const finalField =
+              index === 'google_ads_data' || countryField.endsWith('.keyword')
+                ? countryField
+                : `${countryField}.keyword`;
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
             const ownerClause = buildOwnerClause(index, competitor);
             return client.search({

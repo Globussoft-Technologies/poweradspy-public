@@ -505,9 +505,15 @@ const GoogleSearchAd = ({ ad, fill }) => {
 
   return (
     <div
-      className={`bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col p-4 ${fill ? "w-full h-full" : "max-w-[400px] mx-auto"}`}
+      // `w-full` is required in the non-fill (modal) case: without a definite
+      // width the card is content-sized, so a long unbreakable destination URL
+      // (truncate ⇒ white-space:nowrap) inflates its min-content width. The
+      // modal's left media panel is flex-shrink-0, so it then takes that width
+      // and squeezes the right panel. `w-full max-w-[400px]` bounds the card to
+      // its parent (≤400px) so the URL truncates instead of growing the layout.
+      className={`bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col p-4 ${fill ? "w-full h-full" : "w-full max-w-[400px] mx-auto"}`}
     >
-      <div className="flex items-center gap-2 mb-1">
+      <div className="flex items-center gap-2 mb-1 min-w-0">
         <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
           <img src={gIcon} alt="" className="w-4 h-4" />
         </div>
@@ -525,7 +531,11 @@ const GoogleSearchAd = ({ ad, fill }) => {
           Sponsored
         </span>
       </div>
-      <h3 className="text-[16px] text-blue-700 font-medium leading-snug mb-1 hover:underline cursor-pointer">
+      {/* Plain text, not a link: these previews are non-interactive, so the
+          title must not look/behave clickable (no blue link color, hover
+          underline, or pointer cursor) on either the grid "Show original" or
+          the AdDetailModal "Original Preview". */}
+      <h3 className="text-[16px] text-gray-900 font-medium leading-snug mb-1">
         {ad.title}
       </h3>
       {/* No flex-1 here: under flex layout it would stretch the box and break

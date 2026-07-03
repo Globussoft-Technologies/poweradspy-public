@@ -720,7 +720,7 @@ export const buildSearchPayload = (filters = {}) => {
   const subcategoryVal = pick('subcategory');
   const industryFilter = pick('industry', 'industry_filter');
   const ecommerce = pick('ecommerce_platform_filter', 'ecommerce', 'ecommerce_filter', 'ecommerce_platform');
-  const source = pick('source', 'source_filter', 'marketing_platform');
+  const source = pick('source', 'source_filter');
   const funnel = pick('funnel_filter', 'funnel');
   const affiliate = pick('affiliate_network_filter', 'affiliate', 'affiliate_filter', 'affiliate_network', 'affiliates');
   const nativeNetwork = pick('native_network_filter', 'nativeNetwork', 'native_network');
@@ -936,7 +936,19 @@ export const buildSearchPayload = (filters = {}) => {
       return vals.length > 0 ? vals.map(v => String(v).toUpperCase()) : 'NA';
     })(),
     track: 'NA',
-    source: Array.isArray(source) && source.length > 0 ? source : v(source),
+    source: (() => {
+      // "All" is a UI sentinel meaning "no traffic-source filter" — it must NOT
+      // be sent as a real value. The backend term-filters `source` (e.g. ES
+      // `terms: { source: ["all"] }`), and no ad's source is literally "all", so
+      // sending it returns "No ads found" even when Desktop/Mobile ads exist.
+      // Drop 'all'/'na' sentinels; if nothing real remains, omit the filter.
+      const arr = Array.isArray(source) ? source : (source != null && source !== '' ? [source] : []);
+      const clean = arr.filter(s => {
+        const t = String(s).trim().toLowerCase();
+        return t && t !== 'all' && t !== 'na';
+      });
+      return clean.length > 0 ? clean : 'NA';
+    })(),
     funnel: Array.isArray(funnel) && funnel.length > 0 ? funnel : v(funnel),
     affiliate: Array.isArray(affiliate) && affiliate.length > 0 ? affiliate : 'NA',
     nativeNetwork: ps(resolvedNetworks, 'native_network_filter') || ps(resolvedNetworks, 'native_network')

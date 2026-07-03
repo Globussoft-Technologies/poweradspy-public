@@ -160,6 +160,7 @@ import { useInterestBehaviour } from "../../hooks/useInterestBehaviour";
 import { mapAdToCard, resolveNasUrl, fetchFreshTikTokVideoUrl, getVideoEmbedUrl } from '../../services/api';
 import { getStarRating } from "../../constants";
 import { resolveAdCategories } from "../../utils/categoryTaxonomy";
+import { iconColorClass } from "../../utils/iconColors";
 import he from "he";
 
 const StarRating = ({ value, isLight }) => {
@@ -998,6 +999,12 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   );
 };
 
+// Detail-row icon colors are tuned for the dark theme (Tailwind -400 shades +
+// opacity-80), which wash out on the light theme's white background. In light
+// mode swap each to a darker, higher-contrast shade and drop the opacity fade.
+// NOTE: these are explicit literal strings (not a computed `-600` replace) so
+// Tailwind's JIT actually generates the classes instead of purging them.
+
 const OwnerAvatar = ({ imageUrl, ownerName, isLight }) => {
   const [imgError, setImgError] = useState(false);
   const letter = (ownerName || "K")[0];
@@ -1159,11 +1166,14 @@ const AnalyticsModal = ({
       ? wholeDays(postT, end)
       : ((!isNaN(firstT) && !isNaN(end)) ? wholeDays(firstT, end) : null);
     const items = [];
-    if (likes) items.push({ key: 'likes', label: 'Likes', value: likes, icon: <ThumbsUp size={13} className="lucide lucide-thumbs-up text-indigo-400" /> });
-    if (comments) items.push({ key: 'comments', label: 'Comments', value: comments, icon: <MessageCircle size={13} className="lucide lucide-message-circle text-yellow-500" /> });
-    if (shares) items.push({ key: 'shares', label: 'Shares', value: shares, icon: <Share2 size={13} className="lucide lucide-share2 text-green-500" /> });
-    if (views) items.push({ key: 'views', label: 'Views', value: views, icon: <Eye size={13} className="lucide lucide-eye text-purple-400" /> });
-    if (impressions) items.push({ key: 'impressions', label: 'Impressions', value: impressions, icon: <TrendingUp size={13} className="lucide lucide-trending-up text-blue-400" /> });
+    // Engagement icons share MasonryCard's STAT_CONFIG base palette but route through
+    // iconColorClass so they darken for good contrast in light theme (same as the Ad
+    // Details rows) instead of staying pale on white.
+    if (likes) items.push({ key: 'likes', label: 'Likes', value: likes, icon: <ThumbsUp size={13} className={`lucide lucide-thumbs-up ${iconColorClass('text-[#6b99ff]', isLight)}`} /> });
+    if (comments) items.push({ key: 'comments', label: 'Comments', value: comments, icon: <MessageCircle size={13} className={`lucide lucide-message-circle ${iconColorClass('text-yellow-400', isLight)}`} /> });
+    if (shares) items.push({ key: 'shares', label: 'Shares', value: shares, icon: <Share2 size={13} className={`lucide lucide-share2 ${iconColorClass('text-emerald-400', isLight)}`} /> });
+    if (views) items.push({ key: 'views', label: 'Views', value: views, icon: <Eye size={13} className={`lucide lucide-eye ${iconColorClass('text-slate-400', isLight)}`} /> });
+    if (impressions) items.push({ key: 'impressions', label: 'Impressions', value: impressions, icon: <TrendingUp size={13} className={`lucide lucide-trending-up ${iconColorClass('text-violet-400', isLight)}`} /> });
     if (popularity > 0) items.push({ key: 'popularity', label: 'Popularity', value: popularity, isStars: true });
     return { platform, adType, position, typeBadge, runningDays, engagementItems: items, hasEngagement: items.length > 0 };
   }, [processedAd, ad, isLight]);
@@ -1858,7 +1868,7 @@ const AnalyticsModal = ({
                       <div className="flex items-center gap-2.5">
                         <item.icon
                           size={14}
-                          className={`${item.color} opacity-80`}
+                          className={iconColorClass(item.color, isLight)}
                         />
                         <span className="text-[12px] font-bold text-[#aaa]">
                           {item.label}
