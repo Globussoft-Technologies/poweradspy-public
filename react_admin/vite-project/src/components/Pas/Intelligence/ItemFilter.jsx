@@ -36,7 +36,7 @@ const ItemFilter = ({ typeTab, onFilterApply }) => {
         });
         const json = await res.json();
         if (json.code === 200 && json.data?.items) {
-          setItems(json.data.items);
+          setItems(json.data.items.filter((item) => item && item.value));
         } else {
           setItems([]);
         }
@@ -53,7 +53,7 @@ const ItemFilter = ({ typeTab, onFilterApply }) => {
 
   // Filter items based on search term
   const filteredItems = items.filter((item) =>
-    item.value.toLowerCase().includes(searchTerm.toLowerCase())
+    item?.value && (item.value || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Handle item selection

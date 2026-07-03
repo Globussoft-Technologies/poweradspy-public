@@ -39,7 +39,6 @@ const AD_DETAIL_SQL = `
     linkedin_ad_lander.white_ad_screenshot,
     linkedin_ad_lander.white_ad_lander,
     linkedin_ad_outgoing_links.proxy_lander_status,
-    linkedin_ad_built_with.built_with,
     linkedin_ad_built_with.built_with_analytics_tracking,
     linkedin_ad_built_with.affiliate_data,
     languages.name AS language,
@@ -103,6 +102,7 @@ async function getAdDetails(req, db, logger) {
           if (src.new_nas_image_url) adData.image_video_url = src.new_nas_image_url;
           if (src['linkedin.category']) adData.category = src['linkedin.category'];
           if (src['linkedin.subCategory'] !== undefined) adData.subCategory = src['linkedin.subCategory'];
+          if (src['ecommerce_platform']) adData.built_with = src['ecommerce_platform'];
           if (src.impression !== undefined) adData.impression = src.impression;
           if (src.popularity !== undefined) adData.popularity = src.popularity;
           if (src.domain_registration_date !== undefined) {

@@ -249,7 +249,7 @@ const KeywordTrends = ({ onDataReady }) => {
   const filteredDropdownItems = searchTerm === ""
     ? []
     : allItems
-      .filter((item) => item.term && item.term.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter((item) => item && (item.term || "").toLowerCase().includes(searchTerm.toLowerCase()))
       .slice(0, 8);
 
   // Transform topKeywords for chart - handle dynamic field names (keyword, advertiser, domain)

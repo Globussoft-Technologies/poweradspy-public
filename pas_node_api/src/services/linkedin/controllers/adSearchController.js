@@ -22,7 +22,6 @@ const AD_DETAIL_SELECT = `
     linkedin_ad_meta_data.destination_url            AS destination_url,
     linkedin_ad_meta_data.ad_url                    AS ad_url,
     linkedin_ad_meta_data.platform                  AS platform,
-    linkedin_ad_built_with.built_with               AS built_with,
     linkedin_ad_built_with.affiliate_data           AS affiliate_data,
     linkedin_ad_built_with.built_with_analytics_tracking AS built_with_analytics_tracking,
     linkedin_ad_variants.title                      AS ad_title,
@@ -425,6 +424,11 @@ ORDER BY FIELD(linkedin_ad.id, ${placeholders})
           // Language from ES ad_language ISO (e.g. 'en' → 'English')
           if (src['ad_language']) {
             row.language = resolveLanguageName(langMap, src['ad_language']);
+          }
+
+          // Ecommerce platform from ES
+          if (src['ecommerce_platform']) {
+            row.built_with = src['ecommerce_platform'];
           }
 
           // Merge live ES engagement data

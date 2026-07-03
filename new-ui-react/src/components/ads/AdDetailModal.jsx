@@ -90,6 +90,8 @@ import afMaxbounty from "../../assets/afiliate_network/maxbounty.png";
 import afPartnerstack from "../../assets/afiliate_network/partnerstack.png";
 import afRakuten from "../../assets/afiliate_network/rakuten.png";
 import afShareasale from "../../assets/afiliate_network/shareasale.png";
+import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
+import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
 
 const DM_MP_IMGS = {
   'agkn.com': mpAgkn, 'branch': mpBranch, 'conversionx.co': mpConversionx,
@@ -131,6 +133,9 @@ const DM_AF_IMGS = {
   'partnerstack': afPartnerstack,
   'rakuten': afRakuten,
   'shareasale': afShareasale,
+  'amazonassociates': afAmazonAssociates,
+  'amazon': afAmazonAssociates,
+  'skimlinks': afSkimlinks,
 };
 
 const PLATFORM_ICONS = {
