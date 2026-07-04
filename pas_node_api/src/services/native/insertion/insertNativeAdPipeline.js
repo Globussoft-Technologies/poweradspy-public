@@ -22,6 +22,7 @@ const api   = require('../../../insertion/helpers/apiClients');
 const media = require('../../../insertion/helpers/mediaUpload');
 const { storeInNas } = require('../../../insertion/helpers/nasClient');
 const { ok, updated, rejected, serverError } = require('../../../insertion/helpers/responses');
+const { isNullLike } = require('../../../insertion/helpers/util');
 
 const TRANSLATION_TIMEOUT_MS = 3000; // cap translation wait at 3s
 
@@ -40,6 +41,16 @@ async function processNativeAd(ad, ctx) {
 
   if (!ad.ad_id) {
     return rejected(400, 'Missing ad_id.', { field: 'ad_id', hint: 'Every ad must carry a unique ad_id.' });
+  }
+
+  // Native ads (esp. Taboola) frequently surface no advertiser brand, so the crawler sends an
+  // empty post_owner. The landing DOMAIN is the advertiser identity in that case — the same model
+  // as the historical domain->post_owner backfill — so derive it from the resolved destination
+  // (or redirect chain) before validation, instead of shedding a valid, resolvable ad on
+  // 'post_owner required' (this was ~80% of native Taboola inserts, 2026-07-04).
+  if (isNullLike(ad.post_owner)) {
+    const derived = derivePostOwner(ad.destination_url) || derivePostOwner(firstUrl(ad.redirect_url));
+    if (derived) ad.post_owner = derived;
   }
 
   const v = validateNativeAds(ad);
@@ -460,6 +471,36 @@ async function indexAd(ctx, nativeAdId, n, result) {
 function extractDomain(url) {
   if (!url) return '';
   try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+// Public-suffix set for the common multi-label TLDs so registrableDomain() doesn't mistake
+// e.g. `hkmu.edu.hk` for `edu.hk`. Not a full PSL — it falls back to the last two labels, which
+// is correct for the overwhelming majority (.com/.net/.org/…) and good enough to key an advertiser on.
+const MULTI_TLDS = new Set([
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'com.au', 'net.au', 'org.au', 'com.br', 'com.mx',
+  'co.nz', 'co.jp', 'co.in', 'co.za', 'com.hk', 'edu.hk', 'org.hk', 'gov.hk', 'com.cn', 'com.tw',
+  'com.sg', 'co.kr', 'com.tr', 'co.il', 'com.ua', 'com.pl',
+]);
+
+function registrableDomain(hostname) {
+  const parts = String(hostname).split('.').filter(Boolean);
+  if (parts.length <= 2) return parts.join('.');
+  const last2 = parts.slice(-2).join('.');
+  return MULTI_TLDS.has(last2) ? parts.slice(-3).join('.') : last2;
+}
+
+// Advertiser-identity fallback: the registrable domain of the ad's landing URL, lowercased.
+function derivePostOwner(url) {
+  const host = extractDomain(url); // '' on a non-URL / tracker with no host
+  return host ? registrableDomain(host).toLowerCase() : '';
+}
+
+// First usable URL out of a redirect_url that may be a string, a '||'-joined chain, or an array.
+function firstUrl(r) {
+  if (!r) return '';
+  if (Array.isArray(r)) return r.find(Boolean) || '';
+  const s = String(r);
+  return s.includes('||') ? (s.split('||').find(Boolean) || '') : s;
 }
 
 function buildRedirectUrl(n) {
