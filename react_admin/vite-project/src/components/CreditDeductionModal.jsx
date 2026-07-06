@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import './CreditDeductionModal.css';
 import { RiGeminiFill } from 'react-icons/ri';
-import { SiOpenai } from 'react-icons/si';
+import { GiBrain } from 'react-icons/gi';
 import SparkleDark from '../assets/img/sparkle-dark.svg'; // Update path as needed
 import advideo from '../assets/img/advideo.svg'; 
 import addie from '../assets/img/addie.svg'; 
@@ -23,7 +23,7 @@ const CreditDeductionModal = ({ user, isOpen, onClose }) => {
       {
         value: 'ADSGPT-3.0',
         label: 'OpenAI',
-        Icon: <SiOpenai className="model-icon" />,
+        Icon: <GiBrain className="model-icon" />,
       },
       {
         value: 'ADSGPT-1.0',
