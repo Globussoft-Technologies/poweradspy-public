@@ -158,9 +158,14 @@ const LINKEDIN = [
 ];
 
 // ─── YouTube ────────────────────────────────────────────────────────────
-// Has TWO always-applied filters:
+// Has THREE always-applied filters (see youtube SearchMixQueryBuilder.build()):
 //   1. EXTRA_CONDITION (displayable-media gate)
-//   2. exclude ads with empty ad_type (line 394 of the builder)
+//   2. exclude ads with empty ad_type          — must_not term ad_type.keyword ''
+//   3. exclude DISPLAY-type ads                — must_not term ad_type.keyword 'DISPLAY'
+//      DISPLAY YouTube ads are surfaced under GDN (via youtubeDisplayMerge), not
+//      YouTube, so the live YouTube search hides them. Without this exclusion the
+//      total-ad-count over-counts YouTube by every displayable DISPLAY ad (they
+//      pass EXTRA_CONDITION's non-VIDEO/DISCOVERY branch when they have a NAS image).
 const YOUTUBE = [
   {
     bool: {
@@ -192,7 +197,31 @@ const YOUTUBE = [
       minimum_should_match: 1,
     },
   },
-  { bool: { must_not: [{ term: { 'ad_type.keyword': '' } }] } },
+  { bool: { must_not: [{ terms: { 'ad_type.keyword': ['', 'DISPLAY'] } }] } },
+];
+
+// ─── YouTube DISPLAY ads surfaced under GDN ──────────────────────────────
+// YouTube ads with ad_type DISPLAY/IMAGE physically live in the youtube index
+// but are surfaced under the GDN listing (read-path merge in
+// gdn/helpers/youtubeDisplayMerge.js → getYoutubeDisplayHits). The website's GDN
+// "Total Ads" = gdn count + this youtube-side count, so any GDN total that must
+// match the website has to add this count (run against the YOUTUBE index, NOT
+// the gdn index). Mirrors getYoutubeDisplayHits' unfiltered (no user filter)
+// clause set. Keep in sync with youtubeDisplayMerge.BLOCKED_MEDIA.
+const YOUTUBE_DISPLAY_UNDER_GDN = [
+  {
+    bool: {
+      filter: [
+        { terms:  { 'ad_type.keyword': ['DISPLAY', 'IMAGE'] } },
+        { exists: { field: 'new_nas_image_url' } },
+      ],
+      must_not: [
+        { wildcard: { 'new_nas_image_url.keyword': { value: '*pasvideo*' } } },
+        { wildcard: { 'new_nas_image_url.keyword': { value: '*pasimage*' } } },
+        { wildcard: { 'new_nas_image_url.keyword': { value: '*bydefault*' } } },
+      ],
+    },
+  },
 ];
 
 // ─── Google ─────────────────────────────────────────────────────────────
@@ -395,4 +424,4 @@ function getDisplayableMediaFilter(network) {
   return FILTERS[network] || null;
 }
 
-module.exports = { getDisplayableMediaFilter };
+module.exports = { getDisplayableMediaFilter, YOUTUBE_DISPLAY_UNDER_GDN };

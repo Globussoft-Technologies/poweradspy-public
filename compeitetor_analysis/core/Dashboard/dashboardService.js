@@ -859,9 +859,12 @@ const getAdvertiserAdCount = async (advertiser) => {
           lastMonthAdsCount: 0,
           lastYearAdsCount: 0,
           platformCompetitorCount: { facebook: 0, instagram: 0, google: 0 },
-          uniqueCountries: new Set()
+          uniqueCountries: new Set(),
+          // country (lowercased) → combined doc_count across platforms; ranks
+          // "Top Country" by the true leading bucket, not query/insertion order.
+          countryCounts: {}
         };
-    
+
         let facebookStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
         let instagramStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
         let googleStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
@@ -1025,7 +1028,11 @@ const getAdvertiserAdCount = async (advertiser) => {
           const countryRes = await Promise.all(countryPromises);
           countryRes.forEach(r => {
             (r?.aggregations?.countries?.buckets || []).forEach(b => {
-              if (b.key) totals.uniqueCountries.add(b.key.toLowerCase());
+              if (b.key) {
+                const key = b.key.toLowerCase();
+                totals.uniqueCountries.add(key);
+                totals.countryCounts[key] = (totals.countryCounts[key] || 0) + (b.doc_count || 0);
+              }
             });
           });
     
@@ -1122,7 +1129,12 @@ const getAdvertiserAdCount = async (advertiser) => {
 
         return res.send(Response.userSuccessResp("Counts fetched successfully", {
           ...totals,
-          uniqueCountries: Array.from(totals.uniqueCountries),
+          countryCounts: undefined,
+          // Ranked by combined doc_count desc so "Top Country" reflects the true
+          // leading bucket across platforms, not query/insertion order.
+          uniqueCountries: Object.entries(totals.countryCounts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name]) => name),
           averageImpression: avgImpression,
           averagePopularity: avgPopularity,
           averageBudget: avgBudget,
@@ -2073,7 +2085,11 @@ async insertpaidSearch(req,res){
         ];
         const countryIndexConfigs = [
           { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name', countryField: 'country_only.country' },
-          { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' }
+          { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' },
+          // Google contributes to the competitor's country distribution too — the
+          // "Top Country" column must reflect FB+IG+Google combined. google_ads_data
+          // .country is keyword-typed directly (no `.keyword` sub-field).
+          { index: 'google_ads_data', field: 'post_owner_name', countryField: 'country' }
         ];
         // Match the search builders: ads in a date bucket are those *last seen*
         // in that window — not just those first seen. Using firstSeenOn*
@@ -2092,7 +2108,10 @@ async insertpaidSearch(req,res){
           lastMonthAdsCount: 0,
           lastYearAdsCount: 0,
           platformCompetitorCount: { facebook: 0, instagram: 0, google: 0 },
-          uniqueCountries: new Set()
+          uniqueCountries: new Set(),
+          // country (lowercased) → combined doc_count across FB+IG+Google, used to
+          // rank "Top Country" by the true leading bucket, not config/insertion order.
+          countryCounts: {}
         };
         let facebookStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
         let instagramStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
@@ -2181,6 +2200,13 @@ async insertpaidSearch(req,res){
           for (const { index, countryField } of countryIndexConfigs.filter(c => serverData.indexes.includes(c.index))) {
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
             const ownerClause = buildOwnerClause(index, competitor);
+            // google_ads_data.country is keyword-typed directly (no `.keyword`
+            // sub-field); FB/IG `*_country_only.country` is text WITH a `.keyword`
+            // sub-field. Append `.keyword` only when not already keyword-aggregatable.
+            const finalField =
+              index === 'google_ads_data' || countryField.endsWith('.keyword')
+                ? countryField
+                : `${countryField}.keyword`;
             const r = await client.search({
               index, size: 0,
               body: {
@@ -2192,11 +2218,18 @@ async insertpaidSearch(req,res){
                     ...(mustNotClauses.length && { must_not: mustNotClauses }),
                   },
                 },
-                aggs: { countries: { terms: { field: `${countryField}.keyword`, size: 1000 } } }
+                aggs: { countries: { terms: { field: finalField, size: 1000 } } }
               }
             });
+            // Sum doc_count per country across platforms so "Top Country" reflects
+            // the true leading bucket (FB+IG+Google combined), not the order the
+            // platforms happen to be queried in.
             (r?.aggregations?.countries?.buckets || []).forEach(b => {
-              if (b.key) totals.uniqueCountries.add(b.key.toLowerCase());
+              if (b.key) {
+                const key = b.key.toLowerCase();
+                totals.uniqueCountries.add(key);
+                totals.countryCounts[key] = (totals.countryCounts[key] || 0) + (b.doc_count || 0);
+              }
             });
           }
 
@@ -2245,7 +2278,11 @@ async insertpaidSearch(req,res){
           lastMonthAdsCount: totals.lastMonthAdsCount,
           lastYearAdsCount: totals.lastYearAdsCount,
           platformCompetitorCount: totals.platformCompetitorCount,
-          uniqueCountries: Array.from(totals.uniqueCountries),
+          // Ranked by combined doc_count desc so the FE's `countries.slice(0,3)`
+          // ("Top Country") shows the true leading countries across FB+IG+Google.
+          uniqueCountries: Object.entries(totals.countryCounts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name]) => name),
           averageImpression: getValidAverage(facebookStats.averageImpression, instagramStats.averageImpression),
           averagePopularity: getValidAverage(facebookStats.averagePopularity, instagramStats.averagePopularity),
           averageBudget: getValidAverage(facebookStats.averageBudget, instagramStats.averageBudget),

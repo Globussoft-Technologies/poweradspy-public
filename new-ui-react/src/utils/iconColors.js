@@ -33,7 +33,9 @@ export const LIGHT_ICON_COLOR = {
 /**
  * Resolve an icon color class for the active theme.
  * Light theme → the darker mapped variant (or the original if unmapped).
- * Dark theme  → the original color at 80% opacity (matches the detail-row look).
+ * Dark theme  → the original color, at 80% opacity when `dim` (the softer
+ *   detail-row look) or full strength when `dim=false` (higher contrast, e.g.
+ *   the engagement-metric row testers asked to make punchier).
  */
-export const iconColorClass = (color, isLight) =>
-  isLight ? (LIGHT_ICON_COLOR[color] || color) : `${color} opacity-80`;
+export const iconColorClass = (color, isLight, dim = true) =>
+  isLight ? (LIGHT_ICON_COLOR[color] || color) : (dim ? `${color} opacity-80` : color);

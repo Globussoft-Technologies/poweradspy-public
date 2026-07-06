@@ -1174,11 +1174,12 @@ const AnalyticsModal = ({
     // Engagement icons share MasonryCard's STAT_CONFIG base palette but route through
     // iconColorClass so they darken for good contrast in light theme (same as the Ad
     // Details rows) instead of staying pale on white.
-    if (likes) items.push({ key: 'likes', label: 'Likes', value: likes, icon: <ThumbsUp size={13} className={`lucide lucide-thumbs-up ${iconColorClass('text-[#6b99ff]', isLight)}`} /> });
-    if (comments) items.push({ key: 'comments', label: 'Comments', value: comments, icon: <MessageCircle size={13} className={`lucide lucide-message-circle ${iconColorClass('text-yellow-400', isLight)}`} /> });
-    if (shares) items.push({ key: 'shares', label: 'Shares', value: shares, icon: <Share2 size={13} className={`lucide lucide-share2 ${iconColorClass('text-emerald-400', isLight)}`} /> });
-    if (views) items.push({ key: 'views', label: 'Views', value: views, icon: <Eye size={13} className={`lucide lucide-eye ${iconColorClass('text-slate-400', isLight)}`} /> });
-    if (impressions) items.push({ key: 'impressions', label: 'Impressions', value: impressions, icon: <TrendingUp size={13} className={`lucide lucide-trending-up ${iconColorClass('text-violet-400', isLight)}`} /> });
+    // dim=false → full-strength icons (higher contrast than the softer detail rows), per tester feedback.
+    if (likes) items.push({ key: 'likes', label: 'Likes', value: likes, icon: <ThumbsUp size={13} className={`lucide lucide-thumbs-up ${iconColorClass('text-[#6b99ff]', isLight, false)}`} /> });
+    if (comments) items.push({ key: 'comments', label: 'Comments', value: comments, icon: <MessageCircle size={13} className={`lucide lucide-message-circle ${iconColorClass('text-yellow-400', isLight, false)}`} /> });
+    if (shares) items.push({ key: 'shares', label: 'Shares', value: shares, icon: <Share2 size={13} className={`lucide lucide-share2 ${iconColorClass('text-emerald-400', isLight, false)}`} /> });
+    if (views) items.push({ key: 'views', label: 'Views', value: views, icon: <Eye size={13} className={`lucide lucide-eye ${iconColorClass('text-slate-400', isLight, false)}`} /> });
+    if (impressions) items.push({ key: 'impressions', label: 'Impressions', value: impressions, icon: <TrendingUp size={13} className={`lucide lucide-trending-up ${iconColorClass('text-violet-400', isLight, false)}`} /> });
     if (popularity > 0) items.push({ key: 'popularity', label: 'Popularity', value: popularity, isStars: true });
     return { platform, adType, position, typeBadge, runningDays, engagementItems: items, hasEngagement: items.length > 0 };
   }, [processedAd, ad, isLight]);
@@ -1844,7 +1845,7 @@ const AnalyticsModal = ({
                       <div key={i} className="relative group/stat flex items-center gap-1.5">
                         {stat.icon}
                         <span
-                          className={`text-[13px] font-medium tabular-nums ${isLight ? "text-black/45" : "text-white/45"}`}
+                          className={`text-[13px] font-semibold tabular-nums ${isLight ? "text-gray-900" : "text-white/85"}`}
                         >
                           {stat.value}
                         </span>

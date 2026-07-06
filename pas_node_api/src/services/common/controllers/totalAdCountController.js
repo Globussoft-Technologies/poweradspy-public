@@ -47,7 +47,7 @@
 const databaseManager = require('../../../database/DatabaseManager');
 const ResponseFormatter = require('../../../utils/responseFormatter');
 const logger = require('../../../logger');
-const { getDisplayableMediaFilter } = require('../helpers/displayableMediaFilters');
+const { getDisplayableMediaFilter, YOUTUBE_DISPLAY_UNDER_GDN } = require('../helpers/displayableMediaFilters');
 
 const log = logger.createChild('total-ad-count');
 
@@ -152,7 +152,35 @@ async function getTotalAdCount(req, res) {
     });
 
     // ES client v8 returns { count } directly; v7 wraps it as { body: { count } }.
-    const totalAds = result?.count ?? result?.body?.count ?? 0;
+    let totalAds = result?.count ?? result?.body?.count ?? 0;
+
+    // GDN surfaces YouTube DISPLAY/IMAGE ads under its listing via the read-path
+    // merge (gdn/helpers/youtubeDisplayMerge.js) — the website's GDN total is
+    // `gdn count + youtube-DISPLAY count`. Those ads live in the youtube index,
+    // not gdn, so add that count here to match the website's GDN "Total Ads".
+    // The date range (if any) is applied to the youtube last_seen the same way
+    // the merge bounds its youtube sub-query.
+    let mergedYoutubeDisplay = false;
+    if (network === 'gdn') {
+      const ytConn = databaseManager.getElastic('youtube');
+      if (ytConn && ytConn.client) {
+        const ytRange = buildRangeClause('youtube', raw.range);
+        const ytFilter = [...YOUTUBE_DISPLAY_UNDER_GDN];
+        if (ytRange) ytFilter.push(ytRange);
+        try {
+          const ytResult = await ytConn.client.count({
+            index: ytConn.indexName,
+            body: { query: { bool: { filter: ytFilter } } },
+          });
+          totalAds += ytResult?.count ?? ytResult?.body?.count ?? 0;
+          mergedYoutubeDisplay = true;
+        } catch (ytErr) {
+          log.warn('GDN total: YouTube DISPLAY merge count failed; returning gdn-only', {
+            error: ytErr.message,
+          });
+        }
+      }
+    }
 
     return ResponseFormatter.success(res, {
       network,
@@ -160,6 +188,7 @@ async function getTotalAdCount(req, res) {
       index: esConn.indexName,
       rangeApplied: Boolean(rangeClause),
       mediaFilterApplied: Boolean(mediaFilters),
+      ...(network === 'gdn' && { mergedYoutubeDisplay }),
     });
   } catch (err) {
     log.error('Total ad count query failed', {

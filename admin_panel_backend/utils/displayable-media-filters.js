@@ -177,7 +177,32 @@ const YOUTUBE = [
       minimum_should_match: 1,
     },
   },
-  { bool: { must_not: [{ term: { 'ad_type.keyword': '' } }] } },
+  // Exclude empty ad_type AND DISPLAY-type ads. DISPLAY YouTube ads are surfaced
+  // under GDN (via youtubeDisplayMerge), not YouTube, so the live YouTube search
+  // hides them; without this the total-ad-count over-counts YouTube by every
+  // displayable DISPLAY ad. Mirrors youtube SearchMixQueryBuilder.build().
+  { bool: { must_not: [{ terms: { 'ad_type.keyword': ['', 'DISPLAY'] } }] } },
+];
+
+// YouTube DISPLAY/IMAGE ads are surfaced under GDN (read-path merge in
+// pas_node_api gdn/helpers/youtubeDisplayMerge.js). The website's GDN "Total
+// Ads" = gdn count + this youtube-side count, so the GDN total here must add it
+// (run against the YOUTUBE index, not gdn). Mirrors getYoutubeDisplayHits'
+// unfiltered clause set + youtubeDisplayMerge.BLOCKED_MEDIA.
+const YOUTUBE_DISPLAY_UNDER_GDN = [
+  {
+    bool: {
+      filter: [
+        { terms:  { 'ad_type.keyword': ['DISPLAY', 'IMAGE'] } },
+        { exists: { field: 'new_nas_image_url' } },
+      ],
+      must_not: [
+        { wildcard: { 'new_nas_image_url.keyword': { value: '*pasvideo*' } } },
+        { wildcard: { 'new_nas_image_url.keyword': { value: '*pasimage*' } } },
+        { wildcard: { 'new_nas_image_url.keyword': { value: '*bydefault*' } } },
+      ],
+    },
+  },
 ];
 
 const GOOGLE = [
@@ -358,4 +383,4 @@ function getDisplayableMediaFilter(network) {
   return FILTERS[network] || null;
 }
 
-module.exports = { getDisplayableMediaFilter };
+module.exports = { getDisplayableMediaFilter, YOUTUBE_DISPLAY_UNDER_GDN };

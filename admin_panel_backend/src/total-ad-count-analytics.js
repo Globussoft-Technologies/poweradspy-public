@@ -1,6 +1,6 @@
 require('dotenv').config();
 const searchAllInstances = require('../es-connections/connection');
-const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { getDisplayableMediaFilter, YOUTUBE_DISPLAY_UNDER_GDN } = require('../utils/displayable-media-filters');
 
 // Q1-equivalent (lifetime total) via Elasticsearch — with the same per-network
 // displayable-media filter the new-ui-react frontend applies. Keeping the
@@ -44,7 +44,23 @@ const totalAdsCountFilter = async (req, res) => {
             ES_DATA[network].es_id,
             responseType
         );
-        const totalCount = typeCount?.data ? typeCount.data : 0;
+        let totalCount = typeCount?.data ? typeCount.data : 0;
+
+        // GDN surfaces YouTube DISPLAY/IMAGE ads under its listing via the
+        // read-path merge (pas_node_api gdn/helpers/youtubeDisplayMerge.js), so
+        // the website's GDN "Total Ads" = gdn count + that youtube-side count.
+        // The gdn index alone doesn't contain those ads, so add the count from
+        // the YOUTUBE index to match what the user sees.
+        if (network === 'gdn' && ES_DATA.youtube?.index) {
+            const ytDisplayCount = await searchAllInstances(
+                ES_DATA.youtube.index,
+                { query: { bool: { filter: YOUTUBE_DISPLAY_UNDER_GDN } } },
+                ES_DATA.youtube.es_id,
+                'count'
+            );
+            totalCount += ytDisplayCount?.data ? ytDisplayCount.data : 0;
+        }
+
         return res.status(200).json(totalCount);
     } catch (error) {
         console.error('Error fetching total ad count:', error);
