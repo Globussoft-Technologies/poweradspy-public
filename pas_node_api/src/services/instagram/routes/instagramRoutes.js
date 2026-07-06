@@ -22,6 +22,7 @@ const {
   getAdvertiserInsightsByDateRange,
   } = require('../controllers/adInsightsController');
 const { userChk } = require('../controllers/userCheckController');
+const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
@@ -227,6 +228,17 @@ function createInstagramRoutes(service) {
       // PHP returns json_encode($response) as a plain string → HTTP 200 always;
       // the app-level status lives in the body `code` (the extension reads that).
       return res.status(200).json(result);
+    })
+  );
+
+  // ─── Domain registration lookup (gramapi) ─────────────
+  // GET /api/v1/instagram/get-domain-registration?domain=<domain> → Userv2Controller@getDomainRegistration
+  // Public (no auth in PHP). `code` is mapped to the real HTTP status (200/404/400/401).
+  router.get(
+    '/get-domain-registration',
+    asyncHandler(async (req, res) => {
+      const result = await getDomainRegistration(req, service.db, service.log);
+      return res.status(result.code).json(result);
     })
   );
 

@@ -17,6 +17,7 @@ const {
 } = require('../controllers/adInsightsController');
 const { authMiddleware } = require('../../../middleware/auth');
 const validator = require('../../../middleware/validator');
+const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 
 const searchSchema = {
   body: {
@@ -174,6 +175,17 @@ function createGoogleRoutes(service) {
     asyncHandler(async (req, res) => {
       const result = await unHide(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // ─── Domain registration lookup (gtext) ───────────────
+  // GET /api/v1/google/get-domain-registration?domain=<domain> → UserController@getDomainRegistration
+  // Public (no auth in PHP). `code` is mapped to the real HTTP status (200/404/400/401).
+  router.get(
+    '/get-domain-registration',
+    asyncHandler(async (req, res) => {
+      const result = await getDomainRegistration(req, service.db, service.log);
+      return res.status(result.code).json(result);
     })
   );
 
