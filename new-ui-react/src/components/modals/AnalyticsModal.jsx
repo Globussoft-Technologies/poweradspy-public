@@ -1245,6 +1245,16 @@ const AnalyticsModal = ({
     if (s.includes(' ')) return s.split(' ')[0];
     return s;
   };
+  // Domain Reg Date only: WHOIS often has no data → date defaults to the Unix epoch
+  // ("1970-01-01", or "1969-12-31" after a tz shift) / a zero-date. No real domain
+  // predates the epoch, so show an em-dash for those (the ad itself still lists).
+  const fmtDomainRegDate = (val) => {
+    const out = fmtDate(val);
+    if (out === '—' || out === '0000-00-00' || out === '0001-01-01') return '—';
+    const ts = Date.parse(out);
+    if (!isNaN(ts) && ts <= 0) return '—';
+    return out;
+  };
   const detailRows = (() => {
     const tt = tiktokAnalytics || {};
     if (isTikTok)
@@ -1405,7 +1415,7 @@ const AnalyticsModal = ({
       },
       {
         label: "DOMAIN REG DATE",
-        value: fmtDate(d.domain_registered_date),
+        value: fmtDomainRegDate(d.domain_registered_date),
         icon: Calendar,
         color: "text-teal-400",
       },

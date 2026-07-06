@@ -149,26 +149,26 @@ async function insertPath(ctx, rawAd, { network, userId }) {
     const cat = await repo.getCategory(tx, n.ad_category || '');
     categoryId = cat.code === 200 ? cat.data[0].id : await repo.insertCategory(tx, n.ad_category || '');
 
-    // country_only (shared table). Platform 15 (ads library): `country` may be a
-    // comma list → one country_only row per country; linkedin_ad.country_only_id = the
-    // LAST one (PHP 638-674). multipleCountryId feeds linkedin_ad_countries_only below.
+    // country_only (shared table). `country` may be a comma list (esp. platform 15 ads
+    // library) → ALWAYS split into ONE country_only row per country; never store the raw
+    // list as a single value (it overflows the varchar(255) column and pollutes the shared
+    // dedup table). Each value is trimmed and capped to 255 as a safety net.
+    // linkedin_ad.country_only_id = the LAST one (PHP 638-674); multipleCountryId feeds
+    // linkedin_ad_countries_only below.
     let countryOnlyId = null;
     const multipleCountryId = [];
-    if (isLib) {
-      const countries = String(n.country || '').split(',').map((c) => c.trim()).filter(Boolean);
-      for (const c of countries) {
-        const cc = await repo.getCountryOnly(tx, c);
-        const id = cc.code === 200 ? cc.data[0].id : await repo.insertCountryOnly(tx, c);
-        countryOnlyId = id;
-        multipleCountryId.push(id);
-      }
-      if (countryOnlyId === null) {
-        const cc = await repo.getCountryOnly(tx, n.country);
-        countryOnlyId = cc.code === 200 ? cc.data[0].id : await repo.insertCountryOnly(tx, n.country);
-      }
-    } else {
-      const co = await repo.getCountryOnly(tx, n.country);
-      countryOnlyId = co.code === 200 ? co.data[0].id : await repo.insertCountryOnly(tx, n.country);
+    const countries = String(n.country || '').split(',').map((c) => c.trim().slice(0, 255)).filter(Boolean);
+    for (const c of countries) {
+      const cc = await repo.getCountryOnly(tx, c);
+      const id = cc.code === 200 ? cc.data[0].id : await repo.insertCountryOnly(tx, c);
+      countryOnlyId = id;
+      multipleCountryId.push(id);
+    }
+    if (countryOnlyId === null && n.country) {
+      // country present but produced no split values — store the trimmed/capped single value.
+      const single = String(n.country).trim().slice(0, 255);
+      const cc = await repo.getCountryOnly(tx, single);
+      countryOnlyId = cc.code === 200 ? cc.data[0].id : await repo.insertCountryOnly(tx, single);
     }
 
     // domain
