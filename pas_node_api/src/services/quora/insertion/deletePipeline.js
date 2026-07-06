@@ -62,13 +62,20 @@ async function processDelete(delReq, ctx) {
     });
 
 
-    // Delete from ES
+    // Delete from ES. The doc is keyed by an ES-generated hashed _id (mapping type
+    // "doc"), not the numeric internal id, so locate it by the quora_ad.id FIELD and
+    // delete every matching doc (covers the hashed doc + any stray numeric "_doc").
     if (db.elastic) {
       try {
-        await db.elastic.delete({
+        const found = await db.elastic.search({
           index: 'quora_search_mix',
-          id: String(internalId),
+          body: { query: { term: { 'quora_ad.id': internalId } } },
+          size: 100,
         });
+        const hits = found?.hits?.hits || found?.body?.hits?.hits || [];
+        for (const hit of hits) {
+          await db.elastic.delete({ index: 'quora_search_mix', type: hit._type, id: hit._id }).catch(() => null);
+        }
       } catch (err) {
         log.warn('ES delete failed', { error: err.message });
       }

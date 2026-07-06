@@ -7,10 +7,16 @@
  */
 
 const repo = require('./repository');
-const { ensureUtf8mb3Compatible } = require('../../../insertion/helpers/util');
+const { ensureUtf8mb3Compatible, latin1Safe } = require('../../../insertion/helpers/util');
 
 async function upsertPostOwner(exec, ad, userId, log) {
-  const postOwnerName = ad.post_owner ? ad.post_owner.trim() : '';
+  // quora_ad_post_owners.post_owner_name is a latin1 column, so a name carrying a
+  // char outside latin1 (e.g. "WeJñān" — the ā is U+0101) makes mysql2 throw
+  // 'Conversion from collation utf8mb4_unicode_ci into latin1_swedish_ci impossible
+  // for parameter' on BOTH the WHERE lookup and the INSERT, rolling back the whole ad.
+  // Strip the out-of-latin1 code points up front so the value binds cleanly (documented
+  // latin1 stopgap; the lossless fix is ALTERing the column to utf8mb4).
+  const postOwnerName = ad.post_owner ? latin1Safe(ad.post_owner.trim()) : '';
   log && log.info('upsertPostOwner called', { postOwnerName, hasPostOwner: !!ad.post_owner, adPostOwner: ad.post_owner });
 
   if (!postOwnerName) {

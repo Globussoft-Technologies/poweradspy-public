@@ -5,6 +5,13 @@
  * Mirrors the Facebook repository pattern with quora_* table/column names.
  */
 
+// latin1SafeCols strips out-of-latin1 code points from the latin1 image/URL columns on
+// *_ad_variants (image_url, image_url_original, …) — the text columns (title/text/
+// newsfeed_description) are utf8mb4 and left untouched. Binding a utf8mb4 param into a
+// latin1 column otherwise throws the collation error and rolls the whole insert back,
+// dropping the ad. Same guard Facebook/Instagram/GDN use.
+const { latin1SafeCols } = require('../../../insertion/helpers/util');
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const firstId = (r) => (r && r.insertId ? r.insertId : 0);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
@@ -129,7 +136,7 @@ async function getJoinedAd(exec, whereVal) {
 
 // ── quora_ad_variants ──────────────────────────────────────────────────────
 async function insertQuoraAdVariants(exec, data) {
-  const clean = stripNulls(data);
+  const clean = stripNulls(latin1SafeCols(data));
   const cols = Object.keys(clean);
   return firstId(await exec.query(
     `INSERT INTO quora_ad_variants (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -138,7 +145,7 @@ async function insertQuoraAdVariants(exec, data) {
 }
 
 async function updateQuoraAdVariants(exec, data, adInternalId) {
-  const clean = stripNulls(Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)));
+  const clean = stripNulls(Object.fromEntries(Object.entries(latin1SafeCols(data)).filter(([, v]) => v !== undefined)));
   const cols = Object.keys(clean);
   return affected(await exec.query(
     `UPDATE quora_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE quora_ad_id = ?`,

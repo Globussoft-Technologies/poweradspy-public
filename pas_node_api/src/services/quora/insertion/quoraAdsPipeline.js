@@ -447,6 +447,36 @@ async function updateQuoraAd(sql, db, ad, internalId, translationData, ctx) {
   }
 }
 
+// An ES-7 index has exactly one mapping type and it never changes at runtime, so cache it.
+const _indexTypeCache = new Map();
+
+// Resolve the index's single ES-7 mapping type so writes use the type the index actually
+// has ("doc" for a PHP-seeded index, "_doc" for a Node-seeded one). Writing the wrong type
+// is rejected with "the final mapping would have more than 1 type". Reads the live mapping
+// (authoritative even when the index has ZERO docs — `include_type_name` exposes the type
+// name on ES 7), falls back to a sample doc's _type, then to the ES-7 typeless default "_doc".
+async function resolveIndexType(elastic, index) {
+  if (_indexTypeCache.has(index)) return _indexTypeCache.get(index);
+  let type;
+  try {
+    const res = await elastic.indices.getMapping({ index, include_type_name: true });
+    const body = res?.body || res || {};
+    const idxBody = body[index] || body[Object.keys(body)[0]] || {};
+    const typeNames = Object.keys(idxBody.mappings || {});
+    if (typeNames.length) type = typeNames[0];
+  } catch { /* ignore — try a sample doc next */ }
+  if (!type) {
+    try {
+      const probe = await elastic.search({ index, body: { query: { match_all: {} } }, size: 1 });
+      const hits = probe?.hits?.hits || probe?.body?.hits?.hits || [];
+      type = hits[0]?._type;
+    } catch { /* ignore */ }
+  }
+  type = type || '_doc';
+  _indexTypeCache.set(index, type);
+  return type;
+}
+
 async function indexQuoraAdEs(elastic, adInternalId, sql, ctx) {
   if (!elastic) return false;
   try {
@@ -455,12 +485,49 @@ async function indexQuoraAdEs(elastic, adInternalId, sql, ctx) {
 
     const row = joined.data[0];
     const doc = buildSearchMixDoc(QUORA_INSERT_COLUMNS, row);
+    const numericId = String(adInternalId);
 
-    await elastic.index({
-      index: doc.index,
-      id: String(adInternalId),
-      body: doc.body,
-    });
+    // The whole stack (PHP search, frontend, OCR, landers) locates a quora_search_mix
+    // doc via the quora_ad.id FIELD and keys it by an ES-generated hashed _id. Keep that
+    // identity: reuse an existing hashed doc's _id (overwrite in place → no duplicate),
+    // otherwise mint a new hashed _id; the old numeric-_id docs are converted (write the
+    // hashed doc, then drop the numeric one). Always write using the index's OWN mapping
+    // type — ES 7 allows a single type per index ("doc" in prod, "_doc" on a Node-seeded
+    // index) and a hardcoded type would be rejected. And index BEFORE deleting, so a
+    // failed write can never leave the ad with zero docs.
+    let hits = [];
+    try {
+      const found = await elastic.search({
+        index: ES_INDEX,
+        body: { query: { term: { 'quora_ad.id': adInternalId } } },
+        size: 100,
+      });
+      hits = found?.hits?.hits || found?.body?.hits?.hits || [];
+    } catch (err) {
+      ctx.log.warn('ES lookup failed; indexing a fresh doc', { error: err.message, adInternalId });
+    }
+
+    // Reuse an existing HASHED doc (any _id that isn't the bare numeric internal id).
+    const keeper = hits.find((h) => h._id !== numericId);
+    const esType = keeper?._type || hits[0]?._type || (await resolveIndexType(elastic, ES_INDEX));
+
+    let survivorId;
+    if (keeper) {
+      await elastic.index({ index: ES_INDEX, type: esType, id: keeper._id, body: doc.body });
+      survivorId = keeper._id;
+    } else {
+      const res = await elastic.index({ index: ES_INDEX, type: esType, body: doc.body }); // no id → hashed _id
+      survivorId = res?.body?._id || res?._id;
+    }
+
+    // Now that the survivor is written, drop every other doc for this ad (numeric strays,
+    // extra dups). The survivor is never in `hits` on a fresh insert, and is skipped by id on reuse.
+    for (const hit of hits) {
+      if (hit._id !== survivorId) {
+        await elastic.delete({ index: ES_INDEX, type: hit._type, id: hit._id }).catch(() => null);
+        ctx.log.info('Removed stray ES doc for ad', { adInternalId, strayId: hit._id, strayType: hit._type });
+      }
+    }
 
     return true;
   } catch (err) {
