@@ -723,6 +723,350 @@ function buildAllSearchesQuery(params) {
   };
 }
 
+async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger) {
+  if (!elastic || !platformKeywordMap || Object.keys(platformKeywordMap).length === 0) {
+    return {};
+  }
+
+  const results = {};
+  const platformPromises = [];
+  const BATCH_SIZE = 500;
+  const MAX_CONCURRENT_QUERIES = 5;
+
+  for (const [platform, keywords] of Object.entries(platformKeywordMap)) {
+    const platformLower = platform.toLowerCase();
+    const indexName = PLATFORM_INDEX_MAP[platformLower] || 'search_mix';
+    const platformElastic = databaseManager.getElastic(platformLower) || elastic;
+
+    if (!platformElastic) {
+      logger?.warn?.(`[fetchAdsCountForKeywordsByPlatform] No ES client for platform: ${platform}`);
+      continue;
+    }
+
+    const fieldMappings = PLATFORM_FIELD_MAPPINGS[platformLower];
+    if (!fieldMappings || !fieldMappings.keyword) {
+      logger?.warn?.(`[fetchAdsCountForKeywordsByPlatform] No field mapping for platform: ${platform}`);
+      continue;
+    }
+
+    const timestampField = getTimestampField(platformLower);
+
+    const platformPromise = (async () => {
+      try {
+        const enrichedKeywords = [];
+        const totalKeywords = keywords.length;
+        for (let batchStart = 0; batchStart < totalKeywords; batchStart += BATCH_SIZE) {
+          const batchEnd = Math.min(batchStart + BATCH_SIZE, totalKeywords);
+          const batch = keywords.slice(batchStart, batchEnd);
+          const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
+          for (let i = 0; i < batch.length; i += MAX_CONCURRENT_QUERIES) {
+            const concurrentBatch = batch.slice(i, i + MAX_CONCURRENT_QUERIES);
+            const batchPromises = concurrentBatch.map(async (keyword) => {
+              const keywordText = keyword.keyword;
+              const scrappingHistory = keyword.scrappingHistory || [];
+
+              if (scrappingHistory.length === 0) {
+                return {
+                  keyword: keywordText,
+                  scrappingHistory: [],
+                  total_ads_count: 0,
+                  history_with_counts: []
+                };
+              }
+
+              try {
+                const timeWindowRanges = scrappingHistory.map(run => {
+                  let startStr = formatTimestampString(JSON.stringify(run.startTime));
+                  let endStr = formatTimestampString(JSON.stringify(run.endTime));
+
+                  // For LinkedIn and YouTube: convert to Unix seconds
+                  if (platformLower === 'linkedin' || platformLower === 'youtube') {
+                    startStr = convertToUnixSeconds(startStr);
+                    endStr = convertToUnixSeconds(endStr);
+                  }
+
+                  return {
+                    range: {
+                      [timestampField]: {
+                        gte: startStr,
+                        lte: endStr
+                      }
+                    }
+                  };
+                });
+
+                const esQuery = {
+                  index: indexName,
+                  body: {
+                    query: {
+                      bool: {
+                        filter: [
+                          {
+                            bool: {
+                              should: timeWindowRanges,
+                              minimum_should_match: 1
+                            }
+                          }
+                        ],
+                        must: [
+                          {
+                            multi_match: {
+                              query: keywordText,
+                              type: 'phrase',
+                              fields: fieldMappings.keyword
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                };
+
+                console.log(JSON.stringify(esQuery, null, 2));
+
+                const esResult = await platformElastic.count(esQuery);
+                const totalCount = esResult.count || esResult.body?.count || 0;
+
+                const history_with_counts = scrappingHistory.map((run, index) => {
+                  let adsCount = 0;
+                  const historyLength = scrappingHistory.length;
+                  const baseCount = Math.floor(totalCount / historyLength);
+                  const remainder = totalCount % historyLength;
+
+                  if (index < remainder) {
+                    adsCount = baseCount + 1;
+                  } else {
+                    adsCount = baseCount;
+                  }
+
+                  return {
+                    startTime: run.startTime,
+                    endTime: run.endTime,
+                    ads_count: adsCount
+                  };
+                });
+
+                return {
+                  keyword: keywordText,
+                  scrappingHistory: scrappingHistory,
+                  total_ads_count: totalCount,
+                  history_with_counts
+                };
+              } catch (err) {
+                logger?.warn?.(`[fetchAdsCountForKeywordsByPlatform] Error for keyword "${keywordText}" on ${platform}:`, err.message);
+                return {
+                  keyword: keywordText,
+                  scrappingHistory: scrappingHistory,
+                  total_ads_count: 0,
+                  history_with_counts: scrappingHistory.map(run => ({
+                    startTime: run.startTime,
+                    endTime: run.endTime,
+                    ads_count: 0,
+                    error: err.message
+                  }))
+                };
+              }
+            });
+
+            const concurrentResults = await Promise.all(batchPromises);
+            enrichedKeywords.push(...concurrentResults);
+          }
+
+          logger?.info?.(`[fetchAdsCountForKeywordsByPlatform] Completed batch ${batchNum} for ${platform}`);
+        }
+
+        results[platform] = enrichedKeywords;
+
+      } catch (err) {
+        logger?.error?.(`[fetchAdsCountForKeywordsByPlatform] Error processing platform ${platform}:`, err.message);
+        results[platform] = keywords.map(k => ({
+          keyword: k.keyword,
+          scrappingHistory: k.scrappingHistory,
+          total_ads_count: 0,
+          history_with_counts: [],
+          error: err.message
+        }));
+      }
+    })();
+
+    platformPromises.push(platformPromise);
+  }
+
+  await Promise.all(platformPromises);
+  return results;
+}
+
+
+async function fetchAdsCountForMultipleKeywordsFast(elastic, platformKeywordMap, logger) {
+  if (!elastic || !platformKeywordMap || Object.keys(platformKeywordMap).length === 0) {
+    return {};
+  }
+
+  const results = {};
+  const platformPromises = [];
+
+  for (const [platform, keywords] of Object.entries(platformKeywordMap)) {
+    const platformLower = platform.toLowerCase();
+    const indexName = PLATFORM_INDEX_MAP[platformLower] || 'search_mix';
+    const platformElastic = databaseManager.getElastic(platformLower) || elastic;
+
+    if (!platformElastic) {
+      logger?.warn?.(`[fetchAdsCountForMultipleKeywordsFast] No ES client for platform: ${platform}`);
+      continue;
+    }
+
+    const fieldMappings = PLATFORM_FIELD_MAPPINGS[platformLower];
+    if (!fieldMappings || !fieldMappings.keyword) {
+      logger?.warn?.(`[fetchAdsCountForMultipleKeywordsFast] No field mapping for platform: ${platform}`);
+      continue;
+    }
+
+    const timestampField = getTimestampField(platformLower);
+
+    const platformPromise = (async () => {
+      try {
+        logger?.info?.(`[fetchAdsCountForMultipleKeywordsFast] Building aggregation for ${platform}: ${keywords.length} keywords`);
+
+        // Build aggregations for all keywords
+        const aggs = {};
+
+        for (let kidx = 0; kidx < keywords.length; kidx++) {
+          const keyword = keywords[kidx];
+          const keywordText = keyword.keyword;
+          const scrappingHistory = keyword.scrappingHistory || [];
+
+          // For each keyword, create sub-aggregations for each time window
+          const timeWindowAggs = {};
+
+          for (let tidx = 0; tidx < scrappingHistory.length; tidx++) {
+            const timeWindow = scrappingHistory[tidx];
+            const timeWindowKey = `tw_${tidx}`;
+
+            timeWindowAggs[timeWindowKey] = {
+              filter: {
+                range: {
+                  [timestampField]: {
+                    gte: timeWindow.startTime,
+                    lte: timeWindow.endTime
+                  }
+                }
+              }
+            };
+          }
+
+          // Create aggregation for this keyword with proper bool query
+          aggs[`kw_${kidx}`] = {
+            filter: {
+              bool: {
+                must: [
+                  {
+                    multi_match: {
+                      query: keywordText,
+                      type: 'phrase',
+                      fields: fieldMappings.keyword
+                    }
+                  }
+                ]
+              }
+            },
+            aggs: timeWindowAggs
+          };
+        }
+
+        const esQuery = {
+          index: indexName,
+          body: {
+            size: 0,
+            query: { match_all: {} },
+            aggs: aggs
+          }
+        };
+
+        const t1 = Date.now();
+        const esResult = await platformElastic.search(esQuery);
+        const t2 = Date.now();
+
+        logger?.info?.(`[fetchAdsCountForMultipleKeywordsFast] Aggregation for ${platform} completed in ${t2 - t1}ms`);
+
+        // Parse aggregation results
+        const enrichedKeywords = [];
+        const aggResults = esResult.aggregations || esResult.body?.aggregations || {};
+
+        logger?.info?.(`[fetchAdsCountForMultipleKeywordsFast] Raw aggregation keys:`, Object.keys(aggResults).join(','));
+
+        for (let kidx = 0; kidx < keywords.length; kidx++) {
+          const keyword = keywords[kidx];
+          const keywordText = keyword.keyword;
+          const scrappingHistory = keyword.scrappingHistory || [];
+          const keywordAggKey = `kw_${kidx}`;
+          const keywordAgg = aggResults[keywordAggKey];
+
+          if (!keywordAgg) {
+            logger?.warn?.(`[fetchAdsCountForMultipleKeywordsFast] No aggregation result for keyword ${kidx} (${keywordText})`);
+            enrichedKeywords.push({
+              keyword: keywordText,
+              scrappingHistory: scrappingHistory,
+              total_ads_count: 0,
+              history_with_counts: scrappingHistory.map(run => ({
+                startTime: run.startTime,
+                endTime: run.endTime,
+                ads_count: 0
+              }))
+            });
+            continue;
+          }
+
+          logger?.info?.(`[fetchAdsCountForMultipleKeywordsFast] Keyword ${kidx} (${keywordText}): doc_count=${keywordAgg.doc_count}, aggs keys=${Object.keys(keywordAgg.aggs || {}).join(',')}`);
+
+          // Collect counts from time window aggregations
+          const timeWindowCounts = [];
+          for (let tidx = 0; tidx < scrappingHistory.length; tidx++) {
+            const timeWindowKey = `tw_${tidx}`;
+            const count = keywordAgg.aggs?.[timeWindowKey]?.doc_count || 0;
+            timeWindowCounts.push(count);
+          }
+
+          const totalCount = timeWindowCounts.reduce((a, b) => a + b, 0);
+
+          const history_with_counts = scrappingHistory.map((run, index) => ({
+            startTime: run.startTime,
+            endTime: run.endTime,
+            ads_count: timeWindowCounts[index] || 0
+          }));
+
+          enrichedKeywords.push({
+            keyword: keywordText,
+            scrappingHistory: scrappingHistory,
+            total_ads_count: totalCount,
+            history_with_counts
+          });
+        }
+
+        results[platform] = enrichedKeywords;
+        logger?.info?.(`[fetchAdsCountForMultipleKeywordsFast] Completed for ${platform}: ${enrichedKeywords.length} keywords in 1 query`);
+      } catch (err) {
+        logger?.error?.(`[fetchAdsCountForMultipleKeywordsFast] Error processing platform ${platform}:`, err.message);
+        results[platform] = keywords.map(k => ({
+          keyword: k.keyword,
+          scrappingHistory: k.scrappingHistory,
+          total_ads_count: 0,
+          history_with_counts: k.scrappingHistory.map(run => ({
+            startTime: run.startTime,
+            endTime: run.endTime,
+            ads_count: 0,
+            error: err.message
+          }))
+        }));
+      }
+    })();
+
+    platformPromises.push(platformPromise);
+  }
+
+  await Promise.all(platformPromises);
+  return results;
+}
+
 module.exports = {
   fetchAdsCountByPlatform,
   fetchAdsCountBatchByPlatform,
@@ -730,6 +1074,8 @@ module.exports = {
   buildKeywordTrendsQuery,
   parseKeywordTrendsResults,
   buildAllSearchesQuery,
+  fetchAdsCountForKeywordsByPlatform,
+  fetchAdsCountForMultipleKeywordsFast,
   PLATFORM_INDEX_MAP,
   PLATFORM_FIELD_MAPPINGS,
 };

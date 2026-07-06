@@ -2,7 +2,7 @@
 
 const { getAggs } = require('../helpers/searchIntelligenceHelpers');
 const databaseManager = require('../../../database/DatabaseManager');
-const { fetchAdsCountByPlatform, fetchAdsCountBatchByPlatform } = require('../queries/searchIntelligenceQueries');
+const { fetchAdsCountByPlatform,fetchAdsCountForKeywordsByPlatform } = require('../queries/searchIntelligenceQueries');
 
 // Resolve a shared Mongo connection for the keyword_searches collection.
 // If the caller passed one in, use it; otherwise borrow the user_activity pool.
@@ -175,31 +175,50 @@ async function getKeywordTrends(req, elastic, logger, mongo) {
       }
     }
 
-    const total = await collection.countDocuments(filter);
-  
+    // Build aggregation pipeline for segregation by type
+    const aggregationPipeline = [
+      {
+        $match: filter
+      },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          data: [
+            {
+              $sort: sort_by === 'createdAt' || sort_by === 'created'
+                ? { createdAt: -1 }
+                : sort_by === 'count'
+                ? { searchCount: -1 }
+                : sort_by === 'recent' || sort_by === 'lastSearchedAt'
+                ? { lastSearchedAt: -1 }
+                : { createdAt: -1 }
+            },
+            { $skip: skip },
+            { $limit: pageSize },
+            {
+              $group: {
+                _id: '$type',
+                items: { $push: '$$ROOT' },
+                count: { $sum: 1 }
+              }
+            },
+            {
+              $sort: { _id: 1 }
+            }
+          ]
+        }
+      }
+    ];
 
-    // Build sort object based on sort_by parameter
-    let sortObj = {};
-    if (sort_by === 'createdAt' || sort_by === 'created') {
-      sortObj = { createdAt: -1 };
-    } else if (sort_by === 'count') {
-      sortObj = { searchCount: -1 };
-    } else if (sort_by === 'recent' || sort_by === 'lastSearchedAt') {
-      sortObj = { lastSearchedAt: -1 };
-    } else {
-      sortObj = { createdAt: -1 }; // default to createdAt descending
+    const aggregationResult = await collection.aggregate(aggregationPipeline).toArray();
+    const totalCount = aggregationResult[0]?.total[0]?.count || 0;
+    const groupedData = aggregationResult[0]?.data || [];
+
+    // Flatten the grouped data back to single array of docs
+    const docs = [];
+    for (const group of groupedData) {
+      docs.push(...group.items);
     }
-
-    
-
-    const docs = await collection
-      .find(filter)
-      .sort(sortObj)
-      .skip(skip)
-      .limit(pageSize)
-      .toArray();
-
-      
 
     const enriched = await enrichKeywordsWithAds(docs, 'value', typeNum, elastic, logger);
 
@@ -211,8 +230,8 @@ async function getKeywordTrends(req, elastic, logger, mongo) {
       meta: {
         page: pageNum,
         size: pageSize,
-        total,
-        total_pages: Math.ceil(total / pageSize),
+        total: totalCount,
+        total_pages: Math.ceil(totalCount / pageSize),
       },
     };
   } catch (err) {
@@ -222,79 +241,104 @@ async function getKeywordTrends(req, elastic, logger, mongo) {
 }
 
 async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logger) {
- 
-  const results = [];
+  const docMap = {};
+  const platformKeywordMap = {};
 
-  // Process keywords one by one (like scraping-history API does)
+  // Step 1: Organize keywords by platform
   for (const doc of keywords) {
     const searchValue = doc[fieldName];
     const keyword_type = doc.type;
     const platforms = doc.networks || doc.platform || [];
     const scrapingHistory = doc.scrapping_status || [];
 
-    // Last searched info - match scraping-history format
     const rawSearchedDate = doc.searchDates?.[0]?.$date || doc.searchDates?.[0] || doc.createdAt?.$date || doc.createdAt || null;
     const searchedDateStr = rawSearchedDate ? new Date(rawSearchedDate).toLocaleDateString() : null;
 
-    // Get unique platforms from history
     const uniquePlatforms = [...new Set(platforms.length > 0 ? platforms : scrapingHistory.map(s => s.network).filter(Boolean))];
 
-    // Convert scrapping_status to history format
     const history = (scrapingHistory || []).map(run => ({
       date: run.date,
       status: run.status,
       startTime: run.startTime?.$date || run.startTime,
       endTime: run.endTime?.$date || run.endTime,
       network: run.network,
+      adsCount: 0
     }));
 
-    // Fetch ads count from Elasticsearch for each history item ONE BY ONE
-    if (elastic && uniquePlatforms.length > 0) {
-      for (let i = 0; i < history.length; i++) {
-        const run = history[i];
-  
-        try {
-          // Use only the current run's platform(s) for this query
-          const runPlatforms = run.network ? [run.network] : uniquePlatforms;
+    docMap[searchValue] = {
+      doc,
+      searchValue,
+      keyword_type,
+      uniquePlatforms,
+      searchedDateStr,
+      history,
+      docTypeNum: doc.type || typeNum
+    };
 
-          let startTimeLocalMs = run.startTime;
-          let endTimeStr = run.endTime
-            ? new Date(run.endTime).toISOString()
-            : new Date().toISOString().split('T')[0] + 'T23:59:59.000Z';
-         
-          const adsCount = await fetchAdsCountByPlatform(
-            elastic,
-            runPlatforms,
-            null,
-            searchValue,
-            keyword_type,
-            logger,
-            startTimeLocalMs,
-            endTimeStr
-          );
+    // Map platform -> list of keywords for batch query
+    for (const platform of uniquePlatforms) {
+      if (!platformKeywordMap[platform]) {
+        platformKeywordMap[platform] = [];
+      }
+      platformKeywordMap[platform].push({
+        keyword: searchValue,
+        scrappingHistory: history.map(h => ({
+          startTime: h.startTime,
+          endTime: h.endTime
+        }))
+      });
+    }
+  }
 
-          run.adsCount = adsCount;
+  // Step 2: Batch fetch using existing optimized function
+  if (elastic && Object.keys(platformKeywordMap).length > 0) {
+ 
+    try {
+      const t1 = Date.now();
+      const platformResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger);
+      const t2 = Date.now();
 
-          logger?.info?.('[enrichKeywordsWithAds] Fetched ads count for', { startTime: run.startTime, endTime: run.endTime || 'now', adsCount, searchValue, searchType: typeNum });
-        } catch (err) {
-          logger?.warn?.('[enrichKeywordsWithAds] Failed to fetch ads count for time range:', run.startTime, '-', run.endTime, err.message);
+      logger?.info?.('[enrichKeywordsWithAds] Fetch completed in', t2 - t1, 'ms');
+
+      // Merge results back
+      for (const [platform, keywordsWithCounts] of Object.entries(platformResults)) {
+        for (const kwResult of keywordsWithCounts) {
+          const searchValue = kwResult.keyword;
+          const kwDoc = docMap[searchValue];
+
+          if (kwDoc) {
+            for (let i = 0; i < kwDoc.history.length; i++) {
+              const historyRun = kwDoc.history[i];
+              const matchedHistory = kwResult.history_with_counts?.find(h =>
+                h.startTime === historyRun.startTime && h.endTime === historyRun.endTime
+              );
+              if (matchedHistory) {
+                historyRun.adsCount = matchedHistory.ads_count || 0;
+              }
+            }
+          }
         }
       }
-    } else {
-      logger?.warn?.('[enrichKeywordsWithAds] Skipping ads count fetch. Elastic:', !!elastic, 'Platforms:', uniquePlatforms.length);
+    } catch (err) {
+      logger?.error?.('[enrichKeywordsWithAds] Fetch failed:', err.message);
     }
+  }
 
-    const docTypeNum = doc.type || typeNum;
-    const typeLabel = docTypeNum === 1 ? 'keyword' : docTypeNum === 2 ? 'advertiser' : 'domain';
+  // Step 3: Build final response
+  const results = [];
+  for (const doc of keywords) {
+    const searchValue = doc[fieldName];
+    const docInfo = docMap[searchValue];
+
+    const typeLabel = docInfo.docTypeNum === 1 ? 'keyword' : docInfo.docTypeNum === 2 ? 'advertiser' : 'domain';
 
     const result = {
       [typeLabel]: searchValue,
-      platform: uniquePlatforms,
-      searchedDate: searchedDateStr,
-      history
+      platform: docInfo.uniquePlatforms,
+      searchedDate: docInfo.searchedDateStr,
+      history: docInfo.history
     };
 
-    // Only include advertiser/domain if not keyword
     if (typeLabel !== 'keyword') result.keyword = null;
     if (typeLabel !== 'advertiser') result.advertiser = null;
     if (typeLabel !== 'domain') result.domain = null;
@@ -380,233 +424,172 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
       return { code: 500, message: 'MongoDB not available' };
     }
 
-    const { type = 1 } = req.query;
+    const { type = 1, fetch_ads_count = true, period = 'total', limit = 1000 } = req.query;
     const typeNum = Number(type);
+    const maxKeywords = Math.min(5000, Math.max(100, Number(limit)));
+    const shouldFetchAdsCount = fetch_ads_count === 'true' || fetch_ads_count === true;
+
+    logger?.info?.('[getTotalAdsCount] API called with: type=' + typeNum + ', fetch_ads_count=' + shouldFetchAdsCount + ', period=' + period + ', limit=' + maxKeywords);
 
     if (![1, 2, 3].includes(typeNum)) {
       return { code: 400, message: 'Invalid type. Use: 1 (keyword), 2 (advertiser), or 3 (domain)' };
     }
 
-    // Fetch all keywords/advertisers/domains of given type using optimized aggregation
-    // Filter: users: { $ne: null } - exclude documents with null users
-    const docs = await collection.aggregate([
+    const aggregationPipeline = [
       {
         $match: {
           type: typeNum,
-          users: { $ne: null }
+          users: { $ne: null },
+          scrapping_status: { $exists: true, $ne: [] }
         }
       },
       {
-        $unwind: '$scrapping_status'
+        $unwind: "$scrapping_status"
       },
       {
         $group: {
           _id: {
-            network: '$scrapping_status.network',
-            value: '$value'
+            network: "$scrapping_status.network",
+            keyword: "$value"
           },
-          valueNorm: { $first: '$valueNorm' },
-          historyCount: { $sum: 1 },
+          keyword: { $first: "$value" },
           scrappingHistory: {
             $push: {
               startTime: {
                 $dateToString: {
-                  format: '%Y-%m-%d %H:%M:%S',
-                  date: '$scrapping_status.startTime'
+                  format: "%Y-%m-%d %H:%M:%S",
+                  date: "$scrapping_status.startTime"
                 }
               },
               endTime: {
                 $dateToString: {
-                  format: '%Y-%m-%d %H:%M:%S',
-                  date: '$scrapping_status.endTime'
-                }
-              },
-              startTimeMs: {
-                $convert: {
-                  input: '$scrapping_status.startTime',
-                  to: 'long',
-                  onError: 0
-                }
-              },
-              endTimeMs: {
-                $convert: {
-                  input: '$scrapping_status.endTime',
-                  to: 'long',
-                  onError: 0
+                  format: "%Y-%m-%d %H:%M:%S",
+                  date: "$scrapping_status.endTime"
                 }
               }
             }
-          },
-          networks: { $addToSet: '$scrapping_status.network' }
+          }
         }
       },
       {
         $sort: {
-          '_id.network': 1,
-          '_id.value': 1
+          "_id.network": 1,
+          "_id.keyword": 1
+        }
+      },
+      {
+        $group: {
+          _id: "$_id.network",
+          keywords: {
+            $push: {
+              keyword: "$keyword",
+              scrappingHistory: "$scrappingHistory"
+            }
+          }
+        }
+      },
+      {
+        $sort: { _id: 1 }
+      },
+      {
+        $project: {
+          _id: 1,
+          keywords: {
+            $slice: ["$keywords", 0, maxKeywords]
+          }
         }
       }
-    ]).toArray();
+    ];
 
-    if (docs.length === 0) {
+    const aggregation = collection.aggregate(aggregationPipeline);
+
+    const results = await aggregation.toArray();
+
+    if (results.length === 0) {
       return {
         code: 200,
         data: {
-          today_ads_count: 0,
-          total_ads_count: 0,
           type: typeNum,
-          today_per_platform: {},
-          total_per_platform: {},
-          items_count: 0
+          type_label: typeNum === 1 ? 'keywords' : typeNum === 2 ? 'advertisers' : 'domains',
+          by_platform: {}
         }
       };
     }
 
-    // Get today's date boundaries
-    const now = new Date();
-    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const platformKeywordMap = {};
+    for (const result of results) {
+      platformKeywordMap[result._id] = result.keywords;
+    }
 
-    // Collect ads count separated by today vs previous days
-    const todayPlatformAdsCount = {};
-    const totalPlatformAdsCount = {};
-    let todayAdsCount = 0;
-    let totalAdsCount = 0;
-    const keywordBreakdown = [];
+    let finalResults = platformKeywordMap;
 
-    // Fetch all keywords in PARALLEL (not sequential)
-    const keywordPromises = docs.map(async (doc) => {
-      const searchValue = doc._id.value;  // keyword/advertiser/domain name
-      const network = doc._id.network;
-      const platforms = doc.networks || [network];
-      const scrapingHistory = doc.scrappingHistory || [];
-
-      if (scrapingHistory.length === 0) return null;
-
-      let keywordTodayCount = 0;
-      let keywordTotalCount = 0;
-      const keywordTodayPlatforms = {};
-      const keywordTotalPlatforms = {};
-
-      try {
-        // Build time windows array for batch fetching
-        const timeWindows = scrapingHistory.map(run => ({
-          startTime: run.startTime,
-          endTime: run.endTime,
-          key: `${run.startTimeMs}-${run.endTimeMs}`
-        }));
-
-        // Batch fetch ads counts for all time windows in parallel
-        const batchResults = await fetchAdsCountBatchByPlatform(
-          elastic,
-          platforms,
-          searchValue,
-          typeNum,
-          timeWindows,
-          logger
-        );
-
-        // Process each scraping run using pre-fetched batch results
-        for (const run of scrapingHistory) {
-          try {
-            const runPlatforms = run.network ? [run.network] : platforms;
-            const startTime = run.startTime;
-            const runStartDate = new Date(startTime);
-            const timeWindowKey = `${run.startTimeMs}-${run.endTimeMs}`;
-
-            // Lookup ads count from batch results
-            let adsCount = 0;
-            for (const platform of runPlatforms) {
-              adsCount += (batchResults[platform] && batchResults[platform][timeWindowKey]) || 0;
-            }
-
-            const count = adsCount || 0;
-
-            // Check if this run is from today
-            const isToday = runStartDate >= todayStart && runStartDate < todayEnd;
-
-            if (isToday) {
-              keywordTodayCount += count;
-              for (const platform of runPlatforms) {
-                if (!keywordTodayPlatforms[platform]) {
-                  keywordTodayPlatforms[platform] = 0;
-                }
-                keywordTodayPlatforms[platform] += count;
-              }
-            } else {
-              keywordTotalCount += count;
-              for (const platform of runPlatforms) {
-                if (!keywordTotalPlatforms[platform]) {
-                  keywordTotalPlatforms[platform] = 0;
-                }
-                keywordTotalPlatforms[platform] += count;
-              }
-            }
-          } catch (err) {
-            logger?.warn?.('[getTotalAdsCount] Failed to fetch ads for run:', run, err.message);
-          }
-        }
-
-        // Return keyword result
-        if (keywordTodayCount > 0 || keywordTotalCount > 0) {
-          return {
-            keyword: searchValue,
-            today_ads_count: keywordTodayCount,
-            total_ads_count: keywordTotalCount,
-            today_per_platform: keywordTodayPlatforms,
-            total_per_platform: keywordTotalPlatforms
-          };
-        }
-
-        return null;
-      } catch (err) {
-        logger?.warn?.('[getTotalAdsCount] Failed to process keyword:', searchValue, err.message);
-        return null;
-      }
-    });
-
-    // Wait for all keywords to complete
-    const allKeywordResults = await Promise.all(keywordPromises);
-
-    // Process results and aggregate
-    for (const keywordResult of allKeywordResults) {
-      if (!keywordResult) continue;
-
-      todayAdsCount += keywordResult.today_ads_count;
-      totalAdsCount += keywordResult.total_ads_count;
-      keywordBreakdown.push(keywordResult);
-
-      // Aggregate platform counts
-      for (const platform in keywordResult.today_per_platform) {
-        if (!todayPlatformAdsCount[platform]) {
-          todayPlatformAdsCount[platform] = 0;
-        }
-        todayPlatformAdsCount[platform] += keywordResult.today_per_platform[platform];
-      }
-
-      for (const platform in keywordResult.total_per_platform) {
-        if (!totalPlatformAdsCount[platform]) {
-          totalPlatformAdsCount[platform] = 0;
-        }
-        totalPlatformAdsCount[platform] += keywordResult.total_per_platform[platform];
-      }
+    if (shouldFetchAdsCount && elastic) {
+      const { fetchAdsCountForKeywordsByPlatform } = require('../queries/searchIntelligenceQueries');
+      logger?.info?.('[getTotalAdsCount] shouldFetchAdsCount:', shouldFetchAdsCount, 'elastic available:', !!elastic);
+      logger?.info?.('[getTotalAdsCount] Fetching ads count from Elasticsearch...');
+      const t1 = Date.now();
+      finalResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger);
+      const t2 = Date.now();
+      logger?.info?.('[getTotalAdsCount] Elasticsearch ads count fetch completed in', t2 - t1, 'ms');
+      logger?.info?.('[getTotalAdsCount] Final results sample:', JSON.stringify(finalResults['facebook']?.slice(0, 1)));
     }
 
     const typeLabel = typeNum === 1 ? 'keywords' : typeNum === 2 ? 'advertisers' : 'domains';
 
-    return {
+    const summaryStats = {
+      total_ads_count: 0,
+      today_ads_count: 0,
+      platform_wise_counts: {}
+    };
+
+    if (shouldFetchAdsCount && elastic) {
+      const todayDateStr = new Date().toISOString().split('T')[0];
+
+      for (const [platform, keywords] of Object.entries(finalResults)) {
+        let platformTotal = 0;
+        let platformToday = 0;
+
+        for (const keyword of keywords) {
+          if (keyword.history_with_counts && Array.isArray(keyword.history_with_counts)) {
+            for (const run of keyword.history_with_counts) {
+              const runDate = run.startTime?.split(' ')[0];
+              const adsCount = run.ads_count || 0;
+
+              platformTotal += adsCount;
+              if (runDate === todayDateStr) {
+                platformToday += adsCount;
+              }
+            }
+          }
+        }
+
+        summaryStats.platform_wise_counts[platform] = {
+          total: platformTotal,
+          today: platformToday
+        };
+
+        summaryStats.total_ads_count += platformTotal;
+        summaryStats.today_ads_count += platformToday;
+      }
+    }
+
+
+    const response = {
       code: 200,
       data: {
-        today_ads_count: todayAdsCount,
-        total_ads_count: totalAdsCount,
         type: typeNum,
         type_label: typeLabel,
-        today_per_platform: todayPlatformAdsCount,
-        total_per_platform: totalPlatformAdsCount,
-        items_count: keywordBreakdown.length,
-        breakdown: keywordBreakdown
+        summary: shouldFetchAdsCount ? summaryStats : null
       }
     };
+
+    if (shouldFetchAdsCount) {
+      response.data.by_platform = finalResults;
+    }
+
+    logger?.info?.('[getTotalAdsCount] Response ready. Summary stats:', summaryStats);
+
+    return response;
   } catch (err) {
     logger?.error?.('[getTotalAdsCount] Error:', err);
     return { code: 500, message: 'Internal server error', error: err.message };

@@ -56,106 +56,62 @@ const KeywordTrends = ({ onDataReady }) => {
   const searchInputRef = useRef(null);
   const tableRef = useRef(null);
 
-  // Fetch top keywords/advertisers/domains for chart - updates when typeTab changes
+  // Fetch top keywords, summary stats, and ads count - all in one effect to prevent duplicate API calls
   useEffect(() => {
-    const fetchTopItems = async () => {
+    const fetchAllData = async () => {
       if (!NODE_API) return;
+      const token = Cookies.get("token");
+      const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
+
       try {
-        const token = Cookies.get("token");
-        const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
-        const res = await fetch(`${NODE_API}/intelligence/top-keywords?type=${typeParam}`, {
+        // Fetch top keywords
+        const topRes = await fetch(`${NODE_API}/intelligence/top-keywords?type=${typeParam}`, {
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         });
-        if (!res.ok) return;
-        const json = await res.json();
-        if (json.code === 200 && json.data?.items) {
-          setTopKeywords(json.data.items);
+        if (topRes.ok) {
+          const topJson = await topRes.json();
+          if (topJson.code === 200 && topJson.data?.items) {
+            setTopKeywords(topJson.data.items);
+          }
         }
-      } catch (err) {
-        console.error('Failed to fetch top items:', err);
-      }
-    };
-    fetchTopItems();
-  }, [typeTab]);
 
-
-  // Fetch summary stats from API when typeTab changes
-  useEffect(() => {
-    const fetchSummaryStats = async () => {
-      if (!NODE_API) return;
-      try {
-        const token = Cookies.get("token");
-        const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
-
-        // Single API call that returns both today and all-time data
-        const res = await fetch(`${NODE_API}/intelligence/summary-stats?type=${typeParam}`, {
+        // Fetch summary stats
+        const summaryRes = await fetch(`${NODE_API}/intelligence/summary-stats?type=${typeParam}`, {
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         });
-
-        const json = await res.json();
-
-        if (json.code === 200 && json.data) {
-          console.log('[fetchSummaryStats] Summary data:', json.data);
-
-          const data = json.data;
-          const stats = {
-            // Today's stats (use correct field names from API)
-            todayCompletedItems: data.today_completed_scraping || 0,
-            todayNotQueued: data.today_not_went_scrapping || 0,
-            todayScrapingQueued: data.today_under_scraping || 0,
-            todayFailed: data.today_failed_scraping || 0,
-
-            // All time stats
-            totalItems: data.total || 0,
-            completedToday: data.completed_scraping || 0,
-            notQueued: data.not_went_scrapping || 0,
-            scrapingQueued: data.under_scraping || 0,
-            totalScraped: data.completed_scraping || 0,
-            totalFailed: data.failed_scraping || 0,
-            todayAdsCount: 0,
-            totalAdsCount: data.total_ads_count || 0,
-          };
-
-          console.log('[fetchSummaryStats] Mapped stats:', stats);
-          setScrapingStats(stats);
+        if (summaryRes.ok) {
+          const summaryJson = await summaryRes.json();
+          if (summaryJson.code === 200 && summaryJson.data) {
+            const data = summaryJson.data;
+            const stats = {
+              todayCompletedItems: data.today_completed_scraping || 0,
+              todayNotQueued: data.today_not_went_scrapping || 0,
+              todayScrapingQueued: data.today_under_scraping || 0,
+              todayFailed: data.today_failed_scraping || 0,
+              totalItems: data.total || 0,
+              completedToday: data.completed_scraping || 0,
+              notQueued: data.not_went_scrapping || 0,
+              scrapingQueued: data.under_scraping || 0,
+              totalScraped: data.completed_scraping || 0,
+              totalFailed: data.failed_scraping || 0,
+              todayAdsCount: 0,
+              totalAdsCount: data.total_ads_count || 0,
+            };
+            setScrapingStats(stats);
+          }
         }
       } catch (err) {
-        console.error('Failed to fetch summary stats:', err);
+        console.error('Failed to fetch keyword trends data:', err);
       }
     };
-    fetchSummaryStats();
-  }, [typeTab]);
 
-  // Fetch ads count data when typeTab changes
-  useEffect(() => {
-    const fetchAdsCountData = async () => {
-      if (!NODE_API) return;
-      try {
-        const token = Cookies.get("token");
-        const typeParam = typeTab === "keywords" ? "1" : typeTab === "advertisers" ? "2" : "3";
-        const res = await fetch(`${NODE_API}/intelligence/total-ads-count?type=${typeParam}&period=total`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
-        if (!res.ok) return;
-        const json = await res.json();
-        if (json.code === 200 && json.data) {
-          console.log('[fetchAdsCountData] Ads count data:', json.data);
-          setAdsCount(json.data);
-        }
-      } catch (err) {
-        console.error('Failed to fetch ads count:', err);
-      }
-    };
-    fetchAdsCountData();
+    fetchAllData();
   }, [typeTab]);
 
   // Track if typeTab changed (to show loading only on tab change, not pagination)
@@ -344,34 +300,6 @@ const KeywordTrends = ({ onDataReady }) => {
           </div>
         )}
 
-        {/* Ads Count Section */}
-        {adsCount && (
-          <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "12px" }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
-              {/* Today Ads Count */}
-              <SummaryMetric label="Today Ads Count" value={adsCount.today_ads_count} />
-
-              {/* Total Ads Count */}
-              <SummaryMetric label="Total Ads Count" value={adsCount.total_ads_count} />
-
-              {/* Platform Wise Breakdown */}
-              <div style={{ flex: 1, minWidth: "250px", padding: "10px", background: "#f9fafb", borderRadius: "8px", textAlign: "left", border: "1px solid #e5e7eb" }}>
-                <div style={{ fontSize: "10px", color: "#9ca3af", fontWeight: 500, marginBottom: "8px" }}>Ads Count by Platform</div>
-                <div style={{ fontSize: "12px", color: "#111827" }}>
-                  {Object.entries(adsCount.total_per_platform || {}).map(([platform, count]) => (
-                    <div key={platform} style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                      <span style={{ textTransform: "capitalize" }}>{platform}:</span>
-                      <span style={{ fontWeight: 600 }}>{count}</span>
-                    </div>
-                  ))}
-                  {Object.keys(adsCount.total_per_platform || {}).length === 0 && (
-                    <div style={{ color: "#9ca3af" }}>No ads found</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Chart - Custom SVG implementation to avoid Recharts rendering issues */}
         <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", padding: "20px" }}>
