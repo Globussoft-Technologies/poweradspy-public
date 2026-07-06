@@ -21,7 +21,24 @@
 
 const { Router } = require('express');
 const { asyncHandler } = require('../../../middleware/errorHandler');
+const { insertionAuth } = require('../../../middleware/insertionAuth');
 const databaseManager = require('../../../database/DatabaseManager');
+
+// Single-row JSON store for the hourly crawl-box health snapshot (posted by ops/fleet_audit/crawl_watch.py,
+// read publicly by an external Telegram bot / dashboard). A DB row — not a file — so it's shared across the
+// pm2 cluster workers and survives restarts. Created lazily on first POST.
+const CRAWL_HEALTH_DDL = `CREATE TABLE IF NOT EXISTS gdn_crawl_health (
+  id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  payload LONGTEXT NOT NULL,
+  updated_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+// `updated: null` present so a consumer can ALWAYS branch on / staleness-check the field (a fresh snapshot
+// carries a real ISO timestamp; the empty/error sentinels carry null — never undefined).
+const CRAWL_HEALTH_EMPTY = { updated: null, overall: 'unknown', text: 'no crawl health reported yet', counts: {}, boxes: [], issues: [], muted_hosts: [] };
+const CRAWL_HEALTH_KEYS = ['updated', 'overall', 'counts', 'text', 'boxes', 'issues', 'muted_hosts'];  // whitelist — drop anything else
+const CRAWL_HEALTH_MAX = 32 * 1024;                    // reject payloads bigger than the snapshot could legitimately be
+const CRAWL_HEALTH_KEY = process.env.CRAWL_HEALTH_KEY || '';   // optional shared secret on top of insertionAuth
+let crawlHealthEnsured = false;                        // run the CREATE TABLE at most once per worker, not per POST
 
 const httpStatus = (code) => (code === 200 ? 200 : code);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -69,10 +86,11 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
   const lim = parseInt(limit, 10) || 100;
   const pagesRaw = await all(g,
     'SELECT UNIX_TIMESTAMP(last_crawled) ts, target_site site, url, country cc, os, ' +
+    "COALESCE(host,'') host, " +
     'last_gdn_ads n_gdn, last_native_ads n_native, last_total_ads n_total, status ' +
     `FROM gdn_crawl_quality ORDER BY last_crawled DESC LIMIT ${lim}`);
   const pages = pagesRaw.map((p) => ({
-    ts: num(p.ts), site: p.site, url: p.url, cc: p.cc, os: p.os,
+    ts: num(p.ts), site: p.site, url: p.url, cc: p.cc, os: p.os, host: p.host,
     n_gdn: p.n_gdn == null ? null : num(p.n_gdn),
     n_native: p.n_native == null ? null : num(p.n_native),
     n_total: p.n_total == null ? null : num(p.n_total), status: p.status,
@@ -82,9 +100,16 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
   const runs = num((await one(g, 'SELECT COALESCE(SUM(total_crawls),0) c FROM gdn_crawl_quality')).c);
   const ah = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
   const nh = num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date > (NOW()-INTERVAL 1 HOUR)')).c);
-  // 24h ad counts — the live dashboard reads gdn_24h/native_24h from this /live payload (was missing -> tile stuck at 0).
-  const ah24 = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date >= NOW()-INTERVAL 24 HOUR')).c);
-  const nh24 = num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date >= NOW()-INTERVAL 24 HOUR')).c);
+  // NEW ADS inserted in the last 24h, per network -- the 24h companion of gdn_hr/native_hr (new ads
+  // actually inserted, i.e. gdn_ad/native_ad.created_date; NOT the "fresh unique" account_activities metric).
+  const gAds24 = num((await one(g, 'SELECT COUNT(*) c FROM gdn_ad WHERE created_date > (NOW()-INTERVAL 24 HOUR)')).c);
+  const nAds24 = num((await one(n, 'SELECT COUNT(*) c FROM native_ad WHERE created_date > (NOW()-INTERVAL 24 HOUR)')).c);
+  // Per-country crawl breakdown for THIS session, so the dashboard can show the multi-country spread.
+  const byCcRows = await all(g,
+    "SELECT country cc, COUNT(*) urls, COALESCE(SUM(last_gdn_ads),0) gdn, COALESCE(SUM(last_native_ads),0) nat " +
+    "FROM gdn_crawl_quality WHERE last_crawled > (NOW() - INTERVAL ? SECOND) AND provider=? AND country<>'' " +
+    "GROUP BY country ORDER BY urls DESC", [sessionSecs, sid]);
+  const byCountry = byCcRows.map((r) => ({ cc: r.cc, urls: num(r.urls), gdn: num(r.gdn), nat: num(r.nat) }));
   const todayNew = num((await one(g,
     'SELECT COUNT(*) c FROM gdn_account_activities WHERE system_id=? AND is_unique=1 AND created_at>=CURDATE()', [sid])).c);
   const act = await all(g,
@@ -95,7 +120,8 @@ async function buildLive(g, n, sid, sessionSecs, limit) {
     : null;
   const profiles = num((await one(g,
     'SELECT COUNT(*) c FROM gdn_crawl_quality WHERE last_crawled > (NOW()-INTERVAL 45 SECOND) AND provider=?', [sid])).c);
-  return { live, pages, db: { creatives, runs }, ads_hr: ah + nh, gdn_hr: ah, native_hr: nh, gdn_24h: ah24, native_24h: nh24, today_new: todayNew, fleet, profiles };
+  return { live, pages, db: { creatives, runs }, ads_hr: ah + nh, gdn_hr: ah, native_hr: nh,
+    gdn_24h: gAds24, native_24h: nAds24, by_country: byCountry, today_new: todayNew, fleet, profiles };
 }
 
 // ---------------- OVERVIEW ----------------
@@ -250,6 +276,59 @@ function createGdnDashboardRoutes(service) {
     } catch (e) {
       if (service.log && service.log.error) service.log.error('dashboard/overview failed', { error: e.message });
       return res.status(500).json({ code: 500, status: 'error', message: e.message });
+    }
+  }));
+
+  // ---- crawl-box health snapshot (hourly monitor -> public feed) ----
+  // WRITE: guarded by insertionAuth only (NOT insertionEnabled — health monitoring must keep working even
+  // when insertion is disabled for a network). The ops host posts its crawl_health.json here each hour with
+  // "platform":"12". GET is public + unwrapped (returns the snapshot as-is) so a bot can poll it directly.
+  router.post('/dashboard/crawl-health', insertionAuth, asyncHandler(async (req, res) => {
+    // Optional shared secret on TOP of insertionAuth. platform:12 is a public bypass, and this row feeds a
+    // human-facing alert channel — so if CRAWL_HEALTH_KEY is configured, also require the matching header
+    // (only the ops host knows it), which stops anyone from spoofing/masking the feed.
+    if (CRAWL_HEALTH_KEY && req.get('x-crawl-health-key') !== CRAWL_HEALTH_KEY) {
+      return res.status(401).json({ code: 401, status: 'unauthorized', message: 'bad or missing crawl-health key' });
+    }
+    const sql = service.db && service.db.sql;
+    if (!sql) return res.status(503).json({ code: 503, status: 'error', message: 'Database connection is not available.' });
+    const body = req.body || {};
+    const health = {};                                  // whitelist known keys only (drops platform + anything unexpected)
+    for (const k of CRAWL_HEALTH_KEYS) if (body[k] !== undefined) health[k] = body[k];
+    if (!health.updated) {
+      return res.status(400).json({ code: 400, status: 'rejected', message: 'Expected a health JSON body with an `updated` field.' });
+    }
+    const payload = JSON.stringify(health);
+    if (payload.length > CRAWL_HEALTH_MAX) {            // a real snapshot is a few KB; anything larger is abuse
+      return res.status(413).json({ code: 413, status: 'rejected', message: 'payload too large' });
+    }
+    try {
+      if (!crawlHealthEnsured) { await sql.query(CRAWL_HEALTH_DDL); crawlHealthEnsured = true; }
+      await sql.query(
+        'INSERT INTO gdn_crawl_health (id, payload, updated_at) VALUES (1, ?, NOW()) ' +
+        'ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = NOW()',
+        [payload]);
+      return res.status(200).json({ code: 200, status: 'ok', message: 'crawl health recorded' });
+    } catch (e) {
+      crawlHealthEnsured = false;                       // re-attempt the DDL next time (in case the table was the cause)
+      if (service.log && service.log.warn) service.log.warn('crawl-health write failed', { error: e.message });
+      return res.status(500).json({ code: 500, status: 'error', message: e.message });
+    }
+  }));
+
+  router.get('/dashboard/crawl-health', asyncHandler(async (req, res) => {
+    const sql = service.db && service.db.sql;
+    res.set('Cache-Control', 'no-store');
+    if (!sql) return res.status(503).json({ ...CRAWL_HEALTH_EMPTY, error: 'db unavailable' });
+    try {
+      const rows = await sql.query('SELECT payload FROM gdn_crawl_health WHERE id = 1');
+      if (!rows || !rows[0] || !rows[0].payload) return res.status(200).json(CRAWL_HEALTH_EMPTY);  // no data yet != failure
+      return res.status(200).json(JSON.parse(rows[0].payload));
+    } catch (e) {
+      // pre-first-POST the table doesn't exist yet — that's "no data", not a backend failure → 200 empty.
+      // Any other error IS a failure → 5xx so an uptime/health check can tell it apart from a fresh snapshot.
+      if (/does\s*n.?t exist|no such table|ER_NO_SUCH_TABLE/i.test(e.message || '')) return res.status(200).json(CRAWL_HEALTH_EMPTY);
+      return res.status(503).json({ ...CRAWL_HEALTH_EMPTY, error: 'crawl health unavailable' });
     }
   }));
 
