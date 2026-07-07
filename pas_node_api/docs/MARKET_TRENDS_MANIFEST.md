@@ -87,9 +87,9 @@ is **not** modified (the backend is a plain file, not an auto-scanned folder).
 | `GET /access` | `{ enabled }` for the current user (auth + allow-list) — UI shows the tab only if true. |
 | `GET /trends/overview` | Per-network daily ad-volume: `{ networks:[...present...], series:[{date, <net>:count…, total}] }`. |
 | `GET /trends/search?q=` | One advertiser's per-network daily volume — powers the multi-term compare. |
-| `GET /trends/categories` | Category ad-counts + period-over-period growth %. |
-| `GET /trends/top?type=advertiser\|cta` | Top advertisers / CTAs. |
-| `GET /trends/regions` | Ads by country (all networks with data; names normalised/merged). |
+| `GET /trends/categories` | Category ad-counts + period-over-period growth %; each item includes a `byNet` `{net:count}` breakdown (drives the stacked columns). |
+| `GET /trends/top?type=advertiser\|cta` | Top advertisers / CTAs, each with `count`, `growthPct` (vs the previous window) + `byNet` (drives the ranked table's change column). |
+| `GET /trends/regions` | Ads by country (all networks with data; names normalised/merged). Each item includes a `byNet` `{net:count}` breakdown (drives the stacked bars). |
 | `GET /trends/keywords` | Top search keywords (Google `target_keyword`). |
 
 All except `/health` and `/access` run behind `authMiddleware` + `accessGuard`.
@@ -121,12 +121,21 @@ Every number is a **count of ads** (time series grouped by the network's
   a **0–100 index** toggle (each line scaled to its OWN peak, so networks of
   wildly different volume all stay visible — Native alone is ~93% of dev volume)
   or raw ad counts. Labelled axes + grid.
-- **Ads by country** — ranked country bars (names normalised / aliased / merged,
-  junk like `ALL`/blanks dropped). Click a bar → sets the country filter.
-- **Ads per category**, **Top movers** (advertisers / CTAs), **Rising
-  categories**, **Top keywords** (Google) — horizontal bars coloured by source
-  network; click a row → an **in-page detail modal** ("Open in Ads Library" /
-  "+ Compare"). No full-page reload.
+- **Ads by country** — horizontal bars **stacked by network** (each country
+  segmented by the networks running there). Click a segment → sets the country
+  filter.
+- **Ads per category** — a **vertical stacked column** per category, stacked by
+  contributing network, so categories are directly comparable across networks.
+  Click → drill modal.
+- **Top movers** (advertisers / CTAs) and **Rising categories** — rendered as
+  **Google-Trends-style ranked tables**: rank · label · inline micro-bar
+  (search-interest, scaled to the column max) · change column (↑/↓ % vs the
+  previous period) · per-row ⋮ menu ("Open in Ads Library" / "+ Compare"), with
+  10-row pagination ("1–10 of N") and a header (i) tooltip + export icon.
+- **Top keywords** (Google) — horizontal bars; click a row → drill modal.
+- **Every panel** carries a one-line **subtitle** (what the chart shows) and a
+  data-driven **one-line observation** (e.g. "United States leads with 41% of
+  ads"). No full-page reload on any interaction.
 - **Export CSV** — the current window's data, client-side.
 - **Reload persistence** — own URL `/market-trends` (App.jsx URL-sync effect maps
   it to `activePage='intelligence'`), so refresh stays on the page.

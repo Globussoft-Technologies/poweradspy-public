@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
-  ResponsiveContainer, LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
-import { TrendingUp, Loader2, Download, Globe2, Search, X, Plus, LayoutGrid, Calendar, ChevronDown } from 'lucide-react';
+import { TrendingUp, Loader2, Download, Globe2, Search, X, Plus, LayoutGrid, Calendar, ChevronDown, Info, MoreVertical, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import { getAuthToken } from '../hooks/useAuth';
@@ -71,18 +71,147 @@ const TERM_COLORS = ['#4285F4', '#DB4437', '#0F9D58', '#F4B400', '#AB47BC'];
 const TOP_TYPES = [{ v: 'advertiser', label: 'Advertisers' }, { v: 'cta', label: 'CTAs' }];
 const shortLabel = (v) => (typeof v === 'string' && v.length > 18 ? `${v.slice(0, 17)}…` : v);
 
-function Panel({ title, right, children }) {
+// Per-panel "which advertiser" toggle — shown on each panel in compare-mode so
+// it's clear (right there) whose data the chart shows. Controls a shared active
+// advertiser, so all panels stay in sync. Renders nothing when not comparing.
+function AdvScope({ terms, activeTerm, onPick }) {
+  if (!terms.length) return null;
   return (
-    <div className="p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2.5 min-w-0">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-medium text-white">{title}</span>
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-[10px] text-white/50">Show:</span>
+      <button onClick={() => onPick('')}
+        className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors ${!activeTerm ? 'bg-[#335296] text-white border-transparent' : 'border-theme-border text-white/60 hover:border-white/30'}`}>All</button>
+      {terms.map((t, i) => (
+        <button key={t} onClick={() => onPick(t)}
+          className={`flex items-center gap-1 text-[10px] rounded-full px-2.5 py-0.5 border transition-colors ${activeTerm === t ? 'text-white border-transparent' : 'border-theme-border text-white/60 hover:border-white/30'}`}
+          style={activeTerm === t ? { backgroundColor: TERM_COLORS[i % TERM_COLORS.length] } : undefined}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: TERM_COLORS[i % TERM_COLORS.length] }} />{t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Info (i) with a proper styled hover tooltip (replaces the native `title`, which
+// showed a help-cursor "?" and an unstyled browser bubble).
+function InfoTip({ text }) {
+  if (!text) return null;
+  return (
+    <span className="relative inline-flex group align-middle shrink-0">
+      <Info size={12} className="text-white/40 hover:text-white/80 cursor-pointer" />
+      <span className="pointer-events-none absolute left-0 top-5 z-50 w-64 max-w-[75vw] rounded-lg border border-theme-border bg-theme-card px-2.5 py-2 text-[10.5px] leading-snug text-white/80 opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100 whitespace-normal font-normal normal-case tracking-normal">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+// A one-line, data-driven observation shown under a chart to make it easy to read.
+const Insight = ({ children }) => (children ? (
+  <p className="text-[11px] text-white/70 bg-white/[0.03] border border-theme-border rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+    <Sparkles size={12} className="mt-[1px] text-emerald-400 shrink-0" /><span>{children}</span>
+  </p>
+) : null);
+
+function Panel({ title, subtitle, info, right, note, scope, className = '', children }) {
+  return (
+    <div className={`p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2.5 min-w-0 ${className}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <span className="text-[13px] font-medium text-white flex items-center gap-1.5">
+            {title}<InfoTip text={info} />
+          </span>
+          {subtitle && <span className="text-[10.5px] text-white/50 block mt-0.5 leading-snug">{subtitle}</span>}
+        </div>
         {right}
       </div>
+      {scope}
       {children}
+      {note && <Insight>{note}</Insight>}
     </div>
   );
 }
 const Empty = ({ msg }) => <div className="py-12 text-center text-[11px] text-white/60 px-3">{msg || 'No data for this window.'}</div>;
+
+// Google-Trends-style ranked table: rank · label · inline micro-bar · change · ⋮.
+// Paginates 10 rows; header carries an (i) tooltip + export; rows drill on click.
+const TABLE_PAGE = 10;
+function TrendTable({ title, subtitle, info, columnLabel, valueLabel, rows, color, onRowClick, onCompare, onExport, note, right, scope, emptyMsg }) {
+  const [page, setPage] = useState(0);
+  const [menu, setMenu] = useState(null);
+  useEffect(() => { setPage(0); }, [rows]);
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.value) || 0));
+  const totalPages = Math.max(1, Math.ceil(rows.length / TABLE_PAGE));
+  const start = page * TABLE_PAGE;
+  const pageRows = rows.slice(start, start + TABLE_PAGE);
+  return (
+    <div className="p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2 min-w-0 relative">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <span className="text-[13px] font-medium text-white flex items-center gap-1.5">
+            {title}<InfoTip text={info} />
+          </span>
+          {subtitle && <span className="text-[10.5px] text-white/50 block mt-0.5">{subtitle}</span>}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {right}
+          {onExport && <button onClick={onExport} title="Export" className="text-white/50 hover:text-white p-1"><Download size={14} /></button>}
+        </div>
+      </div>
+      {scope}
+      {rows.length ? (
+        <>
+          <div className="flex items-center gap-2 text-[9px] uppercase tracking-wide text-white/40 pt-1">
+            <span className="w-4" />
+            <span className="flex-1">{columnLabel || 'Query'}</span>
+            <span className="w-[96px] hidden sm:block">{valueLabel || 'Search interest'}</span>
+            <span className="w-16 text-right">Change</span>
+            <span className="w-5" />
+          </div>
+          <div className="flex flex-col">
+            {pageRows.map((r, i) => {
+              const idx = start + i;
+              const up = (r.change ?? 0) >= 0;
+              return (
+                <div key={r.id || r.label} className="flex items-center gap-2 py-[7px] border-b border-theme-border/60 last:border-0">
+                  <span className="w-4 text-[11px] text-white/40 tabular-nums text-right">{idx + 1}</span>
+                  <button onClick={() => onRowClick(r)} className="flex-1 min-w-0 text-left text-[12px] text-white truncate hover:underline" title={r.label}>{r.label}</button>
+                  <div className="w-[96px] hidden sm:block">
+                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${Math.max(4, (Math.abs(r.value) / max) * 100)}%`, backgroundColor: color }} />
+                    </div>
+                  </div>
+                  <span className={`w-16 text-right text-[11px] tabular-nums ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {up ? '↑' : '↓'} {up ? '+' : ''}{r.change ?? 0}%
+                  </span>
+                  <div className="relative w-5">
+                    <button onClick={() => setMenu(menu === idx ? null : idx)} className="text-white/30 hover:text-white p-0.5"><MoreVertical size={13} /></button>
+                    {menu === idx && (
+                      <div className="absolute right-0 top-6 z-30 bg-theme-card border border-theme-border rounded-lg shadow-xl py-1 w-40 text-[11px]">
+                        <button onClick={() => { setMenu(null); onRowClick(r); }} className="block w-full text-left px-3 py-1.5 hover:bg-white/5 text-white">Open in Ads Library</button>
+                        {onCompare && <button onClick={() => { setMenu(null); onCompare(r); }} className="block w-full text-left px-3 py-1.5 hover:bg-white/5 text-white">+ Compare</button>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {note && <Insight>{note}</Insight>}
+          <div className="flex items-center justify-end gap-3 pt-1 text-[10px] text-white/50">
+            <span className="tabular-nums">{start + 1}–{Math.min(start + TABLE_PAGE, rows.length)} of {rows.length}</span>
+            <div className="flex items-center gap-1">
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} className="p-1 disabled:opacity-30 hover:text-white"><ChevronLeft size={14} /></button>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} className="p-1 disabled:opacity-30 hover:text-white"><ChevronRight size={14} /></button>
+            </div>
+          </div>
+        </>
+      ) : <Empty msg={emptyMsg} />}
+      {/* click-away to close the row menu */}
+      {menu !== null && <div className="fixed inset-0 z-20" onClick={() => setMenu(null)} />}
+    </div>
+  );
+}
 
 // Date filter — presets + a react-day-picker range calendar (no ad-type tabs).
 const toYMD = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -163,43 +292,86 @@ const MarketTrends = ({ onDrill }) => {
   const [regions, setRegions] = useState(null);
   const [categories, setCategories] = useState([]);
   const [catUnsupported, setCatUnsupported] = useState(false);
+  const [risingCats, setRisingCats] = useState([]);
+  const [risingUnsupported, setRisingUnsupported] = useState(false);
   const [top, setTop] = useState([]);
   const [topUnsupported, setTopUnsupported] = useState(false);
   const [keywords, setKeywords] = useState([]);
   const [kwUnsupported, setKwUnsupported] = useState(false);
   const [metaNet, setMetaNet] = useState('All networks');
   const [drillItem, setDrillItem] = useState(null);
-  const [loading, setLoading] = useState(false);
+
+  // Per-panel advertiser scope (compare-mode). Each card's "Show" toggle is
+  // INDEPENDENT — '' = all compared advertisers merged, else just that one.
+  const [regionsScope, setRegionsScope] = useState('');
+  const [catScope, setCatScope] = useState('');
+  const [risingScope, setRisingScope] = useState('');
+  const [topScope, setTopScope] = useState('');
+  const [kwScope, setKwScope] = useState('');
+
+  // Combined "Updating…" indicator across the independent panel fetches.
+  const [pending, setPending] = useState(0);
+  const loading = pending > 0;
+  const track = (p) => { setPending((n) => n + 1); return Promise.resolve(p).finally(() => setPending((n) => n - 1)); };
 
   // Chips double as a filter: all chips → 'all'; otherwise a CSV the backend honors.
   const netParam = selected.length === CHIP_NETWORKS.length ? 'all' : (selected.join(',') || 'all');
+  const dpOf = () => ((days === 'custom' && from && to) ? { from, to } : { days });
+  const advOf = (scope) => scope || terms.join(','); // panel scope, else all compared advertisers
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const adv = terms.join(','); // searched advertisers filter every panel too
-    const dp = (days === 'custom' && from && to) ? { from, to } : { days }; // preset days or custom range
-    try {
-      const [ov, rg, cat, tp, kw] = await Promise.all([
-        apiGet('/trends/overview', { ...dp, network: 'all', country }).catch(() => null),
-        apiGet('/trends/regions', { ...dp, network: netParam, advertiser: adv }).catch(() => null),
-        apiGet('/trends/categories', { ...dp, network: netParam, size: 12, country, advertiser: adv }).catch(() => null),
-        apiGet('/trends/top', { ...dp, type: topType, network: netParam, size: 12, country, advertiser: adv }).catch(() => null),
-        apiGet('/trends/keywords', { ...dp, network: netParam, size: 12, country, advertiser: adv }).catch(() => null),
-      ]);
-      setOverview(ov?.data || null);
-      setRegions(rg?.data || null);
-      if (rg?.data?.items?.length) setCountryOpts(rg.data.items.map((c) => c.country));
-      setCategories(cat?.data?.items || []);
-      setCatUnsupported(!!cat?.meta?.unsupported);
-      setTop(tp?.data?.items || []);
-      setTopUnsupported(!!tp?.meta?.unsupported);
-      setKeywords(kw?.data?.items || []);
-      setKwUnsupported(!!kw?.meta?.unsupported);
-      setMetaNet(cat?.data?.network || tp?.data?.network || 'All networks');
-    } finally { setLoading(false); }
-  }, [days, from, to, netParam, topType, country, terms]);
+  // Interest overview — no advertiser scope (the chart shows every term as its own line).
+  useEffect(() => {
+    let alive = true;
+    track(apiGet('/trends/overview', { ...dpOf(), network: 'all', country }).catch(() => null))
+      .then((ov) => { if (alive) setOverview(ov?.data || null); });
+    return () => { alive = false; };
+  }, [days, from, to, country]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(); }, [days, from, to, netParam, topType, country, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Ads by country (own scope).
+  useEffect(() => {
+    let alive = true;
+    track(apiGet('/trends/regions', { ...dpOf(), network: netParam, advertiser: advOf(regionsScope) }).catch(() => null))
+      .then((rg) => { if (!alive) return; setRegions(rg?.data || null); if (rg?.data?.items?.length) setCountryOpts(rg.data.items.map((c) => c.country)); });
+    return () => { alive = false; };
+  }, [days, from, to, netParam, regionsScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ads per category (own scope).
+  useEffect(() => {
+    let alive = true;
+    track(apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(catScope) }).catch(() => null))
+      .then((cat) => { if (!alive) return; setCategories(cat?.data?.items || []); setCatUnsupported(!!cat?.meta?.unsupported); setMetaNet(cat?.data?.network || 'All networks'); });
+    return () => { alive = false; };
+  }, [days, from, to, netParam, country, catScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Rising categories (own scope — separate fetch so it can differ from Ads per category).
+  useEffect(() => {
+    let alive = true;
+    track(apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 20, country, advertiser: advOf(risingScope) }).catch(() => null))
+      .then((cat) => { if (!alive) return; setRisingCats(cat?.data?.items || []); setRisingUnsupported(!!cat?.meta?.unsupported); });
+    return () => { alive = false; };
+  }, [days, from, to, netParam, country, risingScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Top movers (own scope).
+  useEffect(() => {
+    let alive = true;
+    track(apiGet('/trends/top', { ...dpOf(), type: topType, network: netParam, size: 12, country, advertiser: advOf(topScope) }).catch(() => null))
+      .then((tp) => { if (!alive) return; setTop(tp?.data?.items || []); setTopUnsupported(!!tp?.meta?.unsupported); });
+    return () => { alive = false; };
+  }, [days, from, to, netParam, country, topType, topScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Top keywords (own scope).
+  useEffect(() => {
+    let alive = true;
+    track(apiGet('/trends/keywords', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(kwScope) }).catch(() => null))
+      .then((kw) => { if (!alive) return; setKeywords(kw?.data?.items || []); setKwUnsupported(!!kw?.meta?.unsupported); });
+    return () => { alive = false; };
+  }, [days, from, to, netParam, country, kwScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Drop any panel scope that's no longer among the compared terms.
+  useEffect(() => {
+    const fix = (s) => (s && !terms.includes(s) ? '' : s);
+    setRegionsScope(fix); setCatScope(fix); setRisingScope(fix); setTopScope(fix); setKwScope(fix);
+  }, [terms]);
 
   // Fetch each compared term's per-network trend.
   useEffect(() => {
@@ -244,6 +416,98 @@ const MarketTrends = ({ onDrill }) => {
     return series.map((r) => { const o = { date: r.date }; for (const k of chartKeys) o[k] = Math.round(((r[k] || 0) / maxByKey[k]) * 100); return o; });
   }, [termMode, terms, termData, shown, overview, indexed, chartKeys]);
 
+  // ── Stacked-chart data (per network) ──
+  const countryNets = useMemo(() => {
+    const set = new Set();
+    (regions?.items || []).forEach((c) => Object.keys(c.byNet || {}).forEach((n) => set.add(n)));
+    return CHIP_NETWORKS.filter((n) => set.has(n));
+  }, [regions]);
+  const countryData = useMemo(() => (regions?.items || []).slice(0, 12).map((c) => ({ country: c.country, ...(c.byNet || {}) })), [regions]);
+  const catNets = useMemo(() => {
+    const set = new Set();
+    categories.forEach((c) => Object.keys(c.byNet || {}).forEach((n) => set.add(n)));
+    return CHIP_NETWORKS.filter((n) => set.has(n));
+  }, [categories]);
+  const catData = useMemo(() => categories.map((c) => ({ category: c.category, ...(c.byNet || {}) })), [categories]);
+
+  // ── Google-Trends table rows (top movers / rising categories) ──
+  const topRows = useMemo(() => top.map((t) => ({ id: t.id || t.label, label: t.label, value: t.count, change: t.growthPct ?? 0, net: t.net })), [top]);
+  const risingRows = useMemo(() => [...risingCats].sort((a, b) => b.growthPct - a.growthPct)
+    .map((c) => ({ id: c.category, label: c.category, value: c.current, change: c.growthPct, net: c.net })), [risingCats]);
+
+  // ── Dynamic one-line observations (computed from raw data, not the chart) ──
+  const netTotals = useMemo(() => {
+    const t = {};
+    (overview?.series || []).forEach((r) => shown.forEach((n) => { t[n] = (t[n] || 0) + (r[n] || 0); }));
+    return t;
+  }, [overview, shown]);
+  const termTotals = useMemo(() => {
+    const t = {};
+    terms.forEach((term) => {
+      let s = 0;
+      (termData[term]?.series || []).forEach((r) => { s += shown.length ? shown.reduce((a, n) => a + (r[n] || 0), 0) : (r.total || 0); });
+      t[term] = s;
+    });
+    return t;
+  }, [terms, termData, shown]);
+  const num = (n) => Number(n || 0).toLocaleString();
+  const interestNote = useMemo(() => {
+    if (termMode) {
+      const e = Object.entries(termTotals).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      if (!e.length) return '';
+      const [t0, v0] = e[0];
+      if (e.length > 1 && e[1][1] > 0) {
+        const ratio = v0 / e[1][1];
+        return `“${t0}” is the busiest advertiser here with ${num(v0)} ads${ratio >= 1.1 ? ` — about ${ratio.toFixed(1)}× “${e[1][0]}” (${num(e[1][1])})` : `, just ahead of “${e[1][0]}” (${num(e[1][1])})`}.`;
+      }
+      return `“${t0}” ran ${num(v0)} ads across the selected networks in this window.`;
+    }
+    const e = Object.entries(netTotals).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    if (!e.length) return '';
+    const grand = e.reduce((s, [, v]) => s + v, 0);
+    const share = grand ? Math.round((e[0][1] / grand) * 100) : 0;
+    const second = e[1] ? `, followed by ${NET_LABEL[e[1][0]] || e[1][0]} (${num(e[1][1])})` : '';
+    return `${NET_LABEL[e[0][0]] || e[0][0]} runs the most ads — ${num(e[0][1])} (${share}% of ${num(grand)} across ${e.length} network${e.length > 1 ? 's' : ''})${second}.`;
+  }, [termMode, termTotals, netTotals]);
+  const countryNote = useMemo(() => {
+    const items = regions?.items || [];
+    if (!items.length) return '';
+    const total = regions.total || items.reduce((s, i) => s + i.count, 0);
+    const share = total ? Math.round((items[0].count / total) * 100) : 0;
+    const second = items[1] ? `, then ${items[1].country} (${num(items[1].count)})` : '';
+    return `${items[0].country} is the biggest market — ${share}% of ads (${num(items[0].count)})${second}; ${items.length}+ countries seen.`;
+  }, [regions]);
+  const catNote = useMemo(() => {
+    if (!categories.length) return '';
+    const t = categories[0];
+    const n = Object.keys(t.byNet || {}).length;
+    const second = categories[1] ? `, then “${categories[1].category}” (${num(categories[1].current)})` : '';
+    return `“${t.category}” is the most-advertised category — ${num(t.current)} ads${n > 1 ? ` spread across ${n} networks` : ''}${second}.`;
+  }, [categories]);
+  const topNote = useMemo(() => {
+    if (!top.length) return '';
+    const leader = top[0];
+    const riser = [...top].sort((a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0))[0];
+    const kind = topType === 'cta' ? 'CTA' : 'advertiser';
+    const g = leader.growthPct ?? 0;
+    let s = `“${leader.label}” is the top ${kind} with ${num(leader.count)} ads (${g >= 0 ? '+' : ''}${g}% vs the prior period)`;
+    if (riser && riser.label !== leader.label && (riser.growthPct ?? 0) > 0) s += `; “${riser.label}” is scaling fastest at +${riser.growthPct}%`;
+    return `${s}.`;
+  }, [top, topType]);
+  const risingNote = useMemo(() => {
+    if (!risingCats.length) return '';
+    const sorted = [...risingCats].sort((a, b) => b.growthPct - a.growthPct);
+    const r = sorted[0];
+    const second = sorted[1] ? `; “${sorted[1].category}” follows (+${sorted[1].growthPct}%)` : '';
+    return `“${r.category}” is growing fastest — +${r.growthPct}% vs the previous period (${num(r.current)} ads now)${second}.`;
+  }, [risingCats]);
+  const kwNote = useMemo(() => {
+    if (!keywords.length) return '';
+    const k = keywords[0];
+    const second = keywords[1] ? `, ahead of “${keywords[1].keyword}” (${num(keywords[1].count)})` : '';
+    return `“${k.keyword}” is the most-targeted search keyword — ${num(k.count)} ads${second}.`;
+  }, [keywords]);
+
   const addTerm = () => {
     const t = termInput.trim();
     if (t && !terms.includes(t) && terms.length < 5) setTerms((p) => [...p, t]);
@@ -261,7 +525,6 @@ const MarketTrends = ({ onDrill }) => {
 
   const metaNote = ` · ${metaNet}`;
   const metaOnlyMsg = "Advertiser / category data isn't stored for this network's ad index.";
-  const netsIn = (items) => [...new Set((items || []).map((i) => i.net).filter(Boolean))];
   const NetLegend = ({ nets }) => (nets.length > 1 ? (
     <div className="flex flex-wrap gap-x-2.5 gap-y-1">
       {nets.map((n) => (
@@ -274,6 +537,8 @@ const MarketTrends = ({ onDrill }) => {
 
   const drill = (kind, value) => value && setDrillItem({ kind, value });
   const daysLabel = days === 'custom' ? (from && to ? `${from} → ${to}` : 'custom range') : `last ${days} days`;
+  // In compare-mode, spell out whose data THIS panel is scoped to right now.
+  const scopeText = (scope) => (termMode ? ` · showing ${scope || 'all compared advertisers'}` : '');
 
   const exportCsv = () => {
     const rows = [['Market Trends export', `last ${days} days`, country ? `country: ${country}` : 'all countries']];
@@ -362,6 +627,11 @@ const MarketTrends = ({ onDrill }) => {
             {/* Interest over time */}
             <Panel
               title={termMode ? `Comparing ${terms.length} advertiser${terms.length > 1 ? 's' : ''} — ${daysLabel}` : `Interest over time — ${daysLabel}`}
+              subtitle={termMode ? 'Each line is an advertiser’s daily ad volume across the selected networks.' : 'Daily ad volume per network. Use the 0–100 index to compare trends regardless of scale.'}
+              info={termMode
+                ? 'One line per compared advertiser, summing their daily ad count over the selected networks. In 0–100 index mode each line is scaled to its own peak so shapes are comparable even when volumes differ.'
+                : 'One line per network showing how many ads were live each day (by last-seen date). 0–100 index scales every line to its own peak; Ad counts shows raw daily volume.'}
+              note={interestNote}
               right={(
                 <div className="flex rounded-lg overflow-hidden border border-theme-border">
                   <button onClick={() => setIndexed(true)} className={`text-[10px] px-2 py-1 ${indexed ? 'bg-[#335296] text-white' : 'text-white/60'}`}>0–100 index</button>
@@ -389,8 +659,7 @@ const MarketTrends = ({ onDrill }) => {
                       ))}
                     </LineChart>
                   </ResponsiveContainer>
-                  <p className="text-[10px] text-white/60">
-                    {termMode ? 'Each line = that advertiser’s ad volume across the selected networks. ' : ''}
+                  <p className="text-[10px] text-white/50">
                     {indexed ? '0–100 index: each line scaled to its own peak.' : 'Raw ad counts per day.'}
                   </p>
                 </>
@@ -398,92 +667,106 @@ const MarketTrends = ({ onDrill }) => {
             </Panel>
 
             <div className="grid gap-5 lg:grid-cols-2">
-              {/* Ads by country */}
-              <Panel title={<span className="flex items-center gap-1.5"><Globe2 size={14} /> Ads by country{selected.length === 1 ? ` · ${NET_LABEL[selected[0]]}` : ''}</span>}>
-                {regions?.items?.length ? (
-                  <ResponsiveContainer width="100%" height={Math.max(220, Math.min(regions.items.length, 12) * 24)}>
-                    <BarChart data={regions.items.slice(0, 12)} layout="vertical" margin={{ top: 4, right: 14, left: 4, bottom: 4 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} />
-                      <YAxis type="category" dataKey="country" tick={{ fontSize: 9, fill: 'currentColor' }} width={110} interval={0} tickFormatter={shortLabel} />
-                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v) => [`${v.toLocaleString()} ads`, 'Ads']} />
-                      <Bar dataKey="count" name="ads" fill="#0ea5e9" radius={[0, 3, 3, 0]} cursor="pointer" onClick={(d) => setCountry(d?.country || '')} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : <Empty msg="No country data for this window." />}
-              </Panel>
-
-              {/* Ads per category */}
-              <Panel title={`Ads per category${metaNote}`}>
-                {catUnsupported ? <Empty msg={metaOnlyMsg} /> : categories.length ? (
+              {/* Ads by country — stacked by network */}
+              <Panel
+                title={<span className="flex items-center gap-1.5"><Globe2 size={14} /> Ads by country{selected.length === 1 ? ` · ${NET_LABEL[selected[0]]}` : ''}</span>}
+                subtitle={`Where ads are running — each country bar stacked by network. Click a bar to filter.${scopeText(regionsScope)}`}
+                info="Ad counts grouped by the target country on each ad, top 12 shown. Bar length = total ads; each coloured segment is one network's share. Country names are normalised and merged across networks. Click a bar to filter the whole page."
+                scope={<AdvScope terms={terms} activeTerm={regionsScope} onPick={setRegionsScope} />}
+                note={countryNote}>
+                {countryData.length ? (
                   <>
-                    {selected.length !== 1 && <NetLegend nets={netsIn(categories)} />}
-                    <ResponsiveContainer width="100%" height={Math.max(220, categories.length * 24)}>
-                      <BarChart data={categories} layout="vertical" margin={{ top: 4, right: 12, left: 4, bottom: 4 }}>
+                    <NetLegend nets={countryNets} />
+                    <ResponsiveContainer width="100%" height={Math.max(220, Math.min(countryData.length, 12) * 26)}>
+                      <BarChart data={countryData} layout="vertical" margin={{ top: 4, right: 14, left: 4, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
                         <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} />
-                        <YAxis type="category" dataKey="category" tick={{ fontSize: 9, fill: 'currentColor' }} width={132} interval={0} tickFormatter={shortLabel} />
-                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, n, p) => [`${v} ads · ${NET_LABEL[p?.payload?.net] || 'Meta'}`, 'Ads']} />
-                        <Bar dataKey="current" name="ads" radius={[0, 3, 3, 0]} cursor="pointer" onClick={(d) => drill('category', d?.category)}>
-                          {categories.map((c, i) => <Cell key={i} fill={NET_COLOR[c.net] || '#6366f1'} />)}
-                        </Bar>
+                        <YAxis type="category" dataKey="country" tick={{ fontSize: 9, fill: 'currentColor' }} width={110} interval={0} tickFormatter={shortLabel} />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, name) => [`${Number(v).toLocaleString()} ads`, NET_LABEL[name] || name]} />
+                        {countryNets.map((n, i) => (
+                          <Bar key={n} dataKey={n} name={n} stackId="country" fill={NET_COLOR[n] || '#0ea5e9'}
+                            radius={i === countryNets.length - 1 ? [0, 3, 3, 0] : 0}
+                            cursor="pointer" onClick={(d) => setCountry(d?.country || '')} />
+                        ))}
                       </BarChart>
                     </ResponsiveContainer>
                   </>
-                ) : <Empty msg={`No category data for ${metaNet} in this window.`} />}
+                ) : <Empty msg="No country data for this window." />}
               </Panel>
 
-              {/* Top movers */}
-              <Panel title={<span className="flex items-center gap-2">Top movers{metaNote}</span>}
+              {/* Ads per category — horizontal stacked, compared across networks */}
+              <Panel
+                title={`Ads per category${metaNote}`}
+                subtitle={`Which categories advertisers push, compared across networks — each bar stacked by network. Click to drill.${scopeText(catScope)}`}
+                info="Ad counts grouped by the ad's category. Bar length = total ads in that category; each coloured segment is a network's contribution, so you can compare where a category is being advertised. Category is only stored on some networks (Facebook, Instagram, Native, Pinterest, Google). Click to open matching ads."
+                scope={<AdvScope terms={terms} activeTerm={catScope} onPick={setCatScope} />}
+                note={catUnsupported ? '' : catNote}>
+                {catUnsupported ? <Empty msg={metaOnlyMsg} /> : catData.length ? (
+                  <>
+                    <NetLegend nets={catNets} />
+                    <ResponsiveContainer width="100%" height={Math.max(220, Math.min(catData.length, 12) * 28)}>
+                      <BarChart data={catData} layout="vertical" margin={{ top: 4, right: 14, left: 4, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} allowDecimals={false} />
+                        <YAxis type="category" dataKey="category" tick={{ fontSize: 9, fill: 'currentColor' }} width={132} interval={0} tickFormatter={shortLabel} />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, name) => [`${Number(v).toLocaleString()} ads`, NET_LABEL[name] || name]} />
+                        {catNets.map((n, i) => (
+                          <Bar key={n} dataKey={n} name={n} stackId="cat" fill={NET_COLOR[n] || '#6366f1'}
+                            radius={i === catNets.length - 1 ? [0, 3, 3, 0] : 0}
+                            cursor="pointer" onClick={(d) => drill('category', d?.category)} />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </>
+                ) : <Empty msg={`No category data ${termMode ? `for “${catScope || 'the compared advertisers'}” ` : ''}in this window — category is only tagged on Facebook, Instagram, Native, Pinterest & Google.`} />}
+              </Panel>
+
+              {/* Top movers — Google-Trends-style ranked table */}
+              <TrendTable
+                title="Top movers"
+                subtitle={`${metaNet} · ${daysLabel}${scopeText(topScope)}`}
+                info="The advertisers (or CTAs) running the most ads right now, ranked by volume. The bar shows each row's share of the top entry; Change is its growth versus the previous equal-length period (↑ up / ↓ down). Use the ⋮ menu to open matching ads or add an advertiser to the compare box."
+                columnLabel={topType === 'cta' ? 'Call to action' : 'Advertiser'}
+                valueLabel="Ad volume"
+                rows={topRows}
+                color="#4285F4"
+                note={topNote}
+                emptyMsg={topUnsupported ? metaOnlyMsg : `No ${topType === 'cta' ? 'CTA' : 'advertiser'} data for ${metaNet} in this window.`}
+                onRowClick={(r) => drill(topType, r.label)}
+                onCompare={topType === 'advertiser' ? (r) => setTerms((p) => (p.includes(r.label) || p.length >= 5 ? p : [...p, r.label])) : undefined}
+                onExport={exportCsv}
+                scope={<AdvScope terms={terms} activeTerm={topScope} onPick={setTopScope} />}
                 right={(
                   <div className="flex gap-1">
                     {TOP_TYPES.map((t) => (
                       <button key={t.v} onClick={() => setTopType(t.v)} className={`text-[10px] px-2 py-0.5 rounded-md ${topType === t.v ? 'bg-[#335296] text-white' : 'bg-white/5 text-white/60'}`}>{t.label}</button>
                     ))}
                   </div>
-                )}>
-                {topUnsupported ? <Empty msg={metaOnlyMsg} /> : top.length ? (
-                  <>
-                    {selected.length !== 1 && <NetLegend nets={netsIn(top)} />}
-                    <ResponsiveContainer width="100%" height={Math.max(220, top.length * 24)}>
-                      <BarChart data={top} layout="vertical" margin={{ top: 4, right: 12, left: 4, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} />
-                        <YAxis type="category" dataKey="label" tick={{ fontSize: 9, fill: 'currentColor' }} width={120} interval={0} tickFormatter={shortLabel} />
-                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, n, p) => [`${v} ads · ${NET_LABEL[p?.payload?.net] || 'Meta'}`, 'Ads']} />
-                        <Bar dataKey="count" name="ads" radius={[0, 3, 3, 0]} cursor="pointer" onClick={(d) => drill(topType, d?.label)}>
-                          {top.map((t, i) => <Cell key={i} fill={NET_COLOR[t.net] || '#10b981'} />)}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </>
-                ) : <Empty msg={`No ${topType === 'cta' ? 'CTA' : topType} data for ${metaNet} in this window.`} />}
-              </Panel>
+                )} />
 
-              {/* Rising categories */}
-              <Panel title={`Rising categories${metaNote}`}>
-                {catUnsupported ? <Empty msg={metaOnlyMsg} /> : categories.length ? (
-                  (() => {
-                    const growth = [...categories].sort((a, b) => b.growthPct - a.growthPct).slice(0, 10);
-                    return (
-                      <ResponsiveContainer width="100%" height={Math.max(220, growth.length * 24)}>
-                        <BarChart data={growth} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
-                          <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} unit="%" />
-                          <YAxis type="category" dataKey="category" tick={{ fontSize: 9, fill: 'currentColor' }} width={132} interval={0} tickFormatter={shortLabel} />
-                          <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v) => [`${v}%`, 'Growth']} />
-                          <Bar dataKey="growthPct" radius={[0, 3, 3, 0]} cursor="pointer" onClick={(d) => drill('category', d?.category)}>
-                            {growth.map((c, i) => <Cell key={i} fill={c.growthPct >= 0 ? '#10b981' : '#ef4444'} />)}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    );
-                  })()
-                ) : <Empty msg={`No category data for ${metaNet} in this window.`} />}
-              </Panel>
+              {/* Rising categories — Google-Trends-style ranked table */}
+              <TrendTable
+                title="Rising categories"
+                subtitle={`${metaNet} · vs previous ${daysLabel}${scopeText(risingScope)}`}
+                info="Categories sorted by growth: the change in ad volume versus the previous equal-length period (↑ rising / ↓ falling). The bar shows current ad volume relative to the top row, so you can tell a fast-growing niche from a fast-growing giant. Click a row to open matching ads."
+                columnLabel="Category"
+                valueLabel="Ad volume"
+                rows={risingRows}
+                color="#8b5cf6"
+                note={risingUnsupported ? '' : risingNote}
+                emptyMsg={risingUnsupported ? metaOnlyMsg : `No category data ${termMode ? `for “${risingScope || 'the compared advertisers'}” ` : ''}in this window — category is only tagged on Facebook, Instagram, Native, Pinterest & Google.`}
+                onRowClick={(r) => drill('category', r.label)}
+                onExport={exportCsv}
+                scope={<AdvScope terms={terms} activeTerm={risingScope} onPick={setRisingScope} />} />
 
               {/* Top keywords */}
-              <Panel title="Top search keywords · Google">
+              <Panel
+                className="lg:col-span-2"
+                title="Top search keywords · Google"
+                subtitle={`Most-targeted Google search keywords in this window.${scopeText(kwScope)}`}
+                info="The search keywords advertisers target most on Google search ads (from each ad's target keyword), ranked by ad count. Available for Google only. Click a bar to open matching ads."
+                scope={<AdvScope terms={terms} activeTerm={kwScope} onPick={setKwScope} />}
+                note={kwUnsupported ? '' : kwNote}>
                 {kwUnsupported ? <Empty msg="Search-keyword data is available for Google search ads." /> : keywords.length ? (
                   <ResponsiveContainer width="100%" height={Math.max(220, keywords.length * 24)}>
                     <BarChart data={keywords} layout="vertical" margin={{ top: 4, right: 12, left: 4, bottom: 4 }}>

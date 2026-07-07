@@ -215,9 +215,18 @@ function categoryBodyFor(cfg, size, field, win, extra = []) {
     },
   };
 }
-function termsBodyFor(cfg, size, field, win, subAggs, extra = []) {
-  const { nowMs, startMs } = win;
-  return { size: 0, query: windowQueryFor(cfg, startMs, nowMs, extra), aggs: { items: { terms: { field, size }, ...(subAggs ? { aggs: subAggs } : {}) } } };
+// Top movers with period-over-period growth: terms split into current/previous
+// windows (mirrors categoryBodyFor) so each advertiser/CTA carries a change %.
+function topBodyFor(cfg, size, field, win, subAggs, extra = []) {
+  const { nowMs, startMs, prevStartMs } = win;
+  return {
+    size: 0,
+    query: windowQueryFor(cfg, prevStartMs, nowMs, extra),
+    aggs: {
+      current: { filter: { range: { [cfg.date]: { gte: fmt(startMs), lte: fmt(nowMs), format: DATE_FMT } } }, aggs: { items: { terms: { field, size }, ...(subAggs ? { aggs: subAggs } : {}) } } },
+      previous: { filter: { range: { [cfg.date]: { gte: fmt(prevStartMs), lt: fmt(startMs), format: DATE_FMT } } }, aggs: { items: { terms: { field, size } } } },
+    },
+  };
 }
 
 // ─── Controllers ─────────────────────────────────────────────────────────────
@@ -277,7 +286,7 @@ async function catForCfg(cfg, days, size, country, advertiser, custom) {
   const { aggs } = await aggWithFallback(es, (f) => categoryBodyFor(cfg, size, f, win, extra), cfg.category);
   return { cur: mapBuckets(aggs.current?.items?.buckets), prev: mapBuckets(aggs.previous?.items?.buckets) };
 }
-// top advertiser/CTA buckets [{key,label,count}] for one Meta config.
+// top advertiser/CTA buckets [{key,label,current,previous,net}] for one Meta config.
 async function topForCfg(cfg, type, days, size, country, advertiser, custom) {
   const es = getEs(cfg.net);
   if (!es) return [];
@@ -285,9 +294,14 @@ async function topForCfg(cfg, type, days, size, country, advertiser, custom) {
   const win = winFrom(days, anchorMs, custom);
   const subAggs = type === 'advertiser' ? { label: { top_hits: { size: 1, _source: [cfg.advLabel] } } } : undefined;
   const extra = extraFilters(cfg.net, country, advertiser);
-  const { aggs } = await aggWithFallback(es, (f) => termsBodyFor(cfg, size, f, win, subAggs, extra), cfg[type]);
-  return (aggs.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
-    .map((b) => ({ key: String(b.key), label: type === 'advertiser' ? (topHit(b)?.[cfg.advLabel] || String(b.key)) : String(b.key), count: b.doc_count, net: cfg.net }));
+  const { aggs } = await aggWithFallback(es, (f) => topBodyFor(cfg, size, f, win, subAggs, extra), cfg[type]);
+  const prevMap = mapBuckets(aggs.previous?.items?.buckets);
+  return (aggs.current?.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
+    .map((b) => ({
+      key: String(b.key),
+      label: type === 'advertiser' ? (topHit(b)?.[cfg.advLabel] || String(b.key)) : String(b.key),
+      current: b.doc_count, previous: prevMap[b.key] || 0, net: cfg.net,
+    }));
 }
 // dominant contributing network from a { net: count } tally.
 const dominantNet = (nets) => Object.entries(nets).sort((a, b) => b[1] - a[1])[0]?.[0];
@@ -313,7 +327,7 @@ async function getCategories(req, res) {
   const items = [...new Set([...Object.keys(cur), ...Object.keys(prev)])].map((key) => {
     const current = cur[key] || 0; const previous = prev[key] || 0;
     const growthPct = previous > 0 ? Math.round(((current - previous) / previous) * 100) : (current > 0 ? 100 : 0);
-    return { category: key, current, previous, growthPct, net: dominantNet(byNet[key] || {}) };
+    return { category: key, current, previous, growthPct, net: dominantNet(byNet[key] || {}), byNet: byNet[key] || {} };
   }).sort((a, b) => b.current - a.current).slice(0, size);
   return res.status(200).json({ code: 200, data: { days, network: sel.label, items }, message: 'Category trends' });
 }
@@ -333,13 +347,17 @@ async function getTop(req, res) {
   const parts = await Promise.all(sel.cfgs.map((cfg) => topForCfg(cfg, type, days, size, country, advertiser, custom)));
   for (const list of parts) {
     for (const b of list) {
-      if (!merged[b.key]) merged[b.key] = { id: b.key, label: b.label, count: 0, nets: {} };
-      merged[b.key].count += b.count;
-      merged[b.key].nets[b.net] = (merged[b.key].nets[b.net] || 0) + b.count;
+      if (!merged[b.key]) merged[b.key] = { id: b.key, label: b.label, current: 0, previous: 0, nets: {} };
+      merged[b.key].current += b.current;
+      merged[b.key].previous += b.previous;
+      merged[b.key].nets[b.net] = (merged[b.key].nets[b.net] || 0) + b.current;
     }
   }
   const items = Object.values(merged)
-    .map((m) => ({ id: m.id, label: m.label, count: m.count, net: dominantNet(m.nets) }))
+    .map((m) => {
+      const growthPct = m.previous > 0 ? Math.round(((m.current - m.previous) / m.previous) * 100) : (m.current > 0 ? 100 : 0);
+      return { id: m.id, label: m.label, count: m.current, previous: m.previous, growthPct, net: dominantNet(m.nets), byNet: m.nets };
+    })
     .sort((a, b) => b.count - a.count).slice(0, size);
   return res.status(200).json({ code: 200, data: { type, days, network: sel.label, items }, message: 'Top movers' });
 }
@@ -499,11 +517,14 @@ async function getRegions(req, res) {
   const list = parseNetList(raw.network);
   const nets = list ? list.filter((n) => GEO_NETWORKS.includes(n)) : GEO_NETWORKS;
 
-  const merged = {};
-  const parts = await Promise.all(nets.map((net) => regionsForNet(net, days, advertiser, custom)));
-  for (const p of parts) for (const [k, v] of Object.entries(p)) merged[k] = (merged[k] || 0) + v;
+  const merged = {}; const byNet = {}; // country → total, country → { net: count }
+  const parts = await Promise.all(nets.map(async (net) => [net, await regionsForNet(net, days, advertiser, custom)]));
+  for (const [net, p] of parts) for (const [k, v] of Object.entries(p)) {
+    merged[k] = (merged[k] || 0) + v;
+    (byNet[k] = byNet[k] || {})[net] = (byNet[k][net] || 0) + v;
+  }
 
-  const items = Object.entries(merged).map(([country, count]) => ({ country, count }))
+  const items = Object.entries(merged).map(([country, count]) => ({ country, count, byNet: byNet[country] || {} }))
     .sort((a, b) => b.count - a.count).slice(0, 40);
   const total = items.reduce((s, i) => s + i.count, 0);
   return res.status(200).json({ code: 200, data: { days, total, items }, message: 'Ads by country' });
