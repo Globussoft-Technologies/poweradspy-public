@@ -519,6 +519,16 @@ const KeywordTrends = ({ onDataReady }) => {
                                   <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
                                     <strong>Date:</strong> {h.date || "—"}
                                   </div>
+                                  {h.owner && (
+                                    <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
+                                      <strong>Scrapping Server:</strong> {h.owner}
+                                    </div>
+                                  )}
+                                  {h.mode && (
+                                    <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
+                                      <strong>Mode:</strong> {h.mode}
+                                    </div>
+                                  )}
                                   <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
                                     <strong>Start:</strong> {startTime}
                                   </div>

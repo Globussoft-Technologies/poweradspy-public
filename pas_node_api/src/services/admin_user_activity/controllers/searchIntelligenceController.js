@@ -743,6 +743,8 @@ async function getKeywordScrapingHistory(req, elastic, logger, mongo) {
         startTime: startTime,
         endTime: endTime,
         network: run.network,
+        owner: run.owner,
+        mode: run.mode,
       };
     });
 

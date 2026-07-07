@@ -262,7 +262,9 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
       startTime: run.startTime?.$date || run.startTime,
       endTime: run.endTime?.$date || run.endTime,
       network: run.network,
-      adsCount: 0
+      adsCount: 0,
+      owner: run.owner,
+      mode: run.mode
     }));
 
     docMap[searchValue] = {

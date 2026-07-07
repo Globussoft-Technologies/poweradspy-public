@@ -1365,8 +1365,10 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
             ) : (
               <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "110px 110px 130px 130px 80px 80px 100px", gap: "10px", marginBottom: "12px", paddingBottom: "8px", borderBottom: "1px solid #e5e7eb", textAlign: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "90px 150px 70px 80px 110px 110px 70px 80px", gap: "10px", marginBottom: "12px", paddingBottom: "8px", borderBottom: "1px solid #e5e7eb", textAlign: "center" }}>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>Scraping Date</strong>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Scrapping Server</strong>
+                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Mode</strong>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>Network</strong>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>Start Time</strong>
                     <strong style={{ fontSize: "11px", color: "#6b7280" }}>End Time</strong>
@@ -1400,8 +1402,10 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                     const rowBorder = isFailed ? "3px solid #dc2626" : "1px solid #f3f4f6";
 
                     return (
-                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "110px 110px 130px 130px 80px 80px 100px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", borderLeft: rowBorder, backgroundColor: rowBg, textAlign: "center" }}>
+                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "90px 150px 70px 80px 110px 110px 70px 80px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", borderLeft: rowBorder, backgroundColor: rowBg, textAlign: "center" }}>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{item.date}</span>
+                        <span style={{ fontSize: "10px", color: "#6b7280", wordBreak: "break-word" }}>{item.owner || "-"}</span>
+                        <span style={{ fontSize: "11px", color: "#374151", textTransform: "capitalize" }}>{item.mode || "-"}</span>
                         <span style={{ fontSize: "11px", color: "#374151", textTransform: "capitalize" }}>{item.network || "-"}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{startTime}</span>
                         <span style={{ fontSize: "11px", color: "#374151" }}>{endTime}</span>

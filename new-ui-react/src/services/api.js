@@ -255,7 +255,14 @@ export const mapAdToCard = (raw) => {
     // image appears once NAS is populated (the next search sends image_video_url again).
     thumbnail: raw.preview_unavailable === true
       ? ''
-      : resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || ''))),
+      : (() => {
+          const t = resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || '')));
+          // The backend stores "/DefaultImage.jpg" as the variant image for ads with no
+          // creative (e.g. TEXT ads). It's a dead path that 404s and renders as "preview
+          // unavailable" — same marker filtered from carouselMedia below. Treat it as no
+          // thumbnail so those ads fall through to the title-based text preview instead.
+          return (typeof t === 'string' && t.includes('DefaultImage')) ? '' : t;
+        })(),
     previewUnavailable: raw.preview_unavailable === true,
     // NAS-cached video first; fall through to the live CDN URL when there's no
     // NAS copy (or VITE_NAS_VIDEO_URL is unset, which would otherwise yield a

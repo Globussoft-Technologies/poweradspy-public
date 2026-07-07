@@ -408,10 +408,10 @@ const App = () => {
   const openAnalyticsModal = (ad) => {
     if (ad) {
       const network = ad.network || ad.platform || "instagram";
-      // YouTube DISPLAY ads surfaced under GDN show /gdn/<id> in the URL, while
-      // the history state keeps the real network ('youtube') so in-session
-      // back/forward still loads the insights from the right source.
-      const urlNetwork = ad.badgeNetwork || network;
+      // YouTube DISPLAY ads surfaced under GDN show /youtube/<id> in the URL
+      // (not /gdn/<id>), while the history state keeps the real network ('youtube')
+      // so in-session back/forward still loads the insights from the right source.
+      const urlNetwork = (network === 'youtube' && ad.badgeNetwork === 'gdn') ? 'youtube' : (ad.badgeNetwork || network);
       const id = ad.adId || ad.id;
       window.history.pushState(
         { adModal: true, network, id },

@@ -61,9 +61,9 @@ function validateQuoraAds(data) {
   if (isEmptyLike(data.destination_url)) {
     errors.push('The destination_url field is required.');
   }
-  if (isEmptyLike(data.post_date)) {
-    errors.push('The post_date field is required.');
-  }
+  // post_date is OPTIONAL — some ads have no discoverable post date. When absent
+  // it is stored as null (see normalize.js). If a value IS sent it must still be a
+  // valid epoch, which validateEpochField below enforces.
   if (isEmptyLike(data.first_seen)) {
     errors.push('The first_seen field is required.');
   }

@@ -454,6 +454,9 @@ const AdDetailModal = ({
   // keeps routing share/insights to YouTube where the ad actually lives.
   const displayNetwork = (ad.badgeNetwork || ad.network || "").toLowerCase();
 
+  // For YouTube display ads shown under GDN, show YouTube icon instead of GDN
+  const iconNetwork = (platform === 'youtube' && displayNetwork === 'gdn') ? 'youtube' : displayNetwork;
+
   // Format platform name for display
   const PLATFORM_NAMES = {
     facebook: "Facebook",
@@ -794,7 +797,7 @@ const AdDetailModal = ({
             {!showOriginal && (
               <>
                 {/* Corner Ad Type Strip */}
-                {PLATFORM_ICONS[displayNetwork] && (
+                {PLATFORM_ICONS[iconNetwork] && (
                   <div className="absolute top-0 left-0 w-[72px] h-[72px] z-[3] pointer-events-none overflow-hidden rounded-tl-2xl">
                     <div
                       className="absolute inset-0 bg-white/20 flex items-center justify-center backdrop-blur-[2px]"
@@ -802,8 +805,8 @@ const AdDetailModal = ({
                     >
                       <div className="flex items-center gap-1 pr-6 pb-8">
                         <img
-                          src={PLATFORM_ICONS[displayNetwork]}
-                          alt={displayNetwork}
+                          src={PLATFORM_ICONS[iconNetwork]}
+                          alt={iconNetwork}
                           className="w-[22px] h-[22px] object-contain drop-shadow-sm"
                         />
                       </div>

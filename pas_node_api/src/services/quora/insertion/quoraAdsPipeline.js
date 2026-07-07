@@ -500,6 +500,27 @@ function buildEsExtra(ad, translationData) {
   return extra;
 }
 
+// The three per-source first_seen fields on the search-mix doc. These live only in ES
+// (never in the SQL join), so a full re-index must carry them over from the existing doc.
+const ES_FIRST_SEEN_KEYS = [
+  'quora_ad_meta_data.firstSeenOnDesktop',
+  'quora_ad_meta_data.firstSeenOnIos',
+  'quora_ad_meta_data.firstSeenOnAndroid',
+];
+
+// Copy any already-recorded firstSeenOn<source> from the existing ES doc onto the new
+// body, so a first_seen is written once and never overwritten on later updates. A source
+// seen for the first time (not present on the old doc) keeps the fresh value from buildEsExtra.
+function preserveFirstSeen(body, prevSource) {
+  const prev = prevSource || {};
+  for (const key of ES_FIRST_SEEN_KEYS) {
+    const existing = prev[key];
+    if (existing !== undefined && existing !== null && existing !== '') {
+      body[key] = existing;
+    }
+  }
+}
+
 // An ES-7 index has exactly one mapping type and it never changes at runtime, so cache it.
 const _indexTypeCache = new Map();
 
@@ -566,6 +587,13 @@ async function indexQuoraAdEs(elastic, adInternalId, sql, ctx, extra = {}) {
 
     let survivorId;
     if (keeper) {
+      // first_seen is write-once PER SOURCE. This is a FULL re-index (not a partial
+      // update), and buildEsExtra only emits the firstSeenOn<source> for THIS payload's
+      // source — so without carrying them over we'd (a) reset an already-recorded
+      // first_seen and (b) drop the other sources' first_seen entirely. Preserve any
+      // firstSeenOn* already stored on the doc; only fields not yet present take the new
+      // value. last_seen still moves forward (it comes from the SQL row, not from here).
+      preserveFirstSeen(doc.body, keeper._source);
       await elastic.index({ index: ES_INDEX, type: esType, id: keeper._id, body: doc.body });
       survivorId = keeper._id;
     } else {

@@ -636,7 +636,12 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   const currentMedia = hasCarousel ? carouselImages[activeIndex] : null;
   // Prefer `ad.thumbnail` (already-cached grid image) over SSE-arriving URLs to
   // avoid a visible re-fetch when adDetails resolves a few hundred ms after open.
-  const computedThumbnailSrc = resolveNasUrl(currentMedia) || ad?.thumbnail || resolveNasUrl(d?.image_video_url) || resolveNasUrl(d?.image_url) || resolveNasUrl(d?.video_cover) || null;
+  // The backend uses "/DefaultImage.jpg" as the placeholder for ads with no creative
+  // (e.g. TEXT ads); it 404s and renders as "Preview unavailable". Strip it from every
+  // source so those ads fall through to the title-based text preview below (like a text
+  // ad that carried no image at all). Mirrors the DefaultImage filtering in mapAdToCard.
+  const noDefault = (u) => (typeof u === 'string' && u.includes('DefaultImage')) ? null : u;
+  const computedThumbnailSrc = noDefault(resolveNasUrl(currentMedia)) || noDefault(ad?.thumbnail) || noDefault(resolveNasUrl(d?.image_video_url)) || noDefault(resolveNasUrl(d?.image_url)) || noDefault(resolveNasUrl(d?.video_cover)) || null;
   // Lock to the first non-null URL we ever computed. Otherwise, when SSE
   // arrives and `processedAd` is re-derived via mapAdToCard, the thumbnail
   // URL can swap out from under us — which resets `imgLoaded` to false and
@@ -1591,7 +1596,7 @@ const AnalyticsModal = ({
             'youtube' so the metrics render from the YouTube insights data. */}
         <AnalyticsHeader
           adId={ad?.id}
-          platform={ad?.badgeNetwork || ctx.platform}
+          platform={ctx.platform === 'youtube' && (ad?.badgeNetwork === 'gdn') ? 'youtube' : (ad?.badgeNetwork || ctx.platform)}
           onClose={onClose}
         />
         {!creativeClosed && (
@@ -1828,10 +1833,11 @@ const AnalyticsModal = ({
                 </div>
               )}
 
-              {/* Engagement */}
-
-              {/* Quora: like/share/comment data not shown */}
-              {ctx.hasEngagement && ctx.platform !== 'quora' ? (
+              {/* Engagement — likes/comments/shares/views/impressions. Zero-value
+                  metrics are filtered out upstream (formatNumber → null), so an ad
+                  with only likes shows just that. Quora carries likes/comments/shares
+                  like every other network, so it's included here too. */}
+              {ctx.hasEngagement ? (
                 <div className="flex items-center gap-5">
                   {ctx.engagementItems.map((stat, i) =>
                     stat.isStars ? (
