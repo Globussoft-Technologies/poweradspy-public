@@ -12,7 +12,7 @@ const config = require('../../../config');
 const repo = require('./repository');
 const { validateQuoraAds } = require('./validate');
 const { normalizeQuoraAds, checkVersion } = require('./normalize');
-const { buildSearchMixDoc, searchIdQuery } = require('./esDocBuilder');
+const { buildSearchMixDoc, searchIdQuery, coerceEsDate } = require('./esDocBuilder');
 const { QUORA_INSERT_COLUMNS } = require('./esColumns');
 const api = require('../../../insertion/helpers/apiClients');
 const media = require('../../../insertion/helpers/mediaUpload');
@@ -304,7 +304,7 @@ async function insertQuoraAd(sql, db, ad, userId, translationData, ctx) {
       }
 
       // ES indexing after all uploads complete
-      const esResult = await indexQuoraAdEs(db.elastic, adInternalId, sql, ctx);
+      const esResult = await indexQuoraAdEs(db.elastic, adInternalId, sql, ctx, buildEsExtra(ad, translationData));
       return ok(adInternalId, 'Ad inserted successfully.', {
         es_indexed: esResult,
       });
@@ -435,7 +435,7 @@ async function updateQuoraAd(sql, db, ad, internalId, translationData, ctx) {
     }).then(async (result) => {
       // Post-commit ES update
       try {
-        await indexQuoraAdEs(db.elastic, internalId, sql, ctx);
+        await indexQuoraAdEs(db.elastic, internalId, sql, ctx, buildEsExtra(ad, translationData));
       } catch (err) {
         log.warn('ES update failed', { error: err.message });
       }
@@ -445,6 +445,59 @@ async function updateQuoraAd(sql, db, ad, internalId, translationData, ctx) {
     log.error('Quora UPDATE failed', { error: err.message });
     return serverError(500, 'Failed to update ad.', { error: err.message });
   }
+}
+
+// Split a comma-separated scalar into a trimmed, non-empty array (PHP explode(',') for state/city/country).
+function csvToArray(v) {
+  if (v === undefined || v === null || v === '') return [];
+  return String(v).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+// Build the extra ES-body fields injected on top of the SQL-derived doc — the fields the PHP pipeline
+// set directly on the ES body (not via the join): language, platform, call-to-action, destination/ad URL,
+// country/city/state, category, age, first-seen-by-source, plus a few useful identifiers. These make the
+// payload fields present + searchable at the paths the frontend/search builder expect. `ad` is normalized.
+function buildEsExtra(ad, translationData) {
+  const extra = {};
+  const set = (k, v) => { if (v !== undefined && v !== null && v !== '') extra[k] = v; };
+
+  // Language — the translation service's detected language (PHP `lang_detect`).
+  const lang = translationData && (translationData.detected_language || translationData.language);
+  set('lang_detect', lang ? String(lang).toLowerCase() : undefined);
+
+  set('quora_ad.platform', (ad.platform !== '' && ad.platform != null) ? toInt(ad.platform) : undefined);
+  set('quora_call_to_action.call_to_action', ensureUtf8mb3Compatible(ad.call_to_action));
+  set('quora_ad_meta_data.destination_url', ad.destination_url);
+  set('quora_ad_url.url', ad.ad_url);
+
+  const country = csvToArray(ad.country);
+  if (country.length) extra['quora_country_only.country'] = country;
+  const city = csvToArray(ad.city);
+  if (city.length) extra['city'] = city;
+  const states = csvToArray(ad.state);
+  if (states.length) extra['states'] = states;
+
+  extra['quora_ad.lower_age_seen'] = toInt(ad.lower_age, 0); // fixes the mis-named quora_ad.lower_age column
+  extra['quora_ad.upper_age_seen'] = toInt(ad.upper_age, 0);
+
+  set('quora_ad.ad_category', ensureUtf8mb3Compatible(ad.category));
+  set('image_url_original', ad.image_url_original);
+
+  // first_seen → the source-specific date field (PHP firstSeenOnDesktop/Ios/Android). Date-coerced so a
+  // bad value is dropped (null) rather than failing the whole index with a mapping error.
+  const firstSeen = coerceEsDate(ad.first_seen, 'datetime');
+  const src = String(ad.source || '').toLowerCase();
+  if (firstSeen && src === 'desktop') extra['quora_ad_meta_data.firstSeenOnDesktop'] = firstSeen;
+  else if (firstSeen && src === 'ios') extra['quora_ad_meta_data.firstSeenOnIos'] = firstSeen;
+  else if (firstSeen && src === 'android') extra['quora_ad_meta_data.firstSeenOnAndroid'] = firstSeen;
+
+  // Useful identifiers/attributes the payload carries.
+  set('quora_ad.ad_id', ad.ad_id ? String(ad.ad_id) : undefined);
+  set('quora_ad.quora_id', ad.quora_id ? String(ad.quora_id) : undefined);
+  set('ip_address', ad.ip_address);
+  set('source', ad.source);
+
+  return extra;
 }
 
 // An ES-7 index has exactly one mapping type and it never changes at runtime, so cache it.
@@ -477,14 +530,14 @@ async function resolveIndexType(elastic, index) {
   return type;
 }
 
-async function indexQuoraAdEs(elastic, adInternalId, sql, ctx) {
+async function indexQuoraAdEs(elastic, adInternalId, sql, ctx, extra = {}) {
   if (!elastic) return false;
   try {
     const joined = await repo.getJoinedAd(sql, adInternalId);
     if (joined.code !== 200 || !joined.data.length) return false;
 
     const row = joined.data[0];
-    const doc = buildSearchMixDoc(QUORA_INSERT_COLUMNS, row);
+    const doc = buildSearchMixDoc(QUORA_INSERT_COLUMNS, row, { extra });
     const numericId = String(adInternalId);
 
     // The whole stack (PHP search, frontend, OCR, landers) locates a quora_search_mix
@@ -537,4 +590,4 @@ async function indexQuoraAdEs(elastic, adInternalId, sql, ctx) {
 }
 
 
-module.exports = { processQuoraAd };
+module.exports = { processQuoraAd, buildEsExtra };

@@ -106,6 +106,13 @@ function buildSearchMixDoc(columns, row, opts = {}) {
     body.country = adCountries;
   }
 
+  // Caller-supplied extra fields (lang_detect, call_to_action, destination_url, country/city/state,
+  // platform, category, ages, firstSeenOn*, …) merged LAST so they win over the SQL-derived columns.
+  // Mirrors the PHP pipeline, which set several fields directly on the ES body rather than via the join.
+  if (opts.extra && typeof opts.extra === 'object') {
+    Object.assign(body, opts.extra);
+  }
+
   return {
     index,
     type: '_doc',
