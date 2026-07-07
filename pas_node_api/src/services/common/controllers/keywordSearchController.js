@@ -276,7 +276,14 @@ function buildClaimAttempts({ type, net, isPriority, today, syntheticOnly }) {
   });
   const daily = (extra) => ({
     mode: 'daily', sortDir: -1,
-    filter: { type, networks: net, [dailyPath]: { $ne: today }, ...extra },
+    filter: {
+      type,
+      networks: net,
+      [dailyPath]: { $ne: today },
+      // Prevent daily from claiming if priority already claimed today (regardless of isActive state)
+      [`networkState.${net}.lastScrape.date`]: { $ne: today },
+      ...extra
+    },
     setOut: { [dailyPath]: today },
   });
 
