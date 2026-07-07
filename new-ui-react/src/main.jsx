@@ -27,7 +27,11 @@ import { PersistGate } from 'redux-persist/integration/react'
 import { BrowserRouter } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { store, persistor } from './store/store.js'
+import { installAuthFetchInterceptor } from './utils/authFetchInterceptor.js'
 import './index.css'
+
+// Global safety net: any 401 from our backends → clear session + redirect to login.
+installAuthFetchInterceptor()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

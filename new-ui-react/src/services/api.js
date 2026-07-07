@@ -13,7 +13,7 @@ const COMPETITOR_API_BASE = import.meta.env.VITE_NODE_API_URL || "http://localho
 // Called whenever any API response returns 401. Clears auth state and redirects.
 const LOGOUT_URL = (import.meta.env.VITE_PAS_API_BASE_URL || '') + '/logout';
 let _loggingOut = false; // guard against duplicate /logout hits when many 401s fire in parallel
-const handle401 = () => {
+export const handle401 = () => {
   // Don't redirect on guest/share routes — those are public pages
   const path = window.location.pathname;
   /* v8 ignore next -- redundant guard: checkFor401() already returns on guest/share paths before ever calling handle401, so this is unreachable defensive code */
