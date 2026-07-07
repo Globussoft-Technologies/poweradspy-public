@@ -20,10 +20,13 @@
  *       the displayed count run ahead of the rendered cards. The redundant copies
  *       (doc_count − 1 per id) are deletable; one doc per id is kept.
  *
- *   • MySQL (db = FB_DATABASE, tables facebook_ad + facebook_ad_image_video)
- *       Source of truth = facebook_ad_image_video (per audit decision). An ad is
- *       "unhealthy" when it has NO row there (missing media) or its row's
- *       `ad_image_video` JSON is empty / "[]" (empty media).
+ *   • MySQL (db = FB_DATABASE, tables facebook_ad + facebook_ad_variants)
+ *       Source of truth = facebook_ad_variants.image_url — the primary stored image
+ *       that ES new_nas_image_url (IMAGE) / Thumbnail (VIDEO) are built from. Only
+ *       IMAGE/VIDEO require media (other types pass the displayable filter → healthy).
+ *       An ad is "unhealthy" when it has NO variant row, or its image_url is empty /
+ *       a default or legacy non-NAS path (bydefault/DefaultImage/pasimage/pasvideo).
+ *       (NOT facebook_ad_image_video — that's the sparse carousel/otherMedia field.)
  *
  * The two are reported as INDEPENDENT audits of equal weight — each gets its own
  * counts, per-factor breakdown and samples.
@@ -74,7 +77,12 @@ const FB = {
   dbId: 0,
   database: process.env.FB_DATABASE || 'pasdev_facebook',
   mainTable: 'facebook_ad',
-  mediaTable: 'facebook_ad_image_video',
+  // Media source-of-truth is the VARIANT image (image_url) — what ES
+  // new_nas_image_url (IMAGE) / Thumbnail (VIDEO) are derived from at insert. NOT
+  // facebook_ad_image_video: that's the sparse carousel / "otherMedia" field
+  // (~80-94% of ads have no row there), so it over-reported "missing media".
+  mediaTable: 'facebook_ad_variants',
+  contentColumn: 'image_url',
 };
 
 // --------------------------------------------------------------------------
@@ -370,25 +378,30 @@ function printEsReport(r) {
 
 const q = (sql, params) => withTimeout(queryDatabase(FB.dbId, FB.database, sql, params), 'MySQL query');
 
-// A media row counts as real content only if ad_image_video is a non-empty,
-// non-"[]" string.
-const NONEMPTY = `(ad_image_video IS NOT NULL AND ad_image_video <> '' AND ad_image_video <> '[]')`;
+// A variant row carries usable media only if image_url is a real stored image —
+// present and not a default / legacy-blocked path. Mirrors the ES displayable rule.
+const GOOD = `(image_url IS NOT NULL AND image_url <> ''
+  AND image_url NOT LIKE '%bydefault%'
+  AND image_url NOT LIKE '%DefaultImage%'
+  AND image_url NOT LIKE '%pasimage%'
+  AND image_url NOT LIKE '%pasvideo%')`;
+// Only IMAGE/VIDEO require media; other facebook types pass the displayable filter.
+const MEDIA_TYPES_SQL = `a.type IN ('IMAGE','VIDEO')`;
 
 async function runSqlAudit() {
   sub(`MySQL audit — db "${FB.database}" (db_id ${FB.dbId}), media table "${FB.mediaTable}"`);
 
-  // One pass: per type, classify every ad as missing-row / empty-content / healthy.
-  // iv.cnt = how many media rows; iv.nonempty = how many carry real content.
+  // One pass: per type, classify every IMAGE/VIDEO ad as missing-row / unusable / healthy.
+  // (Non IMAGE/VIDEO types contribute 0 to missing/empty → counted healthy.)
   const breakdown = await q(`
     SELECT a.type,
            COUNT(*) AS total,
-           SUM(CASE WHEN iv.facebook_ad_id IS NULL THEN 1 ELSE 0 END)                       AS missing_row,
-           SUM(CASE WHEN iv.facebook_ad_id IS NOT NULL AND iv.nonempty = 0 THEN 1 ELSE 0 END) AS empty_content
+           SUM(CASE WHEN ${MEDIA_TYPES_SQL} AND iv.facebook_ad_id IS NULL THEN 1 ELSE 0 END)                          AS missing_row,
+           SUM(CASE WHEN ${MEDIA_TYPES_SQL} AND iv.facebook_ad_id IS NOT NULL AND iv.nonempty = 0 THEN 1 ELSE 0 END)  AS empty_content
     FROM ${FB.mainTable} a
     LEFT JOIN (
       SELECT facebook_ad_id,
-             COUNT(*) AS cnt,
-             SUM(CASE WHEN ${NONEMPTY} THEN 1 ELSE 0 END) AS nonempty
+             SUM(CASE WHEN ${GOOD} THEN 1 ELSE 0 END) AS nonempty
       FROM ${FB.mediaTable}
       GROUP BY facebook_ad_id
     ) iv ON iv.facebook_ad_id = a.id
@@ -409,21 +422,23 @@ async function runSqlAudit() {
   const factors = [
     {
       key: 'MISSING_MEDIA_ROW',
-      label: `Ad with NO row in ${FB.mediaTable}`,
+      label: `IMAGE/VIDEO ad with NO row in ${FB.mediaTable}`,
       count: missingRow,
       sampleSql: `SELECT a.id, a.ad_id, a.type, a.last_seen
                   FROM ${FB.mainTable} a
-                  WHERE NOT EXISTS (SELECT 1 FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id)
+                  WHERE ${MEDIA_TYPES_SQL}
+                    AND NOT EXISTS (SELECT 1 FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id)
                   LIMIT ?`,
     },
     {
       key: 'EMPTY_MEDIA_CONTENT',
-      label: `Ad whose ${FB.mediaTable}.ad_image_video is empty / "[]"`,
+      label: `IMAGE/VIDEO ad whose ${FB.mediaTable}.${FB.contentColumn} is missing / a default or legacy non-NAS path`,
       count: emptyContent,
       sampleSql: `SELECT a.id, a.ad_id, a.type, a.last_seen
                   FROM ${FB.mainTable} a
-                  WHERE EXISTS (SELECT 1 FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id)
-                    AND NOT EXISTS (SELECT 1 FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id AND ${NONEMPTY})
+                  WHERE ${MEDIA_TYPES_SQL}
+                    AND EXISTS (SELECT 1 FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id)
+                    AND NOT EXISTS (SELECT 1 FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id AND ${GOOD})
                   LIMIT ?`,
     },
   ];
@@ -670,7 +685,7 @@ ${'═'.repeat(78)}
 ${'═'.repeat(78)}
   Every audit is auto-saved to diagnostics/audit-reports/ (JSON + Excel).
   1) Run ES audit       (displayable-media filter + duplicate-doc scan${SCAN_DUPLICATES ? '' : ' [--noDup: off]'})
-  2) Run SQL audit      (facebook_ad / facebook_ad_image_video)
+  2) Run SQL audit      (${FB.mainTable} / ${FB.mediaTable})
   3) Run BOTH           (full report)
   4) Re-export last report (audit-reports/)
   5) Delete unhealthy ads   [DISABLED — audit-only]

@@ -1,7 +1,7 @@
 # get-domain-registration API — Test Guide
 
 A read-only lookup that returns a domain's **WHOIS registration date** from a network's
-domains table. Converted PHP → Node for **two** networks, keeping the same request/response
+domains table. Converted PHP → Node for **four** networks, keeping the same request/response
 (with one improvement — proper HTTP status codes; see [§HTTP status](#http-status)).
 
 ---
@@ -12,6 +12,8 @@ domains table. Converted PHP → Node for **two** networks, keeping the same req
 |---------|---------------|--------------------------|---------------|
 | Instagram (`gramapi`) | `GET /api/v1/instagram/get-domain-registration` | `GET gramapi.poweradspy.com/get-domain-registration` | `instagram_ad_domain` |
 | Google (`gtext`) | `GET /api/v1/google/get-domain-registration` | `GET gtext.poweradspy.com/api/get-domain-registration` | `google_text_ad_domains` |
+| YouTube (`tubeapi`) | `GET /api/v1/youtube/get-domain-registration` | `GET tubeapi.poweradspy.com/api/get-domain-registration` | `youtube_ad_domains` |
+| Facebook (`api`) | `GET /api/v1/facebook/get-domain-registration` | `GET api.poweradspy.com/get-domain-registration` | `facebook_ad_domains` |
 
 - **Method:** `GET`
 - **Auth:** none (public — matches PHP)
@@ -184,16 +186,23 @@ Suggested Postman cases to save: `found`, `not-found`, `missing-domain`, `empty-
   don't know one, query the DB for a sample:
   ```sql
   -- instagram
-  SELECT domain, domain_registered_date FROM instagram_ad_domain
-  WHERE domain_registered_date IS NOT NULL LIMIT 5;
-  -- google (dev DB: pasdev_gtext)
-  SELECT domain, domain_registered_date FROM google_text_ad_domains
-  WHERE domain_registered_date IS NOT NULL LIMIT 5;
+  SELECT domain, domain_registered_date FROM instagram_ad_domain      WHERE domain_registered_date IS NOT NULL LIMIT 5;
+  -- google  (dev DB: pasdev_gtext)
+  SELECT domain, domain_registered_date FROM google_text_ad_domains   WHERE domain_registered_date IS NOT NULL LIMIT 5;
+  -- youtube (dev DB: pasdev_youtube)
+  SELECT domain, domain_registered_date FROM youtube_ad_domains       WHERE domain_registered_date IS NOT NULL LIMIT 5;
+  -- facebook
+  SELECT domain, domain_registered_date FROM facebook_ad_domains      WHERE domain_registered_date IS NOT NULL LIMIT 5;
   ```
   Then use one of those `domain` values to see a `200`.
-- **Google network uses the `pasdev_gtext` DB in dev** — make sure the Google SQL connection
-  is enabled in that environment (`google.sql.enabled = true` / `GOOG_SQL_ENABLED=true`),
-  else you'll get `401` ("Some Error Occured").
+- **Per-network DBs / SQL must be enabled** — google uses `pasdev_gtext`, youtube uses
+  `pasdev_youtube` (dev). Make sure each network's SQL connection is enabled in that
+  environment (e.g. `GOOG_SQL_ENABLED=true`, `YT_SQL_ENABLED=true`), else you'll get `401`
+  ("Some Error Occured").
+- **Registration dates are stored PER network** — the same domain (e.g. `madgicx.com`) can
+  have a date in `facebook_ad_domains` but `null` in `instagram_ad_domain`. Each endpoint
+  only reads its own table, so a `200` with `domain_registered_date: null` from one network
+  doesn't mean another network lacks it.
 - **Exact match only** — `Instagram.com` vs `instagram.com`, or `www.instagram.com` vs
   `instagram.com`, are different lookups; there's no normalization or wildcarding (same as PHP).
 - **`domain_registered_date` can be `null`** for a matched row (row exists but the date was
@@ -202,9 +211,7 @@ Suggested Postman cases to save: `found`, `not-found`, `missing-domain`, `empty-
 ---
 
 ## 8. Implementation reference (for debugging)
-- Shared logic: `src/utils/domainRegistration.js`
-- Controllers: `src/services/instagram/controllers/domainRegistrationController.js`,
-  `src/services/google/controllers/domainRegistrationController.js`
-- Routes: `src/services/instagram/routes/instagramRoutes.js`,
-  `src/services/google/routes/googleRoutes.js`
-- Tests: `tests/utils/domainRegistration.test.mjs`
+- Shared logic: `src/utils/domainRegistration.js` (one query, table passed per network)
+- Controllers: `src/services/{instagram,google,youtube,facebook}/controllers/domainRegistrationController.js`
+- Routes: `src/services/{instagram,google,youtube,facebook}/routes/*Routes.js`
+- Tests: `tests/utils/domainRegistration.test.mjs` (all 4 networks)

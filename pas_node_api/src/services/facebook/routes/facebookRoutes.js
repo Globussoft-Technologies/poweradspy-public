@@ -29,6 +29,7 @@ const {
   getAdsPageDetails,
   getAdvertiserInsightsByDateRange,
 } = require('../controllers/adInsightsController');
+const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
@@ -237,6 +238,17 @@ function createFacebookRoutes(service) {
     asyncHandler(async (req, res) => {
       const result = await adsData(req, service.db, service.log);
       return res.status(200).json(result);
+    })
+  );
+
+  // ─── Domain registration lookup (api.poweradspy.com) ──
+  // GET /api/v1/facebook/get-domain-registration?domain=<domain> → Userv2Controller@getDomainRegistration
+  // Public (no auth in PHP). `code` mapped to the real HTTP status (200/404/400/401).
+  router.get(
+    '/get-domain-registration',
+    asyncHandler(async (req, res) => {
+      const result = await getDomainRegistration(req, service.db, service.log);
+      return res.status(result.code).json(result);
     })
   );
 

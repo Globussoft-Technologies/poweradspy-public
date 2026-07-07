@@ -63,8 +63,20 @@ runAuditCli({
     dbId: 8,
     database: process.env.INSTA_DATABASE || 'pasdev_instagram',
     mainTable: 'instagram_ad',
-    mediaTable: 'instagram_ad_image_video',
+    // Media source-of-truth is the VARIANT image — that's what ES new_nas_image_url
+    // (IMAGE/STORIES) and thumbnail (VIDEO) are derived from at insert
+    // (updateVariantByAdId({ image_url }) → new_nas_image_url = its NAS path).
+    // NOT instagram_ad_image_video: that's the sparse carousel/"otherMedia" field
+    // (~91% of ads have no row there), so it wildly over-reported missing media.
+    mediaTable: 'instagram_ad_variants',
     fkColumn: 'instagram_ad_id',
-    contentColumn: 'ad_image_video',
+    contentColumn: 'image_url',
+    mediaRequiredTypes: ['IMAGE', 'VIDEO', 'STORIES'], // other types pass the ES filter → healthy
+    goodMediaExpr: `(image_url IS NOT NULL AND image_url <> ''
+      AND image_url NOT LIKE '%bydefault%'
+      AND image_url NOT LIKE '%DefaultImage%'
+      AND image_url NOT LIKE '%pasimage%'
+      AND image_url NOT LIKE '%pasvideo%')`,
+    unusableDesc: 'missing / a default or legacy non-NAS path (bydefault/DefaultImage/pasimage/pasvideo)',
   },
 });

@@ -21,6 +21,7 @@ const {
   getAdvertiserInsightsByDateRange,
 } = require('../controllers/adInsightsController');
 const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
+const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
@@ -183,6 +184,17 @@ function createYoutubeRoutes(service) {
       const result = await getAdvertiserInsightsByDateRange(req, service.db, service.log);
       if (!result) return res.status(400).json({ code: 400, message: 'No data found.', data: null });
       return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // ─── Domain registration lookup (tubeapi) ─────────────
+  // GET /api/v1/youtube/get-domain-registration?domain=<domain> → SearchController@getDomainRegistration
+  // Public (no auth in PHP). `code` mapped to the real HTTP status (200/404/400/401).
+  router.get(
+    '/get-domain-registration',
+    asyncHandler(async (req, res) => {
+      const result = await getDomainRegistration(req, service.db, service.log);
+      return res.status(result.code).json(result);
     })
   );
 
