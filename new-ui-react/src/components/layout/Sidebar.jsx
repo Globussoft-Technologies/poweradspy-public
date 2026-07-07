@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { LayoutGrid, Library, Hash, BrainCircuit, Menu, Bookmark } from "lucide-react";
+import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark } from "lucide-react";
 import NavItem from "../shared/NavItem";
 import SectionLabel from "../shared/SectionLabel";
 import SidebarDivider from "../shared/SidebarDivider";
@@ -25,6 +25,7 @@ const Sidebar = ({
   filterHasPlanEntry,
   onRestricted,
   canAccessProjects = false,
+  intelligenceEnabled = false,
   guest,
   isLoggedIn = false,
   allowedPlatforms,
@@ -112,6 +113,17 @@ const Sidebar = ({
               onClick={() => onPageChange?.("ads")}
               collapsed={!isOpen}
             />
+            {/* Market Trends — shown only when the env flag is on AND the
+                server allow-listed this user (intelligenceEnabled prop). */}
+            {intelligenceEnabled && (
+              <NavItem
+                icon={<TrendingUp size={isOpen ? 16 : 18} />}
+                label={t("market_trends", "Market Trends")}
+                active={activePage === "intelligence"}
+                onClick={() => onPageChange?.("intelligence")}
+                collapsed={!isOpen}
+              />
+            )}
             {isLoggedIn && (allowedPlatforms == null || allowedPlatforms.length > 0) && (
               <NavItem
                 icon={<Bookmark size={isOpen ? 16 : 18} />}

@@ -46,6 +46,16 @@ import { CompetitorAPI, trackProjectEvent } from "../../services/api";
 import CompetitorComparison from "./CompetitorComparison";
 import MembersManager from "./MembersManager";
 
+// A 401 from any Competitor API call throws Error('Unauthorized: Token expired')
+// (see competitorFetch in services/api.js), which also fires handle401() to clear
+// auth + redirect to the logout/login page. This helper lets callers recognise
+// that case so they show a "session expired" notice instead of a misleading
+// domain-specific error (e.g. "Failed to fetch keywords") while the redirect runs.
+const isSessionExpiredError = (error) => {
+  const msg = (error && error.message) || "";
+  return /unauthorized|token expired/i.test(msg);
+};
+
 const getCountryInfo = (code) => {
   if (!code) return { f: "un", n: "Unknown" };
   const target = code.toString().toLowerCase().trim();
@@ -782,6 +792,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         setViewState(1); // Go back to input so user can retry with domain pre-filled
       }
     } catch (error) {
+      if (isSessionExpiredError(error)) {
+        // Session expired — handle401() is already redirecting to login.
+        // Show the correct reason instead of a misleading "fetch keywords" error.
+        showToast("Your session has expired. Please log in again.", "error");
+        return;
+      }
       console.error("Failed to fetch keywords:", error);
       showToast(
         "Failed to fetch keywords. Please try again.",
@@ -959,6 +975,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         }
       }
     } catch (e) {
+      if (isSessionExpiredError(e)) {
+        showToast("Your session has expired. Please log in again.", "error");
+        return;
+      }
       console.error("Failed to generate competitors", e);
       showToast("Error generating competitors. Please try again.", "error");
       setViewState(1); // Go back to start on error

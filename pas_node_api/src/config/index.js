@@ -383,6 +383,23 @@ const config = {
     },
   },
 
+  // Intelligence suite (Winning Ads / Trends / Tech & Funnel / Creative).
+  // Fully additive + gated: when disabled, the router is never mounted (app.js).
+  // Default OFF (opt-in) so production is unaffected until explicitly enabled.
+  //   allowedUserIds: optional allow-list of user ids. When non-empty, ONLY
+  //   those users get the feature + tab (everyone else is 403'd and the UI hides
+  //   it). Empty/unset = all authenticated users (when `enabled`). Accepts a
+  //   JSON array in config.json or a comma-separated string in the env var.
+  intelligence: {
+    enabled: getVal(fileConfig.intelligence?.enabled, 'INTELLIGENCE_ENABLED', toBool) === true,
+    allowedUserIds: (() => {
+      const raw = getVal(fileConfig.intelligence?.allowedUserIds, 'INTELLIGENCE_ALLOWED_USER_IDS');
+      if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return [];
+    })(),
+  },
+
   sendgrid: {
     enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
     apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),

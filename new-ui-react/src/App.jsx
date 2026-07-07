@@ -42,6 +42,11 @@ import AnalyticsModal from "./components/modals/AnalyticsModal.jsx";
 import AllProjects from "./components/all-projects/AllProjects";
 // SharedAdView no longer used — /share routes now use dashboard UI via GuestProvider
 import SavedAdsPage from "./components/ads/SavedAdsPage";
+import MarketTrends, { fetchMarketTrendsAccess } from "./components/MarketTrends";
+
+// Market Trends is gated twice: the build-time env flag AND a per-user server
+// allow-list (config.intelligence.allowedUserIds), probed via /access.
+const INTEL_ENV_ON = import.meta.env.VITE_ENABLE_INTELLIGENCE_FEATURE === "true";
 import ChatbotWidget from "./components/shared/ChatbotWidget";
 import NotificationPermissionPrompt from "./components/layout/NotificationPermissionPrompt";
 import UnsubscribePage from "./components/UnsubscribePage";
@@ -287,6 +292,10 @@ const App = () => {
     } else if (location.pathname === '/saved') {
       dispatch(setActivePage('ads'));
       dispatch(setShowSavedAdsPage(true));
+    } else if (location.pathname === '/market-trends') {
+      // Market Trends has its own URL so a reload stays on the page.
+      dispatch(setActivePage('intelligence'));
+      dispatch(setShowSavedAdsPage(false));
     } else {
       dispatch(setActivePage('ads'));
       dispatch(setShowSavedAdsPage(false));
@@ -504,6 +513,14 @@ const App = () => {
     const network = sp.length === 1 ? sp[0] : sp.length > 1 ? sp : 'all';
     fetchPlanAccess(network).then(data => { if (data) setPlanAccess(data); }).catch(() => {});
   }, [ui.specificPlatforms, token]);
+
+  // Intelligence per-user access — only show the tab/feature when the env flag
+  // is on AND the server says this user is allow-listed. Defaults to hidden.
+  const [intelAllowed, setIntelAllowed] = useState(false);
+  useEffect(() => {
+    if (!INTEL_ENV_ON || !token) { setIntelAllowed(false); return; }
+    fetchMarketTrendsAccess().then(setIntelAllowed).catch(() => setIntelAllowed(false));
+  }, [token]);
 
   const filterKey = useMemo(
     () => JSON.stringify(sdui.filterValues),
@@ -1502,6 +1519,13 @@ const App = () => {
           activePage={ui.activePage}
           onPageChange={(val) => {
             if (guest?.isPublicLanding) { guest.showGuestWarning('Please login to access this feature'); return; }
+            if (val === 'intelligence') {
+              // Own URL so reload stays on Market Trends (URL-sync effect sets state).
+              navigate('/market-trends');
+              dispatch(setShowSavedAdsPage(false));
+              return;
+            }
+            if (location.pathname === '/market-trends') navigate('/');
             dispatch(setActivePage(val));
             dispatch(setShowSavedAdsPage(false));
           }}
@@ -1511,6 +1535,7 @@ const App = () => {
             dispatch(openModal('isPricingModalOpen'));
           }}
           canAccessProjects={canAccessProjects}
+          intelligenceEnabled={INTEL_ENV_ON && intelAllowed}
           guest={guest}
           isLoggedIn={!guest?.isRestricted}
           allowedPlatforms={planAccess?.allowedPlatforms}
@@ -1523,7 +1548,16 @@ const App = () => {
           searchIn={ui.searchIn}
         />
 
-        {ui.activePage === "projects" && canAccessProjects ? (
+        {INTEL_ENV_ON && intelAllowed && ui.activePage === "intelligence" ? (
+          <MarketTrends
+            onDrill={(kind, value) => {
+              navigate('/');
+              dispatch(setActivePage('ads'));
+              dispatch(setShowSavedAdsPage(false));
+              handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword');
+            }}
+          />
+        ) : ui.activePage === "projects" && canAccessProjects ? (
           <AllProjects
             onSearch={handleSearch}
             onNavigateToAds={() => { coalesceNextHistoryWrite(); dispatch(setActivePage("ads")); }}

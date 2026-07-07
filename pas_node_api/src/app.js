@@ -102,6 +102,13 @@ async function createApp() {
   // Common cross-network API
   app.use('/api/v1/common', require('./services/common/routes/commonRoutes'));
 
+  // Market Trends (single-file, additive). Entirely behind INTELLIGENCE_ENABLED
+  // — when off, the module is never even required, so it has zero footprint.
+  if (config.intelligence?.enabled) {
+    app.use('/api/v1/intelligence', require('./services/marketTrends'));
+    log.info('✓ Market Trends mounted at /api/v1/intelligence');
+  }
+
   // Email service — unsubscribe / resubscribe (public; aMember + SendGrid global suppression)
   app.use('/api/v1/email', require('./services/email/routes/emailRoutes'));
 

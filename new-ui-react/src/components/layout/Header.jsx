@@ -463,7 +463,7 @@ const Header = ({
         />
       )}
 
-      {activePage !== "projects" && (
+      {activePage !== "projects" && activePage !== "intelligence" && (
         <div className="flex-1 relative h-full flex items-center mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div

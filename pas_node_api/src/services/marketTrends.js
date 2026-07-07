@@ -1,0 +1,637 @@
+'use strict';
+
+/**
+ * Market Trends — single-file additive feature (router + access + ES aggs).
+ *
+ * Mounted at /api/v1/intelligence ONLY when config.intelligence.enabled (app.js).
+ * Per-user allow-list via config.intelligence.allowedUserIds (empty = all).
+ * Read-only ES aggregations against the Meta `search_mix` index (fb + ig).
+ * Full doc + enable/remove steps: MARKET_TRENDS_MANIFEST.md (repo root).
+ *
+ * NOTE: this is a plain file under services/ (not a folder), so ServiceRegistry
+ * does NOT auto-mount it — mounting is flag-gated in app.js only.
+ */
+
+const { Router } = require('express');
+const config = require('../config');
+const databaseManager = require('../database/DatabaseManager');
+const serviceRegistry = require('./ServiceRegistry');
+const { authMiddleware } = require('../middleware/auth');
+const { asyncHandler } = require('../middleware/errorHandler');
+
+// ─── Per-user access ─────────────────────────────────────────────────────────
+function isAllowedUser(userId) {
+  const allow = config.intelligence?.allowedUserIds || [];
+  if (!allow.length) return true; // no list → all authenticated users
+  if (userId === undefined || userId === null || userId === '') return false;
+  return allow.map(String).includes(String(userId));
+}
+function accessGuard(req, res, next) {
+  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
+  if (!isAllowedUser(uid)) {
+    return res.status(403).json({ code: 403, message: 'Market Trends is not enabled for this account', data: [] });
+  }
+  return next();
+}
+
+// ─── ES helpers ──────────────────────────────────────────────────────────────
+function clampInt(v, fb, min, max) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < min) return fb;
+  return n > max ? max : n;
+}
+function getEs(net = 'facebook') {
+  const s = serviceRegistry.getService(net);
+  if (s && s.db && s.db.elastic) return s.db.elastic;
+  return databaseManager.getElastic(net) || null;
+}
+function esBody(r) { return r && r.body ? r.body : r; }
+
+// Anchor the window to the newest ad (max last_seen), not wall-clock now, so a
+// stale/dev index still shows a populated window. Falls back to Date.now().
+async function getAnchorMs(es, field = 'facebook_ad.last_seen') {
+  if (!es) return Date.now();
+  try {
+    const r = await es.search({ index: es.indexName || 'search_mix', body: { size: 0, aggs: { _a: { max: { field } } } } });
+    const v = esBody(r).aggregations?._a?.value;
+    return (typeof v === 'number' && v > 0) ? v : Date.now();
+  } catch { return Date.now(); }
+}
+// Try candidate fields in order; a text field w/o `.keyword` throws → next one.
+async function aggWithFallback(es, buildBody, candidates) {
+  if (!es) return { ok: false, aggs: {}, reason: 'Elasticsearch connection unavailable' };
+  const index = es.indexName || 'search_mix';
+  let last = null;
+  for (const f of candidates) {
+    try {
+      const r = await es.search({ index, body: buildBody(f) });
+      return { ok: true, field: f, aggs: esBody(r).aggregations || {} };
+    } catch (e) { last = e; }
+  }
+  return { ok: false, aggs: {}, reason: last ? last.message : 'no candidate field matched the mapping' };
+}
+
+// ─── Aggregation query bodies ────────────────────────────────────────────────
+const DATE_FMT = "yyyy-MM-dd HH:mm:ss";
+// Placeholder/default media the UI hides — excluded from every count.
+const PLACEHOLDER = ['*pasvideo*', '*pasimage*', '*bydefault*', '*DefaultImage*'];
+const MEDIA_FIELDS = ['new_nas_image_url.keyword', 'Thumbnail.keyword', 'othermedia.keyword'];
+
+// Category / advertiser / CTA aggregations need structured keyword fields that
+// exist only on the Meta indexes. Per-network config so the tab can be scoped to
+// Facebook or Instagram (both carry advertiser; category/CTA are richest on FB).
+const META = {
+  facebook: {
+    net: 'facebook', label: 'Facebook', date: 'facebook_ad.last_seen',
+    category: ['facebook.category.keyword', 'facebook.category'],
+    cta: ['facebook_call_to_actions.action.keyword', 'facebook_call_to_actions.action'],
+    advertiser: ['facebook_ad_post_owners.post_owner_lower.keyword', 'facebook_ad_post_owners.post_owner_name.keyword'],
+    advLabel: 'facebook_ad_post_owners.post_owner_name',
+  },
+  instagram: {
+    net: 'instagram', label: 'Instagram', date: 'instagram_ad.last_seen',
+    category: ['instagram.category.keyword', 'instagram.category'],
+    cta: ['instagram_call_to_actions.action.keyword', 'instagram_call_to_actions.action'],
+    advertiser: ['instagram_ad_post_owners.post_owner_lower.keyword', 'instagram_ad_post_owners.post_owner_name.keyword'],
+    advLabel: 'instagram_ad_post_owners.post_owner_name',
+  },
+  // Other *_search_mix indexes carry the same nested structure — advertiser is
+  // populated on all; category on some (native/pinterest); CTA mostly empty.
+  native: {
+    net: 'native', label: 'Native', date: 'native_ad.last_seen',
+    category: ['native.category.keyword', 'native.category'],
+    cta: ['native_call_to_actions.action.keyword'],
+    advertiser: ['native_ad_post_owners.post_owner_lower.keyword'],
+    advLabel: 'native_ad_post_owners.post_owner_name',
+  },
+  reddit: {
+    net: 'reddit', label: 'Reddit', date: 'reddit_ad.last_seen',
+    category: ['reddit.category.keyword', 'reddit.category'],
+    cta: ['reddit_call_to_actions.action.keyword'],
+    advertiser: ['reddit_ad_post_owners.post_owner_lower.keyword'],
+    advLabel: 'reddit_ad_post_owners.post_owner_name',
+  },
+  quora: {
+    net: 'quora', label: 'Quora', date: 'quora_ad.last_seen',
+    category: ['quora.category.keyword', 'quora.category'],
+    cta: ['quora_call_to_actions.action.keyword'],
+    advertiser: ['quora_ad_post_owners.post_owner_lower.keyword'],
+    advLabel: 'quora_ad_post_owners.post_owner_name',
+  },
+  pinterest: {
+    net: 'pinterest', label: 'Pinterest', date: 'pinterest_ad.last_seen',
+    category: ['pinterest.category.keyword', 'pinterest.category'],
+    cta: ['pinterest_call_to_actions.action.keyword'],
+    advertiser: ['pinterest_ad_post_owners.post_owner_lower.keyword'],
+    advLabel: 'pinterest_ad_post_owners.post_owner_name',
+  },
+  gdn: {
+    // GDN is search_mix-style: advertiser + country populated; category/CTA empty.
+    net: 'gdn', label: 'GDN', date: 'gdn_ad.last_seen',
+    category: ['gdn.category.keyword'], cta: ['gdn_call_to_actions.action.keyword'],
+    advertiser: ['gdn_ad_post_owners.post_owner_lower.keyword'],
+    advLabel: 'gdn_ad_post_owners.post_owner_name',
+  },
+  // Flat-schema networks (not *_search_mix) — different field names, no media
+  // placeholder fields, partial coverage. Verified against the live indexes:
+  google: {
+    // per google_ads_data_v2 mapping: category/post_owner_lower/target_keyword
+    // are all `keyword`; post_owner_name is text (+.kw). No CTA field.
+    net: 'google', label: 'Google', date: 'last_seen', mediaFilter: false,
+    category: ['category'], cta: [],
+    advertiser: ['post_owner_lower', 'post_owner_name.kw'], advLabel: 'post_owner_name',
+  },
+  youtube: {
+    net: 'youtube', label: 'YouTube', date: 'last_seen', mediaFilter: false,
+    category: [], cta: ['call_to_action.keyword'],
+    advertiser: [], advLabel: null,
+  },
+  linkedin: {
+    net: 'linkedin', label: 'LinkedIn', date: 'last_seen', mediaFilter: false,
+    category: [], cta: ['call_to_action.keyword'],
+    advertiser: [], advLabel: null,
+  },
+};
+// Networks that carry SOME structured advertiser/category/CTA data.
+const META_ALL = ['facebook', 'instagram', 'native', 'reddit', 'quora', 'pinterest', 'google', 'youtube', 'linkedin', 'gdn'];
+// Parse a `network` param that may be 'all', a single slug, or a CSV list.
+function parseNetList(network) {
+  if (!network || network === 'all') return null; // null = every network
+  return String(network).toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+}
+// Resolve requested network(s) → Meta config(s) + a display label. Honors a CSV
+// selection so the compare chips double as a filter; non-Meta networks in the
+// selection are ignored here (they lack advertiser/category structured data).
+function metaCfgs(network) {
+  const list = parseNetList(network);
+  const nets = list ? list.filter((n) => META[n]) : META_ALL;
+  const cfgs = nets.map((n) => META[n]);
+  if (!cfgs.length) return null;
+  const label = list ? cfgs.map((c) => c.label).join(', ') : 'All networks';
+  return { label, cfgs };
+}
+
+const fmt = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+function windowRange(days, anchorMs = Date.now()) {
+  return { nowMs: anchorMs, startMs: anchorMs - days * 86400000, prevStartMs: anchorMs - 2 * days * 86400000 };
+}
+// Parse an optional absolute custom range (YYYY-MM-DD or ISO) → { fromMs, toMs }.
+function parseRange(raw) {
+  const f = raw.from; const t = raw.to;
+  if (!f || !t) return null;
+  const fromMs = Date.parse(String(f).length <= 10 ? `${f}T00:00:00Z` : f);
+  const toMs = Date.parse(String(t).length <= 10 ? `${t}T23:59:59Z` : t);
+  if (isNaN(fromMs) || isNaN(toMs) || toMs < fromMs) return null;
+  return { fromMs, toMs };
+}
+// Resolve the working window: an explicit custom range wins, else last `days`
+// anchored to `anchorMs` (the previous window is the same length before it).
+function winFrom(days, anchorMs, custom) {
+  if (custom) return { nowMs: custom.toMs, startMs: custom.fromMs, prevStartMs: custom.fromMs - (custom.toMs - custom.fromMs) };
+  return windowRange(days, anchorMs);
+}
+function placeholderMustNot() {
+  const o = [];
+  for (const f of MEDIA_FIELDS) for (const p of PLACEHOLDER) o.push({ wildcard: { [f]: { value: p } } });
+  return o;
+}
+// date in [s,e] AND (for search_mix nets) not a placeholder-media ad — scoped to
+// a Meta config's date field. Flat-schema nets (mediaFilter:false) skip the media
+// must_not since they don't have those fields.
+function windowQueryFor(cfg, s, e, extra = []) {
+  const b = { filter: [{ range: { [cfg.date]: { gte: fmt(s), lte: fmt(e), format: DATE_FMT } } }, ...extra] };
+  if (cfg.mediaFilter !== false) b.must_not = placeholderMustNot();
+  return { bool: b };
+}
+function categoryBodyFor(cfg, size, field, win, extra = []) {
+  const { nowMs, startMs, prevStartMs } = win;
+  const t = { terms: { field, size } };
+  return {
+    size: 0,
+    query: windowQueryFor(cfg, prevStartMs, nowMs, extra),
+    aggs: {
+      current: { filter: { range: { [cfg.date]: { gte: fmt(startMs), lte: fmt(nowMs), format: DATE_FMT } } }, aggs: { items: t } },
+      previous: { filter: { range: { [cfg.date]: { gte: fmt(prevStartMs), lt: fmt(startMs), format: DATE_FMT } } }, aggs: { items: t } },
+    },
+  };
+}
+function termsBodyFor(cfg, size, field, win, subAggs, extra = []) {
+  const { nowMs, startMs } = win;
+  return { size: 0, query: windowQueryFor(cfg, startMs, nowMs, extra), aggs: { items: { terms: { field, size }, ...(subAggs ? { aggs: subAggs } : {}) } } };
+}
+
+// ─── Controllers ─────────────────────────────────────────────────────────────
+const mapBuckets = (b) => (b || []).reduce((o, x) => { o[x.key] = x.doc_count; return o; }, {});
+const topHit = (b) => b.label?.hits?.hits?.[0]?._source || null;
+
+async function getOverview(req, res) {
+  const raw = { ...req.query, ...req.body };
+  const days = clampInt(raw.days, 30, 1, 365);
+  const only = raw.network && raw.network !== 'all' ? String(raw.network).toLowerCase() : null;
+  const nets = only ? [only].filter((n) => TREND_NETWORKS.includes(n)) : [...TREND_NETWORKS];
+
+  const country = String(raw.country || '').trim();
+  const custom = parseRange(raw);
+  const anchorMs = custom ? 0 : await globalTrendAnchor(nets);
+  const startMs = custom ? custom.fromMs : anchorMs - days * 86400000;
+  const endMs = custom ? custom.toMs : anchorMs;
+
+  // Per-network daily maps (in parallel), keeping only networks that returned data.
+  const maps = {};
+  const present = [];
+  await Promise.all(nets.map(async (net) => {
+    const m = await dailySeries(net, startMs, endMs, country);
+    if (m && Object.keys(m).length) { maps[net] = m; present.push(net); }
+  }));
+  present.sort((a, b) => TREND_NETWORKS.indexOf(a) - TREND_NETWORKS.indexOf(b));
+
+  // Union of dates → one row per day with a count per present network + total.
+  const dateSet = new Set();
+  for (const net of present) for (const d of Object.keys(maps[net])) dateSet.add(d);
+  const dates = [...dateSet].sort();
+  const series = dates.map((d) => {
+    const row = { date: d };
+    let dayTotal = 0;
+    for (const net of present) { const c = maps[net][d] || 0; row[net] = c; dayTotal += c; }
+    row.total = dayTotal;
+    return row;
+  });
+  const total = series.reduce((s, r) => s + r.total, 0);
+
+  return res.status(200).json({ code: 200, data: { days, networks: present, series, total }, message: 'Ad volume by network' });
+}
+
+// Category & advertiser/CTA are Meta-only. If the requested network isn't a Meta
+// one, respond with an "unsupported" flag so the UI shows a friendly note.
+function unsupported(res, days, network) {
+  res.status(200).json({ code: 200, data: { days, network, items: [] }, message: 'unsupported', meta: { unsupported: true, network } });
+}
+
+// category current/previous maps for one Meta config (optional country filter).
+async function catForCfg(cfg, days, size, country, advertiser, custom) {
+  const es = getEs(cfg.net);
+  if (!es) return { cur: {}, prev: {} };
+  const anchorMs = custom ? 0 : await getAnchorMs(es, cfg.date);
+  const win = winFrom(days, anchorMs, custom);
+  const extra = extraFilters(cfg.net, country, advertiser);
+  const { aggs } = await aggWithFallback(es, (f) => categoryBodyFor(cfg, size, f, win, extra), cfg.category);
+  return { cur: mapBuckets(aggs.current?.items?.buckets), prev: mapBuckets(aggs.previous?.items?.buckets) };
+}
+// top advertiser/CTA buckets [{key,label,count}] for one Meta config.
+async function topForCfg(cfg, type, days, size, country, advertiser, custom) {
+  const es = getEs(cfg.net);
+  if (!es) return [];
+  const anchorMs = custom ? 0 : await getAnchorMs(es, cfg.date);
+  const win = winFrom(days, anchorMs, custom);
+  const subAggs = type === 'advertiser' ? { label: { top_hits: { size: 1, _source: [cfg.advLabel] } } } : undefined;
+  const extra = extraFilters(cfg.net, country, advertiser);
+  const { aggs } = await aggWithFallback(es, (f) => termsBodyFor(cfg, size, f, win, subAggs, extra), cfg[type]);
+  return (aggs.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
+    .map((b) => ({ key: String(b.key), label: type === 'advertiser' ? (topHit(b)?.[cfg.advLabel] || String(b.key)) : String(b.key), count: b.doc_count, net: cfg.net }));
+}
+// dominant contributing network from a { net: count } tally.
+const dominantNet = (nets) => Object.entries(nets).sort((a, b) => b[1] - a[1])[0]?.[0];
+const addInto = (target, key, n) => { target[key] = (target[key] || 0) + n; };
+
+async function getCategories(req, res) {
+  const raw = { ...req.query, ...req.body };
+  const days = clampInt(raw.days, 30, 1, 365);
+  const size = clampInt(raw.size, 15, 1, 50);
+  const sel = metaCfgs(raw.network);
+  if (!sel) return unsupported(res, days, String(raw.network).toLowerCase());
+
+  const country = String(raw.country || '').trim();
+  const advertiser = String(raw.advertiser || '').trim();
+  const custom = parseRange(raw);
+  const cur = {}; const prev = {}; const byNet = {}; // category → { net: current count }
+  const parts = await Promise.all(sel.cfgs.map((cfg) => catForCfg(cfg, days, size, country, advertiser, custom)));
+  parts.forEach((p, i) => {
+    const net = sel.cfgs[i].net;
+    for (const [k, v] of Object.entries(p.cur)) if (k.trim() !== '') { addInto(cur, k, v); (byNet[k] = byNet[k] || {})[net] = (byNet[k][net] || 0) + v; }
+    for (const [k, v] of Object.entries(p.prev)) if (k.trim() !== '') addInto(prev, k, v);
+  });
+  const items = [...new Set([...Object.keys(cur), ...Object.keys(prev)])].map((key) => {
+    const current = cur[key] || 0; const previous = prev[key] || 0;
+    const growthPct = previous > 0 ? Math.round(((current - previous) / previous) * 100) : (current > 0 ? 100 : 0);
+    return { category: key, current, previous, growthPct, net: dominantNet(byNet[key] || {}) };
+  }).sort((a, b) => b.current - a.current).slice(0, size);
+  return res.status(200).json({ code: 200, data: { days, network: sel.label, items }, message: 'Category trends' });
+}
+
+async function getTop(req, res) {
+  const raw = { ...req.query, ...req.body };
+  const type = raw.type === 'cta' ? 'cta' : 'advertiser';
+  const days = clampInt(raw.days, 30, 1, 365);
+  const size = clampInt(raw.size, 15, 1, 50);
+  const sel = metaCfgs(raw.network);
+  if (!sel) return unsupported(res, days, String(raw.network).toLowerCase());
+
+  const country = String(raw.country || '').trim();
+  const advertiser = String(raw.advertiser || '').trim();
+  const custom = parseRange(raw);
+  const merged = {};
+  const parts = await Promise.all(sel.cfgs.map((cfg) => topForCfg(cfg, type, days, size, country, advertiser, custom)));
+  for (const list of parts) {
+    for (const b of list) {
+      if (!merged[b.key]) merged[b.key] = { id: b.key, label: b.label, count: 0, nets: {} };
+      merged[b.key].count += b.count;
+      merged[b.key].nets[b.net] = (merged[b.key].nets[b.net] || 0) + b.count;
+    }
+  }
+  const items = Object.values(merged)
+    .map((m) => ({ id: m.id, label: m.label, count: m.count, net: dominantNet(m.nets) }))
+    .sort((a, b) => b.count - a.count).slice(0, size);
+  return res.status(200).json({ code: 200, data: { type, days, network: sel.label, items }, message: 'Top movers' });
+}
+
+// ── Per-network volume (daily time series) ───────────────────────────────────
+// ALL networks are charted; each has its own candidate last_seen date field(s).
+// A network only appears if its index is connected AND returns data (dev may not
+// have every network wired up — those are simply omitted, not errors).
+const TREND_NETWORKS = ['facebook', 'instagram', 'google', 'youtube', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok'];
+const NET_DATE_CANDIDATES = {
+  facebook: ['facebook_ad.last_seen'],
+  instagram: ['instagram_ad.last_seen'],
+  google: ['last_seen'],
+  youtube: ['last_seen'],
+  linkedin: ['last_seen'],
+  gdn: ['last_seen', 'gdn_ad.last_seen'],
+  native: ['last_seen', 'native_ad.last_seen'],
+  reddit: ['last_seen', 'reddit_ad.last_seen'],
+  quora: ['last_seen', 'quora_ad.last_seen'],
+  pinterest: ['last_seen', 'pinterest_ad.last_seen'],
+  tiktok: ['last_seen', 'tiktok_ad.last_seen'],
+};
+// First date-typed candidate field for a network's ES (max exposes
+// value_as_string only for date fields), plus that max as epoch-ms.
+async function resolveNetDate(es, net) {
+  for (const f of (NET_DATE_CANDIDATES[net] || ['last_seen'])) {
+    try {
+      const r = await es.search({ index: es.indexName, body: { size: 0, aggs: { a: { max: { field: f } } } } });
+      const a = esBody(r).aggregations?.a;
+      if (a && a.value != null && a.value_as_string) return { field: f, maxMs: a.value };
+    } catch { /* try next */ }
+  }
+  return null;
+}
+// Latest data point across the requested networks (aligns the shared time axis).
+async function globalTrendAnchor(nets) {
+  let anchor = 0;
+  await Promise.all(nets.map(async (net) => {
+    const es = getEs(net);
+    if (!es) return;
+    const d = await resolveNetDate(es, net);
+    if (d && d.maxMs > anchor) anchor = d.maxMs;
+  }));
+  return anchor || Date.now();
+}
+// { 'YYYY-MM-DD': count } for a network in [startMs,endMs], placeholder ads
+// excluded, optionally filtered to a country.
+async function dailySeries(net, startMs, endMs, country) {
+  const es = getEs(net);
+  if (!es) return null;
+  const d = await resolveNetDate(es, net);
+  if (!d) return null;
+  const f = d.field;
+  const cc = countryClause(net, country);
+  const intervalKey = es.esMajor >= 8 ? 'calendar_interval' : 'interval'; // ES8 renamed it
+  try {
+    const r = await es.search({
+      index: es.indexName,
+      body: {
+        size: 0,
+        query: { bool: { filter: [{ range: { [f]: { gte: fmt(startMs), lte: fmt(endMs), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must_not: placeholderMustNot() } },
+        aggs: { d: { date_histogram: { field: f, [intervalKey]: 'day', format: 'yyyy-MM-dd' } } },
+      },
+    });
+    const buckets = esBody(r).aggregations?.d?.buckets || [];
+    const map = {};
+    for (const b of buckets) map[b.key_as_string] = b.doc_count;
+    return map;
+  } catch { return null; }
+}
+
+// ── Ads by country (all networks) ────────────────────────────────────────────
+// Each network stores its geo under a different field; values are country names
+// with inconsistent case + junk ("ALL"). We normalise + merge across networks.
+const NET_COUNTRY = {
+  facebook: 'country_only.country.keyword',
+  instagram: 'instagram_country_only.country.keyword',
+  native: 'native_country_only.country.keyword',
+  reddit: 'reddit_country_only.country.keyword',
+  quora: 'quora_country_only.country.keyword',
+  pinterest: 'pinterest_country_only.country.keyword',
+  google: 'country',
+  youtube: 'countries.keyword',
+  linkedin: 'countries.keyword',
+  gdn: 'gdn_country_only.country.keyword',
+};
+const GEO_NETWORKS = Object.keys(NET_COUNTRY);
+// A case-insensitive country filter clause for a network (values are stored with
+// inconsistent case). Returns null when no country is set or the net has no geo.
+function countryClause(net, country) {
+  if (!country) return null;
+  const f = NET_COUNTRY[net];
+  const c = String(country).trim();
+  if (!f || !c) return null;
+  const variants = [...new Set([c, c.toLowerCase(), c.replace(/\b[a-z]/g, (m) => m.toUpperCase())])];
+  return { bool: { should: variants.map((v) => ({ term: { [f]: v } })), minimum_should_match: 1 } };
+}
+// Filter to ads by one or more advertisers (the compared search terms), so every
+// panel reflects the current search. Matches the network's advertiser-name field.
+function advertiserClause(net, advCsv) {
+  if (!advCsv) return null;
+  const f = NET_ADV_MATCH[net];
+  if (!f) return null;
+  const terms = String(advCsv).split(',').map((s) => s.trim()).filter(Boolean);
+  if (!terms.length) return null;
+  return { bool: { should: terms.map((t) => ({ match: { [f]: t } })), minimum_should_match: 1 } };
+}
+// Build the extra-filter array for a network from optional country + advertiser.
+function extraFilters(net, country, advertiser) {
+  return [countryClause(net, country), advertiserClause(net, advertiser)].filter(Boolean);
+}
+const COUNTRY_ALIAS = {
+  'Usa': 'United States', 'Us': 'United States', 'U.s.': 'United States', 'United States Of America': 'United States',
+  'Uk': 'United Kingdom', 'U.k.': 'United Kingdom', 'Great Britain': 'United Kingdom',
+  'The Netherlands': 'Netherlands', 'Uae': 'United Arab Emirates', 'Korea': 'South Korea',
+};
+function normCountry(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const low = s.toLowerCase();
+  if (['all', 'unknown', 'n/a', 'na', 'none', 'worldwide', 'global'].includes(low)) return null;
+  const title = low.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  return COUNTRY_ALIAS[title] || title;
+}
+async function regionsForNet(net, days, advertiser, custom) {
+  const es = getEs(net);
+  if (!es) return {};
+  const d = await resolveNetDate(es, net);
+  const cf = NET_COUNTRY[net];
+  if (!d || !cf) return {};
+  const start = custom ? custom.fromMs : d.maxMs - days * 86400000;
+  const end = custom ? custom.toMs : d.maxMs;
+  const ac = advertiserClause(net, advertiser);
+  try {
+    const r = await es.search({
+      index: es.indexName,
+      body: {
+        size: 0,
+        query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(ac ? [ac] : [])] } },
+        aggs: { c: { terms: { field: cf, size: 80 } } },
+      },
+    });
+    const out = {};
+    for (const b of (esBody(r).aggregations?.c?.buckets || [])) {
+      const name = normCountry(b.key);
+      if (name) out[name] = (out[name] || 0) + b.doc_count;
+    }
+    return out;
+  } catch { return {}; }
+}
+async function getRegions(req, res) {
+  const raw = { ...req.query, ...req.body };
+  const days = clampInt(raw.days, 30, 1, 365);
+  const advertiser = String(raw.advertiser || '').trim();
+  const custom = parseRange(raw);
+  const list = parseNetList(raw.network);
+  const nets = list ? list.filter((n) => GEO_NETWORKS.includes(n)) : GEO_NETWORKS;
+
+  const merged = {};
+  const parts = await Promise.all(nets.map((net) => regionsForNet(net, days, advertiser, custom)));
+  for (const p of parts) for (const [k, v] of Object.entries(p)) merged[k] = (merged[k] || 0) + v;
+
+  const items = Object.entries(merged).map(([country, count]) => ({ country, count }))
+    .sort((a, b) => b.count - a.count).slice(0, 40);
+  const total = items.reduce((s, i) => s + i.count, 0);
+  return res.status(200).json({ code: 200, data: { days, total, items }, message: 'Ads by country' });
+}
+
+// ── Manual search: an advertiser's ad-volume trend, per network ──────────────
+// Advertiser NAME text field per network (matchable even where it isn't
+// aggregatable, e.g. youtube/linkedin) — powers the "type a term → compare
+// across networks" box (Google-Trends style).
+const NET_ADV_MATCH = {
+  facebook: 'facebook_ad_post_owners.post_owner_name',
+  instagram: 'instagram_ad_post_owners.post_owner_name',
+  native: 'native_ad_post_owners.post_owner_name',
+  reddit: 'reddit_ad_post_owners.post_owner_name',
+  quora: 'quora_ad_post_owners.post_owner_name',
+  pinterest: 'pinterest_ad_post_owners.post_owner_name',
+  google: 'post_owner_name',
+  youtube: 'post_owner',
+  linkedin: 'post_owner',
+  gdn: 'gdn_ad_post_owners.post_owner_name',
+};
+async function searchDaily(net, q, days, country, custom) {
+  const es = getEs(net);
+  if (!es) return null;
+  const d = await resolveNetDate(es, net);
+  const advField = NET_ADV_MATCH[net];
+  if (!d || !advField) return null;
+  const start = custom ? custom.fromMs : d.maxMs - days * 86400000;
+  const end = custom ? custom.toMs : d.maxMs;
+  const cc = countryClause(net, country);
+  try {
+    const r = await es.search({
+      index: es.indexName,
+      body: {
+        size: 0,
+        query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must: [{ match: { [advField]: q } }] } },
+        aggs: { dd: { date_histogram: { field: d.field, interval: 'day', format: 'yyyy-MM-dd' } } },
+      },
+    });
+    const map = {};
+    for (const b of (esBody(r).aggregations?.dd?.buckets || [])) map[b.key_as_string] = b.doc_count;
+    return map;
+  } catch { return null; }
+}
+async function getSearch(req, res) {
+  const raw = { ...req.query, ...req.body };
+  const q = String(raw.q || '').trim();
+  const days = clampInt(raw.days, 30, 1, 365);
+  if (!q) return res.status(200).json({ code: 200, data: { q: '', networks: [], series: [], total: 0 }, message: 'empty query' });
+
+  const country = String(raw.country || '').trim();
+  const custom = parseRange(raw);
+  const list = parseNetList(raw.network);
+  const nets = list ? list.filter((n) => NET_ADV_MATCH[n]) : Object.keys(NET_ADV_MATCH);
+  const maps = {}; const present = [];
+  await Promise.all(nets.map(async (net) => {
+    const m = await searchDaily(net, q, days, country, custom);
+    if (m && Object.keys(m).length) { maps[net] = m; present.push(net); }
+  }));
+  present.sort((a, b) => TREND_NETWORKS.indexOf(a) - TREND_NETWORKS.indexOf(b));
+
+  const dateSet = new Set();
+  for (const net of present) for (const dk of Object.keys(maps[net])) dateSet.add(dk);
+  const series = [...dateSet].sort().map((date) => {
+    const row = { date }; let tot = 0;
+    for (const net of present) { const c = maps[net][date] || 0; row[net] = c; tot += c; }
+    row.total = tot; return row;
+  });
+  const total = series.reduce((s, r) => s + r.total, 0);
+  return res.status(200).json({ code: 200, data: { q, days, networks: present, series, total }, message: 'Search trend' });
+}
+
+// ── Top keywords ─────────────────────────────────────────────────────────────
+// Search-keyword networks expose a `target_keyword` term (Google search ads).
+const NET_KEYWORD = {
+  google: { date: 'last_seen', field: 'target_keyword' },
+  pinterest: { date: 'pinterest_ad.last_seen', field: 'pinterest_ad.target_keyword.keyword' },
+};
+async function keywordsForNet(net, cfg, days, size, country, advertiser, custom) {
+  const es = getEs(net);
+  if (!es) return [];
+  try {
+    const mx = await es.search({ index: es.indexName, body: { size: 0, aggs: { a: { max: { field: cfg.date } } } } });
+    const anchor = esBody(mx).aggregations?.a?.value;
+    if (!anchor) return [];
+    const start = custom ? custom.fromMs : anchor - days * 86400000;
+    const end = custom ? custom.toMs : anchor;
+    const extra = extraFilters(net, country, advertiser);
+    const r = await es.search({
+      index: es.indexName,
+      body: { size: 0, query: { bool: { filter: [{ range: { [cfg.date]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...extra] } }, aggs: { items: { terms: { field: cfg.field, size } } } },
+    });
+    return (esBody(r).aggregations?.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
+      .map((b) => ({ key: String(b.key), count: b.doc_count, net }));
+  } catch { return []; }
+}
+async function getKeywords(req, res) {
+  const raw = { ...req.query, ...req.body };
+  const days = clampInt(raw.days, 30, 1, 365);
+  const size = clampInt(raw.size, 15, 1, 50);
+  const country = String(raw.country || '').trim();
+  const advertiser = String(raw.advertiser || '').trim();
+  const custom = parseRange(raw);
+  const list = parseNetList(raw.network);
+  const nets = (list ? list.filter((n) => NET_KEYWORD[n]) : Object.keys(NET_KEYWORD));
+  const merged = {};
+  const parts = await Promise.all(nets.map((n) => keywordsForNet(n, NET_KEYWORD[n], days, size, country, advertiser, custom)));
+  for (const listx of parts) for (const b of listx) {
+    if (!merged[b.key]) merged[b.key] = { keyword: b.key, count: 0, net: b.net };
+    merged[b.key].count += b.count;
+  }
+  const items = Object.values(merged).sort((a, b) => b.count - a.count).slice(0, size);
+  const supported = nets.length > 0;
+  return res.status(200).json({ code: 200, data: { days, items }, message: 'Top keywords', ...(supported ? {} : { meta: { unsupported: true } }) });
+}
+
+// ─── Router ──────────────────────────────────────────────────────────────────
+const router = Router();
+router.get('/health', (req, res) => res.status(200).json({ code: 200, message: 'market trends enabled', data: { ok: true } }));
+router.get('/access', authMiddleware, (req, res) => {
+  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
+  res.status(200).json({ code: 200, message: 'ok', data: { enabled: isAllowedUser(uid) } });
+});
+router.get('/trends/overview', authMiddleware, accessGuard, asyncHandler(getOverview));
+router.get('/trends/categories', authMiddleware, accessGuard, asyncHandler(getCategories));
+router.get('/trends/top', authMiddleware, accessGuard, asyncHandler(getTop));
+router.get('/trends/regions', authMiddleware, accessGuard, asyncHandler(getRegions));
+router.get('/trends/keywords', authMiddleware, accessGuard, asyncHandler(getKeywords));
+router.get('/trends/search', authMiddleware, accessGuard, asyncHandler(getSearch));
+
+module.exports = router;
