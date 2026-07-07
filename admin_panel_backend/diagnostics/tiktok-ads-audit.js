@@ -48,6 +48,7 @@ runAuditCli({
     transport: tiktokTransport,    // ES 8.x cluster (see es-connections/tiktok-connection.js)
     idField: 'sql_id',             // = tiktok_ads.id; the collapse field
     displayableFilter: getDisplayableMediaFilter('tiktok'),
+    backfillFields: { VIDEO: 'video_cover' }, // SQL source: tiktok_ad_meta_data.video_cover
     sampleSource: ['sql_id', 'video_cover', 'video_url', 'last_seen', 'ad_title'],
     // No ES `type` field and a type-agnostic filter → one group over all docs.
     // failing = total − displayable = non-displayable (trivially a full partition).

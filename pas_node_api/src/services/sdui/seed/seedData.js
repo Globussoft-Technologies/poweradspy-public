@@ -127,13 +127,13 @@ function buildNavbar() {
     facebook: ['category','category_new','engagement','cta','ad_type','ad_position','language','gender','age','meta_ads_lib','verified','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     instagram: ['category','category_new','engagement','cta','ad_type','language','verified','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     youtube: ['category','category_new','engagement','cta','ad_type','ad_position','language','verified','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image','views_range'],
-    google: ['category','category_new','ad_type','ad_position','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
+    google: ['category','category_new','ad_type','ad_position','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     gdn: ['category','category_new','language','image_size','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     native: ['category','category_new','ad_type','native_network','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     linkedin: ['category','category_new','engagement','cta','ad_type','language','verified','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     reddit: ['category','category_new','engagement','cta','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     quora: ['category','category_new','cta','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
-    pinterest: ['category','category_new','ad_type','country','state','city','ecommerce_platform','funnel','marketing_platform','affiliate_network','search_by_image'],
+    pinterest: ['category','category_new','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','affiliate_network','search_by_image'],
     tiktok: ['category','category_new','engagement','cta','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
   };
 
@@ -389,7 +389,7 @@ function buildSidebar() {
         { id: 'lang_da', label: 'Danish', value: 'da' }, { id: 'lang_th', label: 'Thai', value: 'th' },
         { id: 'lang_vi', label: 'Vietnamese', value: 'vi' }, { id: 'lang_fi', label: 'Finnish', value: 'fi' },
       ];
-      return { _id: 'language', config_type: 'sidebar', title: 'LANGUAGE', rank: 4, collapsed_by_default: false, visible: true, icon: { type: 'none', value: null }, meta: 'Filter ads by the language they are written in.', display_mode: 'accordion', created_at: CREATED_AT, flag: true, filters: [{ _id: 'language_filter', group_id: 'language', label: 'Language', type: 'combobox', rank: 1, query_param: 'language', multi_select: true, visible: true, platform_applicability: ['facebook','instagram','youtube','gdn','native','linkedin','reddit','quora'], options: langs.map((l, i) => ({ _id: l.id, filter_id: 'language_filter', label: l.label, value: l.value, rank: i + 1, selected_by_default: false })) }] };
+      return { _id: 'language', config_type: 'sidebar', title: 'LANGUAGE', rank: 4, collapsed_by_default: false, visible: true, icon: { type: 'none', value: null }, meta: 'Filter ads by the language they are written in.', display_mode: 'accordion', created_at: CREATED_AT, flag: true, filters: [{ _id: 'language_filter', group_id: 'language', label: 'Language', type: 'combobox', rank: 1, query_param: 'language', multi_select: true, visible: true, platform_applicability: ['facebook','instagram','youtube','gdn','native','linkedin','reddit','quora','pinterest','google'], options: langs.map((l, i) => ({ _id: l.id, filter_id: 'language_filter', label: l.label, value: l.value, rank: i + 1, selected_by_default: false })) }] };
     })(),
 
     // 5. Gender

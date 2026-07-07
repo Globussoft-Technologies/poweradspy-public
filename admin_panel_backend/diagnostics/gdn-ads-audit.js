@@ -42,6 +42,7 @@ runAuditCli({
     esId: 2,
     idField: 'gdn_ad.id',
     displayableFilter: getDisplayableMediaFilter('gdn'),
+    backfillFields: { IMAGE: 'new_nas_image_url' }, // SQL source: gdn_ad_variants.image_url
     sampleSource: ['gdn_ad.id', 'gdn_ad.type', 'gdn_ad.last_seen', 'new_nas_image_url'],
     typeBuckets: [
       { label: 'IMAGE', query: { term: { [TYPE]: 'IMAGE' } } },

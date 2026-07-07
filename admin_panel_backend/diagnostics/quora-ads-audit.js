@@ -47,6 +47,8 @@ runAuditCli({
     esId: 2,
     idField: 'quora_ad.id',
     displayableFilter: getDisplayableMediaFilter('quora'),
+    // Split SQL source (mediaSpecs): IMAGE←quora_ad_variants.image_url, VIDEO←quora_ad_image_video.ad_image_video.
+    backfillFields: { IMAGE: 'new_nas_image_url', VIDEO: 'thumbnail' },
     sampleSource: ['quora_ad.id', 'quora_ad.type', 'quora_ad.last_seen', 'new_nas_image_url', 'thumbnail'],
     typeBuckets: [
       { label: 'IMAGE', query: { term: { [TYPE]: 'IMAGE' } } },

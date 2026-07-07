@@ -609,7 +609,7 @@ export const FILTER_PLATFORM_SUPPORT = {
   ad_sub_position:['google'],
   image_size:     ['gdn'],
   native_network: ['native'],
-  language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok'],
+  language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google'],
 };
 
 // Returns true if at least one platform in `nets` supports the named filter field.

@@ -42,6 +42,7 @@ runAuditCli({
     esId: 1,
     idField: 'native_ad.id',
     displayableFilter: getDisplayableMediaFilter('native'),
+    backfillFields: { IMAGE: 'native_ad.nas_url', VIDEO: 'native_ad.nas_url' }, // SQL source: native_ad_variants.image_url
     sampleSource: ['native_ad.id', 'native_ad.type', 'native_ad.last_seen', 'native_ad.nas_url'],
     typeBuckets: [
       { label: 'IMAGE', query: { term: { [TYPE]: 'IMAGE' } } },

@@ -36,6 +36,9 @@ runAuditCli({
     esId: 3,
     idField: 'instagram_ad.id',
     displayableFilter: getDisplayableMediaFilter('instagram'),
+    // Backfill target: the ES field the displayable filter checks per type. A
+    // non-displayable ad with a GOOD SQL image_url can be flipped by writing it here.
+    backfillFields: { IMAGE: 'new_nas_image_url', STORIES: 'new_nas_image_url', VIDEO: 'thumbnail' },
     sampleSource: [
       'instagram_ad.id', 'instagram_ad.type', 'instagram_ad.last_seen',
       'new_nas_image_url', 'thumbnail', 'instagram_ad_url.url',

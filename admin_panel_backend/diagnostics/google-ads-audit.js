@@ -49,6 +49,7 @@ runAuditCli({
     esId: 4,
     idField: 'id',
     displayableFilter: getDisplayableMediaFilter('google'),
+    backfillFields: { IMAGE: 'new_nas_image_url' }, // only IMAGE gates on media (TEXT/ORGANIC have none)
     sampleSource: ['id', 'type', 'last_seen', 'new_nas_image_url'],
     typeBuckets: [
       { label: 'IMAGE',          query: Q_IMAGE },

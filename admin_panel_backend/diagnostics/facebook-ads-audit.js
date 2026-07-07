@@ -477,6 +477,75 @@ function printSqlReport(r) {
 }
 
 // ==========================================================================
+// BACKFILL ANALYSIS (READ-ONLY) — mirrors the shared core's runBackfillAnalysis.
+// How many currently non-displayable ES ads have GOOD media in SQL and could be
+// safely made displayable by writing it into the ES field that gates display.
+// ==========================================================================
+
+const FB_BACKFILL_FIELDS = { IMAGE: 'new_nas_image_url', VIDEO: 'Thumbnail' };
+
+async function runBackfillAnalysis() {
+  sub('Backfill analysis — currently non-displayable ES ads that have GOOD media in SQL…');
+  const Q_DISPLAYABLE = { bool: { filter: getDisplayableMediaFilter('facebook') } };
+  const byType = [];
+  let totalBackfillable = 0, totalSqlGood = 0;
+
+  for (const [type, esField] of Object.entries(FB_BACKFILL_FIELDS)) {
+    const idRows = await q(
+      `SELECT a.id AS id FROM ${FB.mainTable} a
+       WHERE a.type = ? AND EXISTS (SELECT 1 FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id AND ${GOOD})`,
+      [type]
+    );
+    const ids = idRows.map((r) => r.id).filter((v) => v !== null && v !== undefined);
+
+    let backfillable = 0;
+    for (let i = 0; i < ids.length; i += 1000) {
+      const chunk = ids.slice(i, i + 1000);
+      const res = await withTimeout(searchAllInstances(FB.esIndex, {
+        size: 0,
+        query: { bool: { filter: [{ terms: { 'facebook_ad.id': chunk } }], must_not: [Q_DISPLAYABLE] } },
+        aggs: { d: { cardinality: { field: 'facebook_ad.id', precision_threshold: 40000 } } },
+      }, FB.esId, 'search'), 'ES backfill count');
+      backfillable += (res && res.data && res.data.aggregations && res.data.aggregations.d && res.data.aggregations.d.value) || 0;
+    }
+
+    let samples = [];
+    if (backfillable && ids.length) {
+      const probe = ids.slice(0, 500);
+      const res = await withTimeout(searchAllInstances(FB.esIndex, {
+        size: SAMPLE_SIZE,
+        _source: ['facebook_ad.id', esField],
+        query: { bool: { filter: [{ terms: { 'facebook_ad.id': probe } }], must_not: [Q_DISPLAYABLE] } },
+      }, FB.esId, 'search'), 'ES backfill samples');
+      const hits = (res && res.data && res.data.hits && res.data.hits.hits) || [];
+      const ndIds = hits.map((h) => h._source && h._source['facebook_ad.id']).filter((v) => v != null);
+      const vals = {};
+      if (ndIds.length) {
+        const ph = ndIds.map(() => '?').join(',');
+        const vr = await q(`SELECT a.id AS id, (SELECT MAX(iv.image_url) FROM ${FB.mediaTable} iv WHERE iv.facebook_ad_id = a.id AND ${GOOD}) AS good_val FROM ${FB.mainTable} a WHERE a.id IN (${ph})`, ndIds);
+        for (const r of vr) vals[String(r.id)] = r.good_val;
+      }
+      samples = hits.map((h) => {
+        const id = h._source && h._source['facebook_ad.id'];
+        return { id, type, esField, currentEs: (h._source && h._source[esField]) ?? null, sqlValue: vals[String(id)] ?? null };
+      });
+    }
+
+    byType.push({ type, esField, sqlColumn: FB.contentColumn, mediaTable: FB.mediaTable, sqlGood: ids.length, backfillable, samples });
+    totalBackfillable += backfillable;
+    totalSqlGood += ids.length;
+  }
+
+  const report = { network: 'facebook', idField: 'facebook_ad.id', totalBackfillable, totalSqlGood, byType };
+  sub(`Backfill opportunity — ${fmt(totalBackfillable)} non-displayable ad(s) can be SAFELY made displayable from SQL`);
+  for (const g of byType) {
+    info(`${g.type}: ${fmt(g.backfillable)} backfillable  (write ES \`${g.esField}\` ← SQL ${g.mediaTable}.${g.sqlColumn}; ${fmt(g.sqlGood)} ${g.type} ads have good SQL media)`);
+    g.samples.forEach((s) => info(`   e.g. id=${s.id}: ES ${s.esField}=${trunc(s.currentEs)}  →  would write ${trunc(s.sqlValue)}`));
+  }
+  return report;
+}
+
+// ==========================================================================
 // REPORT ASSEMBLY / EXPORT
 // ==========================================================================
 
@@ -487,6 +556,10 @@ async function runBoth() {
   recordEs(es);  // persist the ES portion NOW, before SQL runs
   const sql = await runSqlAudit().catch((e) => { bad(`SQL audit failed: ${e.message}`); return null; });
   recordSql(sql); // persist the full report
+  if (es && sql) {
+    const bf = await runBackfillAnalysis().catch((e) => { bad(`Backfill analysis failed: ${e.message}`); return null; });
+    recordBackfill(bf);
+  }
   line('═');
   announceRun();
   return lastReport;
@@ -525,7 +598,11 @@ function recordEs(es) {
   writeReport();
 }
 function recordSql(sql) {
-  lastReport = { generatedAt: new Date().toISOString(), network: 'facebook', elasticsearch: lastReport?.elasticsearch || null, mysql: sql };
+  lastReport = { generatedAt: new Date().toISOString(), network: 'facebook', elasticsearch: lastReport?.elasticsearch || null, mysql: sql, backfill: lastReport?.backfill || null };
+  writeReport();
+}
+function recordBackfill(bf) {
+  lastReport = { ...(lastReport || { generatedAt: new Date().toISOString(), network: 'facebook' }), backfill: bf };
   writeReport();
 }
 
@@ -601,6 +678,18 @@ function buildSheets(rep) {
       summary.push([`${t}: empty_content`, b.empty_content]);
     });
   }
+  if (rep.backfill && rep.backfill.byType && rep.backfill.byType.length) {
+    const bf = rep.backfill;
+    summary.push([]);
+    summary.push(['BACKFILL OPPORTUNITY', '(non-displayable ES ads that have good SQL media)']);
+    summary.push(['Metric', 'Value']);
+    summary.push(['Total backfillable', bf.totalBackfillable]);
+    if (rep.elasticsearch && typeof rep.elasticsearch.displayable === 'number') {
+      summary.push(['ES displayable now', rep.elasticsearch.displayable]);
+      summary.push(['Projected displayable after backfill', rep.elasticsearch.displayable + bf.totalBackfillable]);
+    }
+    bf.byType.forEach((g) => summary.push([`Backfillable ${g.type} (→ ES ${g.esField})`, g.backfillable]));
+  }
   sheets.push({ name: 'Summary', rows: summary });
 
   // ---- Factors ----
@@ -632,6 +721,18 @@ function buildSheets(rep) {
       (f.samples || []).forEach((s) =>
         rows.push([f.key, s.id, s.ad_id, s.type, fmtDate(s.last_seen)])));
     sheets.push({ name: 'SQL Samples', rows });
+  }
+
+  // ---- Backfill (opportunity + samples) ----
+  if (rep.backfill && rep.backfill.byType && rep.backfill.byType.length) {
+    const rows = [['Type', 'Backfillable', 'Write ES field', 'SQL source', 'SQL ads w/ good media']];
+    rep.backfill.byType.forEach((g) => rows.push([g.type, g.backfillable, g.esField, `${g.mediaTable}.${g.sqlColumn}`, g.sqlGood]));
+    sheets.push({ name: 'Backfill', rows });
+
+    const srows = [['Type', 'Ad id', 'Current ES value', 'Value to write (from SQL)']];
+    rep.backfill.byType.forEach((g) => (g.samples || []).forEach((s) =>
+      srows.push([g.type, s.id, (s.currentEs == null || s.currentEs === '') ? '(empty)' : s.currentEs, s.sqlValue])));
+    if (srows.length > 1) sheets.push({ name: 'Backfill Samples', rows: srows });
   }
 
   return sheets;
@@ -686,9 +787,10 @@ ${'═'.repeat(78)}
   Every audit is auto-saved to diagnostics/audit-reports/ (JSON + Excel).
   1) Run ES audit       (displayable-media filter + duplicate-doc scan${SCAN_DUPLICATES ? '' : ' [--noDup: off]'})
   2) Run SQL audit      (${FB.mainTable} / ${FB.mediaTable})
-  3) Run BOTH           (full report)
-  4) Re-export last report (audit-reports/)
-  5) Delete unhealthy ads   [DISABLED — audit-only]
+  3) Run BOTH           (full report + backfill analysis)
+  4) Backfill analysis  (non-displayable ES ads that have good SQL media — READ-ONLY)
+  5) Re-export last report (audit-reports/)
+  6) Delete unhealthy ads   [DISABLED — audit-only]
   0) Exit
 `);
   rl.question('Choose an option: ', async (choice) => {
@@ -711,8 +813,9 @@ ${'═'.repeat(78)}
           break;
         }
         case '3': await runBoth(); break;
-        case '4': exportReport(); break;
-        case '5': deleteFlow(); break;
+        case '4': { head('BACKFILL ANALYSIS'); startRun(); recordBackfill(await runBackfillAnalysis()); announceRun(); break; }
+        case '5': exportReport(); break;
+        case '6': deleteFlow(); break;
         case '0': case 'q': case 'exit':
           rl.close();
           console.log('Bye.');
@@ -748,6 +851,11 @@ async function main() {
       startRun();
       const sql = await runSqlAudit();
       recordSql(sql);
+      announceRun();
+    } else if (run === 'backfill') {
+      head('BACKFILL ANALYSIS');
+      startRun();
+      recordBackfill(await runBackfillAnalysis());
       announceRun();
     } else {
       await runBoth();

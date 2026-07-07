@@ -46,6 +46,7 @@ runAuditCli({
     esId: 1,
     idField: 'ad_id', // _source mirror of the _id (internal linkedin_ad.id); aggregatable
     displayableFilter: getDisplayableMediaFilter('linkedin'),
+    backfillFields: { IMAGE: 'new_nas_image_url', VIDEO: 'ad_video' }, // both from SQL linkedin_ad_variants.image_url
     sampleSource: ['ad_id', 'ad_type', 'last_seen', 'new_nas_image_url', 'ad_video'],
     typeBuckets: [
       { label: 'IMAGE', query: { term: { [TYPE]: 'IMAGE' } } },

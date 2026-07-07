@@ -171,6 +171,52 @@ function buildPerNetworkMarkdown(rep) {
     }
   }
 
+  // Backfill opportunity (the case for write access)
+  const bf = rep.backfill;
+  if (bf && bf.byType && bf.byType.length) {
+    lines.push('## Backfill Opportunity (proposed ES write — analysis is READ-ONLY)');
+    lines.push('');
+    const projected = (es && typeof es.displayable === 'number') ? es.displayable + bf.totalBackfillable : null;
+    lines.push(`**${fmt(bf.totalBackfillable)} currently non-displayable ads can be SAFELY made displayable** by copying an existing *good* media value from SQL into the ES field that gates display.`);
+    if (projected !== null) {
+      lines.push('');
+      lines.push(`This would raise Elasticsearch displayable from **${fmt(es.displayable)}** to **${fmt(projected)}** (+${pct(bf.totalBackfillable, es.total)} of all docs) — using media that already exists in SQL, with zero new crawling.`);
+    }
+    lines.push('');
+    lines.push('These are ads whose media was correctly stored in SQL as a real NAS path, but whose ES document is missing the field the frontend displayable filter requires — so the ad exists and has media, yet is hidden.');
+    lines.push('');
+    const rows = [['Type', 'Backfillable', 'Write ES field ← SQL source', 'SQL ads w/ good media']];
+    for (const g of bf.byType) {
+      rows.push([g.type, fmt(g.backfillable), `${g.esField} ← ${g.mediaTable}.${g.sqlColumn}`, fmt(g.sqlGood)]);
+    }
+    lines.push(mdTable(rows));
+    lines.push('');
+    lines.push('**Why this is safe / certain to display after backfill:**');
+    lines.push('');
+    lines.push('- We only ever copy a **good** SQL value — a real NAS path, explicitly excluding default/legacy placeholders (`bydefault` / `DefaultImage` / `pasimage` / `pasvideo`). Such a value passes both the ES displayable-media filter and the frontend\'s blocked-path regex, so the ad renders.');
+    lines.push('- An ad is counted only if it is **currently non-displayable** AND of a **media-requiring type**, so ads hidden for any other reason are never counted (the flip is attributable solely to the media field).');
+    lines.push('- The write would be **idempotent and verified**: the backfill re-queries the displayable filter for every written id to confirm it actually flipped to displayable.');
+    lines.push('');
+    // samples
+    const sampleRows = [['Type', 'Ad id', 'Current ES value', 'Value we would write (from SQL)']];
+    for (const g of bf.byType) {
+      for (const s of (g.samples || [])) {
+        sampleRows.push([g.type, String(s.id), s.currentEs == null || s.currentEs === '' ? '(empty)' : String(s.currentEs), String(s.sqlValue ?? '')]);
+      }
+    }
+    if (sampleRows.length > 1) {
+      lines.push('**Samples:**');
+      lines.push('');
+      lines.push(mdTable(sampleRows));
+      lines.push('');
+    }
+    if (es && typeof es.unhealthy === 'number') {
+      const notFixable = es.unhealthy - bf.totalBackfillable;
+      lines.push(`**Not fixable by backfill:** ${fmt(Math.max(0, notFixable))} of the ${fmt(es.unhealthy)} non-displayable ads have no good SQL media either — those need an upstream re-crawl / re-upload, not a backfill.`);
+      lines.push('');
+    }
+  }
+
   // Conclusions
   lines.push('## Conclusions');
   lines.push('');
@@ -233,6 +279,12 @@ function buildCentralLogEntry(rep) {
 
   if (es && es.duplicates && es.duplicates.extraDocs) {
     lines.push(`**Duplicates:** ${fmt(es.duplicates.extraDocs)} redundant ES copies across ${fmt(es.duplicates.duplicatedIds)} duplicated ad ids.`);
+    lines.push('');
+  }
+
+  if (rep.backfill && rep.backfill.totalBackfillable) {
+    const projected = (es && typeof es.displayable === 'number') ? ` (displayable ${fmt(es.displayable)} → ${fmt(es.displayable + rep.backfill.totalBackfillable)})` : '';
+    lines.push(`**Backfillable:** ${fmt(rep.backfill.totalBackfillable)} non-displayable ads have good SQL media and can be safely made displayable${projected}.`);
     lines.push('');
   }
 

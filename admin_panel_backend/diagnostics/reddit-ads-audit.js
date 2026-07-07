@@ -39,6 +39,7 @@ runAuditCli({
     esId: 1,
     idField: 'reddit_ad.id',
     displayableFilter: getDisplayableMediaFilter('reddit'),
+    backfillFields: { IMAGE: 'new_nas_image_url', VIDEO: 'Thumbnail' }, // both from SQL reddit_ad_variants.image_url
     sampleSource: ['reddit_ad.id', 'reddit_ad.type', 'reddit_ad.last_seen', 'new_nas_image_url', 'Thumbnail'],
     typeBuckets: [
       { label: 'IMAGE', query: { term: { [TYPE]: 'IMAGE' } } },

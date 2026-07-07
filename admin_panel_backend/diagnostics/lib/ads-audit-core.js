@@ -497,6 +497,115 @@ function makeEngine(cfg) {
     }
   }
 
+  // ── Backfill analysis (READ-ONLY) ────────────────────────────────────────
+  // Cross-store: how many currently NON-displayable ES ads could be made
+  // displayable by copying a GOOD SQL media value into the ES field that gates
+  // display. A candidate = an ad that (a) has good media of a media-requiring type
+  // in SQL, and (b) is currently non-displayable in ES. Writing that good NAS value
+  // into the ES field clears the displayable filter's media requirement (and the
+  // frontend's blocked-path regex), so the ad is certain to become displayable —
+  // for networks where media is the only always-on gate on that type (the type
+  // restriction already excludes ads blocked for other reasons, e.g. youtube DISPLAY).
+  // Config: cfg.es.backfillFields = { <type>: '<ES field to write>' }; the SQL
+  // good-media source is the same mediaSpec the SQL audit uses. Writes NOTHING.
+
+  async function sqlGoodIdsForType(spec, type) {
+    const good = specGood(spec);
+    const rows = await q(`
+      SELECT a.id AS id
+      FROM ${SQL.mainTable} a
+      WHERE a.type = ${sqlStr(type)}
+        AND EXISTS (SELECT 1 FROM ${spec.mediaTable} iv WHERE iv.${spec.fkColumn} = a.id AND ${good})`);
+    return rows.map((r) => r.id).filter((v) => v !== null && v !== undefined);
+  }
+
+  // Distinct non-displayable ES ads among a set of ids. cardinality on idField is
+  // exact for ≤ precision_threshold; chunks are ≤ 1000 (each exact), and an id lands
+  // in exactly one chunk, so the sum is the exact distinct count (robust for
+  // collapse networks where one id can have several docs).
+  async function esNonDisplayableDistinct(ids, Q_DISPLAYABLE) {
+    if (!ids.length) return 0;
+    const CHUNK = 1000;
+    let count = 0;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const data = await esAgg({
+        size: 0,
+        query: { bool: { filter: [{ terms: { [ES.idField]: chunk } }], must_not: [Q_DISPLAYABLE] } },
+        aggs: { d: { cardinality: { field: ES.idField, precision_threshold: 40000 } } },
+      }, 'ES backfill count');
+      count += (data.aggregations && data.aggregations.d && data.aggregations.d.value) || 0;
+    }
+    return count;
+  }
+
+  async function runBackfillAnalysis() {
+    const fields = ES.backfillFields;
+    const hasFilter = Array.isArray(ES.displayableFilter) && ES.displayableFilter.length > 0;
+    if (!sqlEnabled || !fields || !Object.keys(fields).length || !mediaSpecs.length || !hasFilter) return null;
+
+    sub('Backfill analysis — currently non-displayable ES ads that have GOOD media in SQL…');
+    const Q_DISPLAYABLE = { bool: { filter: ES.displayableFilter } };
+    const specByType = {};
+    let defaultSpec = null; // a spec with no `types` covers ALL types (legacy single-table config)
+    for (const spec of mediaSpecs) {
+      if (Array.isArray(spec.types) && spec.types.length) for (const t of spec.types) specByType[t] = spec;
+      else defaultSpec = spec;
+    }
+
+    const byType = [];
+    let totalBackfillable = 0;
+    let totalSqlGood = 0;
+    for (const [type, esField] of Object.entries(fields)) {
+      const spec = specByType[type] || defaultSpec;
+      if (!spec) continue;
+      const goodIds = await sqlGoodIdsForType(spec, type);
+      const backfillable = await esNonDisplayableDistinct(goodIds, Q_DISPLAYABLE);
+
+      // samples: a few backfillable ads — current ES field value vs the good SQL value.
+      let samples = [];
+      if (backfillable && goodIds.length) {
+        const probe = goodIds.slice(0, 500);
+        const data = await esAgg({
+          size: SAMPLE_SIZE,
+          _source: [ES.idField, esField],
+          query: { bool: { filter: [{ terms: { [ES.idField]: probe } }], must_not: [Q_DISPLAYABLE] } },
+        }, 'ES backfill samples');
+        const hits = (data.hits && data.hits.hits) || [];
+        const ndIds = hits.map((h) => h._source && h._source[ES.idField]).filter((v) => v != null);
+        const sqlVals = {};
+        if (ndIds.length) {
+          const ph = ndIds.map(() => '?').join(',');
+          const good = specGood(spec);
+          const vrows = await q(
+            `SELECT a.id AS id, (SELECT MAX(iv.${spec.contentColumn}) FROM ${spec.mediaTable} iv WHERE iv.${spec.fkColumn} = a.id AND ${good}) AS good_val
+             FROM ${SQL.mainTable} a WHERE a.id IN (${ph})`, ndIds);
+          for (const r of vrows) sqlVals[String(r.id)] = r.good_val;
+        }
+        samples = hits.map((h) => {
+          const id = h._source && h._source[ES.idField];
+          return { id, type, esField, currentEs: (h._source && h._source[esField]) ?? null, sqlValue: sqlVals[String(id)] ?? null };
+        });
+      }
+
+      byType.push({ type, esField, sqlColumn: spec.contentColumn, mediaTable: spec.mediaTable, sqlGood: goodIds.length, backfillable, samples });
+      totalBackfillable += backfillable;
+      totalSqlGood += goodIds.length;
+    }
+
+    const report = { network: NET, idField: ES.idField, totalBackfillable, totalSqlGood, byType };
+    printBackfillReport(report);
+    return report;
+  }
+
+  function printBackfillReport(r) {
+    sub(`Backfill opportunity — ${fmt(r.totalBackfillable)} non-displayable ad(s) can be SAFELY made displayable from SQL`);
+    for (const g of r.byType) {
+      info(`${g.type}: ${fmt(g.backfillable)} backfillable  (write ES \`${g.esField}\` ← SQL ${g.mediaTable}.${g.sqlColumn}; ${fmt(g.sqlGood)} ${g.type} ads have good SQL media)`);
+      g.samples.forEach((s) => info(`   e.g. id=${s.id}: ES ${s.esField}=${trunc(s.currentEs)}  →  would write ${trunc(s.sqlValue)}`));
+    }
+  }
+
   // ── Report assembly / export ────────────────────────────────────────────
 
   async function runBoth() {
@@ -506,6 +615,10 @@ function makeEngine(cfg) {
     recordEs(es);
     const sql = await runSqlAudit().catch((e) => { bad(`SQL audit failed: ${e.message}`); return null; });
     recordSql(sql);
+    if (es && sql) {
+      const bf = await runBackfillAnalysis().catch((e) => { bad(`Backfill analysis failed: ${e.message}`); return null; });
+      recordBackfill(bf);
+    }
     line('═');
     announceRun();
     return lastReport;
@@ -541,7 +654,11 @@ function makeEngine(cfg) {
     writeReport();
   }
   function recordSql(sql) {
-    lastReport = { generatedAt: new Date().toISOString(), network: NET, elasticsearch: lastReport?.elasticsearch || null, mysql: sql };
+    lastReport = { generatedAt: new Date().toISOString(), network: NET, elasticsearch: lastReport?.elasticsearch || null, mysql: sql, backfill: lastReport?.backfill || null };
+    writeReport();
+  }
+  function recordBackfill(bf) {
+    lastReport = { ...(lastReport || { generatedAt: new Date().toISOString(), network: NET }), backfill: bf };
     writeReport();
   }
 
@@ -605,6 +722,18 @@ function makeEngine(cfg) {
         summary.push([`${t}: empty_content`, b.empty_content]);
       });
     }
+    if (rep.backfill && rep.backfill.byType && rep.backfill.byType.length) {
+      const bf = rep.backfill;
+      summary.push([]);
+      summary.push(['BACKFILL OPPORTUNITY', '(non-displayable ES ads that have good SQL media)']);
+      summary.push(['Metric', 'Value']);
+      summary.push(['Total backfillable', bf.totalBackfillable]);
+      if (rep.elasticsearch && typeof rep.elasticsearch.displayable === 'number') {
+        summary.push(['ES displayable now', rep.elasticsearch.displayable]);
+        summary.push(['Projected displayable after backfill', rep.elasticsearch.displayable + bf.totalBackfillable]);
+      }
+      bf.byType.forEach((g) => summary.push([`Backfillable ${g.type} (→ ES ${g.esField})`, g.backfillable]));
+    }
     sheets.push({ name: 'Summary', rows: summary });
 
     // ---- Factors ----
@@ -636,6 +765,18 @@ function makeEngine(cfg) {
         (f.samples || []).forEach((s) =>
           rows.push([f.key, s.id, s.ad_id, s.type, fmtDate(s.last_seen)])));
       sheets.push({ name: 'SQL Samples', rows });
+    }
+
+    // ---- Backfill (opportunity + samples) ----
+    if (rep.backfill && rep.backfill.byType && rep.backfill.byType.length) {
+      const rows = [['Type', 'Backfillable', 'Write ES field', 'SQL source', 'SQL ads w/ good media']];
+      rep.backfill.byType.forEach((g) => rows.push([g.type, g.backfillable, g.esField, `${g.mediaTable}.${g.sqlColumn}`, g.sqlGood]));
+      sheets.push({ name: 'Backfill', rows });
+
+      const srows = [['Type', 'Ad id', 'Current ES value', 'Value to write (from SQL)']];
+      rep.backfill.byType.forEach((g) => (g.samples || []).forEach((s) =>
+        srows.push([g.type, s.id, (s.currentEs == null || s.currentEs === '') ? '(empty)' : s.currentEs, s.sqlValue])));
+      if (srows.length > 1) sheets.push({ name: 'Backfill Samples', rows: srows });
     }
 
     return sheets;
@@ -673,9 +814,10 @@ ${'═'.repeat(78)}
   Every audit is auto-saved to diagnostics/audit-reports/ (JSON + Excel).
   1) Run ES audit       (displayable-media filter + duplicate-doc scan${SCAN_DUPLICATES ? '' : ' [--noDup: off]'})
   2) Run SQL audit      (${SQL.mainTable} / ${SQL.mediaTable})
-  3) Run BOTH           (full report)
-  4) Re-export last report (audit-reports/)
-  5) Delete unhealthy ads   [DISABLED — audit-only]
+  3) Run BOTH           (full report + backfill analysis)
+  4) Backfill analysis  (non-displayable ES ads that have good SQL media — READ-ONLY)
+  5) Re-export last report (audit-reports/)
+  6) Delete unhealthy ads   [DISABLED — audit-only]
   0) Exit
 `);
     rl.question('Choose an option: ', async (choice) => {
@@ -684,8 +826,9 @@ ${'═'.repeat(78)}
           case '1': { head('ELASTICSEARCH AUDIT'); startRun(); recordEs(await runEsAudit()); announceRun(); break; }
           case '2': { head('MYSQL AUDIT'); startRun(); recordSql(await runSqlAudit()); announceRun(); break; }
           case '3': await runBoth(); break;
-          case '4': exportReport(); break;
-          case '5': deleteFlow(); break;
+          case '4': { head('BACKFILL ANALYSIS'); startRun(); recordBackfill(await runBackfillAnalysis()); announceRun(); break; }
+          case '5': exportReport(); break;
+          case '6': deleteFlow(); break;
           case '0': case 'q': case 'exit':
             rl.close();
             console.log('Bye.');
@@ -710,6 +853,8 @@ ${'═'.repeat(78)}
         head('ELASTICSEARCH AUDIT'); startRun(); recordEs(await runEsAudit()); announceRun();
       } else if (run === 'sql') {
         head('MYSQL AUDIT'); startRun(); recordSql(await runSqlAudit()); announceRun();
+      } else if (run === 'backfill') {
+        head('BACKFILL ANALYSIS'); startRun(); recordBackfill(await runBackfillAnalysis()); announceRun();
       } else {
         await runBoth();
       }

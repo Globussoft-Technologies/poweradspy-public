@@ -48,6 +48,9 @@ runAuditCli({
     esId: 0,
     idField: 'ad_id',
     displayableFilter: getDisplayableMediaFilter('youtube'),
+    // VIDEO/DISCOVERY gate on thumbnail_url; DISPLAY/IMAGE on new_nas_image_url. SQL
+    // source for all is youtube_ad_variants.video_url (image→NAS, thumbnail→NAS).
+    backfillFields: { VIDEO: 'thumbnail_url', DISCOVERY: 'thumbnail_url', DISPLAY: 'new_nas_image_url', IMAGE: 'new_nas_image_url' },
     sampleSource: ['ad_id', 'ad_type', 'last_seen', 'thumbnail_url', 'new_nas_image_url'],
     typeBuckets: [
       { label: 'VIDEO',     query: { term: { [TYPE]: 'VIDEO' } } },

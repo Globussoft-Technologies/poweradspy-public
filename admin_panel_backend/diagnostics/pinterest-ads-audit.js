@@ -41,6 +41,7 @@ runAuditCli({
     esId: 2,
     idField: 'pinterest_ad.id',
     displayableFilter: getDisplayableMediaFilter('pinterest'),
+    backfillFields: { IMAGE: 'new_nas_image_url', VIDEO: 'thumbnail' }, // both from SQL pinterest_ad_variants.image_url
     sampleSource: ['pinterest_ad.id', 'pinterest_ad.type', 'pinterest_ad.last_seen', 'new_nas_image_url', 'thumbnail'],
     typeBuckets: [
       { label: 'IMAGE', query: { term: { [TYPE]: 'IMAGE' } } },
