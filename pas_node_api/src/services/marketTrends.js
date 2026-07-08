@@ -452,8 +452,13 @@ function countryClause(net, country) {
   const f = NET_COUNTRY[net];
   const c = String(country).trim();
   if (!f || !c) return null;
-  const variants = [...new Set([c, c.toLowerCase(), c.replace(/\b[a-z]/g, (m) => m.toUpperCase())])];
-  return { bool: { should: variants.map((v) => ({ term: { [f]: v } })), minimum_should_match: 1 } };
+  const title = c.toLowerCase().replace(/\b[a-z]/g, (m) => m.toUpperCase());
+  const set = new Set([c, c.toLowerCase(), title]);
+  // Some networks store the geo as an ISO alpha-2 code (e.g. "de") rather than a
+  // name, so when filtering by a name also match its code (both cases).
+  const iso = nameToIso(c);
+  if (iso) { set.add(iso); set.add(iso.toLowerCase()); }
+  return { bool: { should: [...set].map((v) => ({ term: { [f]: v } })), minimum_should_match: 1 } };
 }
 // Filter to ads by one or more advertisers (the compared search terms), so every
 // panel reflects the current search. Matches the network's advertiser-name field.
@@ -474,12 +479,41 @@ const COUNTRY_ALIAS = {
   'Uk': 'United Kingdom', 'U.k.': 'United Kingdom', 'Great Britain': 'United Kingdom',
   'The Netherlands': 'Netherlands', 'Uae': 'United Arab Emirates', 'Korea': 'South Korea',
 };
+// Some networks store the geo as an ISO alpha-2 code ("de", "gb") instead of a
+// name. Convert those to full names (via ICU / Intl.DisplayNames — no data table)
+// so the filter list shows names and merges duplicates; `nameToIso` is the reverse
+// lookup so filtering by a name still matches ads stored as the code.
+const ISO2_CODES = ('AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW').split(' ');
+let _regionNames;
+function regionNames() {
+  if (_regionNames === undefined) {
+    try { _regionNames = new Intl.DisplayNames(['en'], { type: 'region', fallback: 'none' }); }
+    catch { _regionNames = null; }
+  }
+  return _regionNames;
+}
+function iso2ToName(code) {
+  const rn = regionNames();
+  if (!rn) return null;
+  const up = String(code).toUpperCase();
+  try { const n = rn.of(up); return (n && n.toUpperCase() !== up) ? n : null; } catch { return null; }
+}
+let _nameToIso;
+function nameToIso(name) {
+  if (_nameToIso === undefined) {
+    _nameToIso = {};
+    for (const code of ISO2_CODES) { const n = iso2ToName(code); if (n) _nameToIso[n.toLowerCase()] = code; }
+  }
+  return _nameToIso[String(name).trim().toLowerCase()] || null;
+}
 function normCountry(raw) {
   if (raw == null) return null;
   const s = String(raw).trim();
   if (!s) return null;
   const low = s.toLowerCase();
   if (['all', 'unknown', 'n/a', 'na', 'none', 'worldwide', 'global'].includes(low)) return null;
+  // ISO alpha-2 code (e.g. "de", "gb") → full country name.
+  if (/^[a-z]{2}$/i.test(s)) { const iso = iso2ToName(s); if (iso) return COUNTRY_ALIAS[iso] || iso; }
   const title = low.replace(/\b[a-z]/g, (c) => c.toUpperCase());
   return COUNTRY_ALIAS[title] || title;
 }

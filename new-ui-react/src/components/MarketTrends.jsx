@@ -331,7 +331,13 @@ const MarketTrends = ({ onDrill }) => {
   useEffect(() => {
     let alive = true;
     track(apiGet('/trends/regions', { ...dpOf(), network: netParam, advertiser: advOf(regionsScope) }).catch(() => null))
-      .then((rg) => { if (!alive) return; setRegions(rg?.data || null); if (rg?.data?.items?.length) setCountryOpts(rg.data.items.map((c) => c.country)); });
+      .then((rg) => {
+        if (!alive) return;
+        setRegions(rg?.data || null);
+        // Names are normalised server-side (ISO codes → country names); dedupe +
+        // sort so the filter list has no duplicates and reads cleanly.
+        if (rg?.data?.items?.length) setCountryOpts([...new Set(rg.data.items.map((c) => c.country).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
+      });
     return () => { alive = false; };
   }, [days, from, to, netParam, regionsScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
 
