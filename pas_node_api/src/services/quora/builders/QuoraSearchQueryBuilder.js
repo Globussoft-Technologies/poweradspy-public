@@ -459,6 +459,7 @@ class QuoraSearchQueryBuilder {
 QuoraSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'quora_ad.id',
   'quora_ad.days_running',
+  'lang_detect',
   'new_nas_image_url',
   'quora_ad.type',
   'quora_ad_url.url_destination',

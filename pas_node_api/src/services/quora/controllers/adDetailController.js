@@ -106,6 +106,18 @@ async function getAdDetails(req, db, logger) {
           if (src['quora.category'] !== undefined) adData.category = src['quora.category'];
           if (src['quora.subCategory'] !== undefined) adData.subCategory = src['quora.subCategory'];
 
+          // SOURCE (desktop/ios/android) is stored in ES; the SQL quora_ad.source column
+          // stays empty for API-ingested ads, so prefer the ES value when SQL has none.
+          if (!adData.source && src['source']) adData.source = src['source'];
+
+          // The ad's outbound/destination URL lives in ES as quora_ad_meta_data.destination_url
+          // (the metadata-table insert is deferred in the Node pipeline, so it's empty in SQL).
+          // Surface it as the Basic Info "Redirect URL" — BasicInfo maps adDetails.redirect_url
+          // to that row for Quora. Only backfill when SQL didn't supply a real redirect.
+          if (!adData.redirect_url && src['quora_ad_meta_data.destination_url']) {
+            adData.redirect_url = src['quora_ad_meta_data.destination_url'];
+          }
+
           // Language from ES lang_detect ISO
           if (src['lang_detect']) {
             const langMap = await getLanguageMap(db.sql);

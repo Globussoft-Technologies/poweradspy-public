@@ -260,6 +260,11 @@ async function searchAds(req, db, logger) {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
         ...ad,
+        // Detected language (ISO) lives in ES as `lang_detect`; the SQL languages join
+        // is empty for API-ingested ads (no language_id). Surface it so the card's
+        // LANGUAGE row resolves (the frontend maps lang_detect → full name). Falls back
+        // to the SQL `language` name when ES has none.
+        lang_detect: src['lang_detect'] || null,
         market_platform_urls: {
           url_destination: src['quora_ad_url.url_destination']         || null,
           source_url:      src['quora_ad_outgoing_links.source_url']   || null,
