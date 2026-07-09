@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 // Hooks & Services
 import { useSDUI } from "./hooks/useSDUI";
 import { findCategoryOptions } from "./utils/categoryTaxonomy";
+import { findCountryOptions, labelsToCountryCodes } from "./utils/countryFilter";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import {
@@ -1232,9 +1233,10 @@ const App = () => {
       const userEmail = user?.email || '';
       const selected = (platform ? [platform] : ui.specificPlatforms) || [];
       const network = selected.length === 0 ? 'all' : selected.map((p) => String(p).toLowerCase());
-      // Selected country-filter code(s) at search time → stored with the term (null when none).
+      // Selected country filter at search time → mapped from display labels (what the
+      // combobox stores) to ISO 2-letter codes, stored with the term (null when none).
       const selCountries = sdui.selCountries || sdui.filterValues?.country_filter || [];
-      const country = Array.isArray(selCountries) && selCountries.length ? selCountries : null;
+      const country = labelsToCountryCodes(selCountries, findCountryOptions(sdui.config));
       lastDailyKeywordRef.current = { query, si, userEmail, network, country };
     }
   }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
