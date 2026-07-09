@@ -1,11 +1,14 @@
 'use strict';
 
 const { Router } = require('express');
+const multer = require('multer');
 const { asyncHandler } = require('../../../middleware/errorHandler');
 const ResponseFormatter = require('../../../utils/responseFormatter');
 const { searchAds } = require('../controllers/adSearchController');
 const { getAdsCount } = require('../controllers/adCountController');
 const { getAdDetails } = require('../controllers/adDetailController');
+const { getLatestVideoAdUrls } = require('../controllers/videoUrlController');
+const { updateNasImage } = require('../controllers/updateNasImageController');
 const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
 const {
   getQuoraAdCountry,
@@ -25,6 +28,22 @@ const searchSchema = {
     page_size: { type: 'number' },
   },
 };
+
+// Multer config for the NAS image upload (single binary field named "image").
+const uploadImage = multer({ dest: '/tmp/quora-nas-image/' });
+
+// Hardcoded passkey guard for the NAS image upload endpoint (worker-to-server auth).
+// The calling worker must send this exact value in the `x-passkey` header.
+const NAS_IMAGE_PASSKEY = 'pas-quora-nas-img-9f3Kx7QwZ2p';
+const NAS_IMAGE_PASSKEY_HEADER = 'x-passkey';
+
+function requireNasImagePasskey(req, res, next) {
+  const provided = req.get(NAS_IMAGE_PASSKEY_HEADER);
+  if (!provided || provided !== NAS_IMAGE_PASSKEY) {
+    return res.status(401).json({ code: 401, message: 'Unauthorized: invalid or missing passkey' });
+  }
+  return next();
+}
 
 function createQuoraRoutes(service) {
   const router = Router();
@@ -54,6 +73,36 @@ function createQuoraRoutes(service) {
       const result = await getAdsCount(req, service.db, service.log);
       if (result.code === 200) {
         return ResponseFormatter.success(res, { data: result.data });
+      }
+      return res.status(result.code).json(result);
+    })
+  );
+
+  // GET /api/v1/quora/ads/get-ad-url
+  // Latest VIDEO ads whose new_nas_image_url is still "/DefaultImage.jpg".
+  // ?limit=<n> (default 1). Returns [{ ad_id, video_url }].
+  router.get(
+    '/ads/get-ad-url',
+    asyncHandler(async (req, res) => {
+      const result = await getLatestVideoAdUrls(req, service.db, service.log);
+      if (result.code === 200) {
+        return ResponseFormatter.success(res, { data: result.data, meta: { total: result.total } });
+      }
+      return res.status(result.code).json(result);
+    })
+  );
+
+  // POST /api/v1/quora/ads/update-nas-image
+  // Store an uploaded image binary in NAS and set the ad's new_nas_image_url in ES.
+  // Requires the `x-passkey` header. multipart/form-data: ad_id, network (must be "quora"), image (file).
+  router.post(
+    '/ads/update-nas-image',
+    requireNasImagePasskey,
+    uploadImage.single('image'),
+    asyncHandler(async (req, res) => {
+      const result = await updateNasImage(req, service.db, service.log);
+      if (result.code === 200) {
+        return ResponseFormatter.success(res, { data: result.data }, result.message);
       }
       return res.status(result.code).json(result);
     })

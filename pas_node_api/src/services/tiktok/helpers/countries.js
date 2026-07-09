@@ -149,6 +149,7 @@ const COUNTRY_LABEL_TO_ISO = {
   'South Korea': 'KR',
   'Spain': 'ES',
   'Sri Lanka': 'LK',
+  'St. Vincent & Grenadines': 'VC',
   'Sweden': 'SE',
   'Switzerland': 'CH',
   'Thailand': 'TH',

@@ -825,10 +825,17 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
     setDraft((currentDraft) => {
       const next = patch ? { ...currentDraft, ...patch } : { ...currentDraft };
 
-      // Auto-select activity types based on filled text fields
-      if (patch) {
-        const updatedTypes = new Set();
-        // Only add types that have non-empty values in the final state
+      // Auto-select activity types only when the patch touches keyword/advertiser/domain.
+      // Reflect exactly which of these three text fields currently have values, while
+      // preserving non-text activity toggles (filters, otherActivity, sortingFilters)
+      // that the user selected manually. Patches for unrelated fields (excludedUsers,
+      // dates, etc.) must not touch activityTypes.
+      if (patch && ('keyword' in patch || 'advertiser' in patch || 'domain' in patch)) {
+        const TEXT_TYPES = ['keyword', 'advertiser', 'domain'];
+        const preserved = (currentDraft.activityTypes || []).filter(
+          (t) => !TEXT_TYPES.includes(t)
+        );
+        const updatedTypes = new Set(preserved);
         if (next.keyword && next.keyword !== '') updatedTypes.add('keyword');
         if (next.advertiser && next.advertiser !== '') updatedTypes.add('advertiser');
         if (next.domain && next.domain !== '') updatedTypes.add('domain');

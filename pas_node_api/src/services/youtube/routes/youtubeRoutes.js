@@ -22,6 +22,7 @@ const {
 } = require('../controllers/adInsightsController');
 const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
+const createYoutubeAdversuiteRoutes = require('./adversuite_Api_routes');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
@@ -197,6 +198,10 @@ function createYoutubeRoutes(service) {
       return res.status(result.code).json(result);
     })
   );
+
+  // ─── Adversuite API Routes (getLocation, getCallToActions) ────
+  const adversuiteRouter = createYoutubeAdversuiteRoutes(service);
+  router.use('/adversuite', adversuiteRouter);
 
   return router;
 }

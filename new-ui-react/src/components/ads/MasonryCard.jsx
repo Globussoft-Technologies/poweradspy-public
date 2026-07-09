@@ -454,11 +454,16 @@ const MasonryCard = ({
     // `carouselMedia` is already DefaultImage-filtered in mapAdToCard; also skip
     // the cover when it's the placeholder so a broken first slide doesn't render.
     const coverOk = ad.thumbnail && !ad.thumbnail.includes("DefaultImage");
-    if (coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
+    // The cover/slide split only applies to IMAGE carousels. A VIDEO ad keeps its
+    // poster in `ad_image_video` (a single slide) while its `image_video_url` cover
+    // is the SAME creative — prepending it turns one video into a bogus 2-slide
+    // carousel. Skip the prepend for videos; genuine carousels (≥2 real slides in
+    // `carouselMedia`, image or video) are unaffected.
+    if (!isVideo && coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
       return [ad.thumbnail, ...media];
     }
     return media;
-  }, [ad.thumbnail, ad.carouselMedia]);
+  }, [ad.thumbnail, ad.carouselMedia, isVideo]);
 
   const hasCarousel = carouselImages.length > 1;
   const currentImg = hasCarousel

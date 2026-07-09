@@ -21,6 +21,7 @@ const { searchAds } = require('../controllers/adSearchController');
 const { getAdDetails } = require('../controllers/adDetailController');
 const { getAdsCount } = require('../controllers/adCountController');
 const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
+const createFacebookAdversuiteRoutes = require('./adversuite_Api_routes');
 const {
   getLikeCommentShareDetails,
   getFacebookAdCountry,
@@ -139,6 +140,12 @@ function createFacebookRoutes(service) {
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
+
+  // ─── Adversuite API Routes ─────────────────────────────
+  // Mounts insert_free_plan, insert_user_data, getLocation, getCalltoAction,
+  // get-available-tags, get_all_language under /adversuite.
+  const adversuiteRouter = createFacebookAdversuiteRoutes(service);
+  router.use('/adversuite', adversuiteRouter);
 
   // ─── Like/Comment/Share Analytics Timeline ──────────
   // POST /api/v1/facebook/ads/getLikeCommentShareDetails

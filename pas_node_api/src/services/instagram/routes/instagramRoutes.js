@@ -28,6 +28,7 @@ const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
 const validator = require('../../../middleware/validator');
 const createInstagramLandersRoutes = require('./instagramLandersRoutes');
+const createInstagramAdversuiteRoutes = require('./adversuite_Api_routes');
 
 const searchSchema = {
   body: {
@@ -245,6 +246,10 @@ function createInstagramRoutes(service) {
   // ─── Landers Routes ────────────────────────────────────
   const landersRouter = createInstagramLandersRoutes(service);
   router.use('/landers', landersRouter);
+
+  // ─── Adversuite API Routes (getLocation etc.) ─────────
+  const adversuiteRouter = createInstagramAdversuiteRoutes(service);
+  router.use('/adversuite', adversuiteRouter);
 
   return router;
 }

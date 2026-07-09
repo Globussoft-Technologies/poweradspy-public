@@ -18,6 +18,7 @@ const {
 const { authMiddleware } = require('../../../middleware/auth');
 const validator = require('../../../middleware/validator');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
+const createGoogleAdversuiteRoutes = require('./adversuite_Api_routes');
 
 const searchSchema = {
   body: {
@@ -188,6 +189,10 @@ function createGoogleRoutes(service) {
       return res.status(result.code).json(result);
     })
   );
+
+  // ─── Adversuite API Routes (getLocation) ──────────────
+  const adversuiteRouter = createGoogleAdversuiteRoutes(service);
+  router.use('/adversuite', adversuiteRouter);
 
   return router;
 }

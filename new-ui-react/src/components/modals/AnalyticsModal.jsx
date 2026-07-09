@@ -421,23 +421,18 @@ const AdTextBlock = ({ text, isLight }) => {
   const textCls = isLight
     ? "text-[13px] text-black/65 leading-relaxed font-semibold"
     : "text-[13px] text-white/60 leading-relaxed font-light";
-  if (!isLong) return <p className={textCls}>{text}</p>;
   return (
-    <div>
-      <div
-        className={
-          expanded ? "max-h-[140px] overflow-y-auto scrollbar-hide pr-1" : ""
-        }
-      >
-        <p className={`${textCls} ${expanded ? "" : "line-clamp-3"}`}>{text}</p>
-      </div>
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className="text-[12px] text-[#6b99ff]/70 hover:text-[#6b99ff] font-medium mt-1.5 transition-colors"
-      >
-        {expanded ? "Show less" : "Read more"}
-      </button>
-    </div>
+    <p className={textCls}>
+      {expanded || !isLong ? text : `${text.substring(0, 150)}...`}
+      {isLong && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="ml-1 text-[#6b99ff] hover:text-[#7899e0] font-bold focus:outline-none"
+        >
+          {expanded ? "Show Less" : "Read More"}
+        </button>
+      )}
+    </p>
   );
 };
 
@@ -666,18 +661,23 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   // prepend the cover into `carouselImages` and gate on its length — mirror that
   // here, otherwise gating on `carouselMedia.length > 1` (== 1 for such ads) hid
   // the arrows and showed only one image while the card/detail views paged fine.
+  const isVideo = isTikTok || ctx.adType.includes('video') || d?.type?.toLowerCase() === 'video';
   const carouselImages = useMemo(() => {
     const media = ad?.carouselMedia || [];
     // `carouselMedia` is already DefaultImage-filtered in mapAdToCard; also skip
     // the cover when it's the placeholder so a broken first slide doesn't render.
     const coverOk = ad?.thumbnail && !ad.thumbnail.includes('DefaultImage');
-    if (coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
+    // The cover/slide split only applies to IMAGE carousels. A VIDEO ad keeps its
+    // poster in `ad_image_video` (a single slide) while its `image_video_url` cover
+    // is the SAME creative — prepending it turns one video into a bogus 2-slide
+    // carousel. Skip the prepend for videos; genuine carousels (≥2 real slides in
+    // `carouselMedia`, image or video) are unaffected.
+    if (!isVideo && coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
       return [ad.thumbnail, ...media];
     }
     return media;
-  }, [ad?.thumbnail, ad?.carouselMedia]);
+  }, [ad?.thumbnail, ad?.carouselMedia, isVideo]);
   const hasCarousel = carouselImages.length > 1;
-  const isVideo = isTikTok || ctx.adType.includes('video') || d?.type?.toLowerCase() === 'video';
   const isTextImageAd = ctx.adType === 'text-image';
 
   // If carousel exists, use its media. Otherwise use single thumbnail/video logic.
@@ -1846,19 +1846,11 @@ const AnalyticsModal = ({
                     <MessageCircle size={14} className={isLight ? "text-gray-500" : "text-white/50"} />
                     News Feed Description
                   </h4>
-                  <ClampedText
+                  <AdTextBlock
                     text={he.decode(
                       d?.newsfeed_description || d?.news_feed_description || ""
                     )}
-                    className={`text-[13px] leading-relaxed transition-all ${
-                      isLight ? "text-black/70" : "text-white/70"
-                    }`}
-                    clampClass="line-clamp-4"
-                    buttonClassName={`text-xs font-semibold mt-2 transition-colors ${
-                      isLight
-                        ? "text-blue-600 hover:text-blue-700"
-                        : "text-blue-400 hover:text-blue-300"
-                    }`}
+                    isLight={isLight}
                   />
                 </div>
               )}
