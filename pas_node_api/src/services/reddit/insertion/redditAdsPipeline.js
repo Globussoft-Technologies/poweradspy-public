@@ -114,6 +114,25 @@ async function insertRedditAd(sql, db, ad, userId, translationData, ctx) {
       const poRes = await upsertPostOwner(tx, ad, userId, log);
       const postOwnerId = poRes.postOwnerId;
 
+    // Resolve FK lookups (country/city/state, category, call-to-action). These were
+    // dropped in the initial minimal port, so the crawler's values never persisted
+    // (country_id stayed 0, category_id was hardcoded 1, call_to_action_id null).
+    let countryId = null;
+    if (ad.country) {
+      const cRes = await repo.getCountry(tx, { city: ad.city, state: ad.state, country: ad.country });
+      countryId = cRes.code === 200 ? cRes.data[0].id : await repo.insertCountry(tx, { city: ad.city, state: ad.state, country: ad.country });
+    }
+    let categoryId = 1;
+    if (ad.category) {
+      const catRes = await repo.getCategory(tx, ad.category);
+      categoryId = catRes.code === 200 ? catRes.data[0].id : await repo.insertCategory(tx, ad.category);
+    }
+    let ctaId = null;
+    if (ad.call_to_action) {
+      const ctaRes = await repo.getCallToAction(tx, ad.call_to_action);
+      ctaId = ctaRes.code === 200 ? ctaRes.data[0].id : await repo.insertCallToAction(tx, ad.call_to_action);
+    }
+
     // Insert main ad row (minimal fields - only what's required)
     const now = new Date();
     const p = (n) => String(n).padStart(2, '0');
@@ -142,7 +161,12 @@ async function insertRedditAd(sql, db, ad, userId, translationData, ctx) {
       post_owner_id: postOwnerId,
       ad_position: ad.ad_position || null,
       source: ad.source || null,
-      category_id: 1,
+      category_id: categoryId,
+      country_id: countryId,
+      call_to_action_id: ctaId,
+      likes: parseInt(ad.likes, 10) || 0,
+      comments: parseInt(ad.comment, 10) || 0,
+      shares: parseInt(ad.share, 10) || 0,
     };
 
     const redditAdId = await repo.insertRedditAd(tx, adRow);
@@ -152,6 +176,19 @@ async function insertRedditAd(sql, db, ad, userId, translationData, ctx) {
       e.insertionHint = 'No action needed unless you expected an update — the ad is already stored.';
       throw e;
     }
+
+    // Daily analytics snapshot (PHP-parity): one reddit_ad_analytics row per ad per day,
+    // linked as the ad's default_analytics_id. Feeds the likes/comments/shares trend chart.
+    const analyticsDate = nowDt.split(' ')[0];
+    const analyticsId = await repo.insertAnalytics(tx, {
+      reddit_ad_id: redditAdId,
+      likes: parseInt(ad.likes, 10) || 0,
+      comments: parseInt(ad.comment, 10) || 0,
+      shares: parseInt(ad.share, 10) || 0,
+      date: analyticsDate,
+      hits: 1,
+    });
+    if (analyticsId) await repo.updateRedditAd(tx, { default_analytics_id: analyticsId }, redditAdId);
 
     // Upload image/thumbnail and get NAS path (BEFORE inserting variant, like PHP does)
     let nasImagePath = null;
@@ -200,6 +237,8 @@ async function insertRedditAd(sql, db, ad, userId, translationData, ctx) {
         destination_url: ad.destination_url,
         built_with: ad.built_with || null,
         built_with_analytics_tracking: ad.built_with_analytics_tracking || null,
+        version: ad.version || null,
+        platform: ad.platform ?? null,
       });
     }
 
@@ -344,13 +383,47 @@ async function updateRedditAd(sql, db, ad, redditAdId, translationData, ctx) {
     const inPostEpoch = parseInt(ad.post_date, 10);
     const backfillPostDate = !(postDateEpoch > 0) && Number.isFinite(inPostEpoch) && inPostEpoch > 0;
 
-    await repo.updateRedditAd(tx, {
+    // Resolve FKs on update too — only when the crawler sent them, so they backfill
+    // without clobbering an existing value with a blank.
+    const upd = {
       type: String(ad.type).toUpperCase(),
       last_seen: lastSeen,
       days_running: daysRunning,
       ad_position: ad.ad_position || null,
+      likes: parseInt(ad.likes, 10) || 0,
+      comments: parseInt(ad.comment, 10) || 0,
+      shares: parseInt(ad.share, 10) || 0,
       ...(backfillPostDate ? { post_date: epochToDateTime(ad.post_date) } : {}),
-    }, redditAdId);
+    };
+    if (ad.country) {
+      const cRes = await repo.getCountry(tx, { city: ad.city, state: ad.state, country: ad.country });
+      upd.country_id = cRes.code === 200 ? cRes.data[0].id : await repo.insertCountry(tx, { city: ad.city, state: ad.state, country: ad.country });
+    }
+    if (ad.category) {
+      const catRes = await repo.getCategory(tx, ad.category);
+      upd.category_id = catRes.code === 200 ? catRes.data[0].id : await repo.insertCategory(tx, ad.category);
+    }
+    if (ad.call_to_action) {
+      const ctaRes = await repo.getCallToAction(tx, ad.call_to_action);
+      upd.call_to_action_id = ctaRes.code === 200 ? ctaRes.data[0].id : await repo.insertCallToAction(tx, ad.call_to_action);
+    }
+    await repo.updateRedditAd(tx, upd, redditAdId);
+
+    // Daily analytics snapshot (PHP-parity): update today's row if it exists, else insert
+    // a new day's row (keeps the likes/comments/shares time-series).
+    const analyticsDate = nowDt.split(' ')[0];
+    const analyticsData = {
+      likes: parseInt(ad.likes, 10) || 0,
+      comments: parseInt(ad.comment, 10) || 0,
+      shares: parseInt(ad.share, 10) || 0,
+    };
+    const todayRow = await repo.getAnalyticsForDate(tx, redditAdId, analyticsDate);
+    if (todayRow.code === 200) {
+      await repo.updateAnalyticsById(tx, analyticsData, todayRow.data[0].id);
+    } else {
+      const aId = await repo.insertAnalytics(tx, { reddit_ad_id: redditAdId, ...analyticsData, date: analyticsDate, hits: 1 });
+      if (aId) await repo.updateRedditAd(tx, { default_analytics_id: aId }, redditAdId);
+    }
 
     await repo.updateRedditAdVariants(tx, {
       title: ad.ad_title || null,
@@ -364,6 +437,8 @@ async function updateRedditAd(sql, db, ad, redditAdId, translationData, ctx) {
         destination_url: ad.destination_url,
         built_with: ad.built_with || null,
         built_with_analytics_tracking: ad.built_with_analytics_tracking || null,
+        version: ad.version || null,
+        platform: ad.platform ?? null,
       }, redditAdId);
     }
 

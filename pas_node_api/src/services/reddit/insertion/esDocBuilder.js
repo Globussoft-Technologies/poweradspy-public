@@ -54,6 +54,10 @@ function buildSearchMixDoc(joinedAd) {
     created_date: coerceEsDate(joinedAd.created_date, ES_DATE_FIELDS.created_date),
     ad_position: joinedAd.ad_position,
     source: joinedAd.source,
+
+    likes: joinedAd.likes ?? 0,
+    comments: joinedAd.comments ?? 0,
+    shares: joinedAd.shares ?? 0,
   };
 
   // Post owner fields
@@ -101,10 +105,19 @@ function buildSearchMixDoc(joinedAd) {
     };
   }
 
-  // Country
+  // Country (incl. city/state — previously only `country` was indexed)
   if (joinedAd.country_row) {
     body.reddit_country = {
       country: joinedAd.country_row,
+      city: joinedAd.city,
+      state: joinedAd.state,
+    };
+  }
+
+  // Category (was never indexed)
+  if (joinedAd.category_name) {
+    body.reddit_category = {
+      category_name: joinedAd.category_name,
     };
   }
 
@@ -115,10 +128,12 @@ function buildSearchMixDoc(joinedAd) {
     };
   }
 
-  // Meta data
-  if (joinedAd.destination_url) {
+  // Meta data (incl. ad_url + version — previously not indexed)
+  if (joinedAd.destination_url || joinedAd.ad_url) {
     body.reddit_ad_meta_data = {
       destination_url: joinedAd.destination_url,
+      ad_url: joinedAd.ad_url,
+      version: joinedAd.version,
       built_with: joinedAd.built_with,
       built_with_analytics_tracking: joinedAd.built_with_analytics_tracking,
     };

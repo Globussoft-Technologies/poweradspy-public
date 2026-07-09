@@ -104,8 +104,13 @@ async function getJoinedAd(exec, whereVal) {
            ANY_VALUE(reddit_ad_domain.domain_registered_date) AS domain_registered_date,
            ANY_VALUE(reddit_call_to_action.call_to_action) AS call_to_action,
            ANY_VALUE(reddit_country.country) AS country_row,
+           ANY_VALUE(reddit_country.city) AS city,
+           ANY_VALUE(reddit_country.state) AS state,
            ANY_VALUE(reddit_user.Gender) AS gender,
            ANY_VALUE(reddit_ad_meta_data.destination_url) AS destination_url,
+           ANY_VALUE(reddit_ad_meta_data.ad_url) AS ad_url,
+           ANY_VALUE(reddit_ad_meta_data.version) AS version,
+           ANY_VALUE(reddit_ad_meta_data.platform) AS platform,
            ANY_VALUE(reddit_ad_meta_data.built_with) AS built_with,
            ANY_VALUE(reddit_ad_meta_data.built_with_analytics_tracking) AS built_with_analytics_tracking,
            ANY_VALUE(reddit_ad_post_owners.post_owner_name) AS post_owner_name,
@@ -275,6 +280,22 @@ async function updateAnalytics(exec, data, adInternalId) {
   ));
 }
 
+// One daily snapshot per ad per day (PHP keyed the time-series on reddit_ad_id + date).
+async function getAnalyticsForDate(exec, adInternalId, date) {
+  return found(await exec.query(
+    'SELECT id FROM reddit_ad_analytics WHERE reddit_ad_id = ? AND date = ? LIMIT 1',
+    [adInternalId, date]
+  ));
+}
+
+async function updateAnalyticsById(exec, data, analyticsId) {
+  const cols = Object.keys(data);
+  return affected(await exec.query(
+    `UPDATE reddit_ad_analytics SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
+    [...Object.values(data), analyticsId]
+  ));
+}
+
 // ── reddit_call_to_action ─────────────────────────────────────────
 async function getCallToAction(exec, cta) {
   return found(await exec.query('SELECT id FROM reddit_call_to_action WHERE call_to_action = ? LIMIT 1', [cta]));
@@ -374,7 +395,7 @@ module.exports = {
   insertMetaData, updateMetaData,
   getUserByRedditId,
   upsertTranslation,
-  insertAnalytics, updateAnalytics,
+  insertAnalytics, updateAnalytics, getAnalyticsForDate, updateAnalyticsById,
   getCallToAction, insertCallToAction,
   insertCategory, getCategory,
   insertAdUser,
