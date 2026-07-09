@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import ReactDOM from "react-dom";
 import {
   Globe,
@@ -115,6 +115,14 @@ const getCountryInfo = (code) => {
 const getInitials = (name) => {
   if (!name) return "?";
   return name.charAt(0).toUpperCase();
+};
+
+// Capitalizes only the first character — unlike CSS `capitalize`, this
+// won't title-case every dot-separated segment of a domain (e.g. "cobra.sa"
+// stays "Cobra.sa" instead of becoming "Cobra.Sa").
+const capitalizeFirst = (str) => {
+  if (!str) return str;
+  return str.charAt(0).toUpperCase() + str.slice(1);
 };
 
 const formatNumber = (num) => {
@@ -319,6 +327,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   };
 
   const [websiteLink, setWebsiteLink] = useState("");
+  const [showAdvertiserSuggestions, setShowAdvertiserSuggestions] =
+    useState(false);
+  const advertiserInputWrapperRef = useRef(null);
+  const advertiserInputRef = useRef(null);
   const [selectedKeywords, setSelectedKeywords] = useState([]);
   const [keywordSuggestions, setKeywordSuggestions] =
     useState(KEYWORDS_SUGGESTIONS);
@@ -639,7 +651,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             const normalizedWebsite = (websiteLinkRef.current || "")
               .replace(/^https?:\/\//i, "")
               .replace(/^www\./i, "")
-              .split(".")[0]
+              .split("/")[0]
               .toLowerCase();
 
             if (
@@ -730,6 +742,42 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const activeProject = projects.find((p) => p.id === selectedProjectId);
   const hasProjects = projects.length > 0;
 
+  // Suggestions from already-added advertisers, filtered by substring match
+  // against whatever the user has typed so far (e.g. "M" -> "MY" -> ...).
+  const advertiserSuggestions = useMemo(() => {
+    const query = websiteLink.trim().toLowerCase();
+    if (!query) return [];
+    const seen = new Set();
+    return projects
+      .filter((p) => p.advertiser && p.advertiser.toLowerCase().includes(query))
+      .filter((p) => {
+        const key = p.advertiser.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }, [websiteLink, projects]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (
+        advertiserInputWrapperRef.current &&
+        !advertiserInputWrapperRef.current.contains(e.target)
+      ) {
+        setShowAdvertiserSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Auto-focus the advertiser input whenever the "Add New Advertiser" screen opens.
+  useEffect(() => {
+    if (viewState === 1) {
+      advertiserInputRef.current?.focus();
+    }
+  }, [viewState]);
+
   const toggleKeyword = (kw) => {
     setSelectedKeywords((prev) =>
       prev.includes(kw) ? prev.filter((k) => k !== kw) : [...prev, kw],
@@ -743,11 +791,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     setViewState(3);
     try {
       // First check if brand already exists (matching legacy blade behavior)
-      // Force lowercase to match case-sensitive backend storage
+      // Force lowercase to match case-sensitive backend storage.
+      // Keep the full domain (including TLD) — "cobra" and "cobra.sa" are
+      // different brands, only exact-domain matches (e.g. with/without
+      // "https://" or "www.") should be treated as duplicates.
       const brandFromUrl = websiteLink
         .replace(/^https?:\/\//i, "")
         .replace(/^www\./i, "")
-        .split(".")[0]
+        .split("/")[0]
         .toLowerCase();
       const checkResp = await CompetitorAPI.checkBrand(
         brandFromUrl,
@@ -815,10 +866,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     setIsPreparingCompetitors(true); // keep the buffer up through fetch + ES enrich
 
     // 1. Normalize specifically for matching existing projects/labels in our local state
+    // Keep the full domain (including TLD) — only strip protocol/www and any path/query.
     const normalizedAdvertiser = websiteLink
       .replace(/^https?:\/\//i, "")
       .replace(/^www\./i, "")
-      .split(".")[0];
+      .split("/")[0];
 
     try {
       const newRefId = fetchedContentRefId || Date.now().toString();
@@ -1589,9 +1641,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     </button>
                     <h3
                       title={proj.advertiser}
-                      className="text-xl font-bold text-white mb-1 group-hover:text-[#6b99ff] transition-colors mt-2 capitalize break-words line-clamp-2 pr-8"
+                      className="text-xl font-bold text-white mb-1 group-hover:text-[#6b99ff] transition-colors mt-2 break-words line-clamp-2 pr-8"
                     >
-                      {proj.advertiser}
+                      {capitalizeFirst(proj.advertiser)}
                     </h3>
                     <div className="flex items-center gap-1.5 text-sm text-theme-text-muted">
                       <Activity
@@ -1637,21 +1689,59 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
           </div>
           <div className="bg-theme-card border border-theme-border rounded-2xl p-6 shadow-2xl shadow-[#3759a3]/5">
             <label className="block text-sm font-semibold text-theme-text-secondary mb-2">
-              Advertiser Website
+              Advertiser website, name or description
             </label>
             <div className="flex gap-3">
-              <div className="relative flex-1">
+              <div
+                className="relative flex-1"
+                ref={advertiserInputWrapperRef}
+              >
                 <Globe
                   className="absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-text-muted"
                   size={18}
                 />
                 <input
+                  ref={advertiserInputRef}
                   type="text"
                   value={websiteLink}
-                  onChange={(e) => setWebsiteLink(e.target.value)}
-                  placeholder="e.g. walmart.com"
+                  onChange={(e) => {
+                    setWebsiteLink(e.target.value);
+                    setShowAdvertiserSuggestions(true);
+                  }}
+                  onFocus={() => setShowAdvertiserSuggestions(true)}
+                  placeholder="e.g. walmart.com, Walmart, or online retail store"
+                  autoComplete="off"
                   className="w-full bg-theme-bg border border-theme-border rounded-xl py-3.5 pl-11 pr-4 text-theme-text focus:outline-none focus:border-[#3759a3] focus:ring-1 focus:ring-[#3759a3]/50 transition-all font-medium"
                 />
+                {showAdvertiserSuggestions &&
+                  advertiserSuggestions.length > 0 && (
+                    <div className="absolute z-10 top-full left-0 right-0 mt-2 bg-theme-card border border-theme-border rounded-xl shadow-2xl shadow-black/20 overflow-hidden">
+                      <p className="px-4 pt-3 pb-1 text-xs font-semibold text-theme-text-muted uppercase tracking-wide">
+                        Existing Advertisers
+                      </p>
+                      <div className="max-h-64 overflow-y-auto">
+                        {advertiserSuggestions.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              setWebsiteLink(p.advertiser);
+                              setShowAdvertiserSuggestions(false);
+                            }}
+                            className="w-full text-left px-4 py-2.5 flex items-center gap-2.5 hover:bg-theme-border/60 transition-colors"
+                          >
+                            <Globe
+                              size={14}
+                              className="text-theme-text-muted flex-shrink-0"
+                            />
+                            <span className="text-sm font-medium text-theme-text truncate">
+                              {capitalizeFirst(p.advertiser)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
               </div>
               <button
                 onClick={handleNextPhase}
@@ -1687,31 +1777,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             <div className="md:col-span-2 space-y-6">
               <div className="bg-theme-card border border-theme-border rounded-xl p-6 shadow-sm">
                 <h3 className="font-semibold mb-4 flex items-center gap-2">
-                  <Target size={16} className="text-[#6b99ff]" /> Select
-                  Relevant Keywords
+                  <Target size={16} className="text-[#6b99ff]" /> Provide
+                  Relevant Keywords For Better Results
                 </h3>
-                <div className="flex flex-wrap gap-2 mb-6">
-                  {keywordSuggestions.slice(0, 20).map((kw) => {
-                    const isSelected = selectedKeywords.includes(kw);
-                    return (
-                      <button
-                        key={kw}
-                        onClick={() => toggleKeyword(kw)}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${isSelected ? "bg-[#3762c1]/20 text-[#7899e0] border border-[#3759a3]/40" : "bg-theme-bg text-theme-text-muted border border-theme-border hover:border-[#3759a3]/30"}`}
-                      >
-                        {isSelected && (
-                          <Check size={14} className="inline mr-1.5" />
-                        )}
-                        {kw}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="border-t border-theme-border pt-6 mt-2">
-                  <h4 className="text-sm font-medium text-theme-text-secondary mb-3 flex items-center gap-1.5">
-                    <Plus size={14} className="text-[#6b99ff]" /> Add Custom
-                    Keyword
-                  </h4>
+                <div>
                   <form onSubmit={addCustomKeyword} className="flex gap-2">
                     <input
                       type="text"
@@ -1728,6 +1797,27 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                       Add
                     </button>
                   </form>
+                  <h4 className="text-sm font-medium text-theme-text-secondary mt-3 flex items-center gap-1.5">
+                    <Plus size={14} className="text-[#6b99ff]" /> Add Relevant
+                    Keyword or Choose From Below
+                  </h4>
+                </div>
+                <div className="flex flex-wrap gap-2 border-t border-theme-border pt-6 mt-6">
+                  {keywordSuggestions.slice(0, 20).map((kw) => {
+                    const isSelected = selectedKeywords.includes(kw);
+                    return (
+                      <button
+                        key={kw}
+                        onClick={() => toggleKeyword(kw)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${isSelected ? "bg-[#3762c1]/20 text-[#7899e0] border border-[#3759a3]/40" : "bg-theme-bg text-theme-text-muted border border-theme-border hover:border-[#3759a3]/30"}`}
+                      >
+                        {isSelected && (
+                          <Check size={14} className="inline mr-1.5" />
+                        )}
+                        {kw}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1800,8 +1890,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 <div className="p-2 bg-theme-card border border-theme-border rounded-lg">
                   <Globe size={24} className="text-[#6b99ff]" />
                 </div>
-                <h1 className="text-3xl font-bold text-white tracking-tight capitalize">
-                  {activeProject.advertiser}
+                <h1 className="text-3xl font-bold text-white tracking-tight">
+                  {capitalizeFirst(activeProject.advertiser)}
                 </h1>
                 <button
                   onClick={openRenameBrandModal}
@@ -2479,8 +2569,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             </h2>
             <p className="text-theme-text-muted text-sm mb-8">
               Are you sure you want to permanently delete{" "}
-              <span className="text-theme-text font-bold capitalize break-words">
-                {projectToDelete.advertiser || projectToDelete.name}
+              <span className="text-theme-text font-bold break-words">
+                {capitalizeFirst(projectToDelete.advertiser || projectToDelete.name)}
               </span>{" "}
               and all its tracked intelligence? This cannot be undone.
             </p>
@@ -2596,8 +2686,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               <div className="flex items-center gap-3 bg-theme-bg border border-theme-border rounded-xl px-4 py-3 mb-6">
                 <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
                 <span className="text-xs text-theme-text-muted">Adding to brand:</span>
-                <span className="font-bold capitalize text-theme-text truncate">
-                  {activeProject?.advertiser}
+                <span className="font-bold text-theme-text truncate">
+                  {capitalizeFirst(activeProject?.advertiser)}
                 </span>
               </div>
 
@@ -2702,8 +2792,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               <div className="flex items-center gap-3 bg-theme-bg border border-theme-border rounded-xl px-4 py-3 mb-6">
                 <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
                 <span className="text-xs text-theme-text-muted">Current name:</span>
-                <span className="font-bold capitalize text-theme-text truncate">
-                  {activeProject?.advertiser}
+                <span className="font-bold text-theme-text truncate">
+                  {capitalizeFirst(activeProject?.advertiser)}
                 </span>
               </div>
 

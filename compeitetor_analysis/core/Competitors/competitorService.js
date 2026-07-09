@@ -2265,11 +2265,14 @@ async fetchCompetitorsForUpdateNew(req, res) {
     if (Array.isArray(advertiser)) {
       advertiser = advertiser[0] || "";
     }
-    // Deep normalization logic
+    // Deep normalization logic. Keep the full domain (including TLD) — e.g.
+    // "cobra" and "cobra.sa" are different brands and must not collapse to
+    // the same DB key just because everything after the first "." was
+    // discarded.
     return String(advertiser)
       .replace(/^https?:\/\//i, "")
       .replace(/^www\./i, "")
-      .split(".")[0]
+      .split("/")[0]
       .toLowerCase()
       .trim();
   }
