@@ -3268,7 +3268,7 @@ async checkDailyTokenLimit(req, res) {
 
   async checkCompetitorProcess(req, res) {
     try {
-      const { user_id, content_ref_id, keywords, limit, advertiser } = req.body;
+      const { user_id, content_ref_id, keywords, limit, advertiser, country } = req.body;
       if (!user_id) {
         return res.status(400).json({ code: 400, message: "user_id is required" });
       }
@@ -3281,6 +3281,7 @@ async checkDailyTokenLimit(req, res) {
 
       const advArray = Array.isArray(advertiser) ? advertiser : [advertiser];
       const fullBrand = (advArray[0] || advertiser || "");
+      const countryArray = Array.isArray(country) ? country.filter(Boolean) : (country ? [country] : []);
 
       const brand = this.normalizeAdvertiser(fullBrand);
 
@@ -3296,13 +3297,25 @@ async checkDailyTokenLimit(req, res) {
           advertiser: [brand],
           brand_url: fullBrand, // Full domain
           competitors: [],
-          monitoring: []
+          monitoring: [],
+          country: countryArray
         });
         logger.info(`Created new project record: ${brand} (Targeting: ${fullBrand})`);
+      } else if (countryArray.length && !project.country?.length) {
+        // Backfill country onto an existing (e.g. race-created) project doc.
+        project.country = countryArray;
+        await project.save();
       }
       // ----------------------------------------
 
       const keywordUrl = config.get("COMPETITOR_URL_PYTHON") + "/v1/api/competitors/prepare";
+
+      // Fold the selected target countries into the generation prompt so the
+      // AI weighs competitors accordingly, in addition to sending them as a
+      // dedicated structured field.
+      const countryPrompt = countryArray.length
+        ? `Focus on competitors that primarily run ads in: ${countryArray.join(", ")}.`
+        : "";
 
       const formParams = {
         content_ref_id: content_ref_id,
@@ -3310,6 +3323,8 @@ async checkDailyTokenLimit(req, res) {
         // Over-fetch so name-dedup losses still leave >= `limit` unique competitors
         limit: this.competitorOverfetchLimit(limit),
         advertiser: fullBrand, // SEND FULL DOMAIN TO PYTHON API
+        country: countryArray,
+        prompt: countryPrompt,
         domain_validation: false,
         input_token_budget: 20000,
         output_token_budget: 20000

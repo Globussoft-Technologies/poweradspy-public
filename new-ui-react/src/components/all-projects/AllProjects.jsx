@@ -236,6 +236,207 @@ const calculateTotalBudget = (competitors) => {
 
 const INITIAL_PROJECTS = [];
 
+// Full ISO 3166-1 country list for the "Configure Analysis" target-country picker.
+const COUNTRIES = [
+  { code: "af", name: "Afghanistan" },
+  { code: "al", name: "Albania" },
+  { code: "dz", name: "Algeria" },
+  { code: "ad", name: "Andorra" },
+  { code: "ao", name: "Angola" },
+  { code: "ag", name: "Antigua and Barbuda" },
+  { code: "ar", name: "Argentina" },
+  { code: "am", name: "Armenia" },
+  { code: "au", name: "Australia" },
+  { code: "at", name: "Austria" },
+  { code: "az", name: "Azerbaijan" },
+  { code: "bs", name: "Bahamas" },
+  { code: "bh", name: "Bahrain" },
+  { code: "bd", name: "Bangladesh" },
+  { code: "bb", name: "Barbados" },
+  { code: "by", name: "Belarus" },
+  { code: "be", name: "Belgium" },
+  { code: "bz", name: "Belize" },
+  { code: "bj", name: "Benin" },
+  { code: "bt", name: "Bhutan" },
+  { code: "bo", name: "Bolivia" },
+  { code: "ba", name: "Bosnia and Herzegovina" },
+  { code: "bw", name: "Botswana" },
+  { code: "br", name: "Brazil" },
+  { code: "bn", name: "Brunei" },
+  { code: "bg", name: "Bulgaria" },
+  { code: "bf", name: "Burkina Faso" },
+  { code: "bi", name: "Burundi" },
+  { code: "cv", name: "Cabo Verde" },
+  { code: "kh", name: "Cambodia" },
+  { code: "cm", name: "Cameroon" },
+  { code: "ca", name: "Canada" },
+  { code: "cf", name: "Central African Republic" },
+  { code: "td", name: "Chad" },
+  { code: "cl", name: "Chile" },
+  { code: "cn", name: "China" },
+  { code: "co", name: "Colombia" },
+  { code: "km", name: "Comoros" },
+  { code: "cg", name: "Congo" },
+  { code: "cd", name: "Congo (DRC)" },
+  { code: "cr", name: "Costa Rica" },
+  { code: "hr", name: "Croatia" },
+  { code: "cu", name: "Cuba" },
+  { code: "cy", name: "Cyprus" },
+  { code: "cz", name: "Czech Republic" },
+  { code: "dk", name: "Denmark" },
+  { code: "dj", name: "Djibouti" },
+  { code: "dm", name: "Dominica" },
+  { code: "do", name: "Dominican Republic" },
+  { code: "ec", name: "Ecuador" },
+  { code: "eg", name: "Egypt" },
+  { code: "sv", name: "El Salvador" },
+  { code: "gq", name: "Equatorial Guinea" },
+  { code: "er", name: "Eritrea" },
+  { code: "ee", name: "Estonia" },
+  { code: "sz", name: "Eswatini" },
+  { code: "et", name: "Ethiopia" },
+  { code: "fj", name: "Fiji" },
+  { code: "fi", name: "Finland" },
+  { code: "fr", name: "France" },
+  { code: "ga", name: "Gabon" },
+  { code: "gm", name: "Gambia" },
+  { code: "ge", name: "Georgia" },
+  { code: "de", name: "Germany" },
+  { code: "gh", name: "Ghana" },
+  { code: "gr", name: "Greece" },
+  { code: "gd", name: "Grenada" },
+  { code: "gt", name: "Guatemala" },
+  { code: "gn", name: "Guinea" },
+  { code: "gw", name: "Guinea-Bissau" },
+  { code: "gy", name: "Guyana" },
+  { code: "ht", name: "Haiti" },
+  { code: "hn", name: "Honduras" },
+  { code: "hk", name: "Hong Kong" },
+  { code: "hu", name: "Hungary" },
+  { code: "is", name: "Iceland" },
+  { code: "in", name: "India" },
+  { code: "id", name: "Indonesia" },
+  { code: "ir", name: "Iran" },
+  { code: "iq", name: "Iraq" },
+  { code: "ie", name: "Ireland" },
+  { code: "il", name: "Israel" },
+  { code: "it", name: "Italy" },
+  { code: "jm", name: "Jamaica" },
+  { code: "jp", name: "Japan" },
+  { code: "jo", name: "Jordan" },
+  { code: "kz", name: "Kazakhstan" },
+  { code: "ke", name: "Kenya" },
+  { code: "ki", name: "Kiribati" },
+  { code: "kp", name: "North Korea" },
+  { code: "kr", name: "South Korea" },
+  { code: "kw", name: "Kuwait" },
+  { code: "kg", name: "Kyrgyzstan" },
+  { code: "la", name: "Laos" },
+  { code: "lv", name: "Latvia" },
+  { code: "lb", name: "Lebanon" },
+  { code: "ls", name: "Lesotho" },
+  { code: "lr", name: "Liberia" },
+  { code: "ly", name: "Libya" },
+  { code: "li", name: "Liechtenstein" },
+  { code: "lt", name: "Lithuania" },
+  { code: "lu", name: "Luxembourg" },
+  { code: "mo", name: "Macao" },
+  { code: "mg", name: "Madagascar" },
+  { code: "mw", name: "Malawi" },
+  { code: "my", name: "Malaysia" },
+  { code: "mv", name: "Maldives" },
+  { code: "ml", name: "Mali" },
+  { code: "mt", name: "Malta" },
+  { code: "mh", name: "Marshall Islands" },
+  { code: "mr", name: "Mauritania" },
+  { code: "mu", name: "Mauritius" },
+  { code: "mx", name: "Mexico" },
+  { code: "fm", name: "Micronesia" },
+  { code: "md", name: "Moldova" },
+  { code: "mc", name: "Monaco" },
+  { code: "mn", name: "Mongolia" },
+  { code: "me", name: "Montenegro" },
+  { code: "ma", name: "Morocco" },
+  { code: "mz", name: "Mozambique" },
+  { code: "mm", name: "Myanmar" },
+  { code: "na", name: "Namibia" },
+  { code: "nr", name: "Nauru" },
+  { code: "np", name: "Nepal" },
+  { code: "nl", name: "Netherlands" },
+  { code: "nz", name: "New Zealand" },
+  { code: "ni", name: "Nicaragua" },
+  { code: "ne", name: "Niger" },
+  { code: "ng", name: "Nigeria" },
+  { code: "mk", name: "North Macedonia" },
+  { code: "no", name: "Norway" },
+  { code: "om", name: "Oman" },
+  { code: "pk", name: "Pakistan" },
+  { code: "pw", name: "Palau" },
+  { code: "ps", name: "Palestine" },
+  { code: "pa", name: "Panama" },
+  { code: "pg", name: "Papua New Guinea" },
+  { code: "py", name: "Paraguay" },
+  { code: "pe", name: "Peru" },
+  { code: "ph", name: "Philippines" },
+  { code: "pl", name: "Poland" },
+  { code: "pt", name: "Portugal" },
+  { code: "qa", name: "Qatar" },
+  { code: "ro", name: "Romania" },
+  { code: "ru", name: "Russia" },
+  { code: "rw", name: "Rwanda" },
+  { code: "kn", name: "Saint Kitts and Nevis" },
+  { code: "lc", name: "Saint Lucia" },
+  { code: "vc", name: "Saint Vincent and the Grenadines" },
+  { code: "ws", name: "Samoa" },
+  { code: "sm", name: "San Marino" },
+  { code: "st", name: "Sao Tome and Principe" },
+  { code: "sa", name: "Saudi Arabia" },
+  { code: "sn", name: "Senegal" },
+  { code: "rs", name: "Serbia" },
+  { code: "sc", name: "Seychelles" },
+  { code: "sl", name: "Sierra Leone" },
+  { code: "sg", name: "Singapore" },
+  { code: "sk", name: "Slovakia" },
+  { code: "si", name: "Slovenia" },
+  { code: "sb", name: "Solomon Islands" },
+  { code: "so", name: "Somalia" },
+  { code: "za", name: "South Africa" },
+  { code: "ss", name: "South Sudan" },
+  { code: "es", name: "Spain" },
+  { code: "lk", name: "Sri Lanka" },
+  { code: "sd", name: "Sudan" },
+  { code: "sr", name: "Suriname" },
+  { code: "se", name: "Sweden" },
+  { code: "ch", name: "Switzerland" },
+  { code: "sy", name: "Syria" },
+  { code: "tw", name: "Taiwan" },
+  { code: "tj", name: "Tajikistan" },
+  { code: "tz", name: "Tanzania" },
+  { code: "th", name: "Thailand" },
+  { code: "tl", name: "Timor-Leste" },
+  { code: "tg", name: "Togo" },
+  { code: "to", name: "Tonga" },
+  { code: "tt", name: "Trinidad and Tobago" },
+  { code: "tn", name: "Tunisia" },
+  { code: "tr", name: "Turkey" },
+  { code: "tm", name: "Turkmenistan" },
+  { code: "tv", name: "Tuvalu" },
+  { code: "ug", name: "Uganda" },
+  { code: "ua", name: "Ukraine" },
+  { code: "ae", name: "United Arab Emirates" },
+  { code: "gb", name: "United Kingdom" },
+  { code: "us", name: "United States" },
+  { code: "uy", name: "Uruguay" },
+  { code: "uz", name: "Uzbekistan" },
+  { code: "vu", name: "Vanuatu" },
+  { code: "va", name: "Vatican City" },
+  { code: "ve", name: "Venezuela" },
+  { code: "vn", name: "Vietnam" },
+  { code: "ye", name: "Yemen" },
+  { code: "zm", name: "Zambia" },
+  { code: "zw", name: "Zimbabwe" },
+];
+
 const KEYWORDS_SUGGESTIONS = [
   "ecommerce",
   "online shopping",
@@ -338,6 +539,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const [fetchedContentRefId, setFetchedContentRefId] = useState("");
   const [maxCompetitors, setMaxCompetitors] = useState("15");
   const [customKeyword, setCustomKeyword] = useState("");
+  const [selectedCountries, setSelectedCountries] = useState([]);
+  const [countrySearch, setCountrySearch] = useState("");
+  const [isCountryAccordionOpen, setIsCountryAccordionOpen] = useState(false);
   const [compareCompetitor, setCompareCompetitor] = useState(null);
   const [competitorToDelete, setCompetitorToDelete] = useState(null);
   const [isDeletingCompetitor, setIsDeletingCompetitor] = useState(false);
@@ -784,6 +988,18 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     );
   };
 
+  const toggleCountry = (code) => {
+    setSelectedCountries((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
+    );
+  };
+
+  const filteredCountries = useMemo(() => {
+    const query = countrySearch.trim().toLowerCase();
+    if (!query) return COUNTRIES;
+    return COUNTRIES.filter((c) => c.name.toLowerCase().includes(query));
+  }, [countrySearch]);
+
   const handleNextPhase = async () => {
     if (!websiteLink) return;
     setIsGeneratingKeywords(true);
@@ -872,6 +1088,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       .replace(/^www\./i, "")
       .split("/")[0];
 
+    // Resolve selected ISO codes to full names so the AI-generation prompt
+    // reads naturally (e.g. "United States" rather than "us").
+    const selectedCountryNames = selectedCountries
+      .map((code) => COUNTRIES.find((c) => c.code === code)?.name)
+      .filter(Boolean);
+
     try {
       const newRefId = fetchedContentRefId || Date.now().toString();
       setContentRefId(newRefId);
@@ -897,6 +1119,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         parseInt(maxCompetitors, 10),
         websiteLink, // Send original domain
         userId,
+        selectedCountryNames,
       );
 
       // Build project stub first
@@ -921,6 +1144,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       setSelectedProjectId(projectId);
       setWebsiteLink("");
       setSelectedKeywords([]);
+      setSelectedCountries([]);
+      setCountrySearch("");
+      setIsCountryAccordionOpen(false);
       setViewState(4);
       trackProjectEvent('Project-click', { project_name: normalizedAdvertiser });
 
@@ -1269,6 +1495,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const startNewProject = () => {
     setWebsiteLink("");
     setSelectedKeywords([]);
+    setSelectedCountries([]);
+    setCountrySearch("");
+    setIsCountryAccordionOpen(false);
     setViewState(1);
   };
 
@@ -1841,6 +2070,75 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     {maxCompetitors}
                   </span>
                 </div>
+              </div>
+
+              <div className="bg-theme-card border border-theme-border rounded-xl shadow-sm overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setIsCountryAccordionOpen((prev) => !prev)}
+                  className="w-full flex items-center justify-between p-6"
+                >
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <Globe size={16} className="text-[#6b99ff]" /> Target
+                    Countries
+                    {selectedCountries.length > 0 && (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#3762c1]/20 text-[#7899e0] border border-[#3759a3]/40">
+                        {selectedCountries.length}
+                      </span>
+                    )}
+                  </h3>
+                  <ChevronDown
+                    size={18}
+                    className={`text-theme-text-muted transition-transform ${isCountryAccordionOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {isCountryAccordionOpen && (
+                  <div className="px-6 pb-6">
+                    <div className="relative mb-3">
+                      <Search
+                        size={14}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-text-muted"
+                      />
+                      <input
+                        type="text"
+                        value={countrySearch}
+                        onChange={(e) => setCountrySearch(e.target.value)}
+                        placeholder="Search countries..."
+                        className="w-full bg-theme-bg border border-theme-border rounded-lg py-2 pl-8 pr-3 text-sm text-theme-text focus:outline-none focus:border-[#3759a3] transition-all"
+                      />
+                    </div>
+                    <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                      {filteredCountries.length === 0 ? (
+                        <p className="text-sm text-theme-text-muted text-center py-4">
+                          No countries match "{countrySearch}"
+                        </p>
+                      ) : (
+                        filteredCountries.map((c) => {
+                          const isSelected = selectedCountries.includes(
+                            c.code,
+                          );
+                          return (
+                            <button
+                              key={c.code}
+                              type="button"
+                              onClick={() => toggleCountry(c.code)}
+                              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2.5 transition-all ${isSelected ? "bg-[#3762c1]/20 text-[#7899e0] border border-[#3759a3]/40" : "hover:bg-theme-bg text-theme-text border border-transparent"}`}
+                            >
+                              <span
+                                className={`w-4 h-4 rounded-sm border flex items-center justify-center flex-shrink-0 ${isSelected ? "bg-[#3762c1] border-[#3762c1]" : "border-theme-border"}`}
+                              >
+                                {isSelected && (
+                                  <Check size={12} className="text-white" />
+                                )}
+                              </span>
+                              {c.name}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <button

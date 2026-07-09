@@ -1797,7 +1797,7 @@ export const CompetitorAPI = {
     }),
 
   // Competitor process
-  checkCompetitorProcess: (contentRefId, keywords, limit, advertiser, userId) =>
+  checkCompetitorProcess: (contentRefId, keywords, limit, advertiser, userId, country) =>
     competitorFetch('/check-competitor-process', {
       method: 'POST',
       body: JSON.stringify({
@@ -1806,6 +1806,7 @@ export const CompetitorAPI = {
         limit,
         advertiser,
         user_id: userId,
+        country,
       }),
     }),
 

@@ -62,7 +62,7 @@ Content-Type: application/json
 | `network` | yes | Single slug, comma list, or `all`. |
 | `email` | no | Stored against the term (deduped). |
 | `ads_count` | no | Used only by the `realTimeStore` numeric gate. |
-| `country` | no | Selected country-filter code(s) — a single code (`"US"`), comma list (`"US,GB"`), or array (`["us","gb"]`). Stored upper-cased & deduped, **accumulated (union) across every search** of the term so it covers all regions searched; a search with no country adds nothing (never wipes prior codes). A term never searched with a country stays `null`. Echoed by the work API. |
+| `country` | no | Selected country as **ISO 2-letter code(s)** — a single code (`"SA"`), comma list (`"US,GB"`), or array (`["us","gb"]`). Stored upper-cased & deduped, **accumulated (union) across every search** of the term so it covers all regions searched; a search with no country adds nothing (never wipes prior codes). A term never searched with a country stays `null`. Echoed by the work API. **Note:** the frontend Country filter holds the display *name* (e.g. "Saudi Arabia"); the web app maps it to the ISO code before calling this endpoint — send codes here, not names. |
 
 **Example — keyword for all networks**
 
