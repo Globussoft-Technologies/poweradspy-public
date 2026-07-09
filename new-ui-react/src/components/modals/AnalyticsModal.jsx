@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
 import mpConversionx from "../../assets/marketingPlatform/conversionx.co.png";
@@ -438,6 +438,54 @@ const AdTextBlock = ({ text, isLight }) => {
         {expanded ? "Show less" : "Read more"}
       </button>
     </div>
+  );
+};
+
+// Renders clamped text and only exposes the toggle button when the text
+// actually overflows its clamp (measured, not guessed). Prevents a stray
+// "Read More" from appearing next to fully-visible short descriptions.
+const ClampedText = ({
+  text,
+  className = "",
+  clampClass = "line-clamp-4",
+  buttonClassName = "",
+  moreLabel = "Read More",
+  lessLabel = "Read Less",
+}) => {
+  const ref = useRef(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => {
+      // Only meaningful while clamped; when expanded the clamp is off and
+      // scrollHeight === clientHeight, so preserve the last-known result.
+      if (expanded) return;
+      setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, expanded]);
+
+  if (!text) return null;
+  return (
+    <>
+      <p ref={ref} className={`${className} ${expanded ? "" : clampClass}`}>
+        {text}
+      </p>
+      {overflowing && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className={buttonClassName}
+        >
+          {expanded ? lessLabel : moreLabel}
+        </button>
+      )}
+    </>
   );
 };
 
@@ -1072,7 +1120,6 @@ const AnalyticsModal = ({
   const [creativeClosed, setCreativeClosed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [regionExpanded, setRegionExpanded] = useState(false);
-  const [descExpanded, setDescExpanded] = useState(false);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -1799,25 +1846,20 @@ const AnalyticsModal = ({
                     <MessageCircle size={14} className={isLight ? "text-gray-500" : "text-white/50"} />
                     News Feed Description
                   </h4>
-                  <p
-                    className={`text-[13px] leading-relaxed transition-all ${
-                      isLight ? "text-black/70" : "text-white/70"
-                    } ${!descExpanded ? "line-clamp-4" : ""}`}
-                  >
-                    {he.decode(
+                  <ClampedText
+                    text={he.decode(
                       d?.newsfeed_description || d?.news_feed_description || ""
                     )}
-                  </p>
-                  <button
-                    onClick={() => setDescExpanded(!descExpanded)}
-                    className={`text-xs font-semibold mt-2 transition-colors ${
+                    className={`text-[13px] leading-relaxed transition-all ${
+                      isLight ? "text-black/70" : "text-white/70"
+                    }`}
+                    clampClass="line-clamp-4"
+                    buttonClassName={`text-xs font-semibold mt-2 transition-colors ${
                       isLight
                         ? "text-blue-600 hover:text-blue-700"
                         : "text-blue-400 hover:text-blue-300"
                     }`}
-                  >
-                    {descExpanded ? "Read Less" : "Read More"}
-                  </button>
+                  />
                 </div>
               )}
 

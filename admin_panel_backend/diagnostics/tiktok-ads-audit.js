@@ -37,6 +37,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { runAuditCli } = require('./lib/ads-audit-core');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { nasGoodMediaExpr } = require('./lib/media-good-expr');
 const tiktokTransport = require('../es-connections/tiktok-connection');
 
 runAuditCli({
@@ -67,14 +68,10 @@ runAuditCli({
     // "Good" = a usable cover (present) that isn't a blocked placeholder, and a
     // video_url that isn't blocked — mirroring the ES filter. NAS is NOT required
     // (raw tiktokcdn.com covers are valid), so no PowerAdspy/pasN whitelisting.
-    goodMediaExpr: `(video_cover IS NOT NULL AND video_cover <> ''
-      AND video_cover NOT LIKE '%pasvideo%'
-      AND video_cover NOT LIKE '%pasimage%'
-      AND video_cover NOT LIKE '%bydefault%'
-      AND video_cover NOT LIKE '%DefaultImage%'
-      AND video_url NOT LIKE '%pasvideo%'
-      AND video_url NOT LIKE '%pasimage%'
-      AND video_url NOT LIKE '%bydefault%')`,
-    unusableDesc: 'missing video_cover or a blocked path (pasvideo/pasimage/bydefault/DefaultImage)',
+    // Backfill eligibility = a real NAS video_cover (allowlist). Note: tiktok also
+    // displays raw tiktokcdn.com covers, but per policy only NAS-stored covers are
+    // backfill-eligible — raw-CDN/legacy covers are deletion candidates, not backfill.
+    goodMediaExpr: nasGoodMediaExpr('video_cover'),
+    unusableDesc: 'missing / not a real NAS video_cover (raw CDN, legacy, blocked, null)',
   },
 });

@@ -61,6 +61,7 @@ const searchAllInstances = require('../es-connections/connection');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
 const { writeXlsx } = require('./xlsx-writer');
 const { writeMarkdown, CENTRAL_LOG } = require('./lib/markdown-writer');
+const { nasGoodMediaExpr } = require('./lib/media-good-expr');
 
 // --------------------------------------------------------------------------
 // HARD SAFETY SWITCH. Deletion is intentionally not enabled yet — this run is
@@ -378,13 +379,11 @@ function printEsReport(r) {
 
 const q = (sql, params) => withTimeout(queryDatabase(FB.dbId, FB.database, sql, params), 'MySQL query');
 
-// A variant row carries usable media only if image_url is a real stored image —
-// present and not a default / legacy-blocked path. Mirrors the ES displayable rule.
-const GOOD = `(image_url IS NOT NULL AND image_url <> ''
-  AND image_url NOT LIKE '%bydefault%'
-  AND image_url NOT LIKE '%DefaultImage%'
-  AND image_url NOT LIKE '%pasimage%'
-  AND image_url NOT LIKE '%pasvideo%')`;
+// A variant row carries usable media only if image_url is a real NAS path — an
+// ALLOWLIST of the canonical mount prefixes (facebook also allows a bare
+// `PowerAdspy`, so bare:true), mirroring paramParser's withCdn() strip. A blocklist
+// would wrongly pass test/asset/raw-CDN paths (getMedia/PowerAdspy-test/…, /assets/img/…).
+const GOOD = nasGoodMediaExpr('image_url', { bare: true });
 // Only IMAGE/VIDEO require media; other facebook types pass the displayable filter.
 const MEDIA_TYPES_SQL = `a.type IN ('IMAGE','VIDEO')`;
 

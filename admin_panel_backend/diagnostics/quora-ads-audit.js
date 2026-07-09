@@ -29,15 +29,13 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { runAuditCli } = require('./lib/ads-audit-core');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { nasGoodMediaExpr } = require('./lib/media-good-expr');
 
 const TYPE = 'quora_ad.type.keyword';
 const MEDIA_TYPES = ['IMAGE', 'VIDEO'];
-// "Good" NAS media: present and not a default/legacy placeholder. Shared by both specs.
-const goodNas = (col) => `(${col} IS NOT NULL AND ${col} <> ''
-  AND ${col} NOT LIKE '%bydefault%'
-  AND ${col} NOT LIKE '%DefaultImage%'
-  AND ${col} NOT LIKE '%pasimage%'
-  AND ${col} NOT LIKE '%pasvideo%')`;
+// "Good" media = a real NAS path (allowlist of the canonical mount prefixes), not a
+// blocklist. Shared by both specs (IMAGE→image_url, VIDEO→ad_image_video).
+const goodNas = (col) => nasGoodMediaExpr(col);
 
 runAuditCli({
   network: 'quora',

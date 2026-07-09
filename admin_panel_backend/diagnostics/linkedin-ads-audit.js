@@ -34,6 +34,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { runAuditCli } = require('./lib/ads-audit-core');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { nasGoodMediaExpr } = require('./lib/media-good-expr');
 
 const TYPE = 'ad_type.keyword';
 const MEDIA_TYPES = ['IMAGE', 'VIDEO'];
@@ -70,11 +71,7 @@ runAuditCli({
     fkColumn: 'linkedin_ad_id',
     contentColumn: 'image_url',
     mediaRequiredTypes: ['IMAGE', 'VIDEO'], // other linkedin types have no media by design → healthy
-    goodMediaExpr: `(image_url IS NOT NULL AND image_url <> ''
-      AND image_url NOT LIKE '%bydefault%'
-      AND image_url NOT LIKE '%DefaultImage%'
-      AND image_url NOT LIKE '%pasimage%'
-      AND image_url NOT LIKE '%pasvideo%')`,
-    unusableDesc: 'missing / a default or legacy non-NAS path (bydefault/DefaultImage/pasimage/pasvideo)',
+    goodMediaExpr: nasGoodMediaExpr('image_url'), // allowlist of real NAS prefixes, not a blocklist
+    unusableDesc: 'missing / not a real NAS media path (legacy pasimages/pasvideos, test/asset paths, raw CDN, default, null)',
   },
 });

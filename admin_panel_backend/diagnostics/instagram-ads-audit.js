@@ -25,6 +25,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { runAuditCli } = require('./lib/ads-audit-core');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { nasGoodMediaExpr } = require('./lib/media-good-expr');
 
 const TYPE = 'instagram_ad.type.keyword';
 
@@ -75,11 +76,8 @@ runAuditCli({
     fkColumn: 'instagram_ad_id',
     contentColumn: 'image_url',
     mediaRequiredTypes: ['IMAGE', 'VIDEO', 'STORIES'], // other types pass the ES filter → healthy
-    goodMediaExpr: `(image_url IS NOT NULL AND image_url <> ''
-      AND image_url NOT LIKE '%bydefault%'
-      AND image_url NOT LIKE '%DefaultImage%'
-      AND image_url NOT LIKE '%pasimage%'
-      AND image_url NOT LIKE '%pasvideo%')`,
-    unusableDesc: 'missing / a default or legacy non-NAS path (bydefault/DefaultImage/pasimage/pasvideo)',
+    // Good = a real NAS media path (allowlist), not just "not a known-bad string".
+    goodMediaExpr: nasGoodMediaExpr('image_url'),
+    unusableDesc: 'missing / not a real NAS media path (legacy pasimages, test/asset paths, raw CDN, default, null)',
   },
 });

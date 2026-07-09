@@ -599,9 +599,9 @@ export const fetchGemini = async (prompt, retryCount = 0) => {
 // Used by buildSearchPayload to skip irrelevant fields when querying specific platforms.
 // Also exported so App.jsx can decide whether to skip TikTok or generic API calls entirely.
 export const FILTER_PLATFORM_SUPPORT = {
-  likes:          ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok'],
-  shares:         ['facebook', 'tiktok'],
-  comments:       ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok'],
+  likes:          ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok', 'quora'],
+  shares:         ['facebook', 'tiktok', 'quora'],
+  comments:       ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok', 'quora'],
   impressions:    ['facebook', 'instagram', 'linkedin', 'tiktok'],
   popularity:     ['facebook', 'instagram', 'linkedin', 'tiktok'],
   adBudget:       ['facebook', 'instagram', 'youtube', 'tiktok'],

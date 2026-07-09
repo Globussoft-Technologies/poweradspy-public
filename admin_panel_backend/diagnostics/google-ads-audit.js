@@ -34,6 +34,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { runAuditCli } = require('./lib/ads-audit-core');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { nasGoodMediaExpr } = require('./lib/media-good-expr');
 
 // Mirror the displayable filter's exact type predicates (works whether `type` is
 // keyword or text): IMAGE via term, ORGANIC SEARCH via match_phrase (it has a space).
@@ -81,11 +82,7 @@ runAuditCli({
     // so excluding pasimage/pasvideo is essential — without it the legacy paths would
     // wrongly count as healthy. Verified: with these exclusions, SQL IMAGE-unhealthy
     // (~5,440) matches the ES IMAGE failure group (5,442).
-    goodMediaExpr: `(image_url IS NOT NULL AND image_url <> ''
-      AND image_url NOT LIKE '%bydefault%'
-      AND image_url NOT LIKE '%DefaultImage%'
-      AND image_url NOT LIKE '%pasimage%'
-      AND image_url NOT LIKE '%pasvideo%')`,
-    unusableDesc: 'missing / a default or legacy non-NAS path (bydefault/DefaultImage/pasimage/pasvideo)',
+    goodMediaExpr: nasGoodMediaExpr('image_url'), // allowlist of real NAS prefixes, not a blocklist
+    unusableDesc: 'missing / not a real NAS media path (legacy pasimages, test/asset paths, raw CDN, default, null)',
   },
 });

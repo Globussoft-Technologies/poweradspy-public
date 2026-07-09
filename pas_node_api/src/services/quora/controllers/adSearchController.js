@@ -192,6 +192,11 @@ async function searchAds(req, db, logger) {
   if (p.gender) builder.setGender(ensureArray(p.gender));
   if (p.lower_age && p.upper_age) builder.setLowerAgeSeen({ lower_age: p.lower_age, upper_age: p.upper_age });
 
+  // Engagement range filters — Quora indexes likes/comments/shares only.
+  if (p.likes && Array.isArray(p.likes))       builder.setLikes(p.likes);
+  if (p.comments && Array.isArray(p.comments)) builder.setComments(p.comments);
+  if (p.shares && Array.isArray(p.shares))     builder.setShares(p.shares);
+
   const tsToDate = (ts, time) => new Date(Number(ts) * 1000).toISOString().slice(0, 10) + ' ' + time;
   if (Array.isArray(p.seen_btn_sort) && p.seen_btn_sort.length === 2) builder.setLastSeen({ lower_date: tsToDate(p.seen_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.seen_btn_sort[0], '23:59:59') });
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: tsToDate(p.post_date_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.post_date_btn_sort[0], '23:59:59') });

@@ -132,7 +132,7 @@ function buildNavbar() {
     native: ['category','category_new','ad_type','native_network','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     linkedin: ['category','category_new','engagement','cta','ad_type','language','verified','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     reddit: ['category','category_new','engagement','cta','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
-    quora: ['category','category_new','cta','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
+    quora: ['category','category_new','engagement','cta','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
     pinterest: ['category','category_new','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','affiliate_network','search_by_image'],
     tiktok: ['category','category_new','engagement','cta','ad_type','language','country','state','city','ecommerce_platform','funnel','marketing_platform','source','affiliate_network','search_by_image'],
   };
@@ -341,9 +341,9 @@ function buildSidebar() {
     // 2. Engagement (range sliders)
     (() => {
       const sliders = [
-        { id: 'likes_range', label: 'Likes', qp: 'likes', min: 0, max: 10000000, step: 1000, unit: null, loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook','instagram','youtube','linkedin','reddit'] },
-        { id: 'shares_range', label: 'Shares', qp: 'shares', min: 0, max: 1000000, step: 500, unit: null, loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook'] },
-        { id: 'comments_range', label: 'Comments', qp: 'comments', min: 0, max: 1000000, step: 500, unit: null, loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook','instagram','youtube','linkedin','reddit'] },
+        { id: 'likes_range', label: 'Likes', qp: 'likes', min: 0, max: 10000000, step: 1000, unit: null, loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook','instagram','youtube','linkedin','reddit','quora'] },
+        { id: 'shares_range', label: 'Shares', qp: 'shares', min: 0, max: 1000000, step: 500, unit: null, loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook','quora'] },
+        { id: 'comments_range', label: 'Comments', qp: 'comments', min: 0, max: 1000000, step: 500, unit: null, loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook','instagram','youtube','linkedin','reddit','quora'] },
         { id: 'impressions_range', label: 'Impressions', qp: 'impressions', min: 0, max: 100000000, step: 10000, unit: null, loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook','instagram','linkedin'] },
         { id: 'popularity_score', label: 'Popularity Score', qp: 'popularity', min: 0, max: 100, step: 1, unit: null, loose_ends: 'none', slider_scale: 'linear', pin_mode: 'single', platforms: ['facebook','instagram','linkedin'] },
         { id: 'avg_ad_budget', label: 'Avg. Ad Budget', qp: 'avgBudget', min: 0, max: 100000, step: 100, unit: 'USD', loose_ends: 'right', slider_scale: 'exponential', pin_mode: 'double', platforms: ['facebook','instagram'] },

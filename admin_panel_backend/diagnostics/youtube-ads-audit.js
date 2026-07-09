@@ -36,6 +36,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { runAuditCli } = require('./lib/ads-audit-core');
 const { getDisplayableMediaFilter } = require('../utils/displayable-media-filters');
+const { nasGoodMediaExpr } = require('./lib/media-good-expr');
 
 const TYPE = 'ad_type.keyword';
 const VIDEO_LIKE = ['VIDEO', 'DISCOVERY']; // the displayable filter's thumbnail_url branch
@@ -87,11 +88,7 @@ runAuditCli({
     // Mirrors the ES displayable filter's blocked substrings. MySQL LIKE is
     // case-insensitive under the default *_ci collation, so this also catches
     // mixed-case variants of the patterns.
-    goodMediaExpr: `(video_url IS NOT NULL AND video_url <> ''
-      AND video_url NOT LIKE '%bydefault%'
-      AND video_url NOT LIKE '%DefaultImage%'
-      AND video_url NOT LIKE '%pasimage%'
-      AND video_url NOT LIKE '%pasvideo%')`,
-    unusableDesc: 'missing / a default or blocked NAS path (bydefault/DefaultImage/pasimage/pasvideo)',
+    goodMediaExpr: nasGoodMediaExpr('video_url'), // allowlist of real NAS prefixes, not a blocklist
+    unusableDesc: 'missing / not a real NAS media path (legacy, test/asset paths, raw CDN, default, null)',
   },
 });

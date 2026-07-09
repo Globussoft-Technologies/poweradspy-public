@@ -103,6 +103,9 @@ class QuoraSearchQueryBuilder {
   setImageObject(v)    { this._params.imageObject = Array.isArray(v) ? v : [v]; return this; }
   setLogo(v)           { this._params.logo = Array.isArray(v) ? v : [v]; return this; }
   setHtmlContent(v)    { this._params.htmlContent = v; return this; }
+  setLikes(v)          { this._params.likes = Array.isArray(v) ? v : null; return this; }
+  setComments(v)       { this._params.comments = Array.isArray(v) ? v : null; return this; }
+  setShares(v)         { this._params.shares = Array.isArray(v) ? v : null; return this; }
 
   // ─── must (relevance) ──
 
@@ -280,6 +283,20 @@ class QuoraSearchQueryBuilder {
     return asFilter({ range: { 'quora_ad.lower_age_seen': { gte: parseInt(a.lower_age, 10), lte: parseInt(a.upper_age, 10) } } });
   }
 
+  // Engagement range filters. `vals` is a [min, max] pair (mirrors the Facebook
+  // builder's contract). Quora only indexes likes/comments/shares — no
+  // impressions/popularity/budget — so only those three are wired.
+  _getRangeEnv(field, vals) {
+    if (!vals || !Array.isArray(vals) || vals.length < 2) return null;
+    return asFilter({
+      range: { [field]: { gte: parseInt(vals[0], 10), lte: parseInt(vals[1], 10) } },
+    });
+  }
+
+  _getLikesEnv()    { return this._getRangeEnv('quora_ad.likes', this._params.likes); }
+  _getCommentsEnv() { return this._getRangeEnv('quora_ad.comments', this._params.comments); }
+  _getSharesEnv()   { return this._getRangeEnv('quora_ad.shares', this._params.shares); }
+
   _getLastSeenEnv() {
     const ls = this._params.lastSeen;
     if (!ls || !ls.lower_date || !ls.upper_date) return null;
@@ -402,6 +419,7 @@ class QuoraSearchQueryBuilder {
       '_getFunnelEnv', '_getAffiliateEnv', '_getMarketPlatformEnv',
       '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv',
       '_getDomainDateEnv', '_getNeedleEnv',
+      '_getLikesEnv', '_getCommentsEnv', '_getSharesEnv',
       '_getUrlEnv',
       '_getKeywordEnv', '_getPostOwnerNameEnv',
       '_getOcrEnv', '_getCelebrityEnv', '_getImageObjectEnv', '_getLogoEnv',
