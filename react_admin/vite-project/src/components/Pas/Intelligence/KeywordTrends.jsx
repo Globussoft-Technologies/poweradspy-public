@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import Cookies from "js-cookie";
+import { authFetch, requireAuthOrRedirect } from "./authFetch";
 import ItemFilter from "./ItemFilter";
 
 const NODE_API = (import.meta.env.VITE_NODE_USER_ACTIVITY_API ?? "").trim().replace(/\/$/, "");
@@ -60,17 +60,12 @@ const KeywordTrends = ({ onDataReady }) => {
   useEffect(() => {
     const fetchAllData = async () => {
       if (!NODE_API) return;
-      const token = Cookies.get("token");
+      if (!requireAuthOrRedirect()) return;
       const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
 
       try {
         // Fetch top keywords
-        const topRes = await fetch(`${NODE_API}/intelligence/top-keywords?type=${typeParam}`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
+        const topRes = await authFetch(`${NODE_API}/intelligence/top-keywords?type=${typeParam}`);
         if (topRes.ok) {
           const topJson = await topRes.json();
           if (topJson.code === 200 && topJson.data?.items) {
@@ -79,12 +74,7 @@ const KeywordTrends = ({ onDataReady }) => {
         }
 
         // Fetch summary stats
-        const summaryRes = await fetch(`${NODE_API}/intelligence/summary-stats?type=${typeParam}`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
+        const summaryRes = await authFetch(`${NODE_API}/intelligence/summary-stats?type=${typeParam}`);
         if (summaryRes.ok) {
           const summaryJson = await summaryRes.json();
           if (summaryJson.code === 200 && summaryJson.data) {
@@ -129,7 +119,7 @@ const KeywordTrends = ({ onDataReady }) => {
       if (!NODE_API) { setError("API URL not configured"); return; }
       setError(null);
       try {
-        const token = Cookies.get("token");
+        if (!requireAuthOrRedirect()) return;
         const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
         const params = new URLSearchParams({
           type: typeParam,
@@ -140,12 +130,7 @@ const KeywordTrends = ({ onDataReady }) => {
           ...(selectedFilterValue ? { search_value: selectedFilterValue } : {})
         });
         console.log('[fetchTableData] params:', Object.fromEntries(params));
-        const res = await fetch(`${NODE_API}/intelligence/keyword-trends?${params}`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
+        const res = await authFetch(`${NODE_API}/intelligence/keyword-trends?${params}`);
         if (!res.ok) throw new Error(`Server error: ${res.status}`);
         const json = await res.json();
         if (json.code !== 200) throw new Error(json.message || "Unexpected response");

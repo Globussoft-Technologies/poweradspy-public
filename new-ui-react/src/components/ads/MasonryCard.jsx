@@ -41,6 +41,7 @@ import {
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { useTheme } from "../../hooks/useTheme";
 import { iconColorClass } from "../../utils/iconColors";
+import PlatformBadgesRow from "../shared/PlatformBadgesRow";
 
 import metaIcon from "../../assets/meta.svg";
 import fbIcon from "../../assets/fb.png";
@@ -1048,7 +1049,42 @@ const MasonryCard = ({
             )}
           </div>
 
-          {/* Marketing platform / ecommerce / funnel logos */}
+          {/* Title in body — only for non-media variants (text/banner/text-image already render it inside the media) */}
+          {!hasMediaOverlay && decodedTitle && (
+            <h3 className="text-[13px] leading-relaxed text-zinc-200 break-words line-clamp-2">
+              {decodedTitle}
+            </h3>
+          )}
+
+          {/* Engagement stats — icon + value, label revealed on hover.
+              Renders only the fields that have data; if none do, the whole
+              row is omitted so empty cards don't show a meaningless rule. */}
+          {availableStats.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-3 border-t border-dashed border-zinc-700/50">
+              {availableStats.map((s) => {
+                const Icon = s.Icon;
+                return (
+                  <div
+                    key={s.key}
+                    className="relative group/stat inline-flex items-center gap-1.5"
+                  >
+                    <Icon size={13} className={`flex-shrink-0 ${iconColorClass(s.color, isLight)}`} />
+                    <span className="text-[12px] font-bold text-zinc-100">
+                      {s.value}
+                    </span>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/stat:opacity-100 pointer-events-none transition-opacity z-50">
+                      {s.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Marketing platform / ecommerce / funnel / affiliate badges —
+              placed above the date footer so they visually sit between the
+              engagement metrics and the last-seen date. Overflow scrolls
+              horizontally instead of wrapping so tall ad cards stay compact. */}
           {(() => {
             const mpUrlObj = ad.marketPlatformUrls || {};
             const mpRedirects = (mpUrlObj.url_redirects || "")
@@ -1112,55 +1148,9 @@ const MasonryCard = ({
             const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];
             if (allLogos.length === 0) return null;
             return (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {allLogos.map((logo) => (
-                  <div key={logo.key} className="relative shrink-0 group/logo">
-                    <img
-                      src={logo.src}
-                      alt={logo.title}
-                      title={logo.title}
-                      className="h-4 w-auto object-contain opacity-80"
-                      onError={(e) => {
-                        e.target.style.display = "none";
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
+              <PlatformBadgesRow allLogos={allLogos} />
             );
           })()}
-
-          {/* Title in body — only for non-media variants (text/banner/text-image already render it inside the media) */}
-          {!hasMediaOverlay && decodedTitle && (
-            <h3 className="text-[13px] leading-relaxed text-zinc-200 break-words line-clamp-2">
-              {decodedTitle}
-            </h3>
-          )}
-
-          {/* Engagement stats — icon + value, label revealed on hover.
-              Renders only the fields that have data; if none do, the whole
-              row is omitted so empty cards don't show a meaningless rule. */}
-          {availableStats.length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-3 border-t border-dashed border-zinc-700/50">
-              {availableStats.map((s) => {
-                const Icon = s.Icon;
-                return (
-                  <div
-                    key={s.key}
-                    className="relative group/stat inline-flex items-center gap-1.5"
-                  >
-                    <Icon size={13} className={`flex-shrink-0 ${iconColorClass(s.color, isLight)}`} />
-                    <span className="text-[12px] font-bold text-zinc-100">
-                      {s.value}
-                    </span>
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/stat:opacity-100 pointer-events-none transition-opacity z-50">
-                      {s.label}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
 
           {/* Budget chip — qualitative tag (`ad.budget`, e.g. TikTok's
               "High/Medium/Low") and/or numeric range (`ad.lowerBudget`,

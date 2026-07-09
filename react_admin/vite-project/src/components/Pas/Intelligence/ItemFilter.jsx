@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import Cookies from "js-cookie";
+import { authFetch, requireAuthOrRedirect } from "./authFetch";
 
 const NODE_API = (import.meta.env.VITE_NODE_USER_ACTIVITY_API ?? "").trim().replace(/\/$/, "");
 
@@ -26,14 +26,9 @@ const ItemFilter = ({ typeTab, onFilterApply }) => {
       setSelectedItem(null);
       setSearchTerm("");
       try {
-        const token = Cookies.get("token");
+        if (!requireAuthOrRedirect()) return;
         const type = getApiType();
-        const res = await fetch(`${NODE_API}/intelligence/items-list?type=${type}`, {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const res = await authFetch(`${NODE_API}/intelligence/items-list?type=${type}`);
         const json = await res.json();
         if (json.code === 200 && json.data?.items) {
           setItems(json.data.items.filter((item) => item && item.value));

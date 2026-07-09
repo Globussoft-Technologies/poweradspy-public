@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import OriginalPreview from "./OriginalPreview";
+import PlatformBadgesRow from "../shared/PlatformBadgesRow";
 import { createShareLink, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent } from "../../services/api";
 import { downloadAdAsPdf } from "../../services/adPdf";
 
@@ -929,76 +930,6 @@ const AdDetailModal = ({
                     <img src={metaIcon} alt="meta" className="w-4 h-4 flex-shrink-0" />
                   )}
                 </div>
-                {/* Platform logos row */}
-                {(() => {
-                  const mpLogos = [];
-                  const mpUrlObj = ad.marketPlatformUrls || {};
-                  const mpRedirects = (mpUrlObj.url_redirects || '').split('||').map(s => s.trim()).filter(Boolean);
-                  const mpRedirectUrlsArr = Array.isArray(mpUrlObj.redirect_urls)
-                    ? mpUrlObj.redirect_urls
-                    : typeof mpUrlObj.redirect_urls === 'string' && mpUrlObj.redirect_urls
-                      ? [mpUrlObj.redirect_urls]
-                      : [];
-                  const mpUrlSources = [
-                    ad.destinationUrl,
-                    mpUrlObj.destination_url,
-                    mpUrlObj.url_destination,
-                    mpUrlObj.source_url,
-                    mpUrlObj.redirect_url,
-                    mpUrlObj.final_url,
-                    ...mpRedirects,
-                    ...mpRedirectUrlsArr,
-                  ];
-                  const mpSeen = new Set();
-                  for (const urlVal of mpUrlSources) {
-                    if (!urlVal) continue;
-                    const lower = urlVal.toLowerCase();
-                    for (const mp of DM_MP_LIST) {
-                      if (lower.includes(mp.match) && !mpSeen.has(mp.match)) {
-                        mpSeen.add(mp.match);
-                        const src = DM_MP_IMGS[mp.file];
-                        if (src) mpLogos.push({ key: mp.match, src, title: mp.title });
-                      }
-                    }
-                  }
-                  const ecRaw = ad.builtWith;
-                  const ecList = Array.isArray(ecRaw) ? ecRaw : ecRaw ? [ecRaw] : [];
-                  const ecLogos = ecList.map(name => {
-                    const src = DM_EC_IMGS[name.toLowerCase().replace(/\s+/g, '')];
-                    return src ? { key: `ec_${name}`, src, title: name } : null;
-                  }).filter(Boolean);
-                  const fnRaw = ad.builtWithFunnel;
-                  const fnList = Array.isArray(fnRaw) ? fnRaw : fnRaw ? [fnRaw] : [];
-                  const fnLogos = fnList.map(name => {
-                    const src = DM_FN_IMGS[name.toLowerCase().replace(/\s+/g, '')];
-                    return src ? { key: `fn_${name}`, src, title: name } : null;
-                  }).filter(Boolean);
-                  const afRaw = ad.affiliateData;
-                  const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
-                  const afLogos = afList.map(name => {
-                    const src = DM_AF_IMGS[name.toLowerCase().replace(/\s+/g, '')];
-                    return src ? { key: `af_${name}`, src, title: name } : null;
-                  }).filter(Boolean);
-                  const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];
-                  if (allLogos.length === 0) return null;
-                  return (
-                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                      {allLogos.map((logo) => (
-                        <div key={logo.key} className="relative shrink-0 group/logo">
-                          <img
-                            src={logo.src}
-                            alt={logo.title}
-                            className="h-4 w-auto object-contain"
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                          />
-                          <div className="absolute bottom-full left-0 mb-1 px-2 py-1 rounded text-[10px] font-semibold whitespace-nowrap pointer-events-none bg-[#1a1a1a] text-white z-[9999] opacity-0 group-hover/logo:opacity-100 transition-opacity border border-white/10 shadow-xl">
-                            {logo.title}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
               </div>
               <button
                 onClick={() => {
@@ -1712,6 +1643,67 @@ const AdDetailModal = ({
     )}
 </div>
 </div>
+            {/* Platform logos row — sits below the details box and above the
+                Analytics action button. Shows marketing / ecommerce / funnel /
+                affiliate badges consolidated into one chip stack. */}
+            {(() => {
+              const mpLogos = [];
+              const mpUrlObj = ad.marketPlatformUrls || {};
+              const mpRedirects = (mpUrlObj.url_redirects || '').split('||').map(s => s.trim()).filter(Boolean);
+              const mpRedirectUrlsArr = Array.isArray(mpUrlObj.redirect_urls)
+                ? mpUrlObj.redirect_urls
+                : typeof mpUrlObj.redirect_urls === 'string' && mpUrlObj.redirect_urls
+                  ? [mpUrlObj.redirect_urls]
+                  : [];
+              const mpUrlSources = [
+                ad.destinationUrl,
+                mpUrlObj.destination_url,
+                mpUrlObj.url_destination,
+                mpUrlObj.source_url,
+                mpUrlObj.redirect_url,
+                mpUrlObj.final_url,
+                ...mpRedirects,
+                ...mpRedirectUrlsArr,
+              ];
+              const mpSeen = new Set();
+              for (const urlVal of mpUrlSources) {
+                if (!urlVal) continue;
+                const lower = urlVal.toLowerCase();
+                for (const mp of DM_MP_LIST) {
+                  if (lower.includes(mp.match) && !mpSeen.has(mp.match)) {
+                    mpSeen.add(mp.match);
+                    const src = DM_MP_IMGS[mp.file];
+                    if (src) mpLogos.push({ key: mp.match, src, title: mp.title });
+                  }
+                }
+              }
+              const ecRaw = ad.builtWith;
+              const ecList = Array.isArray(ecRaw) ? ecRaw : ecRaw ? [ecRaw] : [];
+              const ecLogos = ecList.map(name => {
+                const src = DM_EC_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                return src ? { key: `ec_${name}`, src, title: name } : null;
+              }).filter(Boolean);
+              const fnRaw = ad.builtWithFunnel;
+              const fnList = Array.isArray(fnRaw) ? fnRaw : fnRaw ? [fnRaw] : [];
+              const fnLogos = fnList.map(name => {
+                const src = DM_FN_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                return src ? { key: `fn_${name}`, src, title: name } : null;
+              }).filter(Boolean);
+              const afRaw = ad.affiliateData;
+              const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
+              const afLogos = afList.map(name => {
+                const src = DM_AF_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                return src ? { key: `af_${name}`, src, title: name } : null;
+              }).filter(Boolean);
+              const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];
+              if (allLogos.length === 0) return null;
+              return (
+                <div className="pt-1">
+                  <PlatformBadgesRow allLogos={allLogos} />
+                </div>
+              );
+            })()}
+
             {/* Action buttons */}
             <div className="flex gap-2 pt-1">
               <button

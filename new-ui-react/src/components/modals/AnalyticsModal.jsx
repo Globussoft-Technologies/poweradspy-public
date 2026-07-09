@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import PlatformBadgesRow from "../shared/PlatformBadgesRow";
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
 import mpConversionx from "../../assets/marketingPlatform/conversionx.co.png";
@@ -1773,47 +1774,7 @@ const AnalyticsModal = ({
                 const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];
                 if (allLogos.length === 0) return null;
 
-                return (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {allLogos.map((logo) => (
-                      <div
-                        key={logo.key}
-                        className="relative shrink-0"
-                        onMouseEnter={(e) => {
-                          const tip = e.currentTarget.querySelector('.pl-tip');
-                          if (tip) {
-                            tip.style.left = e.clientX + 'px';
-                            tip.style.top = (e.clientY - 32) + 'px';
-                            tip.style.opacity = '1';
-                          }
-                        }}
-                        onMouseMove={(e) => {
-                          const tip = e.currentTarget.querySelector('.pl-tip');
-                          if (tip) {
-                            tip.style.left = e.clientX + 'px';
-                            tip.style.top = (e.clientY - 32) + 'px';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          const tip = e.currentTarget.querySelector('.pl-tip');
-                          if (tip) tip.style.opacity = '0';
-                        }}
-                      >
-                        <img
-                          src={logo.src}
-                          alt={logo.title}
-                          className="h-6 w-auto object-contain"
-                          style={{ display: 'none' }}
-                          onLoad={(e) => { e.target.style.display = 'block'; }}
-                          onError={(e) => { e.target.style.display = 'none'; }}
-                        />
-                        <div className="pl-tip fixed px-2 py-1 rounded text-[10px] font-semibold whitespace-nowrap pointer-events-none bg-gray-800 text-white z-[9999] -translate-x-1/2 transition-opacity opacity-0">
-                          {logo.title}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
+                return <PlatformBadgesRow allLogos={allLogos} />;
               })()}
 
               {/* Title */}

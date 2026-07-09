@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { RxCross1 } from "react-icons/rx";
 import { CiFilter } from "react-icons/ci";
 import { FaArrowDown, FaArrowUp, FaCalendarAlt } from "react-icons/fa";
-import Cookies from "js-cookie";
+import { authFetch, requireAuthOrRedirect } from "./authFetch";
 
 const NODE_API = import.meta.env.VITE_NODE_USER_ACTIVITY_API?.replace(/\/$/, '');
 
@@ -218,7 +218,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
   useEffect(() => {
     const controller = new AbortController();
-    const token = Cookies.get("token");
+    if (!requireAuthOrRedirect()) return;
     setStatsLoading(true);
 
     // Only fetch if currentPeriod is a preset or if custom dates are applied
@@ -246,10 +246,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
       prev_to_date: `${previousDates.to}T23:59:59`,
     });
 
-    fetch(`${NODE_API}/intelligence/stats?${params}`, {
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    authFetch(`${NODE_API}/intelligence/stats?${params}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((json) => { if (json.code === 200) setStats(json.data); })
       .catch(() => {})
@@ -259,7 +256,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
   useEffect(() => {
     const controller = new AbortController();
-    const token = Cookies.get("token");
+    if (!requireAuthOrRedirect()) return;
     setUsersLoading(true);
     setUsersError(null);
 
@@ -277,10 +274,7 @@ const TopUsers = ({ onExport, forceExpand = false, onDataReady }) => {
 
     const params = new URLSearchParams({ size: "50", from_date, to_date });
     if (flaggedOnly) params.set("flagged_only", "true");
-    fetch(`${NODE_API}/intelligence/top-users?${params}`, {
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    authFetch(`${NODE_API}/intelligence/top-users?${params}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((json) => {
         if (json.code === 200) {

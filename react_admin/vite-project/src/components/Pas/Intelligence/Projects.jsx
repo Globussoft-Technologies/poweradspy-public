@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { RxCross1 } from "react-icons/rx";
-import Cookies from "js-cookie";
+import { authFetch, requireAuthOrRedirect } from "./authFetch";
 
 const NODE_API = (import.meta.env.VITE_NODE_USER_ACTIVITY_API ?? "").trim().replace(/\/$/, "");
 
@@ -100,13 +100,8 @@ const Projects = ({ forceExpand = false, onDataReady }) => {
         params.set("size", String(PAGE_SIZE));
         if (f.userFilter) params.set("user", f.userFilter);
 
-        const token = Cookies.get("token");
-        const res = await fetch(`${NODE_API}/intelligence/projects?${params.toString()}`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
+        if (!requireAuthOrRedirect()) return;
+        const res = await authFetch(`${NODE_API}/intelligence/projects?${params.toString()}`);
         if (!res.ok) throw new Error(`Server error: ${res.status}`);
         const json = await res.json();
         if (json.code !== 200) throw new Error(json.message || "Unexpected response");

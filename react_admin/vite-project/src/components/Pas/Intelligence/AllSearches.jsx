@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { RxCross1 } from "react-icons/rx";
-import Cookies from "js-cookie";
+import { authFetch, requireAuthOrRedirect } from "./authFetch";
 
 const NODE_API = (import.meta.env.VITE_NODE_USER_ACTIVITY_API ?? "").trim().replace(/\/$/, "");
 
@@ -550,10 +550,8 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   const [filterOptions, setFilterOptions] = useState({ keywords: [], advertisers: [], domains: [], countries: [], users: [] });
   useEffect(() => {
     if (!NODE_API) return;
-    const token = Cookies.get("token");
-    fetch(`${NODE_API}/intelligence/filter-options`, {
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
+    if (!requireAuthOrRedirect()) return;
+    authFetch(`${NODE_API}/intelligence/filter-options`)
       .then((r) => r.json())
       .then((j) => {
         console.log('[AllSearches] filterOptions response:', j);
@@ -665,10 +663,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       console.log("[openStatusModal] Fetching from:", url);
       console.log("[openStatusModal] Row data:", rowData);
 
-      const token = Cookies.get("token");
-      const response = await fetch(url, {
-        headers: token ? { "Authorization": `Bearer ${token}` } : {},
-      });
+      const response = await authFetch(url);
 
       console.log("[openStatusModal] Response status:", response.status);
 
@@ -744,7 +739,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         const params = buildParams(true);
         const summaryParams = buildParams(false);
 
-        const token = Cookies.get("token");
+        if (!requireAuthOrRedirect()) return;
 
         const allSearchesUrl = `${NODE_API}/intelligence/all-searches?${params.toString()}`;
         const summaryUrl = `${NODE_API}/intelligence/summary?${summaryParams.toString()}`;
@@ -765,18 +760,8 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
 
         // Fetch both in parallel
         const [mainRes, summaryRes] = await Promise.all([
-          fetch(allSearchesUrl, {
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-          }),
-          fetch(summaryUrl, {
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-          })
+          authFetch(allSearchesUrl),
+          authFetch(summaryUrl),
         ]);
 
         if (!mainRes.ok) throw new Error(`Server error: ${mainRes.status}`);
