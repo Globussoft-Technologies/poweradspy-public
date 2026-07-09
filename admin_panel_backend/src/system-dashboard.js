@@ -114,9 +114,10 @@ const NET_KEYS = Object.keys(NETS);
 
 // ---- small helpers -------------------------------------------------------
 
-async function instantQuery(promql) {
+async function instantQuery(promql, atUnix) {
   if (!PROM_BASE) return { data: { result: [] } };
-  const url = `${PROM_BASE}/api/v1/query?query=${encodeURIComponent(promql)}`;
+  let url = `${PROM_BASE}/api/v1/query?query=${encodeURIComponent(promql)}`;
+  if (atUnix) url += `&time=${atUnix}`;   // evaluate the query AT a past instant (for historical windows)
   const res = await axios.get(url, { timeout: 12000 });
   return res.data;
 }
@@ -627,10 +628,10 @@ async function overview(req, res) {
                             (new Date(b.last_active || 0)) - (new Date(a.last_active || 0)));
 
   // Make each network's "live" count use the SAME definition as the per-system
-  // `active` badge (heartbeat OR scraping-now OR recent). Earlier the rollup
-  // loop only knew about heartbeat/recency, so a network could show "0 live"
-  // while its system cards showed "Active" (scraping now). Recompute from the
-  // finalized rows so the network card and the grid always agree.
+  // `active` badge (heartbeat OR scraping-now OR recent). Earlier the rollup  
+  // loop only knew about heartbeat/recency, so a network could show "0 live"  
+  // while its system cards showed "Active" (scraping now). Recompute from the 
+  // finalized rows so the network card and the grid always agree.             
   const netActiveCount = {};
   for (const r of systemRows) {
     if (!r.active) continue;
@@ -1680,4 +1681,139 @@ async function youtubeBenchmark(req, res) {
   }
 }
 
-module.exports = { overview, systemDrill, accountsOverview, accountTimeline, platforms, systemDebug, gdnBenchmark, youtubeBenchmark, exporterHealth };
+// ---- OCR processing analytics (Prometheus) -------------------------------
+//
+// POST /dashboard/ocr  { range }
+// Ports the "OCR" Grafana dashboard (grafana.poweradspy.ai, datasource kT4VkhPnk
+// = the SAME prometheus.poweradspy.ai we already read via PROM_BASE) into the
+// System Info page. The OCR workers expose two pull-scraped counters:
+//   ocr_status_total{platform,status,code,instance}
+//       code "0"      = image processed OK
+//       code "1|2|3"  = processed but failed (no image / ocr error / …)
+//   ocr_request_status_total{platform,status,instance}
+//       status "urls found" / "no urls found"  = the get-image-URL stage
+// NOTE: unlike the crawler metrics these carry NO `mode` label — do not add one.
+// Everything is fail-safe: a missing/empty Prometheus just yields zeros.
+
+// Window for the OCR queries — MATCHES the OCR Grafana dashboard exactly.
+// Every panel there hardcodes a trailing `increase(...[24h])` reduced to the last
+// point (reduceOptions.lastNotNull), so it always shows the last 24 hours,
+// anchored at the END of the selected range (the range length is ignored). We
+// mirror that: a fixed 24h window evaluated AT the end of the `to` day (clamped
+// to now for "today"). Prometheus `increase(metric[24h])` @ T = increase over
+// [T-24h, T].
+const OCR_WINDOW_SEC = 24 * 3600;
+function ocrWindow(range) {
+  const { fromDay, toDay } = dayBounds(range);
+  let toEnd = Math.floor(new Date(`${toDay}T23:59:59Z`).getTime() / 1000);
+  const now = Math.floor(Date.now() / 1000);
+  if (toEnd > now) toEnd = now;            // "today" -> anchor on now, no future window
+  return { winSec: OCR_WINDOW_SEC, atUnix: toEnd, fromDay, toDay };
+}
+
+function ocrQuery(metric, filter, winSec, agg) {
+  const sel = filter ? `${metric}{${filter}}` : metric;
+  const inner = `increase(${sel}[${winSec}s])`;
+  return `${agg}(${inner})`;
+}
+
+// sum by (<label>) (increase(<metric>{<filter>}[W])) -> { <label value>: number }
+async function ocrSumBy(metric, byLabel, filter, winSec, atUnix) {
+  const out = {};
+  try {
+    const r = await instantQuery(ocrQuery(metric, filter, winSec, `sum by (${byLabel})`), atUnix);
+    for (const s of (r.data?.result || [])) {
+      const k = s.metric?.[byLabel];
+      const v = Number(s.value?.[1]);
+      if (k != null && k !== '' && Number.isFinite(v)) out[k] = (out[k] || 0) + v;
+    }
+  } catch (e) { /* fail-safe */ }
+  return out;
+}
+
+const round = (v) => Math.round(Number(v) || 0);
+const pct = (a, b) => (b > 0 ? Number(((100 * a) / b).toFixed(1)) : 0);
+
+async function ocr(req, res) {
+  const range = req.body?.range || {};
+  const { winSec, atUnix, fromDay, toDay } = ocrWindow(range);
+
+  const cacheKey = `dash_ocr_${fromDay}_${toDay}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  if (!PROM_BASE) {
+    const payload = { available: false, reason: 'PROMETHEUS_URL not set',
+      window: { from: fromDay, to: toDay }, totals: {}, platforms: [], instances: [], statuses: [] };
+    return res.json(payload);
+  }
+
+  // All fail-safe + parallel.
+  const [succByPlat, failByPlat, urlsByPlat, noUrlsByPlat,
+         succByInst, failByInst, statusAll] = await Promise.all([
+    ocrSumBy('ocr_status_total', 'platform', `code="0"`, winSec, atUnix),
+    ocrSumBy('ocr_status_total', 'platform', `code=~"1|2|3"`, winSec, atUnix),
+    ocrSumBy('ocr_request_status_total', 'platform', `status="urls found"`, winSec, atUnix),
+    ocrSumBy('ocr_request_status_total', 'platform', `status="no urls found"`, winSec, atUnix),
+    ocrSumBy('ocr_status_total', 'instance', `code="0"`, winSec, atUnix),
+    ocrSumBy('ocr_status_total', 'instance', `code=~"1|2|3"`, winSec, atUnix),
+    ocrSumBy('ocr_status_total', 'status', '', winSec, atUnix),
+  ]);
+
+  // ---- per-platform rollup (union of every platform seen across the maps) ----
+  const platKeys = [...new Set([
+    ...Object.keys(succByPlat), ...Object.keys(failByPlat),
+    ...Object.keys(urlsByPlat), ...Object.keys(noUrlsByPlat),
+  ])];
+  const platforms = platKeys.map((p) => {
+    const successful = round(succByPlat[p]);
+    const unsuccessful = round(failByPlat[p]);
+    const processed = successful + unsuccessful;
+    return {
+      platform: p,
+      processed, successful, unsuccessful,
+      success_rate: pct(successful, processed),
+      urls_found: round(urlsByPlat[p]),
+      no_urls_found: round(noUrlsByPlat[p]),
+    };
+  }).sort((a, b) => b.processed - a.processed);
+
+  // ---- per-instance (system-wise) rollup -------------------------------------
+  const instKeys = [...new Set([...Object.keys(succByInst), ...Object.keys(failByInst)])];
+  const instances = instKeys.map((i) => {
+    const successful = round(succByInst[i]);
+    const unsuccessful = round(failByInst[i]);
+    const processed = successful + unsuccessful;
+    return { instance: i, processed, successful, unsuccessful, success_rate: pct(successful, processed) };
+  }).sort((a, b) => b.processed - a.processed);
+
+  // ---- overall status breakdown (every textual status, e.g. success / no image) ----
+  const statuses = Object.entries(statusAll)
+    .map(([status, v]) => ({ status, count: round(v) }))
+    .sort((a, b) => b.count - a.count);
+
+  const successful = platforms.reduce((x, p) => x + p.successful, 0);
+  const unsuccessful = platforms.reduce((x, p) => x + p.unsuccessful, 0);
+  const processed = successful + unsuccessful;
+  const urls_found = platforms.reduce((x, p) => x + p.urls_found, 0);
+  const no_urls_found = platforms.reduce((x, p) => x + p.no_urls_found, 0);
+
+  const payload = {
+    available: processed > 0 || instances.length > 0,
+    generatedAt: new Date().toISOString(),
+    window: { from: fromDay, to: toDay },
+    totals: {
+      processed, successful, unsuccessful,
+      success_rate: pct(successful, processed),
+      urls_found, no_urls_found,
+      instances: instances.length,
+    },
+    platforms,
+    instances,
+    statuses,
+  };
+  cache.set(cacheKey, payload, 60);
+  return res.json(payload);
+}
+
+module.exports = { overview, systemDrill, accountsOverview, accountTimeline, platforms, systemDebug, gdnBenchmark, youtubeBenchmark, exporterHealth, ocr };

@@ -553,6 +553,24 @@ export const fetchExporterHealth = createAsyncThunk(
   }
 );
 
+// NEW — OCR processing analytics (Prometheus: ocr_status_total / ocr_request_status_total).
+export const fetchOcrAnalytics = createAsyncThunk(
+  "fetchOcrAnalytics/details",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/system-metrics/dashboard/ocr`,
+        args || {},
+        { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || error.message);
+    }
+  }
+);
+
 export const fetchSystemInfoAccounts = createAsyncThunk(
   "fetchSystemInfoAccounts/details",
   async (args, { rejectWithValue }) => {

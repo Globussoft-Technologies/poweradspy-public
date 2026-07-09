@@ -26,6 +26,7 @@ import {
   fetchGdnBenchmark,
   fetchYoutubeBenchmark,
   fetchExporterHealth,
+  fetchOcrAnalytics,
   fetchNasStorage,
   fetchInfraStorage
 } from "./../actions/powerAdsPyActionsApi";
@@ -88,6 +89,9 @@ const initialState = {
   ytBenchmark: null,
   loadingYtBenchmark: false,
   exporterHealth: null,
+  // NEW — OCR processing analytics
+  ocrAnalytics: null,
+  loadingOcrAnalytics: false,
   network: "",
 };
 
@@ -514,6 +518,19 @@ const networkTypesSlice = createSlice({
            })
            .addCase(fetchExporterHealth.rejected, (state) => {
              state.exporterHealth = { up: false };
+           });
+
+           // NEW — OCR processing analytics
+           builder
+           .addCase(fetchOcrAnalytics.pending, (state) => {
+             state.loadingOcrAnalytics = true;
+           })
+           .addCase(fetchOcrAnalytics.fulfilled, (state, action) => {
+             state.loadingOcrAnalytics = false;
+             state.ocrAnalytics = action.payload;
+           })
+           .addCase(fetchOcrAnalytics.rejected, (state) => {
+             state.loadingOcrAnalytics = false;
            });
   },
 });

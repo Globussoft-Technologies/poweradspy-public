@@ -1329,7 +1329,10 @@ const AnalyticsModal = ({
         icon: Activity,
         color: "text-emerald-400",
       },
-      {
+      // Quora hides POST DATE and RUNNING DAYS: the crawler's post_date for Quora
+      // is unreliable, so we surface neither it nor the running-days figure derived
+      // from it. Other networks keep both rows.
+      ...(ctx.platform === 'quora' ? [] : [{
         label: "POST DATE",
         // Old rows can carry the epoch-0 (1970-01-01), zero-date (0000-00-00) or ES sentinel
         // (0001-01-01) when the crawler never supplied a real publish date — show "—" (no date)
@@ -1341,8 +1344,8 @@ const AnalyticsModal = ({
         })(),
         icon: Hash,
         color: "text-purple-400",
-      },
-      {
+      }]),
+      ...(ctx.platform === 'quora' ? [] : [{
         label: "RUNNING DAYS",
         // Running days = last_seen − post_date, computed from the same `d` dates shown
         // above (epoch or datetime string), irrespective of the backend days_running.
@@ -1369,7 +1372,7 @@ const AnalyticsModal = ({
         })(),
         icon: Clock,
         color: "text-orange-400",
-      },
+      }]),
       {
         label: "AD LANGUAGE",
         value: d.language || d.lang || d.adLanguage || d.ad_language || "—",

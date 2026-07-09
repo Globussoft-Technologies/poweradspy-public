@@ -19,6 +19,7 @@ import {
   fetchYoutubeBenchmark,
   fetchStatusSystemInfo,
   fetchExporterHealth,
+  fetchOcrAnalytics,
 } from "../../store/actions/powerAdsPyActionsApi";
 import TimeChart from "./ModalSystemStatusInfo";
 import ModalAccountStatusInfo from "./ModalAccountStatusInfo";
@@ -123,6 +124,9 @@ const agoText = (sec) => {
 
 const nfmt = (n) =>
   n == null ? "—" : Number(n).toLocaleString("en-US");
+
+// OCR success-rate cell: "98.5%" when there were attempts, else "—".
+const ocrPct = (r) => (r && r.processed ? `${r.success_rate}%` : "—");
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // "2026-06-18" -> "18 Jun 2026"
@@ -927,7 +931,8 @@ const CrawlerDashboard = () => {
           dashboardAccountTimeline, loadingDashboardAccountTimeline,
           dashboardPlatforms, systemDebug, loadingSystemDebug,
           gdnBenchmark, loadingGdnBenchmark,
-          ytBenchmark, loadingYtBenchmark } =
+          ytBenchmark, loadingYtBenchmark,
+          ocrAnalytics, loadingOcrAnalytics } =
     useSelector((s) => s.poweradspy);
 
   const [dateRange, setDateRange] = useState(loadSelectedDates());
@@ -1009,6 +1014,8 @@ const CrawlerDashboard = () => {
       .catch(() => {});
     // raw metrics-source health (send-metrics) — separate, never blocks overview
     dispatch(fetchExporterHealth());
+    // OCR processing analytics (Prometheus) — honors the same date window
+    dispatch(fetchOcrAnalytics({ range: buildPayload().range }));
   }, [dispatch, buildPayload]);
 
   /* fetch on filter/date change */
@@ -1063,6 +1070,8 @@ const CrawlerDashboard = () => {
   const live = dashboardOverview?.live || {};
   const networks = dashboardOverview?.networks || [];
   const systems = useMemo(() => dashboardOverview?.systems || [], [dashboardOverview]);
+  const ocr = ocrAnalytics || {};
+  const ocrTotals = ocr.totals || {};
 
   /* derive filtered + sorted systems */
   const visibleSystems = useMemo(() => {
@@ -1570,6 +1579,106 @@ const CrawlerDashboard = () => {
               </div>
             );
           })}
+      </div>
+
+      {/* ===== OCR processing (Prometheus: ocr_status_total / ocr_request_status_total) ===== */}
+      <div className="flex flex-col gap-3 rounded-[14px] border border-[#eef1fb] bg-[#fbfcff] px-4 py-4">
+        <div className="flex items-center gap-2 text-[18px] font-[600] text-[#264688]">
+          OCR Processing
+          <SourceDot s="prom" />
+          <span className="text-[13px] font-normal text-[#9aa2c0]">
+            image OCR / OCB · rolling 24h{ocr.window?.to ? ` ending ${niceDate(ocr.window.to)}` : ""} (matches Grafana)
+          </span>
+          {ocrTotals.instances ? (
+            <span className="rounded-full bg-[#eef2ff] px-2 py-0.5 text-[12px] font-normal text-[#1f296a]">
+              {nfmt(ocrTotals.instances)} instances
+            </span>
+          ) : null}
+        </div>
+
+        {loadingOcrAnalytics && !ocrAnalytics ? (
+          <div className="flex flex-wrap gap-3">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-[92px] w-[150px] animate-pulse rounded-[14px] border border-[#eef1fb] bg-white" />
+            ))}
+          </div>
+        ) : !ocr.available ? (
+          <div className="rounded-[12px] border border-[#eef1fb] bg-white px-6 py-8 text-center text-[13px] text-[#9aa2c0]">
+            No OCR metrics for the selected window
+            {ocr.reason ? ` · ${ocr.reason}` : " (the OCR exporters reported nothing in this range)."}
+          </div>
+        ) : (
+          <>
+            {/* KPI tiles */}
+            <div className="flex flex-wrap gap-3">
+              <KpiTile label="Ads Processed" value={nfmt(ocrTotals.processed)} accent="#264688" source="prom"
+                sub="OCR attempts (ok + failed)" hint="sum(increase(ocr_status_total[window]))" />
+              <KpiTile label="Successful" value={nfmt(ocrTotals.successful)} accent="#16a34a" source="prom"
+                sub="code 0" hint="ocr_status_total{code=0}" />
+              <KpiTile label="Unsuccessful" value={nfmt(ocrTotals.unsuccessful)} accent="#cd213b" source="prom"
+                sub="code 1 / 2 / 3" hint="ocr_status_total{code=~'1|2|3'}" />
+              <KpiTile label="Success Rate"
+                value={ocrTotals.processed ? `${ocrTotals.success_rate}%` : "—"}
+                accent="#7c3aed" source="prom" sub="ok / processed" />
+              <KpiTile label="URLs Found" value={nfmt(ocrTotals.urls_found)} accent="#16a34a" source="prom"
+                sub="get-image-url stage" hint="ocr_request_status_total{status='urls found'}" />
+              <KpiTile label="No URLs" value={nfmt(ocrTotals.no_urls_found)} accent="#9aa2c0" source="prom"
+                sub="get-image-url stage" hint="ocr_request_status_total{status='no urls found'}" />
+            </div>
+
+            {/* platform-wise table */}
+            <BenchTable
+              title="Platform-wise OCR"
+              rows={(ocr.platforms || []).map((p) => ({
+                label: NETWORK_LABEL[p.platform] || p.platform,
+                processed: p.processed,
+                successful: p.successful,
+                unsuccessful: p.unsuccessful,
+                rate: ocrPct(p),
+                urls_found: p.urls_found,
+                no_urls_found: p.no_urls_found,
+              }))}
+              cols={[
+                ["label", "Platform"],
+                ["processed", "Processed", 1],
+                ["successful", "OK", 1],
+                ["unsuccessful", "Failed", 1],
+                ["rate", "Success %"],
+                ["urls_found", "URLs found", 1],
+                ["no_urls_found", "No URLs", 1],
+              ]}
+              limit={20}
+            />
+
+            {/* system-wise (per OCR instance) + status breakdown */}
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <BenchTable
+                title="System-wise OCR (per instance)"
+                rows={(ocr.instances || []).map((it) => ({
+                  instance: it.instance,
+                  processed: it.processed,
+                  successful: it.successful,
+                  unsuccessful: it.unsuccessful,
+                  rate: ocrPct(it),
+                }))}
+                cols={[
+                  ["instance", "OCR instance"],
+                  ["processed", "Processed", 1],
+                  ["successful", "OK", 1],
+                  ["unsuccessful", "Failed", 1],
+                  ["rate", "Success %"],
+                ]}
+                limit={50}
+              />
+              <BenchTable
+                title="Status breakdown"
+                rows={ocr.statuses || []}
+                cols={[["status", "Status"], ["count", "Count", 1]]}
+                limit={50}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {/* ===== Systems panel controls ===== */}

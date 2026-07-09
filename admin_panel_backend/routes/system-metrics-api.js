@@ -25,4 +25,5 @@ router.post('/dashboard/system-debug', wrapAsync(dashboard.systemDebug));
 router.post('/dashboard/gdn-benchmark', wrapAsync(dashboard.gdnBenchmark));
 router.post('/dashboard/youtube-benchmark', wrapAsync(dashboard.youtubeBenchmark));
 router.get('/dashboard/exporter-health', wrapAsync(dashboard.exporterHealth));
+router.post('/dashboard/ocr', wrapAsync(dashboard.ocr));
 module.exports = router;

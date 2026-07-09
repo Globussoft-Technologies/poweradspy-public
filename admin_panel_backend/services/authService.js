@@ -1,7 +1,7 @@
-import dotenv from "dotenv"
-import jwt from "jsonwebtoken";
+const dotenv = require("dotenv");
+const jwt = require("jsonwebtoken");
 dotenv.config();
-export const authenticateJWT = (req, res, next) => {
+const authenticateJWT = (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
         console.log(authHeader, "authHeader");
@@ -35,3 +35,5 @@ export const authenticateJWT = (req, res, next) => {
         });
     }
 };
+
+module.exports = { authenticateJWT };
