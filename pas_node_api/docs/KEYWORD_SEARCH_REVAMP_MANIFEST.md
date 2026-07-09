@@ -124,6 +124,12 @@ A frontend search sends one of: `keyword`, `advertiser`, `domain` (plus `country
   "lastSearchedAt": "2026-06-12T14:22:15Z",
   "searchCount": 42,               // total searches ever (monotonic counter)
 
+  // Union of every country-filter code the term has been searched with — array of
+  // upper-cased codes, or null when it was never searched with a country. Accumulates across
+  // searches (a no-country search adds nothing). Echoed on the /work response. Older docs may
+  // not have this field at all; readers treat missing as null.
+  "country": ["US", "GB"],
+
   // Which networks this term applies to (union of all networks it was searched for;
   // 'all' on POST expands to config.keywordSearch.networks). A scraper only ever
   // receives terms whose `networks` contains its network.

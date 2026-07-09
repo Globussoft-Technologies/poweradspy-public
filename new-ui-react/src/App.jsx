@@ -1048,7 +1048,7 @@ const App = () => {
 
         // Fire daily keyword request only when triggered by an explicit search submit (ref set in handleSearch)
         if (page === 0 && lastDailyKeywordRef.current) {
-          const { query, si, userEmail, network } = lastDailyKeywordRef.current;
+          const { query, si, userEmail, network, country } = lastDailyKeywordRef.current;
           lastDailyKeywordRef.current = null; // clear immediately so filter changes don't re-trigger
           const adsCount = data?.meta?.total?.facebook ?? data?.ads?.filter(a => a.network === 'facebook')?.length ?? 0;
           const adsFound = adsCount > 0;
@@ -1058,6 +1058,7 @@ const App = () => {
             network,         // 'all' or array of platform slugs
             email: userEmail,
             ads_count: adsCount,
+            country,         // selected country code(s) or null
           }).then((res) => {
             if (res?.data?.status === 'skip') return;
             if (adsFound) showToast('Hang On! Syncing Recent Ads for You', 'success');
@@ -1231,7 +1232,10 @@ const App = () => {
       const userEmail = user?.email || '';
       const selected = (platform ? [platform] : ui.specificPlatforms) || [];
       const network = selected.length === 0 ? 'all' : selected.map((p) => String(p).toLowerCase());
-      lastDailyKeywordRef.current = { query, si, userEmail, network };
+      // Selected country-filter code(s) at search time → stored with the term (null when none).
+      const selCountries = sdui.selCountries || sdui.filterValues?.country_filter || [];
+      const country = Array.isArray(selCountries) && selCountries.length ? selCountries : null;
+      lastDailyKeywordRef.current = { query, si, userEmail, network, country };
     }
   }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
 

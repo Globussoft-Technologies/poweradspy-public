@@ -125,6 +125,19 @@ describe("keywordInput parser", () => {
     ]);
     fs.unlinkSync(tmp);
   });
+  it("parseJsonKeywords + parseCsvFile carry an optional country column/field", async () => {
+    expect(parseJsonKeywords([{ value: "d", country: "US" }]))
+      .toEqual([{ value: "d", country: "US" }]);
+    // empty country is dropped (treated as absent)
+    expect(parseJsonKeywords([{ value: "d", country: "" }])).toEqual([{ value: "d" }]);
+    const tmp = path.join(os.tmpdir(), `synk_c_${Date.now()}.csv`);
+    fs.writeFileSync(tmp, "keyword,network,country\nCat,facebook,us\ndog,instagram,\n");
+    expect(await parseCsvFile(tmp)).toEqual([
+      { value: "Cat", network: "facebook", country: "us" },
+      { value: "dog", network: "instagram" }, // blank country column omitted
+    ]);
+    fs.unlinkSync(tmp);
+  });
 });
 
 // ── synthetic insert ──────────────────────────────────────────────────────────
@@ -169,6 +182,32 @@ describe("insertSyntheticKeywords", () => {
     const op = col.calls.bulkWrite[0][0].updateOne;
     expect(op.filter.type).toBe(2);
     expect(op.update.$setOnInsert.networks.sort()).toEqual(["instagram", "reddit"]);
+  });
+
+  it("stores country upper-cased (per-item over batch) and null when none supplied", async () => {
+    const col = makeCol();
+    installMongo(col);
+    const res = mockRes();
+    await insertSyntheticKeywords({ body: {
+      network: "facebook", country: "gb",
+      keywords: [{ value: "withC", country: "us,ca" }, { value: "batchC" }, { value: "noC", country: "" }],
+    } }, res);
+    const byNorm = Object.fromEntries(col.calls.bulkWrite[0].map((o) => [o.updateOne.filter.valueNorm, o.updateOne.update.$setOnInsert]));
+    expect(byNorm.withc.country).toEqual(["US", "CA"]); // per-item wins, upper-cased
+    expect(byNorm.batchc.country).toEqual(["GB"]);       // falls back to batch default
+    expect(byNorm.noc.country).toEqual(["GB"]);          // empty per-item → batch default
+  });
+
+  it("accumulates (unions) country codes across duplicate rows for the same keyword", async () => {
+    const col = makeCol();
+    installMongo(col);
+    const res = mockRes();
+    await insertSyntheticKeywords({ body: {
+      network: "facebook",
+      keywords: [{ value: "dup", country: "us" }, { value: "Dup", country: "gb,us" }, { value: "DUP", country: "ca" }],
+    } }, res);
+    const op = col.calls.bulkWrite[0].find((o) => o.updateOne.filter.valueNorm === "dup").updateOne;
+    expect(op.update.$setOnInsert.country).toEqual(["US", "GB", "CA"]); // union, deduped, upper-cased
   });
 
   it("reads a CSV upload and unlinks the temp file", async () => {

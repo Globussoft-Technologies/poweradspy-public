@@ -31,6 +31,20 @@ function normType(t) {
   return TYPE_MAP[k] || null;
 }
 
+// Normalize the optional country filter attached to a search into a stored value.
+// Accepts a single code ("US"), a comma list ("US,GB"), or an array (["us","gb"]).
+// Returns an array of upper-cased codes when at least one is present, or NULL when the
+// filter was not selected (empty / 'NA' / null) — the field is always present so the
+// GET API can echo it (null included) without special-casing missing data.
+function normCountry(raw) {
+  if (raw == null) return null;
+  let list = Array.isArray(raw) ? raw : String(raw).split(',');
+  list = list
+    .map((c) => String(c).trim().toUpperCase())
+    .filter((c) => c && c !== 'NA');
+  return list.length ? [...new Set(list)] : null; // dedupe, preserve order
+}
+
 // Resolve a store request's network(s) → array of valid slugs.
 // 'all' (allToken) expands to the full configured list; a specific/comma list is
 // validated against config. Returns [] when nothing valid is supplied.
@@ -187,6 +201,13 @@ async function storeKeywordSearch(req, res) {
       return res.json({ code: 200, message: 'no valid network', data: { status: 'skip' } });
     }
 
+    // Optional country filter for this search → ACCUMULATED onto the doc (union of every
+    // country the term has ever been searched with), so a deduped term covers all its
+    // regions. A search with no country filter adds nothing (never wipes prior codes); a
+    // term never searched with a country stays NULL. Existing docs without the field are
+    // treated as an empty set on both write (§store) and read (§work).
+    const country = normCountry(body.country);
+
     const valueNorm = value.toLowerCase();
     const now = new Date();
     const cap = config.keywordSearch.searchDatesCap;
@@ -228,6 +249,16 @@ async function storeKeywordSearch(req, res) {
                 },
             searchDates: { $slice: [{ $concatArrays: [{ $ifNull: ['$searchDates', []] }, [now]] }, -cap] },
             networks: { $setUnion: [{ $ifNull: ['$networks', []] }, netList] },
+            // Country filter — UNION of the existing codes and this search's codes, so the
+            // term accumulates every region searched. Empty union → NULL (never searched with
+            // a country). $ifNull treats a missing/null field as an empty set (existing data
+            // safe); $literal keeps this search's codes from being parsed as field paths.
+            country: {
+              $let: {
+                vars: { merged: { $setUnion: [{ $ifNull: ['$country', []] }, { $literal: country || [] }] } },
+                in: { $cond: [{ $gt: [{ $size: '$$merged' }, 0] }, '$$merged', null] },
+              },
+            },
             ...netActiveSet, // networkState.<net>.isActive = true for each searched network
           },
         },
@@ -352,6 +383,9 @@ async function claimOne(col, { type, net, isPriority, owner, today, now, synthet
         // request this term is. Falls back to emails-only (legacy `users`) if userInfos is absent.
         return {
           docId: doc._id, type: doc.type, value: doc.value, network: net, scrapeId, mode: a.mode,
+          // Country filter the term was searched with (array of codes) — NULL when none was
+          // selected OR the doc predates this field (existing data never throws).
+          country: doc.country ?? null,
           users: Array.isArray(doc.userInfos) && doc.userInfos.length
             ? doc.userInfos
             : (doc.users || []).map(e => ({ id: null, username: '', email: e })),
@@ -694,6 +728,7 @@ async function insertSyntheticKeywords(req, res) {
     // its own `network` (per-item / CSV column) or the batch `network`.
     const batchType = normType(body.type) || ks.syntheticDefaultType;
     const batchNetwork = (body.network != null && body.network !== '') ? body.network : null;
+    const batchCountry = (body.country != null && body.country !== '') ? body.country : null;
 
     const rawItems = filePath ? await parseCsvFile(filePath) : parseJsonKeywords(body);
     if (!rawItems || rawItems.length === 0) {
@@ -716,11 +751,15 @@ async function insertSyntheticKeywords(req, res) {
       if (networkRaw == null) { skippedNoNetwork++; continue; }   // network is mandatory
       const nets = resolveNetworks(networkRaw);
       if (!nets.length) { skippedNoNetwork++; continue; }          // unknown/invalid network slug(s)
+      const country = normCountry((it.country != null && it.country !== '') ? it.country : batchCountry);
       const valueNorm = value.toLowerCase();
       const key = `${type}::${valueNorm}`;
       const existing = byKey.get(key);
-      if (existing) existing.networks = [...new Set([...existing.networks, ...nets])];
-      else byKey.set(key, { type, value, valueNorm, networks: nets });
+      if (existing) {
+        existing.networks = [...new Set([...existing.networks, ...nets])];
+        // accumulate country codes across duplicate rows for the same key (union)
+        if (country) existing.country = existing.country ? [...new Set([...existing.country, ...country])] : country;
+      } else byKey.set(key, { type, value, valueNorm, networks: nets, country });
     }
 
     const unique = byKey.size;
@@ -751,6 +790,7 @@ async function insertSyntheticKeywords(req, res) {
               userCount: 0,
               searchDates: [],
               networks: d.networks,
+              country: d.country ?? null, // optional country filter; NULL when none supplied
               networkState,
             },
           },

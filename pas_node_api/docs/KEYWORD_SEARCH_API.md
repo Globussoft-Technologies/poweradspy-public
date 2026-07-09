@@ -62,11 +62,12 @@ Content-Type: application/json
 | `network` | yes | Single slug, comma list, or `all`. |
 | `email` | no | Stored against the term (deduped). |
 | `ads_count` | no | Used only by the `realTimeStore` numeric gate. |
+| `country` | no | Selected country-filter code(s) — a single code (`"US"`), comma list (`"US,GB"`), or array (`["us","gb"]`). Stored upper-cased & deduped, **accumulated (union) across every search** of the term so it covers all regions searched; a search with no country adds nothing (never wipes prior codes). A term never searched with a country stays `null`. Echoed by the work API. |
 
 **Example — keyword for all networks**
 
 ```json
-{ "value": "Nike", "type": 1, "network": "all", "email": "user@example.com" }
+{ "value": "Nike", "type": 1, "network": "all", "email": "user@example.com", "country": ["US","GB"] }
 ```
 
 **Example — advertiser for facebook + instagram**
@@ -188,6 +189,7 @@ other network — and any explicit `priority:true` — is unchanged.
     {
       "docId": "665f1f77bcf86cd799439002", "type": 1, "value": "Nike", "network": "facebook",
       "scrapeId": "665f200abcf86cd799439010", "mode": "daily",
+      "country": ["US", "GB"],
       "users": [
         { "id": 281, "username": "john_d", "email": "john@example.com" },
         { "id": 305, "username": "asha", "email": "asha@example.com" }
@@ -200,6 +202,9 @@ other network — and any explicit `priority:true` — is unchanged.
 - `networks` / `types` echo what was requested. `network` is the single slug when one
   network was requested, or the array when several were. Each `data[]` item always carries
   its own concrete `network` + `type` — that is the source of the value.
+- `data[].country` is the union of every country-filter code the term has been searched with
+  (array of upper-cased codes), or `null` when it was never searched with a country **or** the
+  term predates this field (older docs never break — they simply return `null`).
 - `data[].users` is the array of everyone who searched that term — one
   `{ id, username, email }` object per user — so you know **whose** request the term is.
   (`id`/`username` come from the searcher's login; older terms stored before this change
@@ -245,13 +250,15 @@ Content-Type: application/json
 | array of objects (per-item `network`/`type`) | `[ { "value": "cat", "network": "facebook,instagram" }, { "value": "ad", "type": 2, "network": "google" } ]` |
 
 `value` (alias `keyword`/`term`) is required per item; optional `type` (default keyword/1) and
-`country`/`user_id`. Top-level `type`/`network` are batch defaults; per-item overrides win.
+`country` (single code, comma list, or array — stored upper-cased, `null` when omitted).
+Top-level `type`/`network`/`country` are batch defaults; per-item overrides win.
 
 ### Option B — CSV file (multipart/form-data)
 
 Field name **`file`** (≤ `syntheticMaxUploadMb`, default 50 MB, streamed). One keyword per
-line, **or** a header row with a `keyword` (or `value`) column (+ optional `type`/`network`
-columns). A batch `network`/`type` text field supplies the default when a row omits it.
+line, **or** a header row with a `keyword` (or `value`) column (+ optional `type`/`network`/
+`country` columns). A batch `network`/`type`/`country` text field supplies the default when a
+row omits it.
 
 ```csv
 keyword,network

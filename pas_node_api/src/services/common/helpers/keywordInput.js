@@ -51,6 +51,7 @@ function parseJsonKeywords(body) {
         const out = { value };
         if (item.type !== undefined && item.type !== null && item.type !== '') out.type = item.type;
         if (item.network !== undefined && item.network !== null && item.network !== '') out.network = item.network;
+        if (item.country !== undefined && item.country !== null && item.country !== '') out.country = item.country;
         return out;
       }
       return null;
@@ -85,6 +86,7 @@ function parseCsvFile(filePath) {
             value: valIdx,
             type: lower.indexOf('type') === -1 ? null : lower.indexOf('type'),
             network: lower.indexOf('network') === -1 ? null : lower.indexOf('network'),
+            country: lower.indexOf('country') === -1 ? null : lower.indexOf('country'),
           };
           return; // header row consumed
         }
@@ -97,6 +99,7 @@ function parseCsvFile(filePath) {
         const out = { value };
         if (header.type != null && fields[header.type]) out.type = fields[header.type];
         if (header.network != null && fields[header.network]) out.network = fields[header.network];
+        if (header.country != null && fields[header.country]) out.country = fields[header.country];
         items.push(out);
       } else {
         const value = (fields[0] || '').trim();
