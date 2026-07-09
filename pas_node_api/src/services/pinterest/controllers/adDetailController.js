@@ -85,6 +85,10 @@ async function getAdDetails(req, db, logger) {
           if (src['pinterest_ad_variants.image_celebrity_exactly']) adData.imageCeleb = src['pinterest_ad_variants.image_celebrity_exactly'];
           if (src['pinterest_ad_variants.image_ocr_exactly']) adData.imageOcr = src['pinterest_ad_variants.image_ocr_exactly'];
           if (src.new_nas_image_url) adData.image_url = src.new_nas_image_url;
+          // Language: the SQL languages join relies on pinterest_ad.language_id, which is
+          // often 0/unresolved → NULL. ES lang_detect (the value the language filter matches
+          // on) is the reliable source, so surface it for the frontend to render.
+          if (src.lang_detect) adData.lang_detect = src.lang_detect;
           if (src['pinterest_ad_domains.domain_registered_date'] !== undefined) adData.domain_registered_date = src['pinterest_ad_domains.domain_registered_date'];
           if (src['pinterest_ad.days_running'] !== undefined) adData.days_running = src['pinterest_ad.days_running'];
           if (src['pinterest.category'] !== undefined) adData.category = src['pinterest.category'];

@@ -238,6 +238,10 @@ async function searchAds(req, db, logger) {
           const src = esHit._source || {};
           if (src.new_nas_image_url) row.image_video_url = src.new_nas_image_url;
           if (src['pinterest_ad.days_running'] !== undefined) row.days_running = src['pinterest_ad.days_running'];
+          // Language: the SQL languages join relies on pinterest_ad.language_id, which is
+          // often 0/unresolved → NULL. ES lang_detect (the value the language filter matches
+          // on) is the reliable source, so surface it for the frontend to render.
+          if (src.lang_detect) row.lang_detect = src.lang_detect;
           return row;
         });
       } catch (sqlErr) { logger.warn('SQL fetch failed, falling back to ES', { error: sqlErr.message }); finalAds = esHits.map(hit => hit._source); }
