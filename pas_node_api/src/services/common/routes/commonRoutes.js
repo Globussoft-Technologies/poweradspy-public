@@ -40,6 +40,9 @@ const { getRecentAds } = require('../controllers/recentAdsController');
 const { storeBehaviourData, insertInterestBehaviour, updateInterestBehaviour } = require('../controllers/interestBehaviourController');
 const { getAdDetailsData, getInstagramAdDetailsData } = require('../controllers/adDetailsDataController');
 const { patchAdMedia } = require('../controllers/updateAdMediaController');
+const { domainsWithoutRegistration } = require('../controllers/domainsWithoutRegistrationController');
+const { putDomainDate } = require('../controllers/updateDomainDateController');
+const { getDomainRegistration: getDomainRegistrationUnified } = require('../controllers/domainRegistrationLookupController');
 const { authunticatePhpApi } = require('../controllers/phpAuthController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
@@ -463,5 +466,24 @@ router.get('/authunticate-php-api', asyncHandler(authunticatePhpApi));
 // Cross-network media repair: update image, thumbnail, video and/or
 // other_multimedia in both SQL and Elasticsearch for any supported network.
 router.patch('/ads/media', authMiddleware, asyncHandler(patchAdMedia));
+
+// GET /api/v1/common/get-domains-without-registration-date?network=<net>&limit=<1..50>
+// Returns a network's domains with NO WHOIS registration date
+// (domain_registered_date IS NULL), ordered newest-updated first. Ops/backfill
+// helper; companion to the per-network get-domain-registration lookup.
+router.get('/get-domains-without-registration-date', asyncHandler(domainsWithoutRegistration));
+
+// PUT /api/v1/common/insert-update-domain-date  { domain_name, domain_date: 'YYYY-MM-DD' }
+// Updates a domain's WHOIS registration date across ALL networks' domains tables and bumps
+// `updated_date` where present (not on facebook/linkedin). Update-only; never inserts. Node
+// port of the PHP SupportScrapper@putDomainDate, fanned out to every network.
+router.put('/insert-update-domain-date', asyncHandler(putDomainDate));
+
+// GET /api/v1/common/get-domain-registration?domain=<domain>&network=<net|csv|all>
+// Unified cross-network domain registration-date lookup. Consolidates the four per-network
+// /api/v1/{instagram,google,youtube,facebook}/get-domain-registration endpoints and covers
+// all 10 networks. No `network` (or 'all') searches every network; returns every network the
+// domain was found in, each with its own domain_registered_date.
+router.get('/get-domain-registration', asyncHandler(getDomainRegistrationUnified));
 
 module.exports = router;

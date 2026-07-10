@@ -3310,21 +3310,24 @@ async checkDailyTokenLimit(req, res) {
 
       const keywordUrl = config.get("COMPETITOR_URL_PYTHON") + "/v1/api/competitors/prepare";
 
-      // Fold the selected target countries into the generation prompt so the
-      // AI weighs competitors accordingly, in addition to sending them as a
-      // dedicated structured field.
-      const countryPrompt = countryArray.length
-        ? `Focus on competitors that primarily run ads in: ${countryArray.join(", ")}.`
-        : "";
+      // The DS/Python API only accepts a flat `keywords` list — no dedicated
+      // `country`/`prompt` field. Fold the selected target countries in as an
+      // extra keyword-shaped entry, e.g. "Brands from India, Saudi Arabia" —
+      // placed FIRST so the country intent gets priority weighting over the
+      // user's own keywords.
+      const keywordsArray = Array.isArray(keywords)
+        ? [...keywords]
+        : (keywords ? [keywords] : []);
+      if (countryArray.length) {
+        keywordsArray.unshift(`Brands from ${countryArray.join(", ")}`);
+      }
 
       const formParams = {
         content_ref_id: content_ref_id,
-        keywords: keywords,
+        keywords: keywordsArray,
         // Over-fetch so name-dedup losses still leave >= `limit` unique competitors
         limit: this.competitorOverfetchLimit(limit),
         advertiser: fullBrand, // SEND FULL DOMAIN TO PYTHON API
-        country: countryArray,
-        prompt: countryPrompt,
         domain_validation: false,
         input_token_budget: 20000,
         output_token_budget: 20000
