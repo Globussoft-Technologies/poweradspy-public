@@ -47,6 +47,14 @@ import CompetitorComparison from "./CompetitorComparison";
 import MembersManager from "./MembersManager";
 import { COUNTRIES } from "../../utils/countries";
 
+// Target Countries picker (Configure Analysis) is gated by a build-time env
+// flag, same pattern as VITE_ENABLE_KEYWORD_EXPLORER/VITE_ENABLE_INTELLIGENCE_FEATURE
+// in App.jsx. When off, the accordion is hidden entirely — the backend already
+// handles an empty/absent country selection gracefully (no country stored,
+// no "Brands from ..." keyword appended), so no backend flag is needed.
+const COUNTRY_TARGETING_ON =
+  import.meta.env.VITE_ENABLE_COUNTRY_TARGETING === "true";
+
 // A 401 from any Competitor API call throws Error('Unauthorized: Token expired')
 // (see competitorFetch in services/api.js), which also fires handle401() to clear
 // auth + redirect to the logout/login page. This helper lets callers recognise
@@ -1875,6 +1883,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 </div>
               </div>
 
+              {COUNTRY_TARGETING_ON && (
               <div className="bg-theme-card border border-theme-border rounded-xl shadow-sm overflow-hidden">
                 <button
                   type="button"
@@ -1943,6 +1952,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   </div>
                 )}
               </div>
+              )}
 
               <button
                 onClick={handleSubmitData}
