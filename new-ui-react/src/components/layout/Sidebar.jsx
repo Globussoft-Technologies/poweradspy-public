@@ -6,6 +6,10 @@ import SectionLabel from "../shared/SectionLabel";
 import SidebarDivider from "../shared/SidebarDivider";
 import SchemaRenderer from "../sdui/SchemaRenderer";
 
+// Keywords Explorer visibility is controlled purely by this build-time env flag.
+// Set VITE_ENABLE_KEYWORD_EXPLORER="true" to show it; anything else hides it.
+const KEYWORD_EXPLORER_ON = import.meta.env.VITE_ENABLE_KEYWORD_EXPLORER === "true";
+
 /**
  * Sidebar — Fully SDUI-driven.
  *
@@ -125,13 +129,17 @@ const Sidebar = ({
                 collapsed={!isOpen}
               />
             )}
-            <NavItem
-              icon={<Hash size={isOpen ? 16 : 18} />}
-              label={t("keywords_explorer")}
-              active={activePage === "keywords-explorer"}
-              onClick={() => onOpenKeywordsExplorer?.()}
-              collapsed={!isOpen}
-            />
+            {/* Keywords Explorer — shown only when the env flag is on
+                (VITE_ENABLE_KEYWORD_EXPLORER), same pattern as Market Trends. */}
+            {KEYWORD_EXPLORER_ON && (
+              <NavItem
+                icon={<Hash size={isOpen ? 16 : 18} />}
+                label={t("keywords_explorer")}
+                active={activePage === "keywords-explorer"}
+                onClick={() => onOpenKeywordsExplorer?.()}
+                collapsed={!isOpen}
+              />
+            )}
             {isLoggedIn && (allowedPlatforms == null || allowedPlatforms.length > 0) && (
               <NavItem
                 icon={<Bookmark size={isOpen ? 16 : 18} />}

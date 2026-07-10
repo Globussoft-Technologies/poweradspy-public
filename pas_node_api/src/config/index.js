@@ -400,6 +400,14 @@ const config = {
     })(),
   },
 
+  // Keywords Explorer feature (dedicated page + single-keyword modal). Additive
+  // + gated: when disabled, the /keywords/* Google routes 404 so the APIs are
+  // inert. Mirrors the frontend VITE_ENABLE_KEYWORD_EXPLORER flag. Default OFF
+  // (opt-in) so production is unaffected until explicitly enabled.
+  keywordExplorer: {
+    enabled: getVal(fileConfig.keywordExplorer?.enabled, 'KEYWORD_EXPLORER_ENABLED', toBool) === true,
+  },
+
   sendgrid: {
     enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
     apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),

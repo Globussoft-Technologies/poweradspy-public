@@ -339,8 +339,25 @@ function requireIntelAccess(req, res, next) {
   next();
 }
 
+/**
+ * Middleware: requireKeywordExplorerEnabled
+ *
+ * Feature flag gate for the Keywords Explorer routes (/keywords/explorer,
+ * /keywords/ideas, /keywords/import, /keywords/insight, /keywords/lists*).
+ * Mirrors the frontend VITE_ENABLE_KEYWORD_EXPLORER flag: when the feature is
+ * disabled the APIs are treated as if they don't exist (404), so nothing is
+ * reachable until KEYWORD_EXPLORER_ENABLED is turned on. Default OFF (opt-in).
+ */
+function requireKeywordExplorerEnabled(req, res, next) {
+  if (config.keywordExplorer?.enabled !== true) {
+    return res.status(404).json({ code: 404, message: 'Not found' });
+  }
+  next();
+}
+
 module.exports = {
   planAccessMiddleware,
   requirePlatform,
   requireIntelAccess,
+  requireKeywordExplorerEnabled,
 };

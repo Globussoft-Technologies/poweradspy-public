@@ -51,6 +51,12 @@ import MarketTrends, { fetchMarketTrendsAccess } from "./components/MarketTrends
 // Market Trends is gated twice: the build-time env flag AND a per-user server
 // allow-list (config.intelligence.allowedUserIds), probed via /access.
 const INTEL_ENV_ON = import.meta.env.VITE_ENABLE_INTELLIGENCE_FEATURE === "true";
+
+// Keywords Explorer is gated by a build-time env flag (same pattern as Market
+// Trends above). When off, the nav item, page, and single-keyword modal are all
+// hidden and the open handlers no-op — the backend routes are separately gated
+// by KEYWORD_EXPLORER_ENABLED so the APIs are inert too. Default OFF (opt-in).
+const KEYWORD_EXPLORER_ON = import.meta.env.VITE_ENABLE_KEYWORD_EXPLORER === "true";
 import ChatbotWidget from "./components/shared/ChatbotWidget";
 import NotificationPermissionPrompt from "./components/layout/NotificationPermissionPrompt";
 import UnsubscribePage from "./components/UnsubscribePage";
@@ -293,7 +299,7 @@ const App = () => {
     if (location.pathname === '/projects') {
       dispatch(setActivePage('projects'));
       dispatch(setShowSavedAdsPage(false));
-    } else if (location.pathname === '/keywords-explorer') {
+    } else if (location.pathname === '/keywords-explorer' && KEYWORD_EXPLORER_ON) {
       dispatch(setActivePage('keywords-explorer'));
       dispatch(setShowSavedAdsPage(false));
     } else if (location.pathname === '/saved') {
@@ -341,7 +347,7 @@ const App = () => {
     if (_isSpecialRoute) return;
     if (ui.activePage === 'projects' && location.pathname !== '/projects') {
       navigate('/projects');
-    } else if (ui.activePage === 'keywords-explorer' && location.pathname !== '/keywords-explorer') {
+    } else if (ui.activePage === 'keywords-explorer' && KEYWORD_EXPLORER_ON && location.pathname !== '/keywords-explorer') {
       navigate('/keywords-explorer');
     } else if (ui.showSavedAdsPage && location.pathname !== '/saved') {
       navigate('/saved');
@@ -473,10 +479,12 @@ const App = () => {
     return true;
   };
   const openKeywordExplorer = (keyword) => {
+    if (!KEYWORD_EXPLORER_ON) return;
     if (!keyword || !canAccessIntel()) return;
     setKeywordExplorer(String(keyword));
   };
   const openKeywordsExplorerPage = () => {
+    if (!KEYWORD_EXPLORER_ON) return;
     if (!canAccessIntel()) return;
     dispatch(setActivePage('keywords-explorer'));
   };
@@ -1630,7 +1638,7 @@ const App = () => {
               handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword');
             }}
           />
-        ) : ui.activePage === "keywords-explorer" ? (
+        ) : ui.activePage === "keywords-explorer" && KEYWORD_EXPLORER_ON ? (
           <KeywordsExplorerPage onOpenKeyword={openKeywordExplorer} />
         ) : ui.activePage === "projects" && canAccessProjects ? (
           <AllProjects
@@ -1765,7 +1773,7 @@ const App = () => {
         onOpenKeywordsExplorer={openKeywordsExplorerPage}
       />
 
-      {keywordExplorer && (
+      {KEYWORD_EXPLORER_ON && keywordExplorer && (
         <KeywordExplorerModal
           keyword={keywordExplorer}
           onClose={() => setKeywordExplorer(null)}

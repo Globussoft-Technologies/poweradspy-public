@@ -32,7 +32,7 @@ const {
 } = require('../controllers/keywordListsController');
 const { importKeywordsFile } = require('../controllers/keywordImportController');
 const { authMiddleware } = require('../../../middleware/auth');
-const { planAccessMiddleware, requireIntelAccess } = require('../../../middleware/planAccess');
+const { planAccessMiddleware, requireIntelAccess, requireKeywordExplorerEnabled } = require('../../../middleware/planAccess');
 const validator = require('../../../middleware/validator');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 const createGoogleAdversuiteRoutes = require('./adversuite_Api_routes');
@@ -52,6 +52,13 @@ const searchSchema = {
 
 function createGoogleRoutes(service) {
   const router = Router();
+
+  // Keywords Explorer feature flag (KEYWORD_EXPLORER_ENABLED / config.json
+  // keywordExplorer.enabled). Single gate for the whole /keywords/* group:
+  // when the feature is off every keyword route 404s before any auth/plan work,
+  // mirroring the frontend's VITE_ENABLE_KEYWORD_EXPLORER visibility toggle.
+  // Registered before the route handlers so it runs first in the chain.
+  router.use('/keywords', requireKeywordExplorerEnabled);
 
   // POST /api/v1/google/ads/search
   router.post(
