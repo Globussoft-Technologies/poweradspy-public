@@ -19,6 +19,7 @@ import {
   guestSearchAds,
   publicSearchAds,
   fetchPlanAccess,
+  fetchKeywordExplorerAccess,
   saveKeywordSearch,
   trackEvent,
 } from "./services/api";
@@ -479,12 +480,12 @@ const App = () => {
     return true;
   };
   const openKeywordExplorer = (keyword) => {
-    if (!KEYWORD_EXPLORER_ON) return;
+    if (!(KEYWORD_EXPLORER_ON && keywordExplorerAllowed)) return;
     if (!keyword || !canAccessIntel()) return;
     setKeywordExplorer(String(keyword));
   };
   const openKeywordsExplorerPage = () => {
-    if (!KEYWORD_EXPLORER_ON) return;
+    if (!(KEYWORD_EXPLORER_ON && keywordExplorerAllowed)) return;
     if (!canAccessIntel()) return;
     dispatch(setActivePage('keywords-explorer'));
   };
@@ -578,6 +579,15 @@ const App = () => {
   useEffect(() => {
     if (!INTEL_ENV_ON || !token) { setIntelAllowed(false); return; }
     fetchMarketTrendsAccess().then(setIntelAllowed).catch(() => setIntelAllowed(false));
+  }, [token]);
+
+  // Keywords Explorer per-user access — same pattern as intelAllowed above: show
+  // the nav/page/modal only when the env flag is on AND the server allow-listed
+  // this user (config.keywordExplorer.allowedUserIds). Defaults to hidden.
+  const [keywordExplorerAllowed, setKeywordExplorerAllowed] = useState(false);
+  useEffect(() => {
+    if (!KEYWORD_EXPLORER_ON || !token) { setKeywordExplorerAllowed(false); return; }
+    fetchKeywordExplorerAccess().then(setKeywordExplorerAllowed).catch(() => setKeywordExplorerAllowed(false));
   }, [token]);
 
   const filterKey = useMemo(
@@ -1616,6 +1626,7 @@ const App = () => {
           }}
           canAccessProjects={canAccessProjects}
           intelligenceEnabled={INTEL_ENV_ON && intelAllowed}
+          keywordExplorerEnabled={KEYWORD_EXPLORER_ON && keywordExplorerAllowed}
           guest={guest}
           isLoggedIn={!guest?.isRestricted}
           allowedPlatforms={planAccess?.allowedPlatforms}
@@ -1638,7 +1649,7 @@ const App = () => {
               handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword');
             }}
           />
-        ) : ui.activePage === "keywords-explorer" && KEYWORD_EXPLORER_ON ? (
+        ) : ui.activePage === "keywords-explorer" && KEYWORD_EXPLORER_ON && keywordExplorerAllowed ? (
           <KeywordsExplorerPage onOpenKeyword={openKeywordExplorer} />
         ) : ui.activePage === "projects" && canAccessProjects ? (
           <AllProjects
@@ -1773,7 +1784,7 @@ const App = () => {
         onOpenKeywordsExplorer={openKeywordsExplorerPage}
       />
 
-      {KEYWORD_EXPLORER_ON && keywordExplorer && (
+      {KEYWORD_EXPLORER_ON && keywordExplorerAllowed && keywordExplorer && (
         <KeywordExplorerModal
           keyword={keywordExplorer}
           onClose={() => setKeywordExplorer(null)}

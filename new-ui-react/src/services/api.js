@@ -2025,6 +2025,20 @@ const postGoogleIntel = async (path, body) => {
   return data;
 };
 
+// Per-user access probe for Keywords Explorer (mirrors fetchMarketTrendsAccess).
+// GET /api/v1/google/keywords/access → { data: { enabled } }, where enabled =
+// feature flag on AND this user is allow-listed. Returns false on any error.
+export const fetchKeywordExplorerAccess = async () => {
+  try {
+    const res = await fetch(`${PAS_API_BASE}/api/v1/google/keywords/access`, {
+      headers: { ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}) },
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data?.data?.enabled;
+  } catch { return false; }
+};
+
 export const getGoogleKeywordInsight = ({ keyword, from_date, to_date, country, top_n, interval, creatives, user_id = 281 } = {}) =>
   postGoogleIntel('keywords/insight', { keyword, from_date, to_date, country, top_n, interval, creatives, user_id });
 

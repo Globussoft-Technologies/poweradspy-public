@@ -32,7 +32,8 @@ const {
 } = require('../controllers/keywordListsController');
 const { importKeywordsFile } = require('../controllers/keywordImportController');
 const { authMiddleware } = require('../../../middleware/auth');
-const { planAccessMiddleware, requireIntelAccess, requireKeywordExplorerEnabled } = require('../../../middleware/planAccess');
+const { planAccessMiddleware, requireIntelAccess, requireKeywordExplorerEnabled, isKeywordExplorerUserAllowed } = require('../../../middleware/planAccess');
+const config = require('../../../config');
 const validator = require('../../../middleware/validator');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 const createGoogleAdversuiteRoutes = require('./adversuite_Api_routes');
@@ -53,11 +54,22 @@ const searchSchema = {
 function createGoogleRoutes(service) {
   const router = Router();
 
-  // Keywords Explorer feature flag (KEYWORD_EXPLORER_ENABLED / config.json
-  // keywordExplorer.enabled). Single gate for the whole /keywords/* group:
-  // when the feature is off every keyword route 404s before any auth/plan work,
-  // mirroring the frontend's VITE_ENABLE_KEYWORD_EXPLORER visibility toggle.
-  // Registered before the route handlers so it runs first in the chain.
+  // GET /api/v1/google/keywords/access — per-user access probe (mirrors Market
+  // Trends' /access). Registered BEFORE the feature gate below so it always
+  // answers (auth only, no allow-list block): returns whether this user should
+  // see Keywords Explorer = feature enabled AND user allow-listed. The frontend
+  // uses this to show/hide the nav item + page.
+  router.get('/keywords/access', authMiddleware, (req, res) => {
+    const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
+    const enabled = config.keywordExplorer?.enabled === true && isKeywordExplorerUserAllowed(uid);
+    res.status(200).json({ code: 200, message: 'ok', data: { enabled } });
+  });
+
+  // Keywords Explorer feature gate (KEYWORD_EXPLORER_ENABLED / config.json
+  // keywordExplorer.enabled + per-user allowedUserIds). Single gate for the whole
+  // /keywords/* group: feature off → 404, user not allow-listed → 403, before any
+  // plan work. Mirrors the frontend's env flag + /keywords/access allow-list.
+  // Registered after the access probe so that probe stays reachable.
   router.use('/keywords', requireKeywordExplorerEnabled);
 
   // POST /api/v1/google/ads/search

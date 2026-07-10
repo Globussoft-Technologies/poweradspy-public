@@ -340,17 +340,34 @@ function requireIntelAccess(req, res, next) {
 }
 
 /**
+ * Per-user allow-list for Keywords Explorer (mirrors marketTrends.isAllowedUser).
+ * Empty/unset list → all authenticated users. Non-empty → only those user ids.
+ */
+function isKeywordExplorerUserAllowed(userId) {
+  const allow = config.keywordExplorer?.allowedUserIds || [];
+  if (!allow.length) return true; // no list → all authenticated users
+  if (userId === undefined || userId === null || userId === '') return false;
+  return allow.map(String).includes(String(userId));
+}
+
+/**
  * Middleware: requireKeywordExplorerEnabled
  *
- * Feature flag gate for the Keywords Explorer routes (/keywords/explorer,
+ * Feature gate for the Keywords Explorer routes (/keywords/explorer,
  * /keywords/ideas, /keywords/import, /keywords/insight, /keywords/lists*).
- * Mirrors the frontend VITE_ENABLE_KEYWORD_EXPLORER flag: when the feature is
- * disabled the APIs are treated as if they don't exist (404), so nothing is
- * reachable until KEYWORD_EXPLORER_ENABLED is turned on. Default OFF (opt-in).
+ * Two layers, mirroring Market Trends:
+ *   1. Feature flag (KEYWORD_EXPLORER_ENABLED / VITE_ENABLE_KEYWORD_EXPLORER) —
+ *      when off the APIs are treated as non-existent (404).
+ *   2. Per-user allow-list (config.keywordExplorer.allowedUserIds) — when on but
+ *      the caller isn't allow-listed, 403. Empty list = all authenticated users.
  */
 function requireKeywordExplorerEnabled(req, res, next) {
   if (config.keywordExplorer?.enabled !== true) {
     return res.status(404).json({ code: 404, message: 'Not found' });
+  }
+  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
+  if (!isKeywordExplorerUserAllowed(uid)) {
+    return res.status(403).json({ code: 403, message: 'Keywords Explorer is not enabled for this account', data: [] });
   }
   next();
 }
@@ -360,4 +377,5 @@ module.exports = {
   requirePlatform,
   requireIntelAccess,
   requireKeywordExplorerEnabled,
+  isKeywordExplorerUserAllowed,
 };

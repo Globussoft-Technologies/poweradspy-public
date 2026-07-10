@@ -404,8 +404,19 @@ const config = {
   // + gated: when disabled, the /keywords/* Google routes 404 so the APIs are
   // inert. Mirrors the frontend VITE_ENABLE_KEYWORD_EXPLORER flag. Default OFF
   // (opt-in) so production is unaffected until explicitly enabled.
+  //   allowedUserIds: optional per-user allow-list (same contract as
+  //   intelligence.allowedUserIds). When non-empty, ONLY those users get the
+  //   feature + APIs (everyone else is 403'd and the UI hides it). Empty/unset =
+  //   all authenticated users (when `enabled`). JSON array in config.json or a
+  //   comma-separated string in the env var.
   keywordExplorer: {
     enabled: getVal(fileConfig.keywordExplorer?.enabled, 'KEYWORD_EXPLORER_ENABLED', toBool) === true,
+    allowedUserIds: (() => {
+      const raw = getVal(fileConfig.keywordExplorer?.allowedUserIds, 'KEYWORD_EXPLORER_ALLOWED_USER_IDS');
+      if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return [];
+    })(),
   },
 
   sendgrid: {

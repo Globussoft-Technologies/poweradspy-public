@@ -19,7 +19,7 @@ const META_ADS_RULES = {
   likes: 'required',
   comment: 'required',
   other_multimedia: 'present|nullable',
-  destination_url: 'required',
+  destination_url: 'present|string|nullable',
   ad_title: 'present|string|nullable',
   news_feed_description: 'present|string|nullable',
   ad_text: 'present|string|nullable',
@@ -35,7 +35,7 @@ const META_ADS_RULES = {
   last_seen: 'required|epoch',
   city: 'present|string|nullable',
   state: 'present|string|nullable',
-  country: 'required|string',
+  country: 'present|string|nullable',
   source: 'required|string|in:desktop,android,ios',
 };
 
