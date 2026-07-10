@@ -33,7 +33,13 @@ function parsePagination(params) {
 
 function parseSort(params) {
   const sortMap = {
-    newest_sort:          'quora_ad.id',
+    // "Newest" sorts by last_seen (a real, reliably-populated date) — NOT quora_ad.id.
+    // quora_ad.id is insertion order, which is decorrelated from the ad's date (re-crawls,
+    // batch/dual-pipeline ingestion, frequently-null post_date), so id-desc made the grid
+    // look unsorted-by-date. last_seen matches the date the card displays and the field the
+    // frontend re-sorts by, so backend order, pagination, and the visible date now agree.
+    // quora_ad.id remains the sort tiebreak (see QuoraSearchQueryBuilder baseSort).
+    newest_sort:          'quora_ad.last_seen',
     running_longest_sort: 'quora_ad.days_running',
     last_seen_sort:       'quora_ad.last_seen',
     hits_sort:            'quora_ad.hits',
