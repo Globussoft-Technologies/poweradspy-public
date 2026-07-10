@@ -291,9 +291,34 @@ const AdDetailModal = ({
   const [hideMenuPos, setHideMenuPos] = useState({ top: 0, left: 0 });
   const hideButtonRef = React.useRef(null);
 
+  // const displayLanguage = (() => {
+  //   const raw = (ad?.adLanguage || "").trim();
+  //   if (!raw) return "—";
+  //   return raw.charAt(0).toUpperCase() + raw.slice(1);
+  // })();
+
   const displayLanguage = (() => {
     const raw = (ad?.adLanguage || "").trim();
     if (!raw) return "—";
+    // Try ISO code → full name (e.g. "sv" → "Swedish", "en" → "English").
+    // Chromium's ICU canonicalizes ANY input as a BCP 47 tag, so passing a
+    // full name like "Ido"/"Twi" comes back as its 2-letter tag ("io"/"tw")
+    // — a *shorter* result. Only accept the ICU output when it's actually
+    // *longer* than the input (i.e. an expansion, not a canonicalization);
+    // otherwise fall through to the plain capitalize path so full names
+    // survive intact.
+    try {
+      const names = new Intl.DisplayNames(['en'], { type: 'language' });
+      const name = names.of(raw);
+      if (
+        name &&
+        name.toLowerCase() !== raw.toLowerCase() &&
+        name.length > raw.length
+      ) {
+        return name;
+      }
+    } catch {}
+    // Full name (e.g. "english", "swedish", "Ido", "Twi") — just capitalize.
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   })();
 
@@ -454,8 +479,7 @@ const AdDetailModal = ({
   // keeps routing share/insights to YouTube where the ad actually lives.
   const displayNetwork = (ad.badgeNetwork || ad.network || "").toLowerCase();
 
-  // For YouTube display ads shown under GDN, show YouTube icon instead of GDN
-  const iconNetwork = (platform === 'youtube' && displayNetwork === 'gdn') ? 'youtube' : displayNetwork;
+  const iconNetwork = displayNetwork;
 
   // Format platform name for display
   const PLATFORM_NAMES = {

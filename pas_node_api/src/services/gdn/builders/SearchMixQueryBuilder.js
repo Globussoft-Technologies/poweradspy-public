@@ -475,6 +475,13 @@ class SearchMixQueryBuilder {
     const buckets = bucketize(envelopes);
     buckets.filter.push(...EXTRA_CONDITION);
 
+    // Default exclusion: drop scraper placeholder ads whose creative text is
+    // the Slovenian "prikazuj oglas" ("display ad") marker — these are not
+    // real ads and should never surface regardless of the search filters.
+    buckets.must_not.push({
+      match_phrase: { 'gdn_ad_variants.text_exactly': 'prikazuj oglas' },
+    });
+
     const nc = this._getNotCountryClause();
     if (nc) buckets.must_not.push(nc);
 

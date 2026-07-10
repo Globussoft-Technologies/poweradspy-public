@@ -1680,7 +1680,7 @@ const AnalyticsModal = ({
             'youtube' so the metrics render from the YouTube insights data. */}
         <AnalyticsHeader
           adId={ad?.id}
-          platform={ctx.platform === 'youtube' && (ad?.badgeNetwork === 'gdn') ? 'youtube' : (ad?.badgeNetwork || ctx.platform)}
+          platform={ad?.badgeNetwork || ctx.platform}
           onClose={onClose}
         />
         {!creativeClosed && (

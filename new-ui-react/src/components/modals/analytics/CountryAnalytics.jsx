@@ -7,46 +7,7 @@ import am5themes_Dark from '@amcharts/amcharts5/themes/Dark';
 import { useTheme } from '../../../hooks/useTheme';
 import DateRangePicker from './DateRangePicker';
 import { getAdvertiserInsightsByDateRange } from '../../../services/api';
-
-// ISO country code → name mapping
-const COUNTRY_NAMES = {
-  US: "United States", GB: "United Kingdom", CA: "Canada", AU: "Australia",
-  DE: "Germany", FR: "France", IN: "India", BR: "Brazil", JP: "Japan",
-  KR: "South Korea", MX: "Mexico", IT: "Italy", ES: "Spain", NL: "Netherlands",
-  SE: "Sweden", NO: "Norway", DK: "Denmark", FI: "Finland", PL: "Poland",
-  PT: "Portugal", BE: "Belgium", AT: "Austria", CH: "Switzerland", IE: "Ireland",
-  NZ: "New Zealand", SG: "Singapore", MY: "Malaysia", TH: "Thailand",
-  PH: "Philippines", ID: "Indonesia", VN: "Vietnam", TW: "Taiwan", HK: "Hong Kong",
-  SA: "Saudi Arabia", AE: "United Arab Emirates", EG: "Egypt", ZA: "South Africa",
-  NG: "Nigeria", KE: "Kenya", AR: "Argentina", CL: "Chile", CO: "Colombia",
-  PE: "Peru", TR: "Turkey", RU: "Russia", UA: "Ukraine", CZ: "Czech Republic",
-  RO: "Romania", HU: "Hungary", GR: "Greece", IL: "Israel", PK: "Pakistan",
-  BD: "Bangladesh",
-  // Additional country codes
-  LB: "Lebanon", RS: "Serbia", JO: "Jordan", CR: "Costa Rica", LV: "Latvia",
-  LT: "Lithuania", EE: "Estonia", SK: "Slovakia", SI: "Slovenia", HR: "Croatia",
-  BG: "Bulgaria", MK: "North Macedonia", AL: "Albania", BA: "Bosnia and Herzegovina",
-  ME: "Montenegro", LU: "Luxembourg", IS: "Iceland", MT: "Malta", CY: "Cyprus",
-  QA: "Qatar", KW: "Kuwait", BH: "Bahrain", OM: "Oman", IQ: "Iraq",
-  SY: "Syria", YE: "Yemen", MA: "Morocco", DZ: "Algeria", TN: "Tunisia",
-  LY: "Libya", SD: "Sudan", ET: "Ethiopia", GH: "Ghana", TZ: "Tanzania",
-  UG: "Uganda", SN: "Senegal", CM: "Cameroon", CI: "Ivory Coast", MZ: "Mozambique",
-  MG: "Madagascar", AO: "Angola", ZM: "Zambia", ZW: "Zimbabwe", RW: "Rwanda",
-  UZ: "Uzbekistan", KZ: "Kazakhstan", AZ: "Azerbaijan", GE: "Georgia",
-  AM: "Armenia", TM: "Turkmenistan", KG: "Kyrgyzstan", TJ: "Tajikistan",
-  MM: "Myanmar", KH: "Cambodia", LA: "Laos", BN: "Brunei", MN: "Mongolia",
-  NP: "Nepal", LK: "Sri Lanka", VE: "Venezuela", EC: "Ecuador", BO: "Bolivia",
-  PY: "Paraguay", UY: "Uruguay", GT: "Guatemala", HN: "Honduras", SV: "El Salvador",
-  NI: "Nicaragua", PA: "Panama", DO: "Dominican Republic", CU: "Cuba",
-  PR: "Puerto Rico", JM: "Jamaica", TT: "Trinidad and Tobago",
-  CN: "China", PG: "Papua New Guinea", FJ: "Fiji",
-  BY: "Belarus",
-};
-
-// Reverse lookup: normalised country name → ISO code
-const NAME_TO_ISO = Object.fromEntries(
-  Object.entries(COUNTRY_NAMES).map(([iso, name]) => [name.toUpperCase(), iso])
-);
+import { COUNTRY_NAMES, NAME_TO_ISO } from '../../../utils/countries';
 
 // Named regions that have no single ISO — expand to constituent country ISOs for map highlighting
 const REGION_ISO_MAP = {
@@ -72,7 +33,7 @@ function transformAdCountry(raw) {
   let hasAll = false;
   for (const item of raw) {
     const nameUpper = (item.country || '').toUpperCase();
-    let iso = item.iso || NAME_TO_ISO[nameUpper] || '';
+    let iso = (item.iso || NAME_TO_ISO[nameUpper] || '').toUpperCase();
     const name = item.country || '';
 
     if (!iso && nameUpper === 'ALL') {
@@ -112,7 +73,7 @@ function transformAdvertiserCountry(raw, adData) {
 
   for (const item of raw) {
     const countryUpper = (item.country || '').toUpperCase();
-    const iso = item.iso || NAME_TO_ISO[countryUpper] || null;
+    const iso = (item.iso || NAME_TO_ISO[countryUpper] || '').toUpperCase() || null;
 
     const count = item.ad_count || (item.ad_ids ? item.ad_ids.length : 0);
 
@@ -164,7 +125,8 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
     const countries = tiktokAnalytics.countries;
     if (!Array.isArray(countries) || countries.length === 0) return null;
     const map = {};
-    for (const iso of countries) {
+    for (const rawIso of countries) {
+      const iso = String(rawIso).toUpperCase();
       if (!map[iso])
         map[iso] = { id: iso, name: COUNTRY_NAMES[iso] || iso, count: 0 };
       map[iso].count += 1;

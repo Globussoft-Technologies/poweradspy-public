@@ -273,9 +273,7 @@ const MasonryCard = ({
   // carry badgeNetwork:'gdn' so they show the GDN badge (while still routing to
   // YouTube via ad.network).
   const badgeNetwork = String(ad.badgeNetwork || ad.network || "").toLowerCase();
-  // YouTube display ads surfaced in GDN show the YouTube icon so they're distinguishable
-  // in the grid from native GDN ads (which keep the GDN icon).
-  const cornerNetwork = ad.ytSourced ? "youtube" : badgeNetwork;
+  const cornerNetwork = badgeNetwork;
   const adTypeLower = (ad.adType || "image").toLowerCase();
   const badge = AD_TYPE_BADGES[adTypeLower] || AD_TYPE_BADGES.image;
   const TypeIcon = AD_TYPE_ICONS[adTypeLower] || ImageIcon;
