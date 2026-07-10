@@ -1132,7 +1132,7 @@ const AdDetailModal = ({
                   value: `${ad.ctr}%`,
                   tooltip: "Click-through rate",
                 },
-                (ad.budget || ad.lowerBudget > 0 || ad.upperBudget > 0) && {
+                (ad.budget || ad.lowerBudget > 0 || ad.upperBudget > 0 || ad.adBudget > 0) && {
                   key: "budget",
                   icon: (
                     <span className="text-[13px] font-extrabold leading-none">
@@ -1141,12 +1141,15 @@ const AdDetailModal = ({
                   ),
                   color: "#10b981",
                   label: "Ad Budget",
-                  // Prefer the qualitative tag (TikTok's "High/Medium/Low")
-                  // when present; otherwise show the numeric range. Mirrors
-                  // MasonryCard's budget chip so the two surfaces match.
+                  // Prefer the qualitative tag (TikTok's "High/Medium/Low") when
+                  // present, then the numeric lower/upper range, then the single
+                  // average spend surfaced from ES (`ad.adBudget`) as a fallback
+                  // for ads with no meta-ad-budget range. Mirrors MasonryCard.
                   value: ad.budget
                     ? `${ad.budget} budget`
-                    : `${ad.lowerBudget ?? 0} - ${ad.upperBudget ?? "∞"}`,
+                    : (ad.lowerBudget > 0 || ad.upperBudget > 0)
+                      ? `${ad.lowerBudget ?? 0} - ${ad.upperBudget ?? "∞"}`
+                      : `$${Math.round(ad.adBudget).toLocaleString()}`,
                   tooltip: "Ad Budget",
                 },
               ].filter(Boolean);

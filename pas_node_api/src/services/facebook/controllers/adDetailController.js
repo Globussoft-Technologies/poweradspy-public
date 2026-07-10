@@ -182,7 +182,12 @@ async function getAdDetails(req, db, logger) {
             if (source['facebook_ad.comments'] !== undefined)   adData.comment = source['facebook_ad.comments'];
             if (source['facebook_ad.impression'] !== undefined) adData.impression = source['facebook_ad.impression'];
             if (source['facebook_ad.popularity'] !== undefined) adData.popularity = source['facebook_ad.popularity'];
-            if (source['facebook.averagebudget'] !== undefined) adData.averageBudget = source['facebook.averagebudget'];
+            // Numeric average spend — node-ingested docs use `facebook.averagebudget`,
+            // legacy docs use `facebook_ad.averagebudget`. Take whichever ES has.
+            {
+              const avgBudget = source['facebook.averagebudget'] ?? source['facebook_ad.averagebudget'];
+              if (avgBudget !== undefined && avgBudget !== null && avgBudget !== '') adData.averageBudget = Number(avgBudget);
+            }
           }
 
           // Image analysis data

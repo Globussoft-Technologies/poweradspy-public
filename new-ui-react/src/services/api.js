@@ -409,7 +409,15 @@ export const mapAdToCard = (raw) => {
     keywords: raw.tags || raw.keyword || '',
     aspectRatio: isTikTok ? '9:16' : deriveAspectRatio(raw),
     adLanguage: raw.lang_detect || raw.language || raw.ad_language || '',
-    adBudget: raw.ad_budget || raw.avg_ad_budget || raw.budget || null,
+    // Numeric average spend surfaced from ES (the field the Ad Budget filter
+    // ranges on). Kept strictly numeric so the card can show it as a fallback
+    // when there's no lower/upper meta-ad-budget range. The qualitative tag
+    // (TikTok's High/Medium/Low) lives in `budget`, not here.
+    adBudget: (() => {
+      const n = raw.averageBudget ?? raw.ad_budget ?? raw.avg_ad_budget;
+      const num = n != null && n !== '' ? Number(n) : NaN;
+      return Number.isFinite(num) && num > 0 ? num : null;
+    })(),
     lowerBudget: raw.lowerBudget != null ? Number(raw.lowerBudget) : null,
     upperBudget: raw.upperBudget != null ? Number(raw.upperBudget) : null,
     engRate: calcEngRate(raw),

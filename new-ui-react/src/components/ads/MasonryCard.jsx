@@ -1183,12 +1183,13 @@ const MasonryCard = ({
           })()}
 
           {/* Budget chip — qualitative tag (`ad.budget`, e.g. TikTok's
-              "High/Medium/Low") and/or numeric range (`ad.lowerBudget`,
-              `ad.upperBudget`, e.g. Meta). Either signal is enough to
-              render the chip, and both render side-by-side when present.
-              Kept in sync with AdDetailModal so the two surfaces always
-              agree on whether budget is reported for this ad. */}
-          {(ad.budget || ad.lowerBudget > 0 || ad.upperBudget > 0) && (
+              "High/Medium/Low"), numeric range (`ad.lowerBudget`/`ad.upperBudget`,
+              e.g. Meta ad-library), OR the single average spend (`ad.adBudget`,
+              surfaced from ES — the field the Ad Budget filter ranges on). The
+              average is a fallback shown only when there's no lower/upper range,
+              so an ad that matched the budget filter but has no meta-ad-budget
+              row still shows a value. Kept in sync with AdDetailModal. */}
+          {(ad.budget || ad.lowerBudget > 0 || ad.upperBudget > 0 || ad.adBudget > 0) && (
             <div className="flex items-center gap-1.5 flex-wrap">
               {ad.budget && (
                 <span className="relative group/budget inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
@@ -1204,6 +1205,14 @@ const MasonryCard = ({
                   <Wallet size={10} />${ad.lowerBudget ?? 0} – ${ad.upperBudget ?? "∞"}
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
                     Ad spend range
+                  </div>
+                </span>
+              )}
+              {ad.adBudget > 0 && !(ad.lowerBudget > 0 || ad.upperBudget > 0) && (
+                <span className="relative group/budget inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                  <Wallet size={10} />${Math.round(ad.adBudget).toLocaleString()}
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
+                    Estimated ad spend
                   </div>
                 </span>
               )}

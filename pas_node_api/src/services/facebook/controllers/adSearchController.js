@@ -587,8 +587,18 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
 
     finalAds = finalAds.map(ad => {
       const src = (esMap.get(String(ad.ad_id || ad.id))?._source) || {};
+      // Ad budget fallback: the numeric average spend the Ad Budget filter ranges
+      // on lives in ES, NOT in the SQL facebook_meta_ad_budget lower/upper range
+      // the card normally shows. Many ads match the budget filter (they have an
+      // averagebudget in ES) yet have no meta-ad-budget row → the card showed
+      // nothing. If ES has the value, take it from ES. Node-ingested docs use
+      // `facebook.averagebudget`; legacy docs use `facebook_ad.averagebudget`.
+      const avgBudget = src['facebook.averagebudget'] ?? src['facebook_ad.averagebudget'];
       return {
         ...ad,
+        averageBudget: (avgBudget !== undefined && avgBudget !== null && avgBudget !== '')
+          ? Number(avgBudget)
+          : (ad.averageBudget ?? null),
         market_platform_urls: {
           url_destination:  src['facebook_ad_url.url_destination']         || null,
           source_url:       src['facebook_ad_outgoing_links.source_url']   || null,
