@@ -1995,6 +1995,89 @@ export const getAdvertiserInsightsByDateRange = async ({ post_owner_id, from_dat
   return data;
 };
 
+// ─── Google Competitive Intelligence (Tier-1 aggregations) ────────────────────
+// SpyFu-style surfaces backed by the google_ads_data ES index:
+//   keywords/insight     → Keyword Explorer (advertisers/domains competing on a keyword)
+//   advertiser/profile   → Advertiser Profile (keyword portfolio, domains, trend, geo)
+//   ads/trends           → time-series for any filter context
+// All return { code, message, data }.
+const postGoogleIntel = async (path, body) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/google/${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getPASToken()}`,
+    },
+    body: JSON.stringify(body),
+  });
+  await checkFor401(res);
+  const data = await res.json();
+  // 400 = "no data" (valid empty result); only throw on real transport/server errors.
+  if (!res.ok && res.status !== 400) throw new Error(`google/${path} failed: ${res.status}`);
+  return data;
+};
+
+export const getGoogleKeywordInsight = ({ keyword, from_date, to_date, country, top_n, interval, creatives, user_id = 281 } = {}) =>
+  postGoogleIntel('keywords/insight', { keyword, from_date, to_date, country, top_n, interval, creatives, user_id });
+
+export const getGoogleAdvertiserProfile = ({ post_owner_id, post_owner_name, from_date, to_date, top_n, interval, creatives, user_id = 281 } = {}) =>
+  postGoogleIntel('advertiser/profile', { post_owner_id, post_owner_name, from_date, to_date, top_n, interval, creatives, user_id });
+
+export const getGoogleAdTrends = ({ interval, date_field, split, keyword, advertiser, target_keyword, country, type, from_date, to_date, user_id = 281 } = {}) =>
+  postGoogleIntel('ads/trends', { interval, date_field, split, keyword, advertiser, target_keyword, country, type, from_date, to_date, user_id });
+
+// ─── Keywords Explorer (Ahrefs/SEMrush-style browsable keyword database) ──────
+// Backed by the keyword_stats rollup (SQL), not live ES — see
+// GOOGLE_COMPETITIVE_INTEL_FEATURE.md. Volume/Competition/Growth are proxies
+// derived from PowerAdSpy's own crawled Google Ads corpus, not real search
+// volume / backlink-based Keyword Difficulty (no third-party data provider).
+export const getGoogleKeywordsExplorer = ({ page, page_size, sort_by, sort_dir, volume_min, volume_max, competition_min, competition_max, growth_min, growth_max, category, country, include, exclude, first_seen_after, user_id = 281 } = {}) =>
+  postGoogleIntel('keywords/explorer', { page, page_size, sort_by, sort_dir, volume_min, volume_max, competition_min, competition_max, growth_min, growth_max, category, country, include, exclude, first_seen_after, user_id });
+
+export const getGoogleKeywordIdeas = ({ keyword, top_n, user_id = 281 } = {}) =>
+  postGoogleIntel('keywords/ideas', { keyword, top_n, user_id });
+
+export const createGoogleKeywordList = ({ name, country, user_id = 281 } = {}) =>
+  postGoogleIntel('keywords/lists', { name, country, user_id });
+
+export const getGoogleKeywordLists = ({ user_id = 281 } = {}) =>
+  postGoogleIntel('keywords/lists/get', { user_id });
+
+export const renameGoogleKeywordList = ({ id, name, user_id = 281 } = {}) =>
+  postGoogleIntel(`keywords/lists/${id}/rename`, { name, user_id });
+
+export const deleteGoogleKeywordList = ({ id, user_id = 281 } = {}) =>
+  postGoogleIntel(`keywords/lists/${id}/delete`, { user_id });
+
+export const getGoogleKeywordListItems = ({ id, user_id = 281 } = {}) =>
+  postGoogleIntel(`keywords/lists/${id}/items/get`, { user_id });
+
+export const addGoogleKeywordsToList = ({ id, keywords, user_id = 281 } = {}) =>
+  postGoogleIntel(`keywords/lists/${id}/items`, { keywords, user_id });
+
+export const removeGoogleKeywordFromList = ({ id, keyword_id, user_id = 281 } = {}) =>
+  postGoogleIntel(`keywords/lists/${id}/items/remove`, { keyword_id, user_id });
+
+// CSV/TXT file upload — multipart, so this bypasses postGoogleIntel's JSON body.
+export const importGoogleKeywordsFile = async ({ file, user_id = 281 } = {}) => {
+  const form = new FormData();
+  if (file) form.append('file', file);
+  form.append('user_id', user_id);
+  const res = await fetch(`${PAS_API_BASE}/api/v1/google/keywords/import`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+    body: form,
+  });
+  await checkFor401(res);
+  const data = await res.json();
+  if (!res.ok && res.status !== 400) throw new Error(`google/keywords/import failed: ${res.status}`);
+  return data;
+};
+
+// Pasted (comma/newline-separated) keywords — no file, JSON body.
+export const importGoogleKeywordsText = ({ text, user_id = 281 } = {}) =>
+  postGoogleIntel('keywords/import', { text, user_id });
+
 /**
  * Creates a shareable link for an ad.
  * Backend hardcodes 7-day expiry.

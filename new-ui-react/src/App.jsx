@@ -40,6 +40,9 @@ import CampaignModal from "./components/modals/CampaignModal";
 import SubscriptionModal from "./components/modals/SubscriptionModal";
 import PricingModal from "./components/modals/PricingModal";
 import AnalyticsModal from "./components/modals/AnalyticsModal.jsx";
+import KeywordExplorerModal from "./components/modals/KeywordExplorerModal.jsx";
+import KeywordsExplorerPage from "./components/keywords-explorer/KeywordsExplorerPage.jsx";
+import AdvertiserProfileModal from "./components/modals/AdvertiserProfileModal.jsx";
 import AllProjects from "./components/all-projects/AllProjects";
 // SharedAdView no longer used — /share routes now use dashboard UI via GuestProvider
 import SavedAdsPage from "./components/ads/SavedAdsPage";
@@ -290,6 +293,9 @@ const App = () => {
     if (location.pathname === '/projects') {
       dispatch(setActivePage('projects'));
       dispatch(setShowSavedAdsPage(false));
+    } else if (location.pathname === '/keywords-explorer') {
+      dispatch(setActivePage('keywords-explorer'));
+      dispatch(setShowSavedAdsPage(false));
     } else if (location.pathname === '/saved') {
       dispatch(setActivePage('ads'));
       dispatch(setShowSavedAdsPage(true));
@@ -335,6 +341,8 @@ const App = () => {
     if (_isSpecialRoute) return;
     if (ui.activePage === 'projects' && location.pathname !== '/projects') {
       navigate('/projects');
+    } else if (ui.activePage === 'keywords-explorer' && location.pathname !== '/keywords-explorer') {
+      navigate('/keywords-explorer');
     } else if (ui.showSavedAdsPage && location.pathname !== '/saved') {
       navigate('/saved');
     } else if (ui.activePage === 'ads' && !ui.showSavedAdsPage && location.pathname !== '/') {
@@ -415,6 +423,10 @@ const App = () => {
     return null;
   });
 
+  // Bumped to tell AdGrid to dismiss its (locally-owned) AdDetailModal when a
+  // parent-level navigation jumps to the Ads Library out from under it.
+  const [closeDetailSignal, setCloseDetailSignal] = useState(0);
+
   const openAnalyticsModal = (ad) => {
     if (ad) {
       const network = ad.network || ad.platform || "instagram";
@@ -436,6 +448,43 @@ const App = () => {
   const closeAnalyticsModal = () => {
     window.history.pushState(null, "", "/");
     setSelectedAdForAnalytics(null);
+  };
+
+  // ─── Google competitive-intelligence modals (Keyword Explorer / Advertiser
+  // Profile). These stack above the analytics modal and cross-link to each
+  // other. State is just the lookup key; the modal fetches its own data.
+  const [keywordExplorer, setKeywordExplorer] = useState(null); // keyword string
+  const [advertiserProfile, setAdvertiserProfile] = useState(null); // { postOwnerId?, advertiserName? }
+  // Gate the competitive-intelligence surfaces behind the same plan check as the
+  // analytics modal (onAnalyticsAd): guests and plans without analytics access
+  // get the pricing modal instead. Returns true when access is allowed.
+  const canAccessIntel = () => {
+    if (guest?.isRestricted) {
+      dispatch(openModal('isPricingModalOpen'));
+      return false;
+    }
+    if (!planAccess) return false;
+    const allowed = planAccess.filters?.ad_analytics?.enabled === true ||
+      (planAccess.competitorLimits?.brandLimit ?? 0) > 0;
+    if (!allowed) {
+      dispatch(openModal('isPricingModalOpen'));
+      return false;
+    }
+    return true;
+  };
+  const openKeywordExplorer = (keyword) => {
+    if (!keyword || !canAccessIntel()) return;
+    setKeywordExplorer(String(keyword));
+  };
+  const openKeywordsExplorerPage = () => {
+    if (!canAccessIntel()) return;
+    dispatch(setActivePage('keywords-explorer'));
+  };
+  const openAdvertiserProfile = (arg) => {
+    const next = typeof arg === "string" ? { advertiserName: arg } : arg;
+    if (!next || !(next.postOwnerId || next.advertiserName)) return;
+    if (!canAccessIntel()) return;
+    setAdvertiserProfile(next);
   };
 
   useEffect(() => {
@@ -1331,6 +1380,23 @@ const App = () => {
     dispatch(setActivePage("ads"));
   }, [guestGuard, dispatch, sdui, handleSearch]);
 
+  // Keyword Explorer "Top advertisers" click → land on the ads library
+  // searching that advertiser (Google platform), closing the intel modals
+  // since we're navigating away from them.
+  const handleIntelAdvertiserClick = useCallback((advertiserName) => {
+    if (guestGuard("Please login to search", {})) return;
+    setKeywordExplorer(null);
+    setAdvertiserProfile(null);
+    if (selectedAdForAnalytics) closeAnalyticsModal();
+    setCloseDetailSignal((n) => n + 1);
+    sdui.setActivePlatforms(["google"]);
+    dispatch(setSpecificPlatforms(["google"]));
+    dispatch(setShowSavedAdsPage(false));
+    handleSearch(advertiserName, "advertiser");
+    coalesceNextHistoryWrite();
+    dispatch(setActivePage("ads"));
+  }, [guestGuard, dispatch, sdui, handleSearch, selectedAdForAnalytics]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
     const params = new URLSearchParams(window.location.search);
@@ -1551,6 +1617,7 @@ const App = () => {
             dispatch(setActivePage('ads'));
             dispatch(setShowSavedAdsPage(next));
           }}
+          onOpenKeywordsExplorer={openKeywordsExplorerPage}
           searchIn={ui.searchIn}
         />
 
@@ -1563,6 +1630,8 @@ const App = () => {
               handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword');
             }}
           />
+        ) : ui.activePage === "keywords-explorer" ? (
+          <KeywordsExplorerPage onOpenKeyword={openKeywordExplorer} />
         ) : ui.activePage === "projects" && canAccessProjects ? (
           <AllProjects
             onSearch={handleSearch}
@@ -1592,6 +1661,7 @@ const App = () => {
               if (!canAccessAnalytics) { dispatch(openModal('isPricingModalOpen')); return; }
               openAnalyticsModal(ad);
             }}
+            closeDetailSignal={closeDetailSignal}
           />
         ) : (
           <AdGrid
@@ -1615,6 +1685,8 @@ const App = () => {
               openAnalyticsModal(ad);
             }}
             onSearch={handleSearch}
+            onOpenAdvertiserProfile={openAdvertiserProfile}
+            onOpenKeywordExplorer={openKeywordExplorer}
             onExportAll={handleExportAll}
             setPage={setPage}
             hasMore={hasMore}
@@ -1659,6 +1731,7 @@ const App = () => {
             DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}
             hiddenCount={hiddenCount}
             isSearchActive={!!(ui.searchQuery && ui.searchQuery.trim() && ui.searchQuery !== 'NA')}
+            closeDetailSignal={closeDetailSignal}
           />
         )}
       </div>
@@ -1687,7 +1760,28 @@ const App = () => {
           visibleAds.findIndex((a) => a.id === selectedAdForAnalytics?.id) <
           visibleAds.length - 1
         }
+        onOpenKeywordExplorer={openKeywordExplorer}
+        onOpenAdvertiserProfile={openAdvertiserProfile}
+        onOpenKeywordsExplorer={openKeywordsExplorerPage}
       />
+
+      {keywordExplorer && (
+        <KeywordExplorerModal
+          keyword={keywordExplorer}
+          onClose={() => setKeywordExplorer(null)}
+          onAdvertiserClick={handleIntelAdvertiserClick}
+          onOpenKeyword={openKeywordExplorer}
+        />
+      )}
+
+      {advertiserProfile && (
+        <AdvertiserProfileModal
+          postOwnerId={advertiserProfile.postOwnerId}
+          advertiserName={advertiserProfile.advertiserName}
+          onClose={() => setAdvertiserProfile(null)}
+          onOpenKeyword={openKeywordExplorer}
+        />
+      )}
 
       <AIAnalysisModal
         ad={selectedAdForAI}

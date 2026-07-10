@@ -54,6 +54,7 @@ const SavedAdsPage = ({
   onHideAdvertiser,
   onAnalyticsAd,
   onSearch,
+  closeDetailSignal,
 }) => {
   const dispatch = useDispatch();
   const reduxPlatforms = useSelector((s) => s.ui.specificPlatforms);
@@ -62,6 +63,12 @@ const SavedAdsPage = ({
   const [activeTab, setActiveTab] = useState(reduxSavedAdsTab || "favourites");
 
   const [selectedAd, setSelectedAd] = useState(null);
+  // Lets a parent-level navigation (e.g. jumping to the Ads Library from the
+  // Keyword Explorer's "Top advertisers" list) dismiss this modal even though
+  // it's local state — without lifting selectedAd up to App.jsx.
+  useEffect(() => {
+    if (closeDetailSignal) setSelectedAd(null);
+  }, [closeDetailSignal]);
   const [specificPlatforms, setSpecificPlatforms] = useState(reduxPlatforms);
   const [ads, setAds] = useState([]);
   const [page, setPage] = useState(0);

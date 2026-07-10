@@ -303,7 +303,44 @@ function requirePlatform(platform) {
   };
 }
 
+/**
+ * Middleware: requireIntelAccess
+ *
+ * Must run AFTER authMiddleware + planAccessMiddleware (needs req.planAccess).
+ * Server-side mirror of the frontend's `canAccessIntel()` gate (new-ui-react
+ * `App.jsx`) — until now the Google competitive-intelligence endpoints
+ * (`/keywords/insight`, `/advertiser/profile`, `/ads/trends`, and the newer
+ * Keywords Explorer routes) were reachable by any authenticated user because
+ * the entitlement check only existed in the UI. Same condition as the FE:
+ * the `ad_analytics` filter is enabled for the plan, OR the plan has a
+ * competitor/brand tracking limit above zero.
+ */
+function requireIntelAccess(req, res, next) {
+  if (!req.planAccess) {
+    return res.status(500).json({
+      code: 500,
+      message: 'planAccessMiddleware must run before requireIntelAccess',
+    });
+  }
+
+  const allowed = req.planAccess.filters?.ad_analytics?.enabled === true ||
+    (req.planAccess.competitorLimits?.brandLimit ?? 0) > 0;
+
+  if (!allowed) {
+    log.warn('Intel access denied', { userId: req.user?.id, planId: req.planAccess.planId });
+    return res.status(403).json({
+      code: 403,
+      message: 'Your current plan does not include competitive intelligence access. Please upgrade your plan.',
+      showSubscriptionModal: true,
+      currentPlan: req.planAccess.planId,
+    });
+  }
+
+  next();
+}
+
 module.exports = {
   planAccessMiddleware,
   requirePlatform,
+  requireIntelAccess,
 };

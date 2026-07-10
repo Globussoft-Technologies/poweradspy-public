@@ -31,6 +31,7 @@ const Sidebar = ({
   allowedPlatforms,
   showSavedAdsPage = false,
   onShowSavedAdsPage,
+  onOpenKeywordsExplorer,
   searchIn = "keyword",
 }) => {
   const {
@@ -124,6 +125,13 @@ const Sidebar = ({
                 collapsed={!isOpen}
               />
             )}
+            <NavItem
+              icon={<Hash size={isOpen ? 16 : 18} />}
+              label={t("keywords_explorer")}
+              active={activePage === "keywords-explorer"}
+              onClick={() => onOpenKeywordsExplorer?.()}
+              collapsed={!isOpen}
+            />
             {isLoggedIn && (allowedPlatforms == null || allowedPlatforms.length > 0) && (
               <NavItem
                 icon={<Bookmark size={isOpen ? 16 : 18} />}

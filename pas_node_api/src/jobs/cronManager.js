@@ -16,6 +16,7 @@ const config = require('../config');
 const logger = require('../logger');
 const { parseSchedule } = require('./parseSchedule');
 const { runActiveCountSnapshot } = require('./activeCountSnapshotJob');
+const { runKeywordStatsRefresh } = require('../services/google/jobs/refreshKeywordStats');
 
 const log = logger.createChild('cron-manager');
 
@@ -23,6 +24,13 @@ const log = logger.createChild('cron-manager');
 const REGISTRY = {
   activeCountSnapshot: (jobCfg) =>
     runActiveCountSnapshot({ retentionDays: jobCfg.retentionDays || 365 }),
+  keywordStatsRefresh: (jobCfg) =>
+    runKeywordStatsRefresh({
+      commit: jobCfg.commit !== false,
+      truncate: !!jobCfg.truncate,
+      full: !!jobCfg.full,
+      batch: jobCfg.batch || 200,
+    }),
 };
 
 /**

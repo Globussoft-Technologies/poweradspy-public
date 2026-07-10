@@ -126,7 +126,8 @@ function bootstrapAuth() {
 
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
+    // Skip expiry check for dev env fallback tokens — they are local-only and don't rotate.
+    if (payload.exp && payload.exp * 1000 < Date.now() && !isEnvLogin) {
       throw new Error('Token expired');
     }
     localStorage.setItem('authUser', JSON.stringify(payload));

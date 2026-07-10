@@ -153,6 +153,7 @@ import {
   Tag,
   Type,
   Search,
+  Building2,
   ChevronLeft,
   ChevronRight,
   X,
@@ -485,7 +486,7 @@ const ClampedText = ({
   );
 };
 
-const TargetedKeywords = ({ adDetails, ad, isLight }) => {
+const TargetedKeywords = ({ adDetails, ad, isLight, onKeywordClick, onOpenAdvertiserProfile, onOpenKeywordsExplorer, advertiser, postOwnerId }) => {
   const keywords =
     adDetails?.target_keyword ||
     ad?.target_keyword ||
@@ -499,14 +500,39 @@ const TargetedKeywords = ({ adDetails, ad, isLight }) => {
           .map((k) => k.trim())
           .filter(Boolean)
       : [];
+  const kwClickable = typeof onKeywordClick === "function";
   return (
     <div className="px-6">
-      <h3
-        className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
-      >
-        <Tag size={16} className="opacity-60" />
-        Targeted Keywords
-      </h3>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h3
+          className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] ${isLight ? "text-gray-800" : "text-white/90"}`}
+        >
+          <Tag size={16} className="opacity-60" />
+          Targeted Keywords
+        </h3>
+        <div className="flex items-center gap-2">
+          {typeof onOpenKeywordsExplorer === "function" ? (
+            <button
+              type="button"
+              onClick={() => onOpenKeywordsExplorer()}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${isLight ? "border-blue-200 text-blue-700 hover:bg-blue-50" : "border-blue-500/30 text-blue-300 hover:bg-blue-500/10"}`}
+            >
+              <Tag size={13} />
+              Keywords Explorer
+            </button>
+          ) : null}
+          {typeof onOpenAdvertiserProfile === "function" && (advertiser || postOwnerId) ? (
+            <button
+              type="button"
+              onClick={() => onOpenAdvertiserProfile({ postOwnerId, advertiserName: advertiser })}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${isLight ? "border-blue-200 text-blue-700 hover:bg-blue-50" : "border-blue-500/30 text-blue-300 hover:bg-blue-500/10"}`}
+            >
+              <Building2 size={13} />
+              View advertiser profile
+            </button>
+          ) : null}
+        </div>
+      </div>
       {kwList.length === 0 ? (
         <div
           className={`rounded-xl border py-12 flex items-center justify-center ${isLight ? "bg-gray-50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
@@ -522,12 +548,16 @@ const TargetedKeywords = ({ adDetails, ad, isLight }) => {
           className={`rounded-xl border p-4 flex flex-wrap gap-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
         >
           {kwList.map((kw, i) => (
-            <span
+            <button
               key={i}
-              className={`inline-flex items-center rounded-full px-3 py-1 text-sm border ${isLight ? "bg-white border-blue-200 text-blue-700" : "bg-blue-500/10 border-blue-500/20 text-blue-300"}`}
+              type="button"
+              disabled={!kwClickable}
+              onClick={kwClickable ? () => onKeywordClick(kw) : undefined}
+              title={kwClickable ? `Explore “${kw}”` : undefined}
+              className={`inline-flex items-center rounded-full px-3 py-1 text-sm border transition-colors ${isLight ? "bg-white border-blue-200 text-blue-700" : "bg-blue-500/10 border-blue-500/20 text-blue-300"} ${kwClickable ? (isLight ? "hover:bg-blue-50 cursor-pointer" : "hover:bg-blue-500/20 cursor-pointer") : "cursor-default"}`}
             >
               {kw}
-            </span>
+            </button>
           ))}
         </div>
       )}
@@ -1100,6 +1130,9 @@ const AnalyticsModal = ({
   onNext,
   hasPrev = false,
   hasNext = false,
+  onOpenKeywordExplorer,
+  onOpenAdvertiserProfile,
+  onOpenKeywordsExplorer,
 }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
@@ -1982,6 +2015,11 @@ const AnalyticsModal = ({
                 adDetails={adDetailsData}
                 ad={ad}
                 isLight={isLight}
+                onKeywordClick={onOpenKeywordExplorer}
+                onOpenAdvertiserProfile={onOpenAdvertiserProfile}
+                onOpenKeywordsExplorer={onOpenKeywordsExplorer}
+                advertiser={adDetailsData?.post_owner || ad?.post_owner || ad?.advertiser}
+                postOwnerId={postOwnerId}
               />
             ) : ctx.platform === "native" ? (
               <AdDetailsActivity

@@ -40,6 +40,8 @@ const AdGrid = ({
   onHideAdvertiser,
   onToggleFavourite,
   onSearch,
+  onOpenAdvertiserProfile,
+  onOpenKeywordExplorer,
   onExportAll,
   error = null,
   onRetry,
@@ -70,6 +72,7 @@ const AdGrid = ({
   hiddenCount = 0,
   isSearchActive = false,
   onGuestLimit,
+  closeDetailSignal,
 }) => {
   const {
     activePlatforms,
@@ -571,6 +574,12 @@ const AdGrid = ({
 
   // Detail modal state
   const [selectedAd, setSelectedAd] = useState(null);
+  // Lets a parent-level navigation (e.g. jumping to the Ads Library from the
+  // Keyword Explorer's "Top advertisers" list) dismiss this modal even though
+  // it's local state — without lifting selectedAd up to App.jsx.
+  useEffect(() => {
+    if (closeDetailSignal) setSelectedAd(null);
+  }, [closeDetailSignal]);
   // Stable card click handler so the memoized MasonryCard sees the same fn ref
   // across AdGrid re-renders triggered by unrelated state.
   const handleCardClick = useCallback((ad) => {
@@ -1157,6 +1166,8 @@ const AdGrid = ({
                   isFavourite={favouriteAdIds.has(`${(item.network || '').toLowerCase()}:${Number(item.adId || item.id)}`)}
                   onToggleFavourite={onToggleFavourite}
                   onSearch={onSearch}
+                  onOpenAdvertiserProfile={onOpenAdvertiserProfile}
+                  onOpenKeywordExplorer={onOpenKeywordExplorer}
                   onClick={handleCardClick}
                   onHideAd={onHideAd}
                   onHideAdvertiser={onHideAdvertiser}

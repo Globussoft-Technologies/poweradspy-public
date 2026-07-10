@@ -258,6 +258,8 @@ const MasonryCard = ({
   onClick,
   onImageReady,
   onSearch,
+  onOpenAdvertiserProfile,
+  onOpenKeywordExplorer,
   onHideAd,
   onHideAdvertiser,
   isHidden = false,
@@ -631,14 +633,31 @@ const MasonryCard = ({
                       .split(",")
                       .filter(Boolean)
                       .slice(0, 4)
-                      .map((kw, i) => (
-                        <span
-                          key={i}
-                          className="px-2 py-0.5 text-[10px] text-blue-700 bg-blue-50 rounded-full border border-blue-100"
-                        >
-                          {kw.trim()}
-                        </span>
-                      ))}
+                      .map((kw, i) => {
+                        const term = kw.trim();
+                        const clickable = typeof onOpenKeywordExplorer === "function";
+                        return (
+                          <button
+                            key={i}
+                            type="button"
+                            disabled={!clickable}
+                            onClick={
+                              clickable
+                                ? (e) => {
+                                    e.stopPropagation();
+                                    onOpenKeywordExplorer(term);
+                                  }
+                                : undefined
+                            }
+                            title={clickable ? `Explore “${term}”` : undefined}
+                            className={`px-2 py-0.5 text-[10px] text-blue-700 bg-blue-50 rounded-full border border-blue-100 transition-colors ${
+                              clickable ? "hover:bg-blue-100 hover:border-blue-300 cursor-pointer" : "cursor-default"
+                            }`}
+                          >
+                            {term}
+                          </button>
+                        );
+                      })}
                   </div>
                 )}
               </div>
@@ -989,10 +1008,21 @@ const MasonryCard = ({
                   <span
                     onClick={(e) => {
                       e.stopPropagation();
-                      onSearch?.(ad.advertiser, "advertiser");
+                      // Google cards open the full Advertiser Profile (competitive
+                      // intelligence); other networks keep the search-by-advertiser
+                      // behaviour. Falls back to search if the handler isn't wired.
+                      if (platform === "google" && typeof onOpenAdvertiserProfile === "function") {
+                        onOpenAdvertiserProfile({ postOwnerId: ad.postOwnerId, advertiserName: ad.advertiser });
+                      } else {
+                        onSearch?.(ad.advertiser, "advertiser");
+                      }
                     }}
                     className="text-[14px] font-bold truncate text-zinc-100 hover:text-[#6b99ff] cursor-pointer transition-colors"
-                    title={`See all ads from ${ad.advertiser}`}
+                    title={
+                      platform === "google"
+                        ? `View advertiser profile — ${ad.advertiser}`
+                        : `See all ads from ${ad.advertiser}`
+                    }
                   >
                     {ad.advertiser}
                   </span>

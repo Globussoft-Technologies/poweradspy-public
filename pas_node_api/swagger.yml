@@ -23,6 +23,8 @@ info:
 servers:
   - url: http://localhost:3000
     description: Local development server
+  - url: http://localhost:3000
+    description: Local development server (config.json default port)
   - url: https://stagingtest-api.poweradspy.com
     description: Port forwarded development server
   - url: https://v2-api.poweradspy.com
@@ -7087,6 +7089,295 @@ paths:
           description: Advertiser not found or no data
         '401':
           description: Missing parameters
+
+  # ═══════════════════════════════════════════
+  # GOOGLE — Competitive Intelligence / Keywords Explorer
+  # Ad Volume / Competition / Growth are proxies derived from PowerAdSpy's own
+  # crawled Google Ads corpus — not real Google search volume or backlink-based
+  # Keyword Difficulty. All routes require an Intel-entitled plan (403 otherwise).
+  # ═══════════════════════════════════════════
+
+  /api/v1/google/ads/trends:
+    post:
+      tags: [Google]
+      summary: Ad/advertiser activity time-series
+      description: Time-series of distinct-ad and distinct-advertiser counts for any filter context.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keyword: { type: string, example: "adspy tool" }
+                advertiser: { type: string }
+                domain: { type: string }
+                country: { type: string, example: US }
+                type: { type: string, example: TEXT }
+                from_date: { type: string, format: date }
+                to_date: { type: string, format: date }
+                interval: { type: string, enum: [day, week, month, quarter, year], default: month }
+                date_field: { type: string, enum: [last_seen, first_seen, post_date], default: last_seen }
+                split: { type: string, enum: [none, sub_position, position, type], default: none }
+      responses:
+        '200': { description: Trend points }
+        '403': { description: Plan does not include Intel access }
+
+  /api/v1/google/keywords/insight:
+    post:
+      tags: [Google]
+      summary: Keyword Explorer — competitive board for one bidding keyword
+      description: Top advertisers/domains, SERP position mix, trend, and sample creatives for one target_keyword.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keyword]
+              properties:
+                keyword: { type: string, example: "adspy tool" }
+                from_date: { type: string, format: date }
+                to_date: { type: string, format: date }
+                country: { type: string, example: US }
+                top_n: { type: integer, default: 20, maximum: 100 }
+                interval: { type: string, enum: [day, week, month, quarter, year], default: month }
+                creatives: { type: integer, default: 12, maximum: 50 }
+      responses:
+        '200': { description: Keyword insight }
+        '400': { description: Missing keyword }
+        '403': { description: Plan does not include Intel access }
+
+  /api/v1/google/advertiser/profile:
+    post:
+      tags: [Google]
+      summary: Advertiser Profile — full competitive profile for one advertiser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                post_owner_id: { type: integer, example: 123 }
+                post_owner_name: { type: string, example: "Nike" }
+                from_date: { type: string, format: date }
+                to_date: { type: string, format: date }
+                top_n: { type: integer, default: 25, maximum: 100 }
+                interval: { type: string, enum: [day, week, month, quarter, year], default: month }
+                creatives: { type: integer, default: 12, maximum: 50 }
+      responses:
+        '200': { description: Advertiser profile }
+        '400': { description: Missing post_owner_id or post_owner_name }
+        '404': { description: Advertiser not found }
+        '403': { description: Plan does not include Intel access }
+
+  /api/v1/google/keywords/explorer:
+    post:
+      tags: [Google]
+      summary: Keywords Explorer — paginated/filterable/sortable keyword table
+      description: |
+        Reads the `keyword_stats` rollup (SQL, refreshed by refreshKeywordStats.js) —
+        NOT a live ES aggregation. Returns 500 if `keyword_stats` is empty/missing;
+        run `node scripts/apply-keyword-stats-schema.js` then
+        `node src/services/google/jobs/refreshKeywordStats.js --commit` first.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                page: { type: integer, default: 1 }
+                page_size: { type: integer, default: 50, maximum: 200 }
+                sort_by: { type: string, enum: [ads_total, advertisers_total, domains_total, competition_score, growth_pct, first_seen, last_seen], default: ads_total }
+                sort_dir: { type: string, enum: [asc, desc], default: desc }
+                volume_min: { type: integer }
+                volume_max: { type: integer }
+                competition_min: { type: integer }
+                competition_max: { type: integer }
+                growth_min: { type: number }
+                growth_max: { type: number }
+                category: { type: string }
+                country: { type: string, example: US }
+                include: { type: string, description: substring match on the keyword text }
+                exclude: { type: string, description: substring anti-match on the keyword text }
+                first_seen_after: { type: string, format: date }
+      responses:
+        '200': { description: Paginated keyword rows }
+        '403': { description: Plan does not include Intel access }
+        '500': { description: SQL error — usually keyword_stats missing/empty }
+
+  /api/v1/google/keywords/ideas:
+    post:
+      tags: [Google]
+      summary: Related/matching keyword ideas for a seed keyword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keyword]
+              properties:
+                keyword: { type: string, example: "adspy tool" }
+                top_n: { type: integer, default: 30, maximum: 100 }
+      responses:
+        '200': { description: Matching + related terms }
+        '400': { description: Missing keyword }
+        '403': { description: Plan does not include Intel access }
+
+  /api/v1/google/keywords/lists:
+    post:
+      tags: [Google]
+      summary: Create a keyword list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "Competitor keywords" }
+                country: { type: string, example: US }
+      responses:
+        '200': { description: List created }
+        '400': { description: Missing name }
+        '403': { description: Plan does not include Intel access }
+
+  /api/v1/google/keywords/lists/get:
+    post:
+      tags: [Google]
+      summary: List the current user's keyword lists
+      responses:
+        '200': { description: Keyword lists with item counts }
+        '403': { description: Plan does not include Intel access }
+
+  /api/v1/google/keywords/lists/{id}/rename:
+    post:
+      tags: [Google]
+      summary: Rename a keyword list
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '200': { description: List renamed }
+        '403': { description: Not owned by the current user, or plan lacks Intel access }
+        '404': { description: List not found }
+
+  /api/v1/google/keywords/lists/{id}/delete:
+    post:
+      tags: [Google]
+      summary: Delete a keyword list (cascades to its items)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: List deleted }
+        '403': { description: Not owned by the current user, or plan lacks Intel access }
+        '404': { description: List not found }
+
+  /api/v1/google/keywords/lists/{id}/items/get:
+    post:
+      tags: [Google]
+      summary: Get a keyword list's items (joined with keyword_stats)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Keywords in the list }
+        '403': { description: Not owned by the current user, or plan lacks Intel access }
+        '404': { description: List not found }
+
+  /api/v1/google/keywords/lists/{id}/items:
+    post:
+      tags: [Google]
+      summary: Add keywords to a list
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keywords]
+              properties:
+                keywords:
+                  type: array
+                  items: { type: string }
+                  example: ["adspy tool", "ad intelligence"]
+      responses:
+        '200': { description: "{ added, not_found } counts" }
+        '400': { description: Missing keywords array }
+        '403': { description: Not owned by the current user, or plan lacks Intel access }
+        '404': { description: List not found }
+
+  /api/v1/google/keywords/lists/{id}/items/remove:
+    post:
+      tags: [Google]
+      summary: Remove one keyword from a list
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keyword_id]
+              properties:
+                keyword_id: { type: integer }
+      responses:
+        '200': { description: Keyword removed }
+        '400': { description: Missing keyword_id }
+        '403': { description: Not owned by the current user, or plan lacks Intel access }
+        '404': { description: List not found }
+
+  /api/v1/google/keywords/import:
+    post:
+      tags: [Google]
+      summary: Import keywords from a CSV/TXT upload or pasted text
+      description: >
+        Multipart file field `file`, OR JSON body with a `keywords` array or a
+        `text` string of comma/newline-separated keywords.
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+          application/json:
+            schema:
+              type: object
+              properties:
+                keywords: { type: array, items: { type: string } }
+                text: { type: string, example: "adspy tool, ad intelligence" }
+      responses:
+        '200': { description: "{ matched, not_found }" }
+        '400': { description: No keywords provided }
+        '403': { description: Plan does not include Intel access }
 
   # ═══════════════════════════════════════════
   # QUORA
