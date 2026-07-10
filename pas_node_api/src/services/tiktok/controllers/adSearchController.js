@@ -274,9 +274,13 @@ async function searchAds(req, db, logger) {
   const budgetVal = toArr(raw.budget);
   if (budgetVal.length > 0) builder.setBudget(budgetVal);
 
-  // language: frontend sends ISO codes (["es","de"]) or full names — resolve to ES values.
-  // Skip bare "en" default (sent when no language is selected).
-  const langRaw = toArr(raw.language || raw.lang).filter(l => l && l !== 'en');
+  // Frontend sends TWO language fields with different semantics:
+  //   - `lang`     = user's selection ("NA" if none, array like ["en"] if picked)
+  //   - `language` = defaults to "en" as a UI hint even when nothing is picked,
+  //                  so it can't be trusted to detect explicit selection.
+  // Only `lang` disambiguates "user picked English" from "user picked nothing",
+  // so treat `lang` as the authoritative source and ignore the `language` alias.
+  const langRaw = toArr(raw.lang);
   const langVal = resolveLanguageValues(langRaw);
   if (langVal.length > 0) builder.setLanguage(langVal);
 

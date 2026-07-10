@@ -432,7 +432,8 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['ad_id']), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
-      const language = (src['ad_language'] && langMap) ? resolveLanguageName(langMap, src['ad_language']) : ad.language;
+      const esLang = src['ad_language'];
+      const language = (esLang && langMap) ? resolveLanguageName(langMap, esLang) : null;
       return {
         ...ad,
         language,

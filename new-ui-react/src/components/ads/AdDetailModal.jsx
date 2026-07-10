@@ -294,13 +294,6 @@ const AdDetailModal = ({
   const displayLanguage = (() => {
     const raw = (ad?.adLanguage || "").trim();
     if (!raw) return "—";
-    // Try ISO code → full name (e.g. "sv" → "Swedish", "en" → "English")
-    try {
-      const names = new Intl.DisplayNames(['en'], { type: 'language' });
-      const name = names.of(raw);
-      if (name && name.toLowerCase() !== raw.toLowerCase()) return name;
-    } catch {}
-    // Already a full name (e.g. "english", "swedish") — just capitalize
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   })();
 

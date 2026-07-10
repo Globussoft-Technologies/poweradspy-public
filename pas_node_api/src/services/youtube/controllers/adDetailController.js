@@ -70,9 +70,7 @@ const AD_DETAIL_SQL = `
 
     youtube_ad_outgoing_links.source_url,
     youtube_ad_outgoing_links.redirect_url,
-    youtube_ad_outgoing_links.final_url,
-
-    languages.name AS language
+    youtube_ad_outgoing_links.final_url
 
   FROM youtube_ad
   LEFT JOIN youtube_ad_image_video ON youtube_ad.id = youtube_ad_image_video.youtube_ad_id
@@ -85,7 +83,6 @@ const AD_DETAIL_SQL = `
   LEFT JOIN youtube_ad_variants ON youtube_ad.id = youtube_ad_variants.youtube_ad_id
   LEFT JOIN youtube_category ON youtube_category.id = youtube_ad.category_id
   LEFT JOIN youtube_ad_outgoing_links ON youtube_ad.id = youtube_ad_outgoing_links.youtube_ad_id
-  LEFT JOIN languages ON youtube_ad.language_id = languages.id
   WHERE youtube_ad.id = ?
   LIMIT 1
 `;
@@ -120,6 +117,10 @@ async function getAdDetails(req, db, logger) {
     }
 
     const adData = { ...rows[0] };
+    // Language is sourced exclusively from ES `ad_language` in the overlay below.
+    // Initialise to null so ES-unavailable / doc-missing / overlay-failure paths
+    // return a deterministic value instead of undefined.
+    adData.language = null;
 
     // ─── Step 2: Overlay ES data ────────────────────────
     if (db.elastic) {
@@ -181,10 +182,15 @@ async function getAdDetails(req, db, logger) {
           // Text image title
           adData.text_image_title = src.text_image_title || null;
 
-          // Language from ES ad_language ISO
+          // Language comes exclusively from ES `ad_language` (ISO). The SQL languages
+          // join was removed above because its per-ad value is stale for many rows.
+          // getLanguageMap is only used to resolve the ISO → display name (a small
+          // reference lookup), not to source the ad's language.
           if (src['ad_language']) {
             const langMap = await getLanguageMap(db.sql);
             adData.language = resolveLanguageName(langMap, src['ad_language']);
+          } else {
+            adData.language = null;
           }
 
           // Market platform URL fields
