@@ -1,7 +1,7 @@
 # AI-Meta & Category Read-Back — API Implementation
 
-**Status:** Implemented · **Date:** 2026-07-01, updated for spec v1.5 on 2026-07-10 · **Owner:** Anij Burnwal
-**Spec:** `AI_META_API_PAYLOAD_SPEC.md` **v1.5** · **Backend issues:** `BACKEND_FIX_PROMPT.md` (Issues 1 & 3)
+**Status:** Implemented · **Date:** 2026-07-01, updated for spec v1.5 (2026-07-10) and v1.6 (2026-07-13) · **Owner:** Anij Burnwal
+**Spec:** `AI_META_API_PAYLOAD_SPEC.md` **v1.6** · **Backend issues:** `BACKEND_FIX_PROMPT.md` (Issues 1 & 3)
 
 This document describes two related pieces of work on the shared classifier controller
 [`src/services/common/controllers/addCategoryController.js`](../src/services/common/controllers/addCategoryController.js):
@@ -104,17 +104,19 @@ Responses: `200` (found), `400` (bad/missing platform or ad_id), `404` (ad not f
 
 ## 2. AI-Meta enrichment
 
-Implements `AI_META_API_PAYLOAD_SPEC.md` **v1.5** (2026-07-10). Data is stored on the ad's ES doc
+Implements `AI_META_API_PAYLOAD_SPEC.md` **v1.6** (2026-07-13). Data is stored on the ad's ES doc
 under a single `ai` object (spec §7 mapping). Field set = 8 core (`ad_type`, `intent`, `hook`,
-`offering_type`, `offers`, `offering`, `caption`, `roa`) + `colors`/`category`/`sub_category`.
+`offering_type`, `offers`, `offering`, `caption`, `roa`) + `colors` + the category classification group
+(`category`/`category_id`/`sub_category`/`subcategory_id`).
 
 > **Lineage vs the original v1.1 build:** `product_type`→**`offering_type`** (enum shrank to
 > `product`/`service`/`both`); `reason`→**`roa`**; **added `caption`**; **removed** `object`,
 > `language`, `ocr`, `brand_logos`, **`status`**, and — in **v1.5** — **`brand`** and **`celebrity`**.
-> With `status` gone there is no partial/failed state — every payload is a completed enrichment, so the
-> whole `ai` object is always replaced. `colors` is a fixed **16-value HEX palette** (not the
-> never-shipped named-word vocab). v1.5's `roa` self-explaining fallback strings need no special
-> handling — they're ordinary ≤200-char values.
+> **v1.6:** the category name **and its ids** (`category_id` 4-char, `subcategory_id` 8-char) now travel
+> inside `ai_meta` — the top-level classification fields are retired — so `/ai-meta` can drive the flat ES
+> ad-doc codes and maintain the master `category` taxonomy index on its own. With `status` gone there is no
+> partial/failed state — every payload is a completed enrichment, so the whole `ai` object is always
+> replaced. `colors` is a fixed **16-value HEX palette** (not the never-shipped named-word vocab).
 
 ### 2.1 Validator — `src/services/common/helpers/aiMetaValidator.js`
 
@@ -131,39 +133,55 @@ Pure/synchronous, fully unit-tested. Enforces the entire §3 contract:
   `flat_discount`, and forced to `null` for every other type.
 - **Text:** `offering`/`caption` ≤200 (no newlines/control chars, empty → omitted); `roa` sub-fields
   (`intent`/`hook`/`offering_type`/`offering`) each ≤200, empties dropped, whole object omitted if all empty.
+- **Category group (v1.6):** `category` (≥5) ↔ `category_id` (exactly 4) travel together; `sub_category`
+  (≥2) ↔ `subcategory_id` (exactly 8, prefixed by `category_id`) travel together; a sub requires a parent
+  category; a failed name/id pair drops **both** halves (no half-pairs); the whole group is optional.
 - **Unknown fields ignored:** legacy/removed keys (`product_type`, `brand`, `celebrity`, …) are not
   errored, just dropped → a payload sending the old `product_type` instead of `offering_type` still fails
   because the now-required `offering_type` is missing, which is the intended rejection.
 
 ### 2.2 Option A — `ai_meta` on `newCatInsertion`
 
-`newCatInsertion` accepts an optional `ai_meta` object alongside the category fields. It is
-**additive and non-blocking**: an invalid `ai_meta` never fails the category write — it is reported
-via `ai_meta_status: "validation_error"` + `ai_meta_errors`, while the category result stands.
+`newCatInsertion` accepts an optional `ai_meta` object alongside the (legacy top-level) category fields. It
+is **additive and non-blocking**: an invalid `ai_meta` never fails the category write — it is reported via
+`ai_meta_status: "validation_error"` + `ai_meta_errors`, while the category result stands. On success the
+`ai` object is written and dual-persisted to SQL (`ai_meta_sql`). Category on this path is still driven by
+the top-level classification (Step 1 taxonomy + Step 2 flat-code ad update), so the ai_meta category is not
+re-applied here. **Once the DS pipeline ships v1.6, `/ai-meta` (Option B) is the intended single endpoint;**
+Option A stays for backward compatibility.
 
-### 2.3 Option B — `POST /ai-meta` (dedicated, strict)
+### 2.3 Option B — `POST /ai-meta` (dedicated) — now the full category writer
 
-Standalone, spec-conformant write path — decoupled from category classification (it writes only the
-`ai` object, never `${platform}.category`).
+Standalone, spec-conformant write path. **As of v1.6 it is no longer decoupled from category** — because
+the category name + ids arrive inside `ai_meta`, this endpoint now, when a category is present:
+1. writes the `ai` object,
+2. maintains the master `category` taxonomy index (shared `syncMasterCategory`, using `category_id`/
+   `subcategory_id`),
+3. mirrors the dotted names + flat 4/8-char codes onto the ad doc (`mirrorCategoryToEs`), and
+4. dual-writes to SQL (`persistAiMeta`), syncing the category name to `<net>_ad.category_id` where a store
+   exists.
+Steps 2–3 are non-fatal and surfaced under `category_sync`; step 4 under `sql`.
 
 **Request** (spec §2):
 ```json
 {
   "ad_id": "531218",
-  "network": "gdn",
-  "major_category": "Retail",            // optional; not written by this endpoint
-  "sub_category": "Specialty Stores",    // optional
-  "ai_meta": { "ad_type": "promotional", "intent": ["conversion"], "hook": ["urgency"], "offering_type": "product", "...": "..." }
+  "network": "facebook",
+  "ai_meta": {
+    "ad_type": "promotional", "intent": ["conversion"], "hook": ["urgency"], "offering_type": "product",
+    "category": "Retail", "category_id": "1234",
+    "sub_category": "Specialty Stores", "subcategory_id": "12340001"
+  }
 }
 ```
-`network` is required (alias `platform` also accepted). `major_category`/`sub_category` are accepted
-but ignored for writing — category classification stays on `newCatInsertion`.
+`network` is required (alias `platform` also accepted). The category group is optional; when present it
+must carry its ids (§2.1).
 
 **Responses** (spec §6, verbatim shapes):
 
 | Status | Body |
 |---|---|
-| `200` | `{ success:true, ad_id, message, stored_fields:[…] }` |
+| `200` | `{ success:true, ad_id, message, stored_fields:[…], category_sync?:{taxonomy,mirrored}, sql:{sql_status,…} }` |
 | `400` | `{ success:false, ad_id, error:{ code:"VALIDATION_ERROR", message, details:[{field,message}] } }` |
 | `404` | `{ success:false, ad_id, error:{ code:"AD_NOT_FOUND", message } }` |
 | `503` | `{ success:false, ad_id, error:{ code:"ES_UNAVAILABLE", message } }` |
@@ -196,6 +214,27 @@ The stored `ai` object is returned by both `GET /getDescriptionDetails` (feed) a
 `GET /getAdCategory` (single ad), so the classifier can verify an enrichment write and skip
 already-enriched ads.
 
+### 2.6 SQL dual-write — `src/services/common/helpers/aiMetaSqlWriter.js`
+
+ES is the search store; SQL is the durable system-of-record copy. `persistAiMeta({ sql, network, adId,
+normalized, logger })` runs alongside every ES `writeAiMeta` (both options), in **one transaction**, and is
+**non-fatal** — any failure returns a status object and never throws, so an ES success is never lost. Full
+schema/design in `docs/AI_META_SQL_STORAGE.md`. In short:
+
+- **Upsert** the validated `ai_meta` object into `<net>_ad_ai_meta` (1:1 with `<net>_ad`, keyed on the
+  public `ad_id` → internal PK). JSON fields (`intent`/`hook`/`colors`/`offers`/`roa`) are `JSON.stringify`'d
+  into `JSON` columns; absent fields bind SQL `NULL` (whole-object replace via `ON DUPLICATE KEY`).
+- **Category dual-write:** category/sub_category (+ the v1.6 `category_id`/`subcategory_id`) come from the
+  **`ai_meta` object** (the top-level `newCatInsertion` category is retired). When a category is present and
+  the network has a SQL category store, the name is resolved to its `<net>_category.id` (SELECT-then-INSERT)
+  and written to `<net>_ad.category_id`; the controller also maintains the master `category` taxonomy index
+  (`syncMasterCategory`, using the ids) and mirrors the names + flat codes to the ad doc
+  (`mirrorCategoryToEs`). **Only 7 networks have a SQL category store** (facebook, instagram, youtube,
+  native, linkedin, reddit, quora); **gdn, google, pinterest, tiktok have none** → category stays ES-only
+  there. `sub_category` has no SQL category-table home, so it lives only in `<net>_ad_ai_meta.sub_category`.
+- **Status:** returned as `{ sql_status: 'stored'|'skipped'|'ad_not_found'|'error', sql_ad_row_id?,
+  category_synced?, sql_error? }`, surfaced on the response as `ai_meta_sql` (Option A) / `sql` (Option B).
+
 ---
 
 ## 3. Decisions (spec §8 open questions)
@@ -205,23 +244,28 @@ already-enriched ads.
 | 1 | Endpoint choice | **Both** A (extend `newCatInsertion`) and B (dedicated `/ai-meta`), sharing one validator + writer. |
 | 2 | Idempotency | **Overwrite** — the whole `ai` object is replaced on every write. (`status` was dropped, so the earlier partial/failed policy no longer applies.) |
 | 3 | Indexing trigger | Direct ES write with `refresh: wait_for` — immediately searchable, no separate cron. |
+| 4 | Durable store | **Dual-write to SQL** (`<net>_ad_ai_meta`) alongside ES, non-fatal. category/sub_category sourced from the `ai_meta` object; category also synced to the pre-existing `<net>_ad.category_id` store where one exists (7/11 networks). |
+| 5 | Category location (v1.6) | Category **name + 4/8-char ids live inside `ai_meta`** (top-level classification fields retired). This lets **Option B (`/ai-meta`) be the single endpoint** — it maintains the taxonomy index and the flat ES codes from the ids. `newCatInsertion` (Option A) is kept as-is for backward compatibility; its taxonomy logic is now shared via `syncMasterCategory`. |
 
 ---
 
 ## 4. Tests
 
 - `tests/services/common/helpers/aiMetaValidator.test.mjs` — validator (offering_type rename, hex
-  colors, offers rules, `caption`/`roa`, cardinality, no-status, removed brand/celebrity ignored).
+  colors, offers rules, `caption`/`roa`, cardinality, no-status, removed brand/celebrity ignored, and the
+  v1.6 category group: name↔id pairing, 4/8-char formats, subcategory_id prefix, half-pair drop).
 - `tests/services/common/controllers/addCategoryController.test.mjs` — feed read-back, native
-  fallback, `ad_status` transitions, `getAdCategory`, `insertAiMeta` (200/400/404/503), and Option-A
-  `ai_meta` integration.
+  fallback, `ad_status` transitions, `getAdCategory`, `insertAiMeta` (200/400/404/503), Option-A
+  `ai_meta` integration, and the SQL dual-write wiring (both options, ES category mirror, non-fatal).
+- `tests/services/common/helpers/aiMetaSqlWriter.test.mjs` — `persistAiMeta` (upsert params, JSON NULL
+  binding, category name→id resolve/insert, networks without a category store, rollback on error).
 - `tests/services/common/routes/commonRoutes.test.mjs` — route registration.
 
 Run:
 ```bash
 npx vitest run tests/services/common
 ```
-All `tests/services/common` suites green (594 tests).
+All `tests/services/common` suites green (615 tests).
 
 ---
 
@@ -237,3 +281,7 @@ All `tests/services/common` suites green (594 tests).
 3. **Native backlog:** the `image_url_original` fallback only helps ads that actually kept an
    original URL. Ads whose creative was never captured upstream cannot be recovered from this service
    — that requires the scraper/source team.
+4. **SQL tables (dual-write):** apply the per-network `<net>_ad_ai_meta` DDL from
+   [`AI_META_SQL_STORAGE.md`](./AI_META_SQL_STORAGE.md) **before** go-live. Until the table exists,
+   `persistAiMeta` returns `{ sql_status: 'error' }` — non-fatal (ES still succeeds), but no durable copy
+   is written. Take the schema name from `networks.<net>.sql.database` per environment.

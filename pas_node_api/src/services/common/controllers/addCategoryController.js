@@ -5,6 +5,7 @@ const networksConfig = require('../../../config/networks');
 const config = require('../../../config');
 const { syncCategory } = require('./categoryController');
 const { validateAiMeta } = require('../helpers/aiMetaValidator');
+const { persistAiMeta } = require('../helpers/aiMetaSqlWriter');
 
 // NAS/CDN base that turns a stored NAS path into a fetchable URL (config.json cdn.baseUrl
 // or CDN_BASE_URL env; e.g. https://media.globussoft.com/pas-prod/stream). Mirrors the
@@ -75,6 +76,253 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized) {
     },
     refresh: 'wait_for',
   }));
+}
+
+/**
+ * Mirror an ai_meta-sourced category onto the ad's ES doc under the canonical
+ * literal dotted `${platform}.category` / `${platform}.subCategory` keys plus the
+ * flat 4-char `category_id` / 8-char `subCategory_id` codes and the legacy
+ * `confidence_score: 0` (marking a certain/assigned category). This is byte-for-byte
+ * the same `updateDoc` shape newCatInsertion writes, so the feed reads it identically.
+ * Idempotent doc-merge. Only called when the ai_meta object carries a category (+id).
+ *
+ * @param {object} cat  { category, subCategory, categoryId, subCategoryId }
+ */
+async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat) {
+  await esForPlat.update(withEsType(esForPlat, {
+    index: esIndex,
+    id:    docId,
+    body: {
+      doc: {
+        category_id:                 cat.categoryId ?? null,
+        [`${platform}.category`]:    cat.category,
+        subCategory_id:              cat.subCategoryId ?? null,
+        [`${platform}.subCategory`]: cat.subCategory ?? null,
+        confidence_score:            0,
+      },
+    },
+    refresh: 'wait_for',
+  }));
+}
+
+/**
+ * Conflict raised by `syncMasterCategory` when the incoming category/subcategory
+ * name↔id pair contradicts what the master `category` taxonomy index already holds.
+ * Carries the exact legacy response payload so callers reproduce the old 500 body.
+ */
+class CategoryTaxonomyConflict extends Error {
+  constructor(payload) {
+    super(payload.error || 'category taxonomy conflict');
+    this.name = 'CategoryTaxonomyConflict';
+    this.payload = payload;
+  }
+}
+
+/**
+ * Insert/patch the shared master `category` taxonomy index (the category dropdown:
+ * `{ category, cat_id, platforms[], subcategory:[{ sub_cat, sub_cat_id, platforms[] }] }`).
+ * Extracted verbatim from newCatInsertion so BOTH the classification POST and the
+ * /ai-meta path (v1.6: ids now arrive inside ai_meta) maintain the taxonomy identically.
+ *
+ * @param {object} esClient  the ES client that owns the shared `category` index (gdn)
+ * @param {object} p         { category, catId, subCategory, subCategoryId, platform }
+ * @returns {Promise<{ message: string }>}
+ * @throws  {CategoryTaxonomyConflict} on a name↔id mismatch (legacy 500 payload)
+ */
+async function syncMasterCategory(esClient, { category, catId, subCategory, subCategoryId, platform }) {
+  const existResult = await esClient.search({
+    index: 'category',
+    body: {
+      query: {
+        bool: {
+          should: [
+            { term: { 'category.keyword': category } },
+            { term: { 'cat_id.keyword': catId } },
+          ],
+          minimum_should_match: 1,
+        },
+      },
+    },
+  });
+
+  const hits = (existResult.hits || existResult.body?.hits)?.hits || [];
+  let message = 'Category/Subcategory successfully processed';
+
+  if (hits.length > 0) {
+    const doc    = hits[0];
+    const docId  = doc._id;
+    const source = doc._source;
+
+    const catIdExists   = source.cat_id  === catId;
+    const catNameExists = source.category === category;
+
+    if (catIdExists && !catNameExists) {
+      throw new CategoryTaxonomyConflict({
+        code: 500,
+        error: "Category ID exists but category name doesn't match",
+        cat_id: catId,
+        expected_category: source.category,
+        received_category: category,
+      });
+    }
+    if (!catIdExists && catNameExists) {
+      throw new CategoryTaxonomyConflict({
+        code: 500,
+        error: "Category name exists but category ID doesn't match",
+        category,
+        expected_cat_id: source.cat_id,
+        received_cat_id: catId,
+      });
+    }
+
+    // Add platform to category if missing
+    if (!((source.platforms || []).includes(platform))) {
+      await esClient.update(withEsType(esClient, {
+        index: 'category',
+        id:    docId,
+        body: {
+          script: {
+            source: "if (!ctx._source.platforms.contains(params.platform)) { ctx._source.platforms.add(params.platform); }",
+            lang:   'painless',
+            params: { platform },
+          },
+        },
+      }));
+    }
+
+    // Handle subcategory
+    if (subCategory && subCategoryId) {
+      const subcategories   = source.subcategory || [];
+      let subcategoryExists = false;
+
+      for (const sub of subcategories) {
+        if (sub.sub_cat_id === subCategoryId) {
+          if (sub.sub_cat !== subCategory) {
+            throw new CategoryTaxonomyConflict({ code: 500, error: "Subcategory ID exists but subcategory name doesn't match" });
+          }
+          subcategoryExists = true;
+          if (!((sub.platforms || []).includes(platform))) {
+            await esClient.update(withEsType(esClient, {
+              index: 'category',
+              id:    docId,
+              body: {
+                script: {
+                  source: `
+                    if (ctx._source.subcategory == null) { ctx._source.subcategory = []; }
+                    boolean found = false;
+                    for (sub in ctx._source.subcategory) {
+                      if (sub.sub_cat_id == params.sub_cat_id) {
+                        if (!sub.platforms.contains(params.platform)) { sub.platforms.add(params.platform); }
+                        found = true;
+                      }
+                    }
+                    if (!found) { ctx._source.subcategory.add(params.newSub); }
+                  `,
+                  lang:   'painless',
+                  params: {
+                    sub_cat_id: subCategoryId,
+                    platform,
+                    newSub: { sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] },
+                  },
+                },
+              },
+            }));
+          }
+          break;
+        } else if (sub.sub_cat === subCategory) {
+          throw new CategoryTaxonomyConflict({ code: 500, error: "Subcategory name exists but subcategory ID doesn't match" });
+        }
+      }
+
+      if (!subcategoryExists) {
+        await esClient.update(withEsType(esClient, {
+          index: 'category',
+          id:    docId,
+          body: {
+            script: {
+              source: `
+                if (ctx._source.subcategory == null) { ctx._source.subcategory = []; }
+                boolean found = false;
+                for (sub in ctx._source.subcategory) {
+                  if (sub.sub_cat_id == params.newSub.sub_cat_id) { found = true; break; }
+                }
+                if (!found) { ctx._source.subcategory.add(params.newSub); }
+              `,
+              lang:   'painless',
+              params: {
+                newSub: { sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] },
+              },
+            },
+          },
+        }));
+        message = 'Subcategory inserted successfully';
+      } else {
+        message = 'Category and Subcategory already exist';
+      }
+    } else {
+      message = 'Category already exists';
+    }
+  } else {
+    // ── Insert new category ──────────────────────────────────────────
+    const docData = { category, cat_id: catId, platforms: [platform] };
+    if (subCategory && subCategoryId) {
+      docData.subcategory = [{ sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] }];
+    }
+    await esClient.index(withEsType(esClient, { index: 'category', body: docData, refresh: 'wait_for' }));
+    message = 'New category' + (subCategory ? ' and subcategory' : '') + ' inserted successfully';
+  }
+
+  return { message };
+}
+
+/**
+ * Apply an ai_meta-sourced category to ES (v1.6: the category name + 4/8-char ids
+ * now live inside ai_meta). Two writes, both idempotent:
+ *   1. maintain the shared master `category` taxonomy index (via `syncMasterCategory`
+ *      on the gdn ES client), and
+ *   2. mirror the flat codes + dotted names onto the ad doc (`mirrorCategoryToEs`).
+ * Non-fatal: returns a status object; a taxonomy name↔id conflict or an ES error is
+ * captured (not thrown), so the AI-Meta write it accompanies still succeeds.
+ * Returns null when the payload has no category to apply.
+ *
+ * @returns {Promise<{taxonomy, mirrored, taxonomy_error?, mirror_error?}|null>}
+ */
+async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform, normalized, log }) {
+  if (!normalized || !normalized.category || !normalized.category_id) return null;
+  const status = { taxonomy: null, mirrored: false };
+
+  if (gdnEs) {
+    try {
+      const { message } = await syncMasterCategory(gdnEs, {
+        category:      normalized.category,
+        catId:         normalized.category_id,
+        subCategory:   normalized.sub_category,
+        subCategoryId: normalized.subcategory_id,
+        platform,
+      });
+      status.taxonomy = message;
+    } catch (taxErr) {
+      const isConflict = taxErr instanceof CategoryTaxonomyConflict;
+      status.taxonomy = isConflict ? 'conflict' : 'error';
+      status.taxonomy_error = isConflict ? taxErr.payload.error : taxErr.message;
+      log?.warn?.(`[aiMetaCategory] taxonomy sync failed for platform=${platform}: ${status.taxonomy_error}`);
+    }
+  }
+
+  try {
+    await mirrorCategoryToEs(platEs, esIndex, docId, platform, {
+      category:      normalized.category,
+      subCategory:   normalized.sub_category,
+      categoryId:    normalized.category_id,
+      subCategoryId: normalized.subcategory_id,
+    });
+    status.mirrored = true;
+  } catch (mirrorErr) {
+    status.mirror_error = mirrorErr.message;
+    log?.warn?.(`[aiMetaCategory] ES mirror failed for platform=${platform}: ${mirrorErr.message}`);
+  }
+
+  return status;
 }
 
 /**
@@ -454,148 +702,18 @@ async function newCatInsertion(req, res) {
       return res.status(503).json({ code: 503, message: 'ES not available' });
     }
 
-    // ── Step 1: Check if category exists in master category index ───────
-    const existResult = await gdnService.db.elastic.search({
-      index: 'category',
-      body: {
-        query: {
-          bool: {
-            should: [
-              { term: { 'category.keyword': category } },
-              { term: { 'cat_id.keyword': catId } },
-            ],
-            minimum_should_match: 1,
-          },
-        },
-      },
-    });
-
-    const hits = (existResult.hits || existResult.body?.hits)?.hits || [];
-    let message = 'Category/Subcategory successfully processed';
-
-    if (hits.length > 0) {
-      const doc    = hits[0];
-      const docId  = doc._id;
-      const source = doc._source;
-
-      const catIdExists   = source.cat_id  === catId;
-      const catNameExists = source.category === category;
-
-      if (catIdExists && !catNameExists) {
-        return res.status(500).json({
-          code: 500,
-          error: "Category ID exists but category name doesn't match",
-          cat_id: catId,
-          expected_category: source.category,
-          received_category: category,
-        });
+    // ── Step 1: Upsert the master `category` taxonomy index (shared helper,
+    //    also used by POST /ai-meta now that ids travel inside ai_meta). ──
+    let message;
+    try {
+      ({ message } = await syncMasterCategory(gdnService.db.elastic, {
+        category, catId, subCategory, subCategoryId, platform,
+      }));
+    } catch (taxErr) {
+      if (taxErr instanceof CategoryTaxonomyConflict) {
+        return res.status(taxErr.payload.code || 500).json(taxErr.payload);
       }
-      if (!catIdExists && catNameExists) {
-        return res.status(500).json({
-          code: 500,
-          error: "Category name exists but category ID doesn't match",
-          category,
-          expected_cat_id: source.cat_id,
-          received_cat_id: catId,
-        });
-      }
-
-      // Add platform to category if missing
-      if (!( (source.platforms || []).includes(platform) )) {
-        await gdnService.db.elastic.update(withEsType(gdnService.db.elastic, {
-          index: 'category',
-          id:    docId,
-          body: {
-            script: {
-              source: "if (!ctx._source.platforms.contains(params.platform)) { ctx._source.platforms.add(params.platform); }",
-              lang:   'painless',
-              params: { platform },
-            },
-          },
-        }));
-      }
-
-      // Handle subcategory
-      if (subCategory && subCategoryId) {
-        const subcategories   = source.subcategory || [];
-        let subcategoryExists = false;
-
-        for (const sub of subcategories) {
-          if (sub.sub_cat_id === subCategoryId) {
-            if (sub.sub_cat !== subCategory) {
-              return res.status(500).json({ code: 500, error: "Subcategory ID exists but subcategory name doesn't match" });
-            }
-            subcategoryExists = true;
-            if (!( (sub.platforms || []).includes(platform) )) {
-              await gdnService.db.elastic.update(withEsType(gdnService.db.elastic, {
-                index: 'category',
-                id:    docId,
-                body: {
-                  script: {
-                    source: `
-                      if (ctx._source.subcategory == null) { ctx._source.subcategory = []; }
-                      boolean found = false;
-                      for (sub in ctx._source.subcategory) {
-                        if (sub.sub_cat_id == params.sub_cat_id) {
-                          if (!sub.platforms.contains(params.platform)) { sub.platforms.add(params.platform); }
-                          found = true;
-                        }
-                      }
-                      if (!found) { ctx._source.subcategory.add(params.newSub); }
-                    `,
-                    lang:   'painless',
-                    params: {
-                      sub_cat_id: subCategoryId,
-                      platform,
-                      newSub: { sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] },
-                    },
-                  },
-                },
-              }));
-            }
-            break;
-          } else if (sub.sub_cat === subCategory) {
-            return res.status(500).json({ code: 500, error: "Subcategory name exists but subcategory ID doesn't match" });
-          }
-        }
-
-        if (!subcategoryExists) {
-          await gdnService.db.elastic.update(withEsType(gdnService.db.elastic, {
-            index: 'category',
-            id:    docId,
-            body: {
-              script: {
-                source: `
-                  if (ctx._source.subcategory == null) { ctx._source.subcategory = []; }
-                  boolean found = false;
-                  for (sub in ctx._source.subcategory) {
-                    if (sub.sub_cat_id == params.newSub.sub_cat_id) { found = true; break; }
-                  }
-                  if (!found) { ctx._source.subcategory.add(params.newSub); }
-                `,
-                lang:   'painless',
-                params: {
-                  newSub: { sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] },
-                },
-              },
-            },
-          }));
-          message = 'Subcategory inserted successfully';
-        } else {
-          message = 'Category and Subcategory already exist';
-        }
-      } else {
-        message = 'Category already exists';
-      }
-
-    } else {
-      // ── Insert new category ──────────────────────────────────────────
-      const docData = { category, cat_id: catId, platforms: [platform] };
-      if (subCategory && subCategoryId) {
-        docData.subcategory = [{ sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] }];
-      }
-      await gdnService.db.elastic.index(withEsType(gdnService.db.elastic, { index: 'category', body: docData, refresh: 'wait_for' }));
-      message = 'New category' + (subCategory ? ' and subcategory' : '') + ' inserted successfully';
+      throw taxErr;
     }
 
     // ── Step 2: Update the ad record in the platform's search_mix index ──
@@ -674,6 +792,20 @@ async function newCatInsertion(req, res) {
           await writeAiMeta(esForPlat, esIndex, adDocId, aiNormalized);
           aiMetaResult = { ai_meta_status: 'stored', ai_meta_stored_fields: storedFields };
           gdnService.log?.info(`[newCatInsertion] ai_meta stored for ad_id=${ad_id}`);
+
+          // Category on Option A is driven by the top-level classification (Step 1
+          // taxonomy + Step 2 flat-code ad update) which runs on every request, so the
+          // ai_meta category is not re-applied here — it would only duplicate that write.
+          // Durable SQL copy + category dual-write (non-fatal — an ES success stands
+          // even if SQL is unavailable or the AI-Meta table has not been created yet).
+          const sqlResult = await persistAiMeta({
+            sql:        platService?.db?.sql,
+            network:    platform,
+            adId:       ad_id,
+            normalized: aiNormalized,
+            logger:     gdnService.log,
+          });
+          aiMetaResult.ai_meta_sql = sqlResult;
         } catch (aiErr) {
           aiMetaResult = { ai_meta_status: 'error', ai_meta_error: aiErr.message };
           gdnService.log?.warn(`[newCatInsertion] ai_meta write failed for ad_id=${ad_id}: ${aiErr.message}`);
@@ -785,10 +917,13 @@ async function getAdCategory(req, res) {
  * POST /ai-meta  (Option B — dedicated AI-Meta enrichment endpoint)
  *
  * Standalone, spec-conformant write path for AI-generated meta labels
- * (AI_META_API_PAYLOAD_SPEC.md §2/§3/§6). Decoupled from category classification:
- * it writes only the ad's `ai` object, never touches `${platform}.category`.
+ * (AI_META_API_PAYLOAD_SPEC.md §2/§3/§6). As of v1.6 the category classification
+ * travels inside `ai_meta` (name + 4-char `category_id` + 8-char `subcategory_id`),
+ * so this endpoint is now ALSO the category writer: when a category is present it
+ * maintains the master `category` taxonomy index, mirrors the flat codes + names onto
+ * the ad doc, and dual-writes to SQL — everything the classification POST does.
  *
- * Body: { ad_id, network, major_category?, sub_category?, ai_meta:{…} }
+ * Body: { ad_id, network, ai_meta:{…} }
  * Responses follow §6 exactly (success / 400 VALIDATION_ERROR / 404 AD_NOT_FOUND).
  */
 async function insertAiMeta(req, res) {
@@ -842,12 +977,37 @@ async function insertAiMeta(req, res) {
 
     await writeAiMeta(es, esIndex, adHit._id, normalized);
     service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
-    return res.status(200).json({
+
+    // Category (v1.6: name + ids inside ai_meta) — maintain the master `category`
+    // taxonomy index and mirror the flat codes + names onto the ad doc. Non-fatal.
+    const categorySync = await applyAiMetaCategoryToEs({
+      gdnEs:      serviceRegistry.getService('gdn')?.db?.elastic,
+      platEs:     es,
+      esIndex,
+      docId:      adHit._id,
+      platform,
+      normalized,
+      log:        service.log,
+    });
+
+    // Durable SQL copy + category dual-write (non-fatal).
+    const sqlResult = await persistAiMeta({
+      sql:        service?.db?.sql,
+      network:    platform,
+      adId:       adId,
+      normalized: normalized,
+      logger:     service.log,
+    });
+
+    const out = {
       success: true,
       ad_id:   adId,
       message: 'AI-Meta labels stored successfully',
       stored_fields: storedFields,
-    });
+      sql: sqlResult,
+    };
+    if (categorySync) out.category_sync = categorySync;
+    return res.status(200).json(out);
   } catch (err) {
     service.log?.error(`[insertAiMeta] network=${platform} ad_id=${adId} error: ${err.message}`);
     return res.status(500).json({ success: false, ad_id: adId, error: { code: 'INTERNAL_ERROR', message: err.message } });

@@ -474,11 +474,20 @@ const getAdvertiserAdCount = async (advertiser) => {
 
         const names = competitors_data.map(c => c.competitor_name);
 
+        // Same DS `specific_to_match` carried through as getCompetitorTableRows
+        // (compeitetor_analysis/core/Competitors/competitorService.js) — this is
+        // the separate "view an existing project" read path, so it needs its own
+        // lookup against the same `specificToMatches` field on the request doc.
+        const specificToMatchByName = new Map(
+          (projectName.specificToMatches || []).map(m => [m.name, m.match])
+        );
+
         const cnames = competitors_data.reduce((acc, c) => {
           acc[c.competitor_name] = {
             id: c._id,
             comp_request_id: projectName._id,
-            monitoring: monitoringStatus.includes(c._id)
+            monitoring: monitoringStatus.includes(c._id),
+            specific_to_match: specificToMatchByName.get(c.competitor_name?.toLowerCase().trim()) || null
           };
           return acc;
         }, {});

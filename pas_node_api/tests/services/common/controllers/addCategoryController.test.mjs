@@ -898,3 +898,102 @@ describe("addCategoryController > newCatInsertion + ai_meta (Option A)", () => {
     expect(res.body.ai_meta_status).toBeUndefined();
   });
 });
+
+// ── SQL dual-write wiring (persistAiMeta) ──────────────────────────────
+// A fake mysql2 pool connection so we can assert the controller invokes the
+// SQL writer and surfaces its status without a live DB.
+function mkSqlConn({ adRow = [{ id: 42 }], catRows = [{ id: 300 }] } = {}) {
+  const calls = [];
+  return {
+    calls,
+    beginTransaction: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
+    rollback: vi.fn(async () => {}),
+    release: vi.fn(() => {}),
+    execute: vi.fn(async (sql) => {
+      calls.push(sql);
+      if (/WHERE ad_id/.test(sql)) return [adRow];
+      if (/FROM `\w+_category`/.test(sql)) return [catRows];
+      return [{ affectedRows: 1, insertId: 1 }];
+    }),
+  };
+}
+
+describe("addCategoryController > SQL dual-write wiring", () => {
+  function setupWithSql({ adHits, sqlConn, existHits = [] }) {
+    const search = vi.fn(async (params) => {
+      if (params.index === "category") return { hits: { hits: existHits } };
+      return { hits: { hits: adHits } };
+    });
+    const svc = {
+      db: {
+        elastic: { search, index: vi.fn(async () => {}), update: vi.fn(async () => {}) },
+        sql: { getConnection: vi.fn(async () => sqlConn) },
+      },
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
+    serviceRegistry.getService.mockReturnValue(svc);
+    return svc;
+  }
+
+  it("Option A: newCatInsertion attaches ai_meta_sql=stored when SQL is available", async () => {
+    const sqlConn = mkSqlConn();
+    setupWithSql({ adHits: [{ _id: "ad-1", _source: {} }], sqlConn });
+    const res = mkRes();
+    await newCatInsertion({ body: { platform: "facebook", category: "FooCat", category_id: "1234", ad_id: 7, ai_meta: VALID_AI_META } }, res);
+    expect(res.body.ai_meta_status).toBe("stored");
+    expect(res.body.ai_meta_sql).toMatchObject({ sql_status: "stored", sql_ad_row_id: 42 });
+    expect(sqlConn.commit).toHaveBeenCalled();
+    // meta upsert ran against facebook_ad_ai_meta
+    expect(sqlConn.calls.some((s) => s.includes("facebook_ad_ai_meta"))).toBe(true);
+  });
+
+  it("Option B: /ai-meta with category dual-writes SQL + mirrors category (name+ids) to ES", async () => {
+    const sqlConn = mkSqlConn();
+    const svc = setupWithSql({ adHits: [{ _id: "ad-1" }], sqlConn });
+    const res = mkRes();
+    const aiWithCat = { ...VALID_AI_META, category: "Retail", category_id: "1234", sub_category: "eCommerce", subcategory_id: "12340001" };
+    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: aiWithCat } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.sql).toMatchObject({ sql_status: "stored", category_synced: true });
+    // taxonomy sync + ES mirror both reported
+    expect(res.body.category_sync).toBeTruthy();
+    expect(res.body.category_sync.mirrored).toBe(true);
+    // ES ad-doc mirror carries the dotted names AND the flat 4/8-char codes + confidence
+    const mirror = svc.db.elastic.update.mock.calls.find((c) => c[0].body.doc && c[0].body.doc["instagram.category"] === "Retail");
+    expect(mirror).toBeTruthy();
+    expect(mirror[0].body.doc["instagram.subCategory"]).toBe("eCommerce");
+    expect(mirror[0].body.doc.category_id).toBe("1234");
+    expect(mirror[0].body.doc.subCategory_id).toBe("12340001");
+    expect(mirror[0].body.doc.confidence_score).toBe(0);
+  });
+
+  it("Option B: no category in ai_meta → no ES category mirror, category_synced false", async () => {
+    const sqlConn = mkSqlConn();
+    const svc = setupWithSql({ adHits: [{ _id: "ad-1" }], sqlConn });
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META } }, res);
+    expect(res.body.sql).toMatchObject({ sql_status: "stored", category_synced: false });
+    const mirror = svc.db.elastic.update.mock.calls.find((c) => c[0].body.doc && "instagram.category" in c[0].body.doc);
+    expect(mirror).toBeUndefined();
+  });
+
+  it("SQL failure is non-fatal — ES write still succeeds (ai_meta_status stored)", async () => {
+    // getConnection throws → persistAiMeta returns error, controller still 200/stored
+    const svc = {
+      db: {
+        elastic: {
+          search: vi.fn(async (p) => (p.index === "category" ? { hits: { hits: [] } } : { hits: { hits: [{ _id: "ad-1", _source: {} }] } })),
+          index: vi.fn(async () => {}), update: vi.fn(async () => {}),
+        },
+        sql: { getConnection: vi.fn(async () => { throw new Error("pool-empty"); }) },
+      },
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
+    serviceRegistry.getService.mockReturnValue(svc);
+    const res = mkRes();
+    await newCatInsertion({ body: { platform: "facebook", category: "FooCat", category_id: "1234", ad_id: 7, ai_meta: VALID_AI_META } }, res);
+    expect(res.body.ai_meta_status).toBe("stored");
+    expect(res.body.ai_meta_sql.sql_status).toBe("error");
+  });
+});

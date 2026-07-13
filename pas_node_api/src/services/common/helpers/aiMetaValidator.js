@@ -1,16 +1,16 @@
 'use strict';
 
 /**
- * AI-Meta payload validator — enforces AI_META_API_PAYLOAD_SPEC.md v1.5 (2026-07-10).
+ * AI-Meta payload validator — enforces AI_META_API_PAYLOAD_SPEC.md v1.6 (2026-07-13).
  *
  * Pure/synchronous: takes the raw `ai_meta` object and returns
  *   { errors: [{ field, message }], normalized: {…}, storedFields: [...] }
  * `normalized` is the cleaned object safe to write onto the ad's ES `ai` field.
  * `storedFields` lists the ai_meta keys that survived validation (for the response).
  *
- * v1.5 field set (8 core + colors/category/sub_category):
- *   ad_type, intent, hook, offering_type, offers, offering, caption, roa,
- *   colors, category, sub_category.
+ * v1.6 field set (8 core + colors + category classification group):
+ *   ad_type, intent, hook, offering_type, offers, offering, caption, roa, colors,
+ *   category, category_id, sub_category, subcategory_id.
  *
  * Lineage vs the old v1.1 shape this file used to enforce:
  *   - `product_type` → `offering_type` (enum shrank to product|service|both).  [v1.4]
@@ -19,6 +19,11 @@
  *   - `colors` is a fixed 16-value HEX palette (0–3), not the named-word vocab. [v1.2]
  *   - removed `object`, `language`, `ocr`, `brand_logos`, `status`,            [v1.2–1.4]
  *     and `brand` + `celebrity`.                                               [v1.5]
+ *   - added `category_id` (4-char) + `subcategory_id` (8-char) so the category  [v1.6]
+ *     classification now travels ENTIRELY inside ai_meta (the top-level
+ *     newCatInsertion category/category_id is retired). These ids let the
+ *     /ai-meta path drive the flat ES ad-doc codes and maintain the master
+ *     `category` taxonomy index without the separate classification POST.
  * With `status` gone there is no more partial/failed relaxation — every payload is a
  * completed enrichment, so the core fields (ad_type, intent, hook, offering_type) are
  * ALWAYS required. `roa` self-explaining fallback strings are ordinary values (no special rule).
@@ -208,6 +213,67 @@ function validateRoa(errors, base, roa) {
 }
 
 /**
+ * Validate the category classification group — `category` (name), `category_id`
+ * (4-char code), `sub_category` (name), `subcategory_id` (8-char code). Rules mirror
+ * the legacy newCatInsertion validator so a name+id pair is safe to feed straight into
+ * the master `category` taxonomy index and the ES ad-doc flat codes:
+ *   - category (≥5) and category_id (exactly 4) travel together (both or neither).
+ *   - sub_category (≥2) and subcategory_id (exactly 8) travel together; a sub requires
+ *     a parent category; subcategory_id must be prefixed by category_id.
+ * The whole group is optional (v1.6: DS omits it when the ad is uncategorized).
+ * Empty string / null / undefined all mean "absent".
+ */
+function validateCategoryGroup(errors, base, aiMeta, normalized) {
+  const category = aiMeta.category;
+  const catId    = aiMeta.category_id;
+  const sub      = aiMeta.sub_category;
+  const subId    = aiMeta.subcategory_id;
+  const present  = (v) => v !== undefined && v !== null && v !== '';
+
+  const hasCat   = present(category);
+  const hasCatId = present(catId);
+  const hasSub   = present(sub);
+  const hasSubId = present(subId);
+
+  // ── category name + 4-char id (paired) ──
+  if (hasCat) {
+    if (!isPlainString(category)) errors.push({ field: `${base}.category`, message: 'category must be a string' });
+    else if (category.length < 5) errors.push({ field: `${base}.category`, message: 'category must be at least 5 characters' });
+    else normalized.category = category;
+  }
+  if (hasCatId) {
+    if (String(catId).length !== 4) errors.push({ field: `${base}.category_id`, message: 'category_id must be exactly 4 characters' });
+    else normalized.category_id = String(catId);
+  }
+  if (hasCat && !hasCatId) errors.push({ field: `${base}.category_id`, message: 'category_id is required when category is present' });
+  if (hasCatId && !hasCat) errors.push({ field: `${base}.category`, message: 'category is required when category_id is present' });
+
+  // ── sub_category name + 8-char id (paired, child of category) ──
+  if (hasSub) {
+    if (!isPlainString(sub)) errors.push({ field: `${base}.sub_category`, message: 'sub_category must be a string' });
+    else if (sub.length < 2) errors.push({ field: `${base}.sub_category`, message: 'sub_category must be at least 2 characters' });
+    else normalized.sub_category = sub;
+  }
+  if (hasSubId) {
+    if (String(subId).length !== 8) {
+      errors.push({ field: `${base}.subcategory_id`, message: 'subcategory_id must be exactly 8 characters' });
+    } else if (hasCatId && !String(subId).startsWith(String(catId))) {
+      errors.push({ field: `${base}.subcategory_id`, message: 'subcategory_id must start with category_id' });
+    } else {
+      normalized.subcategory_id = String(subId);
+    }
+  }
+  if (hasSub && !hasSubId) errors.push({ field: `${base}.subcategory_id`, message: 'subcategory_id is required when sub_category is present' });
+  if (hasSubId && !hasSub) errors.push({ field: `${base}.sub_category`, message: 'sub_category is required when subcategory_id is present' });
+  if (hasSub && !hasCat)   errors.push({ field: `${base}.category`, message: 'category is required when sub_category is present' });
+
+  // If a paired id failed validation, drop its partner from normalized so we never
+  // persist a half-pair (e.g. category name with no valid id).
+  if (normalized.category !== undefined && normalized.category_id === undefined) delete normalized.category;
+  if (normalized.sub_category !== undefined && normalized.subcategory_id === undefined) delete normalized.sub_category;
+}
+
+/**
  * @param {object} aiMeta  raw ai_meta object
  * @param {string} [base='ai_meta'] field-path prefix for error messages
  * @returns {{ errors: Array<{field,message}>, normalized: object, storedFields: string[] }}
@@ -253,14 +319,8 @@ function validateAiMeta(aiMeta, base = 'ai_meta') {
   const roa = validateRoa(errors, base, aiMeta.roa);
   if (roa !== undefined) normalized.roa = roa;
 
-  if (aiMeta.category !== undefined && aiMeta.category !== null) {
-    if (isPlainString(aiMeta.category)) normalized.category = aiMeta.category;
-    else errors.push({ field: `${base}.category`, message: 'category must be a string' });
-  }
-  if (aiMeta.sub_category !== undefined && aiMeta.sub_category !== null) {
-    if (isPlainString(aiMeta.sub_category)) normalized.sub_category = aiMeta.sub_category;
-    else errors.push({ field: `${base}.sub_category`, message: 'sub_category must be a string' });
-  }
+  // Category classification group (v1.6: name + 4/8-char ids, all inside ai_meta).
+  validateCategoryGroup(errors, base, aiMeta, normalized);
 
   const storedFields = Object.keys(normalized);
   return { errors, normalized, storedFields };

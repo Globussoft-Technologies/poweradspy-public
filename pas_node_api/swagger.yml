@@ -60,16 +60,19 @@ components:
   # ─── Reusable schemas ─────────────────────────────────────
   schemas:
 
-    # AI-Meta enrichment (AI_META_API_PAYLOAD_SPEC.md v1.5)
+    # AI-Meta enrichment (AI_META_API_PAYLOAD_SPEC.md v1.6)
     AiMeta:
       type: object
       description: |
-        AI-generated meta labels for an ad (AI_META_API_PAYLOAD_SPEC.md **v1.5**). The core
+        AI-generated meta labels for an ad (AI_META_API_PAYLOAD_SPEC.md **v1.6**). The core
         labels `ad_type`, `intent`, `hook`, `offering_type` are always required. Field set is
-        8 core + `colors`/`category`/`sub_category`. Removed vs v1.1: `status`, `language`,
-        `ocr`, `object`, `brand_logos`, **`brand`**, **`celebrity`**; renamed
-        `product_type`→`offering_type` and `reason`→`roa`; added `caption`. On write the whole
-        `ai` object is REPLACED (re-sending overwrites prior labels).
+        8 core + `colors` + the category classification group (`category`/`category_id`/
+        `sub_category`/`subcategory_id`). Removed vs v1.1: `status`, `language`, `ocr`, `object`,
+        `brand_logos`, **`brand`**, **`celebrity`**; renamed `product_type`→`offering_type` and
+        `reason`→`roa`; added `caption`. **v1.6:** the category name **and its ids** now travel
+        inside `ai_meta` (the top-level classification fields are retired) — `category_id` (4-char)
+        is required with `category`, and `subcategory_id` (8-char, prefixed by `category_id`) with
+        `sub_category`. On write the whole `ai` object is REPLACED (re-sending overwrites prior labels).
       required: [ad_type, intent, hook, offering_type]
       properties:
         ad_type:
@@ -140,12 +143,26 @@ components:
             offering:      { type: string, maxLength: 200 }
         category:
           type: string
-          description: Mirrors top-level major_category so ES can filter on ai.category.
+          minLength: 5
+          description: Category name. Requires `category_id`. Drives ES `${platform}.category`, the master `category` taxonomy index, and the SQL category store.
           example: "Retail"
+        category_id:
+          type: string
+          minLength: 4
+          maxLength: 4
+          description: 4-char category code. Required whenever `category` is present (v1.6).
+          example: "1234"
         sub_category:
           type: string
-          description: May legitimately be absent (major-only classifications are valid).
+          minLength: 2
+          description: Sub-category name. May legitimately be absent (major-only classifications are valid). Requires `subcategory_id` + a parent `category`.
           example: "Specialty Stores"
+        subcategory_id:
+          type: string
+          minLength: 8
+          maxLength: 8
+          description: 8-char sub-category code; must start with `category_id`. Required whenever `sub_category` is present (v1.6).
+          example: "12340001"
 
     # Insertion
     MetaAdInsert:
@@ -11052,6 +11069,21 @@ paths:
                       properties:
                         field: { type: string, example: "ai_meta.ad_type" }
                         message: { type: string, example: "ad_type is required" }
+                  ai_meta_sql:
+                    type: object
+                    description: >-
+                      Result of the durable SQL dual-write (present when ai_meta_status=stored). Non-fatal:
+                      an ES success stands even if this reports an error. `category_synced` is true only for
+                      networks with a SQL category store (facebook, instagram, youtube, native, linkedin,
+                      reddit, quora); gdn/google/pinterest/tiktok have none so it is always false there.
+                    properties:
+                      sql_status:
+                        type: string
+                        enum: [stored, skipped, ad_not_found, error]
+                        example: stored
+                      sql_ad_row_id: { type: integer, nullable: true, example: 42 }
+                      category_synced: { type: boolean, example: true }
+                      sql_error: { type: string, nullable: true }
                   warning:
                     type: string
                     nullable: true
@@ -11175,7 +11207,39 @@ paths:
                   stored_fields:
                     type: array
                     items: { type: string }
-                    example: [ad_type, intent, hook, offering_type, offers, offering, caption, roa, colors, category, sub_category]
+                    example: [ad_type, intent, hook, offering_type, offers, offering, caption, roa, colors, category, category_id, sub_category, subcategory_id]
+                  category_sync:
+                    type: object
+                    description: >-
+                      Present only when the ai_meta object carried a category (v1.6). Reports the ES side of
+                      the category write. Non-fatal — the AI labels are stored even if this reports a conflict/error.
+                    properties:
+                      taxonomy:
+                        type: string
+                        description: Master `category` taxonomy index outcome — a status message, or `conflict`/`error`.
+                        example: "New category and subcategory inserted successfully"
+                      mirrored:
+                        type: boolean
+                        description: Flat codes + dotted names written onto the ad doc (${platform}.category, category_id, …).
+                        example: true
+                      taxonomy_error: { type: string, nullable: true }
+                      mirror_error: { type: string, nullable: true }
+                  sql:
+                    type: object
+                    description: >-
+                      Result of the durable SQL dual-write. Non-fatal: the 200 (ES write) stands even if this
+                      reports an error. When the ai_meta object carries a `category`, its name is also synced to the
+                      network's SQL category store (`<net>_ad.category_id`) — but only for the 7 networks that have one
+                      (facebook, instagram, youtube, native, linkedin, reddit, quora); `category_synced` is false for
+                      gdn/google/pinterest/tiktok.
+                    properties:
+                      sql_status:
+                        type: string
+                        enum: [stored, skipped, ad_not_found, error]
+                        example: stored
+                      sql_ad_row_id: { type: integer, nullable: true, example: 42 }
+                      category_synced: { type: boolean, example: true }
+                      sql_error: { type: string, nullable: true }
         '400':
           description: Validation error
           content:

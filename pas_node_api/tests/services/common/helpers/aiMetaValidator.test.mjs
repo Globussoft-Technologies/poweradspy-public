@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { validateAiMeta } = require("../../../../src/services/common/helpers/aiMetaValidator");
 
-// Real v1.5 shape (AI_META_API_PAYLOAD_SPEC §4).
+// Real v1.6 shape (AI_META_API_PAYLOAD_SPEC §4): category classification (name + ids)
+// now lives entirely inside ai_meta.
 const FULL = {
   ad_type: "promotional",
   intent: ["conversion", "awareness", "lead_generation"],
@@ -19,7 +20,9 @@ const FULL = {
   },
   colors: ["#FFFFFF", "#C9A227"],
   category: "Retail",
+  category_id: "1234",
   sub_category: "Specialty Stores",
+  subcategory_id: "12340001",
 };
 
 const errFields = (r) => r.errors.map((e) => e.field);
@@ -126,6 +129,46 @@ describe("aiMetaValidator v1.5 > caption + roa", () => {
   });
   it("roa sub-field over 200 chars rejected", () => {
     expect(errFields(validateAiMeta({ ...FULL, roa: { intent: "x".repeat(201) } }))).toContain("ai_meta.roa.intent");
+  });
+});
+
+describe("aiMetaValidator v1.6 > category classification group (ids inside ai_meta)", () => {
+  it("accepts a full category + 4/8-char id pair", () => {
+    const r = validateAiMeta(FULL);
+    expect(r.errors).toEqual([]);
+    expect(r.normalized).toMatchObject({
+      category: "Retail", category_id: "1234",
+      sub_category: "Specialty Stores", subcategory_id: "12340001",
+    });
+  });
+  it("whole group is optional — absent means uncategorized, no error", () => {
+    const { category, category_id, sub_category, subcategory_id, ...noCat } = FULL;
+    const r = validateAiMeta(noCat);
+    expect(r.errors).toEqual([]);
+    expect("category" in r.normalized).toBe(false);
+    expect("category_id" in r.normalized).toBe(false);
+  });
+  it("category without category_id is rejected (and vice versa), and drops the half-pair", () => {
+    const { category_id, ...noId } = FULL;
+    const r = validateAiMeta(noId);
+    expect(errFields(r)).toContain("ai_meta.category_id");
+    expect("category" in r.normalized).toBe(false);   // half-pair not persisted
+    const { category, ...noName } = FULL;
+    expect(errFields(validateAiMeta(noName))).toContain("ai_meta.category");
+  });
+  it("category shorter than 5 / category_id not exactly 4 chars rejected", () => {
+    expect(errFields(validateAiMeta({ ...FULL, category: "Ab", category_id: "12" }))).toEqual(
+      expect.arrayContaining(["ai_meta.category", "ai_meta.category_id"]));
+  });
+  it("subcategory_id must be 8 chars and start with category_id", () => {
+    expect(errFields(validateAiMeta({ ...FULL, subcategory_id: "999" }))).toContain("ai_meta.subcategory_id");
+    expect(errFields(validateAiMeta({ ...FULL, subcategory_id: "99990001" }))).toContain("ai_meta.subcategory_id");
+  });
+  it("sub_category requires both its id and a parent category", () => {
+    const { subcategory_id, ...noSubId } = FULL;
+    expect(errFields(validateAiMeta(noSubId))).toContain("ai_meta.subcategory_id");
+    const bare = { ad_type: "promotional", intent: ["conversion"], hook: ["urgency"], offering_type: "product", sub_category: "X", subcategory_id: "12340001" };
+    expect(errFields(validateAiMeta(bare))).toContain("ai_meta.category");
   });
 });
 

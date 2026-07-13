@@ -1,6 +1,6 @@
 # AI-Meta ES Mapping — Apply Runbook
 
-**Applies to:** `AI_META_API_PAYLOAD_SPEC.md` **v1.5** · **Companion:** `AI_META_API_IMPLEMENTATION.md`
+**Applies to:** `AI_META_API_PAYLOAD_SPEC.md` **v1.6** · **Companion:** `AI_META_API_IMPLEMENTATION.md`
 **Goal:** create the `ai` object mapping on every network's `*_search_mix` (or ads) index **before** the
 DS pipeline starts POSTing AI-Meta, so filters/aggregations on `ai.*` work correctly.
 
@@ -46,7 +46,7 @@ Once a field is dynamically mapped, you **cannot** change its type in place — 
 
 ---
 
-## 2. The mapping payload (v1.5)
+## 2. The mapping payload (v1.6)
 
 One `properties.ai` block, identical across every network. This is the body you PUT (the enclosing
 `PUT …/_mapping` differs per ES version — see §3).
@@ -86,8 +86,10 @@ One `properties.ai` block, identical across every network. This is the body you 
             "offering":      { "type": "text" }
           }
         },
-        "category":      { "type": "keyword" },
-        "sub_category":  { "type": "keyword" }
+        "category":       { "type": "keyword" },
+        "category_id":    { "type": "keyword" },
+        "sub_category":   { "type": "keyword" },
+        "subcategory_id": { "type": "keyword" }
       }
     }
   }
@@ -99,8 +101,11 @@ One `properties.ai` block, identical across every network. This is the body you 
 
 Design notes / why each type:
 - **Categorical → `keyword`** (`ad_type`, `intent`, `hook`, `offering_type`, `colors`, `category`,
-  `sub_category`): exact filter + fast `terms` aggregation via doc-values. Enum/hex values — no analysis,
-  no fuzzy needed.
+  `category_id`, `sub_category`, `subcategory_id`): exact filter + fast `terms` aggregation via doc-values.
+  Enum/hex values and the 4/8-char taxonomy codes — no analysis, no fuzzy needed.
+- **`category_id` / `subcategory_id` → `keyword`** (v1.6): the 4-char / 8-char taxonomy codes now carried
+  inside `ai_meta`. Note these mirror the ad doc's existing top-level `category_id` / `subCategory_id`
+  fields (written by the classification path) — the `ai.*` copies live under the `ai` object.
 - **`offering` → `text`** base (full-text + fuzzy) **+ `offering.keyword`** (exact/agg) **+
   `offering.suggest`** (`completion`, autocomplete). This is the one free-text field a user types to
   search, so it carries the autocomplete sub-field. Multi-fields are auto-populated from the base value
@@ -273,7 +278,8 @@ const AI_PROPS = {
   offering:{type:'text', fields:{keyword:{type:'keyword', ignore_above:256}, suggest:{type:'completion', max_input_length:200}}},
   caption:{type:'text', fields:{keyword:{type:'keyword', ignore_above:256}}},
   roa:{properties:{intent:{type:'text'}, hook:{type:'text'}, offering_type:{type:'text'}, offering:{type:'text'}}},
-  category:{type:'keyword'}, sub_category:{type:'keyword'},
+  category:{type:'keyword'}, category_id:{type:'keyword'},
+  sub_category:{type:'keyword'}, subcategory_id:{type:'keyword'},
 };
 const NETWORKS = ['facebook','instagram','gdn','youtube','google','native','linkedin','reddit','quora','pinterest','tiktok'];
 const COMMIT = process.argv.includes('--commit');
@@ -337,18 +343,22 @@ GET search_mix/_mapping/field/ai.*        # ES 6.8 (Kibana)  — or curl GET <ho
 ```
 GET gdn_search_mix_v2/_mapping/field/ai.offers.value      # → "type":"float"
 GET gdn_search_mix_v2/_mapping/field/ai.colors            # → "type":"keyword"
+GET gdn_search_mix_v2/_mapping/field/ai.category_id       # → "type":"keyword"  (v1.6)
 ```
 
-**b) End-to-end write + read-back** (uses the real endpoints — pick an ad_id you know exists):
+**b) End-to-end write + read-back** (uses the real endpoints — pick an ad_id you know exists). The
+category group (name + 4/8-char ids, v1.6) exercises the taxonomy + flat-code path:
 ```bash
 # write
 curl -sS -X POST "https://<api-host>/api/v1/common/ai-meta" -H 'Content-Type: application/json' -d '{
   "ad_id":"<known_ad_id>","network":"gdn",
   "ai_meta":{"ad_type":"promotional","intent":["conversion"],"hook":["urgency"],
              "offering_type":"product","offering":"printer parts",
-             "colors":["#FFFFFF","#C9A227"],"caption":"A test caption."}
+             "colors":["#FFFFFF","#C9A227"],"caption":"A test caption.",
+             "category":"Retail","category_id":"1234",
+             "sub_category":"Specialty Stores","subcategory_id":"12340001"}
 }'
-# → { "success": true, "stored_fields": [...] }
+# → { "success": true, "stored_fields": [...], "category_sync": { "mirrored": true, ... }, "sql": {...} }
 
 # read back (should echo the ai object)
 curl -sS "https://<api-host>/api/v1/common/getAdCategory?platform=gdn&ad_id=<known_ad_id>"

@@ -1,6 +1,6 @@
 # AI-Meta SQL Storage — Schema & Apply Doc
 
-**Applies to:** `AI_META_API_PAYLOAD_SPEC.md` **v1.5** · **Companions:** `AI_META_API_IMPLEMENTATION.md`,
+**Applies to:** `AI_META_API_PAYLOAD_SPEC.md` **v1.6** · **Companions:** `AI_META_API_IMPLEMENTATION.md`,
 `AI_META_ES_MAPPING_RUNBOOK.md`
 **Purpose:** define the SQL side of the AI-Meta dual-write — which table/columns to add per network and
 how they connect to the existing ad tables. Verified against the **live dev DB** (MySQL 8.0.46 at the
@@ -35,9 +35,11 @@ touch any child/variant/meta tables.
 | `ad_type` | `ad_type` | `VARCHAR(32)` | single enum value |
 | `offering_type` | `offering_type` | `VARCHAR(16)` | `product`/`service`/`both` |
 | `offering` | `offering` | `VARCHAR(255)` | ≤200 in spec; 255 headroom |
-| `caption` | `caption` | `VARCHAR(255)` | ≤200 in spec |
-| `category` | `category` | `VARCHAR(255)` | mirrors major_category |
-| `sub_category` | `sub_category` | `VARCHAR(255)` | may be null (major-only) |
+| `caption` | `caption` | `TEXT` | free-text visual description; never indexed, so `TEXT` (survives a loosened cap without `ALTER`) |
+| `category` | `category` | `VARCHAR(255)` | major category name; **also** dual-written to `<net>_ad.category_id` (see note) |
+| `category_id` | `category_id` | `VARCHAR(4)` | v1.6 4-char taxonomy code (from ai_meta); stored for a faithful copy — SQL linkage uses the name |
+| `sub_category` | `sub_category` | `VARCHAR(255)` | may be null (major-only); AI-Meta table is its only SQL home |
+| `subcategory_id` | `subcategory_id` | `VARCHAR(8)` | v1.6 8-char taxonomy code (from ai_meta) |
 | `intent` | `intent` | `JSON` | array of enum strings |
 | `hook` | `hook` | `JSON` | array of enum strings |
 | `colors` | `colors` | `JSON` | array of hex strings |
@@ -50,6 +52,23 @@ string-parsing like the legacy tables). If you prefer the legacy delimited-strin
 use `TEXT` with a `||` separator for the scalar-array fields — but `offers`/`roa` are structured, so
 JSON is strongly recommended there regardless. Scalars are plain columns so they filter/sort without
 JSON functions and can be indexed directly (indexes on `ad_type`, `offering_type`, `category` included).
+
+**`category` — dual-write (write to BOTH stores).** The AI-Meta table keeps its own `category` column,
+**and** every write must also update the pre-existing category flow so the feed/legacy readers stay
+correct. On each API hit, the category is written to:
+1. **`<net>_ad_ai_meta.category`** — this table (the AI-Meta copy), and
+2. **`<net>_ad.category_id`** — the existing per-ad category FK → the master **`<net>_category`** taxonomy
+   table (`id` + `category_name`; resolve/insert the name to its `id`, then set `category_id` on the ad),
+   mirrored to ES under `${platform}.category` — exactly the path `newCatInsertion` already uses.
+
+Both writes happen together (same request); the category-table update is the source of truth the feed
+reads, and the AI-Meta copy keeps the row self-contained.
+
+**`sub_category`** has **no other SQL home** — the master `<net>_category` table stores only the major
+category name, and the only `*subcat*` tables in the schema (`facebook_user_interest_sub_category`,
+`facebook_user_interests.subcategory_id`) are audience/interest-targeting data, unrelated to ad
+classification (verified live vs `pasdev_facebook`). So the **`<net>_ad_ai_meta.sub_category`** column is
+its canonical SQL store; it is also mirrored to ES under `${platform}.subCategory`.
 
 **Removed fields — do NOT add columns for:** `product_type`, `language`, `ocr`, `object`, `brand_logos`,
 `status`, **`brand`**, **`celebrity`** (the last two dropped in v1.5).
@@ -95,9 +114,11 @@ CREATE TABLE IF NOT EXISTS facebook_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -120,9 +141,11 @@ CREATE TABLE IF NOT EXISTS instagram_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -145,9 +168,11 @@ CREATE TABLE IF NOT EXISTS gdn_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -170,9 +195,11 @@ CREATE TABLE IF NOT EXISTS youtube_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -195,9 +222,11 @@ CREATE TABLE IF NOT EXISTS google_text_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -220,9 +249,11 @@ CREATE TABLE IF NOT EXISTS native_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -245,9 +276,11 @@ CREATE TABLE IF NOT EXISTS linkedin_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -270,9 +303,11 @@ CREATE TABLE IF NOT EXISTS reddit_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -295,9 +330,11 @@ CREATE TABLE IF NOT EXISTS quora_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -320,9 +357,11 @@ CREATE TABLE IF NOT EXISTS pinterest_ad_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -345,9 +384,11 @@ CREATE TABLE IF NOT EXISTS tiktok_ads_ai_meta (
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
   offering      VARCHAR(255) NULL,
-  caption       VARCHAR(255) NULL,
+  caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
+  category_id   VARCHAR(4)   NULL,
   sub_category  VARCHAR(255) NULL,
+  subcategory_id VARCHAR(8)  NULL,
   intent        JSON NULL,
   hook          JSON NULL,
   colors        JSON NULL,
@@ -368,35 +409,60 @@ CREATE TABLE IF NOT EXISTS tiktok_ads_ai_meta (
 
 ## 4. How the API connects to it (write flow)
 
-The write mirrors the ES path (`writeAiMeta` in `addCategoryController.js`). Per network:
+**Implemented** in `src/services/common/helpers/aiMetaSqlWriter.js` (`persistAiMeta`), invoked alongside
+the ES `writeAiMeta` from **both** write paths in `addCategoryController.js`: `newCatInsertion` (Option A,
+when an `ai_meta` object is present) and `POST /ai-meta` (Option B). The whole thing runs in **one
+transaction** and is **non-fatal** — any failure (missing table, ad not in SQL, connection error) is caught
+and returned as a status object, so an ES success is never lost. category/sub_category are sourced from the
+**`ai_meta` object** (the top-level newCatInsertion category is being retired by the DS pipeline).
 
-1. Resolve the network's SQL pool: `serviceRegistry.getService(network).db.sql` (same per-network
-   connection the read/insert controllers already use — the DB is chosen by `networks.<net>.sql.database`).
+Per call, `persistAiMeta({ sql, network, adId, normalized, logger })`:
+
+1. Resolve the network's SQL pool: `serviceRegistry.getService(network).db.sql` (chosen by
+   `networks.<net>.sql.database`). Absent → `{ sql_status: 'skipped' }`.
 2. Look the ad up by its **public** `ad_id` to get the numeric PK:
-   `SELECT id FROM <net>_ad WHERE ad_id = ? LIMIT 1` → `adRowId`. (For the string-vs-numeric `ad_id`
-   quirks, reuse the same match logic `findAdDoc` uses on the ES side.)
+   `SELECT id FROM <net>_ad WHERE ad_id = ? LIMIT 1` → `adRowId`. No row → `{ sql_status: 'ad_not_found' }`
+   (transaction rolled back).
 3. **Upsert** the ai_meta row (replace-on-conflict, matching ES's whole-object replace):
 
 ```sql
 INSERT INTO facebook_ad_ai_meta
-  (facebook_ad_id, ad_type, offering_type, offering, caption, category, sub_category,
+  (facebook_ad_id, ad_type, offering_type, offering, caption, category, category_id, sub_category, subcategory_id,
    intent, hook, colors, offers, roa)
-VALUES (?,?,?,?,?,?,?, CAST(? AS JSON), CAST(? AS JSON), CAST(? AS JSON), CAST(? AS JSON), CAST(? AS JSON))
+VALUES (?,?,?,?,?,?,?,?,?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
   ad_type=VALUES(ad_type), offering_type=VALUES(offering_type), offering=VALUES(offering),
-  caption=VALUES(caption), category=VALUES(category), sub_category=VALUES(sub_category),
+  caption=VALUES(caption), category=VALUES(category), category_id=VALUES(category_id),
+  sub_category=VALUES(sub_category), subcategory_id=VALUES(subcategory_id),
   intent=VALUES(intent), hook=VALUES(hook), colors=VALUES(colors),
   offers=VALUES(offers), roa=VALUES(roa);
 ```
 
-Bind the JSON columns with `JSON.stringify(value)` (or `null`). `ON DUPLICATE KEY` on the unique FK gives
-the same idempotent overwrite semantics as ES. Fields absent from the payload bind as `NULL` (so a v1.5
-payload naturally leaves the removed columns — which don't exist — untouched, and clears any field the
-new payload omits).
+The JSON columns are bound with `JSON.stringify(value)` and assigned straight into the `JSON` column (MySQL
+parses the string; no `CAST` needed — verified with mysql2 `execute` prepared statements, incl. float
+values like `12.5`). Fields absent from the payload bind as SQL `NULL` (not the string `"null"`), clearing
+any field the new payload omits — whole-object replace, matching ES. `ON DUPLICATE KEY` on the unique FK
+gives the idempotent overwrite.
 
-> **Status:** this doc defines the target schema + the write contract. The API currently writes AI-Meta
-> to **ES only**; wiring the SQL upsert (a small per-network repo method invoked alongside `writeAiMeta`,
-> non-fatal on failure so an ES success isn't lost) is the follow-up implementation step.
+4. **Dual-write `category` to the existing category store (same transaction).** Only when a SQL category
+   store exists **and** the payload carries a `category`: resolve the category **name → id** in
+   `<net>_category` (SELECT-then-INSERT — `category_name` is not consistently UNIQUE across networks, so
+   `ON DUPLICATE KEY` can't be relied on; timestamp columns default to `CURRENT_TIMESTAMP`), then
+   `UPDATE <net>_ad SET category_id = ? WHERE id = ?`. The controller also mirrors the category to ES
+   `${platform}.category` (via `mirrorCategoryToEs`) so the feed reads it. `sub_category` has no SQL
+   category-table home, so it lives **only** in `<net>_ad_ai_meta.sub_category` (+ ES `${platform}.subCategory`).
+
+   ⚠️ **Only 7 networks have a SQL category store** (facebook, instagram, youtube, native, linkedin, reddit,
+   quora). **gdn, google, pinterest, tiktok have no `<net>_category` table and no `<net>_ad.category_id`
+   column** (verified live) — for those, `categoryTable` is `null` in `aiMetaSqlWriter`, the category-table
+   write is skipped (`category_synced: false`), and category stays ES-only as before.
+
+**Return / status surfacing:** `persistAiMeta` returns
+`{ sql_status: 'stored'|'skipped'|'ad_not_found'|'error', sql_ad_row_id?, category_synced?, sql_error? }`.
+Option A attaches it to the response as `ai_meta_sql`; Option B as `sql`.
+
+> **Prerequisite:** the DDL in §3 must be applied to each network DB before writes land — until the table
+> exists, `persistAiMeta` returns `{ sql_status: 'error' }` (non-fatal; ES still succeeds).
 
 ---
 

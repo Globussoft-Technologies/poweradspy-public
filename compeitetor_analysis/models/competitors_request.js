@@ -43,12 +43,30 @@ const CompetitorRequestSchema = mongoose.Schema(
     },
 
     country: {
-      type: [String], default: [] 
+      type: [String], default: []
     },
     category: {
       type: [String], default: []
     },
-    
+
+    // Per-competitor `specific_to_match` echoed back by the DS `/competitors/list`
+    // response when a request was constrained via `specific_to` (see
+    // dev_payloads_specific_to.md) — e.g. { name: "li-ning", match: { country: "china" } }.
+    // Keyed by competitor name (lowercased) rather than by `competitors[]` ObjectId
+    // because the referenced `competitors` collection is a SHARED master list across
+    // users/requests, so the match reason must live on this per-request document, not
+    // on the shared competitor doc.
+    specificToMatches: {
+      type: [
+        {
+          name: { type: String, trim: true },
+          match: { type: mongoose.Schema.Types.Mixed },
+        },
+      ],
+      default: [],
+    },
+
+
 
   },
   {

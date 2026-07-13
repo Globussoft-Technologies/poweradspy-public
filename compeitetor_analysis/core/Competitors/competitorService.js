@@ -2871,25 +2871,40 @@ async generateCompetitorsInBackground({
       const brand = this.normalizeAdvertiser(advertiserArray[0] || "");
       const dbAdvertiserArray = [brand];
 
+    // Carry DS's `specific_to_match` (see dev_payloads_specific_to.md) through
+    // to this per-request doc, keyed by competitor name — it only exists on
+    // the raw Python response, not on the shared `competitors` master doc.
+    const specificToEntries = (competitors || [])
+      .filter((c) => c?.specific_to_match && c?.tool_name)
+      .map((c) => ({
+        name: c.tool_name.toLowerCase().trim(),
+        match: c.specific_to_match,
+      }));
+
+    const update = {
+      $setOnInsert: {
+        user_id: userObjectId,
+        advertiser: dbAdvertiserArray,
+        monitoring: [],
+        email_status: 0,
+        country: [],
+        category: []
+          // brand_url is set correctly by checkCompetitorProcess
+      },
+      $addToSet: {
+        competitors: { $each: competitorIds }
+      }
+    };
+    if (specificToEntries.length) {
+      update.$push = { specificToMatches: { $each: specificToEntries } };
+    }
+
     await Competitors_request.updateOne(
       {
         user_id: userObjectId,
         advertiser: dbAdvertiserArray
       },
-      {
-        $setOnInsert: {
-          user_id: userObjectId,
-          advertiser: dbAdvertiserArray,
-          monitoring: [],
-          email_status: 0,
-          country: [],
-          category: []
-            // brand_url is set correctly by checkCompetitorProcess
-        },
-        $addToSet: {
-          competitors: { $each: competitorIds }
-        }
-      },
+      update,
       { upsert: true }
     );
   } catch (err) {
@@ -3196,11 +3211,18 @@ async generateCompetitorsInBackground({
 
   const monitoredSet = new Set(monitoredIds.map(id => id.toString()));
 
+  // Last-write-wins per name — a competitor could in principle be attached
+  // more than once across separate generation rounds with different filters.
+  const matchByName = new Map(
+    (projectDoc.specificToMatches || []).map(m => [m.name, m.match])
+  );
+
   return competitors.map(c => ({
     id: c._id,
     name: c.competitor_name,
     url: c.competitor_url,
     monitoring: monitoredSet.has(c._id.toString()),
+    specific_to_match: matchByName.get(c.competitor_name?.toLowerCase().trim()) || null,
     comp_request_id: projectDoc._id 
   }));
 }
@@ -3310,17 +3332,9 @@ async checkDailyTokenLimit(req, res) {
 
       const keywordUrl = config.get("COMPETITOR_URL_PYTHON") + "/v1/api/competitors/prepare";
 
-      // The DS/Python API only accepts a flat `keywords` list — no dedicated
-      // `country`/`prompt` field. Fold the selected target countries in as an
-      // extra keyword-shaped entry, e.g. "Brands from India, Saudi Arabia" —
-      // placed FIRST so the country intent gets priority weighting over the
-      // user's own keywords.
       const keywordsArray = Array.isArray(keywords)
         ? [...keywords]
         : (keywords ? [keywords] : []);
-      if (countryArray.length) {
-        keywordsArray.unshift(`Brands from ${countryArray.join(", ")}`);
-      }
 
       const formParams = {
         content_ref_id: content_ref_id,
@@ -3332,6 +3346,16 @@ async checkDailyTokenLimit(req, res) {
         input_token_budget: 20000,
         output_token_budget: 20000
       };
+
+      // DS's `specific_to: { <attribute>: [<values>] }` contract (see
+      // dev_payloads_specific_to.md) is the proper, enforced way to constrain
+      // generation — replaces the earlier "Brands from ..." keyword hack.
+      // Their examples use lowercase values ("china", "japan"), so match that.
+      if (countryArray.length) {
+        formParams.specific_to = {
+          country: countryArray.map((c) => c.toLowerCase()),
+        };
+      }
 
 
       const response = await axios.post(keywordUrl, formParams, {

@@ -35,6 +35,7 @@ import {
   AlertTriangle,
   Megaphone,
   Copy,
+  Info,
 } from "lucide-react";
 import { io } from "socket.io-client";
 import fbIcon from "../../assets/fb.png";
@@ -655,6 +656,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               row.is_monitored === 1 ||
               row.is_monitored === true ||
               row.monitored === true,
+            specificToMatch: row.specific_to_match || null,
           };
         });
 
@@ -1031,6 +1033,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   ? `$${Number(stats.totalBudget).toLocaleString()}`
                   : "$0",
                 isMonitored: row.monitoring || false,
+                specificToMatch: row.specific_to_match || null,
               };
             });
 
@@ -1141,6 +1144,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 budget: "...",
                 isMonitored: details.monitoring,
                 statsLoaded: false,
+                specificToMatch: details.specific_to_match || null,
               };
             },
           );
@@ -1884,6 +1888,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               </div>
 
               {COUNTRY_TARGETING_ON && (
+              <>
               <div className="bg-theme-card border border-theme-border rounded-xl shadow-sm overflow-hidden">
                 <button
                   type="button"
@@ -1952,6 +1957,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   </div>
                 )}
               </div>
+              <p className="flex items-start gap-1.5 text-xs text-theme-text-muted px-1">
+                <Info size={13} className="flex-shrink-0 mt-0.5" />
+                Restricting to a specific country limits results to
+                competitors found in that country. If this pool is smaller
+                than your requested number, leave the country field empty to
+                get a complete competitor list from all regions.
+              </p>
+              </>
               )}
 
               <button
@@ -2252,6 +2265,19 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                 <span className="font-bold capitalize text-white">
                                   {comp.name}
                                 </span>
+                                {comp.specificToMatch &&
+                                  Object.entries(comp.specificToMatch).map(
+                                    ([attr, value]) => (
+                                      <span
+                                        key={attr}
+                                        title={`Matched on ${attr}: ${value}`}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#3762c1]/20 text-[#7899e0] border border-[#3759a3]/40 capitalize"
+                                      >
+                                        <Globe size={9} />
+                                        {value}
+                                      </span>
+                                    ),
+                                  )}
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
