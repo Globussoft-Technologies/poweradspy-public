@@ -93,6 +93,7 @@ import afRakuten from "../../assets/afiliate_network/rakuten.png";
 import afShareasale from "../../assets/afiliate_network/shareasale.png";
 import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
 import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
+import afRefersion from "../../assets/afiliate_network/Refersion.webp";
 
 const DM_MP_IMGS = {
   'agkn.com': mpAgkn, 'branch': mpBranch, 'conversionx.co': mpConversionx,
@@ -137,6 +138,7 @@ const DM_AF_IMGS = {
   'amazonassociates': afAmazonAssociates,
   'amazon': afAmazonAssociates,
   'skimlinks': afSkimlinks,
+  'refersion': afRefersion,
 };
 
 const PLATFORM_ICONS = {
@@ -1285,7 +1287,7 @@ const AdDetailModal = ({
                     </span>
                   </>
                 )}
-                {ad.runningDays && (
+                {ad.runningDays && platform !== "quora" && (
                   <>
                     <span style={{ color: "var(--color-text-muted)" }}>
                       Running
@@ -1451,7 +1453,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.runningDays && (
+  {ad.runningDays && platform !== "quora" && (
     <>
       <span
         className="text-[9px] font-bold uppercase"

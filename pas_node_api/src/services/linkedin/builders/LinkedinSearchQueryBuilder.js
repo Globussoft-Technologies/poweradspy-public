@@ -521,6 +521,7 @@ LinkedinSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'redirect_urls',
   'duration',
   'ad_language',
+  'ecommerce_platform',
 ];
 
 module.exports = LinkedinSearchQueryBuilder;

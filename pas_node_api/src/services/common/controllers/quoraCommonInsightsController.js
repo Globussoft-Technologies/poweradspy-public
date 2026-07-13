@@ -4,9 +4,11 @@ const serviceRegistry = require('../../ServiceRegistry');
 const { normalizeParams } = require('../../quora/helpers/paramParser');
 const { streamInsights } = require('../helpers/sseHelper');
 const {
+  getLikeCommentShareDetails,
   getQuoraAdCountry,
   getQuoraOutgoings,
   getQuoraUserData,
+  getAdvertiserLCSData,
   getAdvertiserCountryData,
 } = require('../../quora/controllers/adInsightsController');
 const { getAdDetails } = require('../../quora/controllers/adDetailController');
@@ -18,8 +20,18 @@ const INSIGHT_REGISTRY = [
     payload: (p) => ({ ad_id: p.quora_ad_id, user_id: p.user_id, language: p.language }),
   },
   {
+    key: 'advertiserLCSData',
+    fn: getAdvertiserLCSData,
+    payload: (p) => ({ quora_ad_id: p.quora_ad_id, user_id: p.user_id }),
+  },
+  {
     key: 'advertiserCountryData',
     fn: getAdvertiserCountryData,
+    payload: (p) => ({ quora_ad_id: p.quora_ad_id, user_id: p.user_id }),
+  },
+  {
+    key: 'lcs',
+    fn: getLikeCommentShareDetails,
     payload: (p) => ({ quora_ad_id: p.quora_ad_id, user_id: p.user_id }),
   },
   {

@@ -266,7 +266,8 @@ async function searchAds(req, db, logger) {
     .setSize(size)
     .setSortField(sort.field)
     .setSortMethod(sort.order)
-    .setIpBasedCountry(p.ipBasedCountry || 'NA');
+    .setIpBasedCountry(p.ipBasedCountry || 'NA')
+    .setIncludeDisplayAds(raw.youtube_display_ads);
 
   if (p.status && Array.isArray(p.status) && p.status.length > 0) builder.setStatus(p.status);
 

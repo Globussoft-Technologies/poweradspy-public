@@ -2,6 +2,82 @@
 
 const { normalizeParams } = require('../helpers/paramParser');
 
+// ─── 0. getLikeCommentShareDetails ───────────────────────
+
+/**
+ * Return the latest like/comment/share snapshot for a single Quora ad, sourced
+ * entirely from Elasticsearch. Quora does not maintain a per-day analytics
+ * table — the ad doc stores the current totals under
+ * `quora_ad.likes`/`quora_ad.comments`/`quora_ad.shares`, alongside
+ * `quora_ad.post_date` and `quora_ad.last_seen`. We return two data points
+ * (post_date=0, last_seen=current totals) so consumers can render a timeline.
+ */
+async function getLikeCommentShareDetails(req, db, logger) {
+  const raw = { ...req.body, ...req.query };
+  const p = normalizeParams(raw);
+
+  if (!p.quora_ad_id || !p.user_id) {
+    return { code: 401, message: 'Missing parameters: quora_ad_id and user_id are required' };
+  }
+  if (!db.elastic) return { code: 503, message: 'Elasticsearch connection not available' };
+
+  try {
+    const adId = parseInt(p.quora_ad_id, 10);
+    const esResult = await db.elastic.search({
+      index: 'quora_search_mix',
+      body: {
+        size: 1,
+        _source: [
+          'quora_ad.id',
+          'quora_ad.likes',
+          'quora_ad.comments',
+          'quora_ad.shares',
+          'quora_ad.post_date',
+          'quora_ad.last_seen',
+        ],
+        query: {
+          bool: { filter: { terms: { 'quora_ad.id': [adId] } } },
+        },
+      },
+    });
+
+    const hits = (esResult.hits || esResult.body?.hits)?.hits;
+    if (!hits || hits.length === 0) {
+      return { code: 400, message: 'No data found.', data: null };
+    }
+
+    const src = hits[0]._source;
+    const likes = Number(src['quora_ad.likes']) || 0;
+    const comment = Number(src['quora_ad.comments']) || 0;
+    const share = Number(src['quora_ad.shares']) || 0;
+
+    const toYmd = (val) => {
+      if (!val) return null;
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
+    };
+
+    let postDate = toYmd(src['quora_ad.post_date']);
+    const lastSeenDate = toYmd(src['quora_ad.last_seen']);
+
+    // If post_date is missing/invalid, anchor the zero row one day before last_seen
+    if (!postDate && lastSeenDate) {
+      const d = new Date(lastSeenDate);
+      d.setDate(d.getDate() - 1);
+      postDate = d.toISOString().split('T')[0];
+    }
+
+    const data = [
+      { id: 1, quora_ad_id: adId, likes, comment, share, date: postDate }
+    ];
+
+    return { code: 200, message: 'Quora analytics details.', data };
+  } catch (err) {
+    logger.error('Error in getLikeCommentShareDetails (quora)', { error: err.message });
+    return { code: 500, message: 'Error fetching LCS details', error: err.message };
+  }
+}
+
 // ─── 1. getQuoraAdCountry ───────────────────────────────
 
 const COUNTRY_ISO_SQL = `SELECT name AS country, iso FROM country_data WHERE nicename = ? LIMIT 1`;
@@ -135,8 +211,6 @@ async function getQuoraUserData(req, db, logger) {
 
 // ─── 4. Advertiser-level helpers ────────────────────────
 
-// ─── 4. Advertiser-level helpers ────────────────────────
-
 const AD_META_SQL = `
   SELECT qa.last_seen, qapo.post_owner_name, qa.post_owner_id
   FROM quora_ad qa
@@ -144,6 +218,24 @@ const AD_META_SQL = `
   WHERE qa.id = ?
   LIMIT 1
 `;
+
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/**
+ * Robustly parse dates from ES hits.
+ * Handles ISO strings, Unix seconds, and millis.
+ */
+function parseESDate(val) {
+  if (!val) return new Date();
+  let dt;
+  if (typeof val === 'number') {
+    dt = new Date(val < 10000000000 ? val * 1000 : val);
+  } else {
+    dt = new Date(val);
+  }
+  if (isNaN(dt.getTime())) return new Date();
+  return dt;
+}
 
 function getYearRange(year) {
   return {
@@ -159,6 +251,52 @@ function getCustomDateRange(from, to) {
     lte: `${to} 23:59:59`,
     format: "yyyy-MM-dd' 'HH:mm:ss",
   };
+}
+
+/**
+ * Bucket hits by month of `quora_ad.last_seen` and sum ES-side LCS values.
+ * ES-only — no SQL analytics table lookup. Each hit's `_source` carries
+ * `quora_ad.id/likes/comments/shares/last_seen`.
+ */
+function aggregateLCSData(hits) {
+  if (!hits || hits.length === 0) return null;
+
+  const monthly = {};
+  for (const hit of hits) {
+    const src = hit._source || {};
+    const adId = src['quora_ad.id'];
+    const rawDate = src['quora_ad.last_seen'];
+    if (!adId || !rawDate) continue;
+
+    const dt = parseESDate(rawDate);
+    const key = `${MONTH_NAMES[dt.getMonth()]}_${dt.getFullYear()}`;
+    if (!monthly[key]) monthly[key] = { ad_ids: [], likes: 0, comments: 0, shares: 0 };
+    monthly[key].ad_ids.push(adId);
+    monthly[key].likes += Number(src['quora_ad.likes']) || 0;
+    monthly[key].comments += Number(src['quora_ad.comments']) || 0;
+    monthly[key].shares += Number(src['quora_ad.shares']) || 0;
+  }
+
+  if (Object.keys(monthly).length === 0) return null;
+
+  const sortedKeys = Object.keys(monthly).sort((a, b) => {
+    const [mA, yA] = a.split('_');
+    const [mB, yB] = b.split('_');
+    return (Number(yA) - Number(yB)) || (MONTH_NAMES.indexOf(mA) - MONTH_NAMES.indexOf(mB));
+  });
+
+  const result = {};
+  for (const key of sortedKeys) {
+    const b = monthly[key];
+    result[key] = {
+      ad_ids: b.ad_ids,
+      total_ads: b.ad_ids.length,
+      likes: b.likes,
+      comments: b.comments,
+      shares: b.shares,
+    };
+  }
+  return result;
 }
 
 async function fetchAvailableYears(elastic, index, filter) {
@@ -262,7 +400,86 @@ async function batchCountryLookup(db, names) {
   }
 }
 
-// ─── 5. getAdvertiserCountryData ────────────────────────
+// ─── 5. getAdvertiserLCSData ────────────────────────────
+
+/**
+ * Fetch advertiser-level monthly LCS data. Default to ad's year.
+ */
+async function getAdvertiserLCSData(req, db, logger) {
+  const raw = { ...req.body, ...req.query };
+  const p = normalizeParams(raw);
+  if (!p.quora_ad_id) return { code: 401, message: 'Missing quora_ad_id', data: null };
+
+  const metaRows = await db.sql.query(AD_META_SQL, [p.quora_ad_id]);
+  const postOwnerName = metaRows?.[0]?.post_owner_name || null;
+  const postOwnerId = metaRows?.[0]?.post_owner_id || null;
+  const adLastSeen = metaRows?.[0]?.last_seen || null;
+
+  if (!postOwnerName || !db.elastic) return { code: 400, message: 'Advertiser not found', data: null };
+
+  let adYear;
+  if (p.year) {
+    adYear = p.year;
+  } else {
+    const d = adLastSeen ? parseESDate(adLastSeen) : null;
+    adYear = (d && d.getFullYear() > 1970) ? d.getFullYear() : new Date().getFullYear();
+  }
+  const dateRange = getYearRange(adYear);
+  const index = 'quora_search_mix';
+  const advertiserFilter = { match_phrase: { 'quora_ad_post_owners.post_owner_name': postOwnerName } };
+
+  const [availableYears, esResult] = await Promise.allSettled([
+    fetchAvailableYears(db.elastic, index, advertiserFilter),
+    db.elastic.search({
+      index,
+      body: {
+        size: 10000,
+        _source: [
+          'quora_ad.id',
+          'quora_ad.last_seen',
+          'quora_ad.likes',
+          'quora_ad.comments',
+          'quora_ad.shares',
+        ],
+        query: {
+          bool: {
+            filter: [
+              advertiserFilter,
+              { range: { 'quora_ad.last_seen': dateRange } },
+            ],
+          },
+        },
+      },
+    }),
+  ]);
+
+  const hits = (esResult.status === 'fulfilled') ?
+    (esResult.value.hits || esResult.value.body?.hits)?.hits : [];
+
+  if (!hits || hits.length === 0) {
+    return {
+      code: 200,
+      message: 'No data found for this year.',
+      post_owner_id: postOwnerId,
+      year: adYear,
+      available_years: availableYears.status === 'fulfilled' ? availableYears.value : [],
+      data: {}
+    };
+  }
+
+  const data = aggregateLCSData(hits);
+
+  return {
+    code: 200,
+    message: 'Advertiser LCS data fetched.',
+    post_owner_id: postOwnerId,
+    year: adYear,
+    available_years: availableYears.status === 'fulfilled' ? availableYears.value : [],
+    data: data || {}
+  };
+}
+
+// ─── 6. getAdvertiserCountryData ────────────────────────
 
 /**
  * Fetch advertiser-level country data. Default to ad's year.
@@ -387,13 +604,45 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
     return { code: 200, message: 'Advertiser country data fetched.', ...base, data: data || [] };
   }
 
+  if (targetType === 'lcs') {
+    const esResult = await db.elastic.search({
+      index,
+      body: {
+        size: 10000,
+        _source: [
+          'quora_ad.id',
+          'quora_ad.last_seen',
+          'quora_ad.likes',
+          'quora_ad.comments',
+          'quora_ad.shares',
+        ],
+        query: {
+          bool: {
+            filter: [
+              { match_phrase: { 'quora_ad_post_owners.post_owner_name': postOwnerName } },
+              { range: { 'quora_ad.last_seen': dateRange } },
+            ],
+          },
+        },
+      },
+    });
+
+    const hits = (esResult.hits || esResult.body?.hits)?.hits;
+    if (!hits || hits.length === 0) return { code: 400, message: 'No data found.', ...base, data: {} };
+
+    const data = aggregateLCSData(hits);
+    return { code: 200, message: 'Advertiser LCS data fetched.', ...base, data: data || {} };
+  }
+
   return { code: 400, message: `Insight type '${targetType}' not supported for this platform.` };
 }
 
 module.exports = {
+  getLikeCommentShareDetails,
   getQuoraAdCountry,
   getQuoraOutgoings,
   getQuoraUserData,
+  getAdvertiserLCSData,
   getAdvertiserCountryData,
   getAdvertiserInsightsByDateRange,
 };

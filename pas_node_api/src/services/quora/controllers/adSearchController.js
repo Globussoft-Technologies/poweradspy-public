@@ -270,6 +270,16 @@ async function searchAds(req, db, logger) {
         // LANGUAGE row resolves (the frontend maps lang_detect → full name). Falls back
         // to the SQL `language` name when ES has none.
         lang_detect: src['lang_detect'] || null,
+        // CTA lives in ES as `quora_call_to_action.call_to_action`. The SQL
+        // quora_call_to_action join is empty for API-ingested ads (no
+        // call_to_action_id link), so overlay the ES value when SQL has none —
+        // otherwise the ad-detail modal's CTA button never renders for those ads.
+        call_to_action: ad.call_to_action || src['quora_call_to_action.call_to_action'] || null,
+        // Destination URL: the quora_ad_meta_data insert is deferred in the Node
+        // pipeline, so SQL is empty for API-ingested ads while ES has it. Overlay the
+        // ES value onto the top-level field the frontend reads (ad.destinationUrl) —
+        // otherwise the CTA button is disabled ("lacks a Destination URL") for those ads.
+        destination_url: ad.destination_url || src['quora_ad_meta_data.destination_url'] || null,
         market_platform_urls: {
           url_destination: src['quora_ad_url.url_destination']         || null,
           source_url:      src['quora_ad_outgoing_links.source_url']   || null,

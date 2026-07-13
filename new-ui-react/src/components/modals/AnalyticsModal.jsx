@@ -98,6 +98,7 @@ import afRakuten from "../../assets/afiliate_network/rakuten.png";
 import afShareasale from "../../assets/afiliate_network/shareasale.png";
 import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
 import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
+import afRefersion from "../../assets/afiliate_network/Refersion.webp";
 
 const AFFILIATE_IMGS = {
   'awin': afAwin,
@@ -115,6 +116,7 @@ const AFFILIATE_IMGS = {
   'amazonassociates': afAmazonAssociates,
   'amazon': afAmazonAssociates,
   'skimlinks': afSkimlinks,
+  'refersion': afRefersion,
 };
 
 import {
@@ -1386,7 +1388,13 @@ const AnalyticsModal = ({
         },
         {
           label: "Category",
-          value: tt.industry || ad?.industry || "—",
+          // Prefer the clicked ad's own industry (the same value the card and
+          // AdDetailModal show) over the analytics re-fetch. `getAnalytics`
+          // resolves the ad by sql_id and can land on a different underlying ES
+          // doc when duplicates share a sql_id, giving a category that doesn't
+          // match the ad the user opened. Reading `ad.industry` first keeps the
+          // Analytics category consistent with the Ad Details popup.
+          value: ad?.industry || tt.industry || "—",
           icon: Tag,
           color: "text-cyan-400",
         },
@@ -1991,8 +1999,8 @@ const AnalyticsModal = ({
               />
             )}
 
-            {/* Social Engagements — Facebook, Instagram, YouTube, LinkedIn, Reddit & TikTok */}
-            {['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok'].includes(ctx.platform) && !((['facebook', 'instagram'].includes(ctx.platform) && adDetailsData?.platform === 15)) && (
+            {/* Social Engagements — Facebook, Instagram, YouTube, LinkedIn, Reddit, TikTok & Quora */}
+            {['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok', 'quora'].includes(ctx.platform) && !((['facebook', 'instagram'].includes(ctx.platform) && adDetailsData?.platform === 15)) && (
               <SocialEngagements
                 adId={ad?.id}
                 adLcs={insights.lcs}

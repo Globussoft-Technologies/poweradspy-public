@@ -100,6 +100,7 @@ import afRakuten from "../../assets/afiliate_network/rakuten.png";
 import afShareasale from "../../assets/afiliate_network/shareasale.png";
 import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
 import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
+import afRefersion from "../../assets/afiliate_network/Refersion.webp";
 
 const MC_MP_IMGS = {
   "agkn.com": mpAgkn,
@@ -169,6 +170,7 @@ const MC_AF_IMGS = {
   amazonassociates: afAmazonAssociates,
   amazon: afAmazonAssociates,
   skimlinks: afSkimlinks,
+  refersion: afRefersion,
 };
 
 const PLATFORM_ICONS = {

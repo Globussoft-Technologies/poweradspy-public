@@ -600,6 +600,7 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
                         />
                       )}
                       <span
+                        title={c.name}
                         className={`text-[14px] font-medium flex-1 min-w-0 truncate ${isSelected ? (isLight ? "text-gray-700" : "text-white/90") : isLight ? "text-gray-400" : "text-white/90"}`}
                       >
                         {c.name}

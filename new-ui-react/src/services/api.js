@@ -778,6 +778,17 @@ export const buildSearchPayload = (filters = {}) => {
   // Each backend controller reads only the fields it supports and ignores the rest.
   const resolvedNetworks = finalNetworks;
 
+  // youtube_display_ads: include YouTube DISPLAY ads (ad_origin === 'youtube_display' —
+  // the ads surfaced under GDN) EXCEPT when the selection already covers GDN. The ALL
+  // tab expands into every platform slug (which includes 'gdn'), so a single 'gdn'-
+  // presence check covers both "ALL" and "GDN alone/combined" — in both cases the GDN
+  // surface renders those display ads, and we'd duplicate them.
+  // - Alone YouTube        → true
+  // - ALL selected         → false  (activePlatforms includes 'gdn')
+  // - GDN selected (alone or combined) → false
+  // - Any other combo (no GDN) → true
+  const youtube_display_ads = !resolvedNetworks.includes('gdn');
+
   const keyword = searchIn === 'keyword' ? (searchQuery || 'NA') : 'NA';
   const advertiser = searchIn === 'advertiser' ? (searchQuery || 'NA') : 'NA';
   const domain = searchIn === 'domain' ? (searchQuery || 'NA') : 'NA';
@@ -892,6 +903,7 @@ export const buildSearchPayload = (filters = {}) => {
 
   const payload = {
     network: resolvedNetworks,
+    youtube_display_ads,
     // user_id: 281,
     advertiser,
     domain,

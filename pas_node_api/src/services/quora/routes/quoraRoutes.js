@@ -11,9 +11,11 @@ const { getLatestVideoAdUrls } = require('../controllers/videoUrlController');
 const { updateNasImage } = require('../controllers/updateNasImageController');
 const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
 const {
+  getLikeCommentShareDetails,
   getQuoraAdCountry,
   getQuoraOutgoings,
   getQuoraUserData,
+  getAdvertiserLCSData,
   getAdvertiserCountryData,
   getAdvertiserInsightsByDateRange,
 } = require('../controllers/adInsightsController');
@@ -128,6 +130,16 @@ function createQuoraRoutes(service) {
     })
   );
 
+  // POST /api/v1/quora/ads/getLikeCommentShareDetails
+  router.post(
+    '/ads/getLikeCommentShareDetails',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getLikeCommentShareDetails(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
   // POST /api/v1/quora/ads/getQuoraAdCountry
   router.post(
     '/ads/getQuoraAdCountry',
@@ -154,6 +166,17 @@ function createQuoraRoutes(service) {
     authMiddleware,
     asyncHandler(async (req, res) => {
       const result = await getQuoraUserData(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // POST /api/v1/quora/ads/getAdvertiserLCSData
+  router.post(
+    '/ads/getAdvertiserLCSData',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getAdvertiserLCSData(req, service.db, service.log);
+      if (!result) return res.status(400).json({ code: 400, message: 'No data found.', data: null });
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

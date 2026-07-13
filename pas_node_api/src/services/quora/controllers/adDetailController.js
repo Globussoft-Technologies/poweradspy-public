@@ -101,14 +101,24 @@ async function getAdDetails(req, db, logger) {
           if (src['quora_ad_variants.image_celebrity_exactly']) adData.imageCeleb = src['quora_ad_variants.image_celebrity_exactly'];
           if (src['quora_ad_variants.image_ocr_exactly']) adData.imageOcr = src['quora_ad_variants.image_ocr_exactly'];
           if (src.new_nas_image_url) adData.image_video_url = src.new_nas_image_url;
+          // CTA is empty in SQL for API-ingested ads (no call_to_action_id link);
+          // ES carries it as quora_call_to_action.call_to_action. Overlay when SQL has none.
+          if (!adData.call_to_action && src['quora_call_to_action.call_to_action']) adData.call_to_action = src['quora_call_to_action.call_to_action'];
+          // Destination URL is deferred in the Node insert (SQL quora_ad_meta_data empty for
+          // API-ingested ads); ES has it. Overlay so the CTA button isn't disabled.
+          if (!adData.destination_url && src['quora_ad_meta_data.destination_url']) adData.destination_url = src['quora_ad_meta_data.destination_url'];
           if (src['quora_ad_domain.domain_registered_date'] !== undefined) adData.domain_registered_date = src['quora_ad_domain.domain_registered_date'];
           if (src['quora_ad.days_running'] !== undefined) adData.days_running = src['quora_ad.days_running'];
           if (src['quora.category'] !== undefined) adData.category = src['quora.category'];
           if (src['quora.subCategory'] !== undefined) adData.subCategory = src['quora.subCategory'];
 
-          // SOURCE (desktop/ios/android) is stored in ES; the SQL quora_ad.source column
-          // stays empty for API-ingested ads, so prefer the ES value when SQL has none.
-          if (!adData.source && src['source']) adData.source = src['source'];
+          // SOURCE (desktop/ios/android): the ES `source` field is the authoritative
+          // scrape source kept current by the insertion pipeline (and consistent with
+          // firstSeenOn*), whereas the SQL quora_ad.source column is populated by a
+          // different mechanism and can be empty (API-ingested ads) or stale/divergent.
+          // Prefer ES whenever it has a value so the frontend matches Kibana; fall back
+          // to the SQL value only when ES has none.
+          if (src['source']) adData.source = src['source'];
 
           // The ad's outbound/destination URL lives in ES as quora_ad_meta_data.destination_url
           // (the metadata-table insert is deferred in the Node pipeline, so it's empty in SQL).

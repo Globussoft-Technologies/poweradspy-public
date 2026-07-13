@@ -93,6 +93,7 @@ class SearchMixQueryBuilder {
     this._sortMethod  = 'desc';
     this._ipBasedCountry = '';
     this._profile     = undefined;
+    this._includeDisplayAds = false;
     this._params      = {};
   }
 
@@ -102,6 +103,7 @@ class SearchMixQueryBuilder {
   setSortMethod(v)    { if (v === 'asc' || v === 'desc') this._sortMethod = v; return this; }
   setIpBasedCountry(v) { this._ipBasedCountry = (v && v !== 'NA') ? v : ''; return this; }
   setProfile(v) { this._profile = v; return this; }
+  setIncludeDisplayAds(v) { this._includeDisplayAds = v === true || v === 'true'; return this; }
 
   setKeyword(v)          { this._params.keyword       = v;                               return this; }
   setPostOwnerName(v)    { this._params.postOwnerName = v;                               return this; }
@@ -406,9 +408,11 @@ class SearchMixQueryBuilder {
     buckets.must_not.push({ term: { 'ad_type.keyword': '' } });
 
     // DISPLAY-type YouTube ads are surfaced under GDN, not YouTube — hide them
-    // here so they never appear in YouTube results. They are merged back into the
-    // GDN listing by gdn/helpers/youtubeDisplayMerge.js.
-    buckets.must_not.push({ term: { 'ad_type.keyword': 'DISPLAY' } });
+    // by default. When the caller opts in via `youtube_display_ads: true` (e.g.
+    // to render the combined YouTube+DISPLAY listing on the frontend), keep them.
+    if (!this._includeDisplayAds) {
+      buckets.must_not.push({ term: { 'ad_type.keyword': 'DISPLAY' } });
+    }
 
     // Displayable-media gate (see EXTRA_CONDITION above).
     buckets.filter.push(...EXTRA_CONDITION);

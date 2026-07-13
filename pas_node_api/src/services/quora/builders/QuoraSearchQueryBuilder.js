@@ -480,6 +480,7 @@ QuoraSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'lang_detect',
   'new_nas_image_url',
   'quora_ad.type',
+  'quora_call_to_action.call_to_action',
   'quora_ad_url.url_destination',
   'quora_ad_url.url_redirects',
   'quora_ad_outgoing_links.source_url',
