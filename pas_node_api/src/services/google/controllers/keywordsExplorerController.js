@@ -76,6 +76,26 @@ async function getKeywordsExplorer(req, db, logger) {
   try {
     const [{ total } = { total: 0 }] = await db.sql.query(`SELECT COUNT(*) AS total ${baseFrom}`, params);
 
+    // Summary stats over the WHOLE filtered set (not just the current page) —
+    // powers the stat cards above the table. Same baseFrom + params as the count,
+    // so it respects every active filter/search. No schema change: all columns
+    // already exist on keyword_stats.
+    const [aggRow = {}] = await db.sql.query(
+      `SELECT AVG(ks.competition_score) AS avg_competition,
+              SUM(ks.ads_total)          AS total_ad_volume,
+              SUM(CASE WHEN ks.growth_pct > 0 THEN 1 ELSE 0 END) AS trending_up,
+              SUM(CASE WHEN ks.growth_pct < 0 THEN 1 ELSE 0 END) AS trending_down
+       ${baseFrom}`,
+      params
+    );
+    const stats = {
+      keywords: Number(total) || 0,
+      avg_competition: aggRow.avg_competition != null ? Math.round(Number(aggRow.avg_competition)) : null,
+      total_ad_volume: Number(aggRow.total_ad_volume) || 0,
+      trending_up: Number(aggRow.trending_up) || 0,
+      trending_down: Number(aggRow.trending_down) || 0,
+    };
+
     // LIMIT/OFFSET are inlined below rather than bound as `?` — db.sql.query()
     // runs prepared statements (mysql2 execute()), which errors ("Incorrect
     // arguments to mysqld_stmt_execute") binding LIMIT/OFFSET as placeholders
@@ -101,6 +121,7 @@ async function getKeywordsExplorer(req, db, logger) {
         page,
         page_size: pageSize,
         total,
+        stats,
         note: 'Ad Volume / Competition Score / Growth are proxies derived from PowerAdSpy\'s own crawled Google Ads corpus, not Google search volume or backlink-based Keyword Difficulty.',
       },
     };

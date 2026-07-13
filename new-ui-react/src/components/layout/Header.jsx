@@ -456,14 +456,14 @@ const Header = ({
         />
       </div>
 
-      {activePage !== "projects" && isSearchOpenMobile && (
+      {activePage !== "projects" && activePage !== "keywords-explorer" && isSearchOpenMobile && (
         <div
           className="fixed inset-0 bg-[#0a0a0a] backdrop-blur-sm z-40 md:hidden"
           onClick={() => setIsSearchOpenMobile(false)}
         />
       )}
 
-      {activePage !== "projects" && activePage !== "intelligence" && (
+      {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
         <div className="flex-1 relative h-full flex items-center mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div
@@ -619,7 +619,7 @@ const Header = ({
       )}
 
       <div className="flex items-center gap-1.5 sm:gap-2">
-        {activePage !== "projects" && (
+        {activePage !== "projects" && activePage !== "keywords-explorer" && (
           <button
             className="md:hidden sm:p-1.5 text-theme-text-muted hover:text-theme-text transition-colors"
             onClick={() => setIsSearchOpenMobile(true)}

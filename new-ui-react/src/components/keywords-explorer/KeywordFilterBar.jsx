@@ -1,25 +1,42 @@
 import React from "react";
+import { SlidersHorizontal, BarChart3, Swords, TrendingUp, Tag, Plus, Minus, X } from "lucide-react";
 
-const NumberRange = ({ label, minVal, maxVal, onMinChange, onMaxChange }) => (
-  <div className="flex items-center gap-1.5">
-    <span className="text-xs font-semibold text-theme-text-secondary">{label}</span>
-    <input
-      type="number"
-      placeholder="min"
-      value={minVal ?? ""}
-      onChange={(e) => onMinChange(e.target.value)}
-      className="w-16 rounded-md border border-theme-border bg-transparent px-2 py-1 text-xs text-theme-text focus:outline-none focus:border-[#6b99ff]/60"
-    />
+const inputCls =
+  "w-16 rounded-lg border border-theme-border bg-theme-text/[0.04] px-2.5 py-1.5 text-xs text-theme-text transition-all focus:outline-none focus:border-[#6b99ff] focus:bg-transparent focus:ring-2 focus:ring-[#6b99ff]/15 placeholder:text-theme-text-muted";
+
+const Tip = ({ children, align = "left" }) => (
+  <span className={`pointer-events-none absolute ${align === "right" ? "right-0" : "left-0"} top-full z-30 mt-2 w-56 rounded-lg border border-theme-border bg-theme-surface px-2.5 py-2 text-[11px] font-medium normal-case leading-snug tracking-normal text-theme-text-secondary opacity-0 shadow-xl transition-opacity duration-150 group-hover/tip:opacity-100`}>
+    {children}
+  </span>
+);
+
+const NumberRange = ({ icon, label, tip, minVal, maxVal, onMinChange, onMaxChange }) => (
+  <div className="flex items-center gap-2">
+    <span className="relative group/tip flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-secondary cursor-help">
+      {icon}{label}
+      {tip ? <Tip>{tip}</Tip> : null}
+    </span>
+    <input type="number" placeholder="min" value={minVal ?? ""} onChange={(e) => onMinChange(e.target.value)} className={inputCls} />
     <span className="text-theme-text-muted text-xs">–</span>
-    <input
-      type="number"
-      placeholder="max"
-      value={maxVal ?? ""}
-      onChange={(e) => onMaxChange(e.target.value)}
-      className="w-16 rounded-md border border-theme-border bg-transparent px-2 py-1 text-xs text-theme-text focus:outline-none focus:border-[#6b99ff]/60"
-    />
+    <input type="number" placeholder="max" value={maxVal ?? ""} onChange={(e) => onMaxChange(e.target.value)} className={inputCls} />
   </div>
 );
+
+const TextInput = ({ icon, placeholder, value, onChange, tip }) => (
+  <div className="relative group/tip flex items-center gap-1.5 rounded-lg border border-theme-border bg-theme-text/[0.04] px-2.5 transition-all focus-within:border-[#6b99ff] focus-within:bg-transparent focus-within:ring-2 focus-within:ring-[#6b99ff]/15">
+    <span className="text-theme-text-muted">{icon}</span>
+    <input
+      type="text"
+      placeholder={placeholder}
+      value={value || ""}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-28 bg-transparent py-1.5 text-xs text-theme-text focus:outline-none placeholder:text-theme-text-muted"
+    />
+    {tip ? <Tip align="right">{tip}</Tip> : null}
+  </div>
+);
+
+const Divider = () => <span className="hidden h-6 w-px self-center bg-theme-border lg:block" />;
 
 /** Filter chips for the Keywords Explorer table — Ad Volume/Competition/Growth
  *  are PowerAdSpy ad-corpus proxies (see KeywordsExplorerPage's disclosure copy),
@@ -29,52 +46,51 @@ const KeywordFilterBar = ({ filters, onChange }) => {
   const hasFilters = Object.values(filters).some((v) => v !== undefined && v !== "");
 
   return (
-    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-theme-border bg-theme-card px-4 py-3 mb-4">
+    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3 rounded-2xl border border-theme-border bg-theme-card px-4 py-3 shadow-sm">
+      <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-muted">
+        <SlidersHorizontal size={13} className="text-[#6b99ff]" /> Filters
+      </span>
+      <Divider />
       <NumberRange
-        label="Ad Volume"
+        icon={<BarChart3 size={12} className="text-[#6b99ff]" />}
+        label="Volume"
+        tip="Number of unique ads using this keyword across the crawled corpus."
         minVal={filters.volume_min}
         maxVal={filters.volume_max}
         onMinChange={(v) => set("volume_min", v)}
         onMaxChange={(v) => set("volume_max", v)}
       />
+      <Divider />
       <NumberRange
+        icon={<Swords size={12} className="text-[#6b99ff]" />}
         label="Competition"
+        tip="How crowded the keyword is (0–100) — ranked by how many advertisers use it."
         minVal={filters.competition_min}
         maxVal={filters.competition_max}
         onMinChange={(v) => set("competition_min", v)}
         onMaxChange={(v) => set("competition_max", v)}
       />
+      <Divider />
       <NumberRange
+        icon={<TrendingUp size={12} className="text-[#6b99ff]" />}
         label="Growth %"
+        tip="Change in ad activity: last 30 days vs the previous 30 days."
         minVal={filters.growth_min}
         maxVal={filters.growth_max}
         onMinChange={(v) => set("growth_min", v)}
         onMaxChange={(v) => set("growth_max", v)}
       />
-      <input
-        type="text"
-        placeholder="Category"
-        value={filters.category || ""}
-        onChange={(e) => set("category", e.target.value)}
-        className="w-32 rounded-md border border-theme-border bg-transparent px-2 py-1 text-xs text-theme-text focus:outline-none focus:border-[#6b99ff]/60"
-      />
-      <input
-        type="text"
-        placeholder="Include term"
-        value={filters.include || ""}
-        onChange={(e) => set("include", e.target.value)}
-        className="w-32 rounded-md border border-theme-border bg-transparent px-2 py-1 text-xs text-theme-text focus:outline-none focus:border-[#6b99ff]/60"
-      />
-      <input
-        type="text"
-        placeholder="Exclude term"
-        value={filters.exclude || ""}
-        onChange={(e) => set("exclude", e.target.value)}
-        className="w-32 rounded-md border border-theme-border bg-transparent px-2 py-1 text-xs text-theme-text focus:outline-none focus:border-[#6b99ff]/60"
-      />
+      <Divider />
+      <TextInput icon={<Tag size={12} className="text-[#6b99ff]" />} placeholder="Category" tip="Filter to keywords in a specific ad category (exact match)." value={filters.category} onChange={(v) => set("category", v)} />
+      <TextInput icon={<Plus size={12} className="text-[#6b99ff]" />} placeholder="Include term" tip="Only show keywords whose text contains this term." value={filters.include} onChange={(v) => set("include", v)} />
+      <TextInput icon={<Minus size={12} className="text-[#6b99ff]" />} placeholder="Exclude term" tip="Hide keywords whose text contains this term." value={filters.exclude} onChange={(v) => set("exclude", v)} />
       {hasFilters ? (
-        <button type="button" onClick={() => onChange({})} className="text-xs text-theme-text-muted hover:text-theme-text underline">
-          Clear filters
+        <button
+          type="button"
+          onClick={() => onChange({})}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg border border-theme-border px-3 py-1.5 text-xs font-semibold text-theme-text-secondary transition-colors hover:border-[#6b99ff]/50 hover:text-[#6b99ff]"
+        >
+          <X size={12} /> Clear
         </button>
       ) : null}
     </div>
