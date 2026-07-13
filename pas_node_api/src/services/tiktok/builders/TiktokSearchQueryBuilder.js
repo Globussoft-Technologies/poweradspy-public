@@ -72,15 +72,25 @@ class TiktokSearchQueryBuilder {
   _getKeywordEnv() {
     const kw = this._params.keyword;
     if (!kw) return null;
-    const value = `*${kw.toLowerCase()}*`;
-    // Keyword stays in must so its should-of-wildcards contributes to _score.
+    // Match the keyword as a WHOLE WORD, not an arbitrary substring. The old
+    // `*kw*` wildcard matched mid-word, so "bus" hit "business", "buscaba",
+    // "TikTok for Business", etc. All four fields below are `keyword`-type
+    // (the whole value lowercased, no ngram/stemmer tokens — unlike the
+    // analyzed `ad_title` text field, whose edge_ngram analyzer would itself
+    // make "bus" match "business"). So we use a Lucene regexp anchored to the
+    // whole term with explicit word boundaries: the keyword must be preceded
+    // and followed by a non-alphanumeric char or a string edge. This matches
+    // "bus", "the bus.", "#bus" but not "business"/"buscaba".
+    const escaped = kw.toLowerCase().replace(/[.?+*|{}[\]()"\\#@&<>~/]/g, '\\$&');
+    const value = `(.*[^a-z0-9])?${escaped}([^a-z0-9].*)?`;
+    // Keyword stays in must so its should-of-regexps contributes to _score.
     return asMust({
       bool: {
         should: [
-          { wildcard: { 'ad_title.keyword': { value } } },
-          { wildcard: { industry:           { value } } },
-          { wildcard: { post_owner:         { value } } },
-          { wildcard: { target_keywords:    { value } } },
+          { regexp: { 'ad_title.keyword': { value } } },
+          { regexp: { industry:           { value } } },
+          { regexp: { post_owner:         { value } } },
+          { regexp: { target_keywords:    { value } } },
         ],
         minimum_should_match: 1,
       },

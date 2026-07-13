@@ -71,11 +71,32 @@ describe("TiktokSearchQueryBuilder > build() empty query", () => {
 });
 
 describe("TiktokSearchQueryBuilder > clause generators", () => {
-  it("keyword → bool.should with 4 wildcards (must context)", () => {
+  it("keyword → bool.should with 4 word-boundary regexps (must context)", () => {
     b.setKeyword("Foo");
     const out = b.build();
-    expect(out.body.query.bool.must[0].bool.should).toHaveLength(4);
-    expect(out.body.query.bool.must[0].bool.should[0].wildcard["ad_title.keyword"].value).toBe("*foo*");
+    const should = out.body.query.bool.must[0].bool.should;
+    expect(should).toHaveLength(4);
+    // Whole-word regexp (lowercased), not a `*foo*` substring wildcard.
+    const value = "(.*[^a-z0-9])?foo([^a-z0-9].*)?";
+    expect(should[0].regexp["ad_title.keyword"].value).toBe(value);
+    expect(should.map(s => Object.keys(s.regexp)[0])).toEqual([
+      "ad_title.keyword", "industry", "post_owner", "target_keywords",
+    ]);
+    // The regexp is anchored to the whole term (Lucene), so it matches "foo"
+    // as a standalone word but not mid-word occurrences like "foobar"/"buffoo".
+    const re = new RegExp("^" + value + "$");
+    expect(re.test("the foo bar")).toBe(true);
+    expect(re.test("foo")).toBe(true);
+    expect(re.test("foobar")).toBe(false);
+    expect(re.test("buffoon")).toBe(false);
+  });
+
+  it("keyword regexp escapes Lucene special chars", () => {
+    b.setKeyword("c++");
+    const value = b.build().body.query.bool.must[0].bool.should[0].regexp["ad_title.keyword"].value;
+    expect(value).toBe("(.*[^a-z0-9])?c\\+\\+([^a-z0-9].*)?");
+    // Still a valid, compilable pattern.
+    expect(() => new RegExp("^" + value + "$")).not.toThrow();
   });
   it("advertiser → prefix in filter", () => {
     b.setAdvertiser("BrandX");

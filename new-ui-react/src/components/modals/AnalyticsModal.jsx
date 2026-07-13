@@ -1377,12 +1377,6 @@ const AnalyticsModal = ({
           color: "text-pink-400",
         },
         {
-          label: "SOURCE",
-          value: formatSource(tt.source || d.source) || "TikTok Ads Manager",
-          icon: ExternalLink,
-          color: "text-[#5f8ae7]",
-        },
-        {
           label: "REGION",
           value: (tt.countries || ad?.countries || []).slice(0, 8).join(", ") || "—",
           fullValue: (tt.countries || ad?.countries || []).join(", ") || "—",
@@ -1911,12 +1905,14 @@ const AnalyticsModal = ({
               >
                 <div className="grid grid-cols-2 divide-x divide-white/10">
                   {detailRows.filter(item => !(["FUNNEL", "AFFILIATE", "ECOMMERCE PLATFORM", "CATEGORY", "SUB CATEGORY"].includes(item.label) && item.value === "—")).map((item, i, arr) => {
-                    const isLastOdd = i === arr.length - 1 && arr.length % 2 !== 0;
+                    // A lone last item (odd count) stays in its single column so its
+                    // label/value keep the same spacing as every other cell, instead of
+                    // stretching full-width and slamming the value to the far-right edge.
                     const isEvenRow = Math.floor(i / 2) < Math.floor((arr.length - 1) / 2);
                     return (
                     <div
                       key={i}
-                      className={`flex items-center justify-between px-4 py-3 ${isLastOdd ? "col-span-2 border-t border-white/10" : isEvenRow ? "border-b border-white/10" : ""}`}
+                      className={`flex items-center justify-between px-4 py-3 ${isEvenRow ? "border-b border-white/10" : ""}`}
                     >
                       <div className="flex items-center gap-2.5">
                         <item.icon
