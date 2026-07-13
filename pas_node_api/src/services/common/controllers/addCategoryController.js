@@ -57,32 +57,24 @@ async function findAdDoc(esForPlat, esIndex, idField, adId) {
  * Write a validated `ai_meta` object onto the ad's ES doc under the `ai` field
  * (see AI_META_API_PAYLOAD_SPEC.md §7 mapping).
  *
- * Idempotency / partial policy (product decision):
- *   - status `success`|`partial` → replace the whole `ai` object (overwrite).
- *   - status `failed`|`queued`   → don't clobber prior good labels; only set `ai.status`
- *     (or write the minimal object if the ad had no `ai` yet).
- *
- * Uses a painless script so the replace-vs-merge choice happens atomically server-side.
- *
- * @returns {'stored'|'status_only'} what was written
+ * Idempotency: the whole `ai` object is REPLACED on every write (a painless assign,
+ * not a doc-merge) so re-sending overwrites prior labels and stale sub-fields from an
+ * older payload shape are dropped. v1.4 removed the `status` field, so there is no
+ * longer a partial/status-only path — every payload is a completed enrichment.
  */
-async function writeAiMeta(esForPlat, esIndex, docId, normalized, status) {
-  const replace = status === 'success' || status === 'partial';
+async function writeAiMeta(esForPlat, esIndex, docId, normalized) {
   await esForPlat.update(withEsType(esForPlat, {
     index: esIndex,
     id:    docId,
     body: {
       script: {
-        source: 'if (params.replace) { ctx._source.ai = params.ai; } '
-              + 'else { if (ctx._source.ai == null) { ctx._source.ai = params.ai; } '
-              + 'else { ctx._source.ai.status = params.status; } }',
+        source: 'ctx._source.ai = params.ai;',
         lang:   'painless',
-        params: { replace, ai: normalized, status: status ?? null },
+        params: { ai: normalized },
       },
     },
     refresh: 'wait_for',
   }));
-  return replace ? 'stored' : 'status_only';
 }
 
 /**
@@ -672,16 +664,16 @@ async function newCatInsertion(req, res) {
     // the strict path that 400s on invalid payloads.
     let aiMetaResult = null;
     if (aiMeta !== undefined && aiMeta !== null) {
-      const { errors: aiErrors, normalized: aiNormalized, storedFields, status: aiStatus } = validateAiMeta(aiMeta);
+      const { errors: aiErrors, normalized: aiNormalized, storedFields } = validateAiMeta(aiMeta);
       if (aiErrors.length > 0) {
         aiMetaResult = { ai_meta_status: 'validation_error', ai_meta_errors: aiErrors };
       } else if (!adDocId) {
         aiMetaResult = { ai_meta_status: 'ad_not_found' };
       } else {
         try {
-          const written = await writeAiMeta(esForPlat, esIndex, adDocId, aiNormalized, aiStatus);
-          aiMetaResult = { ai_meta_status: written, ai_meta_stored_fields: storedFields };
-          gdnService.log?.info(`[newCatInsertion] ai_meta ${written} for ad_id=${ad_id} (status=${aiStatus})`);
+          await writeAiMeta(esForPlat, esIndex, adDocId, aiNormalized);
+          aiMetaResult = { ai_meta_status: 'stored', ai_meta_stored_fields: storedFields };
+          gdnService.log?.info(`[newCatInsertion] ai_meta stored for ad_id=${ad_id}`);
         } catch (aiErr) {
           aiMetaResult = { ai_meta_status: 'error', ai_meta_error: aiErr.message };
           gdnService.log?.warn(`[newCatInsertion] ai_meta write failed for ad_id=${ad_id}: ${aiErr.message}`);
@@ -816,9 +808,9 @@ async function insertAiMeta(req, res) {
     details.push({ field: 'ai_meta', message: 'ai_meta is required' });
 
   // ai_meta field-level validation (spec §3)
-  let normalized, storedFields, aiStatus, aiErrors = [];
+  let normalized, storedFields, aiErrors = [];
   if (body.ai_meta !== undefined && body.ai_meta !== null) {
-    ({ errors: aiErrors, normalized, storedFields, status: aiStatus } = validateAiMeta(body.ai_meta));
+    ({ errors: aiErrors, normalized, storedFields } = validateAiMeta(body.ai_meta));
     details.push(...aiErrors);
   }
 
@@ -848,14 +840,12 @@ async function insertAiMeta(req, res) {
       });
     }
 
-    const written = await writeAiMeta(es, esIndex, adHit._id, normalized, aiStatus);
-    service.log?.info(`[insertAiMeta] ${written} for ad_id=${adId} network=${platform} status=${aiStatus}`);
+    await writeAiMeta(es, esIndex, adHit._id, normalized);
+    service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
     return res.status(200).json({
       success: true,
       ad_id:   adId,
-      message: written === 'stored'
-        ? 'AI-Meta labels stored successfully'
-        : `AI-Meta status recorded (${aiStatus}); existing labels preserved`,
+      message: 'AI-Meta labels stored successfully',
       stored_fields: storedFields,
     });
   } catch (err) {

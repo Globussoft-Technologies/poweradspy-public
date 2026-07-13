@@ -3,145 +3,138 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { validateAiMeta } = require("../../../../src/services/common/helpers/aiMetaValidator");
 
+// Real v1.5 shape (AI_META_API_PAYLOAD_SPEC §4).
 const FULL = {
-  ad_type: "testimonial",
-  intent: ["conversion", "awareness"],
-  hook: ["social_proof", "urgency"],
-  product_type: "physical_product",
-  offers: [{ type: "percentage_discount", value: 25 }],
-  language: "en",
-  colors: ["blue", "white", "black"],
-  ocr: "Happy Being — 25% off creatine gummies. Shop now.",
-  object: ["bottle", "gummies", "hand"],
-  celebrity: [],
-  brand: "Happy Being",
-  brand_logos: ["Happy Being"],
-  offering: "creatine gummies",
-  category: "Consumer Packaged Goods",
-  sub_category: "Vitamins and Supplements",
-  status: "success",
+  ad_type: "promotional",
+  intent: ["conversion", "awareness", "lead_generation"],
+  hook: ["urgency", "social_proof", "scarcity"],
+  offering_type: "product",
+  offering: "printer parts",
+  caption: "A hand holding printer parts against a white background.",
+  roa: {
+    intent: "The 'Open' button indicates a call to action for conversion.",
+    hook: "The large number suggests scarcity and urgency.",
+    offering_type: "The text indicates a product offering.",
+    offering: "The text 'printer parts' specifies the product.",
+  },
+  colors: ["#FFFFFF", "#C9A227"],
+  category: "Retail",
+  sub_category: "Specialty Stores",
 };
 
 const errFields = (r) => r.errors.map((e) => e.field);
 
-describe("aiMetaValidator > happy path", () => {
+describe("aiMetaValidator v1.5 > happy path", () => {
   it("accepts the full spec §4 example with no errors", () => {
     const r = validateAiMeta(FULL);
     expect(r.errors).toEqual([]);
-    expect(r.status).toBe("success");
-    expect(r.storedFields).toContain("ad_type");
-    expect(r.normalized.offers).toEqual([{ type: "percentage_discount", value: 25 }]);
+    expect(r.storedFields).toEqual(expect.arrayContaining([
+      "ad_type", "offering_type", "intent", "hook", "colors", "offering", "caption", "roa",
+    ]));
+    // Removed fields never appear (v1.5 dropped brand + celebrity too)
+    expect(r.storedFields).not.toEqual(expect.arrayContaining(["status", "product_type", "language", "ocr", "object", "brand_logos", "brand", "celebrity"]));
+  });
+  it("offers omitted is fine (most ads)", () => {
+    expect(validateAiMeta(FULL).errors).toEqual([]);
+    expect("offers" in validateAiMeta(FULL).normalized).toBe(false);
+  });
+  it("removed fields (brand/celebrity) are ignored, not errored", () => {
+    const r = validateAiMeta({ ...FULL, brand: "Nike", celebrity: ["Someone"] });
+    expect(r.errors).toEqual([]);
+    expect("brand" in r.normalized).toBe(false);
+    expect("celebrity" in r.normalized).toBe(false);
   });
 });
 
-describe("aiMetaValidator > required fields (success/partial)", () => {
-  it("flags missing ad_type/intent/hook/product_type/language when status=success", () => {
-    const r = validateAiMeta({ status: "success" });
+describe("aiMetaValidator v1.5 > required core (no status relaxation)", () => {
+  it("flags all four required fields when empty", () => {
+    const r = validateAiMeta({});
     expect(errFields(r)).toEqual(expect.arrayContaining([
-      "ai_meta.ad_type", "ai_meta.product_type", "ai_meta.language", "ai_meta.intent", "ai_meta.hook",
+      "ai_meta.ad_type", "ai_meta.offering_type", "ai_meta.intent", "ai_meta.hook",
     ]));
   });
-  it("requires status always", () => {
-    const r = validateAiMeta({ ...FULL, status: undefined });
-    expect(errFields(r)).toContain("ai_meta.status");
-  });
-  it("rejects a bad status enum", () => {
-    const r = validateAiMeta({ ...FULL, status: "done" });
-    expect(errFields(r)).toContain("ai_meta.status");
+  it("does NOT require a status field anymore", () => {
+    const r = validateAiMeta(FULL);
+    expect(errFields(r)).not.toContain("ai_meta.status");
   });
 });
 
-describe("aiMetaValidator > relaxation for failed/queued", () => {
-  it("queued needs only status", () => {
-    const r = validateAiMeta({ status: "queued" });
+describe("aiMetaValidator v1.4 > offering_type (renamed from product_type)", () => {
+  it("accepts product|service|both", () => {
+    for (const v of ["product", "service", "both"]) {
+      expect(validateAiMeta({ ...FULL, offering_type: v }).errors).toEqual([]);
+    }
+  });
+  it("rejects an old v1.1 product_type value on offering_type", () => {
+    expect(errFields(validateAiMeta({ ...FULL, offering_type: "physical_product" }))).toContain("ai_meta.offering_type");
+  });
+  it("a payload sending the OLD product_type field (and no offering_type) fails", () => {
+    const { offering_type, ...noOffering } = FULL;
+    const r = validateAiMeta({ ...noOffering, product_type: "physical_product" });
+    expect(errFields(r)).toContain("ai_meta.offering_type");
+  });
+});
+
+describe("aiMetaValidator v1.4 > colors (hex palette)", () => {
+  it("accepts hex from the 16-value palette (case-insensitive, normalized upper)", () => {
+    const r = validateAiMeta({ ...FULL, colors: ["#ffffff", "#c9a227"] });
     expect(r.errors).toEqual([]);
-    expect(r.normalized).toEqual({ status: "queued" });
+    expect(r.normalized.colors).toEqual(["#FFFFFF", "#C9A227"]);
   });
-  it("failed with mostly-empty ai_meta passes", () => {
-    const r = validateAiMeta({ status: "failed", intent: [] });
-    // intent present but empty → still format-checked → min-1 error
-    expect(errFields(r)).toContain("ai_meta.intent");
+  it("rejects named-word colors (the old v1.1 vocab)", () => {
+    expect(errFields(validateAiMeta({ ...FULL, colors: ["blue", "white"] }))).toEqual(
+      expect.arrayContaining(["ai_meta.colors[0]", "ai_meta.colors[1]"]));
   });
-  it("failed without optional fields passes", () => {
-    const r = validateAiMeta({ status: "failed" });
-    expect(r.errors).toEqual([]);
+  it("rejects a hex not in the fixed palette", () => {
+    expect(errFields(validateAiMeta({ ...FULL, colors: ["#123456"] }))).toContain("ai_meta.colors[0]");
   });
-});
-
-describe("aiMetaValidator > enums & cardinality", () => {
-  it("rejects intent value not in enum", () => {
-    const r = validateAiMeta({ ...FULL, intent: ["buy_now"] });
-    expect(errFields(r)).toContain("ai_meta.intent[0]");
-  });
-  it("rejects duplicate hook values", () => {
-    const r = validateAiMeta({ ...FULL, hook: ["urgency", "urgency"] });
-    expect(r.errors.some((e) => /duplicate/.test(e.message))).toBe(true);
-  });
-  it("rejects >5 intents", () => {
-    const r = validateAiMeta({ ...FULL, intent: ["awareness", "consideration", "conversion", "traffic", "engagement", "retargeting"] });
-    expect(errFields(r)).toContain("ai_meta.intent");
-  });
-  it("rejects colors outside the named vocab", () => {
-    const r = validateAiMeta({ ...FULL, colors: ["blue", "#FFFFFF", "teal"] });
-    expect(errFields(r)).toEqual(expect.arrayContaining(["ai_meta.colors[1]", "ai_meta.colors[2]"]));
+  it("rejects >3 colors; allows empty", () => {
+    expect(errFields(validateAiMeta({ ...FULL, colors: ["#000000", "#FFFFFF", "#808080", "#C0C0C0"] }))).toContain("ai_meta.colors");
+    expect(validateAiMeta({ ...FULL, colors: [] }).errors).toEqual([]);
   });
 });
 
-describe("aiMetaValidator > offers", () => {
+describe("aiMetaValidator v1.4 > offers", () => {
   it("percentage_discount value must be 0-100", () => {
-    const r = validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount", value: 125 }] });
-    expect(errFields(r)).toContain("ai_meta.offers[0].value");
+    expect(errFields(validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount", value: 125 }] }))).toContain("ai_meta.offers[0].value");
   });
   it("percentage_discount requires a numeric value", () => {
-    const r = validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount" }] });
-    expect(errFields(r)).toContain("ai_meta.offers[0].value");
+    expect(errFields(validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount" }] }))).toContain("ai_meta.offers[0].value");
   });
-  it("free_trial accepts null value", () => {
-    const r = validateAiMeta({ ...FULL, offers: [{ type: "free_trial", value: null }] });
+  it("non-discount type forces value to null", () => {
+    const r = validateAiMeta({ ...FULL, offers: [{ type: "free_trial", value: 5 }] });
     expect(r.errors).toEqual([]);
+    expect(r.normalized.offers[0]).toEqual({ type: "free_trial", value: null });
   });
-  it("bad offer type rejected", () => {
-    const r = validateAiMeta({ ...FULL, offers: [{ type: "half_off", value: 10 }] });
-    expect(errFields(r)).toContain("ai_meta.offers[0].type");
-  });
-  it("duplicate type same value rejected; differing value allowed", () => {
-    const dup = validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount", value: 25 }, { type: "percentage_discount", value: 25 }] });
-    expect(dup.errors.length).toBeGreaterThan(0);
-    const ok = validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount", value: 25 }, { type: "percentage_discount", value: 50 }] });
-    expect(ok.errors).toEqual([]);
-  });
-  it("empty offers array rejected", () => {
-    const r = validateAiMeta({ ...FULL, offers: [] });
-    expect(errFields(r)).toContain("ai_meta.offers");
+  it("bad offer type rejected; empty offers array rejected", () => {
+    expect(errFields(validateAiMeta({ ...FULL, offers: [{ type: "half_off" }] }))).toContain("ai_meta.offers[0].type");
+    expect(errFields(validateAiMeta({ ...FULL, offers: [] }))).toContain("ai_meta.offers");
   });
 });
 
-describe("aiMetaValidator > text fields", () => {
-  it("ocr allows newlines, rejects other control chars", () => {
-    expect(validateAiMeta({ ...FULL, ocr: "line1\nline2" }).errors).toEqual([]);
-    expect(errFields(validateAiMeta({ ...FULL, ocr: "badbell" }))).toContain("ai_meta.ocr");
+describe("aiMetaValidator v1.5 > caption + roa", () => {
+  it("caption stored; empty caption omitted; >200 rejected", () => {
+    expect(validateAiMeta({ ...FULL, caption: "A blue banner." }).normalized.caption).toBe("A blue banner.");
+    expect("caption" in validateAiMeta({ ...FULL, caption: "   " }).normalized).toBe(false);
+    expect(errFields(validateAiMeta({ ...FULL, caption: "x".repeat(201) }))).toContain("ai_meta.caption");
   });
-  it("ocr over 2000 chars rejected", () => {
-    const r = validateAiMeta({ ...FULL, ocr: "a".repeat(2001) });
-    expect(errFields(r)).toContain("ai_meta.ocr");
+  it("roa keeps only known non-empty sub-fields; all-empty → omitted", () => {
+    const r = validateAiMeta({ ...FULL, roa: { intent: "why", bogus: "ignored", hook: "" } });
+    expect(r.errors).toEqual([]);
+    expect(r.normalized.roa).toEqual({ intent: "why" });
+    expect("roa" in validateAiMeta({ ...FULL, roa: { intent: "", hook: "" } }).normalized).toBe(false);
   });
-  it("offering rejects newlines", () => {
-    const r = validateAiMeta({ ...FULL, offering: "line1\nline2" });
-    expect(errFields(r)).toContain("ai_meta.offering");
-  });
-  it("brand over 100 chars rejected; empty brand rejected", () => {
-    expect(errFields(validateAiMeta({ ...FULL, brand: "x".repeat(101) }))).toContain("ai_meta.brand");
-    expect(errFields(validateAiMeta({ ...FULL, brand: "   " }))).toContain("ai_meta.brand");
+  it("roa sub-field over 200 chars rejected", () => {
+    expect(errFields(validateAiMeta({ ...FULL, roa: { intent: "x".repeat(201) } }))).toContain("ai_meta.roa.intent");
   });
 });
 
-describe("aiMetaValidator > open-vocab arrays", () => {
-  it("object lowercased + de-duped, max 10", () => {
-    const r = validateAiMeta({ ...FULL, object: Array.from({ length: 11 }, (_, i) => `x${i}`) });
-    expect(errFields(r)).toContain("ai_meta.object");
+describe("aiMetaValidator v1.5 > enums & cardinality", () => {
+  it("rejects intent value not in enum", () => {
+    expect(errFields(validateAiMeta({ ...FULL, intent: ["buy_now"] }))).toContain("ai_meta.intent[0]");
   });
-  it("celebrity max 5", () => {
-    const r = validateAiMeta({ ...FULL, celebrity: ["a", "b", "c", "d", "e", "f"] });
-    expect(errFields(r)).toContain("ai_meta.celebrity");
+  it("rejects >5 intents and duplicate hooks", () => {
+    expect(errFields(validateAiMeta({ ...FULL, intent: ["awareness", "consideration", "conversion", "traffic", "engagement", "retargeting"] }))).toContain("ai_meta.intent");
+    expect(validateAiMeta({ ...FULL, hook: ["urgency", "urgency"] }).errors.some((e) => /duplicate/.test(e.message))).toBe(true);
   });
 });

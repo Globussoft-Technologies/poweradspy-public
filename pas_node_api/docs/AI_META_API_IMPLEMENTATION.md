@@ -1,7 +1,7 @@
 # AI-Meta & Category Read-Back — API Implementation
 
-**Status:** Implemented · **Date:** 2026-07-01 · **Owner:** Anij Burnwal
-**Spec:** `AI_META_API_PAYLOAD_SPEC.md` v1.1 · **Backend issues:** `BACKEND_FIX_PROMPT.md` (Issues 1 & 3)
+**Status:** Implemented · **Date:** 2026-07-01, updated for spec v1.5 on 2026-07-10 · **Owner:** Anij Burnwal
+**Spec:** `AI_META_API_PAYLOAD_SPEC.md` **v1.5** · **Backend issues:** `BACKEND_FIX_PROMPT.md` (Issues 1 & 3)
 
 This document describes two related pieces of work on the shared classifier controller
 [`src/services/common/controllers/addCategoryController.js`](../src/services/common/controllers/addCategoryController.js):
@@ -95,7 +95,7 @@ GET /api/v1/common/getAdCategory?platform=facebook&ad_id=13011
   "category": "Retail", "sub_category": "eCommerce",
   "category_id": "1234", "subcategory_id": "12340001",
   "confidence_score": 0,
-  "ai": { "ad_type": "testimonial", "status": "success", "...": "..." }
+  "ai": { "ad_type": "promotional", "offering_type": "product", "...": "..." }
 }
 ```
 Responses: `200` (found), `400` (bad/missing platform or ad_id), `404` (ad not found), `503` (ES down).
@@ -104,27 +104,36 @@ Responses: `200` (found), `400` (bad/missing platform or ad_id), `404` (ad not f
 
 ## 2. AI-Meta enrichment
 
-Implements `AI_META_API_PAYLOAD_SPEC.md` v1.1. Data is stored on the ad's ES doc under a single
-`ai` object (spec §7 mapping).
+Implements `AI_META_API_PAYLOAD_SPEC.md` **v1.5** (2026-07-10). Data is stored on the ad's ES doc
+under a single `ai` object (spec §7 mapping). Field set = 8 core (`ad_type`, `intent`, `hook`,
+`offering_type`, `offers`, `offering`, `caption`, `roa`) + `colors`/`category`/`sub_category`.
+
+> **Lineage vs the original v1.1 build:** `product_type`→**`offering_type`** (enum shrank to
+> `product`/`service`/`both`); `reason`→**`roa`**; **added `caption`**; **removed** `object`,
+> `language`, `ocr`, `brand_logos`, **`status`**, and — in **v1.5** — **`brand`** and **`celebrity`**.
+> With `status` gone there is no partial/failed state — every payload is a completed enrichment, so the
+> whole `ai` object is always replaced. `colors` is a fixed **16-value HEX palette** (not the
+> never-shipped named-word vocab). v1.5's `roa` self-explaining fallback strings need no special
+> handling — they're ordinary ≤200-char values.
 
 ### 2.1 Validator — `src/services/common/helpers/aiMetaValidator.js`
 
-`validateAiMeta(aiMeta)` → `{ errors: [{field,message}], normalized, storedFields, status }`.
+`validateAiMeta(aiMeta)` → `{ errors: [{field,message}], normalized, storedFields }`.
 Pure/synchronous, fully unit-tested. Enforces the entire §3 contract:
 
-- **Enums:** `ad_type`, `intent`, `hook`, `product_type`, `offer.type`, `language`, `status`, and the
-  **14-value *named* `colors` vocabulary** (hex codes are rejected — spec v1.1 removed hex/`color_palette`).
-- **Cardinality:** `intent`/`hook`/`colors` 1–5, `offers` ≤3, `object` ≤10, `celebrity` ≤5; no duplicates.
+- **Required core (always):** `ad_type`, `intent`, `hook`, `offering_type`. (No `status` field → no
+  partial/failed relaxation; every payload must carry these.)
+- **Enums:** `ad_type` (16), `intent` (11), `hook` (16), `offering_type` (`product`/`service`/`both`),
+  `offer.type` (13), and the **16-value HEX `colors` palette** — named-word colors and off-palette hex
+  are both rejected (compared case-insensitively, normalised to the palette's uppercase form).
+- **Cardinality:** `intent`/`hook` 1–5, `colors` 0–3, `offers` ≤3; no duplicates.
 - **Offers:** `value` required and `0–100` for `percentage_discount`, required and `≥0` for
-  `flat_discount`, `null` for non-numeric types; duplicate `type` allowed only when `value` differs.
-- **Text:** `ocr` ≤2000 (newlines allowed, other control chars rejected), `offering` ≤200 (no newlines),
-  `brand` ≤100 (non-empty if present).
-
-**Required-field relaxation (product decision).** `status` is *always* required. The core labels
-(`ad_type`, `intent`, `hook`, `product_type`, `language`) are required **only** when `status` is
-`success` or `partial`. For `failed`/`queued`, only `status` is needed; any present fields are still
-format-checked. This resolves the spec's internal contradiction (§3 marks them Required while §3.15
-says a `failed` payload may be "mostly empty").
+  `flat_discount`, and forced to `null` for every other type.
+- **Text:** `offering`/`caption` ≤200 (no newlines/control chars, empty → omitted); `roa` sub-fields
+  (`intent`/`hook`/`offering_type`/`offering`) each ≤200, empties dropped, whole object omitted if all empty.
+- **Unknown fields ignored:** legacy/removed keys (`product_type`, `brand`, `celebrity`, …) are not
+  errored, just dropped → a payload sending the old `product_type` instead of `offering_type` still fails
+  because the now-required `offering_type` is missing, which is the intended rejection.
 
 ### 2.2 Option A — `ai_meta` on `newCatInsertion`
 
@@ -140,11 +149,11 @@ Standalone, spec-conformant write path — decoupled from category classificatio
 **Request** (spec §2):
 ```json
 {
-  "ad_id": "48979890",
-  "network": "instagram",
-  "major_category": "Consumer Packaged Goods",   // optional; not written by this endpoint
-  "sub_category": "Vitamins and Supplements",     // optional
-  "ai_meta": { "ad_type": "testimonial", "intent": ["conversion"], "...": "...", "status": "success" }
+  "ad_id": "531218",
+  "network": "gdn",
+  "major_category": "Retail",            // optional; not written by this endpoint
+  "sub_category": "Specialty Stores",    // optional
+  "ai_meta": { "ad_type": "promotional", "intent": ["conversion"], "hook": ["urgency"], "offering_type": "product", "...": "..." }
 }
 ```
 `network` is required (alias `platform` also accepted). `major_category`/`sub_category` are accepted
@@ -159,27 +168,24 @@ but ignored for writing — category classification stays on `newCatInsertion`.
 | `404` | `{ success:false, ad_id, error:{ code:"AD_NOT_FOUND", message } }` |
 | `503` | `{ success:false, ad_id, error:{ code:"ES_UNAVAILABLE", message } }` |
 
-### 2.4 Write policy — idempotency & partial/failed (both options)
+### 2.4 Write policy — idempotency (both options)
 
-A single painless script performs the write atomically:
+A single painless script assigns the whole `ai` object atomically:
 
 ```painless
-if (params.replace) { ctx._source.ai = params.ai; }
-else { if (ctx._source.ai == null) { ctx._source.ai = params.ai; }
-       else { ctx._source.ai.status = params.status; } }
+ctx._source.ai = params.ai;
 ```
 
-- `status` = `success` / `partial` → **replace** the whole `ai` object (`replace = true`). Overwrite
-  idempotency: re-sending replaces prior labels.
-- `status` = `failed` / `queued` → **only set `ai.status`**, preserving any prior good labels (or
-  write the minimal object if the ad had no `ai` yet).
+The object is **replaced** on every write (not doc-merged), so re-sending overwrites prior labels and
+stale sub-fields from an older payload shape (e.g. a leftover `object`/`status`/`brand` from a v1.1–v1.4
+write) are dropped. `status` was removed (v1.3), so there is no partial/failed path — every payload is a
+completed enrichment. Written with `refresh: wait_for` so it is immediately searchable.
 
 `ai_meta_status` (Option A) / outcome mapping:
 
 | Value | When |
 |---|---|
-| `stored` | success/partial — full `ai` object written |
-| `status_only` | failed/queued — only `ai.status` recorded |
+| `stored` | full `ai` object written |
 | `validation_error` | payload failed validation (Option A only; Option B returns `400`) |
 | `ad_not_found` | ad id not in the platform index (Option A only; Option B returns `404`) |
 | `error` | ES update threw |
@@ -197,16 +203,15 @@ already-enriched ads.
 | # | Question | Decision |
 |---|---|---|
 | 1 | Endpoint choice | **Both** A (extend `newCatInsertion`) and B (dedicated `/ai-meta`), sharing one validator + writer. |
-| 2 | Partial writes | `partial` writes its valid fields (treated like `success`); `failed`/`queued` record status only. |
-| 3 | Idempotency | **Overwrite** on `success`/`partial`; never clobber on `failed`/`queued`. |
-| 4 | Indexing trigger | Direct ES write with `refresh: wait_for` — immediately searchable, no separate cron. |
+| 2 | Idempotency | **Overwrite** — the whole `ai` object is replaced on every write. (`status` was dropped, so the earlier partial/failed policy no longer applies.) |
+| 3 | Indexing trigger | Direct ES write with `refresh: wait_for` — immediately searchable, no separate cron. |
 
 ---
 
 ## 4. Tests
 
-- `tests/services/common/helpers/aiMetaValidator.test.mjs` — validator (enums, cardinality, offers,
-  text rules, required-field relaxation).
+- `tests/services/common/helpers/aiMetaValidator.test.mjs` — validator (offering_type rename, hex
+  colors, offers rules, `caption`/`roa`, cardinality, no-status, removed brand/celebrity ignored).
 - `tests/services/common/controllers/addCategoryController.test.mjs` — feed read-back, native
   fallback, `ad_status` transitions, `getAdCategory`, `insertAiMeta` (200/400/404/503), and Option-A
   `ai_meta` integration.
@@ -216,16 +221,17 @@ Run:
 ```bash
 npx vitest run tests/services/common
 ```
-All `tests/services/common` suites green (566 tests).
+All `tests/services/common` suites green (594 tests).
 
 ---
 
 ## 5. Deployment notes
 
-1. **ES mapping (spec §7):** apply the explicit `ai` mapping to each `<network>_search_mix` index
-   **before** first write. The code writes the data regardless, but without the mapping ES 6.8
-   dynamic-maps sub-fields (e.g. `ai.colors` as text+keyword, `ai.offers` as object) — and a later
-   mapping change to `keyword`/`nested` would require a reindex.
+1. **ES mapping (spec §7):** apply the explicit `ai` mapping to each network's index **before** first
+   write. The code writes the data regardless, but without the mapping ES 6.8 dynamic-maps sub-fields
+   (e.g. `ai.colors` as text+keyword, `ai.offers.value` as `long`) — and a later type change would
+   require a reindex. **Step-by-step runbook (per-network index list, ES 6.8 vs TikTok 8.x PUT forms,
+   curl/Kibana/Node-script methods, verification, reindex fallback): [`AI_META_ES_MAPPING_RUNBOOK.md`](./AI_META_ES_MAPPING_RUNBOOK.md).**
 2. **CDN base:** `getDescriptionDetails` image resolution needs `config.cdn.baseUrl` (or
    `CDN_BASE_URL`) set; if empty, NAS-relative paths are returned unchanged (no regression).
 3. **Native backlog:** the `image_url_original` fallback only helps ads that actually kept an

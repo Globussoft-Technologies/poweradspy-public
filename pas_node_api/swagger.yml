@@ -60,22 +60,22 @@ components:
   # ─── Reusable schemas ─────────────────────────────────────
   schemas:
 
-    # AI-Meta enrichment (AI_META_API_PAYLOAD_SPEC.md v1.1)
+    # AI-Meta enrichment (AI_META_API_PAYLOAD_SPEC.md v1.5)
     AiMeta:
       type: object
       description: |
-        AI-generated meta labels for an ad. `status` is always required. The core labels
-        (`ad_type`, `intent`, `hook`, `product_type`, `language`) are required only when
-        `status` is `success` or `partial`; for `failed`/`queued` only `status` is needed
-        and any present fields are still format-validated. On `success`/`partial` the whole
-        `ai` object on the ad is replaced (overwrite); on `failed`/`queued` only `ai.status`
-        is updated so prior good labels are preserved.
-      required: [status]
+        AI-generated meta labels for an ad (AI_META_API_PAYLOAD_SPEC.md **v1.5**). The core
+        labels `ad_type`, `intent`, `hook`, `offering_type` are always required. Field set is
+        8 core + `colors`/`category`/`sub_category`. Removed vs v1.1: `status`, `language`,
+        `ocr`, `object`, `brand_logos`, **`brand`**, **`celebrity`**; renamed
+        `product_type`→`offering_type` and `reason`→`roa`; added `caption`. On write the whole
+        `ai` object is REPLACED (re-sending overwrites prior labels).
+      required: [ad_type, intent, hook, offering_type]
       properties:
         ad_type:
           type: string
           enum: [testimonial, ugc, before_after, demonstration, comparison, problem_solution, explainer, listicle, promotional, lifestyle, educational, announcement, storytelling, carousel, meme, other]
-          example: testimonial
+          example: promotional
         intent:
           type: array
           minItems: 1
@@ -83,7 +83,7 @@ components:
           items:
             type: string
             enum: [awareness, consideration, conversion, lead_generation, traffic, app_install, engagement, retargeting, community_building, recruitment, other]
-          example: [conversion, awareness]
+          example: [conversion, awareness, lead_generation]
         hook:
           type: array
           minItems: 1
@@ -91,15 +91,16 @@ components:
           items:
             type: string
             enum: [scarcity, urgency, social_proof, authority, fear, curiosity, discount, pain_point, aspiration, transformation, convenience, novelty, fomo, comparison, emotion, other]
-          example: [social_proof, urgency]
-        product_type:
+          example: [urgency, social_proof, scarcity]
+        offering_type:
           type: string
-          enum: [physical_product, digital_product, service, software, subscription, course, event, job_opportunity, donation, other]
-          example: physical_product
+          description: Renamed from v1.1 `product_type`; enum simplified to 3 values.
+          enum: [product, service, both]
+          example: product
         offers:
           type: array
           maxItems: 3
-          description: Omit if no offer. `value` is required and 0–100 for percentage_discount, required and ≥0 for flat_discount, otherwise null. Duplicate type allowed only if value differs.
+          description: Omitted entirely (not `[]`) when there is no offer. `value` is required and 0–100 for percentage_discount, required and ≥0 for flat_discount, and `null` for every other type.
           items:
             type: object
             required: [type]
@@ -111,63 +112,40 @@ components:
                 type: number
                 nullable: true
           example: [{ type: percentage_discount, value: 25 }]
-        language:
-          type: string
-          enum: [en, hi, es, fr, de, pt, ar, zh, ja, ko, ru, other]
-          example: en
         colors:
           type: array
-          minItems: 1
-          maxItems: 5
-          description: Named controlled vocabulary only (no hex). Order matters — index 0 is most dominant.
+          maxItems: 3
+          description: 0–3 hex values from a fixed 16-value palette (deterministically snapped from the image's pixels), most-dominant first. NOT named words, NOT free hex.
           items:
             type: string
-            enum: [red, blue, green, yellow, orange, purple, pink, black, white, gray, brown, gold, silver, multicolor]
-          example: [blue, white, black]
-        ocr:
-          type: string
-          maxLength: 2000
-          description: Verbatim in-image text (newlines allowed, other control chars rejected).
-          example: "Happy Being — 25% off creatine gummies. Shop now."
-        object:
-          type: array
-          maxItems: 10
-          description: Detected objects/entities. Lowercase singular nouns, open vocabulary.
-          items: { type: string }
-          example: [bottle, gummies, hand]
-        celebrity:
-          type: array
-          maxItems: 5
-          description: Recognized public figures (best-effort, usually empty).
-          items: { type: string }
-          example: []
-        brand:
-          type: string
-          maxLength: 100
-          description: The single primary advertised brand.
-          example: "Happy Being"
-        brand_logos:
-          type: array
-          maxItems: 10
-          description: All brands/logos seen in the creative (superset of `brand`).
-          items: { type: string }
-          example: ["Happy Being"]
+            enum: ['#000000', '#FFFFFF', '#808080', '#C0C0C0', '#E03131', '#F76707', '#F2CC0C', '#2F9E44', '#0CA678', '#1971C2', '#1E3A5F', '#7048E8', '#E64980', '#8B5E34', '#C9A227', '#E8D8B0']
+          example: ['#FFFFFF', '#C9A227']
         offering:
           type: string
           maxLength: 200
-          description: Free-text description of what is being sold (no newlines).
-          example: "creatine gummies"
+          description: Free-text description of what is being sold (no newlines). Omitted if empty.
+          example: "printer parts"
+        caption:
+          type: string
+          maxLength: 200
+          description: NEW (v1.4) — plain-language description of what is visually depicted in the image, independent of the ad's text. Omitted if empty. Recommend indexing as searchable text.
+          example: "A hand holding printer parts against a white background."
+        roa:
+          type: object
+          description: One-line model justification ("reasoning of action") per field, for auditing. Renamed from `reason`. v1.5 — self-explains fallbacks (e.g. "defaulted to 'other'"), so it is present on nearly every payload. Whole object omitted only if all sub-fields empty; each sub-field ≤200 chars, individually omitted if empty.
+          properties:
+            intent:        { type: string, maxLength: 200 }
+            hook:          { type: string, maxLength: 200 }
+            offering_type: { type: string, maxLength: 200 }
+            offering:      { type: string, maxLength: 200 }
         category:
           type: string
           description: Mirrors top-level major_category so ES can filter on ai.category.
-          example: "Consumer Packaged Goods"
+          example: "Retail"
         sub_category:
           type: string
-          example: "Vitamins and Supplements"
-        status:
-          type: string
-          enum: [success, partial, failed, queued]
-          example: success
+          description: May legitimately be absent (major-only classifications are valid).
+          example: "Specialty Stores"
 
     # Insertion
     MetaAdInsert:
@@ -11058,14 +11036,14 @@ paths:
                   ai_meta_status:
                     type: string
                     nullable: true
-                    enum: [stored, status_only, validation_error, ad_not_found, error]
-                    description: Present only when an `ai_meta` object was supplied. `stored` (labels written), `status_only` (failed/queued — only ai.status recorded), `validation_error`, `ad_not_found`, or `error`.
+                    enum: [stored, validation_error, ad_not_found, error]
+                    description: Present only when an `ai_meta` object was supplied. `stored` (labels written), `validation_error`, `ad_not_found`, or `error`.
                     example: stored
                   ai_meta_stored_fields:
                     type: array
                     items: { type: string }
-                    description: The ai_meta keys written (present when ai_meta_status=stored/status_only).
-                    example: [ad_type, intent, hook, product_type, language, status]
+                    description: The ai_meta keys written (present when ai_meta_status=stored).
+                    example: [ad_type, intent, hook, offering_type, offering, caption, colors, roa]
                   ai_meta_errors:
                     type: array
                     description: Field-level validation errors (present when ai_meta_status=validation_error).
@@ -11154,11 +11132,10 @@ paths:
         - Category (Internal)
       summary: Write AI-Meta enrichment labels onto an ad (dedicated endpoint, Option B)
       description: |
-        Standalone, strict AI-Meta write path (AI_META_API_PAYLOAD_SPEC.md). Validates the
+        Standalone, strict AI-Meta write path (AI_META_API_PAYLOAD_SPEC.md v1.5). Validates the
         payload and writes it onto the ad's `ai` field. Decoupled from category classification
-        — it never touches `${platform}.category`. On `success`/`partial` the whole `ai` object
-        is replaced; on `failed`/`queued` only `ai.status` is set (prior labels preserved).
-        Internal endpoint — no auth required.
+        — it never touches `${platform}.category`. The whole `ai` object is REPLACED on every
+        write (re-sending overwrites prior labels). Internal endpoint — no auth required.
       requestBody:
         required: true
         content:
@@ -11186,19 +11163,19 @@ paths:
                   $ref: '#/components/schemas/AiMeta'
       responses:
         '200':
-          description: AI-Meta labels stored (or status recorded for failed/queued)
+          description: AI-Meta labels stored successfully
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   success: { type: boolean, example: true }
-                  ad_id: { type: string, example: "48979890" }
+                  ad_id: { type: string, example: "531218" }
                   message: { type: string, example: "AI-Meta labels stored successfully" }
                   stored_fields:
                     type: array
                     items: { type: string }
-                    example: [ad_type, intent, hook, product_type, offers, language, colors, ocr, object, celebrity, brand, brand_logos, offering, category, sub_category, status]
+                    example: [ad_type, intent, hook, offering_type, offers, offering, caption, roa, colors, category, sub_category]
         '400':
           description: Validation error
           content:

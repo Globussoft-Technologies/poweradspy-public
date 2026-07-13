@@ -20,13 +20,14 @@ const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta } = 
 );
 
 const VALID_AI_META = {
-  ad_type: "testimonial",
+  ad_type: "promotional",
   intent: ["conversion"],
   hook: ["social_proof"],
-  product_type: "physical_product",
-  language: "en",
-  colors: ["blue", "white"],
-  status: "success",
+  offering_type: "product",
+  offering: "printer parts",
+  caption: "A hand holding printer parts against a white background.",
+  roa: { intent: "CTA button present.", offering: "Text names the product." },
+  colors: ["#FFFFFF", "#C9A227"],
 };
 
 function mkRes() {
@@ -769,7 +770,7 @@ describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", (
     const search = vi.fn(async () => ({ hits: { hits: [{ _id: "x", _source: {
       "facebook.category": "Retail", "facebook.subCategory": "eCommerce",
       category_id: "1234", subCategory_id: "12340001", confidence_score: 0,
-      ai: { ad_type: "testimonial", status: "success" },
+      ai: { ad_type: "promotional", offering_type: "product" },
     }}]}}));
     serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
     const res = mkRes();
@@ -779,7 +780,7 @@ describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", (
       platform: "facebook", ad_id: "13011",
       category: "Retail", sub_category: "eCommerce",
       category_id: "1234", subcategory_id: "12340001", confidence_score: 0,
-      ai: { ad_type: "testimonial", status: "success" },
+      ai: { ad_type: "promotional", offering_type: "product" },
     });
   });
 });
@@ -810,7 +811,8 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
 
   it("400 surfaces ai_meta field errors (spec §6.2)", async () => {
     const res = mkRes();
-    await insertAiMeta({ body: { ad_id: "1", network: "instagram", ai_meta: { status: "success", colors: ["teal"] } } }, res);
+    // named-word color + missing required core → field-level errors
+    await insertAiMeta({ body: { ad_id: "1", network: "instagram", ai_meta: { colors: ["teal"] } } }, res);
     expect(res.statusCode).toBe(400);
     expect(res.body.error.details.some((d) => d.field.startsWith("ai_meta"))).toBe(true);
   });
@@ -830,28 +832,20 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.statusCode).toBe(503);
   });
 
-  it("200 success writes ai object (replace) + returns stored_fields", async () => {
+  it("200 success replaces the whole ai object + returns stored_fields", async () => {
     const updateFn = vi.fn(async () => {});
     esWithAd([{ _id: "ad-1" }], updateFn);
     const res = mkRes();
     await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META } }, res);
     expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.stored_fields).toEqual(expect.arrayContaining(["ad_type", "status"]));
-    // painless script writes with replace=true for success
+    expect(res.body.message).toBe("AI-Meta labels stored successfully");
+    expect(res.body.stored_fields).toEqual(expect.arrayContaining(["ad_type", "offering_type"]));
+    // painless script assigns the whole ai object (no replace flag in v1.4)
     const call = updateFn.mock.calls[0][0];
-    expect(call.body.script.params.replace).toBe(true);
-    expect(call.body.script.params.ai.ad_type).toBe("testimonial");
-  });
-
-  it("200 queued records status only (replace=false)", async () => {
-    const updateFn = vi.fn(async () => {});
-    esWithAd([{ _id: "ad-1" }], updateFn);
-    const res = mkRes();
-    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: { status: "queued" } } }, res);
-    expect(res.statusCode).toBe(200);
-    expect(updateFn.mock.calls[0][0].body.script.params.replace).toBe(false);
-    expect(res.body.message).toMatch(/preserved/);
+    expect(call.body.script.source).toContain("ctx._source.ai = params.ai");
+    expect(call.body.script.params.ai.ad_type).toBe("promotional");
+    expect(call.body.script.params.ai.offering_type).toBe("product");
   });
 });
 
@@ -874,7 +868,7 @@ describe("addCategoryController > newCatInsertion + ai_meta (Option A)", () => {
     await newCatInsertion(body({ ai_meta: VALID_AI_META }), res);
     expect(res.statusCode).toBe(200);
     expect(res.body.ai_meta_status).toBe("stored");
-    expect(res.body.ai_meta_stored_fields).toEqual(expect.arrayContaining(["ad_type", "status"]));
+    expect(res.body.ai_meta_stored_fields).toEqual(expect.arrayContaining(["ad_type", "offering_type"]));
     // two updates: category doc-merge + ai script
     const hasAiScript = updateFn.mock.calls.some((c) => c[0].body.script && c[0].body.script.params.ai);
     expect(hasAiScript).toBe(true);
@@ -883,7 +877,7 @@ describe("addCategoryController > newCatInsertion + ai_meta (Option A)", () => {
   it("invalid ai_meta does NOT fail the category write (validation_error)", async () => {
     setupES({ adHits: [{ _id: "ad-1", _source: {} }] });
     const res = mkRes();
-    await newCatInsertion(body({ ai_meta: { status: "success" /* missing required */ } }), res);
+    await newCatInsertion(body({ ai_meta: { ad_type: "promotional" /* missing offering_type/intent/hook */ } }), res);
     expect(res.statusCode).toBe(200);
     expect(res.body.updated).toBe(true);              // category still written
     expect(res.body.ai_meta_status).toBe("validation_error");

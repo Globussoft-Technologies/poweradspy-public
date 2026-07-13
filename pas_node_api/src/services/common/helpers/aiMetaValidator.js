@@ -1,44 +1,52 @@
 'use strict';
 
 /**
- * AI-Meta payload validator — enforces AI_META_API_PAYLOAD_SPEC.md v1.1.
+ * AI-Meta payload validator — enforces AI_META_API_PAYLOAD_SPEC.md v1.5 (2026-07-10).
  *
  * Pure/synchronous: takes the raw `ai_meta` object and returns
  *   { errors: [{ field, message }], normalized: {…}, storedFields: [...] }
  * `normalized` is the cleaned object safe to write onto the ad's ES `ai` field.
  * `storedFields` lists the ai_meta keys that survived validation (for the response).
  *
- * Per spec §3.15 + product decision: the "required" fields (ad_type, intent, hook,
- * product_type, language) are only enforced when status is `success` or `partial`.
- * For `failed`/`queued` only `status` is required; any other present fields are still
- * format-checked. This resolves the §3 (Required: Yes) vs §3.15 ("failed may be mostly
- * empty") contradiction.
+ * v1.5 field set (8 core + colors/category/sub_category):
+ *   ad_type, intent, hook, offering_type, offers, offering, caption, roa,
+ *   colors, category, sub_category.
+ *
+ * Lineage vs the old v1.1 shape this file used to enforce:
+ *   - `product_type` → `offering_type` (enum shrank to product|service|both).  [v1.4]
+ *   - `reason` → `roa` (per-field model justification object).                  [v1.4]
+ *   - added `caption` (plain description of the image).                         [v1.4]
+ *   - `colors` is a fixed 16-value HEX palette (0–3), not the named-word vocab. [v1.2]
+ *   - removed `object`, `language`, `ocr`, `brand_logos`, `status`,            [v1.2–1.4]
+ *     and `brand` + `celebrity`.                                               [v1.5]
+ * With `status` gone there is no more partial/failed relaxation — every payload is a
+ * completed enrichment, so the core fields (ad_type, intent, hook, offering_type) are
+ * ALWAYS required. `roa` self-explaining fallback strings are ordinary values (no special rule).
  */
 
 const ENUMS = {
   ad_type: ['testimonial', 'ugc', 'before_after', 'demonstration', 'comparison', 'problem_solution', 'explainer', 'listicle', 'promotional', 'lifestyle', 'educational', 'announcement', 'storytelling', 'carousel', 'meme', 'other'],
   intent: ['awareness', 'consideration', 'conversion', 'lead_generation', 'traffic', 'app_install', 'engagement', 'retargeting', 'community_building', 'recruitment', 'other'],
   hook: ['scarcity', 'urgency', 'social_proof', 'authority', 'fear', 'curiosity', 'discount', 'pain_point', 'aspiration', 'transformation', 'convenience', 'novelty', 'fomo', 'comparison', 'emotion', 'other'],
-  product_type: ['physical_product', 'digital_product', 'service', 'software', 'subscription', 'course', 'event', 'job_opportunity', 'donation', 'other'],
+  offering_type: ['product', 'service', 'both'],
   offer_type: ['percentage_discount', 'flat_discount', 'free_trial', 'free_shipping', 'buy_one_get_one', 'bundle_offer', 'coupon', 'cashback', 'financing', 'consultation', 'demo', 'limited_time_offer', 'other'],
-  language: ['en', 'hi', 'es', 'fr', 'de', 'pt', 'ar', 'zh', 'ja', 'ko', 'ru', 'other'],
-  colors: ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'black', 'white', 'gray', 'brown', 'gold', 'silver', 'multicolor'],
-  status: ['success', 'partial', 'failed', 'queued'],
+  // Fixed 16-value hex palette (deterministically snapped from the image's pixels).
+  colors: ['#000000', '#FFFFFF', '#808080', '#C0C0C0', '#E03131', '#F76707', '#F2CC0C', '#2F9E44', '#0CA678', '#1971C2', '#1E3A5F', '#7048E8', '#E64980', '#8B5E34', '#C9A227', '#E8D8B0'],
 };
 
-// value required (and numeric) for these offer types
+// value required (numeric) for these offer types; every other type must be null.
 const OFFER_VALUE_REQUIRED = ['percentage_discount', 'flat_discount'];
 
-// Control chars that are never allowed. \n (\x0A) is allowed in `ocr` (layout meaning);
-// `offering` disallows newlines too. This set excludes \n and \t.
-const CTRL_NO_NL = /[\x00-\x08\x0B\x0C\x0E-\x1F]/;
+// roa (reasoning-of-action) sub-fields — the only keys accepted inside `roa`.
+const ROA_FIELDS = ['intent', 'hook', 'offering_type', 'offering'];
+
+// Control chars never allowed in free-text fields (excludes \t; newline handled per-field).
 const CTRL_WITH_NL = /[\x00-\x08\x0B\x0C\x0E-\x1F\x0A]/;
 
 function isPlainString(v) { return typeof v === 'string'; }
-function nonEmpty(v) { return isPlainString(v) && v.trim() !== ''; }
 
 /**
- * Validate a multi-label enum array field.
+ * Validate a multi-label enum array field (intent/hook). Order preserved.
  * @returns cleaned array (only when no errors for this field), else undefined
  */
 function validateEnumArray(errors, base, key, arr, allowed, { min = 1, max = 5 } = {}) {
@@ -68,32 +76,37 @@ function validateEnumArray(errors, base, key, arr, allowed, { min = 1, max = 5 }
 }
 
 /**
- * Validate an open-vocabulary string array (object, celebrity, brand_logos).
+ * Validate the hex `colors` array against the fixed 16-value palette (0–3 items,
+ * most-dominant first, no dupes). Hex is compared case-insensitively and normalised
+ * to the palette's canonical uppercase form.
  */
-function validateStringArray(errors, base, key, arr, { max, lower = false } = {}) {
+function validateColors(errors, base, arr) {
   if (!Array.isArray(arr)) {
-    errors.push({ field: `${base}.${key}`, message: `${key} must be an array` });
+    errors.push({ field: `${base}.colors`, message: 'colors must be an array' });
     return undefined;
   }
-  if (max != null && arr.length > max) {
-    errors.push({ field: `${base}.${key}`, message: `${key} exceeds the max of ${max} items` });
+  if (arr.length > 3) {
+    errors.push({ field: `${base}.colors`, message: 'colors exceeds the max of 3 items' });
   }
+  const upper = new Map(ENUMS.colors.map((c) => [c.toUpperCase(), c]));
   const seen = new Set();
-  let hadErr = max != null && arr.length > max;
+  let hadErr = arr.length > 3;
+  const cleaned = [];
   arr.forEach((el, i) => {
-    if (!nonEmpty(el)) {
-      errors.push({ field: `${base}.${key}[${i}]`, message: `must be a non-empty string` });
+    const canon = isPlainString(el) ? upper.get(el.trim().toUpperCase()) : undefined;
+    if (!canon) {
+      errors.push({ field: `${base}.colors[${i}]`, message: `'${el}' is not in the allowed hex palette` });
       hadErr = true;
       return;
     }
-    const norm = lower ? el.trim().toLowerCase() : el.trim();
-    if (seen.has(norm)) {
-      errors.push({ field: `${base}.${key}[${i}]`, message: `duplicate value '${el}'` });
+    if (seen.has(canon)) {
+      errors.push({ field: `${base}.colors[${i}]`, message: `duplicate value '${el}'` });
       hadErr = true;
     }
-    seen.add(norm);
+    seen.add(canon);
+    cleaned.push(canon);
   });
-  return hadErr ? undefined : arr.map((el) => (lower ? String(el).trim().toLowerCase() : String(el).trim()));
+  return hadErr ? undefined : cleaned;
 }
 
 function validateOffers(errors, base, offers) {
@@ -102,7 +115,7 @@ function validateOffers(errors, base, offers) {
     return undefined;
   }
   if (offers.length === 0) {
-    errors.push({ field: `${base}.offers`, message: 'offers, if present, must be a non-empty array' });
+    errors.push({ field: `${base}.offers`, message: 'offers, if present, must be a non-empty array (omit it when there is no offer)' });
     return undefined;
   }
   if (offers.length > 3) {
@@ -110,8 +123,6 @@ function validateOffers(errors, base, offers) {
   }
   let hadErr = offers.length > 3;
   const cleaned = [];
-  // duplicate type allowed only if value differs
-  const seen = new Map(); // type -> Set of values
 
   offers.forEach((o, i) => {
     if (!o || typeof o !== 'object' || Array.isArray(o)) {
@@ -124,39 +135,22 @@ function validateOffers(errors, base, offers) {
       hadErr = true;
       return;
     }
-    let value = o.value;
-    const needsValue = OFFER_VALUE_REQUIRED.includes(o.type);
-    if (value === undefined) value = null;
-    if (needsValue) {
+    let value = o.value === undefined ? null : o.value;
+    if (OFFER_VALUE_REQUIRED.includes(o.type)) {
       if (typeof value !== 'number' || Number.isNaN(value)) {
         errors.push({ field: `${base}.offers[${i}].value`, message: `value is required and must be a number for ${o.type}` });
-        hadErr = true;
-      } else if (value < 0) {
-        errors.push({ field: `${base}.offers[${i}].value`, message: 'value must be >= 0' });
         hadErr = true;
       } else if (o.type === 'percentage_discount' && (value < 0 || value > 100)) {
         errors.push({ field: `${base}.offers[${i}].value`, message: 'value must be between 0 and 100 for percentage_discount' });
         hadErr = true;
-      }
-    } else if (value !== null) {
-      if (typeof value !== 'number' || Number.isNaN(value)) {
-        errors.push({ field: `${base}.offers[${i}].value`, message: 'value must be a number or null' });
-        hadErr = true;
       } else if (value < 0) {
         errors.push({ field: `${base}.offers[${i}].value`, message: 'value must be >= 0' });
         hadErr = true;
       }
+    } else {
+      // Every other offer type must carry a null value (spec §3.5).
+      value = null;
     }
-
-    // duplicate type only allowed with differing value
-    const vals = seen.get(o.type) || new Set();
-    if (vals.has(value)) {
-      errors.push({ field: `${base}.offers[${i}]`, message: `duplicate offer type '${o.type}' with identical value` });
-      hadErr = true;
-    }
-    vals.add(value);
-    seen.set(o.type, vals);
-
     cleaned.push({ type: o.type, value });
   });
 
@@ -175,28 +169,48 @@ function validateSingleEnum(errors, base, key, val, allowed, required) {
   return val;
 }
 
-function validateText(errors, base, key, val, { maxLen, allowNl }) {
+/**
+ * Validate a free-text field. Empty/whitespace is treated as "omit" (returns undefined
+ * with no error) because the pipeline omits empty free-text rather than sending "".
+ */
+function validateText(errors, base, key, val, { maxLen }) {
   if (val === undefined || val === null) return undefined;
   if (!isPlainString(val)) {
     errors.push({ field: `${base}.${key}`, message: `${key} must be a string` });
     return undefined;
   }
+  if (val.trim() === '') return undefined;
   if (val.length > maxLen) {
     errors.push({ field: `${base}.${key}`, message: `${key} exceeds the max length of ${maxLen}` });
     return undefined;
   }
-  const ctrl = allowNl ? CTRL_NO_NL : CTRL_WITH_NL;
-  if (ctrl.test(val)) {
+  if (CTRL_WITH_NL.test(val)) {
     errors.push({ field: `${base}.${key}`, message: `${key} contains disallowed control characters` });
     return undefined;
   }
   return val;
 }
 
+/** Validate the `roa` object — only the 4 known sub-fields, each ≤200 chars, empties dropped. */
+function validateRoa(errors, base, roa) {
+  if (roa === undefined || roa === null) return undefined;
+  if (typeof roa !== 'object' || Array.isArray(roa)) {
+    errors.push({ field: `${base}.roa`, message: 'roa must be an object' });
+    return undefined;
+  }
+  const out = {};
+  for (const f of ROA_FIELDS) {
+    const v = validateText(errors, `${base}.roa`, f, roa[f], { maxLen: 200 });
+    if (v !== undefined) out[f] = v;
+  }
+  // Whole object omitted if all four sub-fields ended up empty.
+  return Object.keys(out).length ? out : undefined;
+}
+
 /**
  * @param {object} aiMeta  raw ai_meta object
  * @param {string} [base='ai_meta'] field-path prefix for error messages
- * @returns {{ errors: Array<{field,message}>, normalized: object, storedFields: string[], status: string|undefined }}
+ * @returns {{ errors: Array<{field,message}>, normalized: object, storedFields: string[] }}
  */
 function validateAiMeta(aiMeta, base = 'ai_meta') {
   const errors = [];
@@ -204,71 +218,41 @@ function validateAiMeta(aiMeta, base = 'ai_meta') {
 
   if (!aiMeta || typeof aiMeta !== 'object' || Array.isArray(aiMeta)) {
     errors.push({ field: base, message: 'ai_meta must be an object' });
-    return { errors, normalized, storedFields: [], status: undefined };
+    return { errors, normalized, storedFields: [] };
   }
 
-  // status is always required and drives the required-fields relaxation.
-  const status = validateSingleEnum(errors, base, 'status', aiMeta.status, ENUMS.status, true);
-  const requireCore = status === 'success' || status === 'partial';
-
-  // Single-label required enums (relaxed for failed/queued)
-  const adType = validateSingleEnum(errors, base, 'ad_type', aiMeta.ad_type, ENUMS.ad_type, requireCore);
+  // ── Required core (no status → always required) ─────────────────────
+  const adType = validateSingleEnum(errors, base, 'ad_type', aiMeta.ad_type, ENUMS.ad_type, true);
   if (adType !== undefined) normalized.ad_type = adType;
 
-  const productType = validateSingleEnum(errors, base, 'product_type', aiMeta.product_type, ENUMS.product_type, requireCore);
-  if (productType !== undefined) normalized.product_type = productType;
+  const offeringType = validateSingleEnum(errors, base, 'offering_type', aiMeta.offering_type, ENUMS.offering_type, true);
+  if (offeringType !== undefined) normalized.offering_type = offeringType;
 
-  const language = validateSingleEnum(errors, base, 'language', aiMeta.language, ENUMS.language, requireCore);
-  if (language !== undefined) normalized.language = language;
+  const intent = validateEnumArray(errors, base, 'intent', aiMeta.intent ?? [], ENUMS.intent, { min: 1, max: 5 });
+  if (intent !== undefined) normalized.intent = intent;
 
-  // Multi-label required enums
-  if (aiMeta.intent !== undefined || requireCore) {
-    const intent = validateEnumArray(errors, base, 'intent', aiMeta.intent ?? [], ENUMS.intent, { min: 1, max: 5 });
-    if (intent !== undefined) normalized.intent = intent;
-  }
-  if (aiMeta.hook !== undefined || requireCore) {
-    const hook = validateEnumArray(errors, base, 'hook', aiMeta.hook ?? [], ENUMS.hook, { min: 1, max: 5 });
-    if (hook !== undefined) normalized.hook = hook;
-  }
+  const hook = validateEnumArray(errors, base, 'hook', aiMeta.hook ?? [], ENUMS.hook, { min: 1, max: 5 });
+  if (hook !== undefined) normalized.hook = hook;
 
-  // Optional fields (validated only if present)
+  // ── Optional fields (validated only if present) ─────────────────────
   if (aiMeta.offers !== undefined) {
     const offers = validateOffers(errors, base, aiMeta.offers);
     if (offers !== undefined) normalized.offers = offers;
   }
   if (aiMeta.colors !== undefined) {
-    const colors = validateEnumArray(errors, base, 'colors', aiMeta.colors, ENUMS.colors, { min: 1, max: 5 });
+    const colors = validateColors(errors, base, aiMeta.colors);
     if (colors !== undefined) normalized.colors = colors;
   }
-  if (aiMeta.ocr !== undefined) {
-    const ocr = validateText(errors, base, 'ocr', aiMeta.ocr, { maxLen: 2000, allowNl: true });
-    if (ocr !== undefined) normalized.ocr = ocr;
-  }
-  if (aiMeta.object !== undefined) {
-    const object = validateStringArray(errors, base, 'object', aiMeta.object, { max: 10, lower: true });
-    if (object !== undefined) normalized.object = object;
-  }
-  if (aiMeta.celebrity !== undefined) {
-    const celebrity = validateStringArray(errors, base, 'celebrity', aiMeta.celebrity, { max: 5 });
-    if (celebrity !== undefined) normalized.celebrity = celebrity;
-  }
-  if (aiMeta.brand !== undefined && aiMeta.brand !== null) {
-    if (!nonEmpty(aiMeta.brand)) {
-      errors.push({ field: `${base}.brand`, message: 'brand must be a non-empty string (omit if unknown)' });
-    } else if (aiMeta.brand.length > 100) {
-      errors.push({ field: `${base}.brand`, message: 'brand exceeds the max length of 100' });
-    } else {
-      normalized.brand = aiMeta.brand.trim();
-    }
-  }
-  if (aiMeta.brand_logos !== undefined) {
-    const logos = validateStringArray(errors, base, 'brand_logos', aiMeta.brand_logos, { max: 10 });
-    if (logos !== undefined) normalized.brand_logos = logos;
-  }
-  if (aiMeta.offering !== undefined && aiMeta.offering !== null) {
-    const offering = validateText(errors, base, 'offering', aiMeta.offering, { maxLen: 200, allowNl: false });
-    if (offering !== undefined) normalized.offering = offering;
-  }
+
+  const offering = validateText(errors, base, 'offering', aiMeta.offering, { maxLen: 200 });
+  if (offering !== undefined) normalized.offering = offering;
+
+  const caption = validateText(errors, base, 'caption', aiMeta.caption, { maxLen: 200 });
+  if (caption !== undefined) normalized.caption = caption;
+
+  const roa = validateRoa(errors, base, aiMeta.roa);
+  if (roa !== undefined) normalized.roa = roa;
+
   if (aiMeta.category !== undefined && aiMeta.category !== null) {
     if (isPlainString(aiMeta.category)) normalized.category = aiMeta.category;
     else errors.push({ field: `${base}.category`, message: 'category must be a string' });
@@ -278,10 +262,8 @@ function validateAiMeta(aiMeta, base = 'ai_meta') {
     else errors.push({ field: `${base}.sub_category`, message: 'sub_category must be a string' });
   }
 
-  if (status !== undefined) normalized.status = status;
-
   const storedFields = Object.keys(normalized);
-  return { errors, normalized, storedFields, status };
+  return { errors, normalized, storedFields };
 }
 
 module.exports = { validateAiMeta, ENUMS };
