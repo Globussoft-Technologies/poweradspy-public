@@ -50,8 +50,23 @@ function ipBlocklistMiddleware(req, res, next) {
   next();
 }
 
+// Rate-limit ONLY the heavy, human-facing search + analytics endpoints (the ones
+// worth protecting from abuse / accidental hammering). EVERYTHING ELSE is exempt —
+// internal machine loops (crawler insertion, AI classifier, creative scorer, keyword
+// scraper worker) and all other lighter/CRUD/internal APIs ran in tight server-side
+// loops from a few fixed IPs and were tripping the per-IP limit (429). Matched on
+// req.path (the app-level limiter sees the FULL path, e.g. /api/v1/facebook/ads/search).
+const RATE_LIMITED_PATHS = [
+  '/ads/search',            // main ad search (per-network + common)
+  '/catsearch',             // AI category search
+  '/ads/getAdsByAdvertiser', // advertiser search
+  '/ads/analytics',         // ad analytics
+  '/ads/getAdInsights',     // analytics insights
+];
+
 /**
  * Global rate limiter - reads values from config (100 req per 1 min per IP by default).
+ * Applies ONLY to search + analytics (see RATE_LIMITED_PATHS); all other routes skip it.
  */
 const globalLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
@@ -63,8 +78,8 @@ const globalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.ip || req.connection.remoteAddress,
-    // crawler subsystems (insertion / landers / ocr+ocb) ko rate-limit se exempt karo
-  skip: (req) => /\/(insertion|landers|ocr|newCatInsertion)\//.test(req.path),
+  // Skip (exempt) everything EXCEPT the search/analytics endpoints above.
+  skip: (req) => !RATE_LIMITED_PATHS.some((p) => req.path.includes(p)),
 });
 
 // ─── Blocklist management API (used by admin routes) ──────
