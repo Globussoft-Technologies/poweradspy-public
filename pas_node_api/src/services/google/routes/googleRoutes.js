@@ -31,6 +31,7 @@ const {
   getKeywordListItems,
 } = require('../controllers/keywordListsController');
 const { importKeywordsFile } = require('../controllers/keywordImportController');
+const { getUrlForBuiltWith, updateBuiltWith } = require('../controllers/built-withController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { planAccessMiddleware, requireIntelAccess, requireKeywordExplorerEnabled, isKeywordExplorerUserAllowed } = require('../../../middleware/planAccess');
 const config = require('../../../config');
@@ -371,6 +372,24 @@ function createGoogleRoutes(service) {
   // ─── Adversuite API Routes (getLocation) ──────────────
   const adversuiteRouter = createGoogleAdversuiteRoutes(service);
   router.use('/adversuite', adversuiteRouter);
+
+  // ─── Built-with scrape queue (worker endpoints) ──────
+  //   GET  /api/v1/google/built-with/getUrlForBuiltWith
+  //   POST /api/v1/google/built-with/updateBuiltWith
+  router.get(
+    '/built-with/getUrlForBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await getUrlForBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+  router.post(
+    '/built-with/updateBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await updateBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
 
   return router;
 }

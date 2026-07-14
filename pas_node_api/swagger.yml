@@ -60,6 +60,42 @@ components:
   # ─── Reusable schemas ─────────────────────────────────────
   schemas:
 
+    # Shared payload for every /updateBuiltWith endpoint across networks.
+    # `id` is the network-specific ad id (facebook_ad_id, quora_ad_id, …).
+    # `status = 1` with any non-empty built_with_* / affiliate_data → row marked
+    # built_with_status=1 / affiliate_status=1. Empty → status=3.
+    # `status != 1` short-circuits to built_with_status=3.
+    BuiltWithUpdatePayload:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: integer
+          description: Network-specific ad id (facebook_ad_id / quora_ad_id / etc.)
+          example: 123456
+        status:
+          type: integer
+          enum: [0, 1]
+          description: "1 = scrape returned data; anything else = mark as no-data (status=3)"
+          example: 1
+        built_with:
+          type: string
+          nullable: true
+          description: Pipe-separated tech stack tokens; `||` is auto-collapsed to `|`.
+          example: "Shopify|Google Analytics"
+        built_with_analytics_tracking:
+          type: string
+          nullable: true
+          example: "Facebook Pixel"
+        built_with_cms:
+          type: string
+          nullable: true
+          example: "Shopify"
+        affiliate_data:
+          type: string
+          nullable: true
+          example: "ClickBank"
+
     # AI-Meta enrichment (AI_META_API_PAYLOAD_SPEC.md v1.6)
     AiMeta:
       type: object
@@ -1228,6 +1264,33 @@ tags:
     description: Admin-level user counts from aMember and Elasticsearch activity index
   - name: Email
     description: Email unsubscribe / resubscribe (aMember unsubscribed flag + SendGrid global suppression)
+
+  # ─── Built-With scrape queue (per-network worker endpoints) ─────────────────
+  # Ports of PHP SupportScrapper / BlackHatController / ApiController@getUrlForBuiltWith
+  # and companion updates. GET pulls up to 100 pending ads (built_with_status=0) and
+  # flips them to 2 (processing). POST reports back per ad — status=1 with data →
+  # built_with_status=1; anything else → built_with_status=3.
+  # Public (no auth) — worker-facing.
+  - name: Facebook Built-With
+    description: Facebook outgoing / built-with scrape queue (facebook_ad_meta_data)
+  - name: Instagram Built-With
+    description: Instagram built-with scrape queue (instagram_ad_meta_data)
+  - name: YouTube Built-With
+    description: YouTube built-with scrape queue. Get filter is `NOT IN (1, 2, 4)`. ES = youtube_ads_data, updated by ad_id.
+  - name: LinkedIn Built-With
+    description: LinkedIn built-with scrape queue. Split-table layout — writes to linkedin_ad_built_with, mirrors status to linkedin_ad_meta_data. ES = linkedin_ads_data (ecommerce_platform / funnel / affiliate_networks).
+  - name: Google Built-With
+    description: Google Text built-with scrape queue (google_text_ad_meta_data). GET only — no update endpoint in the PHP spec.
+  - name: GDN Built-With
+    description: GDN built-with scrape queue (gdn_ad_meta_data)
+  - name: Reddit Built-With
+    description: Reddit built-with scrape queue (reddit_ad_meta_data)
+  - name: Quora Built-With
+    description: Quora built-with scrape queue (quora_ad_meta_data)
+  - name: Pinterest Built-With
+    description: Pinterest built-with scrape queue (pinterest_ad_meta_data). Filter also requires destination_url IS NOT NULL.
+  - name: Native Built-With
+    description: Native built-with scrape queue (native_ad_meta_data). GET intentionally does NOT flip affiliate_status — matches PHP behaviour.
 
 # ─── Paths ──────────────────────────────────────────────────
 paths:
@@ -4662,6 +4725,397 @@ paths:
                           type: string
         '400':
           description: No outgoing links found
+
+  /api/v1/facebook/built-with/getUrlsForOutgoingBuiltWith:
+    get:
+      tags: [Facebook Built-With]
+      summary: Fetch pending URLs for outgoing / built-with scraping
+      description: |
+        Worker endpoint. Pulls up to **100** ads from `facebook_ad_meta_data` whose
+        `built_with_status = 0` (pending) and atomically flips them to `2` (processing)
+        so a second worker cannot pick up the same batch.
+
+        The scraper consumes these URLs, resolves the outgoing chain + BuiltWith
+        signals, then reports back via `updateOutgoingBuiltWithStatus`.
+
+        Status values in `built_with_status` / `affiliate_status`:
+        - `0` — pending
+        - `1` — completed (data found)
+        - `2` — processing (currently being scraped)
+        - `3` — completed (no data)
+
+        Port of PHP `SupportScrapper@getUrlsForOutgoingBuiltWith`. Public endpoint
+        (no auth) — matches the legacy behaviour used by the scraper worker.
+      responses:
+        '200':
+          description: Batch of pending URLs; rows are now marked processing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: outgoing/builtwith scrapping data ,fetched data in 0.0421 1st query 0.0180 2nd query  0.0231
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          description: facebook_ad_id
+                          example: 123456
+                        destination_url:
+                          type: string
+                          example: https://example.com/landing
+        '400':
+          description: Queue empty — no pending rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 400
+                  message:
+                    type: string
+                    example: No more urls available for outgoing/builtwith scrapping,fetched data in 0.0083 sec
+                  data:
+                    type: string
+                    nullable: true
+                    example: null
+        '402':
+          description: Internal error while querying / updating.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 402
+                  message:
+                    type: string
+                    example: Error Occured
+                  data:
+                    type: string
+                    nullable: true
+                    example: null
+        '503':
+          description: SQL connection not available.
+
+  /api/v1/facebook/built-with/updateOutgoingBuiltWithStatus:
+    post:
+      tags: [Facebook Built-With]
+      summary: Worker reports outgoing / built-with scrape result
+      description: |
+        Companion to `getUrlsForOutgoingBuiltWith`. The scraper posts the resolved
+        BuiltWith + affiliate data back for one facebook_ad_id.
+
+        Behaviour:
+        - `status = 1` → writes `built_with`, `built_with_analytics_tracking`,
+          `built_with_cms`, `affiliate_data` back to `facebook_ad_meta_data`.
+          `built_with_status` becomes `1` if any of the three built_with fields
+          have a value, otherwise `3`. `affiliate_status` becomes `1` if
+          `affiliate_data` is non-empty, otherwise `3`.
+        - anything else → row is marked as no-data: `built_with_status = 3`,
+          `affiliate_status = 3`.
+
+        The `||`-separated tokens are collapsed to `|` (matches PHP normalization).
+        Empty strings become NULL.
+
+        After the SQL update the flat `search_mix` ES doc for this ad is patched
+        (`facebook_ad_meta_data.built_with`, `.built_with_analytics_tracking`,
+        `.affiliate_data`). ES failure is logged and swallowed — the SQL update
+        still succeeds. Public (no auth), matches the PHP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200':
+          description: Row processed. Note "built with updated" is a boolean signalling whether MySQL matched a row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:      { type: integer, example: 200 }
+                  message:   { type: string, example: 'BuiltWith Service status Updated ' }
+                  'built with updated':
+                    type: boolean
+                    example: true
+        '400':
+          description: Missing `id` or `status`, or ES-side "ad not found" during overlay.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:    { type: integer, example: 400 }
+                  message: { type: string, example: facebook ad id and status must be present }
+        '503':
+          description: SQL connection not available.
+
+  # ─── Built-with scrape queue (per-network worker endpoints) ────────────────
+  # GET  /getUrlForBuiltWith  → pull up to 100 pending ads and mark them processing
+  # POST /updateBuiltWith     → worker reports scrape result (status=1 with data / status=0 no data)
+  # All endpoints follow the same shape; see facebook/getUrlsForOutgoingBuiltWith
+  # above for the full state-machine explanation. Public (no auth) — worker-facing.
+
+  /api/v1/quora/built-with/getUrlForBuiltWith:
+    get:
+      tags: [Quora Built-With]
+      summary: Fetch pending URLs for built-with scraping (Quora)
+      description: Pulls up to 100 ads from `quora_ad_meta_data` where `built_with_status = 0`; flips them to 2 (processing).
+      responses:
+        '200': { description: Batch of pending URLs; rows marked processing }
+        '400': { description: Queue empty }
+        '500': { description: Server error }
+        '503': { description: SQL not available }
+  /api/v1/quora/built-with/updateBuiltWith:
+    post:
+      tags: [Quora Built-With]
+      summary: Worker reports built-with scrape result (Quora)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, status]
+              properties:
+                id: { type: integer, description: quora_ad_id }
+                status: { type: integer, enum: [0, 1], description: "1 = data found; anything else = mark row status=3" }
+                built_with: { type: string, nullable: true }
+                built_with_analytics_tracking: { type: string, nullable: true }
+                built_with_cms: { type: string, nullable: true }
+                affiliate_data: { type: string, nullable: true }
+      responses:
+        '200': { description: Row updated }
+        '400': { description: Validation failure / ad not found }
+
+  /api/v1/pinterest/built-with/getUrlForBuiltWith:
+    get:
+      tags: [Pinterest Built-With]
+      summary: Fetch pending URLs for built-with scraping (Pinterest)
+      description: Pulls up to 100 ads from `pinterest_ad_meta_data` where `built_with_status = 0` and `destination_url IS NOT NULL`.
+      responses:
+        '200': { description: Batch of pending URLs }
+        '400': { description: Queue empty }
+        '503': { description: SQL not available }
+  /api/v1/pinterest/built-with/updateBuiltWith:
+    post:
+      tags: [Pinterest Built-With]
+      summary: Worker reports built-with scrape result (Pinterest)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Row updated }
+        '400': { description: Validation failure / ad not found }
+
+  /api/v1/linkedin/built-with/getUrlForBuiltWith:
+    get:
+      tags: [LinkedIn Built-With]
+      summary: Fetch pending URLs for built-with scraping (LinkedIn)
+      description: |
+        Pulls from `linkedin_ad_meta_data` where `built_with_status = 0`. The update
+        writes to the split table `linkedin_ad_built_with` (singular) — this endpoint
+        keeps both tables in sync so the same row isn't handed out twice.
+      responses:
+        '200': { description: Records fetched }
+        '400': { description: No data found }
+        '503': { description: SQL not available }
+  /api/v1/linkedin/built-with/updateBuiltWith:
+    post:
+      tags: [LinkedIn Built-With]
+      summary: Worker reports built-with scrape result (LinkedIn)
+      description: |
+        LinkedIn uses a split-table layout: this writes to `linkedin_ad_built_with`
+        and mirrors `built_with_status` back to `linkedin_ad_meta_data`. The ES
+        overlay uses the LinkedIn field names (`ecommerce_platform`, `funnel`,
+        `affiliate_networks`) against the `linkedin_ads_data` index.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Built With Updated successfully }
+        '400': { description: Missing id/status }
+        '401': { description: Update failed }
+
+  /api/v1/instagram/built-with/getUrlForBuiltWith:
+    get:
+      tags: [Instagram Built-With]
+      summary: Fetch pending URLs for built-with scraping (Instagram)
+      responses:
+        '200': { description: Records fetched }
+        '400': { description: No data found }
+        '503': { description: SQL not available }
+  /api/v1/instagram/built-with/updateBuiltWith:
+    post:
+      tags: [Instagram Built-With]
+      summary: Worker reports built-with scrape result (Instagram)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Built With Updated successfully }
+        '400': { description: Missing id / ad not found }
+
+  /api/v1/youtube/built-with/getUrlForBuiltWith:
+    get:
+      tags: [YouTube Built-With]
+      summary: Fetch pending URLs for built-with scraping (YouTube)
+      description: Filters `built_with_status NOT IN (1, 2, 4)` — statuses 0/3/other are picked up, completed/processing/skipped are excluded.
+      responses:
+        '200': { description: Batch of pending URLs }
+        '400': { description: Queue empty }
+        '503': { description: SQL not available }
+  /api/v1/youtube/built-with/updateBuiltWith:
+    post:
+      tags: [YouTube Built-With]
+      summary: Worker reports built-with scrape result (YouTube)
+      description: ES overlay writes to the `youtube_ads_data` index using the ad_id as `_id` directly.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Built with Updated successfully }
+        '400': { description: Validation failure / not updated }
+
+  /api/v1/google/built-with/getUrlForBuiltWith:
+    get:
+      tags: [Google Built-With]
+      summary: Fetch pending URLs for built-with scraping (Google Text)
+      description: |
+        Filters `google_text_ad_meta_data.built_with_status = 0` with a non-null
+        `destination_url`. Up to 100 rows returned; they're flipped to
+        `built_with_status = 2` / `affiliate_status = 2` (processing) before the
+        response is sent so a second worker cannot pick the same batch.
+      responses:
+        '200': { description: Batch of pending URLs }
+        '400': { description: Queue empty }
+        '500': { description: Server error }
+        '503': { description: SQL not available }
+  /api/v1/google/built-with/updateBuiltWith:
+    post:
+      tags: [Google Built-With]
+      summary: Worker reports built-with scrape result (Google Text)
+      description: |
+        Port of PHP `ApiController@updateBuiltWithold`. Writes back to
+        `google_text_ad_meta_data` for one `google_text_ad_id`, then patches the
+        matching document in the `google_ads_data` ES index.
+
+        Google is the odd one out on the ES side — the index is `google_ads_data`,
+        docs are matched by a flat `id` field (not `google_text_ad.id`), and the
+        overlay fields are FLAT: `built_with`, `built_with_analytics_tracking`,
+        `built_with_analytics_tracking_exact`, `affiliate_data`, `affiliate_data_exact`.
+        Every other network uses the dotted `<network>_ad_meta_data.*` prefix.
+
+        Standard body semantics:
+        - `status = 1` with any non-empty built_with_* / affiliate_data →
+          `built_with_status` / `affiliate_status` become 1; empty → 3.
+        - anything else → row marked as no-data (both statuses = 3).
+        `||` in tokens is collapsed to `|`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Row updated }
+        '400': { description: Validation failure / not updated }
+        '503': { description: SQL not available }
+
+  /api/v1/gdn/built-with/getUrlForBuiltWith:
+    get:
+      tags: [GDN Built-With]
+      summary: Fetch pending URLs for built-with scraping (GDN)
+      responses:
+        '200': { description: Batch of pending URLs }
+        '400': { description: Queue empty }
+        '503': { description: SQL not available }
+  /api/v1/gdn/built-with/updateBuiltWith:
+    post:
+      tags: [GDN Built-With]
+      summary: Worker reports built-with scrape result (GDN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Row updated }
+        '400': { description: Validation failure / ad not found }
+
+  /api/v1/reddit/built-with/getUrlForBuiltWith:
+    get:
+      tags: [Reddit Built-With]
+      summary: Fetch pending URLs for built-with scraping (Reddit)
+      responses:
+        '200': { description: Batch of pending URLs }
+        '400': { description: Queue empty }
+        '503': { description: SQL not available }
+  /api/v1/reddit/built-with/updateBuiltWith:
+    post:
+      tags: [Reddit Built-With]
+      summary: Worker reports built-with scrape result (Reddit)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Row updated }
+        '400': { description: Validation failure / ad not found }
+
+  /api/v1/native/built-with/getUrlForBuiltWith:
+    get:
+      tags: [Native Built-With]
+      summary: Fetch pending URLs for built-with scraping (Native)
+      description: |
+        Native's GET intentionally does NOT touch `affiliate_status` — only
+        `built_with_status` is bumped to 2 (matches PHP behaviour).
+      responses:
+        '200': { description: Batch of pending URLs }
+        '400': { description: Queue empty }
+        '503': { description: SQL not available }
+  /api/v1/native/built-with/updateBuiltWith:
+    post:
+      tags: [Native Built-With]
+      summary: Worker reports built-with scrape result (Native)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200': { description: Row updated }
+        '400': { description: Validation failure / ad not found }
 
   /api/v1/facebook/ads/getAdsPageDetails:
     post:

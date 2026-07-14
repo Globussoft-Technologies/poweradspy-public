@@ -23,6 +23,7 @@ const {
 const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 const createYoutubeAdversuiteRoutes = require('./adversuite_Api_routes');
+const { getUrlForBuiltWith, updateBuiltWith } = require('../controllers/built-withController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
@@ -202,6 +203,22 @@ function createYoutubeRoutes(service) {
   // ─── Adversuite API Routes (getLocation, getCallToActions) ────
   const adversuiteRouter = createYoutubeAdversuiteRoutes(service);
   router.use('/adversuite', adversuiteRouter);
+
+  // ─── Built-with scrape queue (worker endpoints) ──────
+  router.get(
+    '/built-with/getUrlForBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await getUrlForBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+  router.post(
+    '/built-with/updateBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await updateBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
 
   return router;
 }

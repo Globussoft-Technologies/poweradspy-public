@@ -533,7 +533,30 @@ async function exportAllSearchesPDF(data) {
 
     // AD COUNT
     pdf.setFont("helvetica","bold"); pdf.setFontSize(8); pdf.setTextColor(17,24,39);
-    pdf.text(row.ads_count != null ? String(row.ads_count) : "-", COL_X[6]+3, textBaseY);
+    const adCountRaw = row.ads_count;
+    let adCountText = "-";
+    if (adCountRaw != null) {
+      const s = String(adCountRaw);
+      const pipeIdx = s.indexOf("|");
+      if (pipeIdx !== -1) {
+        const numPart = s.slice(0, pipeIdx).trim();
+        const errPart = s.slice(pipeIdx + 1).trim();
+        let errMsg = errPart;
+        try {
+          const parsed = JSON.parse(errPart);
+          if (parsed && typeof parsed === "object") {
+            errMsg = Object.entries(parsed)
+              .map(([p, m]) => `${p.charAt(0).toUpperCase() + p.slice(1)}: ${m}`)
+              .join("; ");
+          }
+        } catch { /* keep raw errPart */ }
+        adCountText = `${numPart} · ${errMsg}`;
+      } else {
+        const n = Number(s);
+        adCountText = Number.isNaN(n) ? s : String(n);
+      }
+    }
+    pdf.text(adCountText, COL_X[6]+3, textBaseY);
 
     // OTHER ACTIVITY — capped to column width
     if (row.other_activity) {

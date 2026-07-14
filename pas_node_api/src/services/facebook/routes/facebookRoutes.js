@@ -31,6 +31,7 @@ const {
   getAdvertiserInsightsByDateRange,
 } = require('../controllers/adInsightsController');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
+const { getUrlsForOutgoingBuiltWith, updateOutgoingBuiltWithStatus } = require('../controllers/built-withController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware, requirePlatform } = require('../../../middleware/planAccess');
@@ -245,6 +246,25 @@ function createFacebookRoutes(service) {
     asyncHandler(async (req, res) => {
       const result = await adsData(req, service.db, service.log);
       return res.status(200).json(result);
+    })
+  );
+
+  // ─── Outgoing / Built-with scrape queue ───────────────
+  // Worker endpoints — no auth (matches PHP).
+  //   GET  /api/v1/facebook/built-with/getUrlsForOutgoingBuiltWith
+  //   POST /api/v1/facebook/built-with/updateOutgoingBuiltWithStatus
+  router.get(
+    '/built-with/getUrlsForOutgoingBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await getUrlsForOutgoingBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+  router.post(
+    '/built-with/updateOutgoingBuiltWithStatus',
+    asyncHandler(async (req, res) => {
+      const result = await updateOutgoingBuiltWithStatus(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
 

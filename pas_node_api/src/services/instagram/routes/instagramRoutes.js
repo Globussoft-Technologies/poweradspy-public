@@ -29,6 +29,7 @@ const { planAccessMiddleware, requirePlatform } = require('../../../middleware/p
 const validator = require('../../../middleware/validator');
 const createInstagramLandersRoutes = require('./instagramLandersRoutes');
 const createInstagramAdversuiteRoutes = require('./adversuite_Api_routes');
+const { getUrlForBuiltWith, updateBuiltWith } = require('../controllers/built-withController');
 
 const searchSchema = {
   body: {
@@ -250,6 +251,22 @@ function createInstagramRoutes(service) {
   // ─── Adversuite API Routes (getLocation etc.) ─────────
   const adversuiteRouter = createInstagramAdversuiteRoutes(service);
   router.use('/adversuite', adversuiteRouter);
+
+  // ─── Built-with scrape queue (worker endpoints) ──────
+  router.get(
+    '/built-with/getUrlForBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await getUrlForBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+  router.post(
+    '/built-with/updateBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await updateBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
 
   return router;
 }

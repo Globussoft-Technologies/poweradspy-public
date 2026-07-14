@@ -19,6 +19,7 @@ const { authMiddleware } = require('../../../middleware/auth');
 const validator = require('../../../middleware/validator');
 const createRedditInsertionRoutes = require('./redditInsertionRoutes');
 const createRedditLandersRoutes = require('../landers/redditLandersRoutes');
+const { getUrlForBuiltWith, updateBuiltWith } = require('../controllers/built-withController');
 
 const searchSchema = {
   body: {
@@ -182,6 +183,22 @@ function createRedditRoutes(service) {
   // Mount lander routes (blackhat scraping pipeline)
   const landerRouter = createRedditLandersRoutes(service);
   router.use(landerRouter);
+
+  // ─── Built-with scrape queue (worker endpoints) ──────
+  router.get(
+    '/built-with/getUrlForBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await getUrlForBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+  router.post(
+    '/built-with/updateBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await updateBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
 
   return router;
 }

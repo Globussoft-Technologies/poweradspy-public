@@ -25,6 +25,31 @@ function getAvatarProps(email) {
 const PLATFORMS = ["Any", "Facebook", "Instagram", "Google", "GDN", "TikTok", "LinkedIn", "YouTube", "Reddit", "Pinterest", "Quora", "Native"];
 const PAGE_SIZE = 10;
 
+// Parse the ads_count value which may be a number, or a string like
+// `"0 | {"instagram":"Error occurred in ad search"}"` when an error occurred.
+// Returns { count, errors } where errors is a { platform: message } map or null.
+function parseAdsCount(raw) {
+  if (raw == null) return { count: null, errors: null };
+  if (typeof raw === "number") return { count: raw, errors: null };
+  const str = String(raw);
+  const pipeIdx = str.indexOf("|");
+  if (pipeIdx === -1) {
+    const n = Number(str);
+    return { count: Number.isNaN(n) ? null : n, errors: null };
+  }
+  const numPart = str.slice(0, pipeIdx).trim();
+  const errPart = str.slice(pipeIdx + 1).trim();
+  const n = Number(numPart);
+  let errors = null;
+  try {
+    const parsed = JSON.parse(errPart);
+    if (parsed && typeof parsed === "object") errors = parsed;
+  } catch { /* fall through — treat as plain error string */
+    errors = { error: errPart };
+  }
+  return { count: Number.isNaN(n) ? null : n, errors };
+}
+
 // Returns today's date as "YYYY-MM-DD" in local time
 function todayStr() {
   const d = new Date();
@@ -960,8 +985,24 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               <PlatformCell platforms={String(row.platform).split(',').map(p => p.trim()).filter(Boolean)} isExport={forceExpand} />
             ) : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
-          <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", textAlign: "left", whiteSpace: "nowrap" }}>
-            {row.ads_count != null ? Number(row.ads_count).toLocaleString() : <span style={{ color: "#9ca3af" }}>—</span>}
+          <td style={{ padding: "10px 8px", color: "#374151", fontSize: "12px", textAlign: "left", whiteSpace: "normal", width: "110px", maxWidth: "110px" }}>
+            {(() => {
+              const { count, errors } = parseAdsCount(row.ads_count);
+              if (errors) {
+                const messages = Object.entries(errors)
+                  .map(([platform, msg]) => `${platform.charAt(0).toUpperCase() + platform.slice(1)}: ${msg}`);
+                const tooltip = messages.join("\n");
+                return (
+                  <span
+                    title={tooltip}
+                    style={{ display: "inline-block", maxWidth: "100%", background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5", padding: "3px 6px", borderRadius: "4px", fontSize: "10px", fontWeight: 500, lineHeight: 1.35, overflowWrap: "break-word", wordBreak: "normal" }}
+                  >
+                    {count != null ? `${count.toLocaleString()} · ` : ""}{messages.join("; ")}
+                  </span>
+                );
+              }
+              return count != null ? count.toLocaleString() : <span style={{ color: "#9ca3af" }}>—</span>;
+            })()}
           </td>
           <td style={{ padding: "10px 12px", color: "#374151", fontSize: "12px", textAlign: "center", whiteSpace: "nowrap" }}>
             {(row.keyword || row.advertiser || row.domain) ? (
@@ -1235,7 +1276,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               <col style={{ minWidth: "100px" }} />
               <col style={{ minWidth: "90px" }} />
               <col style={{ minWidth: forceExpand ? "600px" : "200px" }} />
-              <col style={{ minWidth: "70px" }} />
+              <col style={{ width: "110px", minWidth: "110px", maxWidth: "110px" }} />
               <col style={{ minWidth: "120px" }} />
               <col style={{ minWidth: "280px" }} />
               <col style={{ minWidth: "160px" }} />

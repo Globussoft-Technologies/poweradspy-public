@@ -23,6 +23,7 @@ const { authMiddleware } = require('../../../middleware/auth');
 const validator = require('../../../middleware/validator');
 const createQuoraInsertionRoutes = require('./quoraInsertionRoutes');
 const createQuoraLandersRoutes = require('../landers/quoraLandersRoutes');
+const { getUrlForBuiltWith, updateBuiltWith } = require('../controllers/built-withController');
 
 const searchSchema = {
   body: {
@@ -240,6 +241,22 @@ function createQuoraRoutes(service) {
   // Mount landers routes
   const landersRouter = createQuoraLandersRoutes(service);
   router.use(landersRouter);
+
+  // ─── Built-with scrape queue (worker endpoints) ──────
+  router.get(
+    '/built-with/getUrlForBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await getUrlForBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+  router.post(
+    '/built-with/updateBuiltWith',
+    asyncHandler(async (req, res) => {
+      const result = await updateBuiltWith(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
 
   return router;
 }

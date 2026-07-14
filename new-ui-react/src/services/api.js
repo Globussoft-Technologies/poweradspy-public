@@ -1158,7 +1158,9 @@ async function trackUserActivity(payload, meta) {
     user_keyword:         payload.userkeyword          ?? false,
     ipBasedCountry:       payload.ipBasedCountry       ?? 'NA',
     method:               'getAds',
-    adsCountOnSerach:     total,
+    adsCountOnSerach:     (payload.error_message && payload.error_message !== 'NA')
+                            ? `${total} | ${payload.error_message}`
+                            : total,
     project_name:              payload.project_name              ?? 'NA',
     competitor_name:           payload.competitor_name           ?? 'NA',
     competitor_platform:       payload.competitor_platform       ?? 'NA',
@@ -1580,6 +1582,7 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
       competitor_name:          filters.competitor_name     ?? 'NA',
       competitor_platform:      filters.competitor_platform ?? 'NA',
       competitor_platform_click: filters.competitor_platform ?? 'NA',
+      error_message:            (json.errors && Object.keys(json.errors).length) ? JSON.stringify(json.errors) : 'NA',
     }, json.meta);
   }
 
