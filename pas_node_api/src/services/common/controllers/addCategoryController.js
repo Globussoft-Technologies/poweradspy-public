@@ -348,7 +348,7 @@ const PLATFORM_CONFIG = {
     textField:    'facebook_ad_variants.text_exactly',
     titleField:   'facebook_ad_variants.title_exactly',
     ownerField:   'facebook_ad_post_owners.post_owner_name',
-    ocrField:     'facebook_ad_variants.image_ocr',
+    ocrField:     'facebook_ad_variants.image_ocr_exactly',
     newsFeedField:'facebook_ad_variants.newsfeed_description_exactly',
     typeField:    'facebook_ad.type',
     imageNasField:'new_nas_image_url',
@@ -362,7 +362,7 @@ const PLATFORM_CONFIG = {
     textField:    'instagram_ad_translation.ad_text',
     titleField:   'instagram_ad_translation.ad_title',
     ownerField:   'instagram_ad_post_owners.post_owner_name',
-    ocrField:     'instagram_ad_variants.image_ocr',
+    ocrField:     'instagram_ad_variants.image_ocr_exactly',
     newsFeedField:'instagram_ad_translation.news_feed_description',
     typeField:    'instagram_ad.type',
     imageNasField:'new_nas_image_url',
@@ -422,7 +422,7 @@ const PLATFORM_CONFIG = {
     textField:    'native_ad_translation.ad_text',
     titleField:   'native_ad_translation.ad_title',
     ownerField:   'native_ad_post_owners.post_owner_name',
-    ocrField:     'native_ad_variants.image_ocr',
+    ocrField:     'native_ad_variants.image_ocr_exactly',
     newsFeedField:'native_ad_translation.news_feed_description',
     typeField:    'native_ad.type',
     imageNasField:'native_ad.nas_url',
@@ -452,7 +452,7 @@ const PLATFORM_CONFIG = {
     textField:    'quora_ad_translation.ad_text',
     titleField:   'quora_ad_translation.ad_title',
     ownerField:   'quora_ad_post_owners.post_owner_name',
-    ocrField:     'quora_ad_variants.image_ocr',
+    ocrField:     'quora_ad_variants.image_ocr_exactly',
     newsFeedField:'quora_ad_translation.news_feed_description',
     typeField:    'quora_ad.type',
     imageNasField:'new_nas_image_url',
@@ -478,7 +478,7 @@ const PLATFORM_CONFIG = {
     textField:    'pinterest_ad_variants.text',
     titleField:   'pinterest_ad_variants.title',
     ownerField:   'pinterest_ad_post_owners.post_owner_name',
-    ocrField:     'pinterest_ad_variants.image_ocr',
+    ocrField:     'pinterest_ad_variants.image_ocr_exactly',
     newsFeedField:'pinterest_ad_variants.newsfeed_description',
     typeField:    'pinterest_ad.type',
     imageNasField:'new_nas_image_url',
@@ -498,6 +498,58 @@ const PLATFORM_CONFIG = {
     thumbField:   'thumbnail',
   },
 };
+
+/**
+ * MySQL fallback config for getDescriptionDetails, mirroring each network's own
+ * adDetailController.js join (`<net>_ad` ⟶ `<net>_ad_variants` via `<net>_ad_id`,
+ * ⟶ `<net>_ad_post_owners` via `post_owner_id`). Google's tables are prefixed
+ * `google_text_ad*` rather than `google_ad*`; youtube's variants table has no
+ * `image_url` column (video-only creative), only `thumbnail_url`. TikTok has no
+ * SQL table carrying ad_text/ad_title/newsfeed_description/image (confirmed via
+ * its controllers — only analytics/country-info tables exist there), so it has
+ * no fallback and stays ES-only.
+ *
+ * @param {string} platform
+ * @returns {{adTable, variantsTable, variantsFk, ownerTable, imageCol}|null}
+ */
+function sqlFallbackConfigFor(platform) {
+  if (platform === 'tiktok') return null;
+  const prefix = platform === 'google' ? 'google_text_ad' : `${platform}_ad`;
+  return {
+    adTable:       prefix,
+    variantsTable: `${prefix}_variants`,
+    variantsFk:    `${prefix}_id`,
+    ownerTable:    `${prefix}_post_owners`,
+    imageCol:      platform === 'youtube' ? 'thumbnail_url' : 'image_url',
+  };
+}
+
+/**
+ * Batch-fetch the SQL fallback row (ad_title/ad_text/news_feed_description/
+ * post_owner_name/ad_image_url) for a set of ad ids. Returns a Map keyed by
+ * the ad's SQL PK (as a string) so callers can look up by `row.id`.
+ */
+async function fetchSqlDescriptionFallback(sqlClient, sqlCfg, ids) {
+  if (!ids.length) return new Map();
+  const placeholders = ids.map(() => '?').join(',');
+  const query = `
+    SELECT
+      ${sqlCfg.adTable}.id AS _fallback_id,
+      ${sqlCfg.variantsTable}.title AS ad_title,
+      ${sqlCfg.variantsTable}.text AS ad_text,
+      ${sqlCfg.variantsTable}.newsfeed_description AS news_feed_description,
+      ${sqlCfg.variantsTable}.${sqlCfg.imageCol} AS ad_image_url,
+      ${sqlCfg.ownerTable}.post_owner_name AS post_owner_name
+    FROM ${sqlCfg.adTable}
+    LEFT JOIN ${sqlCfg.variantsTable} ON ${sqlCfg.adTable}.id = ${sqlCfg.variantsTable}.${sqlCfg.variantsFk}
+    LEFT JOIN ${sqlCfg.ownerTable} ON ${sqlCfg.adTable}.post_owner_id = ${sqlCfg.ownerTable}.id
+    WHERE ${sqlCfg.adTable}.id IN (${placeholders})
+  `;
+  const rows = await sqlClient.query(query, ids);
+  const map = new Map();
+  for (const r of rows) map.set(String(r._fallback_id), r);
+  return map;
+}
 
 /**
  * GET /getDescriptionDetails
@@ -607,6 +659,34 @@ async function getDescriptionDetails(req, res) {
 
       return row;
     });
+
+    // SQL fallback: ES is a downstream sync of MySQL, so an ad whose ES doc hasn't
+    // (yet) received text/title/description/owner/image carries the real value in
+    // MySQL. Only fills fields ES left null — never overwrites an ES-derived value.
+    const sqlCfg = sqlFallbackConfigFor(platform);
+    if (sqlCfg && service.db.sql) {
+      try {
+        const idsNeedingFallback = [...new Set(
+          finalArray
+            .filter(row => !row.ad_text || !row.ad_title || !row.news_feed_description || !row.post_owner_name || row.ad_image === null)
+            .map(row => row.id)
+        )];
+        if (idsNeedingFallback.length) {
+          const fallbackMap = await fetchSqlDescriptionFallback(service.db.sql, sqlCfg, idsNeedingFallback);
+          for (const row of finalArray) {
+            const sqlRow = fallbackMap.get(String(row.id));
+            if (!sqlRow) continue;
+            if (!row.ad_text && sqlRow.ad_text) row.ad_text = sqlRow.ad_text;
+            if (!row.ad_title && sqlRow.ad_title) row.ad_title = sqlRow.ad_title;
+            if (!row.news_feed_description && sqlRow.news_feed_description) row.news_feed_description = sqlRow.news_feed_description;
+            if (!row.post_owner_name && sqlRow.post_owner_name) row.post_owner_name = sqlRow.post_owner_name;
+            if (row.ad_image === null && sqlRow.ad_image_url) row.ad_image = served(sqlRow.ad_image_url);
+          }
+        }
+      } catch (sqlErr) {
+        service.log?.warn(`[getDescriptionDetails] SQL fallback failed for platform=${platform}: ${sqlErr.message}`);
+      }
+    }
 
     return res.status(200).json(finalArray);
 

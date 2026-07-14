@@ -37,8 +37,8 @@ function mkRes() {
   return r;
 }
 
-function mkService({ esSearch, esIndex, esUpdate, log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } = {}) {
-  return { db: { elastic: { search: esSearch, index: esIndex, update: esUpdate } }, log };
+function mkService({ esSearch, esIndex, esUpdate, sql, log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } = {}) {
+  return { db: { elastic: { search: esSearch, index: esIndex, update: esUpdate }, sql }, log };
 }
 
 beforeEach(() => {
@@ -70,7 +70,7 @@ describe("addCategoryController > getDescriptionDetails", () => {
       "facebook_ad_variants.title_exactly": "Title",
       "facebook_ad_post_owners.post_owner_name": "Po",
       "facebook_ad_variants.newsfeed_description_exactly": "NF",
-      "facebook_ad_variants.image_ocr": "OCR",
+      "facebook_ad_variants.image_ocr_exactly": "OCR",
       "facebook_ad_html_lander_content.html_dc_blackhat_lander_text": "DEST",
       "facebook_ad.type": "IMAGE",
       "new_nas_image_url": "https://x/PowerAdspy/i.png",
@@ -84,6 +84,64 @@ describe("addCategoryController > getDescriptionDetails", () => {
       news_feed_description: "NF", ocr: "OCR", destination_page_text: "DEST",
       ad_image: "https://x/PowerAdspy/i.png",
     });
+  });
+  it("falls back to MySQL for fields ES left null (facebook)", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "facebook_ad.id": 1,
+      "facebook_ad.type": "IMAGE",
+      // ad_text/ad_title/news_feed_description/post_owner_name/ad_image all absent from ES.
+    }}]}}));
+    const sqlQuery = vi.fn(async (query, params) => {
+      expect(query).toContain("FROM facebook_ad");
+      expect(query).toContain("facebook_ad_variants");
+      expect(query).toContain("facebook_ad_post_owners");
+      expect(params).toEqual([1]);
+      return [{
+        _fallback_id: 1,
+        ad_title: "SQL Title",
+        ad_text: "SQL Text",
+        news_feed_description: "SQL NF",
+        post_owner_name: "SQL Owner",
+        ad_image_url: "https://x/PowerAdspy/n2/img.png",
+      }];
+    });
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook", exVal: 0, limit: 50 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(sqlQuery).toHaveBeenCalledTimes(1);
+    expect(res.body[0]).toMatchObject({
+      id: 1, ad_title: "SQL Title", ad_text: "SQL Text",
+      news_feed_description: "SQL NF", post_owner_name: "SQL Owner",
+    });
+    expect(res.body[0].ad_image).toContain("img.png");
+  });
+  it("does not query MySQL when ES already has all fields (facebook)", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "facebook_ad.id": 2,
+      "facebook_ad_variants.text_exactly": "T",
+      "facebook_ad_variants.title_exactly": "Title",
+      "facebook_ad_post_owners.post_owner_name": "Po",
+      "facebook_ad_variants.newsfeed_description_exactly": "NF",
+      "facebook_ad.type": "VIDEO",
+    }}]}}));
+    const sqlQuery = vi.fn(async () => []);
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook", exVal: 0, limit: 50 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(sqlQuery).not.toHaveBeenCalled();
+  });
+  it("skips SQL fallback for tiktok (no SQL creative-text table)", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      ad_id: 5, ad_type: "IMAGE",
+    }}]}}));
+    const sqlQuery = vi.fn(async () => []);
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "tiktok", exVal: 0, limit: 50 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(sqlQuery).not.toHaveBeenCalled();
   });
   it("google paginates on internal id and exposes ad_id + cursor separately", async () => {
     const search = vi.fn(async (params) => {
