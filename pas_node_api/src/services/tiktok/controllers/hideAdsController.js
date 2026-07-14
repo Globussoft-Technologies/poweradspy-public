@@ -70,7 +70,7 @@ async function hideAds(req, db, logger) {
 
   } catch (err) {
     logger.error('Error in hideAds (tiktok)', { error: err.message });
-    return { code: 401, message: err.message, data: null };
+    return { code: 500, message: err.message, data: null };
   }
 }
 
@@ -123,7 +123,7 @@ async function getHiddenPostOwners(req, db, logger) {
 
   } catch (err) {
     logger.error('Error in getHiddenPostOwners (tiktok)', { error: err.message });
-    return { code: 401, message: 'Error occurred in getHiddenPostOwners', data: null };
+    return { code: 500, message: 'Error occurred in getHiddenPostOwners', data: null };
   }
 }
 

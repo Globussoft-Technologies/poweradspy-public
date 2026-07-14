@@ -35,7 +35,7 @@ function mkConn({ adRow = [{ id: 42 }], catRows = [], insertId = 99, throwOn } =
     execute: vi.fn(async (sql, params) => {
       calls.push({ sql, params });
       if (throwOn && sql.includes(throwOn)) throw new Error("sql-boom");
-      if (/FROM `\w+_ad`|FROM `\w+_ads`|FROM `google_text_ad`/.test(sql) && /WHERE ad_id/.test(sql)) {
+      if (/FROM `\w+_ad`|FROM `\w+_ads`|FROM `google_text_ad`/.test(sql) && /WHERE `(id|ad_id)`/.test(sql)) {
         return [adRow];
       }
       if (/FROM `\w+_category`/.test(sql)) return [catRows];
@@ -144,6 +144,24 @@ describe("aiMetaSqlWriter > persistAiMeta", () => {
     expect(conn.rollback).toHaveBeenCalled();
     expect(conn.release).toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("resolves the PK via `id` for most networks but `ad_id` for google (matchCol)", async () => {
+    // Non-google: the incoming public id equals the SQL PK `id` (ES `ad_id` field
+    // === SQL `id` everywhere except google). Google's incoming id is its distinct
+    // `ad_id` hash → matches the `ad_id` column. Regression guard for the
+    // ad_not_found-on-every-fb/ig/yt-ad bug.
+    const fbConn = mkConn({ adRow: [{ id: 42 }] });
+    await persistAiMeta({ sql: mkSql(fbConn), network: "facebook", adId: "16175", normalized: NORMALIZED });
+    const fbLookup = fbConn.calls.find((c) => c.sql.includes("FROM `facebook_ad`"));
+    expect(fbLookup.sql).toContain("WHERE `id`");
+    expect(NET_SQL.facebook.matchCol).toBe("id");
+
+    const gConn = mkConn({ adRow: [{ id: 11 }] });
+    await persistAiMeta({ sql: mkSql(gConn), network: "google", adId: "-882", normalized: NORMALIZED });
+    const gLookup = gConn.calls.find((c) => c.sql.includes("FROM `google_text_ad`"));
+    expect(gLookup.sql).toContain("WHERE `ad_id`");
+    expect(NET_SQL.google.matchCol).toBe("ad_id");
   });
 
   it("getConnection failure → error status, no throw", async () => {

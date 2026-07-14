@@ -58,8 +58,14 @@ async function hideAds(req, db, logger) {
     return { code: 400, message: 'data not inserted', data: null };
 
   } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+      // Already hidden/favourited (double-click, stale UI state, retry) — idempotent success,
+      // not an error. Returning 401 here would trip the frontend's session-expired handler
+      // and force-logout the user over a harmless duplicate click.
+      return { code: 200, message: 'already hidden/favourited', data: 0 };
+    }
     logger.error('Error in LinkedIn hideAds', { error: err.message });
-    return { code: 401, message: err.message, data: null };
+    return { code: 500, message: err.message, data: null };
   }
 }
 
@@ -102,7 +108,7 @@ async function getHiddenPostOwners(req, db, logger) {
     };
   } catch (err) {
     logger.error('Error in LinkedIn getHiddenPostOwners', { error: err.message });
-    return { code: 401, message: 'Error occurred in getHiddenPostOwners', data: null };
+    return { code: 500, message: 'Error occurred in getHiddenPostOwners', data: null };
   }
 }
 

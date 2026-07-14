@@ -7,7 +7,7 @@
  * (/api/v1/{instagram,google,youtube,facebook}/get-domain-registration) into one and
  * extends coverage to all 10 networks. Looks a domain up in each network's domains table
  * and reports every network it was found in, together with that network's
- * `domain_registered_date`.
+ * `domain_registered_date` and `status` (0 pending / 1 resolved / 2 unresolvable).
  *
  * A domain can live in several networks' tables with DIFFERENT registration dates — all
  * matches are returned, each tagged with its network (see `matches`).
@@ -43,21 +43,29 @@ function resolveNetworks(raw) {
 async function lookupOneNetwork(network, domain) {
   const service = serviceRegistry.getService(network);
   if (!service || !service.db || !service.db.sql) {
-    return { network, error: 'SQL connection not available' };
+    return { network, error: 'SQL connection not available', matches: [] };
   }
   const { table } = DOMAIN_TABLES[network];
+  // NO `LIMIT 1`: these tables have no unique index on `domain`, so a domain can span
+  // several rows with DIFFERENT registration dates (e.g. one dated + one still NULL).
+  // Return each DISTINCT (date, status) within the network so callers see the real picture.
   const rows = await service.db.sql.query(
-    `SELECT domain, domain_registered_date FROM ${table} WHERE domain = ? LIMIT 1`,
+    `SELECT domain, domain_registered_date, status FROM ${table} WHERE domain = ?`,
     [domain]
   );
-  const row = Array.isArray(rows) && rows.length ? rows[0] : null;
-  if (!row) return { network, found: false };
-  return {
-    network,
-    found: true,
-    domain: row.domain,
-    domain_registered_date: row.domain_registered_date ?? null,
-  };
+  if (!Array.isArray(rows) || rows.length === 0) return { network, found: false, matches: [] };
+
+  const seen = new Set();
+  const matches = [];
+  for (const row of rows) {
+    const date = row.domain_registered_date ?? null;
+    const status = row.status ?? null;
+    const key = `${date === null ? 'NULL' : String(date)}|${status}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    matches.push({ network, domain: row.domain, domain_registered_date: date, status });
+  }
+  return { network, found: true, matches };
 }
 
 /**
@@ -84,7 +92,7 @@ async function lookupDomainRegistration(params, log) {
       try {
         const r = await lookupOneNetwork(network, domain);
         if (r.error) errors[network] = r.error;
-        else if (r.found) matches.push({ network: r.network, domain: r.domain, domain_registered_date: r.domain_registered_date });
+        else if (r.found) matches.push(...r.matches);
       } catch (err) {
         errors[network] = err.message;
         if (log && log.error) log.error('domain registration lookup error', { network, domain, error: err.message });

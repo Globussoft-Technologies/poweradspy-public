@@ -3,9 +3,15 @@
 /**
  * Cross-network "domains missing a WHOIS registration date" lookup.
  *
- * Returns the domains in a network's domains table whose `domain_registered_date`
- * IS NULL, ordered by the network's "last updated" column DESC (newest first) so
- * the freshest un-enriched domains surface first — useful for backfill/ops.
+ * Returns the DISTINCT domains in a network's domains table whose `domain_registered_date`
+ * IS NULL **and `status = 0` (PENDING)**, ordered by the network's "last updated" column
+ * DESC (newest first) so the freshest un-enriched domains surface first — useful for
+ * backfill/ops.
+ *
+ * The `status = 0` filter is what stops the backfill loop from re-serving domains that were
+ * already tried and marked UNRESOLVABLE (`status = 2`) by the update API — see
+ * updateDomainDateService. DISTINCT (GROUP BY domain) means a domain that spans several rows
+ * (no unique index on `domain`) is returned once, not once per row.
  *
  * Schema note (verified against the PHP models + insertion repos):
  *   - Every network's domains table has `domain_registered_date`.
@@ -76,10 +82,11 @@ async function getDomainsWithoutRegistration(params, log) {
 
   try {
     const rows = await service.db.sql.query(
-      `SELECT id, domain, domain_registered_date, ${sortColumn}
+      `SELECT domain, MAX(${sortColumn}) AS ${sortColumn}
          FROM ${table}
-        WHERE domain_registered_date IS NULL
-        ORDER BY ${sortColumn} DESC
+        WHERE domain_registered_date IS NULL AND status = 0
+        GROUP BY domain
+        ORDER BY MAX(${sortColumn}) DESC
         LIMIT ${limit}`
     );
     const data = Array.isArray(rows) ? rows : [];

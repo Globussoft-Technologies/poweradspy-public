@@ -88,7 +88,21 @@ const SchemaRenderer = ({
             return;
           }
         }
-        onFilterChangeRef.current(filter._id, newValue);
+        // Traffic Source: "All" is an umbrella option and mutually exclusive
+        // with narrower options — selecting one should deselect the other.
+        let finalValue = newValue;
+        if (filter._id === "source_filter" && Array.isArray(newValue)) {
+          const prevSelected = Array.isArray(value) ? value : [];
+          const hadAll = prevSelected.includes("all");
+          const hasAll = newValue.includes("all");
+          if (hasAll && !hadAll) {
+            finalValue = ["all"];
+          } else if (hasAll && hadAll && newValue.length > 1) {
+            finalValue = newValue.filter((v) => v !== "all");
+          }
+        }
+
+        onFilterChangeRef.current(filter._id, finalValue);
       };
 
       // For nested_select / nested_multiselect: store every selected child in

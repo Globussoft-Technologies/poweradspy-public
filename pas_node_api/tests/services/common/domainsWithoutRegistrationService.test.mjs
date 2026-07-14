@@ -74,8 +74,9 @@ describe("common/services/domainsWithoutRegistrationService > query + limit", ()
 
     const sql = calls[0].sql.replace(/\s+/g, " ");
     expect(sql).toContain("FROM google_text_ad_domains");
-    expect(sql).toContain("WHERE domain_registered_date IS NULL");
-    expect(sql).toContain("ORDER BY updated_date DESC");
+    expect(sql).toContain("WHERE domain_registered_date IS NULL AND status = 0");
+    expect(sql).toContain("GROUP BY domain");
+    expect(sql).toContain("ORDER BY MAX(updated_date) DESC");
     expect(sql).toContain(`LIMIT ${DEFAULT_LIMIT}`);
   });
 
@@ -87,7 +88,7 @@ describe("common/services/domainsWithoutRegistrationService > query + limit", ()
     expect(out.meta.limit).toBe(MAX_LIMIT);
     const sql = calls[0].sql.replace(/\s+/g, " ");
     expect(sql).toContain("FROM facebook_ad_domains");
-    expect(sql).toContain("ORDER BY last_seen DESC");
+    expect(sql).toContain("ORDER BY MAX(last_seen) DESC");
     expect(sql).toContain(`LIMIT ${MAX_LIMIT}`);
   });
 

@@ -170,6 +170,12 @@ async function insertPath(ctx, rawAd, { network, userId }) {
       const cc = await repo.getCountryOnly(tx, single);
       countryOnlyId = cc.code === 200 ? cc.data[0].id : await repo.insertCountryOnly(tx, single);
     }
+    // No country supplied at all → fall back to the DB default sentinel 0.
+    // `linkedin_ad.country_only_id` is NOT NULL DEFAULT 0 (PHP relied on that
+    // default when an ad had no country); passing null throws "Column
+    // 'country_only_id' cannot be null". id 0 matches no country_only row, so
+    // reads LEFT JOIN to a null country — same behaviour as a countryless PHP ad.
+    if (countryOnlyId === null) countryOnlyId = 0;
 
     // domain
     let domainId = null;
@@ -206,7 +212,9 @@ async function insertPath(ctx, rawAd, { network, userId }) {
         const lac = await repo.getAdCountryOnly(tx, linkedinAdId, countId);
         if (lac.code !== 200) await repo.insertAdCountryOnly(tx, { linkedin_ad_id: linkedinAdId, country_only_id: countId, count: 1 });
       }
-    } else {
+    } else if (countryOnlyId) {
+      // Skip when countryOnlyId is the 0 sentinel (no country) — don't create a
+      // junk linkedin_ad_countries_only row mapping the ad to a non-existent country.
       const lac = await repo.getAdCountryOnly(tx, linkedinAdId, countryOnlyId);
       if (lac.code !== 200) await repo.insertAdCountryOnly(tx, { linkedin_ad_id: linkedinAdId, country_only_id: countryOnlyId, count: 1 });
     }

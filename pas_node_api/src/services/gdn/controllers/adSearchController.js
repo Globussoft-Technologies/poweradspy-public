@@ -8,6 +8,7 @@ const {
   isDisplayMergeApplicable,
   getYoutubeDisplayHits,
   enrichYoutubeDisplayAds,
+  getYoutubeDisplayHiddenRows,
   toEpochSeconds,
 } = require('../helpers/youtubeDisplayMerge');
 
@@ -133,6 +134,20 @@ async function enrichAndFilterRows(rows, db, esIndex, typeField, nasField) {
   }
 }
 
+// Fetch+enrich a page's worth of GDN rows for the given ids (shared by the
+// favourite/hidden batching loops below).
+async function fetchGdnRowsByIds(ids, db, esIndex) {
+  if (!ids || ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const sql = `SELECT ${AD_DETAIL_SELECT}
+${AD_DETAIL_JOINS}
+WHERE gdn_ad.id IN (${placeholders})
+ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
+  const rows = await db.sql.query(sql, [...ids, ...ids]);
+  const enriched = await enrichAndFilterRows(dedupeRows(rows), db, esIndex, 'gdn_ad.type', 'new_nas_image_url');
+  return cleanAdsData(enriched);
+}
+
 async function searchFavoriteAds(p, db, logger) {
   try {
     if (!db.sql) return { code: 503, message: 'SQL connection not available' };
@@ -141,33 +156,55 @@ async function searchFavoriteAds(p, db, logger) {
       'SELECT ad_id FROM gdn_hidden_ads WHERE user_id = ? AND type = 3',
       [p.user_id]
     );
-    const adIds = favRows.map(r => r.ad_id).filter(Boolean);
-    if (adIds.length === 0) return { code: 200, data: [], total: 0, message: 'No favorite ads found' };
+    const gdnAdIds = favRows.map(r => r.ad_id).filter(Boolean);
+
+    // YouTube DISPLAY ads surfaced under GDN are favourited via the YouTube
+    // backend (network stays 'youtube' for data routing — see
+    // YOUTUBE_DISPLAY_IN_GDN.md), so gdn_hidden_ads never sees them. Pull the
+    // matching youtube_hidden_ads rows in too so the ad still shows under
+    // GDN's Favourites, matching how it's browsed.
+    const ytRows = await getYoutubeDisplayHiddenRows(p.user_id, 'type = 3', logger);
+    const ytAdIds = ytRows.map(r => r.ad_id);
+
+    const total = gdnAdIds.length + ytAdIds.length;
+    if (total === 0) return { code: 200, data: [], total: 0, message: 'No favorite ads found' };
 
     const esIndex = db.elastic?.indexName || 'gdn_search_mix';
     const take = parseInt(p.take, 10) || 20;
     const skip = (parseInt(p.skip, 10) || 0) * take;
+    const combined = [
+      ...gdnAdIds.map(id => ({ id, src: 'gdn' })),
+      ...ytAdIds.map(id => ({ id, src: 'yt' })),
+    ];
+
     const MAX_ROUNDS = 3;
-    let validRows = [];
+    let validItems = [];
     let cursor = skip;
     let rounds = 0;
 
-    while (validRows.length < take && cursor < adIds.length && rounds < MAX_ROUNDS) {
+    while (validItems.length < take && cursor < combined.length && rounds < MAX_ROUNDS) {
       rounds++;
-      const batchIds = adIds.slice(cursor, cursor + take);
+      const batch = combined.slice(cursor, cursor + take);
       cursor += take;
-      if (batchIds.length === 0) break;
-      const placeholders = batchIds.map(() => '?').join(',');
-      const sql = `SELECT ${AD_DETAIL_SELECT}
-${AD_DETAIL_JOINS}
-WHERE gdn_ad.id IN (${placeholders})
-ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
-      const rows = await db.sql.query(sql, [...batchIds, ...batchIds]);
-      const enriched = await enrichAndFilterRows(dedupeRows(rows), db, esIndex, 'gdn_ad.type', 'new_nas_image_url');
-      validRows = validRows.concat(enriched);
+      if (batch.length === 0) break;
+
+      const batchGdnIds = batch.filter(x => x.src === 'gdn').map(x => x.id);
+      const batchYtIds  = batch.filter(x => x.src === 'yt').map(x => x.id);
+
+      const [gdnAds, ytMap] = await Promise.all([
+        fetchGdnRowsByIds(batchGdnIds, db, esIndex),
+        batchYtIds.length ? enrichYoutubeDisplayAds(batchYtIds, logger) : Promise.resolve(new Map()),
+      ]);
+
+      const gdnMap = new Map(gdnAds.map(ad => [String(ad.ad_id || ad.id), ad]));
+      const batchAds = batch
+        .map(x => (x.src === 'gdn' ? gdnMap.get(String(x.id)) : ytMap.get(String(x.id))))
+        .filter(Boolean);
+
+      validItems = validItems.concat(batchAds);
     }
 
-    return { code: 200, data: cleanAdsData(validRows.slice(0, take)), total: adIds.length, message: 'Favorite ads fetched successfully' };
+    return { code: 200, data: validItems.slice(0, take), total, message: 'Favorite ads fetched successfully' };
   } catch (err) {
     logger.error('Error in searchFavoriteAds (gdn)', { error: err.message });
     return { code: 500, message: 'Error fetching favorite ads', error: err.message };
@@ -184,40 +221,62 @@ async function searchHiddenAds(p, db, logger) {
     );
     const hiddenMeta = {};
     for (const r of hiddenRows) {
-      if (r.ad_id) hiddenMeta[String(r.ad_id)] = { hideType: r.type, postOwnerId: r.post_owner_id };
+      if (r.ad_id) hiddenMeta[`gdn:${r.ad_id}`] = { hideType: r.type, postOwnerId: r.post_owner_id };
     }
-    const adIds = hiddenRows.map(r => r.ad_id).filter(Boolean);
-    if (adIds.length === 0) return { code: 200, data: [], total: 0, message: 'No hidden ads found' };
+    const gdnAdIds = hiddenRows.map(r => r.ad_id).filter(Boolean);
+
+    // Same YouTube-backend routing issue as searchFavoriteAds (see comment there).
+    const ytRows = await getYoutubeDisplayHiddenRows(p.user_id, '(type = 1 OR type = 2)', logger);
+    for (const r of ytRows) {
+      if (r.ad_id) hiddenMeta[`yt:${r.ad_id}`] = { hideType: r.type, postOwnerId: r.post_owner_id };
+    }
+    const ytAdIds = ytRows.map(r => r.ad_id);
+
+    const total = gdnAdIds.length + ytAdIds.length;
+    if (total === 0) return { code: 200, data: [], total: 0, message: 'No hidden ads found' };
 
     const esIndex = db.elastic?.indexName || 'gdn_search_mix';
     const take = parseInt(p.take, 10) || 20;
     const skip = (parseInt(p.skip, 10) || 0) * take;
+    const combined = [
+      ...gdnAdIds.map(id => ({ id, src: 'gdn' })),
+      ...ytAdIds.map(id => ({ id, src: 'yt' })),
+    ];
+
     const MAX_ROUNDS = 3;
-    let validRows = [];
+    let validItems = [];
     let cursor = skip;
     let rounds = 0;
 
-    while (validRows.length < take && cursor < adIds.length && rounds < MAX_ROUNDS) {
+    while (validItems.length < take && cursor < combined.length && rounds < MAX_ROUNDS) {
       rounds++;
-      const batchIds = adIds.slice(cursor, cursor + take);
+      const batch = combined.slice(cursor, cursor + take);
       cursor += take;
-      if (batchIds.length === 0) break;
-      const placeholders = batchIds.map(() => '?').join(',');
-      const sql = `SELECT ${AD_DETAIL_SELECT}
-${AD_DETAIL_JOINS}
-WHERE gdn_ad.id IN (${placeholders})
-ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
-      const rows = await db.sql.query(sql, [...batchIds, ...batchIds]);
-      const enriched = await enrichAndFilterRows(dedupeRows(rows), db, esIndex, 'gdn_ad.type', 'new_nas_image_url');
-      validRows = validRows.concat(enriched);
+      if (batch.length === 0) break;
+
+      const batchGdnIds = batch.filter(x => x.src === 'gdn').map(x => x.id);
+      const batchYtIds  = batch.filter(x => x.src === 'yt').map(x => x.id);
+
+      const [gdnAds, ytMap] = await Promise.all([
+        fetchGdnRowsByIds(batchGdnIds, db, esIndex),
+        batchYtIds.length ? enrichYoutubeDisplayAds(batchYtIds, logger) : Promise.resolve(new Map()),
+      ]);
+
+      const gdnMap = new Map(gdnAds.map(ad => [String(ad.ad_id || ad.id), ad]));
+      const batchAds = batch
+        .map(x => {
+          const ad = x.src === 'gdn' ? gdnMap.get(String(x.id)) : ytMap.get(String(x.id));
+          if (!ad) return null;
+          const meta = hiddenMeta[`${x.src}:${x.id}`] || {};
+          const hideType = meta.hideType ?? 2;
+          return { ...ad, hideType, ad_type: hideType, hiddenPostOwnerId: meta.postOwnerId ?? null };
+        })
+        .filter(Boolean);
+
+      validItems = validItems.concat(batchAds);
     }
 
-    const cleanedData = cleanAdsData(validRows.slice(0, take)).map(ad => {
-      const meta = hiddenMeta[String(ad.ad_id || ad.id)] || {};
-      const hideType = meta.hideType ?? 2;
-      return { ...ad, hideType, ad_type: hideType, hiddenPostOwnerId: meta.postOwnerId ?? null };
-    });
-    return { code: 200, data: cleanedData, total: adIds.length, message: 'Hidden ads fetched successfully' };
+    return { code: 200, data: validItems.slice(0, take), total, message: 'Hidden ads fetched successfully' };
   } catch (err) {
     logger.error('Error in searchHiddenAds (gdn)', { error: err.message });
     return { code: 500, message: 'Error fetching hidden ads', error: err.message };

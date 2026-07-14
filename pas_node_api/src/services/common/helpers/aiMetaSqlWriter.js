@@ -23,19 +23,31 @@
  * and no `<net>_ad.category_id` column); for those, category stays ES-only and the
  * category-table dual-write is skipped. All values are a fixed internal whitelist
  * (never user input), so interpolating them into SQL is injection-safe.
+ *
+ * `matchCol` is the `<net>_ad` column that the INCOMING public `ad_id` (the same
+ * value ES matches on) actually equals, so we resolve the internal PK from it:
+ *   - Every network's `<net>_ad` table has BOTH an integer PK `id` and a separate
+ *     `ad_id` varchar (the platform's external id string). In every ES index EXCEPT
+ *     google, the doc's `ad_id` field === the SQL PK `id` (verified live: fb 16175,
+ *     ig 50001, yt 35431 all resolve on `id`, never on the `ad_id` column), so we
+ *     match on `id`.
+ *   - google_ads_data is the one index whose ES `ad_id` is the distinct Google ad
+ *     identifier (the numeric hash), which maps to the SQL `ad_id` column — so
+ *     google matches on `ad_id`. This mirrors PLATFORM_CONFIG.google in the
+ *     controller (idField='ad_id' vs the internal PK cursor).
  */
 const NET_SQL = {
-  facebook:  { adTable: 'facebook_ad',    metaTable: 'facebook_ad_ai_meta',     fkCol: 'facebook_ad_id',     categoryTable: 'facebook_category'  },
-  instagram: { adTable: 'instagram_ad',   metaTable: 'instagram_ad_ai_meta',    fkCol: 'instagram_ad_id',    categoryTable: 'instagram_category' },
-  youtube:   { adTable: 'youtube_ad',     metaTable: 'youtube_ad_ai_meta',      fkCol: 'youtube_ad_id',      categoryTable: 'youtube_category'   },
-  native:    { adTable: 'native_ad',      metaTable: 'native_ad_ai_meta',       fkCol: 'native_ad_id',       categoryTable: 'native_category'    },
-  linkedin:  { adTable: 'linkedin_ad',    metaTable: 'linkedin_ad_ai_meta',     fkCol: 'linkedin_ad_id',     categoryTable: 'linkedin_category'  },
-  reddit:    { adTable: 'reddit_ad',      metaTable: 'reddit_ad_ai_meta',       fkCol: 'reddit_ad_id',       categoryTable: 'reddit_category'    },
-  quora:     { adTable: 'quora_ad',       metaTable: 'quora_ad_ai_meta',        fkCol: 'quora_ad_id',        categoryTable: 'quora_category'     },
-  gdn:       { adTable: 'gdn_ad',         metaTable: 'gdn_ad_ai_meta',          fkCol: 'gdn_ad_id',          categoryTable: null                 },
-  google:    { adTable: 'google_text_ad', metaTable: 'google_text_ad_ai_meta',  fkCol: 'google_text_ad_id',  categoryTable: null                 },
-  pinterest: { adTable: 'pinterest_ad',   metaTable: 'pinterest_ad_ai_meta',    fkCol: 'pinterest_ad_id',    categoryTable: null                 },
-  tiktok:    { adTable: 'tiktok_ads',     metaTable: 'tiktok_ads_ai_meta',      fkCol: 'ad_id',              categoryTable: null                 },
+  facebook:  { adTable: 'facebook_ad',    metaTable: 'facebook_ad_ai_meta',     fkCol: 'facebook_ad_id',     matchCol: 'id',     categoryTable: 'facebook_category'  },
+  instagram: { adTable: 'instagram_ad',   metaTable: 'instagram_ad_ai_meta',    fkCol: 'instagram_ad_id',    matchCol: 'id',     categoryTable: 'instagram_category' },
+  youtube:   { adTable: 'youtube_ad',     metaTable: 'youtube_ad_ai_meta',      fkCol: 'youtube_ad_id',      matchCol: 'id',     categoryTable: 'youtube_category'   },
+  native:    { adTable: 'native_ad',      metaTable: 'native_ad_ai_meta',       fkCol: 'native_ad_id',       matchCol: 'id',     categoryTable: 'native_category'    },
+  linkedin:  { adTable: 'linkedin_ad',    metaTable: 'linkedin_ad_ai_meta',     fkCol: 'linkedin_ad_id',     matchCol: 'id',     categoryTable: 'linkedin_category'  },
+  reddit:    { adTable: 'reddit_ad',      metaTable: 'reddit_ad_ai_meta',       fkCol: 'reddit_ad_id',       matchCol: 'id',     categoryTable: 'reddit_category'    },
+  quora:     { adTable: 'quora_ad',       metaTable: 'quora_ad_ai_meta',        fkCol: 'quora_ad_id',        matchCol: 'id',     categoryTable: 'quora_category'     },
+  gdn:       { adTable: 'gdn_ad',         metaTable: 'gdn_ad_ai_meta',          fkCol: 'gdn_ad_id',          matchCol: 'id',     categoryTable: null                 },
+  google:    { adTable: 'google_text_ad', metaTable: 'google_text_ad_ai_meta',  fkCol: 'google_text_ad_id',  matchCol: 'ad_id',  categoryTable: null                 },
+  pinterest: { adTable: 'pinterest_ad',   metaTable: 'pinterest_ad_ai_meta',    fkCol: 'pinterest_ad_id',    matchCol: 'id',     categoryTable: null                 },
+  tiktok:    { adTable: 'tiktok_ads',     metaTable: 'tiktok_ads_ai_meta',      fkCol: 'ad_id',              matchCol: 'id',     categoryTable: null                 },
 };
 
 // Fields stored as MySQL JSON columns — bound as a JSON string (or SQL NULL when absent).
@@ -110,9 +122,11 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
   try {
     await conn.beginTransaction();
 
-    // 1) Resolve the internal PK from the public ad_id (FK target).
+    // 1) Resolve the internal PK from the public ad_id (FK target). `matchCol` is
+    //    the column the incoming id equals — the PK `id` for every network except
+    //    google (which matches its distinct `ad_id`); see NET_SQL note above.
     const [adRows] = await conn.execute(
-      `SELECT id FROM \`${cfg.adTable}\` WHERE ad_id = ? LIMIT 1`,
+      `SELECT id FROM \`${cfg.adTable}\` WHERE \`${cfg.matchCol}\` = ? LIMIT 1`,
       [String(adId)],
     );
     if (!adRows.length) {

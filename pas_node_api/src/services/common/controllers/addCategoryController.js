@@ -625,14 +625,24 @@ async function getDescriptionDetails(req, res) {
  * surfaced per-connection by DatabaseManager. When the version is unknown we
  * fall back to the 6.x-safe form, since most of our clusters are 6.8.
  *
+ * The type name must match how each 6.8 index was actually mapped, or a scripted
+ * update addresses a non-existent type and fails with `document_missing_exception`
+ * (search sends no type, so it silently succeeds — masking the mismatch). Verified
+ * live: the shared master `category` index is mapped under `_doc`, while every
+ * per-network ad index (`search_mix`, `<net>_search_mix`, `<net>_ads_data`) is
+ * mapped under `doc`. `INDEX_TYPE` records that; unlisted indices default to `doc`.
+ *
  * @param {object} esConn  the connection object (service.db.elastic)
- * @param {object} params  index/update params
- * @param {string} typeName mapping type to use on 6.x (default 'doc')
+ * @param {object} params  index/update params (must carry `index`)
+ * @param {string} [typeName] explicit override; when omitted, resolved from the index
  */
-function withEsType(esConn, params, typeName = 'doc') {
+const INDEX_TYPE = { category: '_doc' };
+
+function withEsType(esConn, params, typeName) {
   const major = esConn?.esMajor;
   if (major == null || major < 7) {
-    return { ...params, type: typeName };
+    const type = typeName ?? INDEX_TYPE[params.index] ?? 'doc';
+    return { ...params, type };
   }
   return params;
 }

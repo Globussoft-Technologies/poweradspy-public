@@ -1,11 +1,18 @@
 # get-domains-without-registration-date API — Test Guide
 
-A read-only, cross-network lookup that returns the domains in a network's domains table whose
-**WHOIS registration date is missing** (`domain_registered_date IS NULL`), ordered so the most
-recently-updated domains come first. Useful for ops / backfill (finding domains still awaiting
-a registration-date enrichment).
+A read-only, cross-network lookup that returns the **distinct** domains in a network's domains
+table that still need a WHOIS registration date — i.e. `domain_registered_date IS NULL` **and
+`status = 0` (PENDING)** — ordered so the most recently-updated domains come first. Useful for
+ops / backfill (finding domains still awaiting a registration-date enrichment).
 
-Companion to the per-network [`get-domain-registration`](GET_DOMAIN_REGISTRATION_API.md) lookup.
+**The `status = 0` filter is what prevents the backfill loop from getting stuck.** Domains that
+were tried and can't be resolved (dead / privacy-redacted — no date obtainable anywhere) are
+marked `status = 2` (UNRESOLVABLE) via the update API and are **permanently excluded** here, so
+they never get re-served. Results are DISTINCT by domain (a domain that spans multiple rows —
+these tables have no unique index on `domain` — is returned once).
+
+Companion to [`insert-update-domain-date`](INSERT_UPDATE_DOMAIN_DATE_API.md) (writes the date or
+marks a domain unresolvable) and the [`get-domain-registration`](GET_DOMAIN_REGISTRATION_API.md) read.
 
 ---
 
@@ -65,15 +72,17 @@ GET /api/v1/common/get-domains-without-registration-date?network=google&limit=2
   "code": 200,
   "message": "Domains fetched successfully",
   "data": [
-    { "id": 8412, "domain": "example-new.com", "domain_registered_date": null, "updated_date": "2026-07-08 11:02:44" },
-    { "id": 8390, "domain": "another.io",      "domain_registered_date": null, "updated_date": "2026-07-08 09:15:10" }
+    { "domain": "example-new.com", "updated_date": "2026-07-08 11:02:44" },
+    { "domain": "another.io",      "updated_date": "2026-07-08 09:15:10" }
   ],
   "meta": { "network": "google", "limit": 2, "sort_column": "updated_date", "count": 2 }
 }
 ```
 
-For `network=facebook` / `network=linkedin` the rows carry `last_seen` instead of `updated_date`,
-and `meta.sort_column` is `"last_seen"`.
+Each row is a **distinct** domain (deduped across duplicate rows) with only the sort column
+(`domain_registered_date` is always `NULL` here, so it's omitted). For `network=facebook` /
+`network=linkedin` the sort column is `last_seen` instead of `updated_date`, and
+`meta.sort_column` reflects that.
 
 ---
 

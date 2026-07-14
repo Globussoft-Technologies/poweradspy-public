@@ -912,7 +912,7 @@ function mkSqlConn({ adRow = [{ id: 42 }], catRows = [{ id: 300 }] } = {}) {
     release: vi.fn(() => {}),
     execute: vi.fn(async (sql) => {
       calls.push(sql);
-      if (/WHERE ad_id/.test(sql)) return [adRow];
+      if (/WHERE `(id|ad_id)`/.test(sql)) return [adRow];
       if (/FROM `\w+_category`/.test(sql)) return [catRows];
       return [{ affectedRows: 1, insertId: 1 }];
     }),
@@ -976,6 +976,28 @@ describe("addCategoryController > SQL dual-write wiring", () => {
     expect(res.body.sql).toMatchObject({ sql_status: "stored", category_synced: false });
     const mirror = svc.db.elastic.update.mock.calls.find((c) => c[0].body.doc && "instagram.category" in c[0].body.doc);
     expect(mirror).toBeUndefined();
+  });
+
+  // Regression guard: on ES 6.x the shared `category` index is mapped under `_doc`,
+  // while per-network ad indices are mapped under `doc`. A scripted update sent to
+  // the wrong type silently 404s as document_missing_exception (search sends no type,
+  // so it masks the mismatch). withEsType must resolve `category` → `_doc`.
+  it("Option B: taxonomy scripted-update on `category` uses type `_doc`; ad-doc mirror uses `doc`", async () => {
+    const sqlConn = mkSqlConn();
+    // Existing taxonomy doc with the SAME name+id but WITHOUT this platform → forces
+    // the platform-add scripted update() on the `category` index.
+    const existHits = [{ _id: "cat-1", _source: { category: "Retail", cat_id: "1234", platforms: [], subcategory: [] } }];
+    const svc = setupWithSql({ adHits: [{ _id: "ad-1" }], sqlConn, existHits });
+    const res = mkRes();
+    const aiWithCat = { ...VALID_AI_META, category: "Retail", category_id: "1234", sub_category: "eCommerce", subcategory_id: "12340001" };
+    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: aiWithCat } }, res);
+    expect(res.statusCode).toBe(200);
+
+    const catUpdates  = svc.db.elastic.update.mock.calls.filter((c) => c[0].index === "category");
+    const adUpdates   = svc.db.elastic.update.mock.calls.filter((c) => c[0].index !== "category");
+    expect(catUpdates.length).toBeGreaterThan(0);
+    catUpdates.forEach((c) => expect(c[0].type).toBe("_doc"));
+    adUpdates.forEach((c) => expect(c[0].type).toBe("doc"));
   });
 
   it("SQL failure is non-fatal — ES write still succeeds (ai_meta_status stored)", async () => {

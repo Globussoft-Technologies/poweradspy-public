@@ -6,7 +6,10 @@ domains tables. Consolidates the four per-network endpoints
 every network.
 
 Because the same domain can exist in several networks' tables **with different registration
-dates**, this returns **every** match, each tagged with the network it came from.
+dates**, this returns **every** match, each tagged with the network it came from. It also handles
+**duplicate rows within a single network** (these tables have no unique index on `domain`): each
+**distinct** date found in a network is returned (so a network with one dated row + one NULL row
+surfaces both).
 
 ---
 
@@ -37,7 +40,7 @@ Body shape: `{ code, message, data?, meta? }`. `code` is also the HTTP status.
 | `domain` missing / empty | **400** | 400 | `Please provide proper domain` |
 | Unknown `network` | **400** | 400 | `Unsupported network(s): …` |
 
-- `data.matches` — one entry per network the domain was found in: `{ network, domain, domain_registered_date }`. Ordered by the canonical network order.
+- `data.matches` — one entry per distinct (date, status) the domain was found under, tagged with network: `{ network, domain, domain_registered_date, status }` (status 0 pending / 1 resolved / 2 unresolvable). Ordered by the canonical network order.
 - `data.found_in` — the networks, in the same order.
 - `data.distinct_registered_dates` — the set of distinct dates seen (includes `null` if a matched row has no date).
 - `meta.networks_searched` — which networks were queried.
@@ -55,8 +58,8 @@ GET /api/v1/common/get-domain-registration?domain=example.com
   "data": {
     "domain": "example.com",
     "matches": [
-      { "network": "facebook", "domain": "example.com", "domain_registered_date": "2004-06-04" },
-      { "network": "google",   "domain": "example.com", "domain_registered_date": "2015-08-12" }
+      { "network": "facebook", "domain": "example.com", "domain_registered_date": "2004-06-04", "status": 1 },
+      { "network": "google",   "domain": "example.com", "domain_registered_date": "2015-08-12", "status": 1 }
     ],
     "found_in": ["facebook", "google"],
     "distinct_registered_dates": ["2004-06-04", "2015-08-12"]

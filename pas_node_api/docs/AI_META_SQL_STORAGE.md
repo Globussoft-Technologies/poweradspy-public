@@ -420,9 +420,16 @@ Per call, `persistAiMeta({ sql, network, adId, normalized, logger })`:
 
 1. Resolve the network's SQL pool: `serviceRegistry.getService(network).db.sql` (chosen by
    `networks.<net>.sql.database`). Absent → `{ sql_status: 'skipped' }`.
-2. Look the ad up by its **public** `ad_id` to get the numeric PK:
-   `SELECT id FROM <net>_ad WHERE ad_id = ? LIMIT 1` → `adRowId`. No row → `{ sql_status: 'ad_not_found' }`
+2. Resolve the numeric PK from the incoming public id via the network's **`matchCol`**:
+   `SELECT id FROM <net>_ad WHERE <matchCol> = ? LIMIT 1` → `adRowId`. No row → `{ sql_status: 'ad_not_found' }`
    (transaction rolled back).
+   **`matchCol` = `id` for every network except google (`ad_id`).** Every `<net>_ad` table has both an
+   integer PK `id` and a separate `ad_id` varchar (the platform's external id string). In every ES index
+   except `google_ads_data`, the doc's `ad_id` field is literally the SQL PK `id` (verified live: fb `16175`,
+   ig `50001`, yt `35431` all resolve on `id`, never on the `ad_id` column) — so matching on `ad_id` there
+   returns **`ad_not_found` for every ad**. Google is the one index whose ES `ad_id` is the distinct numeric
+   Google ad identifier, which maps to the SQL `ad_id` column. This mirrors `PLATFORM_CONFIG.google`
+   (`idField='ad_id'`) in the controller. (Regression fixed 2026-07-14; see `NET_SQL.matchCol`.)
 3. **Upsert** the ai_meta row (replace-on-conflict, matching ES's whole-object replace):
 
 ```sql

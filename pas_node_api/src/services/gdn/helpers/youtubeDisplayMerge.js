@@ -21,6 +21,13 @@
  * are GDN's default and dominant sorts and the only ones with a directly
  * comparable field on both sides. For any other sort the GDN controller skips the
  * merge and behaves exactly as before.
+ *
+ * Favourites/Hidden lists are a separate merge, not this interleave: hide/favourite
+ * on a DISPLAY ad is still recorded via the YouTube backend (`youtube_hidden_ads`,
+ * since `network` stays 'youtube' for data routing), so GDN's searchFavoriteAds/
+ * searchHiddenAds pull those rows in too via `filterDisplayAdIds` +
+ * `enrichYoutubeDisplayAds` — otherwise a favourited/hidden DISPLAY ad never shows
+ * under GDN's own Favourites/Hidden sections.
  */
 
 const databaseManager = require('../../../database/DatabaseManager');
@@ -240,6 +247,66 @@ async function getYoutubeDisplayHits(upper, sort, p, logger) {
   }
 }
 
+/**
+ * Given arbitrary YouTube ad ids (e.g. from `youtube_hidden_ads`), return the
+ * subset whose `ad_type` is DISPLAY/IMAGE — i.e. the ones surfaced under GDN.
+ * Used by the GDN Favourites/Hidden lists: hide/favourite on a merged-in
+ * DISPLAY ad is recorded via the YouTube backend (network stays 'youtube' for
+ * data routing — see YOUTUBE_DISPLAY_IN_GDN.md), so GDN's own hidden-ads table
+ * never sees it. Without this filter, GDN's Favourites/Hidden lists have no
+ * way to find those rows and the ad silently disappears from them.
+ * @returns {Promise<Array<number|string>>}
+ */
+async function filterDisplayAdIds(ids, logger) {
+  const yt = getYoutubeConns();
+  if (!yt || !yt.elastic || !ids || ids.length === 0) return [];
+  try {
+    const index = yt.elastic.indexName || 'youtube_ads_data';
+    const res = await yt.elastic.search({
+      index,
+      body: {
+        query: { terms: { ad_id: ids.map(Number) } },
+        size: ids.length,
+        _source: ['ad_id', 'ad_type'],
+      },
+    });
+    const hits = res.hits || res.body?.hits;
+    const displaySet = new Set(
+      (hits?.hits || [])
+        .filter(h => ['DISPLAY', 'IMAGE'].includes(h._source.ad_type))
+        .map(h => String(h._source.ad_id))
+    );
+    return ids.filter(id => displaySet.has(String(id)));
+  } catch (err) {
+    if (logger) logger.warn('YouTube DISPLAY id filter failed', { error: err.message });
+    return [];
+  }
+}
+
+/**
+ * Rows from `youtube_hidden_ads` for this user/type-clause, narrowed to the
+ * DISPLAY/IMAGE ad ids (the ones surfaced under GDN). Used by GDN's
+ * searchFavoriteAds/searchHiddenAds to pull in hide/favourite records that
+ * were written via the YouTube backend (see filterDisplayAdIds above).
+ * @returns {Promise<Array<{ad_id, post_owner_id, type}>>}
+ */
+async function getYoutubeDisplayHiddenRows(userId, typeSql, logger) {
+  const yt = getYoutubeConns();
+  if (!yt || !yt.sql) return [];
+  try {
+    const rows = await yt.sql.query(
+      `SELECT ad_id, post_owner_id, type FROM youtube_hidden_ads WHERE user_id = ? AND ${typeSql}`,
+      [userId]
+    );
+    const ids = rows.map(r => r.ad_id).filter(Boolean);
+    const displaySet = new Set((await filterDisplayAdIds(ids, logger)).map(String));
+    return rows.filter(r => r.ad_id && displaySet.has(String(r.ad_id)));
+  } catch (err) {
+    if (logger) logger.warn('YouTube hidden/favourite lookup failed (gdn merge)', { error: err.message });
+    return [];
+  }
+}
+
 function dedupeById(rows) {
   const seen = new Set();
   return rows.filter(r => {
@@ -342,6 +409,9 @@ module.exports = {
   isDisplayMergeApplicable,
   getYoutubeDisplayHits,
   enrichYoutubeDisplayAds,
+  filterDisplayAdIds,
+  getYoutubeDisplayHiddenRows,
+  getYoutubeConns,
   toEpochSeconds,
   MAX_WINDOW,
 };

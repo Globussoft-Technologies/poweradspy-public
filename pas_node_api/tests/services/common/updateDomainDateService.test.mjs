@@ -50,7 +50,7 @@ describe("updateDomainDateService > validation errors", () => {
     expect(out.code).toBe(400);
     expect(out.error).toContain("domain_name");
   });
-  it("400 when domain_date missing", async () => {
+  it("400 when neither domain_date nor status provided", async () => {
     const out = await updateDomainDate({ domain_name: "x.com" }, null);
     expect(out.code).toBe(400);
     expect(out.error).toContain("domain_date");
@@ -60,13 +60,32 @@ describe("updateDomainDateService > validation errors", () => {
     expect(out.code).toBe(400);
     expect(out.error).toContain("Y-m-d");
   });
+  it("400 when status is out of range", async () => {
+    const out = await updateDomainDate({ domain_name: "x.com", status: 5 }, null);
+    expect(out.code).toBe(400);
+    expect(out.error).toContain("status");
+  });
+  it("400 when status 1 sent without a date", async () => {
+    const out = await updateDomainDate({ domain_name: "x.com", status: 1 }, null);
+    expect(out.code).toBe(400);
+    expect(out.error).toContain("requires a domain_date");
+  });
+  it("400 when a date is sent alongside a conflicting status", async () => {
+    const out = await updateDomainDate({ domain_name: "x.com", domain_date: "2026-07-09", status: 2 }, null);
+    expect(out.code).toBe(400);
+    expect(out.error).toContain("implies status 1");
+  });
 });
 
 describe("updateDomainDateService > cross-network update", () => {
-  it("updates where present, skips where absent, bumps updated_date except fb/li", async () => {
-    // present in google (+updated_date) and facebook (no updated_date); absent elsewhere.
-    const gCalls = mockNetwork("google", [{ id: 11, domain: "x.com", domain_registered_date: null }]);
-    const fbCalls = mockNetwork("facebook", [{ id: 22, domain: "x.com", domain_registered_date: "2000-01-01" }]);
+  it("date → sets registered_date + status 1 on ALL rows, skips absent, bumps updated_date except fb/li", async () => {
+    // google has the domain in TWO rows (one dated, one NULL) — both must be updated;
+    // facebook has one row (no updated_date); absent elsewhere.
+    const gCalls = mockNetwork("google", [
+      { id: 11, domain: "x.com", domain_registered_date: null, status: 0 },
+      { id: 12, domain: "x.com", domain_registered_date: "1999-01-01", status: 1 },
+    ]);
+    const fbCalls = mockNetwork("facebook", [{ id: 22, domain: "x.com", domain_registered_date: "2000-01-01", status: 1 }]);
     for (const net of Object.keys(NETWORK_CONFIG)) {
       if (net !== "google" && net !== "facebook") mockNetwork(net, []); // not found
     }
@@ -74,19 +93,39 @@ describe("updateDomainDateService > cross-network update", () => {
     const out = await updateDomainDate({ domain_name: "x.com", domain_date: "2026-07-09" }, null);
 
     expect(out.code).toBe(200);
+    expect(out.data.status).toBe(1);
     expect(out.data.summary).toEqual({ updated: 2, not_found: 8, errors: 0 });
-    expect(out.data.results.google).toMatchObject({ status: "updated", id: 11, updated_date_touched: true });
-    expect(out.data.results.facebook).toMatchObject({ status: "updated", id: 22, updated_date_touched: false, previous_registered_date: "2000-01-01" });
+    expect(out.data.results.google).toMatchObject({ status: "updated", matched_rows: 2, ids: [11, 12], new_status: 1, updated_date_touched: true });
+    expect(out.data.results.facebook).toMatchObject({ status: "updated", matched_rows: 1, ids: [22], new_status: 1, updated_date_touched: false, previous_registered_dates: ["2000-01-01"] });
     expect(out.data.results.reddit.status).toBe("not_found");
 
-    // google UPDATE bumps updated_date; facebook UPDATE does not.
+    // UPDATE targets the domain (all rows), sets status=1; google bumps updated_date, facebook doesn't.
     const gUpdate = gCalls.find((c) => c.sql.trim().startsWith("UPDATE"));
-    expect(gUpdate.sql.replace(/\s+/g, " ")).toContain("SET domain_registered_date = ?, updated_date = NOW()");
-    expect(gUpdate.params).toEqual(["2026-07-09", 11]);
+    expect(gUpdate.sql.replace(/\s+/g, " ")).toContain("SET domain_registered_date = ?, status = ?, updated_date = NOW() WHERE domain = ?");
+    expect(gUpdate.params).toEqual(["2026-07-09", 1, "x.com"]);
 
     const fbUpdate = fbCalls.find((c) => c.sql.trim().startsWith("UPDATE"));
-    expect(fbUpdate.sql.replace(/\s+/g, " ")).toContain("SET domain_registered_date = ? WHERE id = ?");
+    expect(fbUpdate.sql.replace(/\s+/g, " ")).toContain("SET domain_registered_date = ?, status = ? WHERE domain = ?");
     expect(fbUpdate.sql).not.toContain("updated_date");
+    expect(fbUpdate.params).toEqual(["2026-07-09", 1, "x.com"]);
+  });
+
+  it("status 2 → marks UNRESOLVABLE without touching the date", async () => {
+    const gCalls = mockNetwork("google", [{ id: 11, domain: "junk.com", domain_registered_date: null, status: 0 }]);
+    for (const net of Object.keys(NETWORK_CONFIG)) {
+      if (net !== "google") mockNetwork(net, []);
+    }
+    const out = await updateDomainDate({ domain_name: "junk.com", status: 2 }, null);
+
+    expect(out.code).toBe(200);
+    expect(out.data.status).toBe(2);
+    expect(out.data.domain_date).toBeNull();
+    expect(out.data.results.google).toMatchObject({ status: "updated", matched_rows: 1, new_status: 2 });
+
+    const gUpdate = gCalls.find((c) => c.sql.trim().startsWith("UPDATE"));
+    expect(gUpdate.sql.replace(/\s+/g, " ")).toContain("SET status = ?, updated_date = NOW() WHERE domain = ?");
+    expect(gUpdate.sql).not.toContain("domain_registered_date =");
+    expect(gUpdate.params).toEqual([2, "junk.com"]);
   });
 
   it("reports a per-network db error without failing the whole request", async () => {

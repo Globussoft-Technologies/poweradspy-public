@@ -133,6 +133,18 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
 
+  // Clear the previous results so a failed/empty import doesn't leave the stat
+  // cards (Keywords / Avg Competition / Total Ad Volume / Trending) and the table
+  // showing the stale database-browse numbers behind the error message. e.g.
+  // uploading a CSV whose keyword column is empty → 0 matches → counts must read 0.
+  // computeStats([]) → { keywords: 0, avg_competition: null, total_ad_volume: 0, ... }.
+  const clearResults = () => {
+    setRows([]);
+    setTotal(0);
+    setNotFound([]);
+    setStats(computeStats([]));
+  };
+
   const applyImportResult = (res) => {
     if (res.code === 200) {
       setRows(res.data.matched || []);
@@ -140,6 +152,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
       setNotFound(res.data.not_found || []);
       setStats(computeStats(res.data.matched || []));
     } else {
+      clearResults();
       setError(res.message || "Import failed.");
     }
   };
@@ -154,6 +167,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
     try {
       applyImportResult(await importGoogleKeywordsText({ text: pasteText }));
     } catch (e) {
+      clearResults();
       setError(e.message || "Import failed.");
     } finally {
       setImporting(false);
@@ -167,6 +181,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
     try {
       applyImportResult(await importGoogleKeywordsFile({ file }));
     } catch (e) {
+      clearResults();
       setError(e.message || "Import failed.");
     } finally {
       setImporting(false);

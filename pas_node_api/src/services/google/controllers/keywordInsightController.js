@@ -64,7 +64,15 @@ async function getKeywordInsight(req, db, logger) {
     aggs: {
       total_ads: UNIQUE_ADS,
       advertiser_count: UNIQUE_ADVERTISERS,
-      domain_count: UNIQUE_DOMAINS,
+      // Distinct landing domains — EXCLUDING the same redirect/ad-service domains
+      // (REDIRECT_DOMAINS: googleadservices.com/google.com) that the Top Domains
+      // list below drops. Without this filter the headline count includes those
+      // noise domains while the list hides them, so the number never matched the
+      // list (e.g. count 2 vs 1 shown). Filtered cardinality keeps them consistent.
+      domain_count: {
+        filter: { bool: { must_not: [{ terms: { [AGG_FIELD.domain]: REDIRECT_DOMAINS } }] } },
+        aggs: { unique: UNIQUE_DOMAINS },
+      },
       top_advertisers: termsByUniqueAds(AGG_FIELD.advertiser, topN, {
         // resolve the lowercased agg key back to a display name
         name: { top_hits: { size: 1, _source: ['post_owner_name'] } },
@@ -91,7 +99,7 @@ async function getKeywordInsight(req, db, logger) {
         summary: {
           ads: aggs.total_ads?.value ?? 0,
           advertisers: aggs.advertiser_count?.value ?? 0,
-          domains: aggs.domain_count?.value ?? 0,
+          domains: aggs.domain_count?.unique?.value ?? 0,
         },
         top_advertisers: mapTermBuckets(aggs.top_advertisers?.buckets, 'advertiser'),
         top_domains: mapTermBuckets(aggs.top_domains?.buckets, 'domain'),

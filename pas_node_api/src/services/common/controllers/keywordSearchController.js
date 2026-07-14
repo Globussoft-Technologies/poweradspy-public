@@ -338,6 +338,17 @@ function buildClaimAttempts({ type, net, isPriority, today, syntheticOnly }) {
 // Reset the Google daily-claim marker so a drained pool can be served again in the same
 // call. We exclude docs that are actively being scraped (lastScrape.status === 'scrapping')
 // so a keyword currently owned by another scraper is not immediately re-claimed.
+//
+// Also clears lastScrape.date (not just dailyClaimDate): the daily filter's
+// lastScrape.date guard exists to stop a daily claim from immediately re-grabbing a term
+// priority already claimed today, but once a term has gone through a full daily lap its
+// lastScrape.date is permanently "today" — leaving it set would make the guard block the
+// SAME docs on every subsequent lap, forcing a reset on every single call and, worse,
+// letting reset re-clear a term's dailyClaimDate moments after it was just reclaimed
+// (since reset can't tell "claimed this lap" from "claimed last lap"), starving the rest
+// of the pool instead of cycling through it. Only docs whose dailyClaimDate is exactly
+// `today` are touched here, so a term that was claimed via priority (which never sets
+// dailyClaimDate) is untouched and keeps its own guard intact.
 async function resetGoogleDailyClaims(col, { type, today }) {
   const r = await col.updateMany(
     {
@@ -346,7 +357,7 @@ async function resetGoogleDailyClaims(col, { type, today }) {
       'networkState.google.dailyClaimDate': today,
       'networkState.google.lastScrape.status': { $ne: 'scrapping' },
     },
-    { $unset: { 'networkState.google.dailyClaimDate': '' } }
+    { $unset: { 'networkState.google.dailyClaimDate': '', 'networkState.google.lastScrape.date': '' } }
   );
   if (r.modifiedCount) {
     log.debug('google daily claims reset for loop', { type, today, resetCount: r.modifiedCount });

@@ -42,7 +42,9 @@ async function importKeywordsFile(req, db, logger) {
   }
 
   if (!items.length) {
-    return { code: 400, message: 'No keywords provided (upload a file field named "file", or send { keywords: [...] } / { text: "..." })' };
+    // User-facing message (shown verbatim in the Keywords Explorer UI) — keep it
+    // free of API/payload jargon like the field names or JSON shapes.
+    return { code: 400, message: 'Please enter or paste at least one keyword, or upload a .csv/.txt file to explore.' };
   }
 
   const wanted = [...new Set(items.map((i) => i.value.trim().toLowerCase()).filter(Boolean))];

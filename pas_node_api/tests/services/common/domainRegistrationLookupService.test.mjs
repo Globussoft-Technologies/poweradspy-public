@@ -56,15 +56,15 @@ describe("domainRegistrationLookupService > lookup", () => {
 
   it("returns BOTH networks with their DIFFERENT dates, in config order", async () => {
     for (const net of DOMAIN_NETWORKS) mockNetwork(net, null);
-    mockNetwork("google", { domain: "x.com", domain_registered_date: "2015-08-12" });
-    mockNetwork("facebook", { domain: "x.com", domain_registered_date: "2004-06-04" });
+    mockNetwork("google", { domain: "x.com", domain_registered_date: "2015-08-12", status: 1 });
+    mockNetwork("facebook", { domain: "x.com", domain_registered_date: "2004-06-04", status: 1 });
 
     const out = await lookupDomainRegistration({ domain: "x.com" }, null);
     expect(out.code).toBe(200);
     expect(out.data.found_in).toEqual(["facebook", "google"]); // config order (fb before google)
     expect(out.data.matches).toEqual([
-      { network: "facebook", domain: "x.com", domain_registered_date: "2004-06-04" },
-      { network: "google", domain: "x.com", domain_registered_date: "2015-08-12" },
+      { network: "facebook", domain: "x.com", domain_registered_date: "2004-06-04", status: 1 },
+      { network: "google", domain: "x.com", domain_registered_date: "2015-08-12", status: 1 },
     ]);
     expect(out.data.distinct_registered_dates).toEqual(["2004-06-04", "2015-08-12"]);
   });
@@ -78,11 +78,30 @@ describe("domainRegistrationLookupService > lookup", () => {
 
   it("collapses a null registration date into distinct dates and still counts as found", async () => {
     for (const net of DOMAIN_NETWORKS) mockNetwork(net, null);
-    mockNetwork("instagram", { domain: "x.com", domain_registered_date: null });
+    mockNetwork("instagram", { domain: "x.com", domain_registered_date: null, status: 0 });
     const out = await lookupDomainRegistration({ domain: "x.com" }, null);
     expect(out.code).toBe(200);
-    expect(out.data.matches).toEqual([{ network: "instagram", domain: "x.com", domain_registered_date: null }]);
+    expect(out.data.matches).toEqual([{ network: "instagram", domain: "x.com", domain_registered_date: null, status: 0 }]);
     expect(out.data.distinct_registered_dates).toEqual([null]);
+  });
+
+  it("returns each DISTINCT date when one network has duplicate rows for the domain", async () => {
+    for (const net of DOMAIN_NETWORKS) mockNetwork(net, null);
+    // google has 3 rows for x.com: two share a (date,status) (deduped) + one still NULL/pending.
+    serviceRegistry.services.set("google", {
+      db: { sql: { query: async () => ([
+        { domain: "x.com", domain_registered_date: "2015-08-12", status: 1 },
+        { domain: "x.com", domain_registered_date: "2015-08-12", status: 1 },
+        { domain: "x.com", domain_registered_date: null, status: 0 },
+      ]) } },
+    });
+    const out = await lookupDomainRegistration({ domain: "x.com", network: "google" }, null);
+    expect(out.code).toBe(200);
+    expect(out.data.matches).toEqual([
+      { network: "google", domain: "x.com", domain_registered_date: "2015-08-12", status: 1 },
+      { network: "google", domain: "x.com", domain_registered_date: null, status: 0 },
+    ]);
+    expect(out.data.distinct_registered_dates).toEqual(["2015-08-12", null]);
   });
 
   it("records a per-network error but still returns other matches", async () => {
