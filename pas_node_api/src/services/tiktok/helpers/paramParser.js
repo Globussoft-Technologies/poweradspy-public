@@ -3,6 +3,15 @@
 const config = require('../../../config');
 
 const CDN_BASE = (config.cdn && config.cdn.baseUrl) ? config.cdn.baseUrl.replace(/\/$/, '') : '';
+// TikTok creatives are split across two buckets on the SAME media host — pas-prod
+// for the 2025 `/PowerAdspy/tiktok/...` era, pas-dev for the newer `PowerAdspy/n2`,
+// `PowerAdspy-Dev` and `pas-*/stream` eras (verified against the live CDN). Derive
+// the bucket-less host from CDN_BASE so withCdn() can target whichever bucket
+// actually holds each file. Assumes both buckets live under the same host and
+// differ only in the `/<bucket>/stream` segment (true for media.globussoft.com).
+const CDN_HOST = CDN_BASE.replace(/\/[^/]+\/stream$/i, '');
+const CDN_PROD = CDN_HOST ? `${CDN_HOST}/pas-prod/stream` : '';
+const CDN_DEV  = CDN_HOST ? `${CDN_HOST}/pas-dev/stream`  : '';
 
 function normalizeValue(val) {
   if (val === 'NA' || val === null || val === undefined) return '';
@@ -85,16 +94,23 @@ function parseSort(params) {
   return { field: 'updatedAt', order: 'desc' };
 }
 
+// Resolve a stored TikTok media path (video_cover / image_url) to a reachable CDN
+// URL. Paths were written by several pipeline eras whose files landed in DIFFERENT
+// buckets, so a single static base can't serve them all. Route each known format
+// to the bucket that actually holds its file (all verified against the live CDN):
+//   /pas-dev/stream/... , /pas-prod/stream/...  -> bucket already embedded; host + path
+//   /PowerAdspy/n2/... , /PowerAdspy-Dev/...     -> pas-dev; strip the logical tag
+//   /PowerAdspy/tiktok/... (2025 era)            -> pas-prod; keep the path
+//   pasvideos/*.jpg (old)                        -> gone from CDN (unresolvable)
+//   http(s)://...                                -> already absolute
+// This is a read-side compatibility shim; the durable fix is normalizing
+// video_cover at ingestion so every ad stores one canonical, resolvable path.
 function withCdn(url) {
   if (!url || !CDN_BASE) return url;
   if (typeof url !== 'string') return url;
-  let trimmed = url.trim();
+  const trimmed = url.trim();
   // Some upstream rows pack a primary + fallback URL into the same field
-  // separated by "||". Without splitting first, the early http-prefix check
-  // below treats the whole concatenation as resolved and the second segment
-  // keeps its PowerAdspy/n2 prefix — the frontend ends up with an unreachable
-  // `<img src="https://...||/PowerAdspy/...">`. Split, clean each, return
-  // the first reachable URL.
+  // separated by "||". Split, clean each, return the first reachable URL.
   if (trimmed.includes('||')) {
     const cleaned = trimmed
       .split('||')
@@ -103,8 +119,24 @@ function withCdn(url) {
     return cleaned[0] || '';
   }
   if (trimmed.startsWith('http')) return trimmed;
-  trimmed = trimmed.replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|pas-dev\/stream|pas-prod\/stream)\//i, '/');
-  return CDN_BASE + (trimmed.startsWith('/') ? trimmed : '/' + trimmed);
+
+  const path = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+
+  // Bucket already in the path (newest era) — keep it, just prepend the host.
+  if (/^\/(pas-dev|pas-prod)\/stream\//i.test(path)) {
+    return CDN_HOST + path;
+  }
+  // Dev-pipeline tags — strip the logical prefix to the real path, serve from pas-dev.
+  const devPath = path.replace(/^\/(PowerAdspy\/n2|PowerAdspy-Dev)\//i, '/');
+  if (devPath !== path) {
+    return CDN_DEV + devPath;
+  }
+  // Prod 2025 format (keeps the PowerAdspy folder) — serve from pas-prod.
+  if (/^\/PowerAdspy\/tiktok\//i.test(path)) {
+    return CDN_PROD + path;
+  }
+  // Legacy / unknown (e.g. pasvideos) — best effort on the configured base.
+  return CDN_BASE + path;
 }
 
 function cleanAdsData(ads = []) {
@@ -130,4 +162,4 @@ function cleanAdsData(ads = []) {
   });
 }
 
-module.exports = { normalizeValue, normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData, CDN_BASE };
+module.exports = { normalizeValue, normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData, CDN_BASE, withCdn };

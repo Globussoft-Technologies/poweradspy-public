@@ -236,13 +236,19 @@ const BasicInfo = ({
     }
   } else if (urlOnlyPlatforms.includes(p)) {
     basicRows = [
-      {
-        label: "INITIAL URL",
-        icon: Globe,
-        value: initialUrl,
-        href: initialUrl,
-        hoverColor: "hover:text-[#6b99ff]",
-      },
+      // Quora hides INITIAL URL (product decision) — the other url-only platforms
+      // (linkedin/reddit/pinterest) still show it.
+      ...(p === "quora"
+        ? []
+        : [
+            {
+              label: "INITIAL URL",
+              icon: Globe,
+              value: initialUrl,
+              href: initialUrl,
+              hoverColor: "hover:text-[#6b99ff]",
+            },
+          ]),
       {
         label: "REDIRECT URL",
         icon: RefreshCw,

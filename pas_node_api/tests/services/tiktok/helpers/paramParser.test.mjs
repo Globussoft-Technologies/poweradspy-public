@@ -174,11 +174,21 @@ describe("services/tiktok/helpers/paramParser > withCdn", () => {
     expect(mod.cleanAdsData([{ id: 1, video_cover: "https://example.com/x.mp4" }])[0].video_cover)
       .toBe("https://example.com/x.mp4");
   });
-  it("strips PowerAdspy/n2 and PowerAdspy-Dev path prefix", () => {
+  it("routes PowerAdspy/n2 and PowerAdspy-Dev (dev-pipeline tags) to the pas-dev bucket", () => {
     expect(mod.cleanAdsData([{ id: 1, video_cover: "PowerAdspy/n2/foo.mp4" }])[0].video_cover)
-      .toBe("https://cdn.test/foo.mp4");
+      .toBe("https://cdn.test/pas-dev/stream/foo.mp4");
     expect(mod.cleanAdsData([{ id: 1, video_cover: "PowerAdspy-Dev/bar.mp4" }])[0].video_cover)
-      .toBe("https://cdn.test/bar.mp4");
+      .toBe("https://cdn.test/pas-dev/stream/bar.mp4");
+  });
+  it("routes the PowerAdspy/tiktok (2025) format to the pas-prod bucket, keeping the path", () => {
+    expect(mod.cleanAdsData([{ id: 1, video_cover: "/PowerAdspy/tiktok/thumbnail/2025/5.webp" }])[0].video_cover)
+      .toBe("https://cdn.test/pas-prod/stream/PowerAdspy/tiktok/thumbnail/2025/5.webp");
+  });
+  it("preserves an already-embedded pas-dev/pas-prod bucket (host-only prepend)", () => {
+    expect(mod.cleanAdsData([{ id: 1, video_cover: "/pas-dev/stream/tiktok/thumbnail/202607/9.webp" }])[0].video_cover)
+      .toBe("https://cdn.test/pas-dev/stream/tiktok/thumbnail/202607/9.webp");
+    expect(mod.cleanAdsData([{ id: 1, video_cover: "/pas-prod/stream/PowerAdspy/tiktok/thumbnail/2025/9.webp" }])[0].video_cover)
+      .toBe("https://cdn.test/pas-prod/stream/PowerAdspy/tiktok/thumbnail/2025/9.webp");
   });
   it("prefixes paths missing leading slash", () => {
     expect(mod.cleanAdsData([{ id: 1, video_cover: "raw/clip.mp4" }])[0].video_cover)
@@ -193,11 +203,11 @@ describe("services/tiktok/helpers/paramParser > withCdn", () => {
   });
   it("URL with '||' separator → first reachable URL after cleaning (lines 98-103)", () => {
     expect(mod.cleanAdsData([{ id: 1, video_cover: "PowerAdspy/n2/primary.mp4||PowerAdspy/n2/fallback.mp4" }])[0].video_cover)
-      .toBe("https://cdn.test/primary.mp4");
+      .toBe("https://cdn.test/pas-dev/stream/primary.mp4");
   });
   it("URL with empty primary in '||' → falls back to second segment", () => {
     expect(mod.cleanAdsData([{ id: 1, video_cover: "||PowerAdspy/n2/second.mp4" }])[0].video_cover)
-      .toBe("https://cdn.test/second.mp4");
+      .toBe("https://cdn.test/pas-dev/stream/second.mp4");
   });
   it("URL with only '||' (both empty) → '' (cleaned[0] falsy fallback)", () => {
     expect(mod.cleanAdsData([{ id: 1, video_cover: "||" }])[0].video_cover).toBe("");
