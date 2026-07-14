@@ -102,7 +102,9 @@ export const TrendChart = ({ points = [], height = 180 }) => {
   return (
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
-        <AreaChart data={points} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+        {/* top/right/bottom margins give the peak + edge points room so they
+            aren't clipped at the plot edges; YAxis domain adds 15% headroom. */}
+        <AreaChart data={points} margin={{ top: 12, right: 12, left: -8, bottom: 4 }}>
           <defs>
             <linearGradient id="gIntelArea" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={ACCENT} stopOpacity={0.35} />
@@ -111,9 +113,14 @@ export const TrendChart = ({ points = [], height = 180 }) => {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-theme-border" opacity={0.4} />
           <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="currentColor" className="text-theme-text-muted" minTickGap={24} />
-          <YAxis tick={{ fontSize: 10 }} stroke="currentColor" className="text-theme-text-muted" tickFormatter={fmtCompact} width={40} />
+          <YAxis tick={{ fontSize: 10 }} stroke="currentColor" className="text-theme-text-muted" tickFormatter={fmtCompact} width={40} allowDecimals={false} domain={[0, (max) => Math.max(1, Math.ceil((max || 0) * 1.15))]} />
+          {/* Explicit light bg + dark text so the tooltip (incl. the date/year
+              label) is readable in BOTH themes — the app's theme toggle doesn't
+              drive Recharts' default tooltip colors. */}
           <Tooltip
-            contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid rgba(127,127,127,0.25)" }}
+            contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid rgba(127,127,127,0.25)", background: "#ffffff", color: "#111827" }}
+            labelStyle={{ color: "#111827", fontWeight: 600 }}
+            itemStyle={{ color: "#111827" }}
             formatter={(v, k) => [fmtInt(v), k === "advertisers" ? "Advertisers" : "Ads"]}
           />
           <Area type="monotone" dataKey="ads" stroke={ACCENT} strokeWidth={2} fill="url(#gIntelArea)" />
@@ -211,7 +218,9 @@ export const SerpCreatives = ({ creatives = [], onKeywordClick }) => {
                 <span className={`ml-auto text-[10px] font-bold rounded px-1.5 py-0.5 ${slot === "TOP" ? "text-[#34c759] bg-[#34c759]/10" : "text-[#ff9f0a] bg-[#ff9f0a]/10"}`}>{slot}</span>
               ) : null}
             </div>
-            <div className="text-[15px] leading-snug text-[#1a0dab] dark:text-[#8ab4f8] font-medium line-clamp-2">{title}</div>
+            {/* App theme is class/data-attr driven, not OS `dark:` — use the
+                accent blue which stays readable on both light and dark cards. */}
+            <div className="text-[15px] leading-snug text-[#6b99ff] font-medium line-clamp-2">{title}</div>
             {desc ? <div className="text-xs text-theme-text-secondary mt-1 line-clamp-3">{desc}</div> : null}
             <div className="flex flex-wrap gap-1.5 mt-2">
               {kwArray(c.target_keyword).slice(0, 4).map((kw, k) => (

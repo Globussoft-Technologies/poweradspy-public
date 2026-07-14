@@ -191,7 +191,9 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
 
   return (
     <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
-      <div className="px-4 sm:px-6 py-5">
+      {/* pb-24 keeps the table's Prev/Next pagination clear of the fixed
+          chatbot widget floating at the bottom-right of the viewport. */}
+      <div className="px-4 sm:px-6 pt-5 pb-24">
         {/* ── Header ───────────────────────────────────────────── */}
         <div className="mb-4">
           <h1 className="text-xl font-bold tracking-tight text-theme-text">Keywords Explorer</h1>

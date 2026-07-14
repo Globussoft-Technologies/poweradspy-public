@@ -64,6 +64,8 @@ const AD_DETAIL_SQL = `
 
     youtube_category.category_name AS category,
 
+    languages.name AS db_language,
+
     youtube_ad_url.url_type,
     youtube_ad_url.url,
     youtube_ad_url.country_code,
@@ -82,6 +84,7 @@ const AD_DETAIL_SQL = `
   LEFT JOIN youtube_ad_post_owners ON youtube_ad.post_owner_id = youtube_ad_post_owners.id
   LEFT JOIN youtube_ad_variants ON youtube_ad.id = youtube_ad_variants.youtube_ad_id
   LEFT JOIN youtube_category ON youtube_category.id = youtube_ad.category_id
+  LEFT JOIN languages ON languages.id = youtube_ad.language_id
   LEFT JOIN youtube_ad_outgoing_links ON youtube_ad.id = youtube_ad_outgoing_links.youtube_ad_id
   WHERE youtube_ad.id = ?
   LIMIT 1
@@ -117,10 +120,12 @@ async function getAdDetails(req, db, logger) {
     }
 
     const adData = { ...rows[0] };
-    // Language is sourced exclusively from ES `ad_language` in the overlay below.
-    // Initialise to null so ES-unavailable / doc-missing / overlay-failure paths
-    // return a deterministic value instead of undefined.
-    adData.language = null;
+    // Language: ES `ad_language` (ISO) is the primary source (freshest for indexed
+    // ads), resolved in the overlay below. When the ES field is empty — e.g. older
+    // docs indexed before `youtube_ad.language_id` was set and never re-indexed —
+    // fall back to the DB `languages` join. Seeded here so ES-unavailable /
+    // doc-missing / overlay-failure paths still return the DB value, not undefined.
+    adData.language = adData.db_language || null;
 
     // ─── Step 2: Overlay ES data ────────────────────────
     if (db.elastic) {
@@ -182,15 +187,16 @@ async function getAdDetails(req, db, logger) {
           // Text image title
           adData.text_image_title = src.text_image_title || null;
 
-          // Language comes exclusively from ES `ad_language` (ISO). The SQL languages
-          // join was removed above because its per-ad value is stale for many rows.
-          // getLanguageMap is only used to resolve the ISO → display name (a small
-          // reference lookup), not to source the ad's language.
+          // Language: prefer ES `ad_language` (ISO) → display name. When ES has no
+          // value, keep the DB `languages` fallback seeded above; if that's also
+          // empty, use the detected language carried in the localization block
+          // (translation API's `language_name`). getLanguageMap only resolves the
+          // ISO → display name; it does not source the ad's language.
           if (src['ad_language']) {
             const langMap = await getLanguageMap(db.sql);
             adData.language = resolveLanguageName(langMap, src['ad_language']);
-          } else {
-            adData.language = null;
+          } else if (!adData.language && src.localization_en?.language_name) {
+            adData.language = src.localization_en.language_name;
           }
 
           // Market platform URL fields
@@ -234,6 +240,9 @@ async function getAdDetails(req, db, logger) {
         } catch { /* skip */ }
       }
     }
+    // Internal-only helper column (SQL alias) — resolved into `language` above.
+    delete adData.db_language;
+
     return {
       code: 200,
       data: cleanAdsData([adData]),

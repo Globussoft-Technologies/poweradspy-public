@@ -32,6 +32,14 @@
   scrollbar-color: var(--color-border) var(--color-bg);
 }
 
+/* Native form controls (number/date inputs, their spinners, etc.) must be told
+   which scheme the app is in — otherwise the browser paints them light-mode by
+   default and typed values render as dark-on-dark (Keyword Explorer filter
+   Min/Max were invisible in dark theme). The theme hook sets `data-theme` + the
+   `.dark` class on <html>; mirror that onto color-scheme. */
+html.dark { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+
 /* Modal scrollbar — transparent track on white card */
 [data-theme="light"] .modal-scroll::-webkit-scrollbar-track {
   background: transparent;

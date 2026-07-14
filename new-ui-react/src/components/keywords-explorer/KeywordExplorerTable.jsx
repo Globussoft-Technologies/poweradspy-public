@@ -3,6 +3,11 @@ import { ChevronUp, ChevronDown, ChevronsUpDown, TrendingUp, TrendingDown, Searc
 import { fmtInt } from "../modals/google/GoogleIntelShared.jsx";
 import AddToListMenu from "./AddToListMenu.jsx";
 
+// "Add to list" is hidden until the Keyword Lists backend is wired up — the
+// button did nothing when clicked. Flip to true to bring back the row-select
+// checkboxes + the bulk "Add to list" action.
+const SHOW_ADD_TO_LIST = false;
+
 const COLUMNS = [
   { key: "competition_score", label: "Competition", sortable: true, align: "left", tip: "How crowded the keyword is (0–100) — ranked by how many advertisers use it." },
   { key: "ads_total", label: "Ad Volume", sortable: true, align: "left", tip: "Number of unique ads using this keyword across the crawled corpus." },
@@ -71,21 +76,18 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
     );
   }
 
+  // Column tips use the native `title` attribute — the styled popover was
+  // clipped by the table's overflow/scroll container. Native title is never cut off.
   const SortHeader = ({ col }) => {
     const active = sort.sort_by === col.key;
-    const tipPos = col.align === "right" ? "right-4" : "left-4";
-    const tipEl = col.tip ? (
-      <span className={`pointer-events-none absolute ${tipPos} top-full z-30 mt-1.5 w-56 rounded-lg border border-theme-border bg-theme-surface px-2.5 py-2 text-[11px] font-medium normal-case leading-snug tracking-normal text-theme-text-secondary opacity-0 shadow-xl transition-opacity duration-150 group-hover/th:opacity-100`}>
-        {col.tip}
-      </span>
-    ) : null;
     return (
       <th className={`relative px-4 py-3 font-bold ${col.align === "right" ? "text-right" : "text-left"}`}>
         {col.sortable ? (
           <button
             type="button"
+            title={col.tip || undefined}
             onClick={() => toggleSort(col.key)}
-            className={`group/th inline-flex items-center gap-1 transition-colors ${col.align === "right" ? "flex-row-reverse" : ""} ${active ? "text-theme-text" : "hover:text-theme-text"} ${col.tip ? "cursor-pointer" : ""}`}
+            className={`group/th inline-flex items-center gap-1 cursor-pointer transition-colors ${col.align === "right" ? "flex-row-reverse" : ""} ${active ? "text-theme-text" : "hover:text-theme-text"}`}
           >
             {col.label}
             {active ? (
@@ -93,12 +95,10 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
             ) : (
               <ChevronsUpDown size={13} className="opacity-0 transition-opacity group-hover/th:opacity-40" />
             )}
-            {tipEl}
           </button>
         ) : (
-          <span className={`group/th inline-flex items-center ${col.tip ? "cursor-help" : ""}`}>
+          <span title={col.tip || undefined} className={`inline-flex items-center ${col.tip ? "cursor-help" : ""}`}>
             {col.label}
-            {tipEl}
           </span>
         )}
       </th>
@@ -107,7 +107,7 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
 
   return (
     <div className="mt-4 flex flex-col rounded-2xl border border-theme-border bg-theme-card overflow-hidden shadow-sm">
-      {selected.size > 0 ? (
+      {SHOW_ADD_TO_LIST && selected.size > 0 ? (
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-theme-border bg-[#6b99ff]/[0.07]">
           <span className="text-xs font-semibold text-[#6b99ff]">{selected.size} selected</span>
           <AddToListMenu keywords={selectedKeywords} onDone={() => setSelected(new Set())} />
@@ -119,14 +119,16 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
         <table className="w-full text-[13px] [font-variant-numeric:tabular-nums]">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-theme-border bg-theme-card/95 backdrop-blur text-left text-[11px] uppercase tracking-wider text-theme-text-secondary">
-              <th className="px-4 py-3 w-9">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={toggleSelectAll}
-                  className="h-3.5 w-3.5 accent-[#6b99ff] cursor-pointer align-middle"
-                />
-              </th>
+              {SHOW_ADD_TO_LIST ? (
+                <th className="px-4 py-3 w-9">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    className="h-3.5 w-3.5 accent-[#6b99ff] cursor-pointer align-middle"
+                  />
+                </th>
+              ) : null}
               <th className="px-4 py-3 font-bold">Keyword</th>
               {COLUMNS.map((col) => <SortHeader key={col.key} col={col} />)}
             </tr>
@@ -136,14 +138,16 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
               const g = row.growth_pct;
               return (
                 <tr key={row.keyword_id} className="border-b border-theme-border last:border-0 transition-colors hover:bg-theme-text/[0.03]">
-                  <td className="px-4 py-2.5">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(row.keyword_id)}
-                      onChange={() => toggleSelect(row.keyword_id)}
-                      className="h-3.5 w-3.5 accent-[#6b99ff] cursor-pointer align-middle"
-                    />
-                  </td>
+                  {SHOW_ADD_TO_LIST ? (
+                    <td className="px-4 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(row.keyword_id)}
+                        onChange={() => toggleSelect(row.keyword_id)}
+                        className="h-3.5 w-3.5 accent-[#6b99ff] cursor-pointer align-middle"
+                      />
+                    </td>
+                  ) : null}
                   <td className="px-4 py-2.5">
                     <button
                       type="button"
@@ -178,10 +182,11 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
         </table>
       </div>
 
-      {/* Pagination footer (outside the scroll area) */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-theme-border text-xs text-theme-text-muted">
-        <span><b className="text-theme-text-secondary font-semibold">{fmtInt(total)}</b> keywords</span>
-        <div className="flex items-center gap-2">
+      {/* Pagination footer (outside the scroll area) — 3-col grid so the
+          Prev/Next controls sit dead-center while the count stays left. */}
+      <div className="grid grid-cols-3 items-center px-4 py-3 border-t border-theme-border text-xs text-theme-text-muted">
+        <span className="justify-self-start"><b className="text-theme-text-secondary font-semibold">{fmtInt(total)}</b> keywords</span>
+        <div className="justify-self-center flex items-center gap-2">
           <button
             type="button"
             disabled={page <= 1}

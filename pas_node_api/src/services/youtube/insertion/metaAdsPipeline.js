@@ -17,7 +17,6 @@
  * are peripheral and intentionally omitted — see KT §6.)
  */
 
-const config = require('../../../config');
 const repo = require('./repository');
 const { validateMetaAds } = require('./validate');
 const { normalizeYoutubeAd, checkGates } = require('./normalize');
@@ -90,9 +89,13 @@ async function insertPath(ctx, rawAd, { network }) {
   ]);
   const translation = translationRes.ok ? translationRes.data : null;
 
-  // language detect (skipped in dev, like the other networks' APP_ENV check)
+  // Resolve language_id from the language the translation API detected. Runs
+  // whenever detection succeeded (dev + prod) so youtube_ad.language_id — and the
+  // ES `ad_language` built from it via the languages join — fill consistently.
+  // When translation didn't run / detected nothing, detected_language is absent
+  // and languageId stays 0 (unchanged from before).
   let languageId = 0;
-  if (!config.isDev && translation?.detected_language) {
+  if (translation?.detected_language) {
     languageId = (await repo.getLanguageId(sql, String(translation.detected_language).slice(0, 2))) || 0;
   }
   const impressionVal = toInt(impr?.impression, 0);

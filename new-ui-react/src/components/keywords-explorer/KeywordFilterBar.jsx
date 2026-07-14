@@ -4,17 +4,13 @@ import { SlidersHorizontal, BarChart3, Swords, TrendingUp, Tag, Plus, Minus, X }
 const inputCls =
   "w-16 rounded-lg border border-theme-border bg-theme-text/[0.04] px-2.5 py-1.5 text-xs text-theme-text transition-all focus:outline-none focus:border-[#6b99ff] focus:bg-transparent focus:ring-2 focus:ring-[#6b99ff]/15 placeholder:text-theme-text-muted";
 
-const Tip = ({ children, align = "left" }) => (
-  <span className={`pointer-events-none absolute ${align === "right" ? "right-0" : "left-0"} top-full z-30 mt-2 w-56 rounded-lg border border-theme-border bg-theme-surface px-2.5 py-2 text-[11px] font-medium normal-case leading-snug tracking-normal text-theme-text-secondary opacity-0 shadow-xl transition-opacity duration-150 group-hover/tip:opacity-100`}>
-    {children}
-  </span>
-);
-
+// Tooltips use the native `title` attribute rather than a styled popover: the
+// filter bar is inside a scroll container + sticky region, which clipped the
+// old absolutely-positioned tooltip. Native title is never clipped/covered.
 const NumberRange = ({ icon, label, tip, minVal, maxVal, onMinChange, onMaxChange }) => (
   <div className="flex items-center gap-2">
-    <span className="relative group/tip flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-secondary cursor-help">
+    <span title={tip || undefined} className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-secondary cursor-help">
       {icon}{label}
-      {tip ? <Tip>{tip}</Tip> : null}
     </span>
     <input type="number" placeholder="min" value={minVal ?? ""} onChange={(e) => onMinChange(e.target.value)} className={inputCls} />
     <span className="text-theme-text-muted text-xs">–</span>
@@ -23,7 +19,7 @@ const NumberRange = ({ icon, label, tip, minVal, maxVal, onMinChange, onMaxChang
 );
 
 const TextInput = ({ icon, placeholder, value, onChange, tip }) => (
-  <div className="relative group/tip flex items-center gap-1.5 rounded-lg border border-theme-border bg-theme-text/[0.04] px-2.5 transition-all focus-within:border-[#6b99ff] focus-within:bg-transparent focus-within:ring-2 focus-within:ring-[#6b99ff]/15">
+  <div title={tip || undefined} className="flex items-center gap-1.5 rounded-lg border border-theme-border bg-theme-text/[0.04] px-2.5 transition-all focus-within:border-[#6b99ff] focus-within:bg-transparent focus-within:ring-2 focus-within:ring-[#6b99ff]/15">
     <span className="text-theme-text-muted">{icon}</span>
     <input
       type="text"
@@ -32,7 +28,6 @@ const TextInput = ({ icon, placeholder, value, onChange, tip }) => (
       onChange={(e) => onChange(e.target.value)}
       className="w-28 bg-transparent py-1.5 text-xs text-theme-text focus:outline-none placeholder:text-theme-text-muted"
     />
-    {tip ? <Tip align="right">{tip}</Tip> : null}
   </div>
 );
 
