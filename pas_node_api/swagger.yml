@@ -7688,6 +7688,67 @@ paths:
         '404':
           description: Ad not found
 
+  /api/v1/quora/ads/getLikeCommentShareDetails:
+    post:
+      tags: [Quora]
+      summary: Get like/comment/share snapshot for a Quora ad
+      description: |
+        Returns the current LCS totals sourced entirely from Elasticsearch
+        (`quora_ad.likes`, `quora_ad.comments`, `quora_ad.shares`). Quora does
+        not maintain a per-day analytics table, so the response is a single
+        row carrying the current totals anchored at `quora_ad.post_date`
+        (falling back to `last_seen − 1 day` when `post_date` is missing).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quora_ad_id, user_id]
+              properties:
+                quora_ad_id:
+                  type: integer
+                  example: 8641
+                user_id:
+                  type: integer
+                  example: 281
+      responses:
+        '200':
+          description: LCS snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        quora_ad_id:
+                          type: integer
+                        likes:
+                          type: integer
+                        comment:
+                          type: integer
+                        share:
+                          type: integer
+                        date:
+                          type: string
+                          format: date
+                          example: "2026-07-13"
+        '400':
+          description: No data found
+        '401':
+          description: Missing parameters
+
   /api/v1/quora/ads/getQuoraAdCountry:
     post:
       tags: [Quora]
@@ -7789,6 +7850,73 @@ paths:
         '401':
           description: Missing parameters
 
+  /api/v1/quora/ads/getAdvertiserLCSData:
+    post:
+      tags: [Quora]
+      summary: Get advertiser-level monthly LCS data
+      description: |
+        Aggregates monthly likes/comments/shares for a Quora advertiser for a
+        specific year. Data is sourced entirely from Elasticsearch — for each
+        ad matched by the advertiser filter, `quora_ad.likes/comments/shares`
+        are bucketed by month of `quora_ad.last_seen`. Default year is the
+        year of the provided ad.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quora_ad_id]
+              properties:
+                quora_ad_id:
+                  type: integer
+                  example: 8641
+                year:
+                  type: integer
+                  example: 2026
+      responses:
+        '200':
+          description: Monthly LCS data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                  post_owner_id:
+                    type: integer
+                  year:
+                    type: integer
+                  available_years:
+                    type: array
+                    items:
+                      type: integer
+                  data:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        ad_ids:
+                          type: array
+                          items:
+                            type: integer
+                        total_ads:
+                          type: integer
+                        likes:
+                          type: integer
+                        comments:
+                          type: integer
+                        shares:
+                          type: integer
+        '400':
+          description: Advertiser not found
+        '401':
+          description: Missing quora_ad_id
+
   /api/v1/quora/ads/getAdvertiserCountryData:
     post:
       tags: [Quora]
@@ -7856,9 +7984,11 @@ paths:
   /api/v1/quora/ads/getAdvertiserInsightsByDateRange:
     post:
       tags: [Quora]
-      summary: Get advertiser country data by date range
+      summary: Get advertiser insights (country or LCS) by date range
       description: |
-        Fetches country-level ad counts for a Quora advertiser within a custom date range.
+        Fetches advertiser insights for a custom date range. `type=country`
+        returns country-level ad counts; `type=lcs` returns monthly buckets of
+        likes/comments/shares aggregated from ES.
       requestBody:
         required: true
         content:
@@ -7880,6 +8010,7 @@ paths:
                   example: "2024-03-31"
                 type:
                   type: string
+                  enum: [country, lcs]
                   example: country
       responses:
         '200':
