@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Search, Upload, Database, TrendingUp, TrendingDown, Swords, BarChart3 } from "lucide-react";
 import { getGoogleKeywordsExplorer, importGoogleKeywordsFile, importGoogleKeywordsText } from "../../services/api";
 import KeywordFilterBar from "./KeywordFilterBar.jsx";
@@ -109,6 +109,10 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
   const [notFound, setNotFound] = useState([]);
   const [importing, setImporting] = useState(false);
   const [stats, setStats] = useState(null);
+  // 'browse' = full DB (server-paginated/sorted); 'search' = import/search result
+  // (the matched set is loaded whole, so sorting/paging happen client-side and must
+  // NOT trigger a browse refetch — that was reloading the entire DB list on sort).
+  const [mode, setMode] = useState("browse");
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -131,7 +135,33 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
     }
   }, [page, sort, filters]);
 
-  useEffect(() => { fetchRows(); }, [fetchRows]);
+  // Only the browse mode hits the server. In search mode the matched rows are
+  // already loaded, so a sort/page/filter change must NOT re-run fetchRows (which
+  // would replace the search result with the whole database).
+  useEffect(() => { if (mode === "browse") fetchRows(); }, [fetchRows, mode]);
+
+  // In search mode, sort the loaded matched rows client-side so the sort arrows
+  // reorder just the result (browse mode is already server-sorted → pass through).
+  // Empty/null values always sort last regardless of direction.
+  const displayRows = useMemo(() => {
+    if (mode !== "search") return rows;
+    const { sort_by, sort_dir } = sort;
+    const dir = sort_dir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const av = a?.[sort_by];
+      const bv = b?.[sort_by];
+      const aEmpty = av == null || av === "";
+      const bEmpty = bv == null || bv === "";
+      if (aEmpty && bEmpty) return 0;
+      if (aEmpty) return 1;
+      if (bEmpty) return -1;
+      const an = Number(av);
+      const bn = Number(bv);
+      if (Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
+      if (sort_by === "first_seen") return (new Date(av) - new Date(bv)) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }, [rows, sort, mode]);
 
   // Clear the previous results so a failed/empty import doesn't leave the stat
   // cards (Keywords / Avg Competition / Total Ad Volume / Trending) and the table
@@ -162,6 +192,8 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
     // otherwise clearing the text leaves the previous search's stale results on
     // screen with no obvious way back (the Search button used to just disable).
     if (!pasteText.trim()) { resetToDatabase(); return; }
+    setMode("search");
+    setPage(1); // reset stale browse page so it doesn't show e.g. "Page 4 of 1"
     setImporting(true);
     setError(null);
     try {
@@ -176,6 +208,8 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
 
   const handleFileUpload = async (file) => {
     if (!file) return;
+    setMode("search");
+    setPage(1); // reset stale browse page so it doesn't show e.g. "Page 4 of 1"
     setImporting(true);
     setError(null);
     try {
@@ -193,7 +227,9 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
     setNotFound([]);
     setFilters({});
     setPage(1);
-    fetchRows();
+    // Switch back to browse — the guarded effect refetches the full DB (setFilters
+    // always passes a fresh {} ref, so fetchRows is recreated and the effect fires).
+    setMode("browse");
   };
 
   const busy = loading || importing;
@@ -318,7 +354,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
               <div className="py-16 text-center text-sm text-theme-text-muted">{error}</div>
             ) : (
               <KeywordExplorerTable
-                rows={rows}
+                rows={displayRows}
                 total={total}
                 page={page}
                 pageSize={PAGE_SIZE}

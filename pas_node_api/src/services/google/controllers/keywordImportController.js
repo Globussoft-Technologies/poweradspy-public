@@ -58,7 +58,13 @@ async function importKeywordsFile(req, db, logger) {
               ks.first_seen, ks.last_seen
        FROM google_text_keywords gtk
        LEFT JOIN keyword_stats ks ON ks.keyword_id = gtk.id
-       WHERE LOWER(TRIM(gtk.keyword)) IN (${placeholders})`,
+       -- gtk.keyword is utf8mb3 but the bound params arrive as utf8mb4; MySQL can't
+       -- coerce a utf8mb4 param (e.g. an emoji/accented char in an uploaded file)
+       -- into the utf8mb3 column collation ("Conversion from utf8mb4_unicode_ci into
+       -- utf8mb3_unicode_ci impossible for parameter" → 500). Convert the column up
+       -- to utf8mb4 (a lossless superset) and pin the comparison collation to the
+       -- params' so both sides match — a non-matching keyword just falls to not_found.
+       WHERE LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci IN (${placeholders})`,
       wanted
     );
 
