@@ -346,7 +346,12 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
         {activeTab === "explorer" ? (
           <>
             <div className="sticky top-0 z-10 -mx-1 px-1 py-1">
-              <KeywordFilterBar filters={filters} onChange={(f) => { setFilters(f); setPage(1); }} />
+              {/* Filters always operate on the full DB (not the loaded search/import
+                  result), so any filter change switches back to browse mode + refetches.
+                  Without this, changing/clearing a filter while a search result was shown
+                  did nothing (the browse fetch is guarded to mode==='browse'), so e.g.
+                  removing a Category left the list empty instead of restoring it. */}
+              <KeywordFilterBar filters={filters} onChange={(f) => { setFilters(f); setPage(1); setMode("browse"); }} />
             </div>
             {busy ? (
               <KeywordTableSkeleton />

@@ -292,6 +292,7 @@ async function insertPath(ctx, n, { translation, network }) {
 
   // Step 5 — ES index (fire-and-forget: search index only, SQL is source of truth)
   indexAd(ctx, result.nativeAdId, n, { iso: result.iso, imageUrl: imageVideoUrl }).catch((e) => log.warn('ES index failed', { error: e.message }));
+
   api.adgptInsert({ ad_id: n.ad_id, native_ad_id: result.nativeAdId, type: n.type, platform: n.platform });
 
   return ok(result.nativeAdId, 'Ad inserted successfully');
