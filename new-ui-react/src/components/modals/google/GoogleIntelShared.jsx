@@ -227,10 +227,11 @@ export const SerpCreatives = ({ creatives = [], onKeywordClick }) => {
                 <button
                   key={k}
                   type="button"
+                  title={kw}
                   onClick={onKeywordClick ? () => onKeywordClick(kw) : undefined}
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] border border-[#6b99ff]/30 text-[#6b99ff] ${onKeywordClick ? "hover:bg-[#6b99ff]/10 cursor-pointer" : "cursor-default"}`}
+                  className={`inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[11px] border border-[#6b99ff]/30 text-[#6b99ff] ${onKeywordClick ? "hover:bg-[#6b99ff]/10 cursor-pointer" : "cursor-default"}`}
                 >
-                  {kw}
+                  <span className="truncate min-w-0">{kw}</span>
                 </button>
               ))}
             </div>

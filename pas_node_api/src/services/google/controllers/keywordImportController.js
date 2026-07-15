@@ -89,10 +89,11 @@ async function importKeywordsFile(req, db, logger) {
   try {
     const placeholders = wanted.map(() => '?').join(', ');
     const matched = await db.sql.query(
-      `SELECT gtk.id AS keyword_id, gtk.keyword, gtk.country,
-              ks.ads_total, ks.advertisers_total, ks.domains_total,
-              ks.growth_pct, ks.competition_score, ks.category,
-              ks.first_seen, ks.last_seen
+      `SELECT MIN(gtk.id) AS keyword_id, gtk.keyword, ANY_VALUE(gtk.country) AS country,
+              MAX(ks.ads_total) AS ads_total, MAX(ks.advertisers_total) AS advertisers_total,
+              MAX(ks.domains_total) AS domains_total, MAX(ks.growth_pct) AS growth_pct,
+              MAX(ks.competition_score) AS competition_score, ANY_VALUE(ks.category) AS category,
+              MIN(ks.first_seen) AS first_seen, MAX(ks.last_seen) AS last_seen
        FROM google_text_keywords gtk
        LEFT JOIN keyword_stats ks ON ks.keyword_id = gtk.id
        -- gtk.keyword is utf8mb3 but the bound params arrive as utf8mb4; MySQL can't
@@ -101,7 +102,11 @@ async function importKeywordsFile(req, db, logger) {
        -- utf8mb3_unicode_ci impossible for parameter" → 500). Convert the column up
        -- to utf8mb4 (a lossless superset) and pin the comparison collation to the
        -- params' so both sides match — a non-matching keyword just falls to not_found.
-       WHERE LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci IN (${placeholders})`,
+       WHERE LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci IN (${placeholders})
+       -- A keyword string can map to several google_text_keywords rows (one per
+       -- country) with identical keyword-string-level stats; dedupe by keyword text
+       -- so a searched/imported keyword shows once (same fix as the browse list).
+       GROUP BY gtk.keyword`,
       wanted
     );
 

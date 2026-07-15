@@ -74,18 +74,30 @@ async function getKeywordsExplorer(req, db, logger) {
   const baseFrom = `FROM keyword_stats ks JOIN google_text_keywords gtk ON gtk.id = ks.keyword_id ${whereSql}`;
 
   try {
-    const [{ total } = { total: 0 }] = await db.sql.query(`SELECT COUNT(*) AS total ${baseFrom}`, params);
+    // A keyword STRING can map to several google_text_keywords rows (one per
+    // country), and refreshKeywordStats writes the SAME (keyword-string-level)
+    // rollup to each of those keyword_ids — so a plain join surfaces the same
+    // keyword as multiple identical rows (e.g. "sample" twice) and double-counts
+    // the totals. Dedupe by keyword text everywhere: count distinct keywords,
+    // aggregate the (identical) stats per keyword, and GROUP BY in the row query.
+    const [{ total } = { total: 0 }] = await db.sql.query(`SELECT COUNT(DISTINCT gtk.keyword) AS total ${baseFrom}`, params);
 
     // Summary stats over the WHOLE filtered set (not just the current page) —
     // powers the stat cards above the table. Same baseFrom + params as the count,
     // so it respects every active filter/search. No schema change: all columns
     // already exist on keyword_stats.
     const [aggRow = {}] = await db.sql.query(
-      `SELECT AVG(ks.competition_score) AS avg_competition,
-              SUM(ks.ads_total)          AS total_ad_volume,
-              SUM(CASE WHEN ks.growth_pct > 0 THEN 1 ELSE 0 END) AS trending_up,
-              SUM(CASE WHEN ks.growth_pct < 0 THEN 1 ELSE 0 END) AS trending_down
-       ${baseFrom}`,
+      `SELECT AVG(t.competition_score) AS avg_competition,
+              SUM(t.ads_total)          AS total_ad_volume,
+              SUM(CASE WHEN t.growth_pct > 0 THEN 1 ELSE 0 END) AS trending_up,
+              SUM(CASE WHEN t.growth_pct < 0 THEN 1 ELSE 0 END) AS trending_down
+       FROM (
+         SELECT MAX(ks.competition_score) AS competition_score,
+                MAX(ks.ads_total)         AS ads_total,
+                MAX(ks.growth_pct)        AS growth_pct
+         ${baseFrom}
+         GROUP BY gtk.keyword
+       ) t`,
       params
     );
     const stats = {
@@ -102,13 +114,16 @@ async function getKeywordsExplorer(req, db, logger) {
     // against this MySQL setup. Both are clampInt()-validated integers, so
     // inlining is safe (same workaround as getAdsByAdvertiserController.js).
     const rows = await db.sql.query(
-      `SELECT gtk.id AS keyword_id, gtk.keyword, gtk.country,
-              ks.ads_total, ks.advertisers_total, ks.domains_total,
-              ks.growth_pct, ks.competition_score, ks.category, ks.sub_category,
-              ks.top_country, ks.type_mix, ks.position_top_pct,
-              ks.first_seen, ks.last_seen
+      `SELECT MIN(gtk.id) AS keyword_id, gtk.keyword, ANY_VALUE(gtk.country) AS country,
+              MAX(ks.ads_total) AS ads_total, MAX(ks.advertisers_total) AS advertisers_total,
+              MAX(ks.domains_total) AS domains_total, MAX(ks.growth_pct) AS growth_pct,
+              MAX(ks.competition_score) AS competition_score, ANY_VALUE(ks.category) AS category,
+              ANY_VALUE(ks.sub_category) AS sub_category, ANY_VALUE(ks.top_country) AS top_country,
+              ANY_VALUE(ks.type_mix) AS type_mix, ANY_VALUE(ks.position_top_pct) AS position_top_pct,
+              MIN(ks.first_seen) AS first_seen, MAX(ks.last_seen) AS last_seen
        ${baseFrom}
-       ORDER BY ks.${sortBy} ${sortDir}
+       GROUP BY gtk.keyword
+       ORDER BY ${sortBy} ${sortDir}
        LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
       params
     );
