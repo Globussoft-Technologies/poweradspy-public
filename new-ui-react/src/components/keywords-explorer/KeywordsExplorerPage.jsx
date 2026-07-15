@@ -259,7 +259,14 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
           <div className="flex items-center flex-1 min-w-[240px] max-w-md rounded-full border border-theme-border bg-theme-card pl-4 pr-1.5 shadow-sm transition-all focus-within:border-[#6b99ff] focus-within:ring-2 focus-within:ring-[#6b99ff]/15 focus-within:shadow-md">
             <textarea
               value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPasteText(v);
+                // Clearing the box (e.g. backspacing the last char) should bring the
+                // full database list back, instead of leaving the previous search's
+                // stale/empty result on screen until Enter is pressed again.
+                if (!v.trim() && mode === "search") resetToDatabase();
+              }}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSearchPasted(); } }}
               rows={1}
               placeholder="Search keyword"

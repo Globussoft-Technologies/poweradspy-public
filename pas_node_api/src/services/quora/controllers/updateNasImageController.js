@@ -44,9 +44,12 @@ function looksLikeImage(file) {
 /**
  * POST /api/v1/quora/ads/update-nas-image
  *
- * Stores an uploaded image binary in NAS (under the ad's id, adImage/ subfolder)
- * and writes the resulting NAS path into the ad's `new_nas_image_url` field in
- * Elasticsearch (`quora_search_mix`), replacing the "/DefaultImage.jpg" placeholder.
+ * Stores an uploaded image binary in NAS as the video THUMBNAIL (under the ad's id,
+ * thumbnail/ subfolder → .../stream/quora/thumbnail/<YYYYMM>/<id>.<ext>) and writes
+ * that NAS path into the ad's `new_nas_image_url` field in Elasticsearch
+ * (`quora_search_mix`), replacing the "/DefaultImage.jpg" placeholder. The frontend
+ * renders the Quora video poster from `new_nas_image_url`, so the path is recorded
+ * there even though the file lives in the thumbnail/ folder.
  *
  * Body (multipart/form-data):
  *   - ad_id:   internal quora_ad id (required)
@@ -86,10 +89,12 @@ async function updateNasImage(req, db, logger) {
     await fs.rename(file.path, withExt);
     tempPath = withExt;
 
-    // 1. Store the image in NAS under the ad id → path like
-    //    /<bucket>/stream/quora/adImage/<YYYYMM>/<adId>.<ext>. This is the same
-    //    slot the insertion pipeline uses for `new_nas_image_url`.
-    const nasPath = await storeInNas('IMAGE', withExt, adId, EXPECTED_NETWORK, String(adId));
+    // 1. Store the image in NAS as the video THUMBNAIL → path like
+    //    /<bucket>/stream/quora/thumbnail/<YYYYMM>/<adId>.<ext> (the video-poster
+    //    folder). We still record this path in `new_nas_image_url` below, because the
+    //    frontend reads the Quora video poster from that field — not the ES `thumbnail`
+    //    field — so writing there is what actually makes the poster render.
+    const nasPath = await storeInNas('THUMBNAIL', withExt, adId, EXPECTED_NETWORK, String(adId));
     await cleanup();
 
     if (!nasPath || String(nasPath).includes('DefaultImage')) {

@@ -20,14 +20,46 @@ const fs = require('fs');
 const { normalizeParams } = require('../helpers/paramParser');
 const { parseJsonKeywords, parseCsvFile } = require('../../common/helpers/keywordInput');
 
+// A `.txt`/`.csv` extension is not a guarantee of text content — a user can
+// upload a PNG/PDF/binary renamed (or picked) as .txt. Its raw bytes then get
+// split into hundreds of garbage "keywords". Detect that up front so we reject
+// with a friendly message instead of treating bytes as keywords.
+//   - a NUL byte (0x00) never appears in legitimate UTF-8/ASCII text but is
+//     everywhere in binary (PNG, PDF, images) → decisive binary marker.
+//   - otherwise, if a large fraction of the sampled bytes are non-printable
+//     control chars (outside tab/newline/carriage-return and the printable
+//     range) the "text" is garbage/obfuscated, not a keyword list.
+function looksBinaryOrGarbage(buf) {
+  if (!buf || !buf.length) return false;
+  const sample = buf.subarray(0, 8192);
+  let nonPrintable = 0;
+  for (const b of sample) {
+    if (b === 0) return true; // NUL byte → definitely binary
+    // allow tab(9), LF(10), CR(11-13 covers VT/FF/CR), and printable 32..126;
+    // count everything else in the low range as non-printable control noise.
+    const printable = b === 9 || b === 10 || b === 13 || (b >= 32 && b <= 126);
+    if (!printable && b < 32) nonPrintable += 1;
+  }
+  return nonPrintable / sample.length > 0.3;
+}
+
 async function importKeywordsFile(req, db, logger) {
   const p = normalizeParams({ ...req.body, ...req.query });
   if (!db.sql) return { code: 503, message: 'SQL connection not available' };
 
   let items = [];
+  let binaryUpload = false;
   try {
     if (req.file) {
-      items = await parseCsvFile(req.file.path);
+      // Guard against a binary/garbage file uploaded with a .txt/.csv extension
+      // (e.g. a PNG renamed .txt) before its bytes get parsed into fake keywords.
+      let buf = null;
+      try { buf = fs.readFileSync(req.file.path); } catch { /* fall through to parse */ }
+      if (buf && looksBinaryOrGarbage(buf)) {
+        binaryUpload = true;
+      } else {
+        items = await parseCsvFile(req.file.path);
+      }
     } else if (req.body?.keywords) {
       items = parseJsonKeywords(req.body.keywords);
     } else if (typeof req.body?.text === 'string') {
@@ -39,6 +71,11 @@ async function importKeywordsFile(req, db, logger) {
     }
   } finally {
     if (req.file?.path) fs.unlink(req.file.path, () => {}); // best-effort temp-file cleanup
+  }
+
+  if (binaryUpload) {
+    // Distinct from the empty case: the file had content, but it wasn't text.
+    return { code: 400, message: "This file doesn't look like a text or CSV keyword list. Please upload a plain .txt or .csv file with one keyword per line." };
   }
 
   if (!items.length) {

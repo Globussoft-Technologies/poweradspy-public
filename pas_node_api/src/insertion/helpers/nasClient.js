@@ -255,4 +255,4 @@ function resolveMediaUrl(storedPath) {
   return joinUrl(base, resolved);
 }
 
-module.exports = { storeInNas, resolveMediaUrl, DEFAULT_IMAGE, TYPE_SUBFOLDER };
+module.exports = { storeInNas, resolveMediaUrl, resolveBucket, DEFAULT_IMAGE, TYPE_SUBFOLDER };

@@ -1,5 +1,7 @@
 'use strict';
 
+const { resolveBucket } = require('../../../insertion/helpers/nasClient');
+
 const QR_INDEX = process.env.QR_ELASTIC_INDEX || 'quora_search_mix';
 
 // Video URL for a Quora ad lives in the variants row; the top-level
@@ -10,9 +12,13 @@ const ID_FIELD = 'quora_ad.id';
 /**
  * GET /api/v1/quora/ads/get-ad-url
  *
- * Returns the video URL + ad id of the latest Quora VIDEO ads whose
- * `new_nas_image_url` is still the placeholder "/DefaultImage.jpg"
- * (i.e. the video has not been streamed to NAS yet).
+ * Returns the video URL + ad id of the latest Quora VIDEO ads that do NOT yet have
+ * a correct thumbnail — i.e. their `new_nas_image_url` is not a NAS thumbnail path
+ * of the form "/<bucket>/stream/quora/thumbnail/...". Ads whose new_nas_image_url
+ * looks like that already have a correct thumbnail (uploaded via update-nas-image)
+ * and are excluded; everything else ("/DefaultImage.jpg" or any other value) is
+ * returned for processing. <bucket> is resolved dynamically (pas-dev in dev,
+ * pas-prod in production) via the same resolveBucket() that storeInNas uses.
  *
  * Query params:
  *   - limit: number of ads to return (default 1)
@@ -27,6 +33,12 @@ async function getLatestVideoAdUrls(req, db, logger) {
   if (!Number.isFinite(limit) || limit < 1) limit = 1;
   if (limit > 500) limit = 500;
 
+  // A correct thumbnail lives at "/<bucket>/stream/quora/thumbnail/...". Resolve the
+  // bucket the same way storeInNas does (pas-dev in dev, pas-prod in production) so the
+  // exclude pattern matches exactly where update-nas-image writes the file.
+  const bucket = resolveBucket();
+  const correctThumbGlob = `*/${bucket}/stream/quora/thumbnail/*`;
+
   const esParams = {
     index: db.elastic.indexName || QR_INDEX,
     body: {
@@ -37,7 +49,12 @@ async function getLatestVideoAdUrls(req, db, logger) {
         bool: {
           filter: [
             { term: { 'quora_ad.type.keyword': 'VIDEO' } },
-            { term: { 'new_nas_image_url.keyword': '/DefaultImage.jpg' } },
+          ],
+          // Exclude ads that already have a correct thumbnail (new_nas_image_url points
+          // at the bucket's thumbnail path). Everything else — "/DefaultImage.jpg", any
+          // other placeholder/legacy value, or a missing field — is returned.
+          must_not: [
+            { wildcard: { 'new_nas_image_url.keyword': correctThumbGlob } },
           ],
         },
       },
