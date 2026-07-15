@@ -68,6 +68,9 @@ import fnLeadpages from "../../assets/funnels/leadpages.png";
 import fnOptimizepress from "../../assets/funnels/optimizepress.png";
 import fnSamcart from "../../assets/funnels/samcart.png";
 import fnWishpond from "../../assets/funnels/wishpond.png";
+import fnFgFunnel from "../../assets/funnels/fgfunnel.webp";
+import fnFlexi from "../../assets/funnels/flexi.png";
+import fnWebflow from "../../assets/funnels/webflow.png";
 
 const FUNNEL_IMGS = {
   'builderall': fnBuilderall,
@@ -84,6 +87,9 @@ const FUNNEL_IMGS = {
   'optimizepress': fnOptimizepress,
   'samcart': fnSamcart,
   'wishpond': fnWishpond,
+  'fgfunnel': fnFgFunnel,
+  'flexi': fnFlexi,
+  'webflow': fnWebflow,
 };
 
 import afAwin from "../../assets/afiliate_network/awin.png";
@@ -356,6 +362,29 @@ function getAspectStyle(platform, position, adAspectRatio) {
   if (r === "auto") return {};
   return { aspectRatio: r.replace(":", "/") };
 }
+
+// ISO code → full language name (e.g. "id" → "Indonesian", "sv" → "Swedish").
+// Guard: Chromium's ICU canonicalizes ANY input as a BCP 47 tag, so passing a
+// full name like "Ido"/"Twi" comes back as its 2-letter tag ("io"/"tw") — a
+// *shorter* result. Only accept the ICU output when it's actually *longer*
+// than the input (i.e. an expansion, not a canonicalization); otherwise
+// return the input unchanged (capitalized) so full names survive intact.
+const formatLanguage = (raw) => {
+  const s = (raw == null ? '' : String(raw)).trim();
+  if (!s) return '—';
+  try {
+    const names = new Intl.DisplayNames(['en'], { type: 'language' });
+    const name = names.of(s);
+    if (
+      name &&
+      name.toLowerCase() !== s.toLowerCase() &&
+      name.length > s.length
+    ) {
+      return name;
+    }
+  } catch {}
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
 
 // Render multi-value source fields (e.g. ["android","desktop"]) as a readable,
 // comma-separated list instead of React's default concatenation ("androiddesktop").
@@ -1368,7 +1397,7 @@ const AnalyticsModal = ({
         },
         {
           label: "AD LANGUAGE",
-          value: tt.language || d.language || d.lang || "—",
+          value: formatLanguage(tt.language || d.language || d.lang),
           icon: Globe,
           color: "text-[#6b99ff]",
         },
@@ -1458,7 +1487,7 @@ const AnalyticsModal = ({
       }]),
       {
         label: "AD LANGUAGE",
-        value: d.language || d.lang || d.adLanguage || d.ad_language || "—",
+        value: formatLanguage(d.language || d.lang || d.adLanguage || d.ad_language),
         icon: Globe,
         color: "text-[#6b99ff]",
       },
@@ -1802,7 +1831,7 @@ const AnalyticsModal = ({
                 const afRaw = d.affiliate_data || ad?.affiliateData;
                 const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
                 const afLogos = afList.map(name => {
-                  const src = AFFILIATE_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                  const src = AFFILIATE_IMGS[name.toLowerCase().replace(/[\s_]+/g, '')];
                   return src ? { key: `af_${name}`, src, title: name } : null;
                 }).filter(Boolean);
 

@@ -81,6 +81,9 @@ import fnLeadpages from "../../assets/funnels/leadpages.png";
 import fnOptimizepress from "../../assets/funnels/optimizepress.png";
 import fnSamcart from "../../assets/funnels/samcart.png";
 import fnWishpond from "../../assets/funnels/wishpond.png";
+import fnFgFunnel from "../../assets/funnels/fgfunnel.webp";
+import fnFlexi from "../../assets/funnels/flexi.png";
+import fnWebflow from "../../assets/funnels/webflow.png";
 import afAwin from "../../assets/afiliate_network/awin.png";
 import afCj from "../../assets/afiliate_network/cj.png";
 import afClickbank from "../../assets/afiliate_network/ClickBank.png";
@@ -121,6 +124,7 @@ const DM_FN_IMGS = {
   'kajabi': fnKajabi, 'kartra': fnKartra, 'keap': fnKeap, 'landingi': fnLandingi,
   'leadpages': fnLeadpages, 'optimizepress': fnOptimizepress, 'samcart': fnSamcart,
   'wishpond': fnWishpond,
+  'fgfunnel': fnFgFunnel, 'flexi': fnFlexi, 'webflow': fnWebflow,
 };
 const DM_AF_IMGS = {
   'awin': afAwin,
@@ -1714,7 +1718,7 @@ const AdDetailModal = ({
               const afRaw = ad.affiliateData;
               const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
               const afLogos = afList.map(name => {
-                const src = DM_AF_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                const src = DM_AF_IMGS[name.toLowerCase().replace(/[\s_]+/g, '')];
                 return src ? { key: `af_${name}`, src, title: name } : null;
               }).filter(Boolean);
               const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];

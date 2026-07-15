@@ -30,7 +30,6 @@ import SystemInfo from "../pages/user/SystemInfo";
 import NasStorage from "../pages/user/NasStorage";
 import InfraStorage from "../pages/user/InfraStorage";
 import CompetitorDetails from "../components/Pas/CompetitorDetails"
-import DailyKeywordDetails from "../components/Pas/DailyKeywordDetails"
 import Calculator from "../components/Calculator"
 import EmailDetails from "../components/Pas/EmailDetails"
 import CompetitorTracker from "../components/Pas/CompetitorTracker"
@@ -54,7 +53,6 @@ export const routes = createBrowserRouter(
       <Route path="/pas" element={<AuthCheck><Layout /></AuthCheck>}>
         <Route index element={<AuthCheck><PasDashboard /></AuthCheck>} />
         <Route path="competitor-details" element={<AuthCheck><CompetitorDetails /></AuthCheck>} />
-        <Route path="daily-keyword-details" element={<AuthCheck><DailyKeywordDetails /></AuthCheck>} />
         <Route path="email-details" element={<AuthCheck><EmailDetails /></AuthCheck>} />
         <Route path="competitor-tracker" element={<AuthCheck><CompetitorTracker /></AuthCheck>} />
         <Route path="search-intelligence" element={<AuthCheck><SearchIntelligence /></AuthCheck>} />
