@@ -923,7 +923,7 @@ const AdDetailModal = ({
           </div>
 
           {/* Right: Details - Added pt-12 to prevent cross overlap with heart button */}
-          <div className="md:w-1/2 overflow-y-auto p-5 pt-12 space-y-4">
+          <div className="md:w-1/2 overflow-y-auto overflow-x-hidden p-5 pt-12 space-y-4">
             {/* Advertiser header */}
             <div className="flex items-center gap-1 pr-0">
               {/* <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]' : 'bg-white/20'}`} /> */}
