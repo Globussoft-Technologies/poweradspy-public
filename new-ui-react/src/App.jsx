@@ -25,6 +25,9 @@ import {
 } from "./services/api";
 import { useGuest } from "./hooks/useGuest";
 import { GuestProvider } from "./hooks/useGuest";
+import { planAiSearch } from "./services/aiSearchService";
+import { mapArgsToFilters } from "./services/aiSearchMapper";
+import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
 import { Check, X } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -1279,6 +1282,15 @@ const App = () => {
     dispatch(setPreviewMode(val));
   };
 
+  // ── AI Search ────────────────────────────────────────────────────────────
+  // Health-gated toggle: only offered while the DS upstream is reachable, and
+  // never to restricted guests.
+  const { available: aiSearchAvailable, checked: aiSearchChecked } = useAiSearchHealth({
+    enabled: isAuthenticated && !guest?.isRestricted,
+  });
+  const [aiSearchLoading, setAiSearchLoading] = useState(false);
+  const aiRunIdRef = useRef(0);
+
   const handleSearch = useCallback((query, type, platform) => {
     if (guest?.isPublicLanding && guest?.isRestricted) {
       guest.showGuestWarning("Please login to search");
@@ -1307,6 +1319,115 @@ const App = () => {
       lastDailyKeywordRef.current = { query, si, userEmail, network, country };
     }
   }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
+
+  // Orchestrates AI search: prompt → DS plan → try each fallback payload
+  // (most-specific first) until one returns results → commit that tier's filters
+  // to state so the normal reactive pipeline renders it (pagination included).
+  // The applied filters remain fully visible and manually editable afterward.
+  const runAiSearch = useCallback(async (prompt) => {
+    const trimmed = (prompt || '').trim();
+    if (!trimmed) return;
+    if (guestGuard("Please login to search", { searchQuery: trimmed })) return;
+
+    const runId = ++aiRunIdRef.current;
+    setAiSearchLoading(true);
+
+    // Build a fetchAds param set from a mapped payload (mirrors loadAds' _searchParams).
+    const buildProbeParams = (mapped) => ({
+      ...mapped.filterValues,
+      searchQuery: mapped.searchQuery,
+      searchIn: mapped.searchIn || 'keyword',
+      exactSearch: false,
+      sortBy: mapped.sortBy || sdui.sortBy,
+      activePlatforms: mapped.activePlatforms.length
+        ? mapped.activePlatforms
+        : (sdui.activePlatforms?.length ? sdui.activePlatforms : ['facebook']),
+      activePlatform: mapped.activePlatforms[0] || sdui.activePlatforms?.[0] || 'facebook',
+      skip: 0,
+      filterPlatformSupport: sdui.filterPlatformSupport,
+    });
+
+    const totalFromData = (data) => {
+      const t = data?.meta?.total;
+      if (typeof t === 'number') return t;
+      if (t && typeof t === 'object') return Object.values(t).reduce((a, b) => a + (Number(b) || 0), 0);
+      return data?.ads?.length || 0;
+    };
+
+    // Commit a mapped payload to app state; the debounced loadAds effect refetches.
+    // setAllFilters replaces the whole filter map, clearing any stale manual filters.
+    const commit = (mapped) => {
+      sdui.setAllFilters?.(mapped.filterValues || {});
+      if (mapped.activePlatforms?.length) {
+        sdui.setActivePlatforms?.(mapped.activePlatforms);
+        dispatch(setSpecificPlatforms(mapped.activePlatforms));
+      }
+      if (mapped.sortBy && sdui.setSortBy) sdui.setSortBy(mapped.sortBy);
+      dispatch(setExactSearch(false));
+      if (mapped.searchIn) dispatch(setSearchIn(mapped.searchIn));
+      dispatch(setSearchQuery(mapped.searchQuery || ''));
+      setSearchTrigger((prev) => prev + 1);
+    };
+
+    try {
+      const { payloads } = await planAiSearch(trimmed);
+      if (runId !== aiRunIdRef.current) return; // superseded by a newer AI search
+      if (!Array.isArray(payloads) || payloads.length === 0) {
+        showToast("AI couldn't interpret that prompt. Try rephrasing.", "error");
+        return;
+      }
+
+      let matchedIndex = -1;
+      let matchedMapped = null;
+      // Probe each tier in order; stop at the first that returns results.
+      for (let i = 0; i < payloads.length; i++) {
+        const mapped = mapArgsToFilters(payloads[i]?.args || {}, sdui.config);
+        let data = null;
+        try {
+          data = await fetchAds(buildProbeParams(mapped), {});
+        } catch {
+          continue; // probe failure → treat as no results, fall through to next tier
+        }
+        if (runId !== aiRunIdRef.current) return; // superseded mid-probe
+        if (totalFromData(data) > 0) { matchedIndex = i; matchedMapped = mapped; break; }
+      }
+
+      if (matchedIndex === -1) {
+        // No tier had results — commit the initial tier so the user still sees its
+        // filters + the normal empty state.
+        matchedIndex = 0;
+        matchedMapped = mapArgsToFilters(payloads[0]?.args || {}, sdui.config);
+      }
+
+      commit(matchedMapped);
+
+      if (matchedIndex > 0) showToast("Broadened your search to find results", "success");
+      if (matchedMapped.unmapped?.length) {
+        console.debug('[ai-search] dropped unmapped filters:', matchedMapped.unmapped);
+      }
+    } catch (err) {
+      if (runId !== aiRunIdRef.current) return;
+      const msg = /unauthor/i.test(err?.message || '')
+        ? 'Please login to search'
+        : 'AI search failed. Please try again.';
+      showToast(msg, "error");
+    } finally {
+      if (runId === aiRunIdRef.current) setAiSearchLoading(false);
+    }
+  }, [guestGuard, dispatch, sdui, showToast]);
+
+  // Explicitly turning the AI toggle OFF abandons the AI search: clear the
+  // AI-applied query + filters so nothing lingers on screen or gets restored on
+  // refresh (the committed search otherwise persists via localStorage + history
+  // snapshot, same as a manual search). This is distinct from merely flipping the
+  // input mode, and from the auto-reset when the upstream goes unhealthy (which
+  // keeps results — a failed health probe isn't a "leave AI search" intent).
+  const exitAiSearch = useCallback(() => {
+    dispatch(setSearchQuery(''));
+    dispatch(setExactSearch(false));
+    sdui.clearAll?.();
+    setSearchTrigger((prev) => prev + 1);
+  }, [dispatch, sdui]);
 
   // Recent Activity ("Today / Yesterday / Last Week / Last Month") click on the
   // competitor analytics table → land on the ads library searching that
@@ -1566,6 +1687,11 @@ const App = () => {
         setIsSidebarOpen={(val) => dispatch(setSidebarOpen(val))}
         committedQuery={ui.searchQuery}
         onSearch={handleSearch}
+        onAiSearch={runAiSearch}
+        onExitAiSearch={exitAiSearch}
+        aiSearchAvailable={aiSearchAvailable}
+        aiSearchChecked={aiSearchChecked}
+        aiSearchLoading={aiSearchLoading}
         searchIn={ui.searchIn}
         setSearchIn={guestSetSearchIn}
         searchQuery={ui.searchQuery}

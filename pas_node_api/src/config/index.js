@@ -419,6 +419,25 @@ const config = {
     })(),
   },
 
+  // AI Search — prompt → filter-payload planning proxy (fronts the DS service).
+  // Additive + gated: when disabled, the router is never mounted (app.js) and the
+  // frontend hides the toggle. allowedUserIds: same contract as intelligence.
+  aiSearch: {
+    enabled: getVal(fileConfig.aiSearch?.enabled, 'AI_SEARCH_ENABLED', toBool) === true,
+    baseUrl: getVal(fileConfig.aiSearch?.baseUrl, 'AI_SEARCH_BASE_URL') || '',
+    timeoutMs: getVal(fileConfig.aiSearch?.timeoutMs, 'AI_SEARCH_TIMEOUT_MS', toInt) || 15000,
+    healthCacheMs: getVal(fileConfig.aiSearch?.healthCacheMs, 'AI_SEARCH_HEALTH_CACHE_MS', toInt) ?? 15000,
+    rateLimitWindowMs: getVal(fileConfig.aiSearch?.rateLimitWindowMs, 'AI_SEARCH_RATE_LIMIT_WINDOW_MS', toInt) || 60000,
+    rateLimitMax: getVal(fileConfig.aiSearch?.rateLimitMax, 'AI_SEARCH_RATE_LIMIT_MAX', toInt) || 20,
+    maxPromptLen: getVal(fileConfig.aiSearch?.maxPromptLen, 'AI_SEARCH_MAX_PROMPT_LEN', toInt) || 2000,
+    allowedUserIds: (() => {
+      const raw = getVal(fileConfig.aiSearch?.allowedUserIds, 'AI_SEARCH_ALLOWED_USER_IDS');
+      if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return [];
+    })(),
+  },
+
   sendgrid: {
     enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
     apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),

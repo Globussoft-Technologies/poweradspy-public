@@ -19,6 +19,8 @@ import {
   Bell,
   Globe,
   ArrowLeftRight,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { createDashboardShare, buildSearchPayload, trackEvent } from "../../services/api";
@@ -120,11 +122,35 @@ const Header = ({
   showOnlyFavourites = false,
   onShowFavourites,
   onSearch,
+  onAiSearch,
+  onExitAiSearch,
+  aiSearchAvailable = false,
+  aiSearchChecked = false,
+  aiSearchLoading = false,
 }) => {
   const { config } = sdui;
   const { user, logout } = useAuth();
   const { t, i18n } = useTranslation();
   const [searchTypeOpen, setSearchTypeOpen] = useState(false);
+  // AI search mode — free-form prompt instead of keyword/advertiser/domain.
+  // Persisted to sessionStorage so it survives the full page reload the English
+  // language switch performs (Google Translate reset), matching the no-reload
+  // behaviour of the other languages.
+  const [aiMode, setAiMode] = useState(() => {
+    try { return sessionStorage.getItem("ai_search_mode") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try {
+      if (aiMode) sessionStorage.setItem("ai_search_mode", "1");
+      else sessionStorage.removeItem("ai_search_mode");
+    } catch { /* storage unavailable — non-fatal */ }
+  }, [aiMode]);
+  // Drop AI mode only once a health check has COMPLETED and reports unavailable —
+  // never during the initial "not checked yet" window, or a restored aiMode would
+  // be wiped on every reload before the first poll returns.
+  useEffect(() => {
+    if (aiSearchChecked && !aiSearchAvailable && aiMode) setAiMode(false);
+  }, [aiSearchChecked, aiSearchAvailable, aiMode]);
   const [shareCopied, setShareCopied] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
@@ -486,8 +512,8 @@ const Header = ({
               </button>
             )}
 
-            <div className="flex-1 relative flex items-center gap-0 bg-theme-text/[0.04] border border-white/20 rounded-lg focus-within:border-[#6b99ff]/50 transition-all text-white">
-              {searchTypeDoc?.visible !== false && (
+            <div className={`flex-1 relative flex items-center gap-0 bg-theme-text/[0.04] border rounded-lg transition-all text-white ${aiMode ? "border-[#6b99ff] ring-2 ring-[#6b99ff]/60 shadow-[0_0_18px_rgba(107,153,255,0.45)]" : "border-white/20 focus-within:border-[#6b99ff]/50"}`}>
+              {!aiMode && searchTypeDoc?.visible !== false && (
                 <div
                   className="relative group/si border-r border-theme-border"
                   ref={searchTypeRef}
@@ -523,39 +549,87 @@ const Header = ({
                 </div>
               )}
 
+              {aiMode && (
+                <span className="notranslate flex items-center gap-1 pl-3 pr-1 text-[#6b99ff] shrink-0">
+                  <Sparkles size={15} />
+                </span>
+              )}
               <div className="flex-1">
                 <AutocompleteFilter
                   placeholder={
-                    searchFilter?.placeholder ||
-                    t("search_placeholder")
+                    aiMode
+                      ? t(
+                          "ai_search_placeholder",
+                          "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US"
+                        )
+                      : (searchFilter?.placeholder || t("search_placeholder"))
                   }
                   value={localQuery}
                   onChange={(val) => {
                     setLocalQuery(val);
                     if (val === "") {
-                      if (onSearch) onSearch("", localSearchIn);
+                      if (!aiMode && onSearch) onSearch("", localSearchIn);
                     }
                   }}
                   onClear={() => {
-                    if (onSearch) onSearch("", localSearchIn);
+                    if (!aiMode && onSearch) onSearch("", localSearchIn);
                   }}
                   onSearch={(val) => {
-                    if (onSearch) onSearch(val, localSearchIn);
+                    if (aiMode) {
+                      if (onAiSearch) onAiSearch(val);
+                    } else if (onSearch) {
+                      onSearch(val, localSearchIn);
+                    }
                   }}
+                  // AI mode takes a free-form prompt — keyword/category suggestions
+                  // don't apply, so suppress them.
                   suggestionSources={
-                    searchFilter?.suggestion_sources?.length > 0
-                      ? searchFilter.suggestion_sources
-                      : defaultSuggestionSources
+                    aiMode
+                      ? []
+                      : (searchFilter?.suggestion_sources?.length > 0
+                          ? searchFilter.suggestion_sources
+                          : defaultSuggestionSources)
                   }
                   debounceMs={searchFilter?.debounce_ms || 300}
                   minLength={searchFilter?.min_length || 3}
-                  onSelectCategory={handleCategorySelect}
+                  onSelectCategory={aiMode ? undefined : handleCategorySelect}
                   minimal={true}
                 />
               </div>
+
+              {aiSearchAvailable && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !aiMode;
+                    setAiMode(next);
+                    // Turning OFF is an explicit "leave AI search" → clear the
+                    // visible prompt and abandon the AI-applied query + filters.
+                    if (!next) {
+                      setLocalQuery("");
+                      onExitAiSearch?.();
+                    }
+                  }}
+                  disabled={aiSearchLoading}
+                  title={aiMode ? t("ai_search_off", "Switch to normal search") : t("ai_search_on", "Search with AI")}
+                  aria-pressed={aiMode}
+                  className={`notranslate flex items-center gap-1 px-2.5 py-2.5 mr-1 rounded-md text-xs 2xl:text-[13px] font-bold whitespace-nowrap transition-colors ${
+                    aiMode
+                      ? "text-[#6b99ff]"
+                      : "text-theme-text-muted hover:text-[#6b99ff] hover:bg-theme-text/[0.04]"
+                  } ${aiSearchLoading ? "opacity-70 cursor-wait" : ""}`}
+                >
+                  {aiSearchLoading ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Sparkles size={16} />
+                  )}
+                  <span className="hidden sm:inline">{t("ai_search_label", "AI")}</span>
+                </button>
+              )}
             </div>
 
-            {localQuery.trim().length > 0 && localSearchIn === "keyword" && (
+            {!aiMode && localQuery.trim().length > 0 && localSearchIn === "keyword" && (
               <label
                 className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
                 title={t("search_precisely_tooltip")}

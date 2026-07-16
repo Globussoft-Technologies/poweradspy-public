@@ -2142,6 +2142,43 @@ export const createShareLink = async ({ adId, network }) => {
   return { token: json.token, expiresAt: json.expires_at };
 };
 
+// Network → the ad-id field name the backend expects (mirrors useAdInsights).
+const AD_COUNTRY_ID_FIELD = {
+  facebook: 'facebook_ad_id',
+  instagram: 'instagram_ad_id',
+  youtube: 'youtube_ad_id',
+  google: 'google_text_ad_id',
+  gdn: 'gdn_ad_id',
+  native: 'native_ad_id',
+  linkedin: 'linkedin_ad_id',
+  reddit: 'reddit_ad_id',
+  quora: 'quora_ad_id',
+  pinterest: 'pinterest_ad_id',
+  tiktok: 'tiktok_ad_id',
+};
+
+/**
+ * Ad-level country reach — the single `country` insight, without the full
+ * getAdInsights SSE stream. Used by the Ad Details popup (first country + "N more").
+ * Returns [{ country, iso }] (empty array when the ad has no stored country data).
+ */
+export const getAdCountry = async ({ adId, network = 'facebook' }) => {
+  const net = (network || 'facebook').toLowerCase();
+  const idField = AD_COUNTRY_ID_FIELD[net] || 'facebook_ad_id';
+  const res = await fetch(`${PAS_API_BASE}/api/v1/common/ads/ad-country`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+    },
+    body: JSON.stringify({ network: net, [idField]: adId }),
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getAdCountry failed: ${res.status}`);
+  const json = await res.json();
+  return Array.isArray(json?.data) ? json.data : [];
+};
+
 /**
  * Fetches a shared ad by its share token.
  * Public endpoint — no auth required.

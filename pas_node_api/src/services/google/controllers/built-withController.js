@@ -121,22 +121,23 @@ async function updateBuiltWith(req, db, logger) {
             body: { query: { match: { id: Number(adId) } }, size: 1 },
           });
           const hits = search?.hits?.hits || search?.body?.hits?.hits || [];
-          if (hits.length > 0) {
-            await db.elastic.update({
-              index,
-              type: 'doc',
-              id: hits[0]._id,
-              body: {
-                doc: {
-                  built_with,
-                  built_with_analytics_tracking,
-                  built_with_analytics_tracking_exact: built_with_analytics_tracking,
-                  affiliate_data,
-                  affiliate_data_exact: affiliate_data,
-                },
-              },
-            });
+          if (hits.length === 0) {
+            return { code: 400, message: 'ad not found' };
           }
+          await db.elastic.update({
+            index,
+            type: 'doc',
+            id: hits[0]._id,
+            body: {
+              doc: {
+                built_with,
+                built_with_analytics_tracking,
+                built_with_analytics_tracking_exact: built_with_analytics_tracking,
+                affiliate_data,
+                affiliate_data_exact: affiliate_data,
+              },
+            },
+          });
         } catch (esErr) {
           logger.warn('google ES overlay failed in updateBuiltWith', { error: esErr.message });
         }

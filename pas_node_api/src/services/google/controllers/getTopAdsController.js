@@ -3,6 +3,7 @@
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { resolveLongestTokens } = require('../helpers/landerTokenResolver');
 
 const AD_DETAIL_SELECT = `
     google_text_ad.id                                       AS id,
@@ -83,11 +84,22 @@ async function getTopAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: p.post_date_btn_sort[0], upper_date: p.post_date_btn_sort[1] });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) builder.setDomainDate({ lower_date: p.domain_date_btn_sort[0], upper_date: p.domain_date_btn_sort[1] });
 
-  // Lander properties — v2 clean keyword fields → term-match raw values directly.
-  if (p.ecommerce)       builder.setBuiltWith(ensureArray(p.ecommerce));
+  // Lander properties. `built_with`/`built_with_analytics_tracking` still sit on
+  // the legacy edge_ngram/multi-stemmer `custom_analyzer` (never migrated to the
+  // clean keyword mapping the rest of v2 uses), so raw filter values need to be
+  // resolved to their true indexed token first — see adSearchController.js for
+  // the full explanation. Other lander fields are on the clean keyword mapping
+  // and need no resolution.
+  if (p.ecommerce) {
+    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with', ensureArray(p.ecommerce), logger);
+    if (tokens.length) builder.setBuiltWith(tokens);
+  }
   if (p.track)           builder.setTrack(ensureArray(p.track));
   if (p.source)          builder.setSource(ensureArray(p.source));
-  if (p.funnel)          builder.setFunnel(ensureArray(p.funnel));
+  if (p.funnel) {
+    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with_analytics_tracking', ensureArray(p.funnel), logger);
+    if (tokens.length) builder.setFunnel(tokens);
+  }
   if (p.affiliate)       builder.setAffiliate(ensureArray(p.affiliate));
   if (p.market_platform) builder.setMarketPlatform(ensureArray(p.market_platform));
 

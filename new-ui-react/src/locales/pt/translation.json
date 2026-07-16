@@ -36,5 +36,9 @@
   "filter_by_ad_type": "Filtrar por tipo de anúncio",
   "sort_by": "Ordenar por",
   "clear": "Limpar",
-  "search_placeholder": "Buscar por palavra-chave, anunciante ou domínio..."
+  "search_placeholder": "Buscar por palavra-chave, anunciante ou domínio...",
+  "ai_search_label": "IA",
+  "ai_search_on": "Pesquisar com IA",
+  "ai_search_off": "Voltar à pesquisa normal",
+  "ai_search_placeholder": "Descreva o que você procura — ex.: anúncios em vídeo no Facebook para emagrecimento nos EUA"
 }

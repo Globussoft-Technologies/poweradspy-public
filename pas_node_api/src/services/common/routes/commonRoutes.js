@@ -17,6 +17,7 @@ const { getAdInsights: liAdInsights } = require('../controllers/linkedinCommonIn
 const { getAdInsights: redAdInsights } = require('../controllers/redditCommonInsightsController');
 const { getAdInsights: qrAdInsights } = require('../controllers/quoraCommonInsightsController');
 const { getAdInsights: ttAdInsights } = require('../controllers/tiktokCommonInsightsController');
+const { getAdCountry } = require('../controllers/adCountryController');
 const { createShareLink, getSharedAd } = require('../controllers/shareAdController');
 const { syncCategory, syncAllCategories } = require('../controllers/categoryController');
 const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta } = require('../controllers/addCategoryController');
@@ -159,6 +160,23 @@ router.post(
 
     return res.status(400).json({ code: 400, message: `Unsupported network: ${network}. Available: ${availableNetworks}` });
   })
+);
+
+// GET/POST /api/v1/common/ads/ad-country?network=<net>&<net>_ad_id=<id>
+// Lightweight ad-level country lookup — the single `country` fetcher the
+// getAdInsights SSE stream runs, without the other ~8 insights. Used by the Ad
+// Details popup to show the first country + "N more". Returns { code, data:[{country,iso}] }.
+router.post(
+  '/ads/ad-country',
+  authMiddleware,
+  planAccessMiddleware,
+  asyncHandler(getAdCountry)
+);
+router.get(
+  '/ads/ad-country',
+  authMiddleware,
+  planAccessMiddleware,
+  asyncHandler(getAdCountry)
 );
 
 // POST /api/v1/common/dashboard/share — Create a shareable dashboard snapshot (auth required)

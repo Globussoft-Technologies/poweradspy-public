@@ -109,6 +109,14 @@ async function createApp() {
     log.info('✓ Market Trends mounted at /api/v1/intelligence');
   }
 
+  // AI Search (single-file, additive). Entirely behind AI_SEARCH_ENABLED — when
+  // off, the module is never even required, so it has zero footprint. Proxies the
+  // DS payload-planning service behind our JWT + per-user rate limit.
+  if (config.aiSearch?.enabled) {
+    app.use('/api/v1/ai-search', require('./services/aiSearch'));
+    log.info('✓ AI Search mounted at /api/v1/ai-search');
+  }
+
   // Email service — unsubscribe / resubscribe (public; aMember + SendGrid global suppression)
   app.use('/api/v1/email', require('./services/email/routes/emailRoutes'));
 

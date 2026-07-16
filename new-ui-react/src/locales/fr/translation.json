@@ -36,5 +36,9 @@
   "filter_by_ad_type": "Filtrer par type d'annonce",
   "sort_by": "Trier par",
   "clear": "Effacer",
-  "search_placeholder": "Rechercher par mot-clé, annonceur ou domaine..."
+  "search_placeholder": "Rechercher par mot-clé, annonceur ou domaine...",
+  "ai_search_label": "IA",
+  "ai_search_on": "Rechercher avec l'IA",
+  "ai_search_off": "Revenir à la recherche normale",
+  "ai_search_placeholder": "Décrivez ce que vous cherchez — ex. : publicités vidéo Facebook pour la perte de poids aux États-Unis"
 }

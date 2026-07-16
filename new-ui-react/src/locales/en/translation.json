@@ -37,5 +37,9 @@
   "filter_by_ad_type": "Filter by Ad Type",
   "sort_by": "Sort by",
   "clear": "Clear",
-  "search_placeholder": "Search keyword, advertiser, or domain..."
+  "search_placeholder": "Search keyword, advertiser, or domain...",
+  "ai_search_label": "AI",
+  "ai_search_on": "Search with AI",
+  "ai_search_off": "Switch to normal search",
+  "ai_search_placeholder": "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US"
 }

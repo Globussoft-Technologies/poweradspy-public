@@ -21,6 +21,7 @@ import {
   Search,
   Type,
   Globe,
+  MapPin,
   Calendar,
   Tag,
   Copy,
@@ -33,8 +34,9 @@ import {
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import OriginalPreview from "./OriginalPreview";
 import PlatformBadgesRow from "../shared/PlatformBadgesRow";
-import { createShareLink, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent } from "../../services/api";
+import { createShareLink, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent, getAdCountry } from "../../services/api";
 import { downloadAdAsPdf } from "../../services/adPdf";
+import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 
 import fbIcon from "../../assets/fb.png";
 import igIcon from "../../assets/ig.png";
@@ -476,6 +478,49 @@ const AdDetailModal = ({
     () => getVideoEmbedUrl(ad?.adUrl),
     [ad?.adUrl],
   );
+
+  // Ad-level country reach — the same data the AnalyticsModal shows under
+  // "Country Reach" (AD LEVEL). AdDetailModal has no room for the full list, so
+  // we surface the first country plus a "+N more" affordance. Fetched via the
+  // lightweight /ads/ad-country endpoint (the single `country` insight rather
+  // than the full getAdInsights SSE stream). The endpoint returns a uniform
+  // [{ country, iso }] for every network, TikTok included.
+  const [adCountryRaw, setAdCountryRaw] = useState([]);
+  const countryAdKey = ad?.adId || ad?.id;
+  useEffect(() => {
+    if (!countryAdKey) {
+      setAdCountryRaw([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setAdCountryRaw([]);
+    getAdCountry({ adId: countryAdKey, network: ad?.network })
+      .then((rows) => { if (!cancelled) setAdCountryRaw(rows); })
+      .catch(() => { if (!cancelled) setAdCountryRaw([]); });
+    return () => { cancelled = true; };
+  }, [countryAdKey, ad?.network]);
+
+  const adCountryNames = useMemo(() => {
+    if (!Array.isArray(adCountryRaw) || adCountryRaw.length === 0) return [];
+    const seen = new Set();
+    const names = [];
+    for (const item of adCountryRaw) {
+      const nameUpper = (item.country || "").toUpperCase();
+      const iso = (item.iso || NAME_TO_ISO[nameUpper] || "").toUpperCase();
+      if (!iso && nameUpper === "ALL") {
+        if (!seen.has("ALL")) {
+          seen.add("ALL");
+          names.push("Worldwide");
+        }
+        continue;
+      }
+      const key = iso || nameUpper;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      names.push(iso ? COUNTRY_NAMES[iso] || item.country || iso : item.country);
+    }
+    return names;
+  }, [adCountryRaw]);
 
   if (!ad) return null;
 
@@ -1667,6 +1712,41 @@ const AdDetailModal = ({
         </span>
       </>
     )}
+
+  {adCountryNames.length > 0 && (
+    <>
+      <span
+        className="text-[9px] font-bold uppercase"
+        style={{
+          color: "var(--color-text-secondary)",
+          letterSpacing: "0.12em",
+        }}
+      >
+        Countries
+      </span>
+
+      <span
+        className="font-semibold text-[11px] flex items-center gap-1 min-w-0"
+        style={{ color: "var(--color-text-secondary)" }}
+      >
+        <MapPin size={10} className="shrink-0" />
+        <span className="truncate">{adCountryNames[0]}</span>
+        {adCountryNames.length > 1 && (
+          <span className="relative group shrink-0">
+            <span className="text-[#6b99ff] font-bold cursor-default whitespace-nowrap">
+              +{adCountryNames.length - 1} more
+            </span>
+            {/* Full list on hover */}
+            <span className="absolute bottom-full right-0 mb-1.5 hidden group-hover:block z-50 pointer-events-none">
+              <span className="block px-2.5 py-1.5 rounded-lg text-[10px] leading-relaxed text-white bg-slate-800 border border-slate-700 shadow-lg w-max max-w-[220px] max-h-[160px] overflow-y-auto text-left">
+                {adCountryNames.join(", ")}
+              </span>
+            </span>
+          </span>
+        )}
+      </span>
+    </>
+  )}
 </div>
 </div>
             {/* Platform logos row — sits below the details box and above the

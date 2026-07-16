@@ -4,6 +4,7 @@ const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder')
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { resolveLongestTokens } = require('../helpers/landerTokenResolver');
 
 /**
  * Google ad search — mirrors SearchController::getAdsHandlerO.
@@ -267,12 +268,26 @@ async function searchAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: tsToDate(p.post_date_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.post_date_btn_sort[0], '23:59:59') });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) { const tsToDay = ts => new Date(Number(ts) * 1000).toISOString().slice(0, 10); builder.setDomainDate({ lower_date: tsToDay(p.domain_date_btn_sort[1]), upper_date: tsToDay(p.domain_date_btn_sort[0]) }); }
 
-  // Lander properties — v2 fields are clean keyword (lowercase_normalizer), so
-  // term-match the raw values directly (no token resolution needed).
-  if (p.ecommerce)       builder.setBuiltWith(ensureArray(p.ecommerce));
+  // Lander properties. `built_with`/`built_with_analytics_tracking` were NEVER
+  // migrated to the clean keyword mapping the rest of the v2 index uses (still
+  // `text` + the legacy edge_ngram/multi-stemmer `custom_analyzer`) — a raw
+  // `term` match against the filter's display value (e.g. "Convertri") almost
+  // never matches what that analyzer actually indexed (confirmed live: the
+  // analyzer turns "Convertri" into "convertr", not "convertri"). Resolve each
+  // value to its true indexed token first (cheap — cached per value for the
+  // process lifetime) so Ecommerce Platform and Funnel Type filters, alone or
+  // combined, actually match. Other lander fields (affiliate_data, source,
+  // market_platform) ARE on the clean keyword mapping and need no resolution.
+  if (p.ecommerce) {
+    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with', ensureArray(p.ecommerce), logger);
+    if (tokens.length) builder.setBuiltWith(tokens);
+  }
   if (p.track)           builder.setTrack(ensureArray(p.track));
   if (p.source)          builder.setSource(ensureArray(p.source));
-  if (p.funnel)          builder.setFunnel(ensureArray(p.funnel));
+  if (p.funnel) {
+    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with_analytics_tracking', ensureArray(p.funnel), logger);
+    if (tokens.length) builder.setFunnel(tokens);
+  }
   if (p.affiliate)       builder.setAffiliate(ensureArray(p.affiliate));
   if (p.market_platform) builder.setMarketPlatform(ensureArray(p.market_platform));
 
