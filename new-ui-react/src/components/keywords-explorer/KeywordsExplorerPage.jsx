@@ -319,9 +319,9 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
           </button>
         </div>
         {notFound.length > 0 ? (
-          <p className="mb-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs font-medium text-amber-500">
-            {notFound.length} keyword(s) not in PowerAdSpy&apos;s corpus: {notFound.slice(0, 10).join(", ")}
-            {notFound.length > 10 ? "…" : ""}
+          <p className="mb-2 break-words rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs font-medium text-amber-500">
+            No ads found yet for {notFound.length} keyword{notFound.length > 1 ? "s" : ""}: {notFound.slice(0, 10).join(", ")}
+            {notFound.length > 10 ? ", and more" : ""}. Try another keyword — these may not be in our data yet.
           </p>
         ) : null}
 

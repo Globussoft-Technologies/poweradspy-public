@@ -43,7 +43,30 @@ const createGoogleAdversuiteRoutes = require('./adversuite_Api_routes');
 // Intel entitlement (server-side mirror of the FE's canAccessIntel()) on top
 // of plain auth — see requireIntelAccess in middleware/planAccess.js.
 const intelGate = [authMiddleware, planAccessMiddleware, requireIntelAccess];
-const importUploadMw = multer({ dest: require('os').tmpdir() }).single('file');
+// Keyword-import upload guard: accept ONLY .txt/.csv, cap the size, and turn any
+// multer error into a friendly JSON message (never a raw stack/error to the user).
+// An unwanted file type is skipped and flagged (req.invalidFileType) so the
+// controller can return a clear "only .txt/.csv" message instead of parsing junk.
+const ALLOWED_IMPORT_EXT = new Set(['.csv', '.txt']);
+const importUpload = multer({
+  dest: require('os').tmpdir(),
+  limits: { fileSize: 20 * 1024 * 1024, files: 1 }, // 20 MB is far more than any keyword list needs
+  fileFilter: (req, file, cb) => {
+    const ext = require('path').extname(file.originalname || '').toLowerCase();
+    if (ALLOWED_IMPORT_EXT.has(ext)) return cb(null, true);
+    req.invalidFileType = true; // reject without throwing so we can message cleanly
+    return cb(null, false);
+  },
+}).single('file');
+const importUploadMw = (req, res, next) => importUpload(req, res, (err) => {
+  if (err) {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'The file is too large. Please upload a .txt or .csv file under 20 MB.'
+      : "We couldn't read the uploaded file. Please upload a plain .txt or .csv file with one keyword per line.";
+    return res.status(400).json({ code: 400, message });
+  }
+  return next();
+});
 
 const searchSchema = {
   body: {

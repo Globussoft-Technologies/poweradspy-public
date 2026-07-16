@@ -47,8 +47,15 @@ async function importKeywordsFile(req, db, logger) {
   const p = normalizeParams({ ...req.body, ...req.query });
   if (!db.sql) return { code: 503, message: 'SQL connection not available' };
 
+  // Upload middleware flagged a non-.txt/.csv file (PDF/DOCX/XLSX/image/etc.):
+  // reject with a clear message instead of trying to parse it.
+  if (req.invalidFileType) {
+    return { code: 400, message: 'Only .txt or .csv files are supported. Please upload a plain text or CSV file with one keyword per line.' };
+  }
+
   let items = [];
   let binaryUpload = false;
+  let parseFailed = false;
   try {
     if (req.file) {
       // Guard against a binary/garbage file uploaded with a .txt/.csv extension
@@ -69,8 +76,18 @@ async function importKeywordsFile(req, db, logger) {
         .filter(Boolean)
         .map((value) => ({ value }));
     }
+  } catch (e) {
+    // A malformed/unreadable upload can make the CSV stream reject (bad encoding,
+    // read error, weird delimiters, etc.). Treat it as an invalid file → friendly
+    // 400, never let it bubble up as an unhandled 500.
+    parseFailed = true;
+    logger.warn('keyword import parse failed', { error: e.message });
   } finally {
     if (req.file?.path) fs.unlink(req.file.path, () => {}); // best-effort temp-file cleanup
+  }
+
+  if (parseFailed) {
+    return { code: 400, message: "The file couldn't be read as a text or CSV keyword list. Please upload a plain .txt or .csv file with one keyword per line." };
   }
 
   if (binaryUpload) {
@@ -84,7 +101,24 @@ async function importKeywordsFile(req, db, logger) {
     return { code: 400, message: 'Please enter or paste at least one keyword, or upload a .csv/.txt file to explore.' };
   }
 
-  const wanted = [...new Set(items.map((i) => i.value.trim().toLowerCase()).filter(Boolean))];
+  // Accept only real keyword tokens so a "bullshit" upload (random symbols,
+  // single/short stray characters, an entire pasted blob, thousands of lines)
+  // can't match corpus noise, blow up the IN(...) list, or fall through to
+  // `IN ()`. A valid keyword: 3–200 chars and contains at least one letter/digit
+  // — this drops "", spaces, ".", "###", and 1–2 char junk like "c"/"h"/"ab".
+  const MIN_KEYWORD_LENGTH = 3;
+  const MAX_KEYWORDS = 5000;
+  const isValidKeyword = (v) => v.length >= MIN_KEYWORD_LENGTH && v.length <= 200 && /[\p{L}\p{N}]/u.test(v);
+  const cleaned = [...new Set(items.map((i) => String(i.value ?? '').trim().toLowerCase()).filter(isValidKeyword))];
+  const truncated = cleaned.length > MAX_KEYWORDS;
+  const wanted = cleaned.slice(0, MAX_KEYWORDS); // cap so a huge file can't overflow the prepared statement
+
+  if (!wanted.length) {
+    // Non-empty input, but nothing in it looks like a keyword (e.g. a single
+    // character, 1-2 char junk, or symbols). Never build `IN ()` (SQL syntax
+    // error → 500) — return a friendly validation message instead.
+    return { code: 400, message: 'Please enter a valid keyword (at least 3 characters).' };
+  }
 
   try {
     const placeholders = wanted.map(() => '?').join(', ');
@@ -113,20 +147,38 @@ async function importKeywordsFile(req, db, logger) {
     const foundSet = new Set(matched.map((m) => String(m.keyword).trim().toLowerCase()));
     const notFound = wanted.filter((w) => !foundSet.has(w));
 
+    if (matched.length === 0) {
+      // Nothing matched at all — almost always the wrong kind of file (an ads
+      // export / report / random text whose columns got parsed as "keywords"),
+      // not a keyword list. Show a friendly message instead of dumping 100+
+      // unmatched tokens (ad_id/ad_position/…) into the not-found banner.
+      return {
+        code: 400,
+        message: "None of the entries in this file match a keyword in PowerAdSpy's data. Please upload a keyword list — a plain .txt or .csv with one keyword per line, not an ads export or report.",
+      };
+    }
+
     return {
       code: 200,
       message: 'Keywords imported.',
       data: {
         matched,
         not_found: notFound,
-        note: notFound.length
-          ? `${notFound.length} of ${wanted.length} keyword(s) are not in PowerAdSpy's crawled corpus and were not matched.`
-          : undefined,
+        note: [
+          truncated ? `Only the first ${MAX_KEYWORDS} keywords were processed.` : null,
+          notFound.length ? `${notFound.length} of ${wanted.length} keyword(s) are not in PowerAdSpy's crawled corpus and were not matched.` : null,
+        ].filter(Boolean).join(' ') || undefined,
       },
     };
   } catch (err) {
+    // Catch-all: never surface a raw DB/engine error to the user. Log the real
+    // error server-side for debugging, but return a friendly message. Use 400
+    // (not 500) so the frontend renders THIS message — it throws a generic
+    // "failed: 500" for any non-2xx status other than 400, which would hide our
+    // text. This guarantees any unforeseen bad-file edge case still shows a
+    // friendly message instead of an error.
     logger.error('Error in importKeywordsFile (google)', { error: err.message });
-    return { code: 500, message: 'Error importing keywords', error: err.message };
+    return { code: 400, message: "We couldn't process this file. Please make sure it's a valid .txt or .csv with one keyword per line, then try again." };
   }
 }
 

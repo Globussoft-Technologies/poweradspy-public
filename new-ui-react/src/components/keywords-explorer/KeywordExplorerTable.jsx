@@ -151,8 +151,9 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
                   <td className="px-4 py-2.5">
                     <button
                       type="button"
+                      title={row.keyword}
                       onClick={() => onKeywordClick?.(row.keyword)}
-                      className="font-semibold text-[#6b99ff] text-left transition-colors hover:brightness-110 hover:underline"
+                      className="block max-w-[320px] truncate font-semibold text-[#6b99ff] text-left transition-colors hover:brightness-110 hover:underline"
                     >
                       {row.keyword}
                     </button>
