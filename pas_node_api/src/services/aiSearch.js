@@ -15,16 +15,19 @@
  *
  * Browser-facing endpoints:
  *   POST /api/v1/ai-search/plan   { prompt }
- *        → { code, message, data: { ref_id, prompt, payloads[], model, usage } }
- *        Performs the DS two-step (init → fetch) server-side and returns the full
- *        payload set in one round-trip. `payloads` are most-specific-first (1..3).
+ *        → { code, message, data: { ref_id, prompt, payloads[], model, usage, grounding } }
+ *        Runs the DS async flow (init → poll-until-ready) server-side and returns
+ *        the full payload set in one round-trip. `payloads` are most-specific-first
+ *        (1..3). The browser makes ONE call and waits; no client-side polling.
  *   GET  /api/v1/ai-search/health
  *        → { code, message, data: { ok, status, upstream } }
  *        Short-cached proxy of the DS /health — drives the frontend AI-toggle gate.
  *
  * Upstream DS contract (see PAYLOAD_API_GUIDE.md):
- *   POST {baseUrl}/search/payload       { prompt } → { ref_id, model, usage }
- *   GET  {baseUrl}/search/payload/{id}            → { ref_id, prompt, payloads, model, usage }
+ *   POST {baseUrl}/search/payload      { prompt } → 202 { ref_id, status:"pending" }
+ *        (planning runs ASYNC in the background — never blocks this call)
+ *   GET  {baseUrl}/search/payload/{id}           → { status:"pending"|"ready"|"error",
+ *        prompt, payloads[], model, usage, grounding, error? } — poll until not pending
  *   GET  {baseUrl}/health
  */
 
@@ -45,6 +48,11 @@ const TIMEOUT_MS = config.aiSearch?.timeoutMs || 15000;
 const HEALTH_TIMEOUT_MS = Math.min(TIMEOUT_MS, 5000);
 const HEALTH_CACHE_MS = config.aiSearch?.healthCacheMs ?? 15000;
 const MAX_PROMPT_LEN = config.aiSearch?.maxPromptLen || 2000;
+// Async-generation polling: how often to re-check GET, and the overall budget
+// before we give up (the DS side has its own ~2-min internal timeout).
+const POLL_INTERVAL_MS = config.aiSearch?.pollIntervalMs || 1000;
+const POLL_MAX_MS = config.aiSearch?.pollMaxMs || 60000;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Shared axios client to the DS service.
 const http = axios.create({
@@ -108,47 +116,69 @@ router.post(
       return res.status(400).json({ code: 400, message: `prompt exceeds ${MAX_PROMPT_LEN} characters`, data: null });
     }
 
-    // Step 1 — init: plan the prompt, get a ref_id back.
-    let initData;
+    // Step 1 — init: kick off planning, get a ref_id back immediately (202,
+    // status:"pending"). Generation runs ASYNC on the DS side after this returns.
+    let refId;
     try {
       const initRes = await http.post('/search/payload', { prompt });
       if (initRes.status < 200 || initRes.status >= 300) {
         log.warn('DS init non-2xx', { status: initRes.status });
         return res.status(502).json({ code: 502, message: 'AI Search upstream (init) failed', data: null });
       }
-      initData = initRes.data || {};
+      refId = (initRes.data || {}).ref_id;
     } catch (err) {
       log.error('DS init request failed', { error: err.message });
       return res.status(502).json({ code: 502, message: 'AI Search upstream (init) unreachable', data: null });
     }
 
-    const refId = initData.ref_id;
     if (!refId) {
       return res.status(502).json({ code: 502, message: 'AI Search upstream returned no ref_id', data: null });
     }
 
-    // Step 2 — fetch: retrieve the generated payload set for that ref_id.
-    try {
-      const fetchRes = await http.get(`/search/payload/${encodeURIComponent(refId)}`);
-      if (fetchRes.status < 200 || fetchRes.status >= 300) {
-        log.warn('DS fetch non-2xx', { status: fetchRes.status, refId });
-        return res.status(502).json({ code: 502, message: 'AI Search upstream (fetch) failed', data: null });
+    // Step 2 — poll: GET returns status:"pending" until generation finishes
+    // ("ready" with payloads) or fails ("error"). We poll server-side so the
+    // browser makes a single blocking call.
+    const startedAt = Date.now();
+    for (;;) {
+      let d;
+      try {
+        const pollRes = await http.get(`/search/payload/${encodeURIComponent(refId)}`);
+        if (pollRes.status < 200 || pollRes.status >= 300) {
+          log.warn('DS poll non-2xx', { status: pollRes.status, refId });
+          return res.status(502).json({ code: 502, message: 'AI Search upstream (poll) failed', data: null });
+        }
+        d = pollRes.data || {};
+      } catch (err) {
+        log.error('DS poll request failed', { error: err.message, refId });
+        return res.status(502).json({ code: 502, message: 'AI Search upstream (poll) unreachable', data: null });
       }
-      const d = fetchRes.data || {};
-      return res.json({
-        code: 200,
-        message: 'ok',
-        data: {
-          ref_id: d.ref_id || refId,
-          prompt: d.prompt || prompt,
-          payloads: Array.isArray(d.payloads) ? d.payloads : [],
-          model: d.model ?? initData.model ?? null,
-          usage: d.usage ?? initData.usage ?? null,
-        },
-      });
-    } catch (err) {
-      log.error('DS fetch request failed', { error: err.message, refId });
-      return res.status(502).json({ code: 502, message: 'AI Search upstream (fetch) unreachable', data: null });
+
+      // "ready" is the async signal; also accept a response that already carries
+      // payloads without a pending status (robust to a sync-style DS reply).
+      if (d.status === 'ready' || (d.status !== 'pending' && d.status !== 'error' && Array.isArray(d.payloads))) {
+        return res.json({
+          code: 200,
+          message: 'ok',
+          data: {
+            ref_id: d.ref_id || refId,
+            prompt: d.prompt || prompt,
+            payloads: Array.isArray(d.payloads) ? d.payloads : [],
+            model: d.model ?? null,
+            usage: d.usage ?? null,
+            grounding: d.grounding ?? null,
+          },
+        });
+      }
+      if (d.status === 'error') {
+        log.warn('DS planning error', { refId, error: d.error });
+        return res.status(502).json({ code: 502, message: d.error || 'AI Search planning failed', data: null });
+      }
+      // pending (or an unrecognized status) → wait and retry within the budget.
+      if (Date.now() - startedAt >= POLL_MAX_MS) {
+        log.warn('DS poll timed out', { refId });
+        return res.status(504).json({ code: 504, message: 'AI Search timed out — please try again', data: null });
+      }
+      await sleep(POLL_INTERVAL_MS);
     }
   })
 );

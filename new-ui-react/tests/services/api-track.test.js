@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/hooks/useAuth", () => ({
   getAuthToken: vi.fn(() => "tk"),
-  clearSessionState: vi.fn(),
+  markFiltersForExpiry: vi.fn(),
 }));
 
 let api;
@@ -102,7 +102,7 @@ describe("trackUserActivity (via fetchAds, PAS set)", () => {
     vi.resetModules();
     vi.doMock("../../src/hooks/useAuth", () => ({
       getAuthToken: () => "",
-      clearSessionState: () => {},
+      markFiltersForExpiry: () => {},
     }));
     vi.stubEnv("VITE_PAS_API_BASE_URL", PAS);
     vi.stubEnv("VITE_PAS_API_TOKEN", "");
@@ -181,7 +181,7 @@ describe("trackProjectEvent", () => {
   it("no token → omits Authorization header", async () => {
     vi.resetModules();
     vi.doMock("../../src/hooks/useAuth", () => ({
-      getAuthToken: () => "", clearSessionState: () => {},
+      getAuthToken: () => "", markFiltersForExpiry: () => {},
     }));
     vi.stubEnv("VITE_PAS_API_BASE_URL", PAS);
     vi.stubEnv("VITE_PAS_API_TOKEN", "");
@@ -234,7 +234,7 @@ describe("trackEvent", () => {
   it("no token → omits Authorization header (line 1316)", async () => {
     vi.resetModules();
     vi.doMock("../../src/hooks/useAuth", () => ({
-      getAuthToken: () => "", clearSessionState: () => {},
+      getAuthToken: () => "", markFiltersForExpiry: () => {},
     }));
     vi.stubEnv("VITE_PAS_API_BASE_URL", PAS);
     vi.stubEnv("VITE_PAS_API_TOKEN", "");

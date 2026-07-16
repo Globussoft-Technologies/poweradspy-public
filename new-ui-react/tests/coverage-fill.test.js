@@ -73,7 +73,7 @@ describe("coverage-fill: module-load env-set branches", () => {
   it("api.js getPASToken falls back to VITE_PAS_API_TOKEN when auth token absent", async () => {
     vi.doMock("../src/hooks/useAuth", () => ({
       getAuthToken: () => "",          // falsy → forces `|| import.meta.env.VITE_PAS_API_TOKEN`
-      clearSessionState: () => {},
+      markFiltersForExpiry: () => {},
     }));
     vi.stubEnv("VITE_PAS_API_BASE_URL", "https://pas.example.test");
     vi.stubEnv("VITE_PAS_API_TOKEN", "envtoken");

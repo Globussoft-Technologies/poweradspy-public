@@ -790,14 +790,33 @@ describe("competitorService > checkCompetitorProcess", () => {
     await svc.checkCompetitorProcess({ body: { user_id: "u1", advertiser: ["Acme"], content_ref_id: "c", keywords: [], limit: 5 } }, res);
     expect(res.json).toHaveBeenCalled();
   });
-  it("400 catch on axios fail", async () => {
+  it("502 when the DS /prepare call fails (non-timeout)", async () => {
     spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
     spies.configGetSpy.mockReturnValue(20000);
     spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
     spies.axiosPostSpy.mockRejectedValueOnce(new Error("api"));
     const res = mockRes();
     await svc.checkCompetitorProcess({ body: { user_id: "u1", advertiser: "A" } }, res);
-    expect(res.status).toHaveBeenCalledWith(400);
+    // Distinguished from a timeout (504, ECONNABORTED/"timeout" message) so the
+    // frontend can show a specific "try fewer competitors" message only when
+    // that's actually the likely cause.
+    expect(res.status).toHaveBeenCalledWith(502);
+  });
+
+  it("504 when the DS /prepare call times out, and cleans up a newly-created project", async () => {
+    spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
+    spies.configGetSpy.mockReturnValue(20000);
+    // No existing project found → this request creates one, so a timeout
+    // must clean it up rather than leaving a phantom empty brand behind.
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
+    spies.competitorsReqCreateSpy.mockResolvedValueOnce({ _id: "newly-created" });
+    spies.competitorsReqDeleteOneSpy.mockResolvedValueOnce({ deletedCount: 1 });
+    const timeoutErr = Object.assign(new Error("timeout of 45000ms exceeded"), { code: "ECONNABORTED" });
+    spies.axiosPostSpy.mockRejectedValueOnce(timeoutErr);
+    const res = mockRes();
+    await svc.checkCompetitorProcess({ body: { user_id: "u1", advertiser: "A", content_ref_id: "c1", limit: 100 } }, res);
+    expect(res.status).toHaveBeenCalledWith(504);
+    expect(spies.competitorsReqDeleteOneSpy).toHaveBeenCalledWith({ _id: "newly-created" });
   });
 
   it("advertiser as empty array → fullBrand falls back to advertiser (L3280 #1, L3319 #1)", async () => {
@@ -2941,6 +2960,16 @@ describe("competitorService > attachCompetitorsCappedToTarget", () => {
     spies.configGetSpy.mockImplementation((k) => (k === "COMP_OVERFETCH_RATIO" ? 0.5 : `cfg:${k}`));
     expect(svc.competitorOverfetchLimit(10)).toBeGreaterThan(10);
     expect(svc.competitorOverfetchLimit(0)).toBe(0); // target <= 0 early return
+  });
+
+  it("competitorOverfetchLimit clamps to DS's hard cap of 100 (confirmed live: GET /list 422s above 100)", async () => {
+    spies.configHasSpy.mockReturnValue(false); // default 20% ratio
+    // 100 + ceil(100*0.2) = 120 uncapped — must clamp to 100, or every /list
+    // poll for a 100-competitor request 422s forever (the reported "Warner
+    // Bros" 0-results-after-2-minutes bug).
+    expect(svc.competitorOverfetchLimit(100)).toBe(100);
+    // Below the point where overfetch would exceed 100, no clamping needed.
+    expect(svc.competitorOverfetchLimit(50)).toBe(60);
   });
 
   it("attaches fresh, name-unique candidates up to need (break + dedup + skip)", async () => {

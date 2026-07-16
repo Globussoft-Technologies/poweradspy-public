@@ -13,9 +13,14 @@
 // the DS fallback ladder is what recovers from a dropped filter, not us.
 //
 // DS `args` field reference (see PAYLOAD_API_GUIDE.md):
-//   keyword | advertiser | domain (mutually exclusive), network[], type,
-//   country[], adcategory, subCategory, gender, verified, order_column,
-//   order_by, call_to_action.
+//   keyword | advertiser | domain (mutually exclusive, ALL may be absent for a
+//   category-only search), network[], type, country[], adcategory, subCategory,
+//   gender, verified, order_column, order_by, call_to_action[] (array),
+//   affiliate[], ecommerce[], funnel[], market_platform[], source[],
+//   ad_position[], nativeNetwork[], budget[] (low/medium/high),
+//   likes|shares|comments|impressions|popularity|ctr|adBudget ([min,max]),
+//   lower_age|upper_age (numbers). DS resolves any "except X" phrasing into an
+//   explicit include list, so we just resolve whatever list arrives.
 
 // Candidate SDUI _id / query_param aliases per logical field (mirrors the pick()
 // alias lists in services/api.js buildSearchPayload so we target the same keys).
@@ -29,6 +34,23 @@ const FILTER_IDS = {
   cta: ['cta_filter', 'cta', 'call_to_action'],
   sort: ['sort_by', 'sorting', 'sort'],
   platform: ['platform_selector', 'platforms', 'platform'],
+  // Closed-vocabulary multi-selects (DS resolves include/exclude to explicit lists).
+  affiliate: ['affiliate_network_filter', 'affiliate', 'affiliate_filter', 'affiliate_network', 'affiliates'],
+  ecommerce: ['ecommerce_platform_filter', 'ecommerce', 'ecommerce_filter', 'ecommerce_platform'],
+  funnel: ['funnel_filter', 'funnel'],
+  market_platform: ['market_platform', 'marketing_platform_filter', 'marketing_platform', 'marketingPlatform'],
+  source: ['source', 'source_filter'],
+  ad_position: ['ad_position_filter', 'ad_position', 'position'],
+  nativeNetwork: ['native_network_filter', 'nativeNetwork', 'native_network'],
+  budget: ['budget', 'budget_filter', 'tiktok_budget', 'ad_budget_category'],
+  // Numeric range sliders ([min, max]).
+  likes: ['likes', 'like', 'likes_range', 'engagement_likes'],
+  shares: ['shares', 'share', 'shares_range', 'engagement_shares'],
+  comments: ['comments', 'comment', 'comments_range', 'engagement_comments'],
+  impressions: ['impressions', 'impression', 'impressions_range', 'engagement_impressions'],
+  popularity: ['popularity', 'popularity_score', 'popularity_range'],
+  ctr: ['ctr', 'ctr_filter', 'ctr_range'],
+  adBudget: ['adBudget', 'ad_budget', 'avg_ad_budget'],
 };
 
 // Filters whose widget stores the option LABEL rather than its value (the Country
@@ -226,11 +248,12 @@ export function mapArgsToFilters(args = {}, config = {}) {
     }
   }
 
-  // ── call_to_action ("shop now") → cta_filter ("shop_now") ──────────────────
+  // ── call_to_action (array, e.g. ["shop now"]) → cta_filter (["shop_now"]) ──
   const ctaFilter = findFilter(config, FILTER_IDS.cta);
-  if (args.call_to_action) {
-    if (ctaFilter) applyResolved(ctaFilter, [args.call_to_action], filterValues, unmapped, 'call_to_action');
-    else unmapped.push(`call_to_action: ${args.call_to_action}`);
+  const ctaValues = asArray(args.call_to_action);
+  if (ctaValues.length) {
+    if (ctaFilter) applyResolved(ctaFilter, ctaValues, filterValues, unmapped, 'call_to_action');
+    else unmapped.push(`call_to_action: ${ctaValues.join(', ')}`);
   }
 
   // ── order_column / order_by → sortBy (verified against sort options) ───────
@@ -248,6 +271,54 @@ export function mapArgsToFilters(args = {}, config = {}) {
     } else {
       unmapped.push(`sort: ${args.order_column} ${args.order_by || ''}`.trim());
     }
+  }
+
+  // ── Closed-vocabulary multi-selects — resolve each value against the widget's
+  //    options (DS already resolves any "except X" phrasing to an explicit list). ──
+  const MULTI_VOCAB = [
+    ['affiliate', FILTER_IDS.affiliate],
+    ['ecommerce', FILTER_IDS.ecommerce],
+    ['funnel', FILTER_IDS.funnel],
+    ['market_platform', FILTER_IDS.market_platform],
+    ['source', FILTER_IDS.source],
+    ['ad_position', FILTER_IDS.ad_position],
+    ['nativeNetwork', FILTER_IDS.nativeNetwork],
+    ['budget', FILTER_IDS.budget],
+  ];
+  for (const [field, ids] of MULTI_VOCAB) {
+    const raw = asArray(args[field]);
+    if (!raw.length) continue;
+    const filter = findFilter(config, ids);
+    if (filter) applyResolved(filter, raw, filterValues, unmapped, field);
+    else unmapped.push(`${field}: ${raw.join(', ')}`);
+  }
+
+  // ── Numeric range sliders ([min, max]) — stored verbatim under the filter _id;
+  //    no options to resolve against. ─────────────────────────────────────────
+  const RANGES = [
+    ['likes', FILTER_IDS.likes],
+    ['shares', FILTER_IDS.shares],
+    ['comments', FILTER_IDS.comments],
+    ['impressions', FILTER_IDS.impressions],
+    ['popularity', FILTER_IDS.popularity],
+    ['ctr', FILTER_IDS.ctr],
+    ['adBudget', FILTER_IDS.adBudget],
+  ];
+  for (const [field, ids] of RANGES) {
+    const raw = args[field];
+    if (!Array.isArray(raw) || raw.length !== 2) continue;
+    const nums = raw.map(Number);
+    if (nums.some((n) => Number.isNaN(n))) { unmapped.push(`${field}: ${raw.join('-')}`); continue; }
+    const filter = findFilter(config, ids);
+    if (filter) filterValues[filter._id] = nums;
+    else unmapped.push(`${field}: ${raw.join('-')}`);
+  }
+
+  // ── Continuous age (lower_age/upper_age) — our widget is discrete brackets,
+  //    which DS itself confirmed don't filter, so this doesn't round-trip. Leave
+  //    it unmapped rather than force a lossy conversion. ─────────────────────────
+  if (args.lower_age != null || args.upper_age != null) {
+    unmapped.push(`age: ${args.lower_age ?? ''}-${args.upper_age ?? ''}`);
   }
 
   return { searchQuery, searchIn, activePlatforms, sortBy, filterValues, unmapped };

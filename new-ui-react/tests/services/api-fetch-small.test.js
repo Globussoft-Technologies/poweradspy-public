@@ -9,7 +9,7 @@ const { getAuthTokenSpy, clearSessionSpy } = vi.hoisted(() => ({
 
 vi.mock("../../src/hooks/useAuth", () => ({
   getAuthToken: getAuthTokenSpy,
-  clearSessionState: clearSessionSpy,
+  markFiltersForExpiry: clearSessionSpy,
 }));
 
 let api;

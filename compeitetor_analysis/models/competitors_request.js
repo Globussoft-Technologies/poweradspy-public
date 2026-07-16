@@ -49,6 +49,28 @@ const CompetitorRequestSchema = mongoose.Schema(
       type: [String], default: []
     },
 
+    // Persisted generation state — without this, a page refresh mid-generation
+    // has no way to tell "still generating in the background" apart from
+    // "genuinely has no competitors", since isGenerating/content_ref_id were
+    // previously kept only in frontend React state (lost on refresh) and the
+    // socket room join only happened once, during the original submit.
+    // `content_ref_id` lets the frontend rejoin the right socket room after a
+    // refresh; `target_count` is the originally requested competitor count (so
+    // the UI can show "42/100" instead of "0/0" post-refresh); `generation_status`
+    // tracks whether generateCompetitorsInBackground is still running for this
+    // project. 'idle' covers projects created before this field existed, and
+    // projects that never went through the AI-generation flow (e.g. manually
+    // added competitors only).
+    content_ref_id: {
+      type: String, default: null
+    },
+    target_count: {
+      type: Number, default: 0
+    },
+    generation_status: {
+      type: String, enum: ["idle", "running", "completed"], default: "idle"
+    },
+
     // Per-competitor `specific_to_match` echoed back by the DS `/competitors/list`
     // response when a request was constrained via `specific_to` (see
     // dev_payloads_specific_to.md) — e.g. { name: "li-ning", match: { country: "china" } }.

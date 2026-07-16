@@ -18,6 +18,23 @@ import { esClient, esServers, checkElasticsearchHealth } from "../../utils/Elast
 import UserDailyTokens from "../../models/user_daily_tokens.model.js";
 import TokenSyncState from "../../models/jobTokenState.js";
 
+// Bound for every synchronous call to the DS competitor-generation service
+// (`/prepare`, `/list`, `/tokens/usage`) — used both in the request/response
+// path a spinner is waiting on (checkCompetitorProcess, getStoreProcessCompetitors)
+// and in the fire-and-forget background loop (generateCompetitorsInBackground).
+// DS latency scales with the requested competitor count (e.g. 100 vs 15), so
+// without this a slow/hung DS response leaves either the HTTP request or the
+// background loop stuck indefinitely. Tune alongside the frontend's matching
+// timeout in services/api.js (checkCompetitorProcess / getStoreProcessCompetitors).
+const DS_REQUEST_TIMEOUT_MS = 45000;
+
+// Hard ceiling DS's GET /v1/api/competitors/list enforces on its `limit` query
+// param (422 above this — confirmed live). Used by competitorOverfetchLimit()
+// to clamp the 20%-overfetched value we compute from the user's requested
+// count, so a large request (e.g. 100, whose naive overfetch is 120) doesn't
+// silently 422 on every single poll.
+const DS_MAX_LIST_LIMIT = 100;
+
 class CompetitorService {
 
   constructor() {
@@ -2289,7 +2306,19 @@ async fetchCompetitorsForUpdateNew(req, res) {
       ? Number(config.get("COMP_OVERFETCH_RATIO"))
       : 0.2;
     // ceil() guarantees at least 1 extra candidate even for small N
-    return target + Math.ceil(target * ratio);
+    const overfetched = target + Math.ceil(target * ratio);
+    // DS's GET /v1/api/competitors/list hard-rejects `limit` > 100 (422,
+    // Pydantic `le=100`) — confirmed live against comp-list.poweradspy.ai.
+    // Our Max Competitors slider goes up to 100, so any request there
+    // (target >= ~84, once the 20% overfetch pushes past 100) silently 422'd
+    // on EVERY poll forever: the existing catch just logged a warning and
+    // retried, so the UI saw 0 results for the full 2-minute loop cap even
+    // though DS had already generated everything (verified: DS reported
+    // completed_items: 120 for a target=100 request our own polling could
+    // never actually read back). Clamping here protects every caller of this
+    // helper (checkCompetitorProcess's /prepare, getStoreProcessCompetitors's
+    // and generateCompetitorsInBackground's /list polls) in one place.
+    return Math.min(overfetched, DS_MAX_LIST_LIMIT);
   }
 
   // Attach up to (TARGET - alreadyAttached) fresh, name-unique competitors to the
@@ -2425,7 +2454,7 @@ async updateUserDailyTokens(userObjectId, content_ref_id) {
 
   const res = await axios.get(
     config.get("COMPETITOR_URL_PYTHON") + "/v1/api/tokens/usage",
-    { params: { content_ref_id } }
+    { params: { content_ref_id }, timeout: DS_REQUEST_TIMEOUT_MS }
   );
 
   const usage = res.data.data.token_usage;
@@ -2519,12 +2548,20 @@ async isDailyLimitExceeded(userObjectId) {
       );
 
     }
-    // ensure request doc exists with correct brand_url
+    // Ensure request doc exists with correct brand_url, and (re)mark it as
+    // actively generating — this is the actual trigger point for the
+    // background loop below, so generation_status/content_ref_id/target_count
+    // need to be current here regardless of what checkCompetitorProcess did,
+    // so a page refresh mid-generation can tell "still running" apart from
+    // "done" and rejoin the correct socket room.
     await Competitors_request.updateOne(
       { user_id: userObjectId, advertiser: advertiserArray },
       {
           $set: {
-            brand_url: advertiser // Domain
+            brand_url: advertiser, // Domain
+            content_ref_id: content_ref_id,
+            target_count: TARGET,
+            generation_status: "running"
           },
         $setOnInsert: {
           user_id: userObjectId,
@@ -2558,7 +2595,13 @@ async isDailyLimitExceeded(userObjectId) {
         content_ref_id
       });
       try {
+        // Bound this call too — it's awaited directly by the frontend
+        // (getStoreProcessCompetitors runs right after checkCompetitorProcess,
+        // both in the same spinner-visible request chain), so an unbounded DS
+        // hang here reproduces the exact same infinite-spinner bug even with
+        // checkCompetitorProcess's own DS call already fixed.
         const response = await axios.get(keywordUrlC, {
+          timeout: DS_REQUEST_TIMEOUT_MS,
           params: {
             content_ref_id,
             skip: 0,
@@ -2574,11 +2617,23 @@ async isDailyLimitExceeded(userObjectId) {
           count: competitors.length
         });
       } catch (apiErr) {
-        // Python API may return 422 if still preparing — let background loop handle it
-        logger.warn("Python /list API not ready yet, background loop will retry", {
-          status: apiErr?.response?.status,
-          message: apiErr?.message
-        });
+        // A 422 here means OUR request was invalid (e.g. a `limit` DS's schema
+        // rejects) — retrying won't fix that, unlike a transient 5xx/network
+        // blip, which the background loop's own retry loop can reasonably
+        // paper over. Log the actual DS error body so a bad request is
+        // diagnosable without having to reproduce it by hand against DS
+        // directly (see competitorOverfetchLimit's DS_MAX_LIST_LIMIT clamp —
+        // this is exactly the shape of bug that produced 0 results with no
+        // visible error for a 100-competitor request).
+        const status = apiErr?.response?.status;
+        logger[status === 422 ? "error" : "warn"](
+          status === 422 ? "Python /list API rejected our request (won't self-resolve on retry)" : "Python /list API not ready yet, background loop will retry",
+          {
+            status,
+            message: apiErr?.message,
+            responseBody: apiErr?.response?.data
+          }
+        );
       }
       if (competitors.length) {
         const attached = await this.attachCompetitorsCappedToTarget({
@@ -2646,9 +2701,31 @@ async generateCompetitorsInBackground({
   let processingRetries = 0;
   let tokenExceeded = false;
 
+  // Absolute ceiling on the WHOLE loop, independent of the stable/processing
+  // retry counters above. Those only break when DS stops making progress —
+  // but if DS keeps trickling in a handful of new candidates every poll
+  // without ever reaching TARGET (plausible for a large TARGET like 100, if
+  // DS's real candidate pool for this niche is smaller), `competitors.length
+  // > lastCount` stays true forever, resets stableCount to 0 every time, and
+  // this loop never exits — the reported infinite spinner for large requests,
+  // even though every individual HTTP call inside it resolves fine. `startTime`
+  // was already captured above for exactly this but was never actually used.
+  const MAX_LOOP_DURATION_MS = 120000; // 2 minutes
+
   try {
     while (true) {
       loopCount++;
+
+      if (Date.now() - startTime > MAX_LOOP_DURATION_MS) {
+        logger.warn("generateCompetitorsInBackground exceeded max duration, stopping", {
+          content_ref_id,
+          normalizedKey,
+          TARGET,
+          loopCount,
+          elapsedMs: Date.now() - startTime
+        });
+        break;
+      }
 
       // TOKEN CHECK
       try {
@@ -2668,6 +2745,7 @@ async generateCompetitorsInBackground({
         const generated = reqDoc?.competitors?.length || 0;
 
         getIO().to(content_ref_id).emit("token-limit-exceeded", {
+          content_ref_id,
           message: "Daily AI token limit exceeded",
           generated,
           target: TARGET
@@ -2687,6 +2765,7 @@ async generateCompetitorsInBackground({
 
 
       getIO().to(content_ref_id).emit("competitor-progress", {
+        content_ref_id,
         generated: attachedCount,
         target: TARGET,
         status: attachedCount >= TARGET ? "completed" : "running"
@@ -2702,6 +2781,7 @@ async generateCompetitorsInBackground({
       let response;
       try {
         response = await axios.get(keywordUrlC, {
+          timeout: DS_REQUEST_TIMEOUT_MS,
           params: {
             content_ref_id,
             skip: 0,
@@ -2709,6 +2789,16 @@ async generateCompetitorsInBackground({
           }
         });
       } catch (err) {
+        // Same reasoning as getStoreProcessCompetitors' /list catch: a 422 is
+        // OUR request being invalid (won't self-resolve by retrying), not DS
+        // being slow — log it as an error with the actual DS response body so
+        // it's diagnosable, instead of silently retrying for the full
+        // MAX_LOOP_DURATION_MS with no visible sign of what's actually wrong.
+        const status = err?.response?.status;
+        logger[status === 422 ? "error" : "warn"](
+          status === 422 ? "Background /list poll rejected our request (won't self-resolve on retry)" : "Background /list poll failed, retrying",
+          { status, message: err?.message, responseBody: err?.response?.data, content_ref_id }
+        );
         await this.sleep(2000);
         continue;
       }
@@ -2780,7 +2870,7 @@ async generateCompetitorsInBackground({
           logger.error("Failed to enrich competitor-batch with ES stats:", e);
         }
 
-        getIO().to(content_ref_id).emit("competitor-batch", { rows: enrichedRows });
+        getIO().to(content_ref_id).emit("competitor-batch", { content_ref_id, rows: enrichedRows });
 
         // FAST LOOP if data coming
         await this.sleep(500);
@@ -2843,6 +2933,21 @@ async generateCompetitorsInBackground({
     // The top-of-loop progress event only emits "completed" when attachedCount
     // reaches TARGET; the retry-cap exits (stable / still-processing) break
     // silently, which would otherwise leave the spinner running forever.
+    //
+    // Also persist generation_status = "completed" regardless of tokenExceeded
+    // (the loop is stopping either way, so nothing further will update this
+    // project) — this is what lets a page refresh tell "still generating" apart
+    // from "done (maybe fewer than requested)" instead of just seeing an empty
+    // competitors list with no explanation.
+    try {
+      await Competitors_request.updateOne(
+        { user_id: userObjectId, advertiser: advertiserArray },
+        { $set: { generation_status: "completed" } }
+      );
+    } catch (statusErr) {
+      logger.error("Failed to persist final generation_status", statusErr);
+    }
+
     if (!tokenExceeded) {
       try {
         const finalDoc = await Competitors_request.findOne(
@@ -2851,6 +2956,7 @@ async generateCompetitorsInBackground({
         );
         const finalCount = finalDoc?.competitors?.length || 0;
         getIO().to(content_ref_id).emit("competitor-progress", {
+          content_ref_id,
           generated: finalCount,
           target: TARGET,
           status: "completed"
@@ -3276,7 +3382,8 @@ async checkDailyTokenLimit(req, res) {
 
       // weblink expects to be a query param
       const response = await axios.post(keywordUrl, null, {
-        params: { weblink: webSiteUrl }
+        params: { weblink: webSiteUrl },
+        timeout: DS_REQUEST_TIMEOUT_MS
       });
       return res.json(response.data);
     } catch (err) {
@@ -3313,6 +3420,11 @@ async checkDailyTokenLimit(req, res) {
         advertiser: [brand]
       });
 
+      // Track whether THIS request created the project, so a failed/timed-out
+      // DS call below can clean up the phantom empty brand it caused — without
+      // ever touching a pre-existing project from an earlier successful run.
+      let createdNewProject = false;
+
       if (!project) {
         project = await Competitors_request.create({
           user_id: new mongoose.Types.ObjectId(user_id),
@@ -3320,13 +3432,33 @@ async checkDailyTokenLimit(req, res) {
           brand_url: fullBrand, // Full domain
           competitors: [],
           monitoring: [],
-          country: countryArray
+          country: countryArray,
+          content_ref_id: content_ref_id,
+          target_count: Number(limit) || 0,
+          generation_status: "running"
         });
+        createdNewProject = true;
         logger.info(`Created new project record: ${brand} (Targeting: ${fullBrand})`);
-      } else if (countryArray.length && !project.country?.length) {
-        // Backfill country onto an existing (e.g. race-created) project doc.
-        project.country = countryArray;
-        await project.save();
+      } else {
+        // Re-generating against an existing project (e.g. a retry, or
+        // requesting more competitors later) — refresh the fields that let a
+        // page refresh mid-generation reconnect correctly: this request's
+        // content_ref_id (for rejoining the right socket room) and target
+        // (for an accurate "X/Y" until this run finishes). Uses updateOne
+        // (like the rest of this file, e.g. getStoreProcessCompetitors) rather
+        // than project.save() — works whether `project` is a full mongoose
+        // document or a lean/plain result, and doesn't require a second round
+        // trip to re-fetch it first.
+        const setFields = {
+          content_ref_id: content_ref_id,
+          target_count: Number(limit) || project.target_count || 0,
+          generation_status: "running"
+        };
+        if (countryArray.length && !project.country?.length) {
+          // Backfill country onto an existing (e.g. race-created) project doc.
+          setFields.country = countryArray;
+        }
+        await Competitors_request.updateOne({ _id: project._id }, { $set: setFields });
       }
       // ----------------------------------------
 
@@ -3358,12 +3490,43 @@ async checkDailyTokenLimit(req, res) {
       }
 
 
-      const response = await axios.post(keywordUrl, formParams, {
-        params: {
-          content_ref_id: content_ref_id,
-          advertiser: advArray[0] || advArray
+      let response;
+      try {
+        response = await axios.post(keywordUrl, formParams, {
+          params: {
+            content_ref_id: content_ref_id,
+            advertiser: advArray[0] || advArray
+          },
+          // Bound this call — without it, a slow/hung DS response holds this
+          // HTTP request (and the frontend's spinner) open indefinitely, while
+          // the project doc above has already been persisted with no
+          // competitors. See DS_REQUEST_TIMEOUT_MS comment for context.
+          timeout: DS_REQUEST_TIMEOUT_MS
+        });
+      } catch (dsErr) {
+        // DS call failed or timed out. Don't leave a phantom empty brand behind
+        // from THIS request — only clean up if we created it just now; a
+        // pre-existing project (e.g. a retry after competitors already
+        // attached) is left untouched.
+        if (createdNewProject) {
+          await Competitors_request.deleteOne({ _id: project._id }).catch((cleanupErr) => {
+            logger.error("Failed to clean up phantom project after DS call failure", cleanupErr.message);
+          });
         }
-      });
+        const isTimeout = dsErr.code === "ECONNABORTED" || /timeout/i.test(dsErr.message || "");
+        logger.error("DS competitors/prepare call failed", {
+          error: dsErr.message,
+          timeout: isTimeout,
+          limit
+        });
+        return res.status(isTimeout ? 504 : 502).json({
+          code: isTimeout ? 504 : 502,
+          message: isTimeout
+            ? "The competitor generation service took too long to respond. Please try again — requesting fewer competitors may help."
+            : "Failed to reach the competitor generation service. Please try again."
+        });
+      }
+
       const pythonResponse = response.data;
       if (!pythonResponse.data) pythonResponse.data = {};
       pythonResponse.data.exceeded = false;

@@ -245,7 +245,14 @@ class DashboardService {
                 _id: project._id,                 // competitors_request._id → brand-cc project_id
                 project_name: project.advertiser[0],
                 competitors: project.competitors || [],
-                monitoring: project.monitoring || []
+                monitoring: project.monitoring || [],
+                // Persisted generation state — lets the frontend tell "still
+                // generating in the background" apart from "genuinely has no
+                // competitors" after a page refresh, and rejoin the right
+                // socket room to resume live updates.
+                content_ref_id: project.content_ref_id || null,
+                target_count: project.target_count || 0,
+                generation_status: project.generation_status || "idle"
             }));
 
             if(!projectName || projectName.length === 0) {

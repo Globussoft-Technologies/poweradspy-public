@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 // Pre-mock useAuth so api.js's import-time getAuthToken call is safe.
 vi.mock("../../src/hooks/useAuth", () => ({
   getAuthToken: vi.fn(() => "tk"),
-  clearSessionState: vi.fn(),
+  markFiltersForExpiry: vi.fn(),
 }));
 
 const {

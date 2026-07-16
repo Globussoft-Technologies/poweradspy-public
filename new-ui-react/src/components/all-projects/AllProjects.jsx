@@ -43,7 +43,7 @@ import igIcon from "../../assets/ig.png";
 import gIcon from "../../assets/g.png";
 const PLATFORM_ICONS = { Facebook: fbIcon, Instagram: igIcon, Google: gIcon };
 import { useAuth } from "../../hooks/useAuth";
-import { CompetitorAPI, trackProjectEvent } from "../../services/api";
+import { CompetitorAPI, CompetitorFetchTimeoutError, trackProjectEvent } from "../../services/api";
 import CompetitorComparison from "./CompetitorComparison";
 import MembersManager from "./MembersManager";
 import { COUNTRIES } from "../../utils/countries";
@@ -305,6 +305,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const [isPreparingCompetitors, setIsPreparingCompetitors] = useState(false);
   const [progressStatus, setProgressStatus] = useState("");
   const socketRef = useRef(null);
+  // content_ref_ids we've already joined a socket room for — lets a page
+  // refresh rejoin the room(s) of any project still generating server-side
+  // (per its persisted generation_status), not just the one active during
+  // the original submit. Also read by the socket's own "connect" handler so
+  // a reconnect (e.g. after a network drop) rejoins every tracked room, not
+  // just the single most-recent one.
+  const joinedRoomsRef = useRef(new Set());
 
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState(() =>
@@ -331,11 +338,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     type: "success",
   });
 
-  const showToast = (message, type = "success") => {
+  const showToast = (message, type = "success", durationMs = 3000) => {
     setToast({ show: true, message, type });
     setTimeout(
       () => setToast({ show: false, message: "", type: "success" }),
-      3000,
+      durationMs,
     );
   };
 
@@ -419,14 +426,34 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
 
           // Backend now optionally sends raw project objects containing monitoring and competitor ObjectIds
           if (richProjects.length > 0) {
-            mappedProjects = richProjects.map((proj, idx) => ({
-              id: `real_proj_${idx}`,
-              project_id: proj._id ? String(proj._id) : null, // competitors_request._id → brand-cc
-              advertiser: proj.project_name,
-              initialCompetitorCount: proj.competitors?.length || 0,
-              initialMonitoredCount: proj.monitoring?.length || 0,
-              competitors: [], // full list populated when clicked
-            }));
+            mappedProjects = richProjects.map((proj, idx) => {
+              // Persisted generation state (see competitors_request schema) —
+              // lets a page refresh mid-generation resume correctly instead of
+              // showing a flat "no competitors" for a project that's actually
+              // still being populated in the background.
+              const isStillGenerating = proj.generation_status === "running";
+              return {
+                id: `real_proj_${idx}`,
+                project_id: proj._id ? String(proj._id) : null, // competitors_request._id → brand-cc
+                advertiser: proj.project_name,
+                // While still generating, show the originally requested count
+                // so an in-progress project reads as "42/100", not "42/42"
+                // (which reads as already done). But once generation has
+                // actually finished, target_count can overstate reality — DS's
+                // hard cap on /list's `limit` (see competitorOverfetchLimit's
+                // DS_MAX_LIST_LIMIT clamp) leaves no overfetch headroom for a
+                // 100-competitor request, so a single duplicate name in that
+                // batch lands on 99 unique, not 100. Showing "0/100" then would
+                // wrongly imply one more competitor is still coming in.
+                initialCompetitorCount: isStillGenerating
+                  ? (proj.target_count || proj.competitors?.length || 0)
+                  : (proj.competitors?.length || 0),
+                initialMonitoredCount: proj.monitoring?.length || 0,
+                competitors: [], // full list populated when clicked
+                contentRefId: proj.content_ref_id || null,
+                isGenerating: isStillGenerating,
+              };
+            });
           } else {
             mappedProjects = fetchedProjectsStrings.map((projName, idx) => ({
               id: `real_proj_${idx}`,
@@ -615,10 +642,17 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       if (contentRefIdRef.current) {
         socket.emit("join-room", contentRefIdRef.current);
       }
+      // Rejoin every project's room we know is still generating — covers the
+      // page-refresh case, where this is a fresh socket connecting for the
+      // first time and contentRefIdRef alone wouldn't cover projects other
+      // than the one most recently submitted.
+      for (const refId of joinedRoomsRef.current) {
+        socket.emit("join-room", refId);
+      }
     });
 
     // Event for ACTUAL data — appended batch by batch (matches Laravel)
-    socket.on("competitor-batch", ({ rows }) => {
+    socket.on("competitor-batch", ({ content_ref_id, rows }) => {
       if (!rows || !Array.isArray(rows)) return;
 
       try {
@@ -672,6 +706,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               .toLowerCase();
 
             if (
+              (content_ref_id && p.contentRefId === content_ref_id) ||
               p.id === selectedProjectIdRef.current ||
               (normalizedWebsite && pName === normalizedWebsite)
             ) {
@@ -690,15 +725,48 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
 
     // Progress events
     socket.on("competitor-progress", (data) => {
+      const matchesProject = (p) =>
+        (data?.content_ref_id && p.contentRefId === data.content_ref_id) ||
+        (!data?.content_ref_id && p.id === selectedProjectIdRef.current);
+
       if (data?.status === "completed") {
         setProgressStatus("");
+        // Fewer competitors than requested is a legitimate outcome (DS's real
+        // candidate pool for a niche brand can be smaller than the target),
+        // not a failure — but it's surprising if unexplained, so call it out
+        // instead of leaving the user to wonder why they got 62 of 100.
+        const generated = data?.generated ?? 0;
+        const target = data?.target ?? 0;
         setProjects((prev) =>
           prev.map((p) =>
-            p.id === selectedProjectIdRef.current
-              ? { ...p, isGenerating: false }
+            matchesProject(p)
+              ? {
+                  ...p,
+                  isGenerating: false,
+                  // Card showed the requested target while generating (e.g.
+                  // "0/100") — now that generation is actually done, replace
+                  // it with the real final count so it doesn't keep implying
+                  // one more competitor is still coming when it isn't (e.g.
+                  // DS's /list limit cap means a 100-competitor request tops
+                  // out at 99 if that batch has one duplicate name).
+                  initialCompetitorCount: generated,
+                }
               : p,
           ),
         );
+        if (target > 0 && generated < target) {
+          // toast only has two visual styles (green "success" / red anything-else)
+          // — this isn't an error, so "success" is the correct (green) choice
+          // even though the copy explains a shortfall rather than full success.
+          // Longer than the 3s default — this message is long enough that 3s
+          // isn't enough time to read it (flagged directly: "toast should
+          // stay at least 1-2 second longer").
+          showToast(
+            `Generated ${generated} of ${target} requested competitors — that may be all the unique competitors available for this brand.`,
+            "success",
+            6000,
+          );
+        }
       } else if (data?.generated) {
         setProgressStatus(
           `Generated ${data.generated} of ${data.target || "target"} competitors...`,
@@ -711,14 +779,16 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       setProgressStatus("");
       setProjects((prev) =>
         prev.map((p) =>
-          p.id === selectedProjectIdRef.current
-            ? { ...p, isGenerating: false }
+          (data?.content_ref_id && p.contentRefId === data.content_ref_id) ||
+          (!data?.content_ref_id && p.id === selectedProjectIdRef.current)
+            ? { ...p, isGenerating: false, initialCompetitorCount: data?.generated ?? p.initialCompetitorCount }
             : p,
         ),
       );
       showToast(
         `Daily token limit reached. ${data?.generated || 0} competitor(s) generated out of ${data?.target || "target"}.`,
         "error",
+        6000,
       );
     });
 
@@ -733,6 +803,23 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     };
   }, [authToken]); // Only reconnect when auth token changes
   // --- END SOCKET ---
+
+  // Rejoin socket rooms for any project the backend says is still generating
+  // (persisted generation_status — see initDashboard's mapping). Runs whenever
+  // the project list changes, which covers both the initial dashboard load
+  // after a page refresh and any project transitioning into "generating".
+  useEffect(() => {
+    for (const p of projects) {
+      if (!p.isGenerating || !p.contentRefId) continue;
+      if (joinedRoomsRef.current.has(p.contentRefId)) continue;
+      joinedRoomsRef.current.add(p.contentRefId);
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("join-room", p.contentRefId);
+      }
+      // If not connected yet, the socket's own "connect" handler above will
+      // pick this up from joinedRoomsRef once it does connect.
+    }
+  }, [projects]);
 
   const addCustomKeyword = (e) => {
     if (e) e.preventDefault();
@@ -944,6 +1031,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         initialMonitoredCount: 0,
         competitors: [],
         brand_url: websiteLink,
+        contentRefId: newRefId,
         isGenerating: true,
         summary: {
           active_monitors: 0,
@@ -1072,7 +1160,21 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         return;
       }
       console.error("Failed to generate competitors", e);
-      showToast("Error generating competitors. Please try again.", "error");
+      // A client-side abort (competitorFetch's own timeoutMs) or the backend's
+      // clean 504/502 (its DS call timed out/failed — see DS_PREPARE_TIMEOUT_MS
+      // in competitorService.js) both land here, since checkCompetitorProcess
+      // is awaited directly. Either way, no brand is left behind: the backend
+      // deletes the phantom project doc it created before calling DS.
+      const isTimeout =
+        e instanceof CompetitorFetchTimeoutError ||
+        /\b(504|502)\b/.test(e?.message || "");
+      showToast(
+        isTimeout
+          ? "The competitor generation service took too long to respond. Please try again — requesting fewer competitors may help."
+          : "Error generating competitors. Please try again.",
+        "error",
+        isTimeout ? 6000 : 3000,
+      );
       setViewState(1); // Go back to start on error
     } finally {
       // Initial rows are fetched + enriched (or we errored out) — let the empty
@@ -1885,6 +1987,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     {maxCompetitors}
                   </span>
                 </div>
+                {parseInt(maxCompetitors, 10) >= 50 && (
+                  <p className="flex items-start gap-1.5 text-xs text-theme-text-muted mt-3">
+                    <Info size={13} className="flex-shrink-0 mt-0.5" />
+                    Requesting {maxCompetitors} competitors may take longer to
+                    generate — please wait after submitting.
+                  </p>
+                )}
               </div>
 
               {COUNTRY_TARGETING_ON && (

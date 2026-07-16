@@ -6,8 +6,10 @@ const AuthContext = createContext(null);
 // Node.js logout route — clears cookie + redirects to aMember logout
 const LOGOUT_URL = (import.meta.env.VITE_PAS_API_BASE_URL || '') + '/logout';
 
-// User-specific session state keys — wiped on logout so next login starts fresh.
-// Keeps `pas-theme` (user preference) and `clientIP` (non-identifying).
+// User-specific session state keys. Keeps `pas-theme` (user preference) and
+// `clientIP` (non-identifying). Split into two groups on logout:
+//  - FILTER_STATE_KEYS (below) are retained for FILTER_RETENTION_MS, then wiped.
+//  - everything else here is wiped immediately.
 const SESSION_STATE_KEYS = [
   'sdui.filterValues',
   'sdui.activePlatforms',
@@ -17,14 +19,35 @@ const SESSION_STATE_KEYS = [
   'pas_dashboard_view',
   'pas_dashboard_selected_proj_id',
   // redux-persist UI state — search query, active page, selected platforms, etc.
-  // Must be wiped alongside the SDUI filters so an expired session doesn't rehydrate
-  // yesterday's UI on the next login.
   'persist:root',
 ];
 
-export function clearSessionState() {
-  SESSION_STATE_KEYS.forEach(k => localStorage.removeItem(k));
+// Filter/UI selections should survive a logout for a grace period, not vanish
+// or persist forever — kept separate from SESSION_STATE_KEYS above (which are
+// wiped immediately).
+const FILTER_STATE_KEYS = ['sdui.filterValues', 'sdui.activePlatforms', 'persist:root'];
+const FILTER_RETENTION_MS = 24 * 60 * 60 * 1000; // 24h
+const FILTER_LOGOUT_TS_KEY = 'pas_filters_logout_at';
+
+// Called on logout: leaves filter/UI selections in place but starts a 24h
+// retention clock, and immediately wipes everything else session-specific.
+// (Requirement: filters persist up to 24h after logout, then reset to default.)
+export function markFiltersForExpiry() {
+  SESSION_STATE_KEYS.filter(k => !FILTER_STATE_KEYS.includes(k)).forEach(k => localStorage.removeItem(k));
+  localStorage.setItem(FILTER_LOGOUT_TS_KEY, String(Date.now()));
   try { sessionStorage.removeItem('guestToDashboard'); } catch {}
+}
+
+// Called only when a session is (re)established (see bootstrapAuth's success path):
+// if the 24h post-logout retention window has elapsed, clears the saved filters so
+// the app loads with default filter settings; otherwise leaves them for this login.
+function expireStaleFilters() {
+  const loggedOutAt = Number(localStorage.getItem(FILTER_LOGOUT_TS_KEY));
+  if (!loggedOutAt) return;
+  if (Date.now() - loggedOutAt > FILTER_RETENTION_MS) {
+    FILTER_STATE_KEYS.forEach(k => localStorage.removeItem(k));
+  }
+  localStorage.removeItem(FILTER_LOGOUT_TS_KEY);
 }
 
 // ─── SDUI filter _id / group_id  →  plan_access_config _id ──────────────────
@@ -130,6 +153,12 @@ function bootstrapAuth() {
     if (payload.exp && payload.exp * 1000 < Date.now() && !isEnvLogin) {
       throw new Error('Token expired');
     }
+    // A session is actually being (re)established here — this is the "next login"
+    // moment. Resolve any pending post-logout retention window now: keep filters if
+    // logout was under 24h ago, otherwise reset them to defaults. Must NOT run on
+    // every page load (e.g. the reload the /logout redirect chain itself triggers),
+    // or the timestamp gets consumed before the 24h window ever elapses.
+    expireStaleFilters();
     localStorage.setItem('authUser', JSON.stringify(payload));
     if (isFreshLogin || isEnvLogin) {
       trackEvent('loginPage', {
@@ -142,13 +171,13 @@ function bootstrapAuth() {
     }
     return { token, user: payload };
   } catch {
-    // Token is expired/invalid at page load (e.g. user came back the next day without
-    // logging out). Wipe auth AND all user-specific session/UI state so the upcoming
-    // login redirect starts fresh — mirrors the manual logout() path. Without this,
-    // sdui.filterValues + persist:root survive and rehydrate yesterday's filters/search.
+    // Token is expired/invalid at page load (e.g. user came back later without
+    // logging out). Wipe auth immediately, but only start the filter retention
+    // clock — mirrors the manual logout() path, so filters still survive up to
+    // 24h from here before resetting to defaults.
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
-    clearSessionState();
+    markFiltersForExpiry();
     return { token: null, user: null };
   }
 }
@@ -195,8 +224,9 @@ export function AuthProvider({ children }) {
     // Clear all auth data from localStorage
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
-    // Wipe user-specific session + UI state (incl. persist:root) so next login starts fresh
-    clearSessionState();
+    // Start the 24h filter-retention clock; filters/UI state are only wiped once
+    // that window elapses (see expireStaleFilters, run on next app load/login).
+    markFiltersForExpiry();
     // Clear cookie from frontend side too (in case server cookie clear fails due to cross-domain)
     document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;';
     document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.poweradspy.com;';

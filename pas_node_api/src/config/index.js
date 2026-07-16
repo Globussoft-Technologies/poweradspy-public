@@ -427,6 +427,8 @@ const config = {
     baseUrl: getVal(fileConfig.aiSearch?.baseUrl, 'AI_SEARCH_BASE_URL') || '',
     timeoutMs: getVal(fileConfig.aiSearch?.timeoutMs, 'AI_SEARCH_TIMEOUT_MS', toInt) || 15000,
     healthCacheMs: getVal(fileConfig.aiSearch?.healthCacheMs, 'AI_SEARCH_HEALTH_CACHE_MS', toInt) ?? 15000,
+    pollIntervalMs: getVal(fileConfig.aiSearch?.pollIntervalMs, 'AI_SEARCH_POLL_INTERVAL_MS', toInt) || 1000,
+    pollMaxMs: getVal(fileConfig.aiSearch?.pollMaxMs, 'AI_SEARCH_POLL_MAX_MS', toInt) || 60000,
     rateLimitWindowMs: getVal(fileConfig.aiSearch?.rateLimitWindowMs, 'AI_SEARCH_RATE_LIMIT_WINDOW_MS', toInt) || 60000,
     rateLimitMax: getVal(fileConfig.aiSearch?.rateLimitMax, 'AI_SEARCH_RATE_LIMIT_MAX', toInt) || 20,
     maxPromptLen: getVal(fileConfig.aiSearch?.maxPromptLen, 'AI_SEARCH_MAX_PROMPT_LEN', toInt) || 2000,

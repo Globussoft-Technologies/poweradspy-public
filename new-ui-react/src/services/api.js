@@ -5,7 +5,7 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models
 
 // ─── PAS API Configuration ────────────────────────────────────────────────────
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || "";
-import { getAuthToken, clearSessionState } from '../hooks/useAuth';
+import { getAuthToken, markFiltersForExpiry } from '../hooks/useAuth';
 const getPASToken = () => getAuthToken() || import.meta.env.VITE_PAS_API_TOKEN;
 const COMPETITOR_API_BASE = import.meta.env.VITE_NODE_API_URL || "http://localhost:5000/api";
 
@@ -22,7 +22,7 @@ export const handle401 = () => {
   _loggingOut = true;
   localStorage.removeItem('authToken');
   localStorage.removeItem('authUser');
-  clearSessionState();
+  markFiltersForExpiry();
   document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;';
   document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.poweradspy.com;';
   window.location.href = LOGOUT_URL;
@@ -1735,13 +1735,23 @@ export const fetchFilters = async () => {
 // Competitor Analysis API
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Marker so callers (and the caller of checkCompetitorProcess) can tell a
+// client-side timeout apart from a real network/HTTP error.
+export class CompetitorFetchTimeoutError extends Error {
+  constructor(path) {
+    super(`Competitor API ${path} timed out`);
+    this.name = 'CompetitorFetchTimeoutError';
+  }
+}
+
 export const competitorFetch = async (path, options = {}) => {
   const token = getAuthToken();
+  const { timeoutMs, ...fetchOptions } = options;
 
   // Build headers safely
   const headers = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...(fetchOptions.headers || {}),
   };
 
   // Always override Authorization (important)
@@ -1749,11 +1759,27 @@ export const competitorFetch = async (path, options = {}) => {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${COMPETITOR_API_BASE}${path}`, {
-    ...options,
-    headers,
-    cache: 'no-store', // avoids 304 issues
-  });
+  // Optional client-side timeout (opt-in via `timeoutMs`) — without this, a
+  // hung backend response (e.g. the DS competitor-generation call taking too
+  // long) leaves this fetch pending forever, with nothing to ever clear a
+  // loading spinner tied to it. Mirrors the backend's own DS_PREPARE_TIMEOUT_MS.
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  let res;
+  try {
+    res = await fetch(`${COMPETITOR_API_BASE}${path}`, {
+      ...fetchOptions,
+      headers,
+      cache: 'no-store', // avoids 304 issues
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new CompetitorFetchTimeoutError(path);
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   // Safe JSON parsing
   let data = null;
@@ -1828,10 +1854,14 @@ export const CompetitorAPI = {
       body: JSON.stringify({ webSiteUrl, adv }),
     }),
 
-  // Competitor process
+  // Competitor process. timeoutMs slightly exceeds the backend's own
+  // DS_PREPARE_TIMEOUT_MS (45s) so the backend's clean timeout error wins the
+  // race in the normal case; this is only a backstop for when the backend
+  // itself doesn't respond in time.
   checkCompetitorProcess: (contentRefId, keywords, limit, advertiser, userId, country) =>
     competitorFetch('/check-competitor-process', {
       method: 'POST',
+      timeoutMs: 50000,
       body: JSON.stringify({
         content_ref_id: contentRefId,
         keywords,
@@ -1842,10 +1872,15 @@ export const CompetitorAPI = {
       }),
     }),
 
-  // Store competitors
+  // Store competitors. This is awaited directly by handleSubmitData right
+  // after checkCompetitorProcess — same spinner-visible chain — and the
+  // backend's own DS `/list` call has a matching DS_REQUEST_TIMEOUT_MS bound,
+  // so this needs one too (its caller already treats a failure here as
+  // non-fatal: "socket will still deliver data from background loop").
   getStoreProcessCompetitors: (advertiser, contentRefId, target, userId) =>
     competitorFetch('/get-store-process-competitors', {
       method: 'POST',
+      timeoutMs: 50000,
       body: JSON.stringify({
         advertiser,
         content_ref_id: contentRefId,
