@@ -701,7 +701,7 @@ const Header = ({
             <Search size={20} />
           </button>
         )}
-        {sdui.totalActiveFilters > 0 && !guest?.isRestricted && activePage !== "projects" && (
+        {sdui.totalActiveFilters > 0 && !guest?.isRestricted && activePage !== "projects" && activePage !== "keywords-explorer" && (
           <button
             onClick={() => {
               if (guest?.showGuestWarning("Please login to change filters")) return;
