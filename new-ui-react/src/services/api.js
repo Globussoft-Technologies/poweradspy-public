@@ -309,7 +309,16 @@ export const mapAdToCard = (raw) => {
     })(),
     subtitle: raw.news_feed_description || '',
     adText : raw.ad_text || '',
-    adType: isTikTok ? 'video' : mapAdType(raw.type),
+    adType: (() => {
+      if (isTikTok) return 'video';
+      const mapped = mapAdType(raw.type);
+      // Reddit text ads sometimes carry a real image — promote them to 'image' so
+      // the card renders the creative instead of the title-only text fallback.
+      if (mapped === 'text' && resolvedNetwork === 'reddit' && (raw.image_url_original || raw.image_video_url)) {
+        return 'image';
+      }
+      return mapped;
+    })(),
     textImageTitle: raw.text_image_title || '',
     adUrl: raw.ad_url || raw.library_url || '',
     tiktokLibraryUrl: isTikTok ? (raw.library_url || '') : '',
