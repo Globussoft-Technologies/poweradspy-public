@@ -3,6 +3,7 @@
 const RedditSearchQueryBuilder = require('../builders/RedditSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 const AD_DETAIL_SELECT = `
     reddit_ad.id                                    AS id,
@@ -296,6 +297,16 @@ async function searchAds(req, db, logger) {
 
     const adIds = esHits.map(hit => hit._source['reddit_ad.id'] || hit._id);
 
+    // Language map for resolving ES `lang_detect` codes → names. Loaded once,
+    // then reused below to override the stale `reddit_ad.language_id` join —
+    // mirrors adDetailController's overlay (and every other network's list
+    // search) so list results agree with the detail/analytics views instead
+    // of showing blank when language_id doesn't resolve.
+    let langMap = null;
+    if (db.sql) {
+      try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+    }
+
     let finalAds = [];
     if (db.sql) {
       try {
@@ -336,8 +347,10 @@ ORDER BY FIELD(reddit_ad.id, ${placeholders})`;
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['reddit_ad.id'] || hit._id), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+      const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : ad.language;
       return {
         ...ad,
+        language,
         market_platform_urls: {
           url_destination: src['reddit_ad_url.url_destination']         || null,
           source_url:      src['reddit_ad_outgoing_links.source_url']   || null,

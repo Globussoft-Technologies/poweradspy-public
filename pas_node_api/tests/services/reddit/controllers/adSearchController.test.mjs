@@ -48,6 +48,16 @@ require.cache[cursorPath] = {
   exports: { SAFE_FROM: 9000, buildQueryHash, saveCursor, getCursor },
 };
 
+// ── Mock languageMap (real module has a process-wide cache — mock it so
+// tests stay deterministic regardless of call order) ──────────────────────
+const languageMapPath = require.resolve("../../../../src/utils/languageMap");
+const getLanguageMap = vi.fn(async () => new Map());
+const resolveLanguageName = vi.fn((map, code) => map.get(String(code).toUpperCase()) || code);
+require.cache[languageMapPath] = {
+  id: languageMapPath, filename: languageMapPath, loaded: true,
+  exports: { getLanguageMap, resolveLanguageName },
+};
+
 const { searchAds } = require(
   "../../../../src/services/reddit/controllers/adSearchController"
 );
@@ -64,6 +74,8 @@ beforeEach(() => {
   buildQueryHash.mockClear().mockImplementation(() => "qhash");
   saveCursor.mockClear();
   getCursor.mockClear();
+  getLanguageMap.mockClear().mockImplementation(async () => new Map());
+  resolveLanguageName.mockClear().mockImplementation((map, code) => map.get(String(code).toUpperCase()) || code);
   fakeLogger.info.mockClear(); fakeLogger.warn.mockClear(); fakeLogger.error.mockClear();
 });
 
@@ -470,5 +482,44 @@ describe("services/reddit/controllers/adSearchController > regular searchAds", (
       days_running: 10, likes: 111, comments: 22, shares: 33,
       built_with: "Shopify", built_with_analytics_tracking: "GA",
     }));
+  });
+
+  // Regression: AdDetailModal showed blank Language for reddit ad 30263 while
+  // AnalyticsModal (fed by adDetailController, which already has this ES
+  // overlay) showed "English". Root cause: searchAds — the list endpoint
+  // AdDetailModal's `ad` prop comes from — only used the SQL `languages.name`
+  // join with no ES `lang_detect` fallback, unlike every other network's list
+  // search and reddit's own adDetailController.
+  it("language: ES lang_detect overrides a stale/missing SQL languages join", async () => {
+    const esHits = [{ _source: { "reddit_ad.id": 1, lang_detect: "en" } }];
+    const db = {
+      elastic: { indexName: "reddit_search_mix", search: vi.fn(async () => ({ hits: { hits: esHits, total: { value: 1 } } })) },
+      // SQL join produced no language (language_id null/unresolved)
+      sql: { query: vi.fn(async () => [{ id: 1, ad_id: 1, type: "TEXT", language: null }]) },
+    };
+    getLanguageMap.mockResolvedValueOnce(new Map([["EN", "English"]]));
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBe("English");
+  });
+
+  it("language: no ES lang_detect → falls back to the SQL languages join value", async () => {
+    const esHits = [{ _source: { "reddit_ad.id": 1 /* no lang_detect */ } }];
+    const db = {
+      elastic: { indexName: "reddit_search_mix", search: vi.fn(async () => ({ hits: { hits: esHits, total: { value: 1 } } })) },
+      sql: { query: vi.fn(async () => [{ id: 1, ad_id: 1, type: "TEXT", language: "French" }]) },
+    };
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBe("French");
+  });
+
+  it("language: langMap load failure → falls back to the SQL languages join value", async () => {
+    const esHits = [{ _source: { "reddit_ad.id": 1, lang_detect: "en" } }];
+    const db = {
+      elastic: { indexName: "reddit_search_mix", search: vi.fn(async () => ({ hits: { hits: esHits, total: { value: 1 } } })) },
+      sql: { query: vi.fn(async () => [{ id: 1, ad_id: 1, type: "TEXT", language: "German" }]) },
+    };
+    getLanguageMap.mockRejectedValueOnce(new Error("sql down"));
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBe("German");
   });
 });

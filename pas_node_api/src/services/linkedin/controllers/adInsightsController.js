@@ -92,7 +92,23 @@ function fixCountryIso(country, iso) {
   const name = (country || '').toLowerCase();
   if (country === 'Czechia') return 'CZ';
   if (country === 'Russia') return 'RU';
-  if (name.includes('congo') && (!iso || iso === 'null')) return 'CD';
+  // Republic of the Congo (Brazzaville) → CG; DR Congo (Kinshasa) → CD.
+  // Only override when the incoming iso is missing so DB values still win.
+  if (!iso || iso === 'null') {
+    if (
+      name === 'congo - brazzaville' ||
+      name === 'republic of the congo' ||
+      name === 'republic of congo' ||
+      name === 'congo republic' ||
+      name === 'congo'
+    ) return 'CG';
+    if (
+      name === 'congo - kinshasa' ||
+      name === 'dr congo' ||
+      name === 'democratic republic of the congo' ||
+      name === 'democratic republic of congo'
+    ) return 'CD';
+  }
   return iso;
 }
 

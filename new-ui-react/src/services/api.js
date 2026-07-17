@@ -966,7 +966,6 @@ export const buildSearchPayload = (filters = {}) => {
     subCategory: Array.isArray(subcategoryVal) && subcategoryVal.length > 0 ? subcategoryVal : v(subcategoryVal),
     ecommerce: Array.isArray(ecommerce) && ecommerce.length > 0 ? ecommerce : v(ecommerce),
     ad_sub_position: (() => {
-      if (!ps(resolvedNetworks, 'ad_sub_position_filter') && !ps(resolvedNetworks, 'ad_sub_position')) return 'NA';
       if (!adSubPosition || adSubPosition === 'NA') return 'NA';
       const vals = Array.isArray(adSubPosition) ? adSubPosition : [adSubPosition];
       return vals.length > 0 ? vals.map(v => String(v).toUpperCase()) : 'NA';

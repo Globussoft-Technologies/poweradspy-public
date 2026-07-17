@@ -77,11 +77,6 @@ const NON_FILTER_BODY_KEYS = new Set([
   'ipBasedCountry', 'exact_search', 'language', 'lang',
   'advertiser', 'domain', 'keyword', // search inputs — applicability handled by search_input filter (usually 'all')
   'track', 'ad_position_filter',
-  // ─── IMPORTANT — fields that the frontend ALWAYS includes with a default
-  // value even when the user didn't explicitly apply that filter. Treating
-  // these as user-driven filters wrongly restricts network applicability
-  // (e.g. `ad_position` defaults to a 4-element array on every request).
-  'ad_position',
 ]);
 
 // Static network restrictions for filters not driven by SDUI platform_applicability.
@@ -94,6 +89,8 @@ const STATIC_FILTER_NETWORKS = {
   budget:   ['tiktok'],
   // ad_position only applies to Facebook and YouTube
   ad_position: ['facebook', 'youtube'],
+  // ad_sub_position only applies to Google
+  ad_sub_position: ['google'],
 };
 
 // In-memory cache — SDUI config is rebuilt every minute max

@@ -444,6 +444,16 @@ async function searchAds(req, db, logger) {
   if (p.favorite === 'true') return searchFavoriteAds(p, db, logger);
   if (p.hidden   === 'true') return searchHiddenAds(p,   db, logger);
 
+  // ad_position / ad_sub_position values sent by the frontend (e.g. MARKETPLACE,
+  // TOP) come from Facebook/Instagram/YouTube surfaces and don't map to GDN
+  // placements. Short-circuit rather than run a query that would misleadingly
+  // count/return GDN ads.
+  const adPositionArr = p.ad_position ? ensureArray(p.ad_position) : [];
+  const adSubPositionArr = p.ad_sub_position ? ensureArray(p.ad_sub_position) : [];
+  if (adPositionArr.length > 0 || adSubPositionArr.length > 0) {
+    return { code: 200, data: [], total: 0, message: 'ad_position/ad_sub_position filter not applicable to GDN' };
+  }
+
   if (!db.elastic) return { code: 503, message: 'Elasticsearch connection not available' };
 
   const { size, from } = parsePagination(p);
@@ -459,11 +469,6 @@ async function searchAds(req, db, logger) {
     .setSortMethod(sort.order);
 
   if (p.status && Array.isArray(p.status) && p.status.length > 0) builder.setStatus(p.status);
-
-  const adPositionArr = p.ad_position ? ensureArray(p.ad_position) : [];
-  if (adPositionArr.length > 0) builder.setAdPosition(adPositionArr);
-
-  if (p.ad_sub_position) builder.setAdSubPosition(ensureArray(p.ad_sub_position));
   if (p.keyword)         builder.setKeyword(p.keyword);
   if (p.advertiser)      builder.setPostOwnerName(p.advertiser);
   if (p.domain)          builder.setUrl(p.domain);

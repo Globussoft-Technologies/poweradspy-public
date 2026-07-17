@@ -184,11 +184,12 @@ async function searchHiddenAds(p, db, logger) {
 }
 
 // Fields in the unified payload that TikTok has no equivalent for.
-// These are simply ignored (not blocked) — TikTok returns its own results
-// based on the filters it does understand (budget, likes, language, country, etc.).
-// Only keep fields here that would cause incorrect/misleading results if acted on.
+// When any of these are active, we return 0 results rather than running a
+// match_all and reporting a misleading full-index count. Only keep fields
+// here that would cause incorrect/misleading results if acted on.
 const TIKTOK_UNSUPPORTED_FILTERS = new Set([
-  // intentionally empty — all cross-platform fields are now ignored gracefully
+  'ad_position',
+  'ad_sub_position',
 ]);
 
 // Keys that are "covered" by a TikTok-native equivalent — if the TikTok
@@ -208,8 +209,6 @@ function hasUnsupportedFilters(raw) {
   for (const key of TIKTOK_UNSUPPORTED_FILTERS) {
     const v = raw[key];
     if (!isActiveValue(v)) continue;
-    // ad_position belongs to other platforms — TikTok never uses it, so always ignore it
-    if (key === 'ad_position') continue;
     // If a TikTok-native equivalent is active, this key is already handled
     const coveredBy = TIKTOK_COVERED_BY[key];
     if (coveredBy && isActiveValue(raw[coveredBy])) continue;

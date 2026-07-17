@@ -262,14 +262,22 @@ const KEYWORDS_SUGGESTIONS = [
   "ad research",
 ];
 
-// One-shot signal used to keep the user on a project's Competitor Analytics view
-// when they return (e.g. via the browser Back button) after drilling into the
-// Dashboard from that view (Recent Activity / Platform / Top Country). Without
-// it, AllProjects remounts and resets to the projects list, forcing the user to
-// re-select the project.
+// Signal used to keep the user on a project's Competitor Analytics view when
+// AllProjects remounts while they're still in this browser tab session —
+// covers a plain page REFRESH, the browser Back button after drilling into
+// the Dashboard from that view (Recent Activity / Platform / Top Country),
+// and any other in-session remount. Kept in sessionStorage (not localStorage)
+// specifically so it does NOT survive into a genuinely new tab/window — that
+// case should still land on the projects list, matching the original intent.
+// Originally a one-shot flag set only at the moment of a Dashboard drill-down;
+// broadened to be kept continuously in sync with viewState (see the
+// persistence effect below) once a plain refresh was found to bypass it
+// entirely (the drill-down click was the only place that ever set it).
 const RESTORE_ANALYTICS_FLAG = "pas_restore_analytics_view";
 
-// Marked at the moment of a drill-down (only reachable from viewState 4).
+// Still called from the drill-down click handlers below — now redundant with
+// the continuous sessionStorage sync, but harmless to leave (same value,
+// written slightly earlier) and safer than touching every call site.
 const markReturnToAnalytics = () => {
   try {
     sessionStorage.setItem(RESTORE_ANALYTICS_FLAG, "1");
@@ -511,15 +519,15 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     if (didInitViewRef.current) return;
     didInitViewRef.current = true;
     if (shouldRestoreAnalytics()) {
-      // Returning from a Dashboard drill-down: keep the analytics view that the
-      // lazy initializers above restored, and consume the one-shot flag.
-      try {
-        sessionStorage.removeItem(RESTORE_ANALYTICS_FLAG);
-      } catch {
-        /* ignore */
-      }
+      // Same-tab remount (refresh, or Back from a Dashboard drill-down) — keep
+      // the analytics view the lazy initializers above already restored. Do
+      // NOT clear RESTORE_ANALYTICS_FLAG here: it's now maintained continuously
+      // by the persistence effect below (kept in sync with viewState), not
+      // consumed once — clearing it here would just make the very next
+      // refresh fall through to "fresh visit" again.
     } else {
-      // Fresh visit: start on the projects list.
+      // Fresh visit (new tab/window — sessionStorage doesn't carry over):
+      // start on the projects list.
       setViewState(0);
       setSelectedProjectId(null);
     }
@@ -556,6 +564,16 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   useEffect(() => {
     if (viewState !== null)
       localStorage.setItem("pas_dashboard_view", viewState);
+    // Keep RESTORE_ANALYTICS_FLAG in sync with whether we're actually on the
+    // analytics view — set while viewing it (so a refresh restores it), cleared
+    // the moment the user navigates elsewhere on purpose (so a refresh from,
+    // say, the projects list doesn't unexpectedly jump back into a project).
+    try {
+      if (viewState === 4) sessionStorage.setItem(RESTORE_ANALYTICS_FLAG, "1");
+      else sessionStorage.removeItem(RESTORE_ANALYTICS_FLAG);
+    } catch {
+      /* sessionStorage unavailable — refresh restore simply won't work */
+    }
   }, [viewState]);
 
   useEffect(() => {

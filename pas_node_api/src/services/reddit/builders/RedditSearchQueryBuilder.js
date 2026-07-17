@@ -518,6 +518,7 @@ RedditSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'reddit_ad_outgoing_links.redirect_url',
   'reddit_ad_outgoing_links.final_url',
   'reddit_ad_meta_data.destination_url',
+  'lang_detect',
 ];
 
 module.exports = RedditSearchQueryBuilder;
