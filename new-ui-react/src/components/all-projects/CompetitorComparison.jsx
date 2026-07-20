@@ -562,22 +562,33 @@ const NAS_URL = import.meta.env.VITE_PAS_IMAGE_DOMAIN || "";
  * Extract top headlines from get-longest response (matches Laravel logic).
  * Uses longestRunningAds → IMAGE type → title_exactly fields.
  */
-const extractHeadlines = (longestData) => {
+// Scraped ad titles occasionally come through as junk: filler/anti-scraping
+// artifacts (zero-width spaces/joiners, a BOM — no visible glyph at all), or
+// pure punctuation like "||,||," with no actual words. Both pass a plain
+// truthy check and `.trim()` fine, producing a headline pill that's either
+// literally invisible or an unreadable sliver, instead of falling back to
+// "No heading found".
+export const cleanTitle = (raw) => {
+  const stripped = raw?.replace(/[​-‍﻿]/g, "").trim() || "";
+  return /[\p{L}\p{N}]/u.test(stripped) ? stripped : "";
+};
+
+export const extractHeadlines = (longestData) => {
   let titles = [];
 
   const getImageAdTitles = (ads, platform) => {
     const result = [];
     for (const ad of ads) {
       if (platform === "facebook" && ad["facebook_ad.type"] === "IMAGE") {
-        const title = ad["facebook_ad_variants.title_exactly"];
+        const title = cleanTitle(ad["facebook_ad_variants.title_exactly"]);
         if (title) result.push(title);
       }
       if (platform === "instagram" && ad["instagram_ad.type"] === "IMAGE") {
-        const title = ad["instagram_ad_variants.title_exactly"];
+        const title = cleanTitle(ad["instagram_ad_variants.title_exactly"]);
         if (title) result.push(title);
       }
       if (platform === "google" && ad["type"] === "IMAGE") {
-        const title = ad["ad_title"];
+        const title = cleanTitle(ad["ad_title"]);
         if (title) result.push(title);
       }
       if (result.length >= 5) break;
@@ -615,55 +626,45 @@ const extractHeadlines = (longestData) => {
  * Extract creative image URLs from get-longest response (matches Laravel logic).
  * Uses longestRunningAds → IMAGE type → new_nas_image_url, prefixed with NAS_URL.
  */
-const extractImages = (longestData) => {
-  let images = [];
+export const extractImages = (longestData) => {
+  // Different ad variants (and different platforms) can reuse the exact same
+  // creative asset, so collecting raw matches per-platform and only
+  // deduplicating at the end can undercount: a platform's own duplicates fill
+  // up the 5-slot cap before other platforms are ever checked, and the caller
+  // used to render those duplicates as-is. Track seen URLs across the whole
+  // call so "5 images" always means 5 distinct creatives.
+  const images = [];
+  const seen = new Set();
 
   const getImageAdImages = (ads, platform) => {
-    const result = [];
     for (const ad of ads) {
-      if (
-        platform === "facebook" &&
-        ad["facebook_ad.type"] === "IMAGE" &&
-        ad["new_nas_image_url"]
-      ) {
-        result.push(ad["new_nas_image_url"]);
-      }
-      if (
+      let url = null;
+      if (platform === "facebook" && ad["facebook_ad.type"] === "IMAGE") {
+        url = ad["new_nas_image_url"];
+      } else if (
         platform === "instagram" &&
-        ad["instagram_ad.type"] === "IMAGE" &&
-        ad["new_nas_image_url"]
+        ad["instagram_ad.type"] === "IMAGE"
       ) {
-        result.push(ad["new_nas_image_url"]);
+        url = ad["new_nas_image_url"];
+      } else if (platform === "google" && ad["type"] === "IMAGE") {
+        url = ad["new_nas_image_url"];
       }
-      if (
-        platform === "google" &&
-        ad["type"] === "IMAGE" &&
-        ad["new_nas_image_url"]
-      ) {
-        result.push(ad["new_nas_image_url"]);
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        images.push(url);
       }
-      if (result.length >= 5) break;
+      if (images.length >= 5) break;
     }
-    return result;
   };
 
-  if (longestData?.facebook?.longestRunningAds?.length) {
-    images = getImageAdImages(
-      longestData.facebook.longestRunningAds,
-      "facebook",
-    );
+  if (images.length < 5 && longestData?.facebook?.longestRunningAds?.length) {
+    getImageAdImages(longestData.facebook.longestRunningAds, "facebook");
   }
   if (images.length < 5 && longestData?.instagram?.longestRunningAds?.length) {
-    images = images
-      .concat(
-        getImageAdImages(longestData.instagram.longestRunningAds, "instagram"),
-      )
-      .slice(0, 5);
+    getImageAdImages(longestData.instagram.longestRunningAds, "instagram");
   }
   if (images.length < 5 && longestData?.google?.longestRunningAds?.length) {
-    images = images
-      .concat(getImageAdImages(longestData.google.longestRunningAds, "google"))
-      .slice(0, 5);
+    getImageAdImages(longestData.google.longestRunningAds, "google");
   }
 
   // Prefix with NAS_URL

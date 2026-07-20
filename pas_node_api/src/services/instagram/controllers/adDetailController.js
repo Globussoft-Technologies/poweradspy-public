@@ -173,6 +173,10 @@ async function getAdDetails(req, db, logger) {
     }
 
     const adData = { ...rows[0] };
+    // Language is ES-only — must agree with the language FILTER, which only
+    // ever matches `lang_detect`. Discard the stale SQL `languages` join value
+    // seeded above by the spread; it's re-populated below only from ES.
+    adData.language = null;
 
     // ─── Step 2: Overlay ES data (translations, latest LCS, image analysis) ──
     if (db.elastic) {

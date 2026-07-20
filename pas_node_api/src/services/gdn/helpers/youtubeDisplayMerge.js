@@ -380,12 +380,11 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       if (src.countries !== undefined) row.countries = src.countries;
       if (src.duration !== undefined) row.days_running = src.duration;
       if (src.call_to_action !== undefined) row.call_to_action = src.call_to_action;
-      // Truthy check (mirrors youtube adDetailController's overlay): ES stores
-      // `ad_language: null` for ads where detection never ran (e.g. ad_type=IMAGE).
-      // A `!== undefined` test would fire on that null and overwrite the good
-      // `languages.name` SQL join with resolveLanguageName(null) === null → blank
-      // language in the card/detail modal while the analytics modal (which keeps
-      // the SQL join) still showed a value. Only override when we have a real code.
+      // Language is ES-only — must agree with the language FILTER, which only
+      // ever matches `ad_language`. Discard the stale `languages.name` SQL join
+      // (read via YT_SELECT) so a card/detail modal never shows a language the
+      // filter itself wouldn't match this ad on.
+      row.language = null;
       if (src.ad_language) {
         row.ad_language = src.ad_language;
         if (langMap) {

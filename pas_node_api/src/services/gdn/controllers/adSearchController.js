@@ -353,7 +353,9 @@ ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
   const esMap2 = new Map(esHits.map(hit => [String(getEsId(hit._source)), hit._source]));
   finalAds = finalAds.map(ad => {
     const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
-    const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : ad.language;
+    // Language is ES-only — must agree with the language FILTER, which only
+    // ever matches `lang_detect`. Never fall back to the stale SQL join.
+    const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null;
     return {
       ...ad,
       language,

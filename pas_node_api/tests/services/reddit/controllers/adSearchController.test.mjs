@@ -490,11 +490,16 @@ describe("services/reddit/controllers/adSearchController > regular searchAds", (
   // AdDetailModal's `ad` prop comes from — only used the SQL `languages.name`
   // join with no ES `lang_detect` fallback, unlike every other network's list
   // search and reddit's own adDetailController.
-  it("language: ES lang_detect overrides a stale/missing SQL languages join", async () => {
+  //
+  // Language must be ES-only (superseding an earlier, incorrect SQL-fallback
+  // pass): the language FILTER only ever matches ES `lang_detect`, so showing
+  // a SQL-join-derived language the filter wouldn't match this ad on is worse
+  // than showing none — null, not the stale SQL value, in every other case.
+  it("language: ES lang_detect resolves the display language", async () => {
     const esHits = [{ _source: { "reddit_ad.id": 1, lang_detect: "en" } }];
     const db = {
       elastic: { indexName: "reddit_search_mix", search: vi.fn(async () => ({ hits: { hits: esHits, total: { value: 1 } } })) },
-      // SQL join produced no language (language_id null/unresolved)
+      // SQL join produced no language (language_id null/unresolved) — irrelevant now
       sql: { query: vi.fn(async () => [{ id: 1, ad_id: 1, type: "TEXT", language: null }]) },
     };
     getLanguageMap.mockResolvedValueOnce(new Map([["EN", "English"]]));
@@ -502,17 +507,17 @@ describe("services/reddit/controllers/adSearchController > regular searchAds", (
     expect(out.data[0].language).toBe("English");
   });
 
-  it("language: no ES lang_detect → falls back to the SQL languages join value", async () => {
+  it("language: no ES lang_detect → null, never the SQL languages join value", async () => {
     const esHits = [{ _source: { "reddit_ad.id": 1 /* no lang_detect */ } }];
     const db = {
       elastic: { indexName: "reddit_search_mix", search: vi.fn(async () => ({ hits: { hits: esHits, total: { value: 1 } } })) },
       sql: { query: vi.fn(async () => [{ id: 1, ad_id: 1, type: "TEXT", language: "French" }]) },
     };
     const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
-    expect(out.data[0].language).toBe("French");
+    expect(out.data[0].language).toBeNull();
   });
 
-  it("language: langMap load failure → falls back to the SQL languages join value", async () => {
+  it("language: langMap load failure → null, never the SQL languages join value", async () => {
     const esHits = [{ _source: { "reddit_ad.id": 1, lang_detect: "en" } }];
     const db = {
       elastic: { indexName: "reddit_search_mix", search: vi.fn(async () => ({ hits: { hits: esHits, total: { value: 1 } } })) },
@@ -520,6 +525,6 @@ describe("services/reddit/controllers/adSearchController > regular searchAds", (
     };
     getLanguageMap.mockRejectedValueOnce(new Error("sql down"));
     const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
-    expect(out.data[0].language).toBe("German");
+    expect(out.data[0].language).toBeNull();
   });
 });

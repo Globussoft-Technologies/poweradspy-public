@@ -2696,21 +2696,33 @@ async generateCompetitorsInBackground({
   // 🔥 SMART TRACKING
   let lastCount = 0;
   let stableCount = 0;
+  // Last progress_percentage DS reported on the /list poll below. Read here
+  // (rather than only inside the poll) so the top-of-loop "competitor-progress"
+  // emit — which fires before this iteration's poll — can still carry the most
+  // recent value instead of always being one iteration behind.
+  let lastProgressPercentage = null;
   const MAX_STABLE_RETRIES = 5;
   const MAX_PROCESSING_RETRIES = 30; // wait up to ~90s for API to finish processing
   let processingRetries = 0;
   let tokenExceeded = false;
 
   // Absolute ceiling on the WHOLE loop, independent of the stable/processing
-  // retry counters above. Those only break when DS stops making progress —
-  // but if DS keeps trickling in a handful of new candidates every poll
-  // without ever reaching TARGET (plausible for a large TARGET like 100, if
-  // DS's real candidate pool for this niche is smaller), `competitors.length
-  // > lastCount` stays true forever, resets stableCount to 0 every time, and
-  // this loop never exits — the reported infinite spinner for large requests,
-  // even though every individual HTTP call inside it resolves fine. `startTime`
-  // was already captured above for exactly this but was never actually used.
-  const MAX_LOOP_DURATION_MS = 120000; // 2 minutes
+  // retry counters above and of progress_percentage below. Those only break
+  // when DS stops making progress — but if DS keeps trickling in a handful of
+  // new candidates every poll without ever reaching TARGET (plausible for a
+  // large TARGET like 100, if DS's real candidate pool for this niche is
+  // smaller), `competitors.length > lastCount` stays true forever, resets
+  // stableCount to 0 every time, and this loop never exits — the reported
+  // infinite spinner for large requests, even though every individual HTTP
+  // call inside it resolves fine. `startTime` was already captured above for
+  // exactly this but was never actually used.
+  //
+  // DS confirmed some keyword/country/count combinations legitimately take up
+  // to ~10 minutes to finish (e.g. 100 competitors + a country filter). This
+  // ceiling is a last-resort circuit breaker for a genuinely stuck/misbehaving
+  // request, not the expected exit path — see progress_percentage below for
+  // the real completion signal — so it's set well above DS's stated worst case.
+  const MAX_LOOP_DURATION_MS = 900000; // 15 minutes
 
   try {
     while (true) {
@@ -2768,7 +2780,8 @@ async generateCompetitorsInBackground({
         content_ref_id,
         generated: attachedCount,
         target: TARGET,
-        status: attachedCount >= TARGET ? "completed" : "running"
+        status: attachedCount >= TARGET ? "completed" : "running",
+        progress_percentage: lastProgressPercentage
       });
 
       if (attachedCount >= TARGET) {
@@ -2808,6 +2821,17 @@ async generateCompetitorsInBackground({
       const totalItems = apiData?.total_items || 0;
       const completedItems = apiData?.completed_items || 0;
       const isStillProcessing = totalItems > 0 && completedItems < totalItems;
+      // DS confirmed their /list API reports true completion via
+      // progress_percentage, and that generation for some keyword/country/
+      // count combinations legitimately runs well past our old stable/
+      // processing retry windows (up to ~10 minutes). Trust this field over
+      // those retry counters when DS provides it — only fall back to the
+      // counters below for responses that don't include it.
+      const progressPercentage =
+        typeof apiData?.progress_percentage === "number"
+          ? apiData.progress_percentage
+          : null;
+      lastProgressPercentage = progressPercentage;
 
       // SMART LOGIC
 
@@ -2879,6 +2903,18 @@ async generateCompetitorsInBackground({
 
       // SAME DATA AGAIN
       if (competitors.length === lastCount && competitors.length > 0) {
+        if (progressPercentage !== null) {
+          if (progressPercentage >= 100) {
+            break;
+          }
+          // DS says it's not done yet — keep polling regardless of how many
+          // stable/unchanged polls we've seen, up to the absolute ceiling.
+          await this.sleep(3000);
+          continue;
+        }
+
+        // Fallback heuristic — only reached when DS doesn't report
+        // progress_percentage on this response.
         // If API is still processing, don't count towards stable retries — just wait
         if (isStillProcessing) {
           processingRetries++;
@@ -2903,6 +2939,16 @@ async generateCompetitorsInBackground({
 
       // EMPTY CASE
       if (competitors.length === 0) {
+        if (progressPercentage !== null) {
+          if (progressPercentage >= 100) {
+            break;
+          }
+          await this.sleep(3000);
+          continue;
+        }
+
+        // Fallback heuristic — only reached when DS doesn't report
+        // progress_percentage on this response.
         // If API is still processing, don't count towards stable retries — just wait
         if (isStillProcessing) {
           processingRetries++;
@@ -2959,7 +3005,8 @@ async generateCompetitorsInBackground({
           content_ref_id,
           generated: finalCount,
           target: TARGET,
-          status: "completed"
+          status: "completed",
+          progress_percentage: 100
         });
       } catch (emitErr) {
         logger.error("Failed to emit final competitor-progress", emitErr);

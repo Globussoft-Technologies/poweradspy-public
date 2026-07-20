@@ -347,7 +347,11 @@ ORDER BY FIELD(reddit_ad.id, ${placeholders})`;
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['reddit_ad.id'] || hit._id), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
-      const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : ad.language;
+      // Language is ES-only — must agree with the language FILTER, which only
+      // ever matches `lang_detect`. Never fall back to the stale SQL join:
+      // showing a language the filter wouldn't match this ad on is worse than
+      // showing none (superseded the earlier `: ad.language` fallback here).
+      const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null;
       return {
         ...ad,
         language,

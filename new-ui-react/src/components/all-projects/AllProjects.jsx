@@ -46,7 +46,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { CompetitorAPI, CompetitorFetchTimeoutError, trackProjectEvent } from "../../services/api";
 import CompetitorComparison from "./CompetitorComparison";
 import MembersManager from "./MembersManager";
-import { COUNTRIES } from "../../utils/countries";
+import { COUNTRIES, NAME_TO_ISO } from "../../utils/countries";
 
 // Target Countries picker (Configure Analysis) is gated by a build-time env
 // flag, same pattern as VITE_ENABLE_KEYWORD_EXPLORER/VITE_ENABLE_INTELLIGENCE_FEATURE
@@ -66,9 +66,21 @@ const isSessionExpiredError = (error) => {
   return /unauthorized|token expired/i.test(msg);
 };
 
-const getCountryInfo = (code) => {
+export const getCountryInfo = (code) => {
   if (!code) return { f: "un", n: "Unknown" };
   const target = code.toString().toLowerCase().trim();
+
+  // ES stores "all" as a country value for ads with no specific geo-targeting
+  // (untargeted/global reach) — a real, meaningful value, not garbage. It's
+  // not an ISO country though, so it shouldn't be looked up as one (that
+  // previously rendered a bogus "UN" flag) and dropping it from the list
+  // entirely also isn't right — it left competitors whose ads are ALL
+  // untargeted with a blank Top Country cell despite genuinely having ads.
+  // Flag it as global so callers render a globe icon + "Global reach" label
+  // instead of either a fake flag or nothing.
+  if (target === "all") {
+    return { f: null, n: "Global reach", isGlobal: true };
+  }
 
   const _map = {
     us: { f: "us", n: "United States" },
@@ -118,8 +130,69 @@ const getCountryInfo = (code) => {
     return { f: target, n: target.toUpperCase() };
   }
 
+  // Full country name not covered by the ~30-country hardcoded _map above —
+  // fall back to the comprehensive ISO 3166-1 reverse lookup (same one used
+  // by the Configure Analysis country picker) instead of collapsing every
+  // unmapped country to the same generic "un" flag. This was the actual bug:
+  // Ireland/Lithuania/Malta/Romania/Slovakia etc. all missed the small _map
+  // and all fell through to "un", so the Top Country dropdown showed the same
+  // flag for every one of them.
+  const iso = NAME_TO_ISO[target.toUpperCase()];
+  if (iso) {
+    return { f: iso.toLowerCase(), n: code };
+  }
+
+  // Formal/long-form names ("Republic of India", "Kingdom of Spain", "Islamic
+  // Republic of Iran"...) don't match NAME_TO_ISO's short display names
+  // directly, so retry with common formal-name prefixes stripped. Without
+  // this, "India" and "Republic of India" resolve to two different flags
+  // (the real one and the generic "un" fallback) instead of being recognized
+  // as the same country.
+  const stripped = target.replace(
+    /^(the\s+)?(united\s+republic\s+of|islamic\s+republic\s+of|people'?s\s+republic\s+of|co-?operative\s+republic\s+of|republic\s+of|kingdom\s+of|state\s+of|commonwealth\s+of|federation\s+of|federal\s+republic\s+of|principality\s+of|sultanate\s+of|grand\s+duchy\s+of|duchy\s+of)\s+/i,
+    "",
+  );
+  if (stripped !== target) {
+    const strippedIso = NAME_TO_ISO[stripped.toUpperCase()];
+    if (strippedIso) {
+      return { f: strippedIso.toLowerCase(), n: code };
+    }
+  }
+
   // Default to un (United Nations flag or a generic blank) if mapping fails for full string
   return { f: "un", n: code };
+};
+
+// Real API responses can list the same country more than once under
+// different raw strings (e.g. "India" and "Republic of India" both resolve
+// to the same ISO code), and can also mix in the "all"/Global-reach artifact
+// alongside genuine countries. Collapse to one entry per resolved
+// country/flag, and only keep Global reach when it's the sole entry — once
+// there's at least one real country, Global reach adds no information the
+// real countries don't already convey.
+export const getDisplayCountries = (countries) => {
+  const list = (Array.isArray(countries) ? countries : []).filter(Boolean);
+  const seen = new Set();
+  const deduped = [];
+  for (const c of list) {
+    const info = getCountryInfo(c);
+    // info.f === "un" is the generic "couldn't resolve this" fallback, not a
+    // real shared identity — two different unrecognized country strings both
+    // get "un" but are NOT necessarily the same country, so they must not be
+    // deduped against each other (that would silently drop a genuine,
+    // if-unmapped, country). Only dedupe on the resolved flag when it's an
+    // actual match; fall back to the normalized raw string otherwise.
+    const key = info.isGlobal
+      ? "__global__"
+      : info.f === "un"
+        ? `unmapped:${c.toString().trim().toLowerCase()}`
+        : info.f;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(c);
+  }
+  const realOnly = deduped.filter((c) => !getCountryInfo(c).isGlobal);
+  return realOnly.length > 0 ? realOnly : deduped;
 };
 
 const getInitials = (name) => {
@@ -274,6 +347,11 @@ const KEYWORDS_SUGGESTIONS = [
 // persistence effect below) once a plain refresh was found to bypass it
 // entirely (the drill-down click was the only place that ever set it).
 const RESTORE_ANALYTICS_FLAG = "pas_restore_analytics_view";
+// Name of the competitor being compared on the Competitive Analysis view
+// (viewState 5). Only `.name` is ever read off `compareCompetitor` by
+// CompetitorComparison, so persisting just the name is enough to
+// reconstruct it on reload — no need to round-trip the whole competitor row.
+const RESTORE_COMPARE_COMPETITOR_KEY = "pas_dashboard_compare_competitor_name";
 
 // Still called from the drill-down click handlers below — now redundant with
 // the continuous sessionStorage sync, but harmless to leave (same value,
@@ -286,17 +364,26 @@ const markReturnToAnalytics = () => {
   }
 };
 
-// True when we should restore the analytics view on mount: the flag is set and a
-// valid project + analytics view were persisted.
-const shouldRestoreAnalytics = () => {
+// Which view (if any) to restore on mount: 4 (Competitor Analytics) or
+// 5 (Competitive Analysis, a sub-view of 4) when the flag + the view's
+// required persisted data are all present; otherwise 0 (projects list).
+// viewState 5 additionally requires a persisted competitor name — without
+// it CompetitorComparison has nothing to render, so fall back to 4 (still
+// requires the project id) rather than showing a broken view 5.
+const getRestoreViewState = () => {
   try {
-    return (
-      !!sessionStorage.getItem(RESTORE_ANALYTICS_FLAG) &&
-      localStorage.getItem("pas_dashboard_view") === "4" &&
-      !!localStorage.getItem("pas_dashboard_selected_proj_id")
-    );
+    if (!sessionStorage.getItem(RESTORE_ANALYTICS_FLAG)) return 0;
+    if (!localStorage.getItem("pas_dashboard_selected_proj_id")) return 0;
+    const persistedView = localStorage.getItem("pas_dashboard_view");
+    if (
+      persistedView === "5" &&
+      localStorage.getItem(RESTORE_COMPARE_COMPETITOR_KEY)
+    )
+      return 5;
+    if (persistedView === "4" || persistedView === "5") return 4;
+    return 0;
   } catch {
-    return false;
+    return 0;
   }
 };
 
@@ -322,8 +409,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const joinedRoomsRef = useRef(new Set());
 
   const [projects, setProjects] = useState([]);
+  const initialRestoreViewState = getRestoreViewState();
   const [selectedProjectId, setSelectedProjectId] = useState(() =>
-    shouldRestoreAnalytics()
+    initialRestoreViewState !== 0
       ? localStorage.getItem("pas_dashboard_selected_proj_id") || null
       : null,
   );
@@ -331,11 +419,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [openGeoId, setOpenGeoId] = useState(null);
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
-  // viewState 4 = a project's Competitor Analytics view. Restore it when the user
-  // returns from a Dashboard drill-down; otherwise start on the projects list (0).
-  const [viewState, setViewState] = useState(() =>
-    shouldRestoreAnalytics() ? 4 : 0,
-  );
+  // viewState 4 = a project's Competitor Analytics view; 5 = the Competitive
+  // Analysis sub-view for one competitor. Restore whichever was active when
+  // the user returns from a Dashboard drill-down or refreshes the page;
+  // otherwise start on the projects list (0).
+  const [viewState, setViewState] = useState(() => initialRestoreViewState);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editSearch, setEditSearch] = useState("");
   const [projectToDelete, setProjectToDelete] = useState(null);
@@ -369,7 +457,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const [selectedCountries, setSelectedCountries] = useState([]);
   const [countrySearch, setCountrySearch] = useState("");
   const [isCountryAccordionOpen, setIsCountryAccordionOpen] = useState(false);
-  const [compareCompetitor, setCompareCompetitor] = useState(null);
+  const [compareCompetitor, setCompareCompetitor] = useState(() =>
+    initialRestoreViewState === 5
+      ? { name: localStorage.getItem(RESTORE_COMPARE_COMPETITOR_KEY) }
+      : null,
+  );
   const [competitorToDelete, setCompetitorToDelete] = useState(null);
   const [isDeletingCompetitor, setIsDeletingCompetitor] = useState(false);
 
@@ -441,8 +533,22 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               // still being populated in the background.
               const isStillGenerating = proj.generation_status === "running";
               return {
-                id: `real_proj_${idx}`,
-                project_id: proj._id ? String(proj._id) : null, // competitors_request._id → brand-cc
+                // Stable across reloads — MUST match the id a freshly-generated
+                // project gets (`projectId = res?.data?._id` in handleSubmitData),
+                // which is the real Mongo _id, not an array-index placeholder.
+                // Using `real_proj_${idx}` here caused a real bug: a project
+                // opened right after generation has `selectedProjectId` set to
+                // its Mongo _id, but a later refresh reloads the list with
+                // index-based ids that never match it — the "stale restore"
+                // safety net below then (wrongly) treated the just-generated
+                // project as deleted/stale and bounced the user back to the
+                // projects list, while an "already existing" project (whose id
+                // was already `real_proj_${idx}` from a previous load) matched
+                // fine and correctly stayed open. Falls back to the index-based
+                // id only on the rare doc with no `_id` (shouldn't happen for a
+                // real Mongo document, but keeps this from ever crashing).
+                id: proj._id ? String(proj._id) : `real_proj_${idx}`,
+                project_id: proj._id ? String(proj._id) : null, // competitors_request._id → brand-cc (same value as `id` now; kept for any future consumer that specifically wants the raw Mongo id under this name)
                 advertiser: proj.project_name,
                 // While still generating, show the originally requested count
                 // so an in-progress project reads as "42/100", not "42/42"
@@ -518,7 +624,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   useEffect(() => {
     if (didInitViewRef.current) return;
     didInitViewRef.current = true;
-    if (shouldRestoreAnalytics()) {
+    if (initialRestoreViewState !== 0) {
       // Same-tab remount (refresh, or Back from a Dashboard drill-down) — keep
       // the analytics view the lazy initializers above already restored. Do
       // NOT clear RESTORE_ANALYTICS_FLAG here: it's now maintained continuously
@@ -530,6 +636,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       // start on the projects list.
       setViewState(0);
       setSelectedProjectId(null);
+      setCompareCompetitor(null);
     }
   }, []);
 
@@ -569,12 +676,24 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     // the moment the user navigates elsewhere on purpose (so a refresh from,
     // say, the projects list doesn't unexpectedly jump back into a project).
     try {
-      if (viewState === 4) sessionStorage.setItem(RESTORE_ANALYTICS_FLAG, "1");
+      if (viewState === 4 || viewState === 5)
+        sessionStorage.setItem(RESTORE_ANALYTICS_FLAG, "1");
       else sessionStorage.removeItem(RESTORE_ANALYTICS_FLAG);
     } catch {
       /* sessionStorage unavailable — refresh restore simply won't work */
     }
   }, [viewState]);
+
+  // Keep the persisted compare-competitor name in sync with viewState 5, the
+  // same way selectedProjectId is kept in sync with viewState 4 — needed so a
+  // refresh on the Competitive Analysis view has something to restore.
+  useEffect(() => {
+    if (viewState === 5 && compareCompetitor?.name) {
+      localStorage.setItem(RESTORE_COMPARE_COMPETITOR_KEY, compareCompetitor.name);
+    } else if (viewState !== 5) {
+      localStorage.removeItem(RESTORE_COMPARE_COMPETITOR_KEY);
+    }
+  }, [viewState, compareCompetitor]);
 
   useEffect(() => {
     if (selectedProjectId !== null) {
@@ -593,7 +712,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   // Skip if the project is currently generating (data arrives via socket, not API).
   const autoFetchedProjectRef = useRef(null);
   useEffect(() => {
-    if (viewState === 4 && selectedProjectId && projects.length > 0) {
+    if (
+      (viewState === 4 || viewState === 5) &&
+      selectedProjectId &&
+      projects.length > 0
+    ) {
       const project = projects.find((p) => p.id === selectedProjectId);
       if (
         project &&
@@ -614,14 +737,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   // an empty analytics view.
   useEffect(() => {
     if (
-      viewState === 4 &&
+      (viewState === 4 || viewState === 5) &&
       !isLoadingProjects &&
       selectedProjectId &&
-      projects.length > 0 &&
       !projects.some((p) => p.id === selectedProjectId)
     ) {
       setViewState(0);
       setSelectedProjectId(null);
+      setCompareCompetitor(null);
     }
   }, [viewState, isLoadingProjects, selectedProjectId, projects]);
 
@@ -786,8 +909,15 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
           );
         }
       } else if (data?.generated) {
+        // DS's /list API reports true completion via progress_percentage —
+        // surface it here so it's actually visible somewhere (previously
+        // computed on the backend but never sent to the frontend at all).
+        const pct =
+          typeof data?.progress_percentage === "number"
+            ? ` (${Math.round(data.progress_percentage)}% complete)`
+            : "";
         setProgressStatus(
-          `Generated ${data.generated} of ${data.target || "target"} competitors...`,
+          `Generated ${data.generated} of ${data.target || "target"} competitors...${pct}`,
         );
       }
     });
@@ -1066,6 +1196,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       setSelectedCountries([]);
       setCountrySearch("");
       setIsCountryAccordionOpen(false);
+      setMaxCompetitors("15");
       setViewState(4);
       trackProjectEvent('Project-click', { project_name: normalizedAdvertiser });
 
@@ -1433,6 +1564,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     setSelectedCountries([]);
     setCountrySearch("");
     setIsCountryAccordionOpen(false);
+    setMaxCompetitors("15");
     setViewState(1);
   };
 
@@ -2118,10 +2250,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         </div>
       )}
 
-      {/* Restore window: viewState 4 was restored (e.g. browser Back from a
-          Dashboard drill-down) but the projects list is still loading, so
-          activeProject isn't resolved yet — show a spinner instead of a blank. */}
-      {viewState === 4 && !activeProject && isLoadingProjects && (
+      {/* Restore window: viewState 4 or 5 was restored (e.g. browser Back from a
+          Dashboard drill-down, or a refresh) but the projects list is still
+          loading, so activeProject isn't resolved yet — show a spinner instead
+          of a blank / premature bounce to the projects list. */}
+      {(viewState === 4 || viewState === 5) && !activeProject && isLoadingProjects && (
         <div className="flex justify-center py-20">
           <Loader2 className="animate-spin text-[#3759a3] w-10 h-10" />
         </div>
@@ -2598,7 +2731,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                           <td className="px-5 py-4 text-xs font-semibold">
                             {comp.statsLoaded === false ? (
                               <CellShimmer className="h-5 w-16" />
-                            ) : (
+                            ) : (() => {
+                              const displayCountries = getDisplayCountries(comp.countries);
+                              return (
                             <div className="flex items-center gap-1.5 whitespace-nowrap relative">
                               <div
                                 className="dropdown-trigger flex -space-x-1.5 cursor-pointer"
@@ -2608,12 +2743,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                   setOpenDropdownId(null);
                                 }}
                               >
-                                {comp.countries.slice(0, 3).map((c, idx) => {
+                                {displayCountries.slice(0, 3).map((c, idx) => {
                                   const info = getCountryInfo(c);
                                   return (
                                     <div
                                       key={c}
-                                      className="w-5 h-5 rounded-full border border-theme-border overflow-hidden bg-theme-bg shadow-sm hover:scale-110 hover:ring-2 hover:ring-[#6b99ff]/50 transition-transform"
+                                      className="w-5 h-5 rounded-full border border-theme-border overflow-hidden bg-theme-bg shadow-sm hover:scale-110 hover:ring-2 hover:ring-[#6b99ff]/50 transition-transform flex items-center justify-center"
                                       style={{ zIndex: 10 - idx }}
                                       title={`View ${comp.name} ads in ${info.n}`}
                                       onClick={(e) => {
@@ -2622,23 +2757,27 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                         markReturnToAnalytics(); onCountryClick?.(comp.name, c, comp.platforms);
                                       }}
                                     >
-                                      <img
-                                        src={`https://flagcdn.com/w20/${info.f}.png`}
-                                        alt={info.n}
-                                        className="w-full h-full object-cover"
-                                      />
+                                      {info.isGlobal ? (
+                                        <Globe size={12} className="text-[#6b99ff]" />
+                                      ) : (
+                                        <img
+                                          src={`https://flagcdn.com/w20/${info.f}.png`}
+                                          alt={info.n}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      )}
                                     </div>
                                   );
                                 })}
                               </div>
-                              {comp.countries?.length > 0 && <button
+                              {displayCountries.length > 0 && <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (openGeoId === comp.id) {
                                     setOpenGeoId(null);
                                   } else {
                                     const rect = e.currentTarget.getBoundingClientRect();
-                                    const dropdownHeight = Math.min(comp.countries.length * 44, 192) + 4;
+                                    const dropdownHeight = Math.min(displayCountries.length * 44, 192) + 4;
                                     const spaceBelow = window.innerHeight - rect.top;
                                     const top = spaceBelow >= dropdownHeight + 8
                                       ? rect.top
@@ -2661,23 +2800,30 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                   >
                                     <div className="max-h-48 overflow-y-auto custom-scrollbar">
                                       {/* All countries → ads library with every
-                                          country of this competitor as filter */}
-                                      <button
-                                        type="button"
-                                        title={`View ${comp.name} ads in all ${comp.countries.length} countries`}
-                                        className="w-full px-4 py-2.5 border-b border-theme-border flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setOpenGeoId(null);
-                                          markReturnToAnalytics(); onCountryClick?.(comp.name, comp.countries, comp.platforms);
-                                        }}
-                                      >
-                                        <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
-                                        <span className="text-[#6b99ff] text-sm font-bold">
-                                          All Countries ({comp.countries.length})
-                                        </span>
-                                      </button>
-                                      {comp.countries.map((c) => {
+                                          country of this competitor as filter.
+                                          Only makes sense to aggregate when there's
+                                          more than one distinct entry — with just
+                                          one (including the sole entry being "all"/
+                                          Global reach), it's identical to that one
+                                          entry below and just adds a redundant row. */}
+                                      {displayCountries.length > 1 && (
+                                        <button
+                                          type="button"
+                                          title={`View ${comp.name} ads in all ${displayCountries.length} countries`}
+                                          className="w-full px-4 py-2.5 border-b border-theme-border flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setOpenGeoId(null);
+                                            markReturnToAnalytics(); onCountryClick?.(comp.name, displayCountries, comp.platforms);
+                                          }}
+                                        >
+                                          <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
+                                          <span className="text-[#6b99ff] text-sm font-bold">
+                                            All Countries ({displayCountries.length})
+                                          </span>
+                                        </button>
+                                      )}
+                                      {displayCountries.map((c) => {
                                         const info = getCountryInfo(c);
                                         return (
                                           <button
@@ -2691,12 +2837,16 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                               markReturnToAnalytics(); onCountryClick?.(comp.name, c, comp.platforms);
                                             }}
                                           >
-                                            <div className="w-5 rounded-[2px] overflow-hidden shadow-sm">
-                                              <img
-                                                src={`https://flagcdn.com/w20/${info.f}.png`}
-                                                alt={info.n}
-                                                className="w-full h-auto object-cover"
-                                              />
+                                            <div className="w-5 flex items-center justify-center rounded-[2px] overflow-hidden shadow-sm">
+                                              {info.isGlobal ? (
+                                                <Globe size={14} className="text-[#6b99ff]" />
+                                              ) : (
+                                                <img
+                                                  src={`https://flagcdn.com/w20/${info.f}.png`}
+                                                  alt={info.n}
+                                                  className="w-full h-auto object-cover"
+                                                />
+                                              )}
                                             </div>
                                             <span className="text-white text-sm">{info.n}</span>
                                           </button>
@@ -2708,7 +2858,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                               )}
                               </button>}
                             </div>
-                            )}
+                              );
+                            })()}
                           </td>
 
                           <td className="px-5 py-4 font-semibold text-white">

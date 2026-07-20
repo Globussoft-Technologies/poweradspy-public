@@ -253,6 +253,41 @@ describe("services/youtube/controllers/adDetailController > ES overlay", () => {
     expect(getLanguageMap).not.toHaveBeenCalled();
   });
 
+  // Language must be ES-only — must agree with the language FILTER, which only
+  // ever matches ES `ad_language`. The stale `youtube_ad.language_id` join
+  // (aliased `db_language` in AD_DETAIL_SQL) and ES's non-filterable
+  // `localization_en.language_name` must never leak through as `language`.
+  it("language: SQL db_language present but ES ad_language absent → null, not the SQL value", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [{ id: 1, last_seen: null, db_language: "English" }]) },
+      elastic: { indexName: "youtube_ads", search: vi.fn(async () => ({
+        hits: { hits: [{ _source: {} }] },
+      }))},
+    };
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBeNull();
+  });
+
+  it("language: localization_en.language_name present but ES ad_language absent → still null", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [{ id: 1, last_seen: null, db_language: "English" }]) },
+      elastic: { indexName: "youtube_ads", search: vi.fn(async () => ({
+        hits: { hits: [{ _source: { localization_en: { language_name: "German" } } }] },
+      }))},
+    };
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBeNull();
+  });
+
+  it("language: no ES hit at all (db unreachable path) → null, not the SQL db_language value", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [{ id: 1, last_seen: null, db_language: "English" }]) },
+      elastic: null,
+    };
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBeNull();
+  });
+
   it("category fallback: ES youtube.category missing but SQL had category", async () => {
     const db = {
       sql: { query: vi.fn(async () => [{ id: 1, category: "sql_cat", last_seen: null }]) },

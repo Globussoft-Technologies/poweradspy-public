@@ -120,12 +120,12 @@ async function getAdDetails(req, db, logger) {
     }
 
     const adData = { ...rows[0] };
-    // Language: ES `ad_language` (ISO) is the primary source (freshest for indexed
-    // ads), resolved in the overlay below. When the ES field is empty — e.g. older
-    // docs indexed before `youtube_ad.language_id` was set and never re-indexed —
-    // fall back to the DB `languages` join. Seeded here so ES-unavailable /
-    // doc-missing / overlay-failure paths still return the DB value, not undefined.
-    adData.language = adData.db_language || null;
+    // Language is ES-only — must agree with the language FILTER, which only
+    // ever matches `ad_language`. Discard the stale SQL `languages` join value
+    // (`db_language`, seeded above by the spread); it's re-populated below
+    // only from ES, so ES-unavailable/doc-missing/overlay-failure paths
+    // correctly return null rather than a value the filter wouldn't match.
+    adData.language = null;
 
     // ─── Step 2: Overlay ES data ────────────────────────
     if (db.elastic) {
@@ -187,16 +187,14 @@ async function getAdDetails(req, db, logger) {
           // Text image title
           adData.text_image_title = src.text_image_title || null;
 
-          // Language: prefer ES `ad_language` (ISO) → display name. When ES has no
-          // value, keep the DB `languages` fallback seeded above; if that's also
-          // empty, use the detected language carried in the localization block
-          // (translation API's `language_name`). getLanguageMap only resolves the
-          // ISO → display name; it does not source the ad's language.
+          // Language: ES `ad_language` (ISO) → display name, and nothing else —
+          // must agree with the language FILTER, which only ever matches this
+          // same field. No DB fallback, no `localization_en.language_name`
+          // fallback (not the filterable field either): if ES has no detected
+          // language for this ad, language stays null.
           if (src['ad_language']) {
             const langMap = await getLanguageMap(db.sql);
             adData.language = resolveLanguageName(langMap, src['ad_language']);
-          } else if (!adData.language && src.localization_en?.language_name) {
-            adData.language = src.localization_en.language_name;
           }
 
           // Market platform URL fields

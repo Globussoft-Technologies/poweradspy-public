@@ -47,6 +47,16 @@ require.cache[cursorPath] = {
   exports: { SAFE_FROM: 9000, buildQueryHash, saveCursor, getCursor },
 };
 
+// ── Mock languageMap (real module has a process-wide cache — mock it so
+// tests stay deterministic regardless of call order) ──────────────────────
+const languageMapPath = require.resolve("../../../../src/utils/languageMap");
+const getLanguageMap = vi.fn(async () => new Map());
+const resolveLanguageName = vi.fn((map, code) => map.get(String(code).toUpperCase()) || code);
+require.cache[languageMapPath] = {
+  id: languageMapPath, filename: languageMapPath, loaded: true,
+  exports: { getLanguageMap, resolveLanguageName },
+};
+
 const { searchAds } = require(
   "../../../../src/services/quora/controllers/adSearchController"
 );
@@ -63,6 +73,8 @@ beforeEach(() => {
   buildQueryHash.mockClear().mockImplementation(() => "qhash");
   saveCursor.mockClear();
   getCursor.mockClear();
+  getLanguageMap.mockClear().mockImplementation(async () => new Map());
+  resolveLanguageName.mockClear().mockImplementation((map, code) => map.get(String(code).toUpperCase()) || code);
   fakeLogger.info.mockClear(); fakeLogger.warn.mockClear(); fakeLogger.error.mockClear();
 });
 
@@ -330,6 +342,42 @@ describe("services/quora/controllers/adSearchController > regular searchAds", ()
     const db = { elastic: { search: vi.fn(async () => mkEsHits(esHits)) } };
     const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
     expect(out.data[0].foo).toBe("bar");
+  });
+
+  // Language must be ES-only (the `language_id` join on quora_ad is empty for
+  // API-ingested ads, so it can't be trusted) — must agree with the language
+  // FILTER, which only ever matches ES `lang_detect`.
+  it("language: ES lang_detect resolves the display language, ignoring any SQL languages join", async () => {
+    const esHits = [{ _source: { "quora_ad.id": 1, lang_detect: "en" } }];
+    const db = {
+      elastic: { indexName: "quora_search_mix", search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: { query: vi.fn(async () => [{ ad_id: 1, id: 1, type: "TEXT", language: "French" }]) },
+    };
+    getLanguageMap.mockResolvedValueOnce(new Map([["EN", "English"]]));
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBe("English");
+    expect(out.data[0].lang_detect).toBe("en");
+  });
+
+  it("language: no ES lang_detect → null, never the SQL languages join value", async () => {
+    const esHits = [{ _source: { "quora_ad.id": 1 /* no lang_detect */ } }];
+    const db = {
+      elastic: { indexName: "quora_search_mix", search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: { query: vi.fn(async () => [{ ad_id: 1, id: 1, type: "TEXT", language: "French" }]) },
+    };
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBeNull();
+  });
+
+  it("language: langMap load failure → null, never the SQL languages join value", async () => {
+    const esHits = [{ _source: { "quora_ad.id": 1, lang_detect: "en" } }];
+    const db = {
+      elastic: { indexName: "quora_search_mix", search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: { query: vi.fn(async () => [{ ad_id: 1, id: 1, type: "TEXT", language: "German" }]) },
+    };
+    getLanguageMap.mockRejectedValueOnce(new Error("sql down"));
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBeNull();
   });
 
   it("deep page (from >= SAFE_FROM): uses cached cursor → search_after", async () => {

@@ -639,7 +639,9 @@ ORDER BY FIELD(instagram_ad.id, ${placeholders})
       }
       if (src['instagram_ad.days_running'] !== undefined) row.days_running = src['instagram_ad.days_running'];
       if (src['instagram_call_to_action.call_to_action'] !== undefined) row.call_to_action = src['instagram_call_to_action.call_to_action'];
-      if (src['lang_detect']) row.language = resolveLanguageName(langMap, src['lang_detect']);
+      // Language is ES-only — must agree with the language FILTER, which only
+      // ever matches `lang_detect`. Never fall back to the stale SQL join.
+      row.language = src['lang_detect'] ? resolveLanguageName(langMap, src['lang_detect']) : null;
 
       return row;
     });

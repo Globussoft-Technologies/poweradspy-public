@@ -3,6 +3,7 @@
 const QuoraSearchQueryBuilder = require('../builders/QuoraSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 const AD_DETAIL_SELECT = `
     quora_ad.id                                     AS id,
@@ -237,6 +238,14 @@ async function searchAds(req, db, logger) {
     if (esHits.length === 0) return { code: 200, data: [], total, message: 'No ads found' };
 
     const adIds = esHits.map(hit => hit._source['quora_ad.id'] || hit._id);
+
+    // Language map for resolving ES `lang_detect` codes → names. Loaded once,
+    // then used below in place of the stale `quora_ad.language_id` join.
+    let langMap = null;
+    if (db.sql) {
+      try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+    }
+
     let finalAds = [];
     if (db.sql) {
       try {
@@ -265,10 +274,10 @@ async function searchAds(req, db, logger) {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
         ...ad,
-        // Detected language (ISO) lives in ES as `lang_detect`; the SQL languages join
-        // is empty for API-ingested ads (no language_id). Surface it so the card's
-        // LANGUAGE row resolves (the frontend maps lang_detect → full name). Falls back
-        // to the SQL `language` name when ES has none.
+        // Language is ES-only — must agree with the language FILTER, which
+        // only ever matches `lang_detect`. Never fall back to the stale SQL
+        // `languages` join (`ad.language`, inherited via the spread above).
+        language: (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null,
         lang_detect: src['lang_detect'] || null,
         // CTA lives in ES as `quora_call_to_action.call_to_action`. The SQL
         // quora_call_to_action join is empty for API-ingested ads (no

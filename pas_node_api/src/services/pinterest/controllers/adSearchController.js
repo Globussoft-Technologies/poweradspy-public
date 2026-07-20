@@ -3,6 +3,7 @@
 const PinterestSearchQueryBuilder = require('../builders/PinterestSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
+const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 const AD_DETAIL_SELECT = `
     pinterest_ad.id                                     AS id,
@@ -226,6 +227,14 @@ async function searchAds(req, db, logger) {
     if (esHits.length === 0) return { code: 200, data: [], total, message: 'No ads found' };
 
     const adIds = esHits.map(hit => hit._source['pinterest_ad.id'] || hit._id);
+
+    // Language map for resolving ES `lang_detect` codes → names. Loaded once,
+    // then used below in place of the stale `pinterest_ad.language_id` join.
+    let langMap = null;
+    if (db.sql) {
+      try { langMap = await getLanguageMap(db.sql); } catch (_) { langMap = null; }
+    }
+
     let finalAds = [];
     if (db.sql) {
       try {
@@ -238,9 +247,7 @@ async function searchAds(req, db, logger) {
           const src = esHit._source || {};
           if (src.new_nas_image_url) row.image_video_url = src.new_nas_image_url;
           if (src['pinterest_ad.days_running'] !== undefined) row.days_running = src['pinterest_ad.days_running'];
-          // Language: the SQL languages join relies on pinterest_ad.language_id, which is
-          // often 0/unresolved → NULL. ES lang_detect (the value the language filter matches
-          // on) is the reliable source, so surface it for the frontend to render.
+          // Raw ISO code, kept alongside the resolved `language` name set below.
           if (src.lang_detect) row.lang_detect = src.lang_detect;
           return row;
         });
@@ -253,6 +260,10 @@ async function searchAds(req, db, logger) {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
         ...ad,
+        // Language is ES-only — must agree with the language FILTER, which
+        // only ever matches `lang_detect`. Never fall back to the stale SQL
+        // `languages` join (`ad.language`, inherited via the spread above).
+        language: (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null,
         market_platform_urls: {
           url_destination: src['pinterest_ad_url.url_destination']         || null,
           source_url:      src['pinterest_ad_outgoing_links.source_url']   || null,

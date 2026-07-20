@@ -87,6 +87,10 @@ async function getAdDetails(req, db, logger) {
     if (!rows || rows.length === 0) return { code: 404, message: 'Ad not found', data: null };
 
     const adData = { ...rows[0] };
+    // Language is ES-only — must agree with the language FILTER, which only
+    // ever matches `lang_detect`. Discard the stale SQL `languages` join value
+    // seeded above by the spread; it's re-populated below only from ES.
+    adData.language = null;
 
     if (db.elastic) {
       try {

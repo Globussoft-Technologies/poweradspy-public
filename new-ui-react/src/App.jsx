@@ -1104,7 +1104,7 @@ const App = () => {
           ? await guestSearchAds(guest.guestToken, page)
           : _metaAdsLibUnsupported
           ? await (async () => {
-              const d = await fetchAds({ ..._searchParams, activePlatforms: ['facebook'], activePlatform: 'facebook', skip: 0 }, { signal: controller.signal });
+              const d = await fetchAds({ ..._searchParams, activePlatforms: ['facebook', 'instagram'], activePlatform: 'facebook', skip: 0 }, { signal: controller.signal });
               const rawTotal = d.meta?.total;
               const filteredTotal = rawTotal && typeof rawTotal === 'object'
                 ? Object.fromEntries(Object.entries(rawTotal).filter(([p]) => ['facebook', 'instagram'].includes(p.toLowerCase())))
