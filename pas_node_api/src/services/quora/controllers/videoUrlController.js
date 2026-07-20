@@ -49,6 +49,18 @@ async function getLatestVideoAdUrls(req, db, logger) {
         bool: {
           filter: [
             { term: { 'quora_ad.type.keyword': 'VIDEO' } },
+            // Only ads that actually have a video URL — otherwise `video_url` comes back
+            // null. video_url resolves from quora_ad_variants.image_url_original, falling
+            // back to top-level image_url_original, so require at least one to exist.
+            {
+              bool: {
+                should: [
+                  { exists: { field: VIDEO_URL_FIELD } },
+                  { exists: { field: 'image_url_original' } },
+                ],
+                minimum_should_match: 1,
+              },
+            },
           ],
           // Exclude ads that already have a correct thumbnail (new_nas_image_url points
           // at the bucket's thumbnail path). Everything else — "/DefaultImage.jpg", any
