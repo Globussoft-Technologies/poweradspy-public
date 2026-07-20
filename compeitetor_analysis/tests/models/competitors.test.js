@@ -19,10 +19,16 @@ beforeEach(async () => {
 });
 
 describe("models/competitors", () => {
-  it("defines schema with competitor_name + competitor_url required", () => {
+  it("defines schema with competitor_name required and competitor_url optional (default \"\")", () => {
     const def = schemaCalls[0].def;
     expect(def.competitor_name.required).toBe(true);
-    expect(def.competitor_url.required).toBe(true);
+    // competitor_url must NOT be `required: true` — Mongoose's required check
+    // on a String rejects "" but accepts any other non-empty value regardless
+    // of format, which previously made a blank (legitimately optional)
+    // website URL fail for any brand-new competitor while garbage text in
+    // that same field "passed". See the "Add Competitor Manually" bug fix.
+    expect(def.competitor_url.required).not.toBe(true);
+    expect(def.competitor_url.default).toBe("");
   });
   it("registers a mongoose model", () => {
     expect(modelCalls.length).toBeGreaterThanOrEqual(1);

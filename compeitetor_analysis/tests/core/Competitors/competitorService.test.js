@@ -1238,6 +1238,146 @@ describe("competitorService > addManualCompetitor", () => {
     await svc.addManualCompetitor({ body: { user_id: "u", advertiser: "A", competitor_name: "C" } }, res);
     expect(res.status).toHaveBeenCalledWith(500);
   });
+
+  // Regression: competitor_url is optional, but when provided it must look
+  // like an actual domain. Previously nothing validated its format at all —
+  // any non-empty garbage string was silently accepted (see models/competitors.js
+  // for the related required-field bug this shares a root cause with: Mongoose's
+  // `required: true` on a String rejects "" but accepts any other non-empty
+  // value, format notwithstanding).
+  it("400 when competitor_url is present but not a valid domain format", async () => {
+    const res = mockRes();
+    await svc.addManualCompetitor(
+      { body: { user_id: "u", advertiser: "A", competitor_name: "C", competitor_url: "not a url" } },
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json.mock.calls[0][0].body.message).toContain("valid website URL");
+  });
+
+  it("does not reach project lookup when competitor_url is invalid (fails fast)", async () => {
+    const res = mockRes();
+    await svc.addManualCompetitor(
+      { body: { user_id: "u", advertiser: "A", competitor_name: "C", competitor_url: "asdkjhajd" } },
+      res,
+    );
+    expect(spies.competitorsReqFindOneSpy).not.toHaveBeenCalled();
+  });
+
+  it("accepts an empty/absent competitor_url (field is optional)", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", competitors: [] });
+    spies.competitorsFindOneSpy.mockResolvedValueOnce(null);
+    const mod = await import("../../../models/competitors.js");
+    mod.default.create = vi.fn().mockResolvedValueOnce({ _id: "c1", competitor_name: "C", competitor_url: "" });
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
+    const res = mockRes();
+    await svc.addManualCompetitor({ body: { user_id: "u", advertiser: "A", competitor_name: "C" } }, res);
+    expect(res.status).not.toHaveBeenCalledWith(400);
+    expect(res.send).toHaveBeenCalled();
+  });
+
+  it("accepts a valid competitor_url with a protocol/www/path", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", competitors: [] });
+    spies.competitorsFindOneSpy.mockResolvedValueOnce(null);
+    const mod = await import("../../../models/competitors.js");
+    mod.default.create = vi.fn().mockResolvedValueOnce({ _id: "c1", competitor_name: "C", competitor_url: "https://www.walmart.com/x" });
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
+    const res = mockRes();
+    await svc.addManualCompetitor(
+      { body: { user_id: "u", advertiser: "A", competitor_name: "C", competitor_url: "https://www.walmart.com/x" } },
+      res,
+    );
+    expect(res.status).not.toHaveBeenCalledWith(400);
+    expect(res.send).toHaveBeenCalled();
+  });
+
+  // Regression: a manually-typed competitor name is trusted input (this path
+  // exists so a user can pre-emptively track a competitor before we've
+  // crawled any of their ads), so we only reject pure punctuation/whitespace
+  // junk — not letter-based gibberish, which we can't distinguish from a
+  // real small/unfamiliar brand name without a full company-verification
+  // service. Actual "is this a real company" signal is has_ad_data below.
+  it("400 when competitor_name is pure punctuation (no real letter/digit)", async () => {
+    const res = mockRes();
+    await svc.addManualCompetitor(
+      { body: { user_id: "u", advertiser: "A", competitor_name: "!!!---" } },
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json.mock.calls[0][0].body.message).toContain("valid competitor name");
+  });
+
+  it("accepts a letter-based name even if it's not a real company (can't verify that without a name-format check)", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", competitors: [] });
+    spies.competitorsFindOneSpy.mockResolvedValueOnce(null);
+    const mod = await import("../../../models/competitors.js");
+    mod.default.create = vi.fn().mockResolvedValueOnce({ _id: "c1", competitor_name: "asdkjhajd", competitor_url: "" });
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
+    const res = mockRes();
+    await svc.addManualCompetitor(
+      { body: { user_id: "u", advertiser: "A", competitor_name: "asdkjhajd" } },
+      res,
+    );
+    expect(res.status).not.toHaveBeenCalledWith(400);
+    expect(res.send).toHaveBeenCalled();
+  });
+
+  // Regression: the non-blocking has_ad_data signal, letting the frontend
+  // show an informational (not blocking) notice for a name with no known ads.
+  it("has_ad_data: false when the added competitor has zero ads in our system", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", competitors: [] });
+    spies.competitorsFindOneSpy.mockResolvedValueOnce(null);
+    const mod = await import("../../../models/competitors.js");
+    mod.default.create = vi.fn().mockResolvedValueOnce({ _id: "c1", competitor_name: "obscurebrand", competitor_url: "" });
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
+    spies.dashboardCountInternalSpy.mockResolvedValueOnce({ obscurebrand: { competitorsCount: 0 } });
+    const res = mockRes();
+    await svc.addManualCompetitor(
+      { body: { user_id: "u", advertiser: "A", competitor_name: "obscurebrand" } },
+      res,
+    );
+    expect(res.send.mock.calls[0][0].body.data.has_ad_data).toBe(false);
+  });
+
+  it("has_ad_data: true when the added competitor already has ads in our system", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", competitors: [] });
+    spies.competitorsFindOneSpy.mockResolvedValueOnce(null);
+    const mod = await import("../../../models/competitors.js");
+    mod.default.create = vi.fn().mockResolvedValueOnce({ _id: "c1", competitor_name: "nike", competitor_url: "" });
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
+    spies.dashboardCountInternalSpy.mockResolvedValueOnce({ nike: { competitorsCount: 42 } });
+    const res = mockRes();
+    await svc.addManualCompetitor(
+      { body: { user_id: "u", advertiser: "A", competitor_name: "nike" } },
+      res,
+    );
+    expect(res.send.mock.calls[0][0].body.data.has_ad_data).toBe(true);
+  });
+
+  it("has_ad_data check failing doesn't block the (already-successful) add", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1", competitors: [] });
+    spies.competitorsFindOneSpy.mockResolvedValueOnce(null);
+    const mod = await import("../../../models/competitors.js");
+    mod.default.create = vi.fn().mockResolvedValueOnce({ _id: "c1", competitor_name: "c", competitor_url: "" });
+    spies.existingCompFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.existingCompUpdateOneSpy.mockResolvedValueOnce({});
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({});
+    spies.dashboardCountInternalSpy.mockRejectedValueOnce(new Error("es-down"));
+    const res = mockRes();
+    await svc.addManualCompetitor({ body: { user_id: "u", advertiser: "A", competitor_name: "c" } }, res);
+    expect(res.status).not.toHaveBeenCalledWith(500);
+    expect(res.send.mock.calls[0][0].body.data.has_ad_data).toBe(null);
+  });
 });
 
 describe("competitorService > updateCompetitorsNew", () => {

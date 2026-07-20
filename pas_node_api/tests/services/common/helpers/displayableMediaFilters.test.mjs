@@ -84,4 +84,16 @@ describe("common/helpers/displayableMediaFilters > getDisplayableMediaFilter", (
   it("bing has no displayable-media filter", () => {
     expect(getDisplayableMediaFilter("bing")).toBeNull();
   });
+
+  // Regression: the google clause previously term-matched `new_nas_image_url.keyword`
+  // for the "is empty string" check, but that sub-field doesn't exist on this
+  // (already-keyword-typed) field in the real ES mapping — the live
+  // GoogleSearchQueryBuilder.js term-matches the plain field. The mismatch made
+  // an empty-string new_nas_image_url IMAGE ad silently pass the filter instead of
+  // being excluded (an `exists`-but-blank ad slipping through undetected).
+  it("google's empty-new_nas_image_url check term-matches the plain field, not .keyword", () => {
+    const json = JSON.stringify(getDisplayableMediaFilter("google"));
+    expect(json).toContain('"term":{"new_nas_image_url":""}');
+    expect(json).not.toContain('"new_nas_image_url.keyword":""');
+  });
 });

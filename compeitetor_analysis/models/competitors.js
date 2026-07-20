@@ -9,9 +9,14 @@ const CompetitorSchema = mongoose.Schema(
       required: true,
     },
     competitor_url: {
+      // Genuinely optional (the "Add Competitor Manually" form labels it
+      // "(optional)") — was `required: true`, which Mongoose enforces
+      // strictly on String fields (rejects "" but NOT any other non-empty
+      // string, including invalid junk), causing new-competitor creation to
+      // fail with a blank URL while any garbage text "passed".
       type: String,
-      required: true,
-    },  
+      default: "",
+    },
     facebook_status: {
       type: Number,
       default: 0,

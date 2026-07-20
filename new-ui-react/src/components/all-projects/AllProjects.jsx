@@ -208,6 +208,26 @@ const capitalizeFirst = (str) => {
   return str.charAt(0).toUpperCase() + str.slice(1);
 };
 
+// Loose domain-format check for the optional "Company Website URL" field on
+// the "Add Competitor Manually" form — mirrors the backend's own validator
+// (compeitetor_analysis/core/Competitors/competitorService.js) so an invalid
+// URL is caught immediately client-side instead of round-tripping to the
+// server first. Accepts a bare domain or one with a protocol/www/path/query
+// (e.g. "walmart.com", "www.walmart.com", "https://walmart.com/x") but
+// rejects plain non-domain text (no dot, invalid characters).
+export const isValidWebsiteUrl = (raw) => {
+  if (!raw) return true; // optional field — absent/empty is valid
+  const stripped = String(raw)
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .split("/")[0]
+    .split("?")[0];
+  return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(
+    stripped,
+  );
+};
+
 const formatNumber = (num) => {
   if (!num) return "0";
   if (num >= 1000000)
@@ -1679,6 +1699,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       return;
     }
 
+    if (url && !isValidWebsiteUrl(url)) {
+      showToast(
+        "Please enter a valid website URL (e.g. walmart.com), or leave it blank.",
+        "error",
+      );
+      return;
+    }
+
     setIsAddingCompetitor(true);
     try {
       const resp = await CompetitorAPI.addManualCompetitor({
@@ -1690,7 +1718,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
 
       const added = resp?.body?.data;
       if (!added) {
-        showToast("Failed to add competitor. Please try again.", "error");
+        showToast(
+          resp?.body?.message || "Failed to add competitor. Please try again.",
+          "error",
+        );
         return;
       }
 
@@ -1720,11 +1751,23 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         ),
       );
 
-      showToast(
-        added.already_existed
-          ? "Competitor already in this project."
-          : "Competitor added successfully.",
-      );
+      // Only one toast can show at a time (see showToast), so fold the
+      // "no ad data yet" notice into the same message rather than firing a
+      // second toast right after — a manually-typed name is trusted input
+      // (this path exists so a user can pre-emptively track a competitor
+      // before we've crawled any of their ads), so this is informational
+      // only and never blocks the add.
+      if (added.already_existed) {
+        showToast("Competitor already in this project.");
+      } else if (added.has_ad_data === false) {
+        showToast(
+          `"${newCompetitor.name}" added — we don't have any ads for this competitor yet. It'll populate automatically once we detect matching ads.`,
+          "success",
+          6000,
+        );
+      } else {
+        showToast("Competitor added successfully.");
+      }
       trackProjectEvent('Competitor-comparison', { project_name: activeProject?.advertiser ?? 'NA', advertiser: name });
 
       setShowAddCompetitorModal(false);
@@ -1790,7 +1833,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         });
     } catch (err) {
       console.error("Failed to add manual competitor", err);
-      showToast("Failed to add competitor. Please try again.", "error");
+      // competitorFetch now attaches the backend's own validation/error
+      // message to err.message when the server sent one (e.g. an invalid
+      // website URL) — show that instead of a fixed generic string, so a
+      // rejected request actually explains why instead of just "try again".
+      showToast(err?.message || "Failed to add competitor. Please try again.", "error");
     } finally {
       setIsAddingCompetitor(false);
     }
@@ -1948,12 +1995,24 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                       {capitalizeFirst(proj.advertiser)}
                     </h3>
                     <div className="flex items-center gap-1.5 text-sm text-theme-text-muted">
-                      <Activity
-                        size={14}
-                        className="text-theme-text-secondary opacity-70"
-                      />{" "}
-                      Monitoring {proj.initialMonitoredCount} /{" "}
-                      {proj.initialCompetitorCount || 0}
+                      {proj.isGenerating ? (
+                        <>
+                          <Loader2
+                            size={14}
+                            className="text-[#6b99ff] animate-spin"
+                          />{" "}
+                          Generating competitors...
+                        </>
+                      ) : (
+                        <>
+                          <Activity
+                            size={14}
+                            className="text-theme-text-secondary opacity-70"
+                          />{" "}
+                          Monitoring {proj.initialMonitoredCount} /{" "}
+                          {proj.initialCompetitorCount || 0}
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -3144,9 +3203,18 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                       onChange={(e) => setManualCompUrl(e.target.value)}
                       placeholder="e.g. walmart.com"
                       disabled={isAddingCompetitor}
-                      className="w-full bg-theme-bg border border-theme-border rounded-xl py-3 pl-10 pr-4 text-theme-text focus:outline-none focus:border-[#3759a3] focus:ring-1 focus:ring-[#3759a3]/50 transition-all font-medium disabled:opacity-50"
+                      className={`w-full bg-theme-bg border rounded-xl py-3 pl-10 pr-4 text-theme-text focus:outline-none focus:ring-1 transition-all font-medium disabled:opacity-50 ${
+                        manualCompUrl.trim() && !isValidWebsiteUrl(manualCompUrl.trim())
+                          ? "border-red-500/50 focus:border-red-500 focus:ring-red-500/50"
+                          : "border-theme-border focus:border-[#3759a3] focus:ring-[#3759a3]/50"
+                      }`}
                     />
                   </div>
+                  {manualCompUrl.trim() && !isValidWebsiteUrl(manualCompUrl.trim()) && (
+                    <p className="text-xs text-red-400 mt-1.5">
+                      Please enter a valid website URL (e.g. walmart.com), or leave it blank.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-3 pt-2">
@@ -3160,9 +3228,15 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   </button>
                   <button
                     type="submit"
-                    disabled={!manualCompName.trim() || isAddingCompetitor}
+                    disabled={
+                      !manualCompName.trim() ||
+                      isAddingCompetitor ||
+                      (manualCompUrl.trim() && !isValidWebsiteUrl(manualCompUrl.trim()))
+                    }
                     className={`flex-1 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
-                      manualCompName.trim() && !isAddingCompetitor
+                      manualCompName.trim() &&
+                      !isAddingCompetitor &&
+                      (!manualCompUrl.trim() || isValidWebsiteUrl(manualCompUrl.trim()))
                         ? "bg-[#335296] hover:bg-[#3762c1] text-white shadow-[#3759a3]/25"
                         : "bg-theme-border text-theme-text-muted cursor-not-allowed"
                     }`}

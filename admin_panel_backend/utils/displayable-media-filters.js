@@ -217,7 +217,7 @@ const GOOGLE = [
                 bool: {
                   should: [
                     { bool: { must_not: [{ exists: { field: 'new_nas_image_url' } }] } },
-                    { term: { 'new_nas_image_url.keyword': '' } },
+                    { term: { new_nas_image_url: '' } },
                   ],
                   minimum_should_match: 1,
                 },

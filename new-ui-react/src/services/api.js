@@ -1791,7 +1791,18 @@ export const competitorFetch = async (path, options = {}) => {
   if (res.status === 401) { handle401(); throw new Error('Unauthorized: Token expired'); }
   if (!res.ok) {
     console.error("API Error:", res.status, data);
-    throw new Error(`Competitor API ${path} failed: ${res.status}`);
+    // Surface the backend's own validation/error message when it sent one
+    // (e.g. "Please enter a valid website URL...") instead of always
+    // collapsing every failure into the same generic status-code string —
+    // callers that show `err.message` directly in a toast previously had no
+    // way to display anything more specific than "failed: 400" for every
+    // possible reason a request could be rejected.
+    const err = new Error(
+      data?.body?.message || data?.message || `Competitor API ${path} failed: ${res.status}`,
+    );
+    err.status = res.status;
+    err.body = data;
+    throw err;
   }
 
   return data; // direct JSON

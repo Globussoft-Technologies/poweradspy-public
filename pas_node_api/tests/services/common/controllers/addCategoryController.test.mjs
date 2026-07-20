@@ -226,6 +226,32 @@ describe("addCategoryController > getDescriptionDetails", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body[0].ad_image).toContain("g.png");
   });
+  it("google TEXT ads still emit ad_image (null) instead of omitting the key", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      id: 2, ad_id: "pub_2",
+      type: "TEXT",
+      // no new_nas_image_url / image_url_original / screenshot_url / png_file at all.
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "google", exVal: 0, limit: 20 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body[0]).toHaveProperty("ad_image");
+    expect(res.body[0].ad_image).toBeNull();
+  });
+  it("google TEXT ads never fall back to screenshot_url/png_file (landing-page screenshots, not the ad creative)", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      id: 3, ad_id: "pub_3",
+      type: "TEXT",
+      screenshot_url: "https://x/screenshots/pub_3.png",
+      png_file: "https://x/pngs/pub_3.png",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "google", exVal: 0, limit: 20 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body[0].ad_image).toBeNull();
+  });
   it("linkedin reads its VIDEO thumbnail off `ad_video`, not `Thumbnail`", async () => {
     const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
       ad_id: 1,
@@ -291,6 +317,47 @@ describe("addCategoryController > getDescriptionDetails", () => {
     const res = mkRes();
     await getDescriptionDetails({ query: {}, body: { platform: "gdn" } }, res);
     expect(res.body[0].thumbnail).toBeUndefined();
+  });
+  it("gdn never emits ad_text/ad_title/news_feed_description, even when ES has them (post_owner_name still sent)", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "gdn_ad.id": 1, "gdn_ad.type": "IMAGE",
+      "gdn_ad_variants.text": "Click here to Continue",
+      "gdn_ad_variants.title": "Some Title",
+      "gdn_ad_variants.newsfeed_description": "some-site.com",
+      "gdn_ad_post_owners.post_owner_name": "Advertiser Co",
+      "new_nas_image_url": "https://x/PowerAdspy/n2/g.png",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: {}, body: { platform: "gdn" } }, res);
+    expect(res.body[0]).not.toHaveProperty("ad_text");
+    expect(res.body[0]).not.toHaveProperty("ad_title");
+    expect(res.body[0]).not.toHaveProperty("news_feed_description");
+    expect(res.body[0].post_owner_name).toBe("Advertiser Co");
+    expect(res.body[0].ad_image).toContain("g.png");
+  });
+  it("gdn's SQL fallback never reintroduces ad_text/ad_title/news_feed_description", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "gdn_ad.id": 1, "gdn_ad.type": "IMAGE",
+      // no post_owner_name / new_nas_image_url in ES — should trigger the SQL fallback.
+    }}]}}));
+    const sqlQuery = vi.fn(async () => [{
+      _fallback_id: 1,
+      ad_text: "SQL Text (should never appear)",
+      ad_title: "SQL Title (should never appear)",
+      news_feed_description: "SQL NF (should never appear)",
+      post_owner_name: "SQL Owner",
+      ad_image_url: "https://x/PowerAdspy/n2/sql-img.png",
+    }]);
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: {}, body: { platform: "gdn" } }, res);
+    expect(sqlQuery).toHaveBeenCalledTimes(1);
+    expect(res.body[0]).not.toHaveProperty("ad_text");
+    expect(res.body[0]).not.toHaveProperty("ad_title");
+    expect(res.body[0]).not.toHaveProperty("news_feed_description");
+    expect(res.body[0].post_owner_name).toBe("SQL Owner");
+    expect(res.body[0].ad_image).toContain("sql-img.png");
   });
   it("IMAGE row but no nasValue → ad_image=null", async () => {
     const search = vi.fn(async () => ({ hits: { hits: [{ _source: {

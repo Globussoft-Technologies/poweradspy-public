@@ -28,6 +28,26 @@ import TokenSyncState from "../../models/jobTokenState.js";
 // timeout in services/api.js (checkCompetitorProcess / getStoreProcessCompetitors).
 const DS_REQUEST_TIMEOUT_MS = 45000;
 
+// Loose domain-format check for the optional "Company Website URL" field on
+// manual-competitor add. Accepts a bare domain or one with a protocol/www/
+// path/query (e.g. "walmart.com", "www.walmart.com", "https://walmart.com/x")
+// but rejects plain non-domain text (no dot, invalid characters) — previously
+// nothing validated this field's format at all, so any garbage string was
+// silently accepted as long as it was non-empty (see the Mongoose schema
+// comment in models/competitors.js for the related required-field bug).
+const isValidWebsiteUrl = (raw) => {
+  if (!raw) return true; // optional field — absent/empty is valid
+  const stripped = String(raw)
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .split("/")[0]
+    .split("?")[0];
+  return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(
+    stripped,
+  );
+};
+
 // Hard ceiling DS's GET /v1/api/competitors/list enforces on its `limit` query
 // param (422 above this — confirmed live). Used by competitorOverfetchLimit()
 // to clamp the 20%-overfetched value we compute from the user's requested
@@ -3616,6 +3636,26 @@ async checkDailyTokenLimit(req, res) {
         );
       }
 
+      // Reject pure punctuation/whitespace-only junk (e.g. "!!!", "---") — a
+      // low bar, not real company-name verification. We don't block a name
+      // just because we have no ad data for it yet (see has_ad_data below,
+      // by design: this manual-add path exists precisely so a user can
+      // pre-emptively track a competitor before we've crawled any of their
+      // ads), only names with no actual content at all.
+      if (!/[\p{L}\p{N}]/u.test(normalizedName)) {
+        return res.status(400).json(
+          Response.messageResp("Please enter a valid competitor name")
+        );
+      }
+
+      if (!isValidWebsiteUrl(trimmedUrl)) {
+        return res.status(400).json(
+          Response.messageResp(
+            "Please enter a valid website URL (e.g. walmart.com), or leave it blank"
+          )
+        );
+      }
+
       const escapedName = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
       const project = await Competitors_request.findOne({
@@ -3715,6 +3755,20 @@ async checkDailyTokenLimit(req, res) {
         );
       }
 
+      // Non-blocking signal for the frontend: does this name actually have
+      // any known ad data yet? A manually-typed name is trusted input (this
+      // path exists so a user can track a competitor before we've crawled
+      // any of their ads), so this never blocks the add — it only lets the
+      // UI show an informational "no ads found yet" notice instead of
+      // silently treating an arbitrary/possibly-fake name as fully verified.
+      let hasAdData = null;
+      try {
+        const stats = await DashboardService.getCompetitorsCountNewInternal([canonicalName]);
+        hasAdData = (stats?.[canonicalName]?.competitorsCount || 0) > 0;
+      } catch (statsErr) {
+        logger.error("addManualCompetitor: ad-data existence check failed (non-fatal)", statsErr);
+      }
+
       return res.send(
         Response.userSuccessResp(
           alreadyAttached
@@ -3727,6 +3781,7 @@ async checkDailyTokenLimit(req, res) {
             url: canonicalUrl,
             monitoring: false,
             already_existed: alreadyAttached,
+            has_ad_data: hasAdData,
           }
         )
       );

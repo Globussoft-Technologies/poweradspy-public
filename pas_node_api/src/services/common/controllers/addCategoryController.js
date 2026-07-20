@@ -397,6 +397,13 @@ const PLATFORM_CONFIG = {
     imageNasField:'new_nas_image_url',
     thumbField:   null,
     destPageField:'gdn_ad_html_lander_content.html_dc_blackhat_lander_text',
+    // GDN is 100% type IMAGE in production (live-verified: 129,927/129,927 docs) — it
+    // has no real TEXT-type ads despite the field existing in its schema. The ~24% of
+    // GDN ads that do carry a non-empty ad_text are incidental scraped banner
+    // boilerplate ("Ads by  Send feedback", "Click here to C0ntinue"), not real ad
+    // copy, and ad_title is populated on <1% of ads. Per product direction, GDN
+    // shouldn't send any of ad_text/ad_title/news_feed_description to the classifier.
+    suppressTextFields: true,
   },
   google: {
     service:      'google',
@@ -420,6 +427,23 @@ const PLATFORM_CONFIG = {
     typeField:    'type',
     imageNasField:'new_nas_image_url',
     thumbField:   null,
+    // Google's own type enum is IMAGE/TEXT/ORGANIC SEARCH (validate.js), but ORGANIC
+    // SEARCH is already excluded entirely by the displayable-media filter above (its
+    // GOOGLE clause has an unconditional `match_phrase: type:'ORGANIC SEARCH'`
+    // exclusion) and isn't a real ad type in the frontend's Ad Type filter (only
+    // "Image"/"text" list `google` in sduiConfig.json) — so only IMAGE and TEXT ads
+    // ever reach this feed. TEXT ads have no creative image — `ad_image` should still
+    // be emitted as `null` for them (instead of the key being omitted entirely) so the
+    // classifier can distinguish "checked, no image" from "field never sent".
+    // Deliberately NOT falling back to `screenshot_url`/`png_file`: those are a
+    // Lighthouse/cloaking-detection screenshot of the ad's DESTINATION website
+    // (`api_gtext/.../CronController.php::saveScreenShotUsingGAPI`, `BlackhatController.php`,
+    // `docs/GOOGLE_LANDER_MANIFEST.md`) — never the ad creative. Feeding that into
+    // ad_image would show the classifier an unrelated site's imagery and manufacture
+    // false `colors`/`caption` mismatches (the AI-meta caption field exists specifically
+    // to catch real ones).
+    imageOrigField:  'image_url_original',
+    alwaysEmitImage: true,
   },
   native: {
     service:      'native',
@@ -627,10 +651,15 @@ async function getDescriptionDetails(req, res) {
       row.cursor                = src[pageField];
       // Only platforms whose index keeps id and ad_id distinct (Google) carry both.
       if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
-      row.ad_text               = src[cfg.textField]     ?? null;
-      row.ad_title              = src[cfg.titleField]    ?? null;
+      // GDN sends no ad-copy text at all (see PLATFORM_CONFIG.gdn.suppressTextFields) —
+      // it has no real TEXT-type ads, and the incidental text some IMAGE ads carry is
+      // scraped banner boilerplate, not classifiable ad copy.
+      if (!cfg.suppressTextFields) {
+        row.ad_text               = src[cfg.textField]     ?? null;
+        row.ad_title              = src[cfg.titleField]    ?? null;
+        row.news_feed_description = src[cfg.newsFeedField] ?? null;
+      }
       row.post_owner_name       = src[cfg.ownerField]    ?? null;
-      row.news_feed_description = src[cfg.newsFeedField] ?? null;
 
       // Read-back of the stored AI/human category so the classifier can verify a
       // prior newCatInsertion write actually attached and skip already-categorised
@@ -659,10 +688,14 @@ async function getDescriptionDetails(req, res) {
       const origValue = cfg.imageOrigField ? (src[cfg.imageOrigField] || '') : '';
       if (cfg.imageOrigField) row.image_url_original = served(origValue) ?? null;
 
-      if (adType === 'IMAGE') {
+      if (adType === 'IMAGE' || cfg.alwaysEmitImage) {
         // Prefer the stored NAS copy; fall back to the original scraped URL when the
-        // NAS creative is missing. served() returns a resolvable CDN URL (no more
-        // client-side /PowerAdspy/n2 rewrite).
+        // NAS creative is missing. `cfg.alwaysEmitImage` (google) only widens WHEN this
+        // runs (so a TEXT-type ad gets an explicit `ad_image: null` instead of the key
+        // being omitted) — it intentionally has no extra fallback source, since google's
+        // only other image-shaped fields (`screenshot_url`/`png_file`) are landing-page
+        // screenshots, not the ad creative. served() returns a resolvable CDN URL (no
+        // more client-side /PowerAdspy/n2 rewrite).
         row.ad_image = served(nasValue) ?? served(origValue) ?? null;
       }
       if (adType === 'VIDEO' && cfg.thumbField) {
@@ -682,9 +715,14 @@ async function getDescriptionDetails(req, res) {
         // Blank, not falsy: a legit value like ad_text `"0"` must never be treated
         // as missing (a plain `!value` check would wrongly overwrite/skip it).
         const isBlank = (v) => v === null || v === undefined || v === '';
+        // GDN never gets ad_text/ad_title/news_feed_description backfilled either —
+        // those keys don't exist on the row at all for gdn (suppressTextFields), so
+        // they must be excluded from both the "does this row need a SQL lookup" check
+        // and the merge, or the fallback would silently reintroduce them from MySQL.
+        const wantsTextFields = !cfg.suppressTextFields;
         const idsNeedingFallback = [...new Set(
           finalArray
-            .filter(row => isBlank(row.ad_text) || isBlank(row.ad_title) || isBlank(row.news_feed_description) || isBlank(row.post_owner_name) || row.ad_image === null)
+            .filter(row => (wantsTextFields && (isBlank(row.ad_text) || isBlank(row.ad_title) || isBlank(row.news_feed_description))) || isBlank(row.post_owner_name) || row.ad_image === null)
             .map(row => row.id)
         )];
         if (idsNeedingFallback.length) {
@@ -692,9 +730,11 @@ async function getDescriptionDetails(req, res) {
           for (const row of finalArray) {
             const sqlRow = fallbackMap.get(String(row.id));
             if (!sqlRow) continue;
-            if (isBlank(row.ad_text) && !isBlank(sqlRow.ad_text)) row.ad_text = sqlRow.ad_text;
-            if (isBlank(row.ad_title) && !isBlank(sqlRow.ad_title)) row.ad_title = sqlRow.ad_title;
-            if (isBlank(row.news_feed_description) && !isBlank(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
+            if (wantsTextFields) {
+              if (isBlank(row.ad_text) && !isBlank(sqlRow.ad_text)) row.ad_text = sqlRow.ad_text;
+              if (isBlank(row.ad_title) && !isBlank(sqlRow.ad_title)) row.ad_title = sqlRow.ad_title;
+              if (isBlank(row.news_feed_description) && !isBlank(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
+            }
             if (isBlank(row.post_owner_name) && !isBlank(sqlRow.post_owner_name)) row.post_owner_name = sqlRow.post_owner_name;
             if (row.ad_image === null && !isBlank(sqlRow.ad_image_url)) row.ad_image = served(sqlRow.ad_image_url);
           }
