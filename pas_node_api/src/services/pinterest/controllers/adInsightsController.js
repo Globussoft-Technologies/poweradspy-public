@@ -17,8 +17,47 @@ function fixCountryIso(country, iso) {
   const name = (country || '').toLowerCase();
   if (country === 'Czechia') return 'CZ';
   if (country === 'Russia') return 'RU';
-  if (name.includes('congo') && (!iso || iso === 'null')) return 'CD';
+  if (!iso || iso === 'null') {
+    if (
+      name === 'congo - brazzaville' ||
+      name === 'republic of the congo' ||
+      name === 'republic of congo' ||
+      name === 'congo republic' ||
+      name === 'congo'
+    ) return 'CG';
+    if (
+      name === 'congo - kinshasa' ||
+      name === 'dr congo' ||
+      name === 'democratic republic of the congo' ||
+      name === 'democratic republic of congo'
+    ) return 'CD';
+  }
   return iso;
+}
+
+// Pinterest stores multi-country ads as CSV strings (e.g. "Poland,Finland,Cyprus")
+// in both MySQL `pinterest_country_only.country` and the ES mirror. Split on
+// commas, trim whitespace, drop empties, and normalise case so downstream ISO
+// lookup and de-duping work on clean single-country tokens.
+function splitCountryTokens(value) {
+  if (value == null) return [];
+  const parts = Array.isArray(value) ? value : [value];
+  const out = [];
+  const seen = new Set();
+  for (const p of parts) {
+    if (p == null) continue;
+    for (const raw of String(p).split(',')) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const normalised = trimmed.replace(/\b\w+/g, w =>
+        w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+      );
+      if (seen.has(normalised)) continue;
+      seen.add(normalised);
+      out.push(normalised);
+    }
+  }
+  return out;
 }
 
 async function getPinterestAdCountry(req, db, logger) {
@@ -34,10 +73,26 @@ async function getPinterestAdCountry(req, db, logger) {
     const rows = await db.sql.query(COUNTRY_SQL, [parseInt(p.pinterest_ad_id, 10)]);
     if (!rows || rows.length === 0) return { code: 400, message: 'No data found.' };
 
-    const resArray = rows.map(row => ({
-      country: row.country ? row.country.replace(/\b\w/g, c => c.toUpperCase()) : row.country,
-      iso: fixCountryIso(row.country, row.iso),
-    }));
+    // Some rows arrive as CSV blobs ("Poland,Finland,Cyprus,..."); split into
+    // individual countries and resolve each ISO via country_data.
+    const tokens = [];
+    const seen = new Set();
+    for (const row of rows) {
+      for (const t of splitCountryTokens(row.country)) {
+        if (seen.has(t)) continue;
+        seen.add(t);
+        tokens.push(t);
+      }
+    }
+    if (tokens.length === 0) return { code: 400, message: 'No data found.' };
+
+    const isoMap = await batchCountryLookup(db, tokens);
+    const resArray = tokens.map(name => {
+      const lookup = isoMap.get(name);
+      const country = lookup?.country || name;
+      const iso = fixCountryIso(country, lookup?.iso || null);
+      return { country, iso };
+    });
 
     return { code: 200, message: 'Pinterest country data fetched.', data: resArray };
   } catch (err) {
@@ -147,14 +202,16 @@ async function aggregateCountryData(db, hits) {
     const adId = src ? src['pinterest_ad.id'] : f?.['pinterest_ad.id']?.[0];
     if (!adId) continue;
 
-    let countries = src
+    const rawCountries = src
       ? src['pinterest_country_only.country']
       : (f?.['pinterest_country_only.country.keyword'] || f?.['pinterest_country_only.country']);
-    if (!countries) continue;
-    if (!Array.isArray(countries)) countries = [countries];
+    // Pinterest ES stores multi-country ads as CSV strings — split each
+    // value into individual country tokens (also handles the space-prefixed
+    // variants like " Belgium" observed in production).
+    const countries = splitCountryTokens(rawCountries);
+    if (countries.length === 0) continue;
 
     for (const country of countries) {
-      if (!country) continue;
       if (!countryMap[country]) countryMap[country] = new Set();
       countryMap[country].add(adId);
     }

@@ -340,20 +340,21 @@ class QuoraSearchQueryBuilder {
   _getSourceEnv() {
     const src = this._params.source;
     if (!src || !src.length) return null;
-    const fm = {
-      desktop: 'quora_ad_meta_data.firstSeenOnDesktop',
-      ios: 'quora_ad_meta_data.firstSeenOnIos',
-      android: 'quora_ad_meta_data.firstSeenOnAndroid',
-    };
-    const fields = [];
+    // Match the ad's actual traffic `source` (what the UI shows under SOURCE), NOT the
+    // firstSeenOn<platform> existence. An ad seen on several platforms has multiple
+    // firstSeenOn* fields, so the old `exists firstSeenOnIos` matched desktop-source ads
+    // too — the iOS filter leaked desktop ads. Filtering on `source` keeps the results
+    // consistent with the displayed SOURCE.
+    const valid = ['desktop', 'ios', 'android'];
+    const values = [];
     for (const s of src) {
-      if (s === 'all') fields.push(fm.desktop, fm.ios, fm.android);
-      else if (fm[s]) fields.push(fm[s]);
+      const v = String(s).toLowerCase();
+      if (v === 'all') values.push(...valid);
+      else if (valid.includes(v)) values.push(v);
     }
-    const unique = [...new Set(fields)];
+    const unique = [...new Set(values)];
     if (!unique.length) return null;
-    if (unique.length === 1) return asFilter({ exists: { field: unique[0] } });
-    return asFilter({ bool: { should: unique.map(f => ({ exists: { field: f } })), minimum_should_match: 1 } });
+    return asFilter(matchFilter('source', unique));
   }
 
   _getFunnelEnv() {
