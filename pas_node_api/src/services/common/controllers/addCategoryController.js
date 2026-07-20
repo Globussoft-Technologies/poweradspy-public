@@ -6,6 +6,7 @@ const config = require('../../../config');
 const { syncCategory } = require('./categoryController');
 const { validateAiMeta } = require('../helpers/aiMetaValidator');
 const { persistAiMeta } = require('../helpers/aiMetaSqlWriter');
+const { getDisplayableMediaFilter } = require('../helpers/displayableMediaFilters');
 
 // NAS/CDN base that turns a stored NAS path into a fetchable URL (config.json cdn.baseUrl
 // or CDN_BASE_URL env; e.g. https://media.globussoft.com/pas-prod/stream). Mirrors the
@@ -411,7 +412,12 @@ const PLATFORM_CONFIG = {
     ownerField:   'post_owner',
     ocrField:     'image_ocr',
     newsFeedField:'newsfeed_description',
-    typeField:    'ad_type',
+    // The google ES doc's ad-type field is the flat `type` key (e.g. "IMAGE"),
+    // NOT `ad_type` — confirmed against GoogleSearchQueryBuilder.js/adCountController.js
+    // (both query `type`) and the insertion pipeline, which writes `type: 'IMAGE'`
+    // verbatim into `_source` (the field's `lowercase_normalizer` only affects the
+    // indexed/searchable term, not the stored `_source` value read here).
+    typeField:    'type',
     imageNasField:'new_nas_image_url',
     thumbField:   null,
   },
@@ -443,7 +449,10 @@ const PLATFORM_CONFIG = {
     newsFeedField:'newsfeed_description',
     typeField:    'ad_type',
     imageNasField:'new_nas_image_url',
-    thumbField:   'Thumbnail',
+    // LinkedIn has no `Thumbnail` field — VIDEO ads store their thumbnail in
+    // `ad_video` (confirmed against LinkedinSearchQueryBuilder.js's EXTRA_CONDITION,
+    // which requires `ad_video` to exist/be non-placeholder for VIDEO ads).
+    thumbField:   'ad_video',
   },
   quora: {
     service:      'quora',
@@ -589,17 +598,21 @@ async function getDescriptionDetails(req, res) {
     // Pagination cursor: usually the same field as the ad lookup key, but Google
     // paginates on its distinct internal PK (`id`) while looking ads up by `ad_id`.
     const pageField = cfg.descIdField || cfg.idField;
+    // Displayable-media gate: skip ads the UI itself hides for broken/missing/
+    // placeholder media (same clauses each network's own SearchMixQueryBuilder
+    // always applies — see displayableMediaFilters.js). Every ad this feed
+    // returns gets sent through the external category/AI-meta classifier, so
+    // an undisplayable ad is pure wasted classification spend.
+    const mediaFilter = getDisplayableMediaFilter(platform);
+    const boolQuery = { must: [{ range: { [pageField]: { gt: exVal } } }] };
+    if (mediaFilter) boolQuery.filter = mediaFilter;
     const esResult = await service.db.elastic.search({
       index: esIndex,
       body: {
         from: 0,
         size: limit,
         sort: [{ [pageField]: 'asc' }],
-        query: {
-          bool: {
-            must: [{ range: { [pageField]: { gt: exVal } } }],
-          },
-        },
+        query: { bool: boolQuery },
       },
     });
 
@@ -666,9 +679,12 @@ async function getDescriptionDetails(req, res) {
     const sqlCfg = sqlFallbackConfigFor(platform);
     if (sqlCfg && service.db.sql) {
       try {
+        // Blank, not falsy: a legit value like ad_text `"0"` must never be treated
+        // as missing (a plain `!value` check would wrongly overwrite/skip it).
+        const isBlank = (v) => v === null || v === undefined || v === '';
         const idsNeedingFallback = [...new Set(
           finalArray
-            .filter(row => !row.ad_text || !row.ad_title || !row.news_feed_description || !row.post_owner_name || row.ad_image === null)
+            .filter(row => isBlank(row.ad_text) || isBlank(row.ad_title) || isBlank(row.news_feed_description) || isBlank(row.post_owner_name) || row.ad_image === null)
             .map(row => row.id)
         )];
         if (idsNeedingFallback.length) {
@@ -676,11 +692,11 @@ async function getDescriptionDetails(req, res) {
           for (const row of finalArray) {
             const sqlRow = fallbackMap.get(String(row.id));
             if (!sqlRow) continue;
-            if (!row.ad_text && sqlRow.ad_text) row.ad_text = sqlRow.ad_text;
-            if (!row.ad_title && sqlRow.ad_title) row.ad_title = sqlRow.ad_title;
-            if (!row.news_feed_description && sqlRow.news_feed_description) row.news_feed_description = sqlRow.news_feed_description;
-            if (!row.post_owner_name && sqlRow.post_owner_name) row.post_owner_name = sqlRow.post_owner_name;
-            if (row.ad_image === null && sqlRow.ad_image_url) row.ad_image = served(sqlRow.ad_image_url);
+            if (isBlank(row.ad_text) && !isBlank(sqlRow.ad_text)) row.ad_text = sqlRow.ad_text;
+            if (isBlank(row.ad_title) && !isBlank(sqlRow.ad_title)) row.ad_title = sqlRow.ad_title;
+            if (isBlank(row.news_feed_description) && !isBlank(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
+            if (isBlank(row.post_owner_name) && !isBlank(sqlRow.post_owner_name)) row.post_owner_name = sqlRow.post_owner_name;
+            if (row.ad_image === null && !isBlank(sqlRow.ad_image_url)) row.ad_image = served(sqlRow.ad_image_url);
           }
         }
       } catch (sqlErr) {

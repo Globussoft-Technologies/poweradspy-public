@@ -116,6 +116,23 @@ describe("addCategoryController > getDescriptionDetails", () => {
     });
     expect(res.body[0].ad_image).toContain("img.png");
   });
+  it("treats an ES value of the literal string \"0\" as present, not missing (facebook)", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "facebook_ad.id": 3,
+      "facebook_ad_variants.text_exactly": "0",
+      "facebook_ad_variants.title_exactly": "Title",
+      "facebook_ad_post_owners.post_owner_name": "Po",
+      "facebook_ad_variants.newsfeed_description_exactly": "NF",
+      "facebook_ad.type": "VIDEO",
+    }}]}}));
+    const sqlQuery = vi.fn(async () => [{ _fallback_id: 3, ad_text: "SQL Text (should not be used)" }]);
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook", exVal: 0, limit: 50 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(sqlQuery).not.toHaveBeenCalled();
+    expect(res.body[0].ad_text).toBe("0");
+  });
   it("does not query MySQL when ES already has all fields (facebook)", async () => {
     const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
       "facebook_ad.id": 2,
@@ -142,6 +159,32 @@ describe("addCategoryController > getDescriptionDetails", () => {
     await getDescriptionDetails({ query: { platform: "tiktok", exVal: 0, limit: 50 }, body: {} }, res);
     expect(res.statusCode).toBe(200);
     expect(sqlQuery).not.toHaveBeenCalled();
+  });
+  it("applies the displayable-media filter to the ES query (facebook)", async () => {
+    const search = vi.fn(async (params) => {
+      expect(params.body.query.bool.must).toEqual([{ range: { "facebook_ad.id": { gt: 0 } } }]);
+      const filter = params.body.query.bool.filter;
+      expect(Array.isArray(filter)).toBe(true);
+      expect(JSON.stringify(filter)).toContain("new_nas_image_url");
+      expect(JSON.stringify(filter)).toContain("DefaultImage");
+      return { hits: { hits: [] } };
+    });
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook", exVal: 0, limit: 50 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(search).toHaveBeenCalledTimes(1);
+  });
+  it("applies the tiktok displayable-media filter (video_cover gate)", async () => {
+    const search = vi.fn(async (params) => {
+      const filter = params.body.query.bool.filter;
+      expect(JSON.stringify(filter)).toContain("video_cover");
+      return { hits: { hits: [] } };
+    });
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "tiktok", exVal: 0, limit: 50 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
   });
   it("google paginates on internal id and exposes ad_id + cursor separately", async () => {
     const search = vi.fn(async (params) => {
@@ -170,6 +213,31 @@ describe("addCategoryController > getDescriptionDetails", () => {
       post_owner_name: "GO",
       news_feed_description: "GNF",
     });
+  });
+  it("google reads its IMAGE ad_type off the flat `type` field, not `ad_type`", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      id: 1, ad_id: "pub_1",
+      type: "IMAGE",
+      new_nas_image_url: "https://x/PowerAdspy/n2/g.png",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "google", exVal: 0, limit: 20 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body[0].ad_image).toContain("g.png");
+  });
+  it("linkedin reads its VIDEO thumbnail off `ad_video`, not `Thumbnail`", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      ad_id: 1,
+      ad_type: "VIDEO",
+      ad_video: "https://x/PowerAdspy/n2/li-video-thumb.png",
+      Thumbnail: "https://x/should-not-be-used.png",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "linkedin", exVal: 0, limit: 20 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body[0].thumbnail).toContain("li-video-thumb.png");
   });
   it("non-google platforms have cursor equal to id and no ad_id", async () => {
     const search = vi.fn(async (params) => {

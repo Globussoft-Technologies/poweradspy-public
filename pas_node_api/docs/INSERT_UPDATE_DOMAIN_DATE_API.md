@@ -17,6 +17,30 @@ every network.
 This is the fix for the "stuck loop": when DS can't find a date for a rubbish domain, it marks it
 `status: 2`, so the GET stops re-serving it and the queue drains to fillable domains.
 
+**SQL + Elasticsearch.** Setting a date updates the SQL domains table **and** propagates the date
+onto every associated ad's ES doc (the website reads the date off the ad doc, so a SQL-only update
+would leave ES stale). ES docs don't store the domain string, so the ads are resolved from SQL
+(`<adTable>.domain_id`) and their docs updated via `updateByQuery`. The ES field name + value
+format differ per index family (all confirmed against live mappings):
+
+| networks | ES index | date field | format | matched by |
+|----------|----------|-----------|--------|-----------|
+| facebook, instagram, native, pinterest, reddit, quora, gdn | `*_search_mix` | `<table>.domain_registered_date` | `yyyy-MM-dd` | internal id on `<adTable>.id` |
+| google | `google_ads_data` | `domain_registered_date` | `yyyy-MM-dd` | public `ad_id` |
+| linkedin, youtube | `*_ads_data` | `domain_registration_date` | **epoch seconds** | internal id on `ad_id` |
+
+ES writes happen **only on the date path** (status 2/0 change no date, so no ES write). An ES failure
+is reported per network (`es_error`) but never fails the SQL update — SQL is the source of truth.
+
+**Scale (sync vs async).** A domain can have many ads. When a network has **≤ 2000** matching ads the
+ES update runs **synchronously** and the response carries an exact `es_updated` count. Above that it
+runs as an ES **background task** (`wait_for_completion: false`) so a large domain never blocks or
+times out the request — the response returns `es_mode: "async"` + `es_tasks` (ES task ids) and no
+`es_updated` (SQL is already committed; ES converges shortly after). The updates use
+`conflicts: proceed` and `refresh: false` (no forced per-chunk refresh — costly at scale; the date is
+not latency-critical, so it's visible within ES's normal refresh interval). Threshold is tunable via
+env `DOMAIN_ES_SYNC_MAX_ADS` (`0` = always async).
+
 **Update-only:** rows are never inserted. A network whose table has no matching domain is reported
 as `not_found` and left untouched.
 
@@ -63,7 +87,9 @@ Body shape: `{ code, message?, error?, data? }`. `code` is also the HTTP status.
 | No network SQL connection available at all | **503** | 503 |
 
 `data.status` / `data.domain_date` echo the resolved action. `data.results` reports the outcome per
-network; `data.summary` totals them.
+network: `es_mode` (`sync`|`async`), `es_matched_ads`, and either `es_updated` (sync) or `es_tasks`
+(async ES task ids), or `es_error`. `data.summary` totals them: `es_matched_ads` (ads targeted across
+networks), `es_updated` (sync-confirmed updates), `es_async_networks`, `es_errors`.
 
 ### 200 example — set a date (status → 1)
 
@@ -82,12 +108,12 @@ Content-Type: application/json
     "domain_date": "2026-07-09",
     "status": 1,
     "results": {
-      "facebook":  { "status": "updated", "matched_rows": 1, "ids": [22], "previous_registered_dates": ["2000-01-01"], "previous_statuses": [1], "new_status": 1, "updated_date_touched": false },
-      "google":    { "status": "updated", "matched_rows": 2, "ids": [11, 12], "previous_registered_dates": [null, "1999-01-01"], "previous_statuses": [0, 1], "new_status": 1, "updated_date_touched": true },
+      "facebook":  { "status": "updated", "matched_rows": 1, "ids": [22], "new_status": 1, "updated_date_touched": false, "es_index": "search_mix", "es_mode": "sync", "es_matched_ads": 3, "es_updated": 3 },
+      "google":    { "status": "updated", "matched_rows": 2, "ids": [11, 12], "new_status": 1, "updated_date_touched": true, "es_index": "google_ads_data", "es_mode": "async", "es_matched_ads": 5200, "es_tasks": ["nodeId:41713760", "nodeId:41713763"] },
       "reddit":    { "status": "not_found" },
       "quora":     { "status": "error", "message": "..." }
     },
-    "summary": { "updated": 2, "not_found": 7, "errors": 1 }
+    "summary": { "updated": 2, "not_found": 7, "errors": 1, "es_matched_ads": 5203, "es_updated": 3, "es_async_networks": 1, "es_errors": 0 }
   }
 }
 ```

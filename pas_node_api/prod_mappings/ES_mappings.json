@@ -1,0 +1,235 @@
+{
+  "search_mix" : {
+    "mappings" : {
+      "doc" : {
+        "facebook_ad.id" : {
+          "full_name" : "facebook_ad.id",
+          "mapping" : {
+            "id" : {
+              "type" : "long"
+            }
+          }
+        },
+        "facebook_ad_domains.domain_registered_date" : {
+          "full_name" : "facebook_ad_domains.domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date"
+            }
+          }
+        }
+      }
+    }
+  },
+  "youtube_ads_data" : {
+    "mappings" : {
+      "doc" : {
+        "ad_id" : {
+          "full_name" : "ad_id",
+          "mapping" : {
+            "ad_id" : {
+              "type" : "long"
+            }
+          }
+        },
+        "domain_registration_date" : {
+          "full_name" : "domain_registration_date",
+          "mapping" : {
+            "domain_registration_date" : {
+              "type" : "date",
+              "format" : "epoch_second"
+            }
+          }
+        }
+      }
+    }
+  },
+  "native_search_mix_v2" : {
+    "mappings" : {
+      "doc" : {
+        "native_ad.id" : {
+          "full_name" : "native_ad.id",
+          "mapping" : {
+            "id" : {
+              "type" : "long"
+            }
+          }
+        },
+        "native_ad_domains.domain_registered_date" : {
+          "full_name" : "native_ad_domains.domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date"
+            }
+          }
+        }
+      }
+    }
+  },
+  "reddit_search_mix" : {
+    "mappings" : {
+      "doc" : {
+        "reddit_ad.id" : {
+          "full_name" : "reddit_ad.id",
+          "mapping" : {
+            "id" : {
+              "type" : "long"
+            }
+          }
+        },
+        "reddit_ad_domain.domain_registered_date" : {
+          "full_name" : "reddit_ad_domain.domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date"
+            }
+          }
+        }
+      }
+    }
+  },
+  "linkedin_ads_data" : {
+    "mappings" : {
+      "doc" : {
+        "ad_id" : {
+          "full_name" : "ad_id",
+          "mapping" : {
+            "ad_id" : {
+              "type" : "long"
+            }
+          }
+        },
+        "domain_registration_date" : {
+          "full_name" : "domain_registration_date",
+          "mapping" : {
+            "domain_registration_date" : {
+              "type" : "date",
+              "format" : "epoch_second"
+            }
+          }
+        }
+      }
+    }
+  },
+  "gdn_search_mix_v2" : {
+    "mappings" : {
+      "doc" : {
+        "gdn_ad_domains.domain_registered_date" : {
+          "full_name" : "gdn_ad_domains.domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date"
+            }
+          }
+        },
+        "gdn_ad.id" : {
+          "full_name" : "gdn_ad.id",
+          "mapping" : {
+            "id" : {
+              "type" : "long"
+            }
+          }
+        }
+      }
+    }
+  },
+  "quora_search_mix" : {
+    "mappings" : {
+      "doc" : {
+        "quora_ad.id" : {
+          "full_name" : "quora_ad.id",
+          "mapping" : {
+            "id" : {
+              "type" : "long"
+            }
+          }
+        },
+        "quora_ad_domains.domain_registered_date" : {
+          "full_name" : "quora_ad_domains.domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date"
+            }
+          }
+        }
+      }
+    }
+  },
+  "pinterest_search_mix" : {
+    "mappings" : {
+      "doc" : {
+        "pinterest_ad_domains.domain_registered_date" : {
+          "full_name" : "pinterest_ad_domains.domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date",
+              "format" : "yyyy-MM-dd"
+            }
+          }
+        },
+        "pinterest_ad.id" : {
+          "full_name" : "pinterest_ad.id",
+          "mapping" : {
+            "id" : {
+              "type" : "long"
+            }
+          }
+        }
+      }
+    }
+  },
+  "instagram_search_mix" : {
+    "mappings" : {
+      "doc" : {
+        "instagram_ad_domain.domain_registered_date" : {
+          "full_name" : "instagram_ad_domain.domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date"
+            }
+          }
+        },
+        "instagram_ad.id" : {
+          "full_name" : "instagram_ad.id",
+          "mapping" : {
+            "id" : {
+              "type" : "long"
+            }
+          }
+        }
+      }
+    }
+  },
+  "google_ads_data" : {
+    "mappings" : {
+      "doc" : {
+        "domain_registered_date" : {
+          "full_name" : "domain_registered_date",
+          "mapping" : {
+            "domain_registered_date" : {
+              "type" : "date",
+              "format" : "yyyy-MM-dd"
+            }
+          }
+        },
+        "ad_id" : {
+          "full_name" : "ad_id",
+          "mapping" : {
+            "ad_id" : {
+              "type" : "keyword",
+              "normalizer" : "lowercase_normalizer"
+            }
+          }
+        },
+        "status" : {
+          "full_name" : "status",
+          "mapping" : {
+            "status" : {
+              "type" : "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

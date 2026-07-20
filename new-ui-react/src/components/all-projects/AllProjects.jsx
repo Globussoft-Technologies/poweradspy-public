@@ -727,7 +727,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         autoFetchedProjectRef.current !== selectedProjectId
       ) {
         autoFetchedProjectRef.current = selectedProjectId;
-        openProject(selectedProjectId, project.advertiser);
+        openProject(selectedProjectId, project.advertiser, { switchView: false });
       }
     }
   }, [viewState, selectedProjectId, projects, isProjectLoading, competitorUserId]);
@@ -1332,13 +1332,19 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     }
   };
 
-  const openProject = async (id, advertiserName) => {
+  const openProject = async (id, advertiserName, { switchView = true } = {}) => {
     // Switching to another project ends any in-progress generate buffer.
     setIsPreparingCompetitors(false);
     setSelectedProjectId(id);
     setOpenDropdownId(null);
     setOpenGeoId(null);
-    setViewState(4);
+    // `switchView: false` lets a caller use this purely to fetch/hydrate a
+    // project's competitor data without forcing the view to 4 — needed by
+    // the restore-on-refresh auto-fetch effect below, which can otherwise
+    // silently downgrade a restored viewState 5 (Competitive Analysis) back
+    // to 4 the moment it fetches data for a project with no competitors
+    // loaded yet.
+    if (switchView) setViewState(4);
 
     // Check if we've already loaded this project's competitors
     const targetProj = projects.find((p) => p.id === id);
