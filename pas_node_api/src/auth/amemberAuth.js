@@ -58,6 +58,35 @@ const SKIP_CODES = () => [
 ];
 
 /**
+ * Collect every configured, numeric aMember product ID.
+ *
+ * Plans contain nested groups (for example plans.yearly), while the current
+ * pricing generation keeps its IDs under pricing.planIds. Keeping this lookup
+ * config-driven prevents a newly configured regular plan from being mistaken
+ * for an unknown/custom plan and receiving an all-zero platformAccess claim.
+ */
+function collectPlanCodes(value, codes = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectPlanCodes(item, codes);
+    return codes;
+  }
+
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) collectPlanCodes(item, codes);
+    return codes;
+  }
+
+  const code = Number(value);
+  if (Number.isInteger(code) && code > 0) codes.add(code);
+  return codes;
+}
+
+const KNOWN_PLAN_CODES = () => collectPlanCodes([
+  PLANS(),
+  config.pricing?.planIds || {},
+]);
+
+/**
  * Call aMember REST API to verify user and get subscriptions.
  * Returns the raw aMember response: { ok, user_id, name, email, subscriptions: { productId: expireDate, ... } }
  */
@@ -228,9 +257,9 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     const hasValidSubscription = amData.ok && Object.keys(subscriptions).length > 0 &&
       expiryDate && expiryDate >= currentDate;
 
-    if (!hasValidSubscription) {
+     if (!hasValidSubscription) {
       log.warn('No valid subscription', { userId, subscriptions });
-      return res.status(403).json({ code: 403, message: 'No active subscription found' });
+      return res.redirect('https://app-dev.poweradspy.com/amember/member/index');
     }
 
     // Step 5: Resolve platform access.
@@ -238,14 +267,10 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     // (future-proof for new custom plans added in aMember without a config change).
     // Regular plan users (Basic/Standard/Palladium etc.) skip this entirely — no extra API calls.
     const customCodes = CUSTOM_CODES();
-    const ALL_KNOWN_PLAN_IDS = new Set([
-      20,2,5,9,14,15,25,40,59,64,52,58,65,53,60,66,54,61,67,55,62,68,56,63,69,57,
-      3,6,10,13,16,26,41,4,7,11,12,17,27,42,
-      31,35,29,38,44,32,36,30,39,45,22,34,23,24,28,37,43,33,70,46,71,8,18,
-    ]);
+    const allKnownPlanIds = KNOWN_PLAN_CODES();
     const subscriptionIds = Object.keys(subscriptions).map(Number);
     const hasCustomPlan = customCodes.some(code => subscriptionIds.includes(code));
-    const hasUnknownPlan = subscriptionIds.some(id => !ALL_KNOWN_PLAN_IDS.has(id));
+    const hasUnknownPlan = subscriptionIds.some(id => !allKnownPlanIds.has(id));
 
     let platformAccess = {
       facebook: 1, instagram: 1, youtube: 1, google: 1, linkedin: 1,

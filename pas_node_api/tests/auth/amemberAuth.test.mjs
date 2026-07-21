@@ -330,6 +330,26 @@ describe("auth/amemberAuth > custom plan path", () => {
     expect(payload.platformAccess.facebook).toBe(0);
   });
 
+  it("configured 2026 plan ID is regular and does not use custom invoice fallback", async () => {
+    configExports = {
+      ...configExports,
+      pricing: { planIds: { basic: 72, basicYearly: 76 } },
+    };
+    freshSut();
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, user_id: 42, subscriptions: { 72: "2099-01-01" } }),
+    }));
+
+    await handlers.get["/loginpage/:encodedUsername"](mkReq(), mkRes());
+
+    const payload = generateToken.mock.calls[0][0];
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(payload.userSubscriptionType).toBe(72);
+    expect(Object.values(payload.platformAccess).every(value => value === 1)).toBe(true);
+  });
+
   it("custom plan: invoice options as raw object (not string)", async () => {
     freshSut();
     let call = 0;
