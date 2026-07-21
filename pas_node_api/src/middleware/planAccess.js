@@ -360,6 +360,10 @@ function isKeywordExplorerUserAllowed(userId) {
   return allow.map(String).includes(String(userId));
 }
 
+function getAuthenticatedUserId(req) {
+  return req.user?.user_id ?? req.user?.id ?? null;
+}
+
 /**
  * Plan-tier gate for Keywords Explorer — mirrors marketTrends.js's isAllowedByPlan
  * exactly. Self-contained (doesn't run planAccessMiddleware), fails to false on
@@ -385,7 +389,7 @@ async function isKeywordExplorerAllowedByPlan(req) {
  * lookup fails, and the plan-tier grant still works for a user not on the list.
  */
 async function hasKeywordExplorerAccess(req) {
-  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
+  const uid = getAuthenticatedUserId(req);
   if (isKeywordExplorerUserAllowed(uid)) return true;
   return isKeywordExplorerAllowedByPlan(req);
 }
@@ -417,5 +421,6 @@ module.exports = {
   requireIntelAccess,
   requireKeywordExplorerEnabled,
   isKeywordExplorerUserAllowed,
+  getAuthenticatedUserId,
   hasKeywordExplorerAccess,
 };

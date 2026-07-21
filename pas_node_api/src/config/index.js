@@ -408,7 +408,7 @@ const config = {
   //   allowedUserIds: optional per-user allow-list (same contract as
   //   intelligence.allowedUserIds). When non-empty, ONLY those users get the
   //   feature + APIs (everyone else is 403'd and the UI hides it). Empty/unset =
-  //   all authenticated users (when `enabled`). JSON array in config.json or a
+  //   nobody (fail closed). JSON array in config.json or a
   //   comma-separated string in the env var.
   keywordExplorer: {
     enabled: getVal(fileConfig.keywordExplorer?.enabled, 'KEYWORD_EXPLORER_ENABLED', toBool) === true,

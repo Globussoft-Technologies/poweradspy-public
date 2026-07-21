@@ -37,7 +37,7 @@ function authMiddleware(req, res, next) {
 
     // Auto-inject user_id into body for convenience (used by freePlanCheck etc.)
     if (req.body && !req.body.user_id) {
-      req.body.user_id = decoded.id;
+      req.body.user_id = decoded.user_id ?? decoded.id;
     }
 
     next();

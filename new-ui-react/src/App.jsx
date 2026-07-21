@@ -507,6 +507,7 @@ const App = () => {
     dispatch(setActivePage('keywords-explorer'));
   };
   const openAdvertiserProfile = (arg) => {
+    if (!(KEYWORD_EXPLORER_ON && keywordExplorerAllowed)) return;
     const next = typeof arg === "string" ? { advertiserName: arg } : arg;
     if (!next || !(next.postOwnerId || next.advertiserName)) return;
     if (!canAccessIntel()) return;
@@ -1951,6 +1952,7 @@ const App = () => {
           visibleAds.findIndex((a) => a.id === selectedAdForAnalytics?.id) <
           visibleAds.length - 1
         }
+        competitiveIntelEnabled={KEYWORD_EXPLORER_ON && keywordExplorerAllowed}
         onOpenKeywordExplorer={openKeywordExplorer}
         onOpenAdvertiserProfile={openAdvertiserProfile}
         onOpenKeywordsExplorer={openKeywordsExplorerPage}

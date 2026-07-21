@@ -517,7 +517,7 @@ const ClampedText = ({
   );
 };
 
-const TargetedKeywords = ({ adDetails, ad, isLight, onKeywordClick, onOpenAdvertiserProfile, onOpenKeywordsExplorer, advertiser, postOwnerId }) => {
+const TargetedKeywords = ({ adDetails, ad, isLight, competitiveIntelEnabled, onKeywordClick, onOpenAdvertiserProfile, onOpenKeywordsExplorer, advertiser, postOwnerId }) => {
   const keywords =
     adDetails?.target_keyword ||
     ad?.target_keyword ||
@@ -532,6 +532,7 @@ const TargetedKeywords = ({ adDetails, ad, isLight, onKeywordClick, onOpenAdvert
           .filter(Boolean)
       : [];
   const kwClickable = typeof onKeywordClick === "function";
+  
   return (
     <div className="px-6">
       <div className="flex items-center justify-between gap-3 mb-4">
@@ -542,7 +543,7 @@ const TargetedKeywords = ({ adDetails, ad, isLight, onKeywordClick, onOpenAdvert
           Targeted Keywords
         </h3>
         <div className="flex items-center gap-2">
-          {typeof onOpenKeywordsExplorer === "function" ? (
+          {competitiveIntelEnabled && typeof onOpenKeywordsExplorer === "function" ? (
             <button
               type="button"
               onClick={() => onOpenKeywordsExplorer()}
@@ -552,7 +553,7 @@ const TargetedKeywords = ({ adDetails, ad, isLight, onKeywordClick, onOpenAdvert
               Keywords Explorer
             </button>
           ) : null}
-          {typeof onOpenAdvertiserProfile === "function" && (advertiser || postOwnerId) ? (
+          {competitiveIntelEnabled && typeof onOpenAdvertiserProfile === "function" && (advertiser || postOwnerId) ? (
             <button
               type="button"
               onClick={() => onOpenAdvertiserProfile({ postOwnerId, advertiserName: advertiser })}
@@ -1161,6 +1162,7 @@ const AnalyticsModal = ({
   onNext,
   hasPrev = false,
   hasNext = false,
+  competitiveIntelEnabled = false,
   onOpenKeywordExplorer,
   onOpenAdvertiserProfile,
   onOpenKeywordsExplorer,
@@ -2048,6 +2050,7 @@ const AnalyticsModal = ({
                 adDetails={adDetailsData}
                 ad={ad}
                 isLight={isLight}
+                competitiveIntelEnabled={competitiveIntelEnabled}
                 onKeywordClick={onOpenKeywordExplorer}
                 onOpenAdvertiserProfile={onOpenAdvertiserProfile}
                 onOpenKeywordsExplorer={onOpenKeywordsExplorer}

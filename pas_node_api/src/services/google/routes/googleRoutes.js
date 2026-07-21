@@ -281,6 +281,7 @@ function createGoogleRoutes(service) {
   router.post(
     '/advertiser/profile',
     ...intelGate,
+    requireKeywordExplorerEnabled,
     asyncHandler(async (req, res) => {
       const result = await getAdvertiserProfile(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
