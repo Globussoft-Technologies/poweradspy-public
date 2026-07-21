@@ -49,7 +49,33 @@ describe("planAccessService > getConfig", () => {
   it("returns docs from MongoDB on first call", async () => {
     getDB.mockResolvedValue({ collection: () => ({ find: () => ({ toArray: vi.fn(async () => [{ _id: "x" }]) }) }) });
     const svc = freshSut();
-    expect(await svc.getConfig()).toEqual([{ _id: "x" }]);
+    expect(await svc.getConfig()).toEqual(expect.arrayContaining([{ _id: "x" }]));
+  });
+
+  it("automatically removes configured pricing IDs from stale groups and persists the repair", async () => {
+    const updateOne = vi.fn(async () => ({ matchedCount: 1, modifiedCount: 1 }));
+    const docs = [{
+      _id: "plan_groups",
+      updated_at: "before",
+      groups: {
+        Custom: { plans: [33, 70, 46, 72] },
+        "Basic (2026)": { plans: [76] },
+      },
+    }];
+    getDB.mockResolvedValue({
+      collection: () => ({ find: () => ({ toArray: vi.fn(async () => docs) }), updateOne }),
+    });
+
+    const config = await freshSut().getConfig();
+    const groups = config.find((doc) => doc._id === "plan_groups").groups;
+
+    expect(groups.Custom.plans).toEqual([33, 70, 46]);
+    expect(groups["Basic (2026)"].plans).toEqual([72, 76]);
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: "plan_groups", updated_at: "before" },
+      expect.objectContaining({ $set: expect.objectContaining({ groups }) }),
+      { upsert: false },
+    );
   });
 
   it("cache hit on second call within TTL", async () => {
@@ -73,7 +99,7 @@ describe("planAccessService > getConfig", () => {
     existsSpy.mockImplementation((p) => typeof p === "string" && p.includes("plan_config.json"));
     readFileMockReturn = JSON.stringify([{ _id: "from-json" }]);
     const svc = freshSut();
-    expect(await svc.getConfig()).toEqual([{ _id: "from-json" }]);
+    expect(await svc.getConfig()).toEqual(expect.arrayContaining([{ _id: "from-json" }]));
     expect(childLog.warn).toHaveBeenCalled();
   });
 
@@ -88,7 +114,7 @@ describe("planAccessService > getConfig", () => {
     existsSpy.mockImplementation((p) => typeof p === "string" && p.includes("plan_config.json"));
     readFileMockReturn = JSON.stringify([{ _id: "fb" }]);
     const svc = freshSut();
-    expect(await svc.getConfig()).toEqual([{ _id: "fb" }]);
+    expect(await svc.getConfig()).toEqual(expect.arrayContaining([{ _id: "fb" }]));
   });
 
   it("JSON parse failure logs error and returns []", async () => {
@@ -347,6 +373,16 @@ describe("planAccessService > resolvePlanTier", () => {
     const config = [{ _id: "plan_groups", groups: { Basic: { plans: [5] }, Premium: { plans: [10] } } }];
     expect(freshSut().resolvePlanTier(5, config)).toBe("Basic");
     expect(freshSut().resolvePlanTier(10, config)).toBe("Premium");
+  });
+  it("configured pricing plan wins over a stale duplicate Custom membership", () => {
+    const config = [{
+      _id: "plan_groups",
+      groups: {
+        Custom: { plans: [33, 70, 46, 72] },
+        "Basic (2026)": { plans: [72, 76] },
+      },
+    }];
+    expect(freshSut().resolvePlanTier(72, config)).toBe("Basic (2026)");
   });
   it("returns null when plan not in any group", () => {
     const config = [{ _id: "plan_groups", groups: { Basic: { plans: [5] } } }];

@@ -19,6 +19,88 @@ let _configCacheAt = 0;
 let _configFetchInflight = null;
 
 /**
+ * Make config.pricing.planIds authoritative for 2026 plan-group membership.
+ *
+ * Live plan_groups is admin-editable and may contain stale memberships left by
+ * an old plan-ID collision (for example plan 72 under both Custom and Basic
+ * (2026)). Normalize those configured IDs into exactly their generated group,
+ * while preserving every unrelated group and plan ID.
+ */
+function reconcileConfiguredPlanGroups(configDocs) {
+  if (!Array.isArray(configDocs)) return { docs: configDocs, changed: false, originalPlanGroups: null };
+
+  const { DEFAULT_PLAN_GROUPS } = require('./planAccessSeed');
+  const { getPlanGroups } = require('./restructure2026');
+  const originalPlanGroups = configDocs.find((doc) => doc?._id === 'plan_groups') || null;
+  const source = originalPlanGroups || DEFAULT_PLAN_GROUPS;
+  const expectedGroups = getPlanGroups();
+  const configuredIds = new Set(
+    Object.values(expectedGroups).flatMap((group) => group.plans || []).map(Number)
+  );
+
+  const groups = {};
+  for (const [name, group] of Object.entries(source?.groups || {})) {
+    groups[name] = {
+      ...group,
+      plans: Array.isArray(group?.plans)
+        ? group.plans.filter((id) => !configuredIds.has(Number(id)))
+        : [],
+    };
+  }
+
+  for (const [name, expected] of Object.entries(expectedGroups)) {
+    const existing = groups[name] || {};
+    groups[name] = {
+      ...existing,
+      ...expected,
+      plans: [
+        ...(existing.plans || []),
+        ...(expected.plans || []),
+      ],
+    };
+  }
+
+  const changed = !originalPlanGroups || JSON.stringify(source.groups || {}) !== JSON.stringify(groups);
+  if (!changed) return { docs: configDocs, changed: false, originalPlanGroups };
+
+  const normalizedDoc = { ...source, _id: 'plan_groups', groups };
+  const docs = originalPlanGroups
+    ? configDocs.map((doc) => doc === originalPlanGroups ? normalizedDoc : doc)
+    : [...configDocs, normalizedDoc];
+
+  return { docs, changed: true, originalPlanGroups };
+}
+
+async function persistReconciledPlanGroups(collection, reconciliation) {
+  if (!reconciliation.changed) return;
+
+  const normalizedDoc = reconciliation.docs.find((doc) => doc?._id === 'plan_groups');
+  if (!normalizedDoc) return;
+
+  const filter = { _id: 'plan_groups' };
+  if (reconciliation.originalPlanGroups?.updated_at !== undefined) {
+    filter.updated_at = reconciliation.originalPlanGroups.updated_at;
+  }
+
+  try {
+    const result = await collection.updateOne(
+      filter,
+      { $set: { groups: normalizedDoc.groups, updated_at: new Date().toISOString() } },
+      { upsert: !reconciliation.originalPlanGroups }
+    );
+    if (reconciliation.originalPlanGroups && result?.matchedCount === 0) {
+      log.warn('plan_groups changed concurrently; runtime mapping corrected, persistence deferred to next cache refresh');
+      return;
+    }
+    log.info('Automatically reconciled configured pricing plan IDs in plan_groups');
+  } catch (err) {
+    // Entitlements/labels still use the normalized in-memory copy immediately.
+    // A later cache refresh retries persistence without taking the API down.
+    log.warn('Failed to persist reconciled plan_groups; will retry after cache refresh', { error: err.message });
+  }
+}
+
+/**
  * Load plan access config.
  * Primary: MongoDB `plan_access_config` collection.
  * Fallback: plan_config.json (used if MongoDB is unavailable or collection is empty).
@@ -37,11 +119,14 @@ async function getConfig() {
     try {
       const { getDB } = require('../sdui/db');
       const db = await getDB();
-      const docs = await db.collection(COLLECTION).find({}).toArray();
+      const collection = db.collection(COLLECTION);
+      const docs = await collection.find({}).toArray();
       if (docs.length > 0) {
-        _configCache = docs;
+        const reconciliation = reconcileConfiguredPlanGroups(docs);
+        _configCache = reconciliation.docs;
         _configCacheAt = Date.now();
-        return docs;
+        await persistReconciledPlanGroups(collection, reconciliation);
+        return reconciliation.docs;
       }
       log.warn('plan_access_config collection is empty — falling back to plan_config.json');
     } catch (err) {
@@ -57,9 +142,10 @@ async function getConfig() {
       // plan_config.json itself never hardcodes these IDs. See restructure2026.js.
       const { mergeContributions } = require('./restructure2026');
       const merged = mergeContributions(parsed);
-      _configCache = merged;
+      const reconciliation = reconcileConfiguredPlanGroups(merged);
+      _configCache = reconciliation.docs;
       _configCacheAt = Date.now();
-      return merged;
+      return reconciliation.docs;
     } catch (err) {
       log.error('Failed to load plan_config.json fallback', { error: err.message });
       return [];
@@ -396,6 +482,14 @@ function stripRestrictedFilters(body, filterStatus, sduiQueryParamMap = {}) {
 function resolvePlanTier(planId, config) {
   const pid = Number(planId);
   if (!Number.isFinite(pid) || pid <= 0) return null;
+
+  // The configured 2026 IDs are authoritative even if a stale live DB document
+  // temporarily lists the same ID under an older group such as Custom.
+  const { getPlanGroups } = require('./restructure2026');
+  for (const [tier, data] of Object.entries(getPlanGroups())) {
+    if (Array.isArray(data?.plans) && data.plans.includes(pid)) return tier;
+  }
+
   if (!Array.isArray(config)) return null;
   const pgDoc = config.find(d => d?._id === 'plan_groups');
   if (!pgDoc?.groups || typeof pgDoc.groups !== 'object') return null;
