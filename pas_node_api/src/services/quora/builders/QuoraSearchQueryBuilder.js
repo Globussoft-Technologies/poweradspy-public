@@ -340,21 +340,30 @@ class QuoraSearchQueryBuilder {
   _getSourceEnv() {
     const src = this._params.source;
     if (!src || !src.length) return null;
-    // Match the ad's actual traffic `source` (what the UI shows under SOURCE), NOT the
-    // firstSeenOn<platform> existence. An ad seen on several platforms has multiple
-    // firstSeenOn* fields, so the old `exists firstSeenOnIos` matched desktop-source ads
-    // too — the iOS filter leaked desktop ads. Filtering on `source` keeps the results
-    // consistent with the displayed SOURCE.
-    const valid = ['desktop', 'ios', 'android'];
-    const values = [];
+    // Source rules (per product):
+    //   DESKTOP — `source == "desktop"` is authoritative: the ad is desktop regardless of
+    //             any firstSeenOn* timestamps.
+    //   iOS / ANDROID — these ads don't carry a reliable `source`, so they're identified by
+    //             a firstSeenOn<platform> timestamp AND NOT being marked desktop (so a
+    //             desktop ad that was also seen on iOS stays desktop-only).
+    const sourceIsDesktop = { match: { source: { query: 'desktop', operator: 'and' } } };
+    const clauseFor = (v) => {
+      if (v === 'desktop') return sourceIsDesktop;
+      if (v === 'ios')     return { bool: { filter: [{ exists: { field: 'quora_ad_meta_data.firstSeenOnIos' } }],     must_not: [sourceIsDesktop] } };
+      if (v === 'android') return { bool: { filter: [{ exists: { field: 'quora_ad_meta_data.firstSeenOnAndroid' } }], must_not: [sourceIsDesktop] } };
+      return null;
+    };
+
+    const wanted = [];
     for (const s of src) {
       const v = String(s).toLowerCase();
-      if (v === 'all') values.push(...valid);
-      else if (valid.includes(v)) values.push(v);
+      if (v === 'all') wanted.push('desktop', 'ios', 'android');
+      else if (v === 'desktop' || v === 'ios' || v === 'android') wanted.push(v);
     }
-    const unique = [...new Set(values)];
-    if (!unique.length) return null;
-    return asFilter(matchFilter('source', unique));
+    const clauses = [...new Set(wanted)].map(clauseFor).filter(Boolean);
+    if (!clauses.length) return null;
+    if (clauses.length === 1) return asFilter(clauses[0]);
+    return asFilter({ bool: { should: clauses, minimum_should_match: 1 } });
   }
 
   _getFunnelEnv() {

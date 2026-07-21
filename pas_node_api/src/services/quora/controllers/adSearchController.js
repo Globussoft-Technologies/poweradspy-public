@@ -279,11 +279,13 @@ async function searchAds(req, db, logger) {
         // `languages` join (`ad.language`, inherited via the spread above).
         language: (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null,
         lang_detect: src['lang_detect'] || null,
-        // CTA lives in ES as `quora_call_to_action.call_to_action`. The SQL
-        // quora_call_to_action join is empty for API-ingested ads (no
-        // call_to_action_id link), so overlay the ES value when SQL has none —
-        // otherwise the ad-detail modal's CTA button never renders for those ads.
-        call_to_action: ad.call_to_action || src['quora_call_to_action.call_to_action'] || null,
+        // CTA: prefer ES `quora_call_to_action.call_to_action` — that's the field the CTA
+        // FILTER matches, and it holds the current scrape's value (the Node pipeline writes
+        // CTA only to ES; the SQL quora_call_to_action join is empty for API-ingested ads
+        // and stale for older ones). Preferring SQL made the displayed CTA diverge from the
+        // filter (e.g. "Learn More" filter returning an ad showing "Continue reading").
+        // Fall back to the SQL value only when ES has none.
+        call_to_action: src['quora_call_to_action.call_to_action'] || ad.call_to_action || null,
         // Destination URL: the quora_ad_meta_data insert is deferred in the Node
         // pipeline, so SQL is empty for API-ingested ads while ES has it. Overlay the
         // ES value onto the top-level field the frontend reads (ad.destinationUrl) —

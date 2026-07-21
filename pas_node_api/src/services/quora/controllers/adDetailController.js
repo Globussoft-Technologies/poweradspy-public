@@ -105,9 +105,11 @@ async function getAdDetails(req, db, logger) {
           if (src['quora_ad_variants.image_celebrity_exactly']) adData.imageCeleb = src['quora_ad_variants.image_celebrity_exactly'];
           if (src['quora_ad_variants.image_ocr_exactly']) adData.imageOcr = src['quora_ad_variants.image_ocr_exactly'];
           if (src.new_nas_image_url) adData.image_video_url = src.new_nas_image_url;
-          // CTA is empty in SQL for API-ingested ads (no call_to_action_id link);
-          // ES carries it as quora_call_to_action.call_to_action. Overlay when SQL has none.
-          if (!adData.call_to_action && src['quora_call_to_action.call_to_action']) adData.call_to_action = src['quora_call_to_action.call_to_action'];
+          // CTA: prefer ES `quora_call_to_action.call_to_action` — it's the field the CTA
+          // filter matches and holds the current scrape's value (the Node pipeline writes
+          // CTA only to ES; the SQL join is empty for API-ingested ads and stale for older
+          // ones). Preferring ES keeps the displayed CTA consistent with the filter.
+          if (src['quora_call_to_action.call_to_action']) adData.call_to_action = src['quora_call_to_action.call_to_action'];
           // Destination URL is deferred in the Node insert (SQL quora_ad_meta_data empty for
           // API-ingested ads); ES has it. Overlay so the CTA button isn't disabled.
           if (!adData.destination_url && src['quora_ad_meta_data.destination_url']) adData.destination_url = src['quora_ad_meta_data.destination_url'];
