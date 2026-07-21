@@ -755,6 +755,7 @@ const EmailDetails = () => {
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [showPreview, setShowPreview] = useState(false); // mail-preview toggle
 
   // Per-row resend in-flight set (send_ids being processed). Used to disable
   // the button during the request and to show the spinner.
@@ -1027,6 +1028,7 @@ const EmailDetails = () => {
   const openDetail = async (row) => {
     setSelected(row);
     setDetail(null);
+    setShowPreview(false);
     setDetailLoading(true);
     try {
       const res = await axios.get(`${API}/log/${row.send_id}`);
@@ -1668,6 +1670,40 @@ const EmailDetails = () => {
                       </li>
                     ))}
                   </ol>
+                )}
+              </div>
+
+              {/* Email preview — the EXACT mail this user received (stored in
+                  meta.previewHtml at send time). Rendered in a sandboxed iframe
+                  so the mail's own CSS can't leak into the admin panel. */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[#1f296a] font-semibold text-[14px]">Email preview</p>
+                  {detail?.log?.meta?.previewHtml && (
+                    <button
+                      onClick={() => setShowPreview((v) => !v)}
+                      className="text-[12px] font-medium text-[#1540a4] hover:underline"
+                    >
+                      {showPreview ? "Hide" : "Show mail"}
+                    </button>
+                  )}
+                </div>
+                {detailLoading ? (
+                  <p className="text-gray-400 text-sm">Loading…</p>
+                ) : !detail?.log?.meta?.previewHtml ? (
+                  <p className="text-gray-400 text-sm">No preview stored for this send (older row, or a skipped/queued send).</p>
+                ) : showPreview ? (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+                    <iframe
+                      title="mail-preview"
+                      sandbox=""
+                      srcDoc={detail.log.meta.previewHtml}
+                      className="w-full"
+                      style={{ height: "70vh", border: "0" }}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-gray-400 text-[12px]">Click “Show mail” to view the exact email sent to {selected.to}.</p>
                 )}
               </div>
             </div>

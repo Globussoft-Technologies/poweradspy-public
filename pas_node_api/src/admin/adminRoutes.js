@@ -21,9 +21,35 @@ const { getDB } = require('../services/sdui/db');
 const logger = require('../logger');
 const log = logger.createChild('admin-plan-access');
 
-// Palladium + Enterprise plan IDs — new features are auto-assigned here by default.
-// Admin is notified to review and extend to lower tiers as needed.
-const PALLADIUM_AND_ABOVE_PLAN_IDS = [57, 63, 69, 30, 32, 36, 39, 45, 71];
+// Enterprise (plan 71) isn't modeled as its own plan_groups group (it currently sits
+// inside the "Basic" group in DEFAULT_PLAN_GROUPS — a pre-existing data quirk, not
+// something this change attempts to fix). Kept explicit here so new-feature auto-seeding
+// keeps covering it until Enterprise gets a proper topTier group of its own.
+const ADDITIONAL_TOP_TIER_PLAN_IDS = [71];
+
+/**
+ * New SDUI filters are auto-assigned access to every plan ID in a `topTier: true`
+ * plan_groups group (Palladium, Palladium (2026), and any future top tier) — config-driven,
+ * so a new pricing generation never needs a code change to be covered by this default.
+ * Admin is notified via the "needs_review" banner to extend access to lower tiers as needed.
+ * Falls back to DEFAULT_PLAN_GROUPS (and finally to just ADDITIONAL_TOP_TIER_PLAN_IDS) if
+ * MongoDB's plan_groups doc is unreachable or missing.
+ */
+async function getTopTierPlanIds(col) {
+  try {
+    const doc = await col.findOne({ _id: 'plan_groups' });
+    const { DEFAULT_PLAN_GROUPS } = require('../services/planAccess/planAccessSeed');
+    const groups = (doc && doc.groups) || DEFAULT_PLAN_GROUPS.groups;
+    const ids = new Set(ADDITIONAL_TOP_TIER_PLAN_IDS);
+    for (const g of Object.values(groups)) {
+      if (g && g.topTier) (g.plans || []).forEach((id) => ids.add(id));
+    }
+    return [...ids];
+  } catch (e) {
+    log.warn('getTopTierPlanIds failed, using static fallback', { error: e.message });
+    return [...ADDITIONAL_TOP_TIER_PLAN_IDS];
+  }
+}
 
 async function getPlanAccessCollection() {
   // Reuse the shared getDB() singleton instead of opening a new MongoClient on every call.
@@ -391,7 +417,8 @@ async function autoSeedPlanAccessForSduiDoc(docId, docTitle, configType) {
     const existing = await col.findOne({ _id: paId });
     if (!existing) {
       const now = new Date().toISOString();
-      await col.insertOne({ _id: paId, label: docTitle, category: 'sidebar', allowed_plan_ids: PALLADIUM_AND_ABOVE_PLAN_IDS, needs_review: true, created_at: now, updated_at: now });
+      const topTierPlanIds = await getTopTierPlanIds(col);
+      await col.insertOne({ _id: paId, label: docTitle, category: 'sidebar', allowed_plan_ids: topTierPlanIds, needs_review: true, created_at: now, updated_at: now });
       log.info('Auto-seeded plan_access_config for new SDUI doc', { paId, docId });
     }
     await client.close();
@@ -674,14 +701,15 @@ router.get('/api/plan-access/config', async (req, res) => {
     try {
       const { col: seedCol, client: seedClient } = await getPlanAccessCollection();
       const now = new Date().toISOString();
+      const topTierPlanIds = await getTopTierPlanIds(seedCol);
       for (const [paId, doc] of paMap.entries()) {
         if (doc.is_new) {
           await seedCol.updateOne(
             { _id: paId },
-            { $set: { allowed_plan_ids: PALLADIUM_AND_ABOVE_PLAN_IDS, needs_review: true, label: doc.label, category: doc.category || 'sidebar', updated_at: now }, $setOnInsert: { created_at: now } },
+            { $set: { allowed_plan_ids: topTierPlanIds, needs_review: true, label: doc.label, category: doc.category || 'sidebar', updated_at: now }, $setOnInsert: { created_at: now } },
             { upsert: true }
           );
-          paMap.set(paId, { ...doc, allowed_plan_ids: PALLADIUM_AND_ABOVE_PLAN_IDS, is_new: false, needs_review: true });
+          paMap.set(paId, { ...doc, allowed_plan_ids: topTierPlanIds, is_new: false, needs_review: true });
         }
         if (paMap.get(paId)?.needs_review) {
           needsReviewFilters.push({ _id: paId, label: doc.label || paId });
@@ -717,7 +745,7 @@ router.get('/api/plan-access/review-count', async (req, res) => {
 router.put('/api/plan-access/config', express.json(), requireEditorRole, async (req, res) => {
   let paClient = null;
   try {
-    const { planId, platforms, limits, filters, filterPlatforms } = req.body;
+    const { planId, platforms, limits, filters, filterPlatforms, mtNetworks } = req.body;
     if (!planId) return res.status(400).json({ code: 400, message: 'planId required' });
 
     const { col, client: c } = await getPlanAccessCollection();
@@ -823,6 +851,19 @@ router.put('/api/plan-access/config', express.json(), requireEditorRole, async (
       }
     }
 
+    // Market Trends' per-PLAN network scope — independent of platform_access (the
+    // general "can this plan search this network at all" toggle). Lets an admin
+    // give a plan a different network set in Market Trends analytics than it has
+    // for ad search, without touching platform_access. undefined = leave whatever
+    // is already saved untouched; [] is a valid explicit "no networks" value.
+    if (mtNetworks !== undefined) {
+      await col.updateOne(
+        { _id: 'market_trends' },
+        { $set: { [`network_overrides.${pidStr}`]: mtNetworks, updated_at: timestamp } },
+        { upsert: true }
+      );
+    }
+
     invalidateConfigCache();
     res.json({ code: 200, message: 'Plan access config updated' });
   } catch (err) {
@@ -879,7 +920,10 @@ router.post('/api/plan-access/add-plan', express.json(), requireEditorRole, asyn
       if (pgDoc && pgDoc.groups) {
         if (!pgDoc.groups[group]) {
           // Group doesn't exist yet — create it with a default color
-          const DEFAULT_COLORS = { Free:'#94a3b8', Basic:'#6366f1', Standard:'#3b82f6', Premium:'#f59e0b', Platinum:'#ef4444', Titanium:'#8b5cf6', Palladium:'#10b981', Custom:'#f97316' };
+          const DEFAULT_COLORS = {
+            Free:'#94a3b8', Basic:'#6366f1', Standard:'#3b82f6', Premium:'#f59e0b', Platinum:'#ef4444', Titanium:'#8b5cf6', Palladium:'#10b981', Custom:'#f97316',
+            'Basic (2026)':'#4f46e5', 'Standard (2026)':'#2563eb', 'Platinum (2026)':'#dc2626', 'Palladium (2026)':'#059669',
+          };
           pgDoc.groups[group] = { color: DEFAULT_COLORS[group] || '#94a3b8', plans: [] };
         }
         if (!pgDoc.groups[group].plans.includes(newPid)) {

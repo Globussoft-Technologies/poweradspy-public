@@ -349,6 +349,7 @@ async function sendToUser(email, rows, opts = {}) {
 
   const subject = `New ad activity on ${rows.length} of your tracked term${rows.length === 1 ? "" : "s"}`;
   const html = renderTemplate(to, name, rows);
+  base.meta.previewHtml = html; // exact mail this user got (admin detail preview)
   const mailOptions = {
     to,
     from: { email: config.get("SENDGRID_FROM"), name: "PoweradSpy" },

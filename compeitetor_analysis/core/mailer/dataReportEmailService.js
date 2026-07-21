@@ -316,7 +316,7 @@ class DataReportEmailService {
       mail_type: "dataReport",
       to,
       subject,
-      meta: { todayTotal: data?.grand?.last24h ?? 0, allTime: data?.grand?.total ?? 0 },
+      meta: { todayTotal: data?.grand?.last24h ?? 0, allTime: data?.grand?.total ?? 0, previewHtml: html },
     };
     try {
       const resp = await sgMail.send(mailOptions);

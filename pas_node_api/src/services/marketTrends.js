@@ -4,9 +4,20 @@
  * Market Trends — single-file additive feature (router + access + ES aggs).
  *
  * Mounted at /api/v1/intelligence ONLY when config.intelligence.enabled (app.js).
- * Per-user allow-list via config.intelligence.allowedUserIds (empty = all).
- * Read-only ES aggregations against the Meta `search_mix` index (fb + ig).
- * Full doc + enable/remove steps: MARKET_TRENDS_MANIFEST.md (repo root).
+ * Access is granted if EITHER of two independent mechanisms says yes (OR, not
+ * either/or-replace — 2026-07-14 decision):
+ *   1. config.intelligence.allowedUserIds — a manual override list (empty = everyone),
+ *      e.g. for internal testers who should see it regardless of their plan.
+ *   2. plan_access_config's `market_trends` filter doc — the real plan-tier gate
+ *      (PRD FR-17 beta→GA). Computed directly here (NOT via planAccessMiddleware,
+ *      deliberately — that middleware can itself 403/503 a request for reasons
+ *      unrelated to Market Trends, e.g. an unrelated restricted filter in the body,
+ *      which would wrongly block someone who qualifies via mechanism 1 above).
+ * Neither mechanism can break the other: a config.json override always works even
+ * if the plan-tier lookup fails, and vice versa. Read-only ES aggregations against
+ * the Meta `search_mix` index (fb + ig). Full doc + enable/remove steps:
+ * MARKET_TRENDS_MANIFEST.md (repo root). See docs/PLAN_ACCESS.md § "Market Trends
+ * beta→GA" for the full history of this decision.
  *
  * NOTE: this is a plain file under services/ (not a folder), so ServiceRegistry
  * does NOT auto-mount it — mounting is flag-gated in app.js only.
@@ -18,20 +29,115 @@ const databaseManager = require('../database/DatabaseManager');
 const serviceRegistry = require('./ServiceRegistry');
 const { authMiddleware } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
+const planAccessService = require('./planAccess/planAccessService');
 
-// ─── Per-user access ─────────────────────────────────────────────────────────
+// ─── Mechanism 1: per-user allow-list (config.json + userId) ─────────────────
+// This is a targeted OVERRIDE for specific user IDs, not a toggle for whether
+// plan-tier gating applies at all — an empty list contributes NOTHING (final
+// access then rests entirely on mechanism 2 below). Previously an empty list
+// meant "everyone", which silently made ANY plan-tier restriction on the
+// market_trends doc's allowed_plan_ids unenforceable — an admin configuring
+// e.g. allowed_plan_ids:[102] via the Plan Access tab saw it have zero effect
+// on real access, since this mechanism unconditionally won via OR. Confirmed
+// 2026-07-14. To go back to "open to everyone", set market_trends's
+// allowed_plan_ids to null (or every current plan ID), not this list.
 function isAllowedUser(userId) {
   const allow = config.intelligence?.allowedUserIds || [];
-  if (!allow.length) return true; // no list → all authenticated users
+  if (!allow.length) return false;
   if (userId === undefined || userId === null || userId === '') return false;
   return allow.map(String).includes(String(userId));
 }
-function accessGuard(req, res, next) {
-  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
-  if (!isAllowedUser(uid)) {
-    return res.status(403).json({ code: 403, message: 'Market Trends is not enabled for this account', data: [] });
+
+// ─── Mechanism 2: plan-tier gate (plan_access_config's market_trends filter doc) ──
+// Self-contained — does not depend on / run planAccessMiddleware, so a failure here
+// (no plan_id, DB unreachable, etc.) only means "this mechanism didn't grant access
+// this time," never a 500/503 for the whole request. Mechanism 1 is unaffected either way.
+async function isAllowedByPlan(req) {
+  try {
+    const planId = req.user?.userSubscriptionType ?? req.user?.plan_id;
+    if (planId === undefined || planId === null) return false;
+    const planConfig = await planAccessService.getConfig();
+    if (!planConfig || planConfig.length === 0) return false;
+    const network = req.body?.network || req.query?.network || 'all';
+    const filterStatus = planAccessService.getFilterStatus(planId, network, planConfig);
+    return filterStatus?.market_trends?.enabled === true;
+  } catch (_e) {
+    return false;
   }
-  return next();
+}
+
+async function hasMarketTrendsAccess(req) {
+  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
+  if (isAllowedUser(uid)) return true;
+  return isAllowedByPlan(req);
+}
+
+async function accessGuard(req, res, next) {
+  if (await hasMarketTrendsAccess(req)) return next();
+  return res.status(403).json({
+    code: 403,
+    message: 'Market Trends is not enabled for this account',
+    showSubscriptionModal: true,
+    data: [],
+  });
+}
+
+// ─── Which networks THIS plan sees in Market Trends specifically ────────────
+// Checks the market_trends doc's own network_overrides.<planId> FIRST (set via
+// the admin Plan Access tab's dedicated "Market Trends Networks" control) —
+// this is independent of platform_access (which governs Ads Library search
+// access) so an admin can give a plan a different network scope in Market
+// Trends analytics without touching what it can actually search. Falls back to
+// platform_access's allowedPlatforms when no override has been configured for
+// that plan yet, so an unconfigured plan behaves exactly as before this existed.
+function resolveMarketTrendsNetworks(planId, planConfig) {
+  const doc = planConfig.find((d) => d._id === 'market_trends');
+  const override = doc?.network_overrides?.[String(planId)];
+  if (Array.isArray(override)) return override;
+  return planAccessService.getAllowedPlatforms(planId, planConfig);
+}
+
+// ─── Network restriction — clamp the requested network(s) to what this account's
+// PLAN actually includes for Market Trends (see resolveMarketTrendsNetworks).
+// Previously Market Trends had NO server-side network restriction at all — the
+// frontend's network chips only *looked* restricted; the raw API happily
+// returned data for any network regardless of plan (bypassable via
+// devtools/curl). Runs after accessGuard, so a plan without Market Trends
+// access at all never reaches this. Self-contained like the access checks
+// above — a lookup failure fails open (no restriction) rather than breaking
+// the feature outright; no plan_id at all (e.g. a pure allow-list override
+// tester) also skips restriction, matching that mechanism's intent.
+async function restrictNetworkToPlan(req, res, next) {
+  try {
+    const planId = req.user?.userSubscriptionType ?? req.user?.plan_id;
+    if (planId === undefined || planId === null) return next();
+    const planConfig = await planAccessService.getConfig();
+    if (!planConfig || planConfig.length === 0) return next();
+    const allowed = resolveMarketTrendsNetworks(planId, planConfig);
+    if (!allowed || allowed.length === 0) return next();
+    const requested = req.query?.network ?? req.body?.network;
+    const requestedList = (!requested || requested === 'all')
+      ? allowed
+      : String(requested).split(',').map((s) => s.trim().toLowerCase()).filter((n) => allowed.includes(n));
+    const clamped = (requestedList.length ? requestedList : allowed).join(',');
+    if (req.query) req.query.network = clamped;
+    if (req.body) req.body.network = clamped;
+  } catch (_e) {
+    // fail open — an infra hiccup here shouldn't take down Market Trends entirely
+  }
+  next();
+}
+
+// `stage` (beta/ga label only, NOT an access gate) comes from plan_access_config's
+// market_trends doc purely so the frontend can show a BETA badge.
+async function getMarketTrendsStage() {
+  try {
+    const planConfig = await planAccessService.getConfig();
+    const doc = planConfig.find((d) => d._id === 'market_trends');
+    return doc?.stage || 'beta';
+  } catch (_e) {
+    return 'beta';
+  }
 }
 
 // ─── ES helpers ──────────────────────────────────────────────────────────────
@@ -236,8 +342,14 @@ const topHit = (b) => b.label?.hits?.hits?.[0]?._source || null;
 async function getOverview(req, res) {
   const raw = { ...req.query, ...req.body };
   const days = clampInt(raw.days, 30, 1, 365);
-  const only = raw.network && raw.network !== 'all' ? String(raw.network).toLowerCase() : null;
-  const nets = only ? [only].filter((n) => TREND_NETWORKS.includes(n)) : [...TREND_NETWORKS];
+  // network can be 'all', a single slug, or a CSV list (restrictNetworkToPlan clamps
+  // 'all' to a CSV of the plan's allowedPlatforms when that's more than one but not
+  // every network — a single-value `only` check here used to silently match zero
+  // networks whenever a plan had exactly 2+ (but not all) networks allowed).
+  const only = raw.network && raw.network !== 'all'
+    ? String(raw.network).toLowerCase().split(',').map((s) => s.trim()).filter(Boolean)
+    : null;
+  const nets = only ? TREND_NETWORKS.filter((n) => only.includes(n)) : [...TREND_NETWORKS];
 
   const country = String(raw.country || '').trim();
   const custom = parseRange(raw);
@@ -678,15 +790,28 @@ async function getKeywords(req, res) {
 // ─── Router ──────────────────────────────────────────────────────────────────
 const router = Router();
 router.get('/health', (req, res) => res.status(200).json({ code: 200, message: 'market trends enabled', data: { ok: true } }));
-router.get('/access', authMiddleware, (req, res) => {
-  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
-  res.status(200).json({ code: 200, message: 'ok', data: { enabled: isAllowedUser(uid) } });
-});
-router.get('/trends/overview', authMiddleware, accessGuard, asyncHandler(getOverview));
-router.get('/trends/categories', authMiddleware, accessGuard, asyncHandler(getCategories));
-router.get('/trends/top', authMiddleware, accessGuard, asyncHandler(getTop));
-router.get('/trends/regions', authMiddleware, accessGuard, asyncHandler(getRegions));
-router.get('/trends/keywords', authMiddleware, accessGuard, asyncHandler(getKeywords));
-router.get('/trends/search', authMiddleware, accessGuard, asyncHandler(getSearch));
+router.get('/access', authMiddleware, asyncHandler(async (req, res) => {
+  const [enabled, stage] = await Promise.all([hasMarketTrendsAccess(req), getMarketTrendsStage()]);
+  // networks — resolved the exact same way restrictNetworkToPlan enforces it server-side,
+  // so the frontend's chip list and the actual data returned are always in sync. null when
+  // there's no plan_id to resolve against (frontend falls back to showing every network).
+  let networks = null;
+  try {
+    const planId = req.user?.userSubscriptionType ?? req.user?.plan_id;
+    if (planId !== undefined && planId !== null) {
+      const planConfig = await planAccessService.getConfig();
+      if (planConfig && planConfig.length > 0) networks = resolveMarketTrendsNetworks(planId, planConfig);
+    }
+  } catch (_e) {
+    networks = null;
+  }
+  res.status(200).json({ code: 200, message: 'ok', data: { enabled, stage, networks } });
+}));
+router.get('/trends/overview', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getOverview));
+router.get('/trends/categories', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getCategories));
+router.get('/trends/top', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getTop));
+router.get('/trends/regions', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getRegions));
+router.get('/trends/keywords', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getKeywords));
+router.get('/trends/search', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getSearch));
 
 module.exports = router;

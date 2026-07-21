@@ -2108,6 +2108,7 @@ const PA_CAT_COLORS = {
   search_by: '#3b82f6', filter: '#8b5cf6', demographics: '#ec4899', ad_properties: '#f59e0b',
   lander: '#10b981', sort_by: '#06b6d4', dates: '#6366f1', engagement: '#f97316',
   ai: '#a855f7', platform: '#ef4444', limits: '#14b8a6', sidebar: '#0ea5e9',
+  intelligence: '#22d3ee', // Market Trends, Keyword Explorer — beta features, still selectable per-plan here
 };
 
 async function loadPlanAccessDocs(showToastMsg = false) {
@@ -2188,6 +2189,7 @@ function renderPAGroups() {
       <div onclick="paToogleGroupCollapse('${groupName}')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:4px 0;user-select:none">
         <span style="font-size:10px;color:${group.color};width:12px;text-align:center">${isCollapsed ? '▶' : '▼'}</span>
         <p style="font-size:9px;font-weight:700;color:${group.color};text-transform:uppercase;letter-spacing:.08em;margin:0;flex:1">${groupName}</p>
+        ${group.openForNewSignups === false ? `<span title="Not offered to new signups — existing subscribers are unaffected" style="font-size:8px;font-weight:700;color:#94a3b8;border:1px solid #94a3b8;border-radius:3px;padding:1px 4px">LEGACY</span>` : ''}
       </div>`;
 
     if (!isCollapsed) {
@@ -2429,6 +2431,34 @@ function renderPADetail(planId) {
     }).join('');
   }
 
+  // Market Trends networks — independent per-plan override, stored on the
+  // market_trends filter doc's network_overrides.<planId> (NOT platform_access).
+  // Falls back to this plan's Platform Access list when no override has been
+  // saved yet, so a never-configured plan behaves exactly as before this existed.
+  const mtEl = document.getElementById('pa-mt-networks');
+  if (mtEl) {
+    const mtDoc = paFilterDocs.find(f => f._id === 'market_trends');
+    const override = mtDoc?.network_overrides?.[String(pid)];
+    const mtAllowed = Array.isArray(override)
+      ? override
+      : (paPlatformDoc?.platform_plans ? PA_PLATFORMS.filter(p => (paPlatformDoc.platform_plans[p] || []).includes(pid)) : []);
+    mtEl.innerHTML = PA_PLATFORMS.map(p => {
+      const allowed = mtAllowed.includes(p);
+      if (paEditMode) {
+        return `<label style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10px;font-weight:600;cursor:pointer;
+          background:var(--bg-secondary);border:1px solid var(--border);color:var(--text)">
+          <input type="checkbox" id="pa-mt-cb-${p}" data-mtplat="${p}" ${allowed ? 'checked' : ''} style="cursor:pointer"> ${p}
+        </label>`;
+      }
+      return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10px;font-weight:600;
+        background:${allowed ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.1)'};
+        color:${allowed ? '#22c55e' : '#ef4444'};
+        border:1px solid ${allowed ? '#22c55e44' : '#ef444444'}">
+        ${allowed ? '✓' : '✗'} ${p}
+      </span>`;
+    }).join('');
+  }
+
   // Limits
   const limEl = document.getElementById('pa-limits');
   if (limEl && paLimitsDoc && paLimitsDoc.plan_limits) {
@@ -2621,9 +2651,22 @@ function renderPANewFeatureBanner(needsReviewFilters) {
 
 function paGoToReview() {
   switchTab('plan-access');
+  // The filter-access table (where the REVIEW badge/row actually renders) only exists in
+  // the DOM once a plan is selected in the right-hand detail pane — with no plan selected,
+  // there is nothing for the scroll below to find, which is why "Review →" looked like it
+  // did nothing. New features are auto-assigned to a topTier plan_groups group, so jump to
+  // the first plan in whichever topTier group exists (old or new Palladium generation).
+  if (!paSelectedPlan) {
+    const topTierGroup = Object.values(PA_PLAN_GROUPS).find(g => g && g.topTier && g.plans && g.plans.length);
+    if (topTierGroup) paSelectPlan(topTierGroup.plans[0]);
+  }
   setTimeout(() => {
     const firstReview = document.querySelector('tr[data-needs-review="true"]');
-    if (firstReview) firstReview.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (firstReview) {
+      firstReview.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      showToast('No plan with a pending review was found — check each plan tier manually.', 'error');
+    }
   }, 150);
 }
 
@@ -2639,6 +2682,14 @@ async function paSavePlanAccess() {
   // Collect platform checkboxes
   const platforms = Array.from(document.querySelectorAll('#pa-platforms input[type=checkbox]'))
     .filter(cb => cb.checked).map(cb => cb.dataset.plat);
+
+  // Collect Market Trends' per-plan network override (independent of platforms above).
+  // Only sent if the section actually rendered (it's absent for plans with no market_trends
+  // doc loaded) — undefined here means adminRoutes.js leaves network_overrides untouched.
+  const mtCheckboxes = document.querySelectorAll('#pa-mt-networks input[type=checkbox]');
+  const mtNetworks = mtCheckboxes.length
+    ? Array.from(mtCheckboxes).filter(cb => cb.checked).map(cb => cb.dataset.mtplat)
+    : undefined;
 
   // Collect limits
   const brandLimit = parseInt(document.getElementById('pa-edit-brand')?.value || 0);
@@ -2662,7 +2713,7 @@ async function paSavePlanAccess() {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId: pid, platforms, limits: { brandLimit, competitorLimit }, filters, filterPlatforms: changedFilterPlatforms }),
+      body: JSON.stringify({ planId: pid, platforms, limits: { brandLimit, competitorLimit }, filters, filterPlatforms: changedFilterPlatforms, mtNetworks }),
     });
     const json = await res.json();
     if (res.ok) {

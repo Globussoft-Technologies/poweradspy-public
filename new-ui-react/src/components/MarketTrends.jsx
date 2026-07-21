@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
-import { TrendingUp, Loader2, Download, Globe2, Search, X, Plus, LayoutGrid, Calendar, ChevronDown, Info, MoreVertical, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { TrendingUp, Download, Globe2, Search, X, Plus, LayoutGrid, Calendar, ChevronDown, Info, MoreVertical, ChevronLeft, ChevronRight, Sparkles, Lock } from 'lucide-react';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import { getAuthToken } from '../hooks/useAuth';
@@ -17,6 +17,7 @@ import quoraIcon from '../assets/quora.png';
 import pinIcon from '../assets/pinterest.png';
 import gdnIcon from '../assets/gdn.png';
 import tiktokIcon from '../assets/tiktoklogo.jpg';
+import { SkeletonChartLine, SkeletonBarChart, SkeletonTableRows, FadeIn, ErrorRetry } from './shared/Skeleton';
 
 /**
  * Market Trends — Google-Trends-style Explore/Compare for ad data (single file).
@@ -39,8 +40,20 @@ async function apiGet(path, params = {}) {
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return res.json();
 }
+// Returns { enabled, stage, networks } — stage is "beta" or "ga" (see marketTrends.js /
+// docs/PLAN_ACCESS.md § "Market Trends beta→GA"). enabled=false at GA for a
+// lower tier is expected — the caller shows a locked preview, not a hard hide.
+// networks is this plan's Market Trends-specific network list (admin's dedicated
+// "Market Trends Networks" override, falling back to Platform Access) — null
+// while unresolved, in which case the caller should treat every network as
+// available rather than locking everything out.
 export async function fetchMarketTrendsAccess() {
-  try { const r = await apiGet('/access'); return !!r?.data?.enabled; } catch { return false; }
+  try {
+    const r = await apiGet('/access');
+    return { enabled: !!r?.data?.enabled, stage: r?.data?.stage || 'beta', networks: r?.data?.networks ?? null };
+  } catch {
+    return { enabled: false, stage: 'beta', networks: null };
+  }
 }
 
 // ─── CSV ────────────────────────────────────────────────────────────────────
@@ -106,6 +119,38 @@ function InfoTip({ text }) {
   );
 }
 
+// Shimmer visibility, synced EXACTLY to `loading` on the way in — no delay —
+// so it's on-screen the instant a fetch starts, in the same render that
+// clears the panel's data. That's required: this component clears each
+// panel's data immediately when a fetch starts (so a stale result can never
+// linger under a new selection — see the fetch effects below), which means
+// there is no valid "old content" to keep showing while loading is true. An
+// earlier version delayed showing the shimmer by 150ms to avoid flashing it
+// on very fast responses — but that just left an empty ~150ms gap where the
+// panel had no data AND no shimmer, rendering "No data for this window" on
+// every load faster than 150ms (which is most local/dev responses). Once
+// shown, still holds for a minimum `minDuration` ms so a load that finishes
+// in a few ms doesn't flicker the shimmer on and off — that's the only thing
+// actually worth delaying.
+function useMinDisplay(loading, minDuration = 300) {
+  const [holding, setHolding] = useState(false);
+  const shownAtRef = useRef(null);
+  useEffect(() => {
+    if (loading) {
+      shownAtRef.current = Date.now();
+      return;
+    }
+    if (shownAtRef.current == null) return; // wasn't actually showing — nothing to hold
+    const elapsed = Date.now() - shownAtRef.current;
+    shownAtRef.current = null;
+    if (elapsed >= minDuration) return;
+    setHolding(true);
+    const t = setTimeout(() => setHolding(false), minDuration - elapsed);
+    return () => clearTimeout(t);
+  }, [loading, minDuration]);
+  return loading || holding;
+}
+
 // A one-line, data-driven observation shown under a chart to make it easy to read.
 const Insight = ({ children }) => (children ? (
   <p className="text-[11px] text-white/70 bg-white/[0.03] border border-theme-border rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
@@ -113,7 +158,13 @@ const Insight = ({ children }) => (children ? (
   </p>
 ) : null);
 
-function Panel({ title, subtitle, info, right, note, scope, className = '', children }) {
+// Widget-accurate skeleton, real content, or an error+retry state — never all
+// three, and never a stuck shimmer. `skeleton` is the widget-shaped placeholder
+// (SkeletonChartLine / SkeletonBarChart / SkeletonTableRows) for THIS panel
+// specifically — chosen per call site so a line chart skeletons as a line
+// chart, not a generic grey box. Title/subtitle/legend stay visible while
+// loading; only the plot area swaps.
+function Panel({ title, subtitle, info, right, note, scope, className = '', loading, error, onRetry, skeleton, children }) {
   return (
     <div className={`p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2.5 min-w-0 ${className}`}>
       <div className="flex items-start justify-between gap-2">
@@ -126,8 +177,8 @@ function Panel({ title, subtitle, info, right, note, scope, className = '', chil
         {right}
       </div>
       {scope}
-      {children}
-      {note && <Insight>{note}</Insight>}
+      {loading ? skeleton : error ? <ErrorRetry message="Couldn't load this panel." onRetry={onRetry} /> : <FadeIn>{children}</FadeIn>}
+      {!loading && !error && note && <Insight>{note}</Insight>}
     </div>
   );
 }
@@ -136,7 +187,7 @@ const Empty = ({ msg }) => <div className="py-12 text-center text-[11px] text-wh
 // Google-Trends-style ranked table: rank · label · inline micro-bar · change · ⋮.
 // Paginates 10 rows; header carries an (i) tooltip + export; rows drill on click.
 const TABLE_PAGE = 10;
-function TrendTable({ title, subtitle, info, columnLabel, valueLabel, rows, color, onRowClick, onCompare, onExport, note, right, scope, emptyMsg }) {
+function TrendTable({ title, subtitle, info, columnLabel, valueLabel, rows, color, onRowClick, onCompare, onExport, note, right, scope, emptyMsg, loading, error, onRetry }) {
   const [page, setPage] = useState(0);
   const [menu, setMenu] = useState(null);
   useEffect(() => { setPage(0); }, [rows]);
@@ -159,8 +210,8 @@ function TrendTable({ title, subtitle, info, columnLabel, valueLabel, rows, colo
         </div>
       </div>
       {scope}
-      {rows.length ? (
-        <>
+      {loading ? <SkeletonTableRows rows={6} /> : error ? <ErrorRetry message="Couldn't load this table." onRetry={onRetry} /> : rows.length ? (
+        <FadeIn>
           <div className="flex items-center gap-2 text-[9px] uppercase tracking-wide text-white/40 pt-1">
             <span className="w-4" />
             <span className="flex-1">{columnLabel || 'Query'}</span>
@@ -205,7 +256,7 @@ function TrendTable({ title, subtitle, info, columnLabel, valueLabel, rows, colo
               <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} className="p-1 disabled:opacity-30 hover:text-white"><ChevronRight size={14} /></button>
             </div>
           </div>
-        </>
+        </FadeIn>
       ) : <Empty msg={emptyMsg} />}
       {/* click-away to close the row menu */}
       {menu !== null && <div className="fixed inset-0 z-20" onClick={() => setMenu(null)} />}
@@ -273,11 +324,24 @@ function DateRangePicker({ days, from, to, onPreset, onRange, onClear }) {
   );
 }
 
-const MarketTrends = ({ onDrill }) => {
+const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
+  // Networks this account's PLAN actually includes (admin-configured per plan, same
+  // req.planAccess.allowedPlatforms every other gated feature reads) — Market Trends
+  // previously ignored this entirely and always offered all 11 networks regardless
+  // of plan. Falls back to every network only while allowedPlatforms hasn't loaded
+  // yet (undefined) — an empty array (a real "no networks" plan) is respected as-is.
+  const AVAILABLE_NETWORKS = useMemo(
+    () => (allowedPlatforms ? CHIP_NETWORKS.filter((n) => allowedPlatforms.includes(n)) : CHIP_NETWORKS),
+    [allowedPlatforms]
+  );
+
   const [days, setDays] = useState(30);
   const [from, setFrom] = useState(''); // custom range (YYYY-MM-DD)
   const [to, setTo] = useState('');
-  const [selected, setSelected] = useState(CHIP_NETWORKS); // network filter (chips)
+  const [selected, setSelected] = useState(AVAILABLE_NETWORKS); // network filter (chips)
+  // Re-sync once the plan's real allowedPlatforms arrives (it's fetched async in
+  // App.jsx, so it's usually undefined on first render here).
+  useEffect(() => { setSelected(AVAILABLE_NETWORKS); }, [AVAILABLE_NETWORKS]);
   const [indexed, setIndexed] = useState(true);
   const [topType, setTopType] = useState('advertiser');
   const [country, setCountry] = useState('');
@@ -301,6 +365,27 @@ const MarketTrends = ({ onDrill }) => {
   const [metaNet, setMetaNet] = useState('All networks');
   const [drillItem, setDrillItem] = useState(null);
 
+  // Per-panel fetch failure — previously every fetch's `.catch(() => null)`
+  // swallowed the error into an empty result, indistinguishable from a
+  // genuinely-empty window. Each panel now shows a real "Retry" affordance on
+  // failure instead of a silent/misleading Empty state. `xRetry` is a pure
+  // trigger counter — bumping it re-runs that panel's effect with no other
+  // state change.
+  const [overviewError, setOverviewError] = useState(false);
+  const [termError, setTermError] = useState(false);
+  const [regionsError, setRegionsError] = useState(false);
+  const [categoriesError, setCategoriesError] = useState(false);
+  const [risingError, setRisingError] = useState(false);
+  const [topError, setTopError] = useState(false);
+  const [kwError, setKwError] = useState(false);
+  const [overviewRetry, setOverviewRetry] = useState(0);
+  const [termRetry, setTermRetry] = useState(0);
+  const [regionsRetry, setRegionsRetry] = useState(0);
+  const [categoriesRetry, setCategoriesRetry] = useState(0);
+  const [risingRetry, setRisingRetry] = useState(0);
+  const [topRetry, setTopRetry] = useState(0);
+  const [kwRetry, setKwRetry] = useState(0);
+
   // Per-panel advertiser scope (compare-mode). Each card's "Show" toggle is
   // INDEPENDENT — '' = all compared advertisers merged, else just that one.
   const [regionsScope, setRegionsScope] = useState('');
@@ -309,69 +394,114 @@ const MarketTrends = ({ onDrill }) => {
   const [topScope, setTopScope] = useState('');
   const [kwScope, setKwScope] = useState('');
 
-  // Combined "Updating…" indicator across the independent panel fetches.
-  const [pending, setPending] = useState(0);
-  const loading = pending > 0;
-  const track = (p) => { setPending((n) => n + 1); return Promise.resolve(p).finally(() => setPending((n) => n - 1)); };
+  // Each panel loads independently — its own shimmer skeleton, not a page-wide dim.
+  // (Previously a single shared `pending` counter dimmed the ENTIRE page to opacity-60
+  // on ANY of the 6 independent fetches — switching country, say, re-dimmed panels
+  // that hadn't actually changed.)
+  const [termLoading, setTermLoading] = useState(false);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [regionsLoading, setRegionsLoading] = useState(true);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [risingLoading, setRisingLoading] = useState(true);
+  const [topLoading, setTopLoading] = useState(true);
+  const [kwLoading, setKwLoading] = useState(true);
+  const loading = overviewLoading || regionsLoading || categoriesLoading || risingLoading || topLoading || kwLoading;
+  // Actual values passed to the panels — see useMinDisplay above. Shows the
+  // instant loading starts (never an empty gap), holds a minimum stable
+  // duration once shown so a very fast load doesn't flicker.
+  const overviewShimmer = useMinDisplay(overviewLoading || termLoading);
+  const regionsShimmer = useMinDisplay(regionsLoading);
+  const categoriesShimmer = useMinDisplay(categoriesLoading);
+  const risingShimmer = useMinDisplay(risingLoading);
+  const topShimmer = useMinDisplay(topLoading);
+  const kwShimmer = useMinDisplay(kwLoading);
 
-  // Chips double as a filter: all chips → 'all'; otherwise a CSV the backend honors.
-  const netParam = selected.length === CHIP_NETWORKS.length ? 'all' : (selected.join(',') || 'all');
+  // Chips double as a filter: all (of the plan's allowed) chips → 'all'; otherwise a
+  // CSV the backend honors. The backend also independently clamps this to the plan's
+  // allowedPlatforms (restrictNetworkToPlan in marketTrends.js) — this is just keeping
+  // the UI's own "is everything selected" notion in sync with what's actually offered.
+  const netParam = selected.length === AVAILABLE_NETWORKS.length ? 'all' : (selected.join(',') || 'all');
   const dpOf = () => ((days === 'custom' && from && to) ? { from, to } : { days });
   const advOf = (scope) => scope || terms.join(','); // panel scope, else all compared advertisers
 
   // Interest overview — no advertiser scope (the chart shows every term as its own line).
   useEffect(() => {
     let alive = true;
-    track(apiGet('/trends/overview', { ...dpOf(), network: 'all', country }).catch(() => null))
-      .then((ov) => { if (alive) setOverview(ov?.data || null); });
+    setOverviewLoading(true);
+    setOverviewError(false);
+    setOverview(null); // clear immediately so a stale response can never linger under a new selection
+    apiGet('/trends/overview', { ...dpOf(), network: 'all', country })
+      .then((ov) => { if (alive) { setOverview(ov?.data || null); setOverviewLoading(false); } })
+      .catch(() => { if (alive) { setOverviewError(true); setOverviewLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, country]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, country, overviewRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ads by country (own scope).
   useEffect(() => {
     let alive = true;
-    track(apiGet('/trends/regions', { ...dpOf(), network: netParam, advertiser: advOf(regionsScope) }).catch(() => null))
+    setRegionsLoading(true);
+    setRegionsError(false);
+    setRegions(null);
+    apiGet('/trends/regions', { ...dpOf(), network: netParam, advertiser: advOf(regionsScope) })
       .then((rg) => {
         if (!alive) return;
         setRegions(rg?.data || null);
         // Names are normalised server-side (ISO codes → country names); dedupe +
         // sort so the filter list has no duplicates and reads cleanly.
         if (rg?.data?.items?.length) setCountryOpts([...new Set(rg.data.items.map((c) => c.country).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
-      });
+        setRegionsLoading(false);
+      })
+      .catch(() => { if (alive) { setRegionsError(true); setRegionsLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, regionsScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, regionsScope, terms, regionsRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ads per category (own scope).
   useEffect(() => {
     let alive = true;
-    track(apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(catScope) }).catch(() => null))
-      .then((cat) => { if (!alive) return; setCategories(cat?.data?.items || []); setCatUnsupported(!!cat?.meta?.unsupported); setMetaNet(cat?.data?.network || 'All networks'); });
+    setCategoriesLoading(true);
+    setCategoriesError(false);
+    setCategories([]);
+    apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(catScope) })
+      .then((cat) => { if (!alive) return; setCategories(cat?.data?.items || []); setCatUnsupported(!!cat?.meta?.unsupported); setMetaNet(cat?.data?.network || 'All networks'); setCategoriesLoading(false); })
+      .catch(() => { if (alive) { setCategoriesError(true); setCategoriesLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, catScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, catScope, terms, categoriesRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Rising categories (own scope — separate fetch so it can differ from Ads per category).
   useEffect(() => {
     let alive = true;
-    track(apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 20, country, advertiser: advOf(risingScope) }).catch(() => null))
-      .then((cat) => { if (!alive) return; setRisingCats(cat?.data?.items || []); setRisingUnsupported(!!cat?.meta?.unsupported); });
+    setRisingLoading(true);
+    setRisingError(false);
+    setRisingCats([]);
+    apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 20, country, advertiser: advOf(risingScope) })
+      .then((cat) => { if (!alive) return; setRisingCats(cat?.data?.items || []); setRisingUnsupported(!!cat?.meta?.unsupported); setRisingLoading(false); })
+      .catch(() => { if (alive) { setRisingError(true); setRisingLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, risingScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, risingScope, terms, risingRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Top movers (own scope).
   useEffect(() => {
     let alive = true;
-    track(apiGet('/trends/top', { ...dpOf(), type: topType, network: netParam, size: 12, country, advertiser: advOf(topScope) }).catch(() => null))
-      .then((tp) => { if (!alive) return; setTop(tp?.data?.items || []); setTopUnsupported(!!tp?.meta?.unsupported); });
+    setTopLoading(true);
+    setTopError(false);
+    setTop([]);
+    apiGet('/trends/top', { ...dpOf(), type: topType, network: netParam, size: 12, country, advertiser: advOf(topScope) })
+      .then((tp) => { if (!alive) return; setTop(tp?.data?.items || []); setTopUnsupported(!!tp?.meta?.unsupported); setTopLoading(false); })
+      .catch(() => { if (alive) { setTopError(true); setTopLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, topType, topScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, topType, topScope, terms, topRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Top keywords (own scope).
   useEffect(() => {
     let alive = true;
-    track(apiGet('/trends/keywords', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(kwScope) }).catch(() => null))
-      .then((kw) => { if (!alive) return; setKeywords(kw?.data?.items || []); setKwUnsupported(!!kw?.meta?.unsupported); });
+    setKwLoading(true);
+    setKwError(false);
+    setKeywords([]);
+    apiGet('/trends/keywords', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(kwScope) })
+      .then((kw) => { if (!alive) return; setKeywords(kw?.data?.items || []); setKwUnsupported(!!kw?.meta?.unsupported); setKwLoading(false); })
+      .catch(() => { if (alive) { setKwError(true); setKwLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, kwScope, terms]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, kwScope, terms, kwRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drop any panel scope that's no longer among the compared terms.
   useEffect(() => {
@@ -381,14 +511,27 @@ const MarketTrends = ({ onDrill }) => {
 
   // Fetch each compared term's per-network trend.
   useEffect(() => {
-    if (!terms.length) { setTermData({}); return; }
+    if (!terms.length) { setTermData({}); setTermLoading(false); setTermError(false); return; }
     const dp = (days === 'custom' && from && to) ? { from, to } : { days };
     let alive = true;
+    setTermLoading(true);
+    setTermError(false);
+    setTermData({}); // clear immediately — a stale term's data must never linger under a new network selection
+    // Each term is caught individually — one bad advertiser name shouldn't blank
+    // out the others. The 3rd tuple element distinguishes a genuine fetch
+    // failure from a legitimately-empty response, so termError only fires when
+    // EVERY term's request actually failed — not when the terms simply have no
+    // matching ads (that's a real, valid Empty state, not an error).
     Promise.all(terms.map((t) => apiGet('/trends/search', { q: t, ...dp, network: netParam, country })
-      .then((r) => [t, r?.data]).catch(() => [t, null])))
-      .then((pairs) => { if (!alive) return; const m = {}; pairs.forEach(([t, d]) => { if (d) m[t] = d; }); setTermData(m); });
+      .then((r) => [t, r?.data, false]).catch(() => [t, null, true])))
+      .then((triples) => {
+        if (!alive) return;
+        const m = {}; triples.forEach(([t, d]) => { if (d) m[t] = d; }); setTermData(m);
+        setTermError(triples.every(([, , failed]) => failed));
+        setTermLoading(false);
+      });
     return () => { alive = false; };
-  }, [terms, days, from, to, netParam, country]);
+  }, [terms, days, from, to, netParam, country, termRetry]);
 
   const termMode = terms.length > 0;
   const allNets = overview?.networks || [];
@@ -520,14 +663,20 @@ const MarketTrends = ({ onDrill }) => {
     setTermInput('');
   };
   const removeTerm = (t) => setTerms((p) => p.filter((x) => x !== t));
-  const isAllNets = selected.length === CHIP_NETWORKS.length;
-  const selectAll = () => setSelected(CHIP_NETWORKS);
+  const isAllNets = selected.length === AVAILABLE_NETWORKS.length;
+  const selectAll = () => setSelected(AVAILABLE_NETWORKS);
   // From "All" a click solos that network; after that clicks toggle (multi-select, min 1).
-  const toggleNet = (n) => setSelected((prev) => {
-    if (prev.length === CHIP_NETWORKS.length) return [n];
-    if (prev.includes(n)) return prev.length > 1 ? prev.filter((x) => x !== n) : prev;
-    return [...prev, n];
-  });
+  // A network the plan doesn't include stays visible (never hidden — "not a hard
+  // removal", same principle as LockedFeaturePreview) but clicking it opens the
+  // upgrade prompt instead of toggling selection.
+  const toggleNet = (n) => {
+    if (!AVAILABLE_NETWORKS.includes(n)) { onNetworkRestricted?.(); return; }
+    setSelected((prev) => {
+      if (prev.length === AVAILABLE_NETWORKS.length) return [n];
+      if (prev.includes(n)) return prev.length > 1 ? prev.filter((x) => x !== n) : prev;
+      return [...prev, n];
+    });
+  };
 
   const metaNote = ` · ${metaNet}`;
   const metaOnlyMsg = "Advertiser / category data isn't stored for this network's ad index.";
@@ -609,29 +758,32 @@ const MarketTrends = ({ onDrill }) => {
             <LayoutGrid size={13} /> All
           </button>
           {CHIP_NETWORKS.map((n) => {
+            const planRestricted = !AVAILABLE_NETWORKS.includes(n);
             const on = !isAllNets && selected.includes(n);
-            const has = !overview || allNets.includes(n);
+            // Data-presence disabling only applies to networks the plan actually
+            // allows — a plan-restricted chip stays clickable (opens the upgrade
+            // prompt) rather than looking dead, matching "not a hard removal".
+            const has = planRestricted || !overview || allNets.includes(n);
             return (
-              <button key={n} onClick={() => toggleNet(n)} disabled={!has}
-                className={`flex items-center gap-1.5 text-[11px] rounded-full px-2.5 py-1 border transition-colors ${on ? 'border-transparent text-white' : 'border-theme-border text-white/60 hover:border-white/30'} ${!has ? 'opacity-30 cursor-not-allowed' : ''}`}
+              <button key={n} onClick={() => toggleNet(n)} disabled={!has} title={planRestricted ? 'Upgrade your plan to unlock this network' : undefined}
+                className={`flex items-center gap-1.5 text-[11px] rounded-full px-2.5 py-1 border transition-colors ${on ? 'border-transparent text-white' : 'border-theme-border text-white/60 hover:border-white/30'} ${!has ? 'opacity-30 cursor-not-allowed' : ''} ${planRestricted ? 'opacity-50' : ''}`}
                 style={on ? { backgroundColor: NET_COLOR[n] } : undefined}>
                 <img src={NET_ICON[n]} alt="" className="w-3.5 h-3.5 rounded-sm object-contain" />
                 {NET_LABEL[n]}
+                {planRestricted && <Lock size={10} className="opacity-70" />}
               </button>
             );
           })}
         </div>
 
-        {loading && (
-          <div className="flex items-center gap-1.5 text-[11px] text-white/60 self-start px-2 py-1 rounded-full bg-white/5">
-            <Loader2 size={12} className="animate-spin" /> Updating…
-          </div>
-        )}
-
         {(
-          <div className={`flex flex-col gap-5 transition-opacity ${loading ? 'opacity-60' : ''}`}>
+          <div className="flex flex-col gap-5">
             {/* Interest over time */}
             <Panel
+              loading={overviewShimmer}
+              error={overviewError || termError}
+              onRetry={() => { setOverviewRetry((n) => n + 1); setTermRetry((n) => n + 1); }}
+              skeleton={<SkeletonChartLine height={260} lines={termMode ? Math.min(terms.length, 3) : 3} />}
               title={termMode ? `Comparing ${terms.length} advertiser${terms.length > 1 ? 's' : ''} — ${daysLabel}` : `Interest over time — ${daysLabel}`}
               subtitle={termMode ? 'Each line is an advertiser’s daily ad volume across the selected networks.' : 'Daily ad volume per network. Use the 0–100 index to compare trends regardless of scale.'}
               info={termMode
@@ -675,6 +827,10 @@ const MarketTrends = ({ onDrill }) => {
             <div className="grid gap-5 lg:grid-cols-2">
               {/* Ads by country — stacked by network */}
               <Panel
+                loading={regionsShimmer}
+                error={regionsError}
+                onRetry={() => setRegionsRetry((n) => n + 1)}
+                skeleton={<SkeletonBarChart bars={7} orientation="horizontal" height={220} />}
                 title={<span className="flex items-center gap-1.5"><Globe2 size={14} /> Ads by country{selected.length === 1 ? ` · ${NET_LABEL[selected[0]]}` : ''}</span>}
                 subtitle={`Where ads are running — each country bar stacked by network. Click a bar to filter.${scopeText(regionsScope)}`}
                 info="Ad counts grouped by the target country on each ad, top 12 shown. Bar length = total ads; each coloured segment is one network's share. Country names are normalised and merged across networks. Click a bar to filter the whole page."
@@ -702,6 +858,10 @@ const MarketTrends = ({ onDrill }) => {
 
               {/* Ads per category — horizontal stacked, compared across networks */}
               <Panel
+                loading={categoriesShimmer}
+                error={categoriesError}
+                onRetry={() => setCategoriesRetry((n) => n + 1)}
+                skeleton={<SkeletonBarChart bars={7} orientation="horizontal" height={220} />}
                 title={`Ads per category${metaNote}`}
                 subtitle={`Which categories advertisers push, compared across networks — each bar stacked by network. Click to drill.${scopeText(catScope)}`}
                 info="Ad counts grouped by the ad's category. Bar length = total ads in that category; each coloured segment is a network's contribution, so you can compare where a category is being advertised. Category is only stored on some networks (Facebook, Instagram, Native, Pinterest, Google). Click to open matching ads."
@@ -729,6 +889,9 @@ const MarketTrends = ({ onDrill }) => {
 
               {/* Top movers — Google-Trends-style ranked table */}
               <TrendTable
+                loading={topShimmer}
+                error={topError}
+                onRetry={() => setTopRetry((n) => n + 1)}
                 title="Top movers"
                 subtitle={`${metaNet} · ${daysLabel}${scopeText(topScope)}`}
                 info="The advertisers (or CTAs) running the most ads right now, ranked by volume. The bar shows each row's share of the top entry; Change is its growth versus the previous equal-length period (↑ up / ↓ down). Use the ⋮ menu to open matching ads or add an advertiser to the compare box."
@@ -752,6 +915,9 @@ const MarketTrends = ({ onDrill }) => {
 
               {/* Rising categories — Google-Trends-style ranked table */}
               <TrendTable
+                loading={risingShimmer}
+                error={risingError}
+                onRetry={() => setRisingRetry((n) => n + 1)}
                 title="Rising categories"
                 subtitle={`${metaNet} · vs previous ${daysLabel}${scopeText(risingScope)}`}
                 info="Categories sorted by growth: the change in ad volume versus the previous equal-length period (↑ rising / ↓ falling). The bar shows current ad volume relative to the top row, so you can tell a fast-growing niche from a fast-growing giant. Click a row to open matching ads."
@@ -767,6 +933,10 @@ const MarketTrends = ({ onDrill }) => {
 
               {/* Top keywords */}
               <Panel
+                loading={kwShimmer}
+                error={kwError}
+                onRetry={() => setKwRetry((n) => n + 1)}
+                skeleton={<SkeletonBarChart bars={8} orientation="horizontal" height={220} />}
                 className="lg:col-span-2"
                 title="Top search keywords · Google"
                 subtitle={`Most-targeted Google search keywords in this window.${scopeText(kwScope)}`}

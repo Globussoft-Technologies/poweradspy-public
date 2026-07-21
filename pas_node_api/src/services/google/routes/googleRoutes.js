@@ -33,7 +33,7 @@ const {
 const { importKeywordsFile } = require('../controllers/keywordImportController');
 const { getUrlForBuiltWith, updateBuiltWith } = require('../controllers/built-withController');
 const { authMiddleware } = require('../../../middleware/auth');
-const { planAccessMiddleware, requireIntelAccess, requireKeywordExplorerEnabled, isKeywordExplorerUserAllowed } = require('../../../middleware/planAccess');
+const { planAccessMiddleware, requireIntelAccess, requireKeywordExplorerEnabled, hasKeywordExplorerAccess } = require('../../../middleware/planAccess');
 const config = require('../../../config');
 const validator = require('../../../middleware/validator');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
@@ -83,18 +83,23 @@ function createGoogleRoutes(service) {
   // answers (auth only, no allow-list block): returns whether this user should
   // see Keywords Explorer = feature enabled AND user allow-listed. The frontend
   // uses this to show/hide the nav item + page.
-  router.get('/keywords/access', authMiddleware, (req, res) => {
-    const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
-    const enabled = config.keywordExplorer?.enabled === true && isKeywordExplorerUserAllowed(uid);
+  router.get('/keywords/access', authMiddleware, async (req, res) => {
+    const enabled = config.keywordExplorer?.enabled === true && (await hasKeywordExplorerAccess(req));
     res.status(200).json({ code: 200, message: 'ok', data: { enabled } });
   });
 
   // Keywords Explorer feature gate (KEYWORD_EXPLORER_ENABLED / config.json
-  // keywordExplorer.enabled + per-user allowedUserIds). Single gate for the whole
-  // /keywords/* group: feature off → 404, user not allow-listed → 403, before any
-  // plan work. Mirrors the frontend's env flag + /keywords/access allow-list.
+  // keywordExplorer.enabled + hasKeywordExplorerAccess). Single gate for the whole
+  // /keywords/* group: feature off → 404, neither mechanism grants access → 403,
+  // before any plan work. Mirrors the frontend's env flag + /keywords/access check.
   // Registered after the access probe so that probe stays reachable.
-  router.use('/keywords', requireKeywordExplorerEnabled);
+  // `authMiddleware` here is required, not redundant with individual routes' own
+  // authMiddleware (e.g. via intelGate below) — this runs FIRST for the whole
+  // /keywords/* group, so without it req.user is still undefined at this point,
+  // and requireKeywordExplorerEnabled would deny everyone regardless of their
+  // actual entitlement (silently masked previously only because the allow-list's
+  // old empty-list-means-everyone default didn't care whether req.user existed).
+  router.use('/keywords', authMiddleware, requireKeywordExplorerEnabled);
 
   // POST /api/v1/google/ads/search
   router.post(

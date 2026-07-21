@@ -255,6 +255,38 @@ a font * {
   );
 }
 
+/* ── Shared Skeleton system (components/shared/Skeleton.jsx) ──────────────────
+   Used to be `bg-theme-text/10` + a `via-theme-text/15` sweep — computed as a
+   PERCENTAGE tint of the theme text color. That's the bug: 10% black tinted
+   onto an already near-white light-theme page (--color-bg: #f1f5f9) blends
+   into practically the same color as the page itself — invisible. Same
+   incident .media-shimmer above already solved: use an EXPLICIT solid base
+   color per theme (not a computed opacity blend), so contrast against the
+   page is guaranteed regardless of how light or dark that theme's surface is. */
+.skeleton-block {
+  position: relative;
+  overflow: hidden;
+  background-color: rgba(255, 255, 255, 0.09);
+}
+.skeleton-block.skeleton-static { background-color: rgba(255, 255, 255, 0.12); }
+.skeleton-block::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.16) 50%, transparent 100%);
+  animation: media-shimmer-sweep 1.4s ease-in-out infinite;
+  background-size: 55% 100%;
+  background-repeat: no-repeat;
+}
+.skeleton-block.skeleton-no-shimmer::after { display: none; }
+[data-theme="light"] .skeleton-block {
+  background-color: #e2e8f0;
+}
+[data-theme="light"] .skeleton-block.skeleton-static { background-color: #cbd5e1; }
+[data-theme="light"] .skeleton-block::after {
+  background-image: linear-gradient(90deg, transparent 0%, rgba(15, 23, 42, 0.09) 50%, transparent 100%);
+}
+
 /* ── Onboarding modal entrance (overlay fade + card pop) ─────────────────── */
 @keyframes onboarding-overlay-in {
   from { opacity: 0; }

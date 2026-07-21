@@ -63,6 +63,23 @@ export const fetchPlanAccess = async (network) => {
   return json.data || null;
 };
 
+/**
+ * Fetch the display-only plan/pricing catalog for the upgrade modal (PricingModal).
+ * Which generation (legacy / 2026-restructure / both) is returned is controlled
+ * server-side by config.pricing.activePlanGeneration — public endpoint, no auth.
+ * Returns { generation, features: string[], plans: [{ tier, generation, price, platforms, features }] } or null on failure.
+ */
+export const fetchPlansCatalog = async () => {
+  try {
+    const res = await fetch(`${PAS_API_BASE}/api/v1/auth/plans-catalog`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data || null;
+  } catch (_e) {
+    return null;
+  }
+};
+
 // ─── Onboarding (category / competitors / countries) ─────────────────────────
 const authHeaders = () => ({
   'Content-Type': 'application/json',
@@ -81,6 +98,7 @@ export const fetchOnboardingStatus = async () => {
     return null;
   }
 };
+
 
 /** Category search-as-you-type — reuses the existing /catsearch AI proxy. */
 export const searchOnboardingCategory = async (query, topK = 5) => {
@@ -140,6 +158,7 @@ export const fetchOnboardingPreview = async ({ major_category_id, major_category
   const json = await res.json();
   return json.data || { trending: [], topAdvertisers: [], longestRunning: [] };
 };
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const NAS_BASE_URL = (import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, '');
@@ -1887,13 +1906,34 @@ export const competitorFetch = async (path, options = {}) => {
 };
 
 export const CompetitorAPI = {
-  // Initialize user session — check if user exists, auto-create if not (mirrors Laravel dashFunction)
+  // Initialize user session — check if user exists, auto-create if not (mirrors Laravel dashFunction).
+  // Always calls /create-comp-details with the CURRENT plan_id, even when the user already
+  // exists — that endpoint upserts (see compeitetor_analysis's competitorService.js `create()`,
+  // fixed 2026-07-14) so an existing user's plan_id/plan_expiry_date stay in sync with whatever
+  // plan they're currently on. Previously the existing-user branch just returned the cached _id
+  // without ever syncing, so brand/competitor-limit enforcement kept checking a plan_id frozen
+  // at whatever it was the very first time this account ever opened the Projects section.
   initializeCompetitorSession: async (user) => {
     const email = user?.email || "";
     const checkRes = await competitorFetch(`/check-user?email=${encodeURIComponent(email)}`, { method: 'GET' });
 
+    const syncPayload = {
+      amember_id:       user?.user_id  || user?.id || "",
+      // userSubscriptionType = aMember-path JWTs, plan_id = SQL/legacy-path JWTs — same
+      // fallback pattern used everywhere else this claim is read (planAccessMiddleware,
+      // authRoutes, marketTrends.js). Previously only checked userSubscriptionType, so a
+      // legacy plan's brand/competitor limit sync silently never happened for SQL users.
+      plan_id:          user?.userSubscriptionType || user?.plan_id || "",
+      plan_expiry_date: user?.expiry_date || new Date().toISOString(),
+      email:            email,
+      userName:         user?.login    || "",
+    };
+
     if (checkRes?.statusCode === 201) {
-      // User exists — return their MongoDB _id
+      // User exists — sync plan_id/plan_expiry_date, then return their MongoDB _id.
+      // Fire-and-forget-safe: a sync failure shouldn't block the session, the backend
+      // also fails open on its own sync step.
+      competitorFetch('/create-comp-details', { method: 'POST', body: JSON.stringify(syncPayload) }).catch(() => {});
       return checkRes?.body?.data?._id || null;
     }
 
@@ -1901,13 +1941,7 @@ export const CompetitorAPI = {
       // User not found — register them
       const createRes = await competitorFetch('/create-comp-details', {
         method: 'POST',
-        body: JSON.stringify({
-          amember_id:       user?.user_id  || user?.id || "",
-          plan_id:          user?.userSubscriptionType || "",
-          plan_expiry_date: user?.expiry_date || new Date().toISOString(),
-          email:            email,
-          userName:         user?.login    || "",
-        }),
+        body: JSON.stringify(syncPayload),
       });
       return createRes?.body?.data?._id || null;
     }

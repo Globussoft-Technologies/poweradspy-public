@@ -18,6 +18,18 @@ import { esClient, esServers, checkElasticsearchHealth } from "../../utils/Elast
 import UserDailyTokens from "../../models/user_daily_tokens.model.js";
 import TokenSyncState from "../../models/jobTokenState.js";
 
+// Pure — no I/O — so it's unit-testable without mocking mongoose/Elasticsearch/etc.
+// Mirrors the "unlisted plan_id defaults to brandLimit 0" convention documented in
+// docs/PLAN_ACCESS.md (same as plan_access_config.competitor_limits' existing semantics).
+export function resolveBrandLimit(competitorLimitsDoc, planId) {
+  return competitorLimitsDoc?.plan_limits?.[String(planId)]?.brandLimit ?? 0;
+}
+
+// Same convention as resolveBrandLimit — unlisted plan_id defaults to 0.
+export function resolveCompetitorLimit(competitorLimitsDoc, planId) {
+  return competitorLimitsDoc?.plan_limits?.[String(planId)]?.competitorLimit ?? 0;
+}
+
 // Bound for every synchronous call to the DS competitor-generation service
 // (`/prepare`, `/list`, `/tokens/usage`) — used both in the request/response
 // path a spinner is waiting on (checkCompetitorProcess, getStoreProcessCompetitors)
@@ -118,6 +130,24 @@ async create(req, res) {
         }
       }
       else{
+        // Sync plan_id/plan_expiry_date onto the existing record — this endpoint is
+        // called on every login to ensure the user exists, and previously only ever
+        // inserted on first-ever visit. A subscription change (upgrade/downgrade,
+        // or a new pricing-generation plan_id) never propagated here, so brand/
+        // competitor-limit enforcement in insertCompRequests() kept checking a
+        // stale plan_id forever. Confirmed 2026-07-14: a user's plan_id here stayed
+        // pinned to whatever was true the first time this record was created.
+        try {
+          const set = {};
+          if (plan_id !== undefined && plan_id !== null && plan_id !== "") set.plan_id = plan_id;
+          const parsedDate = new Date(plan_expiry_date);
+          if (!isNaN(parsedDate.getTime())) set.plan_expiry_date = parsedDate;
+          if (Object.keys(set).length > 0) {
+            await User_details.updateOne({ _id: emailCheck._id }, { $set: set });
+          }
+        } catch (syncErr) {
+          logger.warn("Failed to sync plan_id on existing user_details record", { email, error: syncErr.message });
+        }
         return res.send(Response.messageResp("This user already exists"));
       }
 
@@ -127,7 +157,7 @@ async create(req, res) {
       logger.error("Error in creating user details", error);
       return res.send(Response.userFailResp("Error in creating user details", error));
     }
-    
+
   }
   async insertCompRequests(req,res){
     try{
@@ -185,6 +215,39 @@ async create(req, res) {
                   return res.send(
                     Response.messageResp("Please provide proper brand name")
                   );
+              }
+
+              // ── Competitor Tracking brand quota (PRD FR-2 / docs/PLAN_ACCESS.md "Known Gaps") ──
+              // brandLimit lives in plan_access_config.competitor_limits, the same collection
+              // getUserBrandStats() already reads from this service's own MongoDB connection —
+              // no cross-service call needed. A plan_id with no entry in plan_limits defaults to
+              // brandLimit 0, matching the documented convention (this mirrors what the frontend
+              // already assumes; this is just the first place it's actually enforced). A lookup
+              // failure (DB unreachable, doc missing) fails OPEN — an infra hiccup here shouldn't
+              // block every brand add across the product.
+              try {
+                const requester = await User_details.findById(user_id, { plan_id: 1 }).lean();
+                const planId = requester?.plan_id ?? null;
+                if (planId != null) {
+                  const competitorLimitsDoc = await mongoose.connection
+                    .collection('plan_access_config')
+                    .findOne({ _id: 'competitor_limits' });
+                  if (competitorLimitsDoc) {
+                    const brandLimit = resolveBrandLimit(competitorLimitsDoc, planId);
+                    const currentBrandCount = await Competitors_request.countDocuments({ user_id });
+                    if (currentBrandCount >= brandLimit) {
+                      logger.info("Competitor brand quota exceeded", { user_id, planId, brandLimit, currentBrandCount });
+                      return res.send(
+                        Response.quotaExceededResp(
+                          `Your current plan allows tracking ${brandLimit} brand${brandLimit === 1 ? "" : "s"}. Please upgrade your plan to track more.`,
+                          { brandLimit, currentBrandCount }
+                        )
+                      );
+                    }
+                  }
+                }
+              } catch (limitErr) {
+                logger.warn("Competitor brand quota check failed — allowing request (fail-open)", { user_id, error: limitErr.message });
               }
 
       if(competitor_details && competitor_details.length!=0){
@@ -572,7 +635,7 @@ async create(req, res) {
         });
 
         if(status==0){ // monitoring will be on for this id
-          
+
           if(monitoringCheck.length>0){
             return res.json({
               statusCode: 201,
@@ -582,6 +645,42 @@ async create(req, res) {
             });
           }
           else{
+            // ── Competitor monitoring quota (mirrors the brand quota above) ──
+            // Previously only brandLimit was ever enforced — competitorLimit (how many
+            // competitors can be monitored per brand) had no check anywhere, so any plan
+            // could monitor unlimited competitors. Fails open on any lookup error, same
+            // as the brand quota check, so an infra hiccup doesn't block every toggle.
+            try {
+              const projectDoc = await Competitors_request.findOne(
+                { _id: competitor_request_id },
+                { user_id: 1, monitoring: 1 }
+              );
+              const requester = projectDoc?.user_id
+                ? await User_details.findById(projectDoc.user_id, { plan_id: 1 }).lean()
+                : null;
+              const planId = requester?.plan_id ?? null;
+              if (planId != null) {
+                const competitorLimitsDoc = await mongoose.connection
+                  .collection('plan_access_config')
+                  .findOne({ _id: 'competitor_limits' });
+                if (competitorLimitsDoc) {
+                  const competitorLimit = resolveCompetitorLimit(competitorLimitsDoc, planId);
+                  const currentMonitoringCount = projectDoc?.monitoring?.length ?? 0;
+                  if (currentMonitoringCount >= competitorLimit) {
+                    logger.info("Competitor monitoring quota exceeded", { competitor_request_id, planId, competitorLimit, currentMonitoringCount });
+                    return res.send(
+                      Response.quotaExceededResp(
+                        `Your current plan allows monitoring ${competitorLimit} competitor${competitorLimit === 1 ? "" : "s"} per brand. Please upgrade your plan to monitor more.`,
+                        { competitorLimit, currentMonitoringCount }
+                      )
+                    );
+                  }
+                }
+              }
+            } catch (limitErr) {
+              logger.warn("Competitor monitoring quota check failed — allowing request (fail-open)", { competitor_request_id, error: limitErr.message });
+            }
+
             updateMonitoring = await Competitors_request.updateOne(
               {
                 _id: competitor_request_id,
@@ -591,7 +690,7 @@ async create(req, res) {
               }
             );
           }
-          
+
 
         }
         else if(status==1){ // monitoring will be off for this id

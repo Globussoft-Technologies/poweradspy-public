@@ -625,6 +625,7 @@ class emailService {
         dateLabel: code?.dateLabel || null,
         cc: ccMembers,           // member emails CC'd on this mail (admin visibility)
         brandsDetail,
+        previewHtml: html,       // exact mail this user got (admin detail preview)
       },
     };
 
@@ -853,6 +854,7 @@ class emailService {
               .map((c) => ({ name: c?.name || c?.post_owner_name || null, networks: networksOf(c) }))
               .filter((c) => c.name),
           })),
+          previewHtml: html,       // exact mail this member got (admin detail preview)
         },
       };
 

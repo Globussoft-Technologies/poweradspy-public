@@ -439,6 +439,15 @@
 
       <!-- Plan Validation Tab -->
       <section id="tab-plan-access" class="tab-content">
+        <details class="card glass" style="padding:10px 14px;margin-bottom:10px">
+          <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text)">❔ How this tab works (click to expand)</summary>
+          <div style="font-size:11px;color:var(--text-muted);line-height:1.6;margin-top:8px">
+            <p style="margin:0 0 6px"><b>1. Pick a plan</b> from the left list, grouped by tier (color-coded). "(2026)" groups are the new pricing-restructure tiers — kept separate from the legacy same-named tiers so they never collide.</p>
+            <p style="margin:0 0 6px"><b>2. Click ✏️ Edit</b> (top-right of the detail panel) to change which networks/filters/competitor limits that plan ID gets, then 💾 Save. Changes write to MongoDB (<code>plan_access_config</code>) immediately — no deploy needed.</p>
+            <p style="margin:0 0 6px"><b>NEW / REVIEW badges:</b> when a brand-new filter is added via SDUI, it's auto-granted to the top-tier plans (Palladium) by default and flagged REVIEW. Click "Review →" in the yellow strip above to jump straight to the first plan/row that needs a decision — extend access down to lower tiers as appropriate, then it clears itself.</p>
+            <p style="margin:0"><b>Full reference:</b> <code>docs/PLAN_ACCESS.md</code> in the repo — architecture, the 2026 pricing restructure, and a step-by-step manual QA scenario for testing plan changes end-to-end.</p>
+          </div>
+        </details>
         <div style="display:flex;gap:12px;height:100%;min-height:600px">
 
           <!-- Left: Plan selector -->
@@ -466,6 +475,10 @@
                 <option value="Titanium">Titanium</option>
                 <option value="Palladium">Palladium</option>
                 <option value="Custom">Custom</option>
+                <option value="Basic (2026)">Basic</option>
+                <option value="Standard (2026)">Standard</option>
+                <option value="Platinum (2026)">Platinum</option>
+                <option value="Palladium (2026)">Palladium</option>
               </select>
               <button class="btn btn-primary btn-sm" style="width:100%;font-size:11px" onclick="paAddNewPlan()">+ Add Plan</button>
               <span id="pa-add-status" style="font-size:9px;color:var(--text-muted)"></span>
@@ -494,6 +507,17 @@
             <div class="card glass" style="padding:14px 16px">
               <p style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px;letter-spacing:.05em">Platform Access</p>
               <div id="pa-platforms" style="display:flex;flex-wrap:wrap;gap:6px">
+                <span style="color:var(--text-muted);font-size:12px">—</span>
+              </div>
+            </div>
+
+            <!-- Market Trends networks — independent of Platform Access above; controls
+                 which networks THIS plan sees in Market Trends analytics specifically,
+                 without touching what it can search on the Ads Library side. -->
+            <div class="card glass" style="padding:14px 16px">
+              <p style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;margin-bottom:2px;letter-spacing:.05em">Market Trends Networks</p>
+              <p style="font-size:10px;color:var(--text-muted);margin-bottom:10px">Independent of Platform Access above — only affects the Market Trends network selector for this plan.</p>
+              <div id="pa-mt-networks" style="display:flex;flex-wrap:wrap;gap:6px">
                 <span style="color:var(--text-muted);font-size:12px">—</span>
               </div>
             </div>

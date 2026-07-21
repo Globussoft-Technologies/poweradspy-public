@@ -206,17 +206,31 @@ const planBillingMetadata = {
 // ─── Default Plan Groups ─────────────────────────────────────────────────────
 // Used only to seed MongoDB on first run via adminRoutes GET /plan-access/config.
 // After seeding, all group data is read from / written to MongoDB plan_access_config.
+// openForNewSignups is METADATA ONLY — it does not gate anything in this codebase (no
+// signup/checkout flow exists here to gate; that happens in aMember). It exists so the
+// admin panel can flag legacy tiers, and so a future pricing page / aMember catalog sync
+// has a single place to read "should this plan still be sold to new customers." Existing
+// subscribers on a false-flagged plan are completely unaffected — their entitlements are
+// looked up by plan ID regardless of this flag. See docs/PLAN_ACCESS.md.
+// 2026 pricing restructure groups ("Basic (2026)" etc.) are NOT hardcoded here —
+// their plan IDs come only from config.json's pricing.planIds (see
+// restructure2026.js and that key's _description). Grouped separately from the
+// legacy same-named tiers above so they never visually or operationally collide;
+// entitlements are independent of the group name/color.
+const { getPlanGroups: get2026PlanGroups } = require('./restructure2026');
+
 const DEFAULT_PLAN_GROUPS = {
   _id: 'plan_groups',
   groups: {
-    Free:      { color: '#94a3b8', plans: [20] },
-    Basic:     { color: '#6366f1', plans: [2,5,9,14,15,25,40,49,52,59,64,71] },
-    Standard:  { color: '#3b82f6', plans: [58,53,65,3,6,10,13,16,26,41] },
-    Premium:   { color: '#f59e0b', plans: [60,54,66,4,7,11,12,17,27,42] },
-    Platinum:  { color: '#ef4444', plans: [61,55,67,22,34,23,24,28,37,43] },
-    Titanium:  { color: '#8b5cf6', plans: [29,35,44,56,62,68,31] },
-    Palladium: { color: '#10b981', plans: [63,57,32,36,30,39,45,69] },
-    Custom:    { color: '#f97316', plans: [33,70,46] },
+    Free:      { color: '#94a3b8', openForNewSignups: true,  plans: [20] },
+    Basic:     { color: '#6366f1', openForNewSignups: false, plans: [2,5,9,14,15,25,40,49,52,59,64,71] },
+    Standard:  { color: '#3b82f6', openForNewSignups: false, plans: [58,53,65,3,6,10,13,16,26,41] },
+    Premium:   { color: '#f59e0b', openForNewSignups: false, plans: [60,54,66,4,7,11,12,17,27,42] },
+    Platinum:  { color: '#ef4444', openForNewSignups: false, plans: [61,55,67,22,34,23,24,28,37,43] },
+    Titanium:  { color: '#8b5cf6', openForNewSignups: false, plans: [29,35,44,56,62,68,31] },
+    Palladium: { color: '#10b981', topTier: true, openForNewSignups: false, plans: [63,57,32,36,30,39,45,69] },
+    Custom:    { color: '#f97316', openForNewSignups: true,  plans: [33,70,46] }, // sales-negotiated, not part of the standard ladder being retired
+    ...get2026PlanGroups(),
   },
 };
 

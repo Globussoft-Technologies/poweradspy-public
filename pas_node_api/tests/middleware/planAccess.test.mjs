@@ -323,3 +323,85 @@ describe("middleware/planAccess > requirePlatform", () => {
     expect(next).toHaveBeenCalled();
   });
 });
+
+// 2026-07-14: mirrors marketTrends.js's OR-of-two-mechanisms design exactly.
+// isKeywordExplorerUserAllowed is a targeted override for SPECIFIC listed user IDs —
+// an empty list contributes NOTHING (final access rests on the plan-tier check via
+// isKeywordExplorerAllowedByPlan). Previously an empty list meant "everyone", which
+// silently made the keyword_explorer doc's allowed_plan_ids (configured via the admin
+// Plan Access tab) have zero effect on real access — confirmed live: an admin had set
+// allowed_plan_ids:[102] but every plan still got in, because mechanism 1 unconditionally
+// won via OR.
+describe("middleware/planAccess > Keyword Explorer (isKeywordExplorerUserAllowed / hasKeywordExplorerAccess)", () => {
+  beforeEach(() => {
+    configExports.keywordExplorer = { enabled: true, allowedUserIds: [] };
+  });
+
+  it("isKeywordExplorerUserAllowed: empty list → false (contributes nothing), not true", () => {
+    const { isKeywordExplorerUserAllowed } = freshSut();
+    expect(isKeywordExplorerUserAllowed(999)).toBe(false);
+  });
+
+  it("isKeywordExplorerUserAllowed: non-empty list only allows the listed id(s)", () => {
+    configExports.keywordExplorer.allowedUserIds = [42];
+    const { isKeywordExplorerUserAllowed } = freshSut();
+    expect(isKeywordExplorerUserAllowed(42)).toBe(true);
+    expect(isKeywordExplorerUserAllowed(43)).toBe(false);
+  });
+
+  it("hasKeywordExplorerAccess: empty allow-list + plan-tier restricted to a different plan → denied", async () => {
+    planSvc.getConfig.mockResolvedValue([{ _id: "keyword_explorer" }]);
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: false } });
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 999, plan_id: 101 } })).toBe(false);
+  });
+
+  it("hasKeywordExplorerAccess: plan-tier grants access even with an empty allow-list", async () => {
+    planSvc.getConfig.mockResolvedValue([{ _id: "keyword_explorer" }]);
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: true } });
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 999, plan_id: 102 } })).toBe(true);
+  });
+
+  it("hasKeywordExplorerAccess: listed user_id grants access even when plan-tier says no", async () => {
+    configExports.keywordExplorer.allowedUserIds = [7];
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: false } });
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 7, plan_id: 101 } })).toBe(true);
+  });
+
+  it("hasKeywordExplorerAccess: plan lookup throwing fails to false, doesn't block the allow-list", async () => {
+    configExports.keywordExplorer.allowedUserIds = [7];
+    planSvc.getConfig.mockRejectedValue(new Error("db-down"));
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 7, plan_id: 101 } })).toBe(true);
+  });
+
+  it("requireKeywordExplorerEnabled: feature flag off → 404 regardless of access", async () => {
+    configExports.keywordExplorer.enabled = false;
+    const { requireKeywordExplorerEnabled } = freshSut();
+    const res = mkRes(); const next = vi.fn();
+    await requireKeywordExplorerEnabled({ user: { id: 1, plan_id: 102 } }, res, next);
+    expect(res.statusCode).toBe(404);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("requireKeywordExplorerEnabled: feature on, neither mechanism grants access → 403 with data:[]", async () => {
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: false } });
+    const { requireKeywordExplorerEnabled } = freshSut();
+    const res = mkRes(); const next = vi.fn();
+    await requireKeywordExplorerEnabled({ user: { id: 999, plan_id: 101 } }, res, next);
+    expect(res.statusCode).toBe(403);
+    expect(res.body.data).toEqual([]);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("requireKeywordExplorerEnabled: feature on, plan-tier grants access → next()", async () => {
+    planSvc.getConfig.mockResolvedValue([{ _id: "keyword_explorer" }]);
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: true } });
+    const { requireKeywordExplorerEnabled } = freshSut();
+    const res = mkRes(); const next = vi.fn();
+    await requireKeywordExplorerEnabled({ user: { id: 999, plan_id: 102 } }, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+});

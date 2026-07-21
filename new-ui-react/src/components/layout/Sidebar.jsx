@@ -26,6 +26,7 @@ const Sidebar = ({
   onRestricted,
   canAccessProjects = false,
   intelligenceEnabled = false,
+  intelligenceStage = null,
   keywordExplorerEnabled = false,
   guest,
   isLoggedIn = false,
@@ -115,8 +116,11 @@ const Sidebar = ({
               onClick={() => onPageChange?.("ads")}
               collapsed={!isOpen}
             />
-            {/* Market Trends — shown only when the env flag is on AND the
-                server allow-listed this user (intelligenceEnabled prop). */}
+            {/* Market Trends — shown whenever the feature is globally live
+                (intelligenceEnabled = the env flag only, PRD FR-17: "not a hard
+                removal" for lower tiers — clicking through shows a locked preview
+                with an upgrade CTA instead of hiding the tab). BETA badge while
+                config.pricing/market_trends' `stage` is "beta" (see marketTrends.js). */}
             {intelligenceEnabled && (
               <NavItem
                 icon={<TrendingUp size={isOpen ? 16 : 18} />}
@@ -124,11 +128,14 @@ const Sidebar = ({
                 active={activePage === "intelligence"}
                 onClick={() => onPageChange?.("intelligence")}
                 collapsed={!isOpen}
+                badge={intelligenceStage === "beta" ? "Beta" : null}
               />
             )}
-            {/* Keywords Explorer — shown only when the env flag is on AND the
-                server allow-listed this user (keywordExplorerEnabled prop),
-                same pattern as Market Trends' intelligenceEnabled. */}
+            {/* Keywords Explorer — shown whenever the feature is globally live
+                (keywordExplorerEnabled = the env flag only, same "not a hard
+                removal" pattern as Market Trends above — a locked preview shows
+                if the account isn't allow-listed, the tab itself never hides).
+                Still in beta for every account today. */}
             {keywordExplorerEnabled && (
               <NavItem
                 icon={<Hash size={isOpen ? 16 : 18} />}
@@ -136,6 +143,7 @@ const Sidebar = ({
                 active={activePage === "keywords-explorer"}
                 onClick={() => onOpenKeywordsExplorer?.()}
                 collapsed={!isOpen}
+                badge="Beta"
               />
             )}
             {isLoggedIn && (allowedPlatforms == null || allowedPlatforms.length > 0) && (

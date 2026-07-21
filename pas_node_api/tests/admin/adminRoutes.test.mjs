@@ -36,6 +36,7 @@ const configFns = {
 const configObj = {
   server: { domain: "" },
   log: { dir: "logs" },
+  insertion: { nas: {} }, // nasAdminClient.js reads config.insertion.nas at require-time
   getRawFileConfig: configFns.getRawFileConfig,
   writeConfigFile: configFns.writeConfigFile,
 };
@@ -704,6 +705,43 @@ describe("adminRoutes > SDUI docs CRUD", () => {
     await new Promise(r => setTimeout(r, 5));
     expect(childLog.warn).toHaveBeenCalledWith("autoSeedPlanAccessForSduiDoc failed", expect.any(Object));
   });
+
+  describe("autoSeed uses getTopTierPlanIds() (config-driven, not the old hardcoded Palladium list)", () => {
+    it("new feature is seeded to every plan ID in a topTier: true plan_groups group (covers 2026 tiers automatically)", async () => {
+      const findOne = vi.fn(async (q) => (q._id === "plan_groups"
+        ? { groups: { TopTierA: { topTier: true, plans: [104, 999] }, NotTop: { plans: [1, 2, 3] } } }
+        : null));
+      const insertOne = vi.fn(async (d) => ({ insertedId: d._id }));
+      sduiDb.getDB.mockResolvedValue({ collection: () => ({ findOne, insertOne }) });
+      sduiAdmin.createDoc.mockResolvedValue({ _id: "cta", title: "CTA", config_type: "sidebar" });
+      const h = lastHandler("post", "/api/sdui/docs");
+      await h({ body: { _id: "cta", title: "CTA", config_type: "sidebar" } }, mkRes());
+      await new Promise(r => setTimeout(r, 5));
+      expect(insertOne).toHaveBeenCalledTimes(1);
+      const inserted = insertOne.mock.calls[0][0];
+      // Derived from the mocked topTier group (104, 999) + the static Enterprise
+      // carve-out (71) — NOT the old hardcoded [57,63,69,...] Palladium list.
+      expect(inserted.allowed_plan_ids.sort((a, b) => a - b)).toEqual([71, 104, 999]);
+      expect(inserted.allowed_plan_ids).not.toContain(57);
+    });
+
+    it("falls back to the static Enterprise-only list when the plan_groups lookup itself fails", async () => {
+      const findOne = vi.fn(async (q) => {
+        if (q._id === "plan_groups") throw new Error("mongo-down");
+        return null; // existing-doc check still succeeds → proceeds to insert
+      });
+      const insertOne = vi.fn(async (d) => ({ insertedId: d._id }));
+      sduiDb.getDB.mockResolvedValue({ collection: () => ({ findOne, insertOne }) });
+      sduiAdmin.createDoc.mockResolvedValue({ _id: "cta2", title: "CTA2", config_type: "sidebar" });
+      const h = lastHandler("post", "/api/sdui/docs");
+      await h({ body: { _id: "cta2", title: "CTA2", config_type: "sidebar" } }, mkRes());
+      await new Promise(r => setTimeout(r, 5));
+      expect(insertOne).toHaveBeenCalledTimes(1);
+      expect(insertOne.mock.calls[0][0].allowed_plan_ids).toEqual([71]);
+      expect(childLog.warn).toHaveBeenCalledWith("getTopTierPlanIds failed, using static fallback", expect.any(Object));
+    });
+  });
+
   it("PUT update 400 when body missing", async () => {
     const h = lastHandler("put", "/api/sdui/docs/:id");
     const res = mkRes();

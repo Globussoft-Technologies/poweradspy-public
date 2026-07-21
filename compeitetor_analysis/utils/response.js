@@ -62,6 +62,21 @@ class Response {
       }
     };
   }
+
+  // Competitor-tracking brand quota exceeded (PRD FR-2 / docs/PLAN_ACCESS.md "Known Gaps").
+  // showSubscriptionModal mirrors pas_node_api's planAccess 403 shape so the frontend can
+  // react the same way regardless of which service answered.
+  quotaExceededResp(msg, limits) {
+    return {
+      statusCode: 403,
+      body: {
+        status: "failed",
+        message: msg,
+        showSubscriptionModal: true,
+        limits,
+      },
+    };
+  }
 }
 
 export default new Response();

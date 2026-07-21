@@ -50,6 +50,30 @@ VITE_ENABLE_INTELLIGENCE_FEATURE=true
 ```
 No new DB/ES credentials — reuses the existing per-network connections.
 
+### Per-plan, per-network access (added 2026-07-15)
+
+Two separate things are now plan-aware, independently of the allow-list above —
+full history and the "empty list ≠ everyone" semantics fix are in
+`docs/PLAN_ACCESS.md` § "Market Trends beta→GA":
+
+1. **Which networks a plan can see in Market Trends specifically.** Resolved by
+   `resolveMarketTrendsNetworks(planId, planConfig)` in `marketTrends.js`: checks
+   `market_trends.network_overrides.<planId>` on the `market_trends` doc first
+   (a dedicated per-feature override, editable in the admin "Market Trends
+   Networks" section — independent of that plan's general Platform Access, so
+   e.g. a Basic plan can be given `youtube` for Market Trends specifically
+   without changing what Basic gets everywhere else); falls back to
+   `planAccessService.getAllowedPlatforms()` (the plan's general Platform
+   Access) if no override exists.
+2. **Server-side enforcement.** `restrictNetworkToPlan` middleware clamps the
+   `network` query param to the resolved list before every `/trends/*` handler
+   runs (fails open — i.e. does not restrict — on any lookup error or missing
+   `plan_id`, so a config/DB hiccup can never lock out a request that should
+   have been allowed).
+3. **`GET /access`** returns this same resolved list as `networks` (`null` while
+   unresolved) — the frontend uses it to compute `AVAILABLE_NETWORKS` and does
+   **not** hide restricted chips (see § 4).
+
 ---
 
 ## 2. Files (only TWO new code files — kept intentionally small)
@@ -84,7 +108,7 @@ is **not** modified (the backend is a plain file, not an auto-scanned folder).
 | Endpoint | Notes |
 |---|---|
 | `GET /health` | Liveness (no auth). |
-| `GET /access` | `{ enabled }` for the current user (auth + allow-list) — UI shows the tab only if true. |
+| `GET /access` | `{ enabled, stage, networks }` for the current user — `enabled` from the allow-list/plan-tier OR (§1), `networks` is this plan's Market Trends-specific network list (`null` while unresolved, treated as "everything available" by the frontend). |
 | `GET /trends/overview` | Per-network daily ad-volume: `{ networks:[...present...], series:[{date, <net>:count…, total}] }`. |
 | `GET /trends/search?q=` | One advertiser's per-network daily volume — powers the multi-term compare. |
 | `GET /trends/categories` | Category ad-counts + period-over-period growth %; each item includes a `byNet` `{net:count}` breakdown (drives the stacked columns). |
@@ -112,6 +136,24 @@ Every number is a **count of ads** (time series grouped by the network's
 - **Network chips** — "All" button + multi-select chips with brand icons from
   `src/assets/` (no per-chip ad counts). Selection is a **filter**: every panel
   reflects it. Selection state persists as you click. All selected → sends `all`.
+  **All 11 chips always render**, even ones the plan doesn't include (a 🔒 +
+  dimmed style marks these) — clicking a plan-restricted chip opens the upgrade
+  modal (`onNetworkRestricted`) instead of hiding the chip or silently doing
+  nothing. `AVAILABLE_NETWORKS` (from `/access`'s `networks`) only gates which
+  chips are *selectable*, never which ones are *visible*.
+- **Per-panel shimmer loading** — each of the 6 panels (overview chart, regions,
+  categories, rising categories, top movers, keywords) has its own independent
+  loading flag and skeleton (`ChartSkeleton`/`RowsSkeleton`), not a single
+  page-wide dim. Shown via `useDelayedLoading` (delay 150ms, min-visible 300ms)
+  so a fast local fetch never flashes a shimmer, but a genuinely slow one shows
+  and holds it long enough to register.
+- **No stale data on rapid re-filtering (2026-07-15)** — every fetch effect
+  clears its own state the instant it starts (before the request even goes
+  out), not just on success. Combined with the existing `alive`-flag guard
+  (which discards a superseded, late-arriving response), what's on screen
+  always corresponds to the *current* filter selection — switching networks
+  (or country / date range / compared advertisers) quickly never leaves an
+  older selection's data on screen while the new one loads in the background.
 - **Country filter** — dropdown populated from the ads-by-country data; filters
   every panel except the country breakdown itself.
 - **Date range** — in-file `DateRangePicker` (react-day-picker): presets (All
@@ -225,4 +267,12 @@ automatically (`es.esMajor`).
 - Every filter (network chips / country / date range / advertiser compare)
   updates all panels **without a full-page reload**; light + dark + night all
   readable.
+- A plan-restricted network chip stays visible (🔒, dimmed) and clicking it
+  opens the upgrade modal — it is never hidden and never a silent no-op.
+- On page refresh, no locked/"not allowed" popup flashes before real data
+  loads (the page waits for `/access` to resolve before rendering either the
+  locked preview or the real component).
+- Rapidly clicking through several network chips in a row never shows a
+  previous network's data alongside the new selection — each panel is either
+  showing the new selection's data or a neutral loading/empty state.
 - `node --check src/services/marketTrends.js` and `npx vite build` both pass.

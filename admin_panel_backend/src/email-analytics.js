@@ -210,8 +210,11 @@ async function log(req, res) {
     }
 
     const col = db().collection(LOG);
+    // Exclude the (potentially large) rendered mail HTML from the LIST — it's
+    // only needed in the per-send detail drawer, which fetches /log/:send_id
+    // (full doc). Keeps the paginated list + Excel export light.
     const [data, totalRecords] = await Promise.all([
-      col.find(q).sort({ sent_at: -1, createdAt: -1 }).skip(skip).limit(limit).toArray(),
+      col.find(q).project({ "meta.previewHtml": 0 }).sort({ sent_at: -1, createdAt: -1 }).skip(skip).limit(limit).toArray(),
       col.countDocuments(q),
     ]);
 

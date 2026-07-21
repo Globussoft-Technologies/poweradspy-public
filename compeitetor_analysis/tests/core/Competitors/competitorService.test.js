@@ -19,9 +19,11 @@ const spies = vi.hoisted(() => {
     axiosPostSpy: vi.fn(),
     userDetailsFindOneSpy: vi.fn(),
     userDetailsCreateSpy: vi.fn(),
+    userDetailsUpdateOneSpy: vi.fn(),
     userDetailsFindSpy: vi.fn(),
     userDetailsCountDocsSpy: vi.fn(),
     userDetailsAggregateSpy: vi.fn(),
+    userDetailsFindByIdSpy: vi.fn(),
     competitorsFindSpy: vi.fn(),
     competitorsFindOneSpy: vi.fn(),
     competitorsAggregateSpy: vi.fn(),
@@ -33,6 +35,8 @@ const spies = vi.hoisted(() => {
     competitorsReqUpdateOneSpy: vi.fn(),
     competitorsReqDeleteOneSpy: vi.fn(),
     competitorsReqCreateSpy: vi.fn(),
+    competitorsReqCountDocsSpy: vi.fn(),
+    planAccessConfigFindOneSpy: vi.fn(),
     existingCompFindOneSpy: vi.fn(),
     existingCompUpdateOneSpy: vi.fn(),
     userDailyTokensFindOneSpy: vi.fn(),
@@ -60,6 +64,7 @@ vi.mock("../../../utils/response.js", () => ({
     validationFailResp: (msg, err) => ({ statusCode: 400, body: { status: "failed", msg, err } }),
     messageResp: (msg, data) => ({ statusCode: 400, body: { message: msg, data } }),
     messageRespComp: (msg) => ({ statusCode: 401, body: { message: msg } }),
+    quotaExceededResp: (msg, limits) => ({ statusCode: 403, body: { status: "failed", message: msg, showSubscriptionModal: true, limits } }),
   },
 }));
 vi.mock("../../../core/Dashboard/dashboardService.js", () => ({
@@ -77,9 +82,11 @@ vi.mock("../../../models/user_details.js", () => ({
   default: {
     findOne: spies.userDetailsFindOneSpy,
     create: spies.userDetailsCreateSpy,
+    updateOne: spies.userDetailsUpdateOneSpy,
     find: (...args) => spies.userDetailsFindSpy(...args),
     countDocuments: spies.userDetailsCountDocsSpy,
     aggregate: spies.userDetailsAggregateSpy,
+    findById: (...args) => spies.userDetailsFindByIdSpy(...args),
   },
 }));
 vi.mock("../../../models/competitors.js", () => ({
@@ -102,6 +109,7 @@ vi.mock("../../../models/competitors_request.js", () => ({
     updateOne: spies.competitorsReqUpdateOneSpy,
     deleteOne: spies.competitorsReqDeleteOneSpy,
     create: spies.competitorsReqCreateSpy,
+    countDocuments: spies.competitorsReqCountDocsSpy,
   },
 }));
 vi.mock("../../../models/existing_competitors.js", () => ({
@@ -133,6 +141,9 @@ vi.mock("mongoose", () => ({
   default: {
     Types: { ObjectId: spies.ObjectIdStub },
     isValidObjectId: spies.isValidObjectIdSpy,
+    connection: {
+      collection: (_name) => ({ findOne: spies.planAccessConfigFindOneSpy }),
+    },
   },
 }));
 vi.mock("stream/consumers", () => ({ json: vi.fn() }));
@@ -152,6 +163,7 @@ vi.mock("../../../utils/Elasticsearch.js", () => ({
 }));
 
 let svc;
+let resolveBrandLimit;
 
 beforeEach(async () => {
   Object.values(spies).forEach((s) => {
@@ -171,10 +183,15 @@ beforeEach(async () => {
   spies._validationCreateDetailsResult = undefined;
   spies._validationCreateRequestResult = undefined;
   spies.configHasSpy.mockReturnValue(false);
+  // Default: no user found → planId stays null → quota check is skipped entirely,
+  // so every pre-existing insertCompRequests test is unaffected unless it opts in.
+  spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve(null) });
+  spies.competitorsReqCountDocsSpy.mockResolvedValue(0);
+  spies.planAccessConfigFindOneSpy.mockResolvedValue(null);
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.resetModules();
-  ({ default: svc } = await import("../../../core/Competitors/competitorService.js"));
+  ({ default: svc, resolveBrandLimit } = await import("../../../core/Competitors/competitorService.js"));
 });
 
 function mockRes() {
@@ -184,6 +201,29 @@ function mockRes() {
   res.send = vi.fn(() => res);
   return res;
 }
+
+describe("competitorService > resolveBrandLimit (pure helper)", () => {
+  it("returns brandLimit when plan_id has an entry", () => {
+    const doc = { plan_limits: { "101": { brandLimit: 1, competitorLimit: 7 } } };
+    expect(resolveBrandLimit(doc, 101)).toBe(1);
+  });
+  it("coerces numeric planId to string key lookup", () => {
+    const doc = { plan_limits: { "104": { brandLimit: 30, competitorLimit: 210 } } };
+    expect(resolveBrandLimit(doc, "104")).toBe(30);
+    expect(resolveBrandLimit(doc, 104)).toBe(30);
+  });
+  it("defaults to 0 when plan_id has no entry (matches docs/PLAN_ACCESS.md convention)", () => {
+    const doc = { plan_limits: { "101": { brandLimit: 1, competitorLimit: 7 } } };
+    expect(resolveBrandLimit(doc, 999)).toBe(0);
+  });
+  it("defaults to 0 when doc is null/undefined", () => {
+    expect(resolveBrandLimit(null, 101)).toBe(0);
+    expect(resolveBrandLimit(undefined, 101)).toBe(0);
+  });
+  it("defaults to 0 when plan_limits is missing entirely", () => {
+    expect(resolveBrandLimit({}, 101)).toBe(0);
+  });
+});
 
 describe("competitorService > create", () => {
   it("400 missing body", async () => {
@@ -201,6 +241,33 @@ describe("competitorService > create", () => {
     spies.userDetailsFindOneSpy.mockResolvedValueOnce({ _id: "u1" });
     const res = mockRes();
     await svc.create({ body: { email: "x@y" } }, res);
+    expect(res.send.mock.calls[0][0].body.message).toContain("already exists");
+  });
+  // 2026-07-14: previously create() left an existing user's plan_id frozen at
+  // whatever it was on first-ever creation — a later plan change (or, in this
+  // session's incident, testing with different 2026-tier plan_ids for the same
+  // account) never propagated, so insertCompRequests()'s brand-limit check kept
+  // enforcing a stale, wrong limit forever.
+  it("existing user → syncs plan_id/plan_expiry_date onto the existing record", async () => {
+    spies.userDetailsFindOneSpy.mockResolvedValueOnce({ _id: "u1", plan_id: 57 });
+    const res = mockRes();
+    await svc.create({ body: { email: "x@y", plan_id: 101, plan_expiry_date: "2027-01-01" } }, res);
+    expect(spies.userDetailsUpdateOneSpy).toHaveBeenCalledWith(
+      { _id: "u1" },
+      { $set: { plan_id: 101, plan_expiry_date: new Date("2027-01-01") } }
+    );
+  });
+  it("existing user, no plan_id/expiry in request → updateOne not called at all", async () => {
+    spies.userDetailsFindOneSpy.mockResolvedValueOnce({ _id: "u1", plan_id: 57 });
+    const res = mockRes();
+    await svc.create({ body: { email: "x@y" } }, res);
+    expect(spies.userDetailsUpdateOneSpy).not.toHaveBeenCalled();
+  });
+  it("existing user, updateOne throws → still responds 'already exists' (fail-open sync)", async () => {
+    spies.userDetailsFindOneSpy.mockResolvedValueOnce({ _id: "u1", plan_id: 57 });
+    spies.userDetailsUpdateOneSpy.mockRejectedValueOnce(new Error("db-down"));
+    const res = mockRes();
+    await svc.create({ body: { email: "x@y", plan_id: 101 } }, res);
     expect(res.send.mock.calls[0][0].body.message).toContain("already exists");
   });
   it("happy: creates user, returns success", async () => {
@@ -1630,6 +1697,100 @@ describe("competitorService > insertCompRequests", () => {
     }, res);
     expect(res.send.mock.calls[0][0].body.message).toContain("Error in creating the competitor request");
   });
+
+  describe("competitor brand quota (PRD FR-2 / docs/PLAN_ACCESS.md)", () => {
+    const bodyFor = (overrides = {}) => ({
+      user_id: "u",
+      advertiser: ["Acme"],
+      brand_url: "https://acme.com",
+      competitor_details: [{ competitor_name: "c1", competitor_url: "c1.com" }],
+      country: [],
+      category: [],
+      ...overrides,
+    });
+
+    it("blocks the (N+1)th brand when currentBrandCount >= brandLimit", async () => {
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null); // this brand is new
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve({ plan_id: 101 }) });
+      spies.planAccessConfigFindOneSpy.mockResolvedValueOnce({ plan_limits: { "101": { brandLimit: 1, competitorLimit: 7 } } });
+      spies.competitorsReqCountDocsSpy.mockResolvedValueOnce(1); // already at the limit
+      const res = mockRes();
+      await svc.insertCompRequests({ body: bodyFor() }, res);
+      const sent = res.send.mock.calls[0][0];
+      expect(sent.statusCode).toBe(403);
+      expect(sent.body.showSubscriptionModal).toBe(true);
+      expect(sent.body.message).toContain("1 brand");
+      expect(sent.body.limits).toEqual({ brandLimit: 1, currentBrandCount: 1 });
+    });
+
+    it("allows exactly up to brandLimit (currentBrandCount < brandLimit passes through)", async () => {
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
+      spies.competitorsFindSpy.mockResolvedValueOnce([]);
+      const mod = await import("../../../models/competitors.js");
+      mod.default.insertMany = vi.fn().mockResolvedValueOnce([{ _id: "c1" }]);
+      spies.competitorsReqCreateSpy.mockResolvedValueOnce({ _id: "r1" });
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve({ plan_id: 102 }) });
+      spies.planAccessConfigFindOneSpy.mockResolvedValueOnce({ plan_limits: { "102": { brandLimit: 5, competitorLimit: 35 } } });
+      spies.competitorsReqCountDocsSpy.mockResolvedValueOnce(4); // one slot remaining
+      const res = mockRes();
+      await svc.insertCompRequests({ body: bodyFor() }, res);
+      expect(res.send.mock.calls[0][0].body.msg).toContain("Competitor Request created");
+    });
+
+    it("plan_id with no entry in plan_limits defaults to brandLimit 0 (blocks)", async () => {
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve({ plan_id: 999 }) });
+      spies.planAccessConfigFindOneSpy.mockResolvedValueOnce({ plan_limits: { "101": { brandLimit: 1, competitorLimit: 7 } } });
+      spies.competitorsReqCountDocsSpy.mockResolvedValueOnce(0);
+      const res = mockRes();
+      await svc.insertCompRequests({ body: bodyFor() }, res);
+      const sent = res.send.mock.calls[0][0];
+      expect(sent.statusCode).toBe(403);
+      expect(sent.body.limits.brandLimit).toBe(0);
+    });
+
+    it("no user found (planId null) → quota check skipped, request proceeds", async () => {
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
+      spies.competitorsFindSpy.mockResolvedValueOnce([]);
+      const mod = await import("../../../models/competitors.js");
+      mod.default.insertMany = vi.fn().mockResolvedValueOnce([{ _id: "c1" }]);
+      spies.competitorsReqCreateSpy.mockResolvedValueOnce({ _id: "r1" });
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve(null) });
+      const res = mockRes();
+      await svc.insertCompRequests({ body: bodyFor() }, res);
+      expect(spies.planAccessConfigFindOneSpy).not.toHaveBeenCalled();
+      expect(res.send.mock.calls[0][0].body.msg).toContain("Competitor Request created");
+    });
+
+    it("competitor_limits doc missing entirely → quota check skipped, request proceeds", async () => {
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
+      spies.competitorsFindSpy.mockResolvedValueOnce([]);
+      const mod = await import("../../../models/competitors.js");
+      mod.default.insertMany = vi.fn().mockResolvedValueOnce([{ _id: "c1" }]);
+      spies.competitorsReqCreateSpy.mockResolvedValueOnce({ _id: "r1" });
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve({ plan_id: 101 }) });
+      spies.planAccessConfigFindOneSpy.mockResolvedValueOnce(null);
+      const res = mockRes();
+      await svc.insertCompRequests({ body: bodyFor() }, res);
+      expect(res.send.mock.calls[0][0].body.msg).toContain("Competitor Request created");
+    });
+
+    it("lookup failure fails OPEN — allows the request rather than blocking on an infra hiccup", async () => {
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
+      spies.competitorsFindSpy.mockResolvedValueOnce([]);
+      const mod = await import("../../../models/competitors.js");
+      mod.default.insertMany = vi.fn().mockResolvedValueOnce([{ _id: "c1" }]);
+      spies.competitorsReqCreateSpy.mockResolvedValueOnce({ _id: "r1" });
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.reject(new Error("mongo-down")) });
+      const res = mockRes();
+      await svc.insertCompRequests({ body: bodyFor() }, res);
+      expect(spies.loggerWarnSpy).toHaveBeenCalledWith(
+        "Competitor brand quota check failed — allowing request (fail-open)",
+        expect.any(Object)
+      );
+      expect(res.send.mock.calls[0][0].body.msg).toContain("Competitor Request created");
+    });
+  });
 });
 
 describe("competitorService > fetchCompetitors", () => {
@@ -2097,6 +2258,69 @@ describe("competitorService > updateMonitoring", () => {
       body: { competitor_request_id: "r1", competitor_id: "c1", status: 1 },
     }, res);
     expect(res.send.mock.calls[0][0].body.msg).toContain("Error in updating monitoring");
+  });
+
+  // 2026-07-14: competitorLimit (how many competitors can be monitored per brand)
+  // was never enforced anywhere — only brandLimit was. A plan with competitorLimit:3
+  // could have unlimited competitors turned on for monitoring.
+  describe("competitor monitoring quota (mirrors the brand quota)", () => {
+    it("blocks turning monitoring ON when currentMonitoringCount >= competitorLimit", async () => {
+      spies.competitorsReqFindSpy.mockResolvedValueOnce([]); // not already monitoring
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", monitoring: ["m1", "m2", "m3"] });
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve({ plan_id: 101 }) });
+      spies.planAccessConfigFindOneSpy.mockResolvedValueOnce({ plan_limits: { "101": { brandLimit: 1, competitorLimit: 3 } } });
+      const res = mockRes();
+      await svc.updateMonitoring({
+        body: { competitor_request_id: "r1", competitor_id: "c4", status: 0 },
+      }, res);
+      const sent = res.send.mock.calls[0][0];
+      expect(sent.statusCode).toBe(403);
+      expect(sent.body.showSubscriptionModal).toBe(true);
+      expect(sent.body.message).toContain("3 competitors");
+      expect(sent.body.limits).toEqual({ competitorLimit: 3, currentMonitoringCount: 3 });
+      expect(spies.competitorsReqUpdateOneSpy).not.toHaveBeenCalled();
+    });
+
+    it("allows turning monitoring ON when under competitorLimit", async () => {
+      spies.competitorsReqFindSpy.mockResolvedValueOnce([]);
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", monitoring: ["m1"] });
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve({ plan_id: 102 }) });
+      spies.planAccessConfigFindOneSpy.mockResolvedValueOnce({ plan_limits: { "102": { brandLimit: 5, competitorLimit: 35 } } });
+      spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({ modifiedCount: 1 });
+      const res = mockRes();
+      await svc.updateMonitoring({
+        body: { competitor_request_id: "r1", competitor_id: "c2", status: 0 },
+      }, res);
+      expect(spies.competitorsReqUpdateOneSpy).toHaveBeenCalledWith(
+        { _id: "r1" },
+        { $push: { monitoring: "c2" } }
+      );
+      expect(res.send.mock.calls[0][0].body.msg).toContain("Updated monitoring");
+    });
+
+    it("no user found (planId null) → quota check skipped, request proceeds", async () => {
+      spies.competitorsReqFindSpy.mockResolvedValueOnce([]);
+      spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ user_id: "u1", monitoring: ["m1", "m2", "m3"] });
+      spies.userDetailsFindByIdSpy.mockReturnValue({ lean: () => Promise.resolve(null) });
+      spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({ modifiedCount: 1 });
+      const res = mockRes();
+      await svc.updateMonitoring({
+        body: { competitor_request_id: "r1", competitor_id: "c4", status: 0 },
+      }, res);
+      expect(spies.planAccessConfigFindOneSpy).not.toHaveBeenCalled();
+      expect(res.send.mock.calls[0][0].body.msg).toContain("Updated monitoring");
+    });
+
+    it("quota check throws → fails open, still updates monitoring", async () => {
+      spies.competitorsReqFindSpy.mockResolvedValueOnce([]);
+      spies.competitorsReqFindOneSpy.mockRejectedValueOnce(new Error("db-down"));
+      spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({ modifiedCount: 1 });
+      const res = mockRes();
+      await svc.updateMonitoring({
+        body: { competitor_request_id: "r1", competitor_id: "c4", status: 0 },
+      }, res);
+      expect(res.send.mock.calls[0][0].body.msg).toContain("Updated monitoring");
+    });
   });
 });
 

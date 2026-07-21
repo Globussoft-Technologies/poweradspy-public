@@ -45,7 +45,6 @@ const persistConfig = {
     // 'isAIAnalysisModalOpen',
     // 'isCampaignModalOpen',
     // 'isAnalyticsModalOpen',
-    // 'isSubscriptionModalOpen',
     // 'activePage',
   ],
 };

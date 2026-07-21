@@ -1,30 +1,62 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Upload, Database, TrendingUp, TrendingDown, Swords, BarChart3 } from "lucide-react";
 import { getGoogleKeywordsExplorer, importGoogleKeywordsFile, importGoogleKeywordsText } from "../../services/api";
 import KeywordFilterBar from "./KeywordFilterBar.jsx";
 import KeywordExplorerTable from "./KeywordExplorerTable.jsx";
 import KeywordListsPanel from "./KeywordListsPanel.jsx";
+import { Skeleton, SkeletonStatCard, FadeIn, ErrorRetry } from "../shared/Skeleton.jsx";
 
 const PAGE_SIZE = 50;
 
-/** Shimmer skeleton shown while keyword rows are loading — mirrors the table's
- *  card + column layout so the swap to real data doesn't jump. */
+// Shimmer visibility, synced EXACTLY to `loading` — no delay — so it's
+// on-screen the instant a fetch starts, with no gap where a panel could fall
+// through to an empty/wrong state. Mirrors MarketTrends.jsx's identical
+// helper (see its comment for the full incident this fixed — an earlier
+// delay-before-show version left a gap where "No data" briefly flashed
+// before the shimmer had a chance to appear, on any load faster than the
+// delay). Still holds a minimum `minDuration` ms once shown so a load that
+// finishes in a few ms doesn't flicker the shimmer on and off.
+function useMinDisplay(loading, minDuration = 300) {
+  const [holding, setHolding] = useState(false);
+  const shownAtRef = useRef(null);
+  useEffect(() => {
+    if (loading) {
+      shownAtRef.current = Date.now();
+      return;
+    }
+    if (shownAtRef.current == null) return;
+    const elapsed = Date.now() - shownAtRef.current;
+    shownAtRef.current = null;
+    if (elapsed >= minDuration) return;
+    setHolding(true);
+    const t = setTimeout(() => setHolding(false), minDuration - elapsed);
+    return () => clearTimeout(t);
+  }, [loading, minDuration]);
+  return loading || holding;
+}
+
+/** Shimmer skeleton shown while keyword rows are loading — built from the shared
+ *  Skeleton primitive (base block + shimmer sweep), composed into this table's
+ *  own column shape (checkbox · keyword · score badge · 3 numeric columns) so
+ *  the swap to real data doesn't jump. The row layout itself is page-specific
+ *  (no other table in the app shares these columns), but every bar is the same
+ *  shared building block used everywhere else. */
 const KeywordTableSkeleton = ({ rows = 8 }) => (
   <div className="mt-4 rounded-2xl border border-theme-border bg-theme-card overflow-hidden shadow-sm">
     <div className="flex items-center gap-4 border-b border-theme-border bg-theme-text/[0.02] px-4 py-3">
-      <div className="h-3.5 w-3.5 rounded bg-theme-text/10" />
-      <div className="h-2.5 w-20 rounded bg-theme-text/10" />
+      <Skeleton className="h-3.5 w-3.5" shimmer={false} />
+      <Skeleton className="h-2.5 w-20" shimmer={false} />
     </div>
-    <div className="animate-pulse">
+    <div>
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="flex items-center gap-4 border-b border-theme-border last:border-0 px-4 py-3">
-          <div className="h-3.5 w-3.5 flex-none rounded bg-theme-text/10" />
-          <div className="h-3.5 flex-1 max-w-[220px] rounded bg-theme-text/10" />
-          <div className="h-5 w-9 flex-none rounded-md bg-theme-text/10" />
-          <div className="h-3.5 w-14 flex-none rounded bg-theme-text/10" />
-          <div className="h-3.5 w-12 flex-none rounded bg-theme-text/10" />
-          <div className="h-3.5 w-28 flex-none rounded bg-theme-text/10" />
-          <div className="h-3.5 w-20 flex-none rounded bg-theme-text/10" />
+          <Skeleton className="h-3.5 w-3.5 flex-none" />
+          <Skeleton className="h-3.5 flex-1" style={{ maxWidth: `${45 + ((i * 37) % 40)}%` }} />
+          <Skeleton className="h-5 w-9 flex-none" rounded="rounded-md" />
+          <Skeleton className="h-3.5 w-14 flex-none" />
+          <Skeleton className="h-3.5 w-12 flex-none" />
+          <Skeleton className="h-3.5 w-28 flex-none" />
+          <Skeleton className="h-3.5 w-20 flex-none" />
         </div>
       ))}
     </div>
@@ -43,12 +75,22 @@ const StatCard = ({ icon, label, children }) => (
   </div>
 );
 
+/** Shimmer version of the 4 stat cards — the shared SkeletonStatCard primitive,
+ *  same one MarketTrends/AdGrid can reuse, so the whole app's "stat card
+ *  loading" moment looks identical. */
+const StatCardsSkeleton = () => (
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+    {Array.from({ length: 4 }).map((_, i) => <SkeletonStatCard key={i} />)}
+  </div>
+);
+
 /** Summary stat cards above the table — driven by the aggregate `stats` the
  *  /keywords/explorer API returns over the whole filtered set. */
-const StatCards = ({ stats }) => {
+const StatCards = ({ stats, loading }) => {
+  if (loading) return <StatCardsSkeleton />;
   if (!stats) return null;
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4 [font-variant-numeric:tabular-nums]">
+    <FadeIn className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4 [font-variant-numeric:tabular-nums]">
       <StatCard icon={<Search size={12} className="text-[#6b99ff]" />} label="Keywords">
         <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.keywords)}</div>
       </StatCard>
@@ -69,7 +111,7 @@ const StatCards = ({ stats }) => {
         </div>
         <div className="mt-0.5 text-[11px] text-theme-text-muted">up vs down</div>
       </StatCard>
-    </div>
+    </FadeIn>
   );
 };
 
@@ -233,6 +275,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
   };
 
   const busy = loading || importing;
+  const busyShimmer = useMinDisplay(busy);
 
   // "Keyword Lists" is hidden for now — the lists corpus isn't populated yet.
   // Re-add { key: "lists", label: "Keyword Lists" } here to bring the tab back.
@@ -326,7 +369,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
         ) : null}
 
         {/* ── Summary stat cards ───────────────────────────────── */}
-        {activeTab === "explorer" ? <StatCards stats={stats} /> : null}
+        {activeTab === "explorer" ? <StatCards stats={stats} loading={busyShimmer} /> : null}
 
         {/* ── Segmented tabs (hidden when only one tab is available) ── */}
         {TABS.length > 1 ? (
@@ -360,21 +403,26 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
                   removing a Category left the list empty instead of restoring it. */}
               <KeywordFilterBar filters={filters} onChange={(f) => { setFilters(f); setPage(1); setMode("browse"); }} />
             </div>
-            {busy ? (
+            {busyShimmer ? (
               <KeywordTableSkeleton />
             ) : error ? (
-              <div className="py-16 text-center text-sm text-theme-text-muted">{error}</div>
+              // Retry re-fetches the current filter/sort/page from the database view — an
+              // import-specific failure (paste/upload) also falls back to that rather than
+              // re-attempting the exact same import, which is the simpler, safer default.
+              <ErrorRetry message={error} onRetry={fetchRows} className="py-16" />
             ) : (
-              <KeywordExplorerTable
-                rows={displayRows}
-                total={total}
-                page={page}
-                pageSize={PAGE_SIZE}
-                sort={sort}
-                onSortChange={(s) => { setSort(s); setPage(1); }}
-                onPageChange={setPage}
-                onKeywordClick={onOpenKeyword}
-              />
+              <FadeIn>
+                <KeywordExplorerTable
+                  rows={displayRows}
+                  total={total}
+                  page={page}
+                  pageSize={PAGE_SIZE}
+                  sort={sort}
+                  onSortChange={(s) => { setSort(s); setPage(1); }}
+                  onPageChange={setPage}
+                  onKeywordClick={onOpenKeyword}
+                />
+              </FadeIn>
             )}
           </>
         ) : (

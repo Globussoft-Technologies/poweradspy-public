@@ -28,7 +28,7 @@ import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters } from "./services/aiSearchMapper";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
-import { Check, X } from "lucide-react";
+import { Check, X, Loader2 } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
@@ -41,7 +41,6 @@ import Sidebar from "./components/layout/Sidebar";
 import AdGrid from "./components/ads/AdGrid";
 import AIAnalysisModal from "./components/modals/AIAnalysisModal";
 import CampaignModal from "./components/modals/CampaignModal";
-import SubscriptionModal from "./components/modals/SubscriptionModal";
 import PricingModal from "./components/modals/PricingModal";
 import OnboardingModal from "./components/modals/OnboardingModal";
 import AnalyticsModal from "./components/modals/AnalyticsModal.jsx";
@@ -52,6 +51,7 @@ import AllProjects from "./components/all-projects/AllProjects";
 // SharedAdView no longer used — /share routes now use dashboard UI via GuestProvider
 import SavedAdsPage from "./components/ads/SavedAdsPage";
 import MarketTrends, { fetchMarketTrendsAccess } from "./components/MarketTrends";
+import LockedFeaturePreview from "./components/shared/LockedFeaturePreview";
 
 // Market Trends is gated twice: the build-time env flag AND a per-user server
 // allow-list (config.intelligence.allowedUserIds), probed via /access.
@@ -184,6 +184,17 @@ const AppWrapper = () => {
   }
   return <App />;
 };
+
+// Neutral placeholder shown ONLY for the brief window before an access check
+// (Market Trends / Keyword Explorer) has answered — avoids flashing
+// LockedFeaturePreview (or the real page) before we actually know which one
+// is correct. `flex-1 h-full` matches LockedFeaturePreview's own centering fix
+// (this renders as a direct flex sibling of <Sidebar>, same layout gotcha).
+const PageAccessLoading = () => (
+  <div className="relative flex-1 h-full flex items-center justify-center">
+    <Loader2 size={22} className="animate-spin text-theme-text-muted" />
+  </div>
+);
 
 const App = () => {
   const ui = useSelector(state => state.ui);
@@ -489,8 +500,10 @@ const App = () => {
     setKeywordExplorer(String(keyword));
   };
   const openKeywordsExplorerPage = () => {
-    if (!(KEYWORD_EXPLORER_ON && keywordExplorerAllowed)) return;
-    if (!canAccessIntel()) return;
+    // Always navigate when the feature is globally live — same "not a hard removal"
+    // pattern as Market Trends (onPageChange('intelligence') above): the page body
+    // decides real content vs. locked preview based on keywordExplorerAllowed.
+    if (!KEYWORD_EXPLORER_ON) return;
     dispatch(setActivePage('keywords-explorer'));
   };
   const openAdvertiserProfile = (arg) => {
@@ -577,21 +590,29 @@ const App = () => {
     fetchPlanAccess(network).then(data => { if (data) setPlanAccess(data); }).catch(() => {});
   }, [ui.specificPlatforms, token]);
 
-  // Intelligence per-user access — only show the tab/feature when the env flag
-  // is on AND the server says this user is allow-listed. Defaults to hidden.
-  const [intelAllowed, setIntelAllowed] = useState(false);
+  // Intelligence access — the NAV TAB shows whenever the env flag is on (PRD FR-17:
+  // "not a hard removal"); per-plan access (intelAccess.enabled) only decides whether
+  // clicking it renders the real MarketTrends page or a locked-preview upsell.
+  // `resolved` starts false so a page refresh/direct-load on the intelligence tab
+  // doesn't flash LockedFeaturePreview for the brief window before this fetch
+  // answers — the page renders a neutral loading state instead until resolved.
+  const [intelAccess, setIntelAccess] = useState({ enabled: false, stage: 'beta', networks: null, resolved: false });
   useEffect(() => {
-    if (!INTEL_ENV_ON || !token) { setIntelAllowed(false); return; }
-    fetchMarketTrendsAccess().then(setIntelAllowed).catch(() => setIntelAllowed(false));
+    if (!INTEL_ENV_ON || !token) { setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true }); return; }
+    fetchMarketTrendsAccess().then((r) => setIntelAccess({ ...r, resolved: true })).catch(() => setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true }));
   }, [token]);
 
-  // Keywords Explorer per-user access — same pattern as intelAllowed above: show
-  // the nav/page/modal only when the env flag is on AND the server allow-listed
+  // Keywords Explorer per-user access — same allow-listed pattern intelAccess used
+  // to follow (still a hard hide for this one, no plan-tier/locked-preview rewiring
+  // yet — see docs/PLAN_ACCESS.md's "Explicitly not covered" list). Show the
+  // nav/page/modal only when the env flag is on AND the server allow-listed
   // this user (config.keywordExplorer.allowedUserIds). Defaults to hidden.
+  // `keywordExplorerResolved` guards the same refresh-flash as intelAccess above.
   const [keywordExplorerAllowed, setKeywordExplorerAllowed] = useState(false);
+  const [keywordExplorerResolved, setKeywordExplorerResolved] = useState(false);
   useEffect(() => {
-    if (!KEYWORD_EXPLORER_ON || !token) { setKeywordExplorerAllowed(false); return; }
-    fetchKeywordExplorerAccess().then(setKeywordExplorerAllowed).catch(() => setKeywordExplorerAllowed(false));
+    if (!KEYWORD_EXPLORER_ON || !token) { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); return; }
+    fetchKeywordExplorerAccess().then((v) => { setKeywordExplorerAllowed(v); setKeywordExplorerResolved(true); }).catch(() => { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); });
   }, [token]);
 
   const filterKey = useMemo(
@@ -1752,8 +1773,9 @@ const App = () => {
             dispatch(openModal('isPricingModalOpen'));
           }}
           canAccessProjects={canAccessProjects}
-          intelligenceEnabled={INTEL_ENV_ON && intelAllowed}
-          keywordExplorerEnabled={KEYWORD_EXPLORER_ON && keywordExplorerAllowed}
+          intelligenceEnabled={INTEL_ENV_ON}
+          intelligenceStage={intelAccess.stage}
+          keywordExplorerEnabled={KEYWORD_EXPLORER_ON}
           guest={guest}
           isLoggedIn={!guest?.isRestricted}
           allowedPlatforms={planAccess?.allowedPlatforms}
@@ -1767,17 +1789,39 @@ const App = () => {
           searchIn={ui.searchIn}
         />
 
-        {INTEL_ENV_ON && intelAllowed && ui.activePage === "intelligence" ? (
-          <MarketTrends
-            onDrill={(kind, value) => {
-              navigate('/');
-              dispatch(setActivePage('ads'));
-              dispatch(setShowSavedAdsPage(false));
-              handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword');
-            }}
-          />
-        ) : ui.activePage === "keywords-explorer" && KEYWORD_EXPLORER_ON && keywordExplorerAllowed ? (
-          <KeywordsExplorerPage onOpenKeyword={openKeywordExplorer} />
+        {INTEL_ENV_ON && ui.activePage === "intelligence" ? (
+          !intelAccess.resolved ? (
+            <PageAccessLoading />
+          ) : intelAccess.enabled ? (
+            <MarketTrends
+              onDrill={(kind, value) => {
+                navigate('/');
+                dispatch(setActivePage('ads'));
+                dispatch(setShowSavedAdsPage(false));
+                handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword');
+              }}
+              allowedPlatforms={intelAccess.networks}
+              onNetworkRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+            />
+          ) : (
+            <LockedFeaturePreview
+              title="Market Trends isn't enabled for your account yet"
+              description="See network comparisons, top advertisers, and category trends across all your tracked ad data. Upgrade your plan to unlock it."
+              onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+            />
+          )
+        ) : ui.activePage === "keywords-explorer" && KEYWORD_EXPLORER_ON ? (
+          !keywordExplorerResolved ? (
+            <PageAccessLoading />
+          ) : keywordExplorerAllowed ? (
+            <KeywordsExplorerPage onOpenKeyword={openKeywordExplorer} />
+          ) : (
+            <LockedFeaturePreview
+              title="Keyword Explorer isn't enabled for your account yet"
+              description="Browse keyword volume, competition, and growth trends with drill-down into advertisers and landing domains. Upgrade your plan to unlock it."
+              onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+            />
+          )
         ) : ui.activePage === "projects" && canAccessProjects ? (
           <AllProjects
             onSearch={handleSearch}
@@ -1785,6 +1829,7 @@ const App = () => {
             onRecentActivityClick={handleRecentActivityClick}
             onCountryClick={handleCountryClick}
             setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}
+            onBrandLimitReached={() => dispatch(openModal('isPricingModalOpen'))}
           />
         ) : ui.showSavedAdsPage ? (
           <SavedAdsPage

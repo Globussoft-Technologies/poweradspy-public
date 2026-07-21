@@ -53,9 +53,13 @@ async function getConfig() {
       if (!fs.existsSync(CONFIG_PATH)) return [];
       const data = fs.readFileSync(CONFIG_PATH, 'utf8');
       const parsed = JSON.parse(data);
-      _configCache = parsed;
+      // Merge in the 2026-restructure tiers, resolved from config.pricing.planIds —
+      // plan_config.json itself never hardcodes these IDs. See restructure2026.js.
+      const { mergeContributions } = require('./restructure2026');
+      const merged = mergeContributions(parsed);
+      _configCache = merged;
       _configCacheAt = Date.now();
-      return parsed;
+      return merged;
     } catch (err) {
       log.error('Failed to load plan_config.json fallback', { error: err.message });
       return [];

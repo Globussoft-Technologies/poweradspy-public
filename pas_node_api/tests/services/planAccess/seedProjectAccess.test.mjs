@@ -13,8 +13,7 @@ require.cache[dotenvPath] = {
 const dbPath = require.resolve("../../../src/services/sdui/db");
 const fakeReplaceOne = vi.fn();
 const fakeCollection = vi.fn(() => ({ replaceOne: fakeReplaceOne }));
-const fakeDb = vi.fn(() => ({ collection: fakeCollection }));
-const fakeAppDb = { client: { db: fakeDb } };
+const fakeAppDb = { collection: fakeCollection };
 const getDB = vi.fn(async () => fakeAppDb);
 const closeDB = vi.fn(async () => {});
 require.cache[dbPath] = {

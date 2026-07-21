@@ -386,10 +386,11 @@ const config = {
   // Intelligence suite (Winning Ads / Trends / Tech & Funnel / Creative).
   // Fully additive + gated: when disabled, the router is never mounted (app.js).
   // Default OFF (opt-in) so production is unaffected until explicitly enabled.
-  //   allowedUserIds: optional allow-list of user ids. When non-empty, ONLY
-  //   those users get the feature + tab (everyone else is 403'd and the UI hides
-  //   it). Empty/unset = all authenticated users (when `enabled`). Accepts a
-  //   JSON array in config.json or a comma-separated string in the env var.
+  //   allowedUserIds: NO LONGER CONSUMED by marketTrends.js as of 2026-07-13 — Market
+  //   Trends access is now plan-tier-based via plan_access_config's `market_trends`
+  //   filter doc (PRD FR-17 beta→GA), enforced through planAccessMiddleware. Kept
+  //   here only in case another intelligence-suite feature wants a plain allow-list
+  //   later; it is otherwise dead config.
   intelligence: {
     enabled: getVal(fileConfig.intelligence?.enabled, 'INTELLIGENCE_ENABLED', toBool) === true,
     allowedUserIds: (() => {
@@ -417,6 +418,23 @@ const config = {
       if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
       return [];
     })(),
+  },
+
+  // Which plan generation GET /api/v1/plans/catalog serves to the upgrade/pricing
+  // modal. Display-only — never affects existing subscribers' actual entitlements
+  // (those are always looked up by plan_id, regardless of this value). See
+  // docs/PLAN_ACCESS.md § 2026 Pricing Restructure.
+  pricing: {
+    activePlanGeneration: getVal(fileConfig.pricing?.activePlanGeneration, 'PRICING_ACTIVE_PLAN_GENERATION') || '2026-restructure',
+    // PRD FR-7/FR-8 §8 — pending CEO decision (lifetime vs 12 months). null = lifetime.
+    // Nothing currently reads this automatically; see config.json's own description.
+    legacyHeldPriceDurationMonths: getVal(fileConfig.pricing?.legacyHeldPriceDurationMonths, 'PRICING_LEGACY_HELD_PRICE_MONTHS', toInt) ?? null,
+    // PRD FR-18 — annual price = monthly × this (10 = "2 months free"). Display only.
+    annualPriceMultiplier: getVal(fileConfig.pricing?.annualPriceMultiplier, 'PRICING_ANNUAL_MULTIPLIER', toInt) || 10,
+    // The ONLY source of the 2026-restructure tiers' numeric plan IDs — see
+    // restructure2026.js and config.json's planIds._description for why these must
+    // never be hardcoded (dev/prod can have different free IDs).
+    planIds: fileConfig.pricing?.planIds ? { ...fileConfig.pricing.planIds } : {},
   },
 
   // AI Search — prompt → filter-payload planning proxy (fronts the DS service).
@@ -571,6 +589,20 @@ config.reload = () => {
       // Update logging
       if (newFileConfig.logging) {
         if (newFileConfig.logging.level) config.log.level = newFileConfig.logging.level;
+      }
+
+      // Update pricing (which plan generation the upgrade modal shows)
+      if (newFileConfig.pricing?.activePlanGeneration !== undefined) {
+        config.pricing.activePlanGeneration = newFileConfig.pricing.activePlanGeneration;
+      }
+      if (newFileConfig.pricing?.legacyHeldPriceDurationMonths !== undefined) {
+        config.pricing.legacyHeldPriceDurationMonths = newFileConfig.pricing.legacyHeldPriceDurationMonths;
+      }
+      if (newFileConfig.pricing?.annualPriceMultiplier !== undefined) {
+        config.pricing.annualPriceMultiplier = toInt(newFileConfig.pricing.annualPriceMultiplier);
+      }
+      if (newFileConfig.pricing?.planIds !== undefined) {
+        config.pricing.planIds = { ...newFileConfig.pricing.planIds };
       }
 
       return true;

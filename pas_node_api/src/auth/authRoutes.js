@@ -198,11 +198,37 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
 
   const filters = planAccessService.getFilterStatus(planId, network, config2);
   const competitorLimits = planAccessService.getCompetitorLimits(planId, config2);
+  // planTier drives PricingModal.jsx's "show only upgrade tiers" filter (currentPlanTier
+  // prop) — this route is a separate implementation from planAccessMiddleware and was
+  // missing it entirely, so the modal always fell back to showing every plan (including
+  // the user's current one) instead of just the ones above it. Confirmed 2026-07-14.
+  const planTier = planAccessService.resolvePlanTier(planId, config2);
   return res.json({
     code: 200,
-    data: { planId: Number(planId), allowedPlatforms, filters, competitorLimits, customPlatformRestriction },
+    data: { planId: Number(planId), planTier, allowedPlatforms, filters, competitorLimits, customPlatformRestriction },
   });
 }));
+
+// ─── GET /api/v1/auth/plans-catalog ────────────────────────
+// Public (no auth) — display-only plan/pricing data for the upgrade modal (and,
+// eventually, a public pricing page). Which generation it returns is controlled by
+// config.pricing.activePlanGeneration (docs/PLAN_ACCESS.md § 2026 Pricing Restructure).
+// Never affects any existing subscriber's actual entitlements — those still come
+// exclusively from plan_access_config via /plan-access above.
+router.get('/plans-catalog', (req, res) => {
+  const { getCatalog } = require('../services/planAccess/planCatalog');
+  const generation = config.pricing?.activePlanGeneration || '2026-restructure';
+  const multiplier = config.pricing?.annualPriceMultiplier || 10;
+  const catalog = getCatalog(generation);
+  // priceAnnual is computed here (not stored in planCatalog.js) so the discount
+  // multiplier stays a single config value (PRD FR-18 §8) rather than baked into
+  // hand-authored data for every plan.
+  const plans = catalog.plans.map((p) => {
+    const monthlyAmount = parseInt(String(p.price).replace(/[^0-9]/g, ''), 10) || 0;
+    return { ...p, priceAnnual: `$${monthlyAmount * multiplier}/Year` };
+  });
+  return res.json({ code: 200, data: { generation, annualPriceMultiplier: multiplier, features: catalog.features, plans } });
+});
 
 // ─── POST /api/auth/refresh ────────────────────────────────
 // Re-issues a fresh token if the current one is still valid (extends session)

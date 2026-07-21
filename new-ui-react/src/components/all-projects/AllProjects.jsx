@@ -407,8 +407,8 @@ const getRestoreViewState = () => {
   }
 };
 
-const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCountryClick, setProjectContext }) => {
-  const { user: authUser, token: authToken } = useAuth();
+const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCountryClick, setProjectContext, onBrandLimitReached }) => {
+  const { user: authUser, token: authToken, planAccess } = useAuth();
   const [competitorUserId, setCompetitorUserId] = useState(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isProjectLoading, setIsProjectLoading] = useState(false);
@@ -1584,7 +1584,16 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     }
   };
 
+  // Client-side pre-check so the user sees the upgrade prompt immediately on click,
+  // instead of filling out the whole "Add New Advertiser" form and only finding out
+  // at submit time (the server still enforces this too — insertCompRequests's brand
+  // quota check — this is just a faster, friendlier front door to the same limit).
   const startNewProject = () => {
+    const brandLimit = planAccess?.competitorLimits?.brandLimit;
+    if (typeof brandLimit === "number" && projects.length >= brandLimit) {
+      onBrandLimitReached?.();
+      return;
+    }
     setWebsiteLink("");
     setSelectedKeywords([]);
     setSelectedCountries([]);

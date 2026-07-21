@@ -25,8 +25,11 @@ const PROJECT_ACCESS_PLAN_IDS = [
 ];
 
 async function seed() {
-  const appDb = await getDB();
-  const db = appDb.client.db('pas_dev');
+  // Use the exact same database getDB() resolves to at runtime (config.databases.mongo.database) —
+  // a previous version hardcoded 'pas_dev', which this DB user isn't even authorized on and which
+  // isn't the database planAccessService.js/adminRoutes.js actually read. See planAccessMigrate.js's
+  // header comment and docs/PLAN_ACCESS.md § 2026 Pricing Restructure for the incident this fixed.
+  const db = await getDB();
   const col = db.collection('plan_access_config');
 
   const doc = {

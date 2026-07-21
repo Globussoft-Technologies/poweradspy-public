@@ -7,7 +7,12 @@ const log = logger.createChild('plan-access');
 
 // Filters the frontend always sends as UI defaults — strip silently instead of triggering upgrade modal.
 // ad_position is auto-sent as ['FEED','SIDE','MARKETPLACE','VIDEOFEED'] on every Facebook search.
-const SILENT_STRIP_FILTERS = new Set(['ad_position']);
+// language defaults to 'en' on every search where the platform supports it (new-ui-react's
+// api.js: `ps(resolvedNetworks, 'language') ? (resolvedLang !== 'NA' ? resolvedLang : 'en') : 'NA'`)
+// even when the user never opened the language filter — confirmed 2026-07-14: this alone made
+// EVERY search 403 with showSubscriptionModal for any plan without the `language` filter unlocked
+// (e.g. Basic 2026), regardless of what the user actually clicked.
+const SILENT_STRIP_FILTERS = new Set(['ad_position', 'language']);
 
 // ─── SDUI Query Param Map Cache ───────────────────────────────────────────────
 // Builds a dynamic map of { query_param: plan_access_config._id } from sdui_config
@@ -340,14 +345,49 @@ function requireIntelAccess(req, res, next) {
 }
 
 /**
- * Per-user allow-list for Keywords Explorer (mirrors marketTrends.isAllowedUser).
- * Empty/unset list → all authenticated users. Non-empty → only those user ids.
+ * Per-user allow-list for Keywords Explorer (same pattern as marketTrends.js's
+ * isAllowedUser). This is a targeted OVERRIDE for specific user IDs, not a
+ * toggle for whether plan-tier gating applies — an empty list contributes
+ * NOTHING (final access rests on the plan-tier check below). Previously an
+ * empty list meant "everyone", which made the keyword_explorer doc's
+ * allowed_plan_ids configured via the admin Plan Access tab silently have zero
+ * effect on real access (mirrors the identical Market Trends fix, 2026-07-14).
  */
 function isKeywordExplorerUserAllowed(userId) {
   const allow = config.keywordExplorer?.allowedUserIds || [];
-  if (!allow.length) return true; // no list → all authenticated users
+  if (!allow.length) return false;
   if (userId === undefined || userId === null || userId === '') return false;
   return allow.map(String).includes(String(userId));
+}
+
+/**
+ * Plan-tier gate for Keywords Explorer — mirrors marketTrends.js's isAllowedByPlan
+ * exactly. Self-contained (doesn't run planAccessMiddleware), fails to false on
+ * any error so a lookup failure only means "this mechanism didn't grant access
+ * this time," never a 500 for the whole request.
+ */
+async function isKeywordExplorerAllowedByPlan(req) {
+  try {
+    const planId = req.user?.userSubscriptionType ?? req.user?.plan_id;
+    if (planId === undefined || planId === null) return false;
+    const planConfig = await planAccessService.getConfig();
+    if (!planConfig || planConfig.length === 0) return false;
+    const filterStatus = planAccessService.getFilterStatus(planId, 'all', planConfig);
+    return filterStatus?.keyword_explorer?.enabled === true;
+  } catch (_e) {
+    return false;
+  }
+}
+
+/**
+ * Combined access check — OR of the allow-list override and the plan-tier gate.
+ * Neither can break the other: the allow-list still works even if the plan
+ * lookup fails, and the plan-tier grant still works for a user not on the list.
+ */
+async function hasKeywordExplorerAccess(req) {
+  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
+  if (isKeywordExplorerUserAllowed(uid)) return true;
+  return isKeywordExplorerAllowedByPlan(req);
 }
 
 /**
@@ -358,15 +398,14 @@ function isKeywordExplorerUserAllowed(userId) {
  * Two layers, mirroring Market Trends:
  *   1. Feature flag (KEYWORD_EXPLORER_ENABLED / VITE_ENABLE_KEYWORD_EXPLORER) —
  *      when off the APIs are treated as non-existent (404).
- *   2. Per-user allow-list (config.keywordExplorer.allowedUserIds) — when on but
- *      the caller isn't allow-listed, 403. Empty list = all authenticated users.
+ *   2. hasKeywordExplorerAccess (allow-list OR plan-tier) — when on but neither
+ *      mechanism grants access, 403.
  */
-function requireKeywordExplorerEnabled(req, res, next) {
+async function requireKeywordExplorerEnabled(req, res, next) {
   if (config.keywordExplorer?.enabled !== true) {
     return res.status(404).json({ code: 404, message: 'Not found' });
   }
-  const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
-  if (!isKeywordExplorerUserAllowed(uid)) {
+  if (!(await hasKeywordExplorerAccess(req))) {
     return res.status(403).json({ code: 403, message: 'Keywords Explorer is not enabled for this account', data: [] });
   }
   next();
@@ -378,4 +417,5 @@ module.exports = {
   requireIntelAccess,
   requireKeywordExplorerEnabled,
   isKeywordExplorerUserAllowed,
+  hasKeywordExplorerAccess,
 };

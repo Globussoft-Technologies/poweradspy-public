@@ -220,6 +220,19 @@
         70
       ],
       "gdn": [
+        56,
+        62,
+        68,
+        3,
+        6,
+        10,
+        13,
+        16,
+        41,
+        53,
+        58,
+        65,
+        26,
         20,
         63,
         69,
@@ -300,6 +313,9 @@
         43
       ],
       "reddit": [
+        56,
+        62,
+        68,
         20,
         63,
         69,
@@ -311,6 +327,9 @@
         45
       ],
       "quora": [
+        56,
+        62,
+        68,
         20,
         63,
         69,
@@ -416,6 +435,50 @@
     "query_param": null,
     "description": "Brand and competitor tracking limits per plan",
     "plan_limits": {
+      "2": {
+        "brandLimit": 1,
+        "competitorLimit": 10
+      },
+      "3": {
+        "brandLimit": 3,
+        "competitorLimit": 21
+      },
+      "5": {
+        "brandLimit": 1,
+        "competitorLimit": 10
+      },
+      "6": {
+        "brandLimit": 3,
+        "competitorLimit": 21
+      },
+      "13": {
+        "brandLimit": 3,
+        "competitorLimit": 21
+      },
+      "14": {
+        "brandLimit": 1,
+        "competitorLimit": 10
+      },
+      "15": {
+        "brandLimit": 1,
+        "competitorLimit": 10
+      },
+      "16": {
+        "brandLimit": 3,
+        "competitorLimit": 21
+      },
+      "23": {
+        "brandLimit": 5,
+        "competitorLimit": 35
+      },
+      "24": {
+        "brandLimit": 5,
+        "competitorLimit": 35
+      },
+      "49": {
+        "brandLimit": 1,
+        "competitorLimit": 10
+      },
       "4": {
         "brandLimit": 5,
         "competitorLimit": 35
@@ -4115,5 +4178,63 @@
       "gdn": false,
       "google": false
     }
+  },
+  {
+    "_id": "ai_metadata_filters",
+    "label": "AI Metadata Filters",
+    "category": "ai",
+    "query_param": null,
+    "description": "Intent/hook/offering/color facets from AI-Meta classification (PRD FR-15). Anchor doc only — actual enforcement still lives in the AI-Meta pipeline, not plan_access yet.",
+    "allowed_plan_ids": null,
+    "visible": true,
+    "created_at": "2026-07-13T07:47:37.411Z",
+    "updated_at": "2026-07-13T07:47:37.411Z"
+  },
+  {
+    "_id": "keyword_explorer",
+    "label": "Keyword Explorer",
+    "category": "intelligence",
+    "query_param": null,
+    "description": "Keyword table/drilldown (PRD FR-16). Anchor doc only — live enforcement is still the allowedUserIds gate in requireKeywordExplorerEnabled(), not plan_access.",
+    "allowed_plan_ids": null,
+     "stage": "beta",
+    "visible": true,
+    "created_at": "2026-07-13T07:47:37.411Z",
+    "updated_at": "2026-07-13T07:47:37.411Z"
+  },
+  {
+    "_id": "advanced_ad_analytics",
+    "label": "Advanced Ad Analytics",
+    "category": "intelligence",
+    "query_param": null,
+    "description": "Flat, all-tier analytics depth per PRD FR-4 (supersedes the old Core/Deep/Deepest model). Anchor doc only.",
+    "allowed_plan_ids": null,
+    "visible": true,
+    "created_at": "2026-07-13T07:47:37.411Z",
+    "updated_at": "2026-07-13T07:47:37.411Z"
+  },
+  {
+    "_id": "market_trends",
+    "label": "Market Trends",
+    "category": "intelligence",
+    "query_param": null,
+    "description": "Beta on all plans today. Access is config.intelligence.allowedUserIds OR this doc's allowed_plan_ids (either grants it — see marketTrends.js and docs/PLAN_ACCESS.md). Flip stage to 'ga' and narrow allowed_plan_ids to Platinum/Palladium to raise the plan-tier bar without touching the allow-list.",
+    "stage": "beta",
+    "allowed_plan_ids": null,
+    "visible": true,
+    "created_at": "2026-07-13T07:47:37.411Z",
+    "updated_at": "2026-07-13T12:00:00.000Z"
+  },
+  {
+    "_id": "ad_tracker",
+    "label": "Ad Tracker",
+    "category": "unresolved",
+    "query_param": null,
+    "description": "PRD-specified boolean entitlement (unlimited on Standard/Platinum/Palladium, off on Basic). No corresponding feature/controller was found anywhere in this backend as of 2026-07-13 — confirm where this lives before treating this doc as authoritative.",
+    "_needs_code_wiring": true,
+    "allowed_plan_ids": [],
+    "visible": true,
+    "created_at": "2026-07-13T07:47:37.411Z",
+    "updated_at": "2026-07-13T07:47:37.411Z"
   }
 ]

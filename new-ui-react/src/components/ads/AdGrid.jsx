@@ -1,5 +1,12 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff } from "lucide-react";
+import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar } from "lucide-react";
+
+// PRD FR-11 — networks with materially lower crawled ad volume than the rest of
+// the platform today. When every currently-active platform is one of these, the
+// empty state explains WHY results are sparse instead of implying the search
+// itself was bad (see the coverage-note block below, distinct from the generic
+// "No ads found" state).
+const LOW_VOLUME_NETWORKS = ['quora', 'reddit', 'tiktok', 'linkedin'];
 import { useTranslation } from "react-i18next";
 import Masonry from "./Masonry";
 import MasonryCard from "./MasonryCard";
@@ -1090,8 +1097,39 @@ const AdGrid = ({
             );
           })()}
 
-        {/* Empty state */}
-        {!error && ads.length === 0 && !loadingMore && (
+        {/* Low-volume network coverage note (PRD FR-11) — replaces the generic
+            empty state below when every active platform is a known low-volume
+            network, so the message explains the sparse coverage rather than
+            implying the search terms were wrong. */}
+        {!error && ads.length === 0 && !loadingMore && activePlatforms.length > 0 &&
+          activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase())) && (
+          <div className="flex flex-col items-center justify-center py-32 gap-5">
+            <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">
+              <Radar size={36} className="text-theme-text-muted" />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-bold text-theme-text-muted">
+                Coverage on {activePlatforms.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(", ")} is still ramping up
+              </h3>
+              <p className="text-xs text-theme-text-muted max-w-sm leading-relaxed">
+                These networks have lower ad volume on PowerAdSpy than Facebook or Google today. Try broadening your search terms or date range, or check another network for more results.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                if (onClearAll) onClearAll();
+                else if (sdui.clearAll) sdui.clearAll();
+              }}
+              className="mt-2 px-5 py-2 rounded-lg bg-theme-surface border border-theme-border text-xs font-semibold text-theme-text-muted hover:text-theme-text hover:border-theme-text-muted transition-all"
+            >
+              Broaden search
+            </button>
+          </div>
+        )}
+
+        {/* Empty state (generic) */}
+        {!error && ads.length === 0 && !loadingMore &&
+          !(activePlatforms.length > 0 && activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase()))) && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">
               <SearchX size={36} className="text-theme-text-muted" />

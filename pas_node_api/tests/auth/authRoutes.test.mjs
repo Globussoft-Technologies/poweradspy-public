@@ -45,6 +45,7 @@ let configExports = {
   env: "production", isDev: false,
   jwt: { cookieMaxAgeMs: 1000, expiresIn: "1d" },
   amember: { plans: { custom: [33, 46, 70] } },
+  pricing: { activePlanGeneration: "2026-restructure" },
 };
 require.cache[configPath] = {
   id: configPath, filename: configPath, loaded: true,
@@ -65,6 +66,7 @@ const planSvc = {
   getAllowedPlatforms: vi.fn(() => ["facebook", "google"]),
   getFilterStatus: vi.fn(() => ({})),
   getCompetitorLimits: vi.fn(() => ({ brandLimit: 5, competitorLimit: 5 })),
+  resolvePlanTier: vi.fn(() => null),
 };
 require.cache[planSvcPath] = {
   id: planSvcPath, filename: planSvcPath, loaded: true, exports: planSvc,
@@ -105,6 +107,7 @@ beforeEach(() => {
     env: "production", isDev: false,
     jwt: { cookieMaxAgeMs: 1000, expiresIn: "1d" },
     amember: { plans: { custom: [33, 46, 70] } },
+    pricing: { activePlanGeneration: "2026-restructure" },
   };
   generateToken.mockReset().mockReturnValue("jwt-token");
   bcryptCompare.mockReset();
@@ -114,16 +117,98 @@ beforeEach(() => {
   planSvc.getAllowedPlatforms.mockReset().mockReturnValue(["facebook", "google"]);
   planSvc.getFilterStatus.mockReset().mockReturnValue({});
   planSvc.getCompetitorLimits.mockReset().mockReturnValue({ brandLimit: 5, competitorLimit: 5 });
+  planSvc.resolvePlanTier.mockReset().mockReturnValue(null);
 });
 
 describe("authRoutes > module load", () => {
-  it("registers login/logout/me/plan-access/refresh", () => {
+  it("registers login/logout/me/plan-access/plans-catalog/refresh", () => {
     freshSut();
     expect(handlers.post["/login"]).toBeDefined();
     expect(handlers.post["/logout"]).toBeDefined();
     expect(handlers.get["/me"]).toBeDefined();
     expect(handlers.get["/plan-access"]).toBeDefined();
+    expect(handlers.get["/plans-catalog"]).toBeDefined();
     expect(handlers.post["/refresh"]).toBeDefined();
+  });
+});
+
+describe("authRoutes > GET /plans-catalog", () => {
+  it("is public — no auth middleware in its handler chain", () => {
+    freshSut();
+    // Only one handler registered (the route fn itself), unlike /plan-access
+    // which has [authMiddleware, asyncHandler(...)].
+    expect(handlers.get["/plans-catalog"].length).toBe(1);
+  });
+
+  it("defaults to 2026-restructure (4 new tiers) when config.pricing is unset", async () => {
+    configExports.pricing = undefined;
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    expect(res.body.code).toBe(200);
+    expect(res.body.data.generation).toBe("2026-restructure");
+    expect(res.body.data.plans.map((p) => p.tier)).toEqual([
+      "Basic (2026)", "Standard (2026)", "Platinum (2026)", "Palladium (2026)",
+    ]);
+  });
+
+  it("respects config.pricing.activePlanGeneration = 'legacy'", async () => {
+    configExports.pricing = { activePlanGeneration: "legacy" };
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    expect(res.body.data.generation).toBe("legacy");
+    expect(res.body.data.plans.map((p) => p.tier)).toEqual([
+      "Basic", "Standard", "Premium", "Platinum", "Titanium", "Palladium",
+    ]);
+  });
+
+  it("'both' returns all 10 tiers, legacy first", async () => {
+    configExports.pricing = { activePlanGeneration: "both" };
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    expect(res.body.data.plans).toHaveLength(10);
+    expect(res.body.data.plans[0].tier).toBe("Basic");
+    expect(res.body.data.plans[9].tier).toBe("Palladium (2026)");
+  });
+
+  it("computes priceAnnual as monthly × config.pricing.annualPriceMultiplier (PRD FR-18)", async () => {
+    configExports.pricing = { activePlanGeneration: "2026-restructure", annualPriceMultiplier: 10 };
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    expect(res.body.data.annualPriceMultiplier).toBe(10);
+    const basic = res.body.data.plans.find((p) => p.tier === "Basic (2026)");
+    expect(basic.price).toBe("$69/Month");
+    expect(basic.priceAnnual).toBe("$690/Year");
+  });
+
+  it("respects a different annualPriceMultiplier value", async () => {
+    configExports.pricing = { activePlanGeneration: "2026-restructure", annualPriceMultiplier: 12 };
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    const basic = res.body.data.plans.find((p) => p.tier === "Basic (2026)");
+    expect(basic.priceAnnual).toBe("$828/Year"); // 69 * 12
+  });
+
+  it("defaults annualPriceMultiplier to 10 when unset", async () => {
+    configExports.pricing = { activePlanGeneration: "2026-restructure" };
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    expect(res.body.data.annualPriceMultiplier).toBe(10);
+  });
+
+  it("every plan's features array matches the features list length", async () => {
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    const { features, plans } = res.body.data;
+    for (const p of plans) {
+      expect(p.features).toHaveLength(features.length - 1); // "Networks" header has no boolean row
+    }
   });
 });
 
@@ -268,6 +353,20 @@ describe("authRoutes > GET /plan-access", () => {
     await getHandler("get", "/plan-access")({ user: { plan_id: 1 }, query: {} }, res);
     expect(res.body.data.allowedPlatforms).toEqual(["facebook", "google"]);
     expect(res.body.data.customPlatformRestriction).toBe(false);
+  });
+
+  // 2026-07-14: this route is a separate implementation from planAccessMiddleware and
+  // was missing planTier entirely — PricingModal.jsx's "only show upgrade tiers" filter
+  // depends on it (currentPlanTier), so its absence made the modal always fall back to
+  // showing every plan including the user's current one.
+  it("includes planTier from resolvePlanTier() in the response", async () => {
+    planSvc.getConfig.mockResolvedValue([{ _id: "plan_groups", groups: { "Basic (2026)": { plans: [101] } } }]);
+    planSvc.resolvePlanTier.mockReturnValue("Basic (2026)");
+    freshSut();
+    const res = mkRes();
+    await getHandler("get", "/plan-access")({ user: { plan_id: 101 }, query: {} }, res);
+    expect(res.body.data.planTier).toBe("Basic (2026)");
+    expect(planSvc.resolvePlanTier).toHaveBeenCalledWith(101, expect.any(Array));
   });
 
   it("aMember regular plan → intersects JWT with config", async () => {

@@ -6,7 +6,7 @@ const fs = require('fs');
 const readline = require('readline');
 
 // The secret salt to verify the key. This MUST match the server's config.admin.sessionSecret
-const SECRET = 'pas-admin-session-secret-change-me';
+const SECRET = 'dhguejfr65f79r65efehgfyef';
 
 function generateKey() {
   const userInfo = os.userInfo();
