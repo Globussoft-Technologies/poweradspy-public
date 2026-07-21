@@ -164,6 +164,8 @@ vi.mock("../../../utils/Elasticsearch.js", () => ({
 
 let svc;
 let resolveBrandLimit;
+let resolveCurrentPlanId;
+let loadCurrentPlanLimits;
 
 beforeEach(async () => {
   Object.values(spies).forEach((s) => {
@@ -191,7 +193,7 @@ beforeEach(async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.resetModules();
-  ({ default: svc, resolveBrandLimit } = await import("../../../core/Competitors/competitorService.js"));
+  ({ default: svc, resolveBrandLimit, resolveCurrentPlanId, loadCurrentPlanLimits } = await import("../../../core/Competitors/competitorService.js"));
 });
 
 function mockRes() {
@@ -222,6 +224,89 @@ describe("competitorService > resolveBrandLimit (pure helper)", () => {
   });
   it("defaults to 0 when plan_limits is missing entirely", () => {
     expect(resolveBrandLimit({}, 101)).toBe(0);
+  });
+});
+
+describe("competitorService > current dynamic plan limits", () => {
+  it("prefers the current aMember JWT plan over a stale stored plan", () => {
+    expect(resolveCurrentPlanId({ user: { userSubscriptionType: 72 } }, 57)).toBe(72);
+  });
+
+  it("loads the admin-managed limits from the authoritative PAS endpoint", async () => {
+    spies.configHasSpy.mockImplementation((key) => key === "PLAN_ACCESS_API_URL");
+    spies.configGetSpy.mockImplementation((key) =>
+      key === "PLAN_ACCESS_API_URL" ? "https://pas.test/api/v1/auth/plan-access" : `cfg:${key}`
+    );
+    spies.axiosGetSpy.mockResolvedValueOnce({
+      data: {
+        data: {
+          planId: 72,
+          competitorLimits: { brandLimit: 4, competitorLimit: 25 },
+        },
+      },
+    });
+
+    const limits = await loadCurrentPlanLimits({
+      user: { userSubscriptionType: 72 },
+      headers: { authorization: "Bearer jwt" },
+    }, 57);
+
+    expect(limits).toEqual({
+      planId: 72,
+      brandLimit: 4,
+      competitorLimit: 25,
+      source: "plan-access-api",
+    });
+    expect(spies.axiosGetSpy).toHaveBeenCalledWith(
+      "https://pas.test/api/v1/auth/plan-access",
+      { headers: { authorization: "Bearer jwt" }, timeout: 5000 },
+    );
+    expect(spies.planAccessConfigFindOneSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not cache limits and applies an admin change on the next request", async () => {
+    spies.configHasSpy.mockImplementation((key) => key === "PLAN_ACCESS_API_URL");
+    spies.configGetSpy.mockReturnValue("https://pas.test/api/v1/auth/plan-access");
+    spies.axiosGetSpy
+      .mockResolvedValueOnce({
+        data: { data: { planId: 72, competitorLimits: { brandLimit: 1, competitorLimit: 7 } } },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { planId: 72, competitorLimits: { brandLimit: 1, competitorLimit: 100 } } },
+      });
+    const req = {
+      user: { userSubscriptionType: 72 },
+      headers: { authorization: "Bearer supplied-token" },
+    };
+
+    const beforeAdminChange = await loadCurrentPlanLimits(req);
+    const afterAdminChange = await loadCurrentPlanLimits(req);
+
+    expect(beforeAdminChange.competitorLimit).toBe(7);
+    expect(afterAdminChange.competitorLimit).toBe(100);
+    expect(afterAdminChange.source).toBe("plan-access-api");
+    expect(spies.axiosGetSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to Mongo when the PAS endpoint is unavailable", async () => {
+    spies.configHasSpy.mockImplementation((key) => key === "PLAN_ACCESS_API_URL");
+    spies.configGetSpy.mockReturnValue("https://pas.test/api/v1/auth/plan-access");
+    spies.axiosGetSpy.mockRejectedValueOnce(new Error("pas-down"));
+    spies.planAccessConfigFindOneSpy.mockResolvedValueOnce({
+      plan_limits: { "72": { brandLimit: 3, competitorLimit: 19 } },
+    });
+
+    const limits = await loadCurrentPlanLimits({
+      user: { userSubscriptionType: 72 },
+      headers: { authorization: "Bearer jwt" },
+    });
+
+    expect(limits).toEqual({
+      planId: 72,
+      brandLimit: 3,
+      competitorLimit: 19,
+      source: "mongo-fallback",
+    });
   });
 });
 

@@ -30,6 +30,82 @@ export function resolveCompetitorLimit(competitorLimitsDoc, planId) {
   return competitorLimitsDoc?.plan_limits?.[String(planId)]?.competitorLimit ?? 0;
 }
 
+// Protected competitor routes already verify the PAS JWT. Prefer its current
+// subscription claim over user_details.plan_id, which is only a synchronized
+// local copy and can lag behind a login/plan change.
+export function resolveCurrentPlanId(req, storedPlanId = null) {
+  const tokenPlanId = req?.user?.userSubscriptionType ?? req?.user?.plan_id;
+  const selected = tokenPlanId !== undefined && tokenPlanId !== null && tokenPlanId !== ''
+    ? tokenPlanId
+    : storedPlanId;
+  if (selected === undefined || selected === null || selected === '') return null;
+  const numeric = Number(selected);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function getPlanAccessApiUrl() {
+  if (process.env.PLAN_ACCESS_API_URL) return process.env.PLAN_ACCESS_API_URL;
+  if (config.has('PLAN_ACCESS_API_URL')) return config.get('PLAN_ACCESS_API_URL');
+
+  // config/*.json is intentionally git-ignored in this service. Keep the dev
+  // deployment functional even when the new key has not yet been added to the
+  // server's local config; production remains explicit via config/env.
+  const serviceHost = config.has('SWAGGER_HOST_URL') ? config.get('SWAGGER_HOST_URL') : '';
+  return serviceHost === 'competitor-dev.poweradspy.com'
+    ? 'https://stagingtest-api.poweradspy.com/api/v1/auth/plan-access'
+    : null;
+}
+
+/**
+ * Resolve current limits from the PAS entitlement API so admin-panel edits
+ * have one authoritative read path across services. Direct Mongo lookup stays
+ * as a fail-safe for an API outage or an older deployment without this config.
+ */
+export async function loadCurrentPlanLimits(req, storedPlanId = null) {
+  const planId = resolveCurrentPlanId(req, storedPlanId);
+  if (planId == null) return null;
+
+  const authorization = req?.headers?.authorization;
+  const planAccessUrl = getPlanAccessApiUrl();
+
+  if (planAccessUrl && authorization) {
+    try {
+      const response = await axios.get(planAccessUrl, {
+        headers: { authorization },
+        timeout: 5000,
+      });
+      const remote = response?.data?.data;
+      const remotePlanId = Number(remote?.planId);
+      const brandLimit = Number(remote?.competitorLimits?.brandLimit);
+      const competitorLimit = Number(remote?.competitorLimits?.competitorLimit);
+      if (
+        remotePlanId === planId &&
+        Number.isFinite(brandLimit) && brandLimit >= 0 &&
+        Number.isFinite(competitorLimit) && competitorLimit >= 0
+      ) {
+        return { planId, brandLimit, competitorLimit, source: 'plan-access-api' };
+      }
+      logger.warn('PAS plan-access response was invalid or for a different plan; using Mongo fallback', {
+        requestedPlanId: planId,
+        responsePlanId: remote?.planId,
+      });
+    } catch (error) {
+      logger.warn('PAS plan-access lookup failed; using Mongo fallback', { planId, error: error.message });
+    }
+  }
+
+  const competitorLimitsDoc = await mongoose.connection
+    .collection('plan_access_config')
+    .findOne({ _id: 'competitor_limits' });
+  if (!competitorLimitsDoc) return null;
+  return {
+    planId,
+    brandLimit: resolveBrandLimit(competitorLimitsDoc, planId),
+    competitorLimit: resolveCompetitorLimit(competitorLimitsDoc, planId),
+    source: 'mongo-fallback',
+  };
+}
+
 // Bound for every synchronous call to the DS competitor-generation service
 // (`/prepare`, `/list`, `/tokens/usage`) — used both in the request/response
 // path a spinner is waiting on (checkCompetitorProcess, getStoreProcessCompetitors)
@@ -227,16 +303,12 @@ async create(req, res) {
               // block every brand add across the product.
               try {
                 const requester = await User_details.findById(user_id, { plan_id: 1 }).lean();
-                const planId = requester?.plan_id ?? null;
-                if (planId != null) {
-                  const competitorLimitsDoc = await mongoose.connection
-                    .collection('plan_access_config')
-                    .findOne({ _id: 'competitor_limits' });
-                  if (competitorLimitsDoc) {
-                    const brandLimit = resolveBrandLimit(competitorLimitsDoc, planId);
+                const currentLimits = await loadCurrentPlanLimits(req, requester?.plan_id);
+                if (currentLimits) {
+                    const { planId, brandLimit, source } = currentLimits;
                     const currentBrandCount = await Competitors_request.countDocuments({ user_id });
                     if (currentBrandCount >= brandLimit) {
-                      logger.info("Competitor brand quota exceeded", { user_id, planId, brandLimit, currentBrandCount });
+                      logger.info("Competitor brand quota exceeded", { user_id, planId, brandLimit, currentBrandCount, source });
                       return res.send(
                         Response.quotaExceededResp(
                           `Your current plan allows tracking ${brandLimit} brand${brandLimit === 1 ? "" : "s"}. Please upgrade your plan to track more.`,
@@ -244,7 +316,6 @@ async create(req, res) {
                         )
                       );
                     }
-                  }
                 }
               } catch (limitErr) {
                 logger.warn("Competitor brand quota check failed — allowing request (fail-open)", { user_id, error: limitErr.message });
@@ -658,16 +729,12 @@ async create(req, res) {
               const requester = projectDoc?.user_id
                 ? await User_details.findById(projectDoc.user_id, { plan_id: 1 }).lean()
                 : null;
-              const planId = requester?.plan_id ?? null;
-              if (planId != null) {
-                const competitorLimitsDoc = await mongoose.connection
-                  .collection('plan_access_config')
-                  .findOne({ _id: 'competitor_limits' });
-                if (competitorLimitsDoc) {
-                  const competitorLimit = resolveCompetitorLimit(competitorLimitsDoc, planId);
+              const currentLimits = await loadCurrentPlanLimits(req, requester?.plan_id);
+              if (currentLimits) {
+                  const { planId, competitorLimit, source } = currentLimits;
                   const currentMonitoringCount = projectDoc?.monitoring?.length ?? 0;
                   if (currentMonitoringCount >= competitorLimit) {
-                    logger.info("Competitor monitoring quota exceeded", { competitor_request_id, planId, competitorLimit, currentMonitoringCount });
+                    logger.info("Competitor monitoring quota exceeded", { competitor_request_id, planId, competitorLimit, currentMonitoringCount, source });
                     return res.send(
                       Response.quotaExceededResp(
                         `Your current plan allows monitoring ${competitorLimit} competitor${competitorLimit === 1 ? "" : "s"} per brand. Please upgrade your plan to monitor more.`,
@@ -675,7 +742,6 @@ async create(req, res) {
                       )
                     );
                   }
-                }
               }
             } catch (limitErr) {
               logger.warn("Competitor monitoring quota check failed — allowing request (fail-open)", { competitor_request_id, error: limitErr.message });
