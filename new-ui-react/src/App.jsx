@@ -43,6 +43,7 @@ import AIAnalysisModal from "./components/modals/AIAnalysisModal";
 import CampaignModal from "./components/modals/CampaignModal";
 import SubscriptionModal from "./components/modals/SubscriptionModal";
 import PricingModal from "./components/modals/PricingModal";
+import OnboardingModal from "./components/modals/OnboardingModal";
 import AnalyticsModal from "./components/modals/AnalyticsModal.jsx";
 import KeywordExplorerModal from "./components/modals/KeywordExplorerModal.jsx";
 import KeywordsExplorerPage from "./components/keywords-explorer/KeywordsExplorerPage.jsx";
@@ -1946,6 +1947,23 @@ const App = () => {
         isOpen={ui.isPricingModalOpen}
         onClose={() => dispatch(closeModal('isPricingModalOpen'))}
         currentPlanTier={planAccess?.planTier ?? null}
+      />
+
+      <OnboardingModal
+        isOpen={ui.isOnboardingModalOpen}
+        onClose={() => dispatch(closeModal('isOnboardingModalOpen'))}
+        onExplore={(category, countries) => {
+          // Carry the picked niche/countries into the Ads Library's own
+          // filters (same filterValues keys the sidebar's Category/Country
+          // filters use — see SchemaRenderer's "adcategory" handling and
+          // countryFilter.js) so "Explore Full Library" actually lands on
+          // ads matching what the user just told us they're tracking,
+          // instead of the generic unfiltered library.
+          const next = {};
+          if (category) next.adcategory = [category];
+          if (countries?.length) next.country_filter = countries;
+          if (Object.keys(next).length) sdui.setAllFilters(next);
+        }}
       />
 
       {actionError && (

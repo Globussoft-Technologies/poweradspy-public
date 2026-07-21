@@ -18,9 +18,29 @@ const { Router } = require('express');
 const { generateToken } = require('../middleware/auth');
 const config = require('../config');
 const logger = require('../logger');
+const dbManager = require('../database/DatabaseManager');
 
 const log = logger.createChild('amember-auth');
 const router = Router();
+
+// Same table/key onboardingController.js reads (am_user_action, keyed by am_id).
+// Kept local + fail-open: a failure here must never block the aMember login redirect.
+async function resolveNeedsOnboarding(userId) {
+  try {
+    const ident = (s, def) => (/^[A-Za-z0-9_]+$/.test(String(s || '')) ? String(s) : def);
+    const net = config.notifications?.tokenNetwork || 'facebook';
+    const tbl = ident(config.notifications?.tokenTable, 'am_user_action');
+    const sql = dbManager.getSQL(net);
+    if (!sql) return false;
+    const rows = await sql.query(`SELECT onboarding_completed FROM ${tbl} WHERE am_id = ? LIMIT 1`, [userId]);
+    const row = Array.isArray(rows[0]) ? rows[0][0] : rows[0];
+    const completed = row?.onboarding_completed === 1 || row?.onboarding_completed === true;
+    return !completed;
+  } catch (err) {
+    log.warn('resolveNeedsOnboarding failed, defaulting to false (fail-open)', { userId, error: err.message });
+    return false;
+  }
+}
 
 // Plan codes from config
 const PLANS = () => config.amember.plans;
@@ -254,7 +274,10 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     // Step 6: Compute subscription type (mirrors PHP max key logic)
     const userSubscriptionType = computeSubscriptionType(subscriptions);
 
-    log.info('User authenticated', { userId, username, userSubscriptionType, expiryDate, platformAccess });
+    // Step 6b: Onboarding status — additive, fail-open (see resolveNeedsOnboarding above).
+    const needsOnboarding = await resolveNeedsOnboarding(parseInt(userId, 10));
+
+    log.info('User authenticated', { userId, username, userSubscriptionType, expiryDate, platformAccess, needsOnboarding });
 
     // Step 7: Build JWT payload with all user data
     const payload = {
@@ -269,6 +292,7 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
       platformAccess,
       referrer: referrer || null,
       role: 'user',
+      needsOnboarding,
     };
 
     const token = generateToken(payload);

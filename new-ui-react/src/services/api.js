@@ -63,6 +63,84 @@ export const fetchPlanAccess = async (network) => {
   return json.data || null;
 };
 
+// ─── Onboarding (category / competitors / countries) ─────────────────────────
+const authHeaders = () => ({
+  'Content-Type': 'application/json',
+  ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+});
+
+/** GET current onboarding status. Returns { needsOnboarding } or null on failure (fail-open on the caller's side). */
+export const fetchOnboardingStatus = async () => {
+  try {
+    const res = await fetch(`${PAS_API_BASE}/api/v1/common/onboarding/status`, { headers: authHeaders() });
+    await checkFor401(res);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data || null;
+  } catch {
+    return null;
+  }
+};
+
+/** Category search-as-you-type — reuses the existing /catsearch AI proxy. */
+export const searchOnboardingCategory = async (query, topK = 5) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/common/catsearch`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ query, top_k: topK }),
+  });
+  await checkFor401(res);
+  if (!res.ok) return null;
+  return res.json();
+};
+
+/** Save onboarding selections and mark the user as onboarded. */
+export const saveOnboarding = async ({ major_category_id, major_category_name, sub_category_id, sub_category_name, competitors, countries }) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/common/onboarding`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ major_category_id, major_category_name, sub_category_id, sub_category_name, competitors, countries }),
+  });
+  await checkFor401(res);
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.message || 'Failed to save onboarding preferences');
+  return json?.data || null;
+};
+
+/**
+ * Real advertiser names for the Competitors picker. Pass the already-selected
+ * category (+ countries) so the list is the TOP ADVERTISERS IN THAT NICHE —
+ * names the user actually recognizes — instead of a random site-wide list.
+ */
+export const fetchAdvertiserSuggestions = async (query, { majorCategoryName, countries } = {}) => {
+  try {
+    const params = new URLSearchParams();
+    if (query) params.set('query', query);
+    if (majorCategoryName) params.set('major_category_name', majorCategoryName);
+    if (countries && countries.length) params.set('countries', countries.join(','));
+    const res = await fetch(`${PAS_API_BASE}/api/v1/common/onboarding/advertiser-suggest?${params.toString()}`, { headers: authHeaders() });
+    await checkFor401(res);
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json.data?.advertisers || [];
+  } catch {
+    return [];
+  }
+};
+
+/** Instant preview — trending / top advertisers / longest-running for the chosen category+countries+competitors. */
+export const fetchOnboardingPreview = async ({ major_category_id, major_category_name, sub_category_id, countries, competitors }) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/common/onboarding/preview-results`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ major_category_id, major_category_name, sub_category_id, countries, competitors }),
+  });
+  await checkFor401(res);
+  if (!res.ok) return { trending: [], topAdvertisers: [], longestRunning: [] };
+  const json = await res.json();
+  return json.data || { trending: [], topAdvertisers: [], longestRunning: [] };
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const NAS_BASE_URL = (import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, '');
 // Since the 2026-06-21 SFTP migration the NAS stores BOTH images and videos under

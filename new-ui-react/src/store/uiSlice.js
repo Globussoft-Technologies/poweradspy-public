@@ -9,6 +9,7 @@ const uiSlice = createSlice({
     isPricingModalOpen: false,
     isAnalyticsModalOpen: false,
     isSubscriptionModalOpen: false,
+    isOnboardingModalOpen: false,
     // Page states
     activePage: 'ads',
     showSavedAdsPage: false,

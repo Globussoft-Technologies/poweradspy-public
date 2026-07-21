@@ -35,6 +35,7 @@ const {
   markNotificationAsRead: markPushAsRead,
   resetDailyKeywordStatus
 } = require('../controllers/pushNotificationController');
+const { getOnboardingStatus, saveOnboarding, getOnboardingPreview, getAdvertiserSuggestions } = require('../controllers/onboardingController');
 const { sendMailDailyUpdate } = require('../controllers/dailyMailUpdateController');
 const { getTotalAdCount } = require('../controllers/totalAdCountController');
 const { getRecentAds } = require('../controllers/recentAdsController');
@@ -503,5 +504,14 @@ router.put('/insert-update-domain-date', asyncHandler(putDomainDate));
 // all 10 networks. No `network` (or 'all') searches every network; returns every network the
 // domain was found in, each with its own domain_registered_date.
 router.get('/get-domain-registration', asyncHandler(getDomainRegistrationUnified));
+
+// ─── First-login onboarding (category / competitors / countries) — additive.
+// Storage: am_user_action (same table/key as fcm_token, pinterest_launch_status
+// above). See onboardingController.js and ONBOARDING_FEATURE_IMPLEMENTATION_PLAN.md.
+// Category search itself reuses the existing /catsearch proxy above — no new endpoint for it.
+router.get('/onboarding/status', authMiddleware, asyncHandler(getOnboardingStatus));
+router.post('/onboarding', authMiddleware, asyncHandler(saveOnboarding));
+router.post('/onboarding/preview-results', authMiddleware, asyncHandler(getOnboardingPreview));
+router.get('/onboarding/advertiser-suggest', authMiddleware, asyncHandler(getAdvertiserSuggestions));
 
 module.exports = router;

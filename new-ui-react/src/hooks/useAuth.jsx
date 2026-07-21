@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { fetchPlanAccess, trackEvent } from '../services/api';
+import { useDispatch } from 'react-redux';
+import { fetchPlanAccess, fetchOnboardingStatus, trackEvent } from '../services/api';
+import { openModal } from '../store/uiSlice';
 
 const AuthContext = createContext(null);
 
@@ -189,6 +191,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(_initialAuth.user);
   const [loading] = useState(false);
   const [planAccess, setPlanAccess] = useState(null);
+  const dispatch = useDispatch();
 
   // Fetch plan access restrictions once user is authenticated (skip on public/guest routes)
   useEffect(() => {
@@ -198,6 +201,29 @@ export function AuthProvider({ children }) {
       if (data) setPlanAccess(data);
     }).catch(() => {});
   }, [token]);
+
+  // First-login onboarding popup. Prefer the needsOnboarding flag baked into a
+  // FRESH login's JWT (authRoutes.js / amemberAuth.js) — no extra request. But a
+  // token already in localStorage from before this feature (or from a session
+  // that started before the DB migration ran) won't carry that field, so fall
+  // back to a live status check whenever it's missing. This also means it self-
+  // corrects: once a stale session hits this once, later loads keep working off
+  // the JWT flag as normal logins refresh it.
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (!token || !user) return;
+    if (path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')) return;
+
+    if (user.needsOnboarding === true) {
+      dispatch(openModal('isOnboardingModalOpen'));
+      return;
+    }
+    if (user.needsOnboarding === undefined) {
+      fetchOnboardingStatus().then(data => {
+        if (data?.needsOnboarding) dispatch(openModal('isOnboardingModalOpen'));
+      }).catch(() => {});
+    }
+  }, [token, user, dispatch]);
 
   /**
    * Check if a SDUI filter/document _id is restricted for this user's plan.

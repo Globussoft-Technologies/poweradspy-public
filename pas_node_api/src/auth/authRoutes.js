@@ -17,6 +17,26 @@ const dbManager = require('../database/DatabaseManager');
 const config = require('../config');
 const logger = require('../logger');
 const planAccessService = require('../services/planAccess/planAccessService');
+const config2Notifications = config.notifications || {};
+
+// Same table/key onboardingController.js reads (am_user_action, keyed by am_id).
+// Kept local + fail-open: a failure here must never block login.
+async function resolveNeedsOnboarding(userId) {
+  try {
+    const ident = (s, def) => (/^[A-Za-z0-9_]+$/.test(String(s || '')) ? String(s) : def);
+    const net = config2Notifications.tokenNetwork || 'facebook';
+    const tbl = ident(config2Notifications.tokenTable, 'am_user_action');
+    const sql = dbManager.getSQL(net);
+    if (!sql) return false;
+    const rows = await sql.query(`SELECT onboarding_completed FROM ${tbl} WHERE am_id = ? LIMIT 1`, [userId]);
+    const row = Array.isArray(rows[0]) ? rows[0][0] : rows[0];
+    const completed = row?.onboarding_completed === 1 || row?.onboarding_completed === true;
+    return !completed;
+  } catch (err) {
+    log.warn('resolveNeedsOnboarding failed, defaulting to false (fail-open)', { userId, error: err.message });
+    return false;
+  }
+}
 
 const log = logger.createChild('auth');
 const router = Router();
@@ -41,7 +61,8 @@ router.post('/login',
 
   // ─── Dev test user (development only — bypasses DB) ──
   if (config.isDev && email === 'test@pas.dev' && password === 'Test@123') {
-    const payload = { id: 281, email: 'test@pas.dev', name: 'Test User', plan_id: 69, role: 'admin' };
+    const needsOnboarding = await resolveNeedsOnboarding(281);
+    const payload = { id: 281, email: 'test@pas.dev', name: 'Test User', plan_id: 69, role: 'admin', needsOnboarding };
     const token = generateToken(payload);
     res.cookie('authToken', token, cookieOptions());
     return res.json({ code: 200, message: 'Login successful', data: { token, expiresIn: config.jwt.expiresIn, user: payload } });
@@ -80,6 +101,8 @@ router.post('/login',
     return res.status(401).json({ code: 401, message: 'Invalid email or password' });
   }
 
+  const needsOnboarding = await resolveNeedsOnboarding(user.id);
+
   // Build JWT payload (no sensitive data)
   const payload = {
     id: user.id,
@@ -87,6 +110,7 @@ router.post('/login',
     name: user.name || '',
     plan_id: user.plan_id || 0,
     role: user.role || 'user',
+    needsOnboarding,
   };
 
   const token = generateToken(payload);
@@ -114,9 +138,13 @@ router.post('/logout', (_req, res) => {
 });
 
 // ─── GET /api/auth/me ──────────────────────────────────────
-router.get('/me', authMiddleware, (req, res) => {
-  return res.json({ code: 200, data: req.user });
-});
+router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
+  // Live lookup (not the JWT's baked-in value) — so completing onboarding
+  // is reflected immediately on next /me call, without waiting for a fresh login/token.
+  const userId = req.user?.id || req.user?.user_id;
+  const needsOnboarding = await resolveNeedsOnboarding(userId);
+  return res.json({ code: 200, data: { ...req.user, needsOnboarding } });
+}));
 
 // ─── GET /api/v1/auth/plan-access ─────────────────────────
 router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
