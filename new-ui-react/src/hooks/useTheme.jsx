@@ -7,12 +7,20 @@ export const THEMES = {
     key: 'dark',
     label: 'Dark',
     bg: '#0a0a0a',
-    cardBg: '#111',
-    surface: '#161616',
-    border: '#1c1c1c',
+    // cardBg/surface/border used to sit within ~1-2% luminance of `bg`
+    // (#111/#161616/#1c1c1c vs #0a0a0a), so cards, dropdowns, and hairlines
+    // never visually separated from the page — the "everything is muddy"
+    // report. Stepped up to a real elevation ladder (page → card → surface),
+    // mirroring the clear bg→white jump light mode gets for free.
+    cardBg: '#1c1c1f',
+    surface: '#24252a',
+    border: '#34353b',
     text: '#ffffff',
     textSecondary: '#aaaaaa',
-    textMuted: '#666666',
+    // Was #666666 on #0a0a0a (~3.4:1, fails WCAG AA for text). Brightened
+    // to clear 4.5:1 so secondary labels/icons read clearly, like light
+    // mode's #64748b does against its own background.
+    textMuted: '#8a8a90',
     accent: '#6366f1',
   },
   light: {

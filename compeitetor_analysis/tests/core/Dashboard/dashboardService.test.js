@@ -101,6 +101,9 @@ vi.mock("../../../models/competitors.js", () => ({
 vi.mock("../../../models/countries.js", () => ({
   getAllCountries: spies.getAllCountriesSpy,
 }));
+vi.mock("../../../models/competitorSnapshot.js", () => ({
+  default: { find: vi.fn(), findOne: vi.fn(), updateOne: vi.fn(), countDocuments: vi.fn(), deleteMany: vi.fn() },
+}));
 vi.mock("../../../utils/Elasticsearch.js", () => ({
   esClient: spies.esClient,
   esServers: {

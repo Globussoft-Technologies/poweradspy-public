@@ -16,6 +16,7 @@ const {
   getAdvertiserCountryData,
   getAdvertiserInsightsByDateRange,
 } = require('../controllers/adInsightsController');
+const { searchAuditKeywords, insertSearchAuditKeywords } = require('../controllers/searchAuditController');
 const { getAdTrends } = require('../controllers/trendsController');
 const { getKeywordInsight } = require('../controllers/keywordInsightController');
 const { getAdvertiserProfile } = require('../controllers/advertiserProfileController');
@@ -67,6 +68,8 @@ const importUploadMw = (req, res, next) => importUpload(req, res, (err) => {
   }
   return next();
 });
+
+const keywordUploadMw = multer({ dest: require('os').tmpdir() }).single('file');
 
 const searchSchema = {
   body: {
@@ -382,6 +385,28 @@ function createGoogleRoutes(service) {
     importUploadMw,
     asyncHandler(async (req, res) => {
       const result = await importKeywordsFile(req, service.db, service.log);
+      return res.status(result.code === 200 ? 200 : result.code).json(result);
+    })
+  );
+
+  // ─── Search-Audit Keywords (gtext → MongoDB google_audit_keywords) ──────────
+  // GET  /api/v1/google/get-search-audit-keywords    — crawler pull (cursored batch)
+  // POST /api/v1/google/insert-search-audit-keywords — bulk insert (CSV file or JSON)
+  // Public (gtext routes had no auth); dedupe + 100k cap handled in the service.
+  router.get(
+    '/get-search-audit-keywords',
+    asyncHandler(async (req, res) => {
+      const result = await searchAuditKeywords(req, service.db, service.log);
+      // HTTP 200 always; the app-level status lives in body.code (legacy contract).
+      return res.status(200).json(result);
+    })
+  );
+
+  router.post(
+    '/insert-search-audit-keywords',
+    keywordUploadMw,
+    asyncHandler(async (req, res) => {
+      const result = await insertSearchAuditKeywords(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

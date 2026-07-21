@@ -14,6 +14,7 @@ import http from "node:http";
 import { initSocket } from "./utils/socket.js";
 import { initDataReportCron } from "./core/mailer/dataReportCron.js";
 import { initKeywordNotifyCron } from "./core/mailer/keywordNotifyCron.js";
+import { initSnapshotCron } from "./core/Dashboard/snapshotCron.js";
 
 const app = express();
 app.use(cors({
@@ -100,6 +101,10 @@ const startServer = async () => {
     // `keyword_notify_cron` is true AND `keyword_notify_schedule` is set
     // (e.g. "10am" / "15m"). Independent of the data-report `cron` flag.
     initKeywordNotifyCron();
+
+    // Competitor snapshot → alert-evaluation → change-detection chain — its
+    // OWN switch (`competitor_snapshot_cron`). No-op unless enabled.
+    initSnapshotCron();
   } catch (error) {
     Logger.error(`Failed to start server: ${error.message}`);
     process.exit(1);

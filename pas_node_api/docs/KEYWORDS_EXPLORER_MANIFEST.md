@@ -1,6 +1,9 @@
 # Keywords Explorer (Google) — Manifest
 
-> **Status: IMPLEMENTED, smoke-tested against dev DB/ES over real HTTP.**
+> **Status: IMPLEMENTED, smoke-tested against dev DB/ES over real HTTP, and
+> scale-validated against production ES/MySQL read-only credentials (§7) —
+> the rollup job's cost was re-tuned after production-scale testing surfaced
+> two crash/perf issues invisible at dev scale (§6, items 3-4).**
 > Ships with the `keywordStatsRefresh` cron **disabled by default** in
 > `config.json` — flip it on only after you've dry-run the job yourself (§5).
 >
@@ -178,24 +181,24 @@ node src/services/google/jobs/refreshKeywordStats.js --commit
 #                        against the 200M+ doc index)
 #   --truncate           wipe the table first (default is upsert-in-place —
 #                        safe to re-run repeatedly without --truncate)
-#   --batch=N            composite page size (default 200; smaller than the
-#                        Tier-2 job's 1000 because this sweep carries more
-#                        sub-aggs per bucket)
+#   --batch=N            composite page size (default 1000)
+#   --precision=N        cardinality-agg precision_threshold (default 1000 —
+#                        see §7, do not raise without re-measuring against prod)
 ```
 
 Cron: `config.json` → `crons.jobs.keywordStatsRefresh` (ships `enabled: false`
 on purpose — flip to `true` only after a manual dry-run + commit have been
-validated once. Same `enabled`/`schedule`/`commit`/`truncate`/`full`/`batch`
-keys map straight through to the job's CLI args via `cronManager.js`'s
-`REGISTRY`).
+validated once. Same `enabled`/`schedule`/`commit`/`truncate`/`full`/`batch`/
+`precision` keys map straight through to the job's CLI args via
+`cronManager.js`'s `REGISTRY`).
 
 ---
 
 ## 6. Gotchas discovered during testing (read this before debugging a similar 500)
 
-Two real bugs were found and fixed while smoke-testing this feature — both
-are the kind of mistake easy to reintroduce in a new controller, so they're
-documented here rather than only in a commit message:
+Four real bugs were found and fixed while testing this feature end-to-end —
+all are the kind of mistake easy to reintroduce elsewhere in this codebase,
+so they're documented here rather than only in a commit message:
 
 1. **`LIMIT ?` / `OFFSET ?` as bound parameters throws
    `Incorrect arguments to mysqld_stmt_execute`.** `db.sql.query()` runs
@@ -219,9 +222,66 @@ documented here rather than only in a commit message:
    && v !== null && v !== ''` check for optional numeric filters, not a bare
    `!== ''`.
 
+3. **A full-table `SELECT` against a table you haven't checked the
+   production row count of can OOM-crash the whole process.**
+   `refreshKeywordStats.js` originally loaded ALL of `google_text_keywords`
+   into one in-memory `Map` upfront — fine against dev's ~5k rows, but
+   production has **~42M rows**, and that query crashed the process with
+   `JavaScript heap out of memory` even at a 4GB heap limit. Because this
+   job runs in-process via the cron (`cronManager.js`), not as a separate
+   child process, that crash would have taken down the entire
+   `pas_node_api` worker, not just the job. Fixed by resolving keyword ids
+   **per composite-agg page** (`resolveKeywordIds()`) instead of once
+   upfront — bounds memory to one page's worth of keywords (≤ `--batch`).
+   **Before writing a bulk job against any of the legacy MySQL tables in
+   this repo, check the production row count first — dev's row counts are
+   not remotely representative.**
+
+4. **Wrapping an indexed column in a SQL function silently defeats the
+   index.** The per-page fix in (3) above still used
+   `WHERE LOWER(TRIM(keyword)) IN (...)` — which measured at **80.7 seconds**
+   for a single 1000-keyword page against production (`EXPLAIN` confirmed a
+   full 42M-row scan; `LOWER()`/`TRIM()` on the column prevents MySQL from
+   using the `keyword`/`keyword_2` indexes at all). Since
+   `google_text_keywords.keyword`'s collation is already case-insensitive
+   (`utf8mb3_unicode_ci`), dropping the function wrap entirely —
+   `WHERE keyword IN (...)` with the already-lowercased ES values passed
+   straight in — matches identically AND lets MySQL use the index
+   (`EXPLAIN`: range scan, ~3 rows per key). Same page, same data:
+   **46ms instead of 80.7s (1730x)**. **Never wrap an indexed WHERE-clause
+   column in a function without checking `EXPLAIN` first** — it's invisible
+   in small/dev-scale testing and only shows up as a production incident.
+
 ---
 
-## 7. What's deliberately NOT built (yet)
+## 7. Production-scale validation (measured against real prod ES/MySQL, 2026-07-03)
+
+Before enabling the cron, these numbers were measured directly against
+production (`google_ads_data` ES index, `pas-gtext` MySQL — read-only
+credentials, no writes) to answer "will a daily full sweep be slow at
+production's actual scale":
+
+| Metric | Value |
+|---|---|
+| Total docs in `google_ads_data` | ~197M |
+| Distinct `target_keyword`, all-time | ~21.5M |
+| Distinct `target_keyword`, trailing 18mo (this job's default scope) | ~464k |
+| `google_text_keywords` row count | ~42M |
+| Full ES composite sweep, gotcha (1)+(2) unfixed (precision 40000, batch 200) | **~12 hours** (extrapolated — do not run) |
+| Full ES composite sweep, fixed (precision 1000, batch 1000) | **~3 minutes** |
+| Full MySQL keyword-resolution, gotcha (3)+(4) unfixed (upfront full-table load) | **crashes** (OOM, 4GB heap) |
+| Full MySQL keyword-resolution, fixed (per-page, unwrapped WHERE) | **~20-25 seconds total** (465 pages × ~46ms) |
+| **Combined estimated full-sweep runtime (fixed)** | **under 4 minutes** |
+
+This is well within a nightly (or even hourly) cron budget. If you change
+the sub-agg set, the lookback window, or the MySQL query shape, re-measure
+against a production-scale dataset before assuming dev-scale timing holds —
+every gotcha in §6 was invisible at dev scale and only appeared at
+production scale.
+
+---
+
+## 8. What's deliberately NOT built (yet)
 
 - **Real CPC/search-volume/backlink-based KD.** Would require a paid
   third-party data license — explicit Tier-3 decision, not assumed here.

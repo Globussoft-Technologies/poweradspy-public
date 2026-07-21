@@ -39,6 +39,19 @@ const UNIQUE_ADVERTISERS = { cardinality: { field: AGG_FIELD.advertiser, precisi
 const UNIQUE_DOMAINS = { cardinality: { field: AGG_FIELD.domain, precision_threshold: ID_PRECISION } };
 const UNIQUE_KEYWORDS = { cardinality: { field: AGG_FIELD.keyword, precision_threshold: ID_PRECISION } };
 
+// Cardinality-agg factory with a caller-chosen precision_threshold. The fixed
+// UNIQUE_* constants above (precision 40000) are sized for the single-bucket
+// Tier-1 live endpoints, where cost is proportional to matched docs, not
+// bucket count. A bulk composite-agg sweep multiplies this cost by every
+// bucket in the page — measured against production ES (~197M docs,
+// google_ads_data), 5 cardinality-family sub-aggs at precision 40000 cost
+// ~18.5s for a 200-bucket page (~12h for a full 464k-keyword sweep); the same
+// sub-aggs at precision 1000 cost ~300-370ms for a 1000-bucket page (~3min
+// full sweep). Use this factory for anything that runs per-bucket at scale.
+function cardinalityAgg(field, precisionThreshold) {
+  return { cardinality: { field, precision_threshold: precisionThreshold } };
+}
+
 // Domains that are ad-network redirects (unresolved aclk), not the real
 // advertiser landing domain — noise in any "top domains" view.
 const REDIRECT_DOMAINS = ['googleadservices.com', 'google.com'];
@@ -178,18 +191,24 @@ function mapTermBuckets(buckets, keyName = 'key') {
   });
 }
 
-// Two-window "trailing 30d vs prior 30d" filter aggs, both wrapping UNIQUE_ADS —
-// used by refreshKeywordStats.js to derive a growth_pct without a second query.
-// `now` is injectable for deterministic tests; defaults to the real clock.
-function last2WindowAggs(dateField = 'last_seen', now = new Date()) {
+// Two-window "trailing 30d vs prior 30d" filter aggs, wrapping a cardinality
+// agg — used by refreshKeywordStats.js to derive a growth_pct without a
+// second query. `now` is injectable for deterministic tests; defaults to the
+// real clock. `cardinalityAgg` defaults to UNIQUE_ADS (precision 40000, fine
+// for the single-bucket Tier-1 live endpoints) but a bulk composite-agg sweep
+// over hundreds of thousands of buckets should pass a much cheaper one — see
+// refreshKeywordStats.js's BULK_UNIQUE_ADS (precision 40000 there measured at
+// ~18s/200-bucket page against production ES; precision 1000 measured
+// ~300ms/1000-bucket page for the same full sub-agg set).
+function last2WindowAggs(dateField = 'last_seen', now = new Date(), cardinalityAgg = UNIQUE_ADS) {
   const day = 24 * 60 * 60 * 1000;
   const iso = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
   const d0 = new Date(now.getTime());
   const d30 = new Date(now.getTime() - 30 * day);
   const d60 = new Date(now.getTime() - 60 * day);
   return {
-    ads_30d: { filter: { range: { [dateField]: { gte: iso(d30), lte: iso(d0) } } }, aggs: { ads: UNIQUE_ADS } },
-    ads_prior_30d: { filter: { range: { [dateField]: { gte: iso(d60), lt: iso(d30) } } }, aggs: { ads: UNIQUE_ADS } },
+    ads_30d: { filter: { range: { [dateField]: { gte: iso(d30), lte: iso(d0) } } }, aggs: { ads: cardinalityAgg } },
+    ads_prior_30d: { filter: { range: { [dateField]: { gte: iso(d60), lt: iso(d30) } } }, aggs: { ads: cardinalityAgg } },
   };
 }
 
@@ -226,4 +245,5 @@ module.exports = {
   last2WindowAggs,
   majorityTermsAgg,
   majorityBucketKey,
+  cardinalityAgg,
 };

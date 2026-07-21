@@ -8,6 +8,7 @@ import Organic_search from '../../models/organic_search.js';
 import Paid_search from "../../models/paid_search.js";
 import Competitors from '../../models/competitors.js';
 import User_details from '../../models/user_details.js';
+import CompetitorSnapshot from '../../models/competitorSnapshot.js';
 import { getAllCountries } from '../../models/countries.js';
 // import {client} from '../../utils/Elasticsearch.js';
 import { esClient,esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
@@ -881,99 +882,10 @@ const getAdvertiserAdCount = async (advertiser) => {
           countryCounts: {}
         };
 
-        let facebookStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
-        let instagramStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
-        let googleStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
-
-        /* ────────────────────── GLOBAL STATS (ALL DOCS) ────────────────────── */
-        const fetchGlobalStatsES6 = async (client, index, ownerField, impField, popField, budField) => {
-          const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
-          const ownerClause = buildOwnerClause(index, competitor);
-          const res = await client.search({
-            index,
-            size: 0,
-            body: {
-              query: {
-                bool: {
-                  must: [ownerClause],
-                  ...(filterClauses.length  && { filter:   filterClauses }),
-                  ...(mustNotClauses.length && { must_not: mustNotClauses }),
-                },
-              },
-              aggs: {
-                impressions: {
-                  filter: { exists: { field: impField } },
-                  aggs: {
-                    total_imp: { sum: { field: impField } },
-                    imp_count: { value_count: { field: impField } }
-                  }
-                },
-                popularity: {
-                  filter: { exists: { field: `${popField}.current` } },   
-                
-                  aggs: {
-                    total_pop: {
-                      sum: {
-                        field: `${popField}.current`,   
-                        missing: 0                      
-                      }
-                    },
-                    pop_count: {
-                      value_count: { field: `${popField}.current` }
-                    }
-                  }
-                },
-                budget: {
-                  filter: { exists: { field: budField } },
-                  aggs: {
-                    // The index has NO stored "total budget" field — only a per-ad
-                    // `averagebudget` (a single numeric per doc). We derive the
-                    // total by summing those per-ad averages. The agg alias name
-                    // makes the derivation explicit so it can't be mistaken for
-                    // a field read.
-                    sum_avg_budget: { sum: { field: budField } },
-                    budget_count:   { value_count: { field: budField } },
-                  },
-                },
-              },
-            },
-          });
-
-          const a = res?.aggregations || {};
-
-          const imp = a.impressions || {};
-          /* v8 ignore start -- denominator is inside the count>0 branch, so the `|| 0` divisor guard is unreachable */
-          const avgImpression = (imp.imp_count?.value || 0) > 0
-            ? (imp.total_imp?.value || 0) / (imp.imp_count?.value || 0)
-            : 0;
-          /* v8 ignore stop */
-
-          const pop = a.popularity || {};
-          /* v8 ignore start -- denominator is inside the count>0 branch, so the `|| 0` divisor guard is unreachable */
-          const avgPopularity = (pop.pop_count?.value || 0) > 0
-            ? (pop.total_pop?.value || 0) / (pop.pop_count?.value || 0)
-            : 0;
-          /* v8 ignore stop */
-
-          const bud = a.budget || {};
-          // totalBudget = Σ(per-ad averagebudget) for ads on this platform.
-          // No "total budget" field exists in the index; this is computed.
-          const totalBudget = bud.sum_avg_budget?.value || 0;
-          /* v8 ignore start -- denominator is inside the count>0 branch, so the `|| 0` divisor guard is unreachable */
-          const avgBudget = (bud.budget_count?.value || 0) > 0
-            ? totalBudget / (bud.budget_count?.value || 0)
-            : 0;
-          /* v8 ignore stop */
-
-          return {
-            averageImpression: avgImpression,
-            averagePopularity: avgPopularity,
-            averageBudget: avgBudget,
-            totalBudget,
-          };
-        };
-    
-       
+        // Budget/impression/popularity are computed by the standalone
+        // getCompetitorBudgetStats() below (extracted so snapshotService and
+        // other callers reuse the exact same ES aggregations instead of
+        // re-deriving them here).
         for (const [serverName, serverData] of Object.entries(this.esServers)) {
          try {
           const client = this.esClient[serverName];
@@ -1075,42 +987,6 @@ const getAdvertiserAdCount = async (advertiser) => {
             totals[`${label}AdsCount`] += counts.reduce((a,b)=>a+b,0);
           }
     
-       
-          if (serverData.indexes.includes('search_mix')) {
-            const fb = await fetchGlobalStatsES6(
-              client,
-              'search_mix',
-              'facebook_ad_post_owners.post_owner_name',
-              'facebook_ad.impression',
-              'facebook_ad.popularity',
-              'facebook.averagebudget'
-            );
-            facebookStats = { ...fb };
-          }
-    
-          if (serverData.indexes.includes('instagram_search_mix')) {
-            const ig = await fetchGlobalStatsES6(
-              client,
-              'instagram_search_mix',
-              'instagram_ad_post_owners.post_owner_name',
-              'instagram_ad.impression',
-              'instagram_ad.popularity',
-              'instagram.averagebudget'
-            );
-            instagramStats = { ...ig };
-          }
-
-          if (serverData.indexes.includes('google_ads_data')) {
-            const gg = await fetchGlobalStatsES6(
-              client,
-              'google_ads_data',
-              'post_owner_name',
-              'impression',
-              'popularity',
-              'averagebudget'
-            );
-            googleStats = { ...gg };
-          }
          } catch (serverErr) {
             // One ES cluster (network) is down/slow → skip it and keep the data
             // from the others. Better partial counts than a failed request.
@@ -1120,28 +996,12 @@ const getAdvertiserAdCount = async (advertiser) => {
         }
 
 
-        const getValidAverage = (fbVal, igVal, ggVal = 0) => {
-          const values = [];
-          if (fbVal > 0) values.push(fbVal);
-          if (igVal > 0) values.push(igVal);
-          if (ggVal > 0) values.push(ggVal);
-          return values.length > 0
-            ? Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(2))
-            : 0;
-        };
-
-        const avgImpression = getValidAverage(facebookStats.averageImpression, instagramStats.averageImpression, googleStats.averageImpression);
-        const avgPopularity = getValidAverage(facebookStats.averagePopularity, instagramStats.averagePopularity, googleStats.averagePopularity);
-        const avgBudget = getValidAverage(facebookStats.averageBudget, instagramStats.averageBudget, googleStats.averageBudget);
-        // totalBudget is a real sum across platforms (not an average) — this is the
-        // "Estimated Total Ad Budget" displayed in the dashboard.
-        const totalBudget = Number(
-          (
-            (facebookStats.totalBudget || 0) +
-            (instagramStats.totalBudget || 0) +
-            (googleStats.totalBudget || 0)
-          ).toFixed(2)
-        );
+        // averageImpression/averagePopularity/averageBudget/totalBudget (the
+        // "Estimated Total Ad Budget" shown in the dashboard — a calculated
+        // proxy from the per-ad `averagebudget` field, not real ad spend) all
+        // come from the shared helper so this stays identical to what
+        // snapshotService persists for the same competitor.
+        const budgetStats = await this.getCompetitorBudgetStats(competitor);
 
         return res.send(Response.userSuccessResp("Counts fetched successfully", {
           ...totals,
@@ -1151,16 +1011,146 @@ const getAdvertiserAdCount = async (advertiser) => {
           uniqueCountries: Object.entries(totals.countryCounts)
             .sort((a, b) => b[1] - a[1])
             .map(([name]) => name),
-          averageImpression: avgImpression,
-          averagePopularity: avgPopularity,
-          averageBudget: avgBudget,
-          totalBudget,
+          averageImpression: budgetStats.averageImpression,
+          averagePopularity: budgetStats.averagePopularity,
+          averageBudget: budgetStats.averageBudget,
+          totalBudget: budgetStats.totalBudget,
         }));
     
       } catch (error) {
         console.error("Error fetching from Elasticsearch:", error);
         return res.send(Response.userFailResp("Internal server error", error));
       }
+    }
+
+    // Per-platform impression/popularity/budget stats for a single
+    // advertiser/competitor name, averaged across platforms. Extracted from
+    // getCompetitorsCount's former inline `fetchGlobalStatsES6` closure so
+    // snapshotService (and any other caller) gets the exact same numbers
+    // without re-deriving the ES aggregations.
+    // NOTE: budget figures are a calculated proxy — Σ(per-ad `averagebudget`)
+    // — not real disclosed ad spend. No "total budget" field is stored in any
+    // index; this derivation must be kept everywhere budget is displayed.
+    // Returns { averageImpression, averagePopularity, averageBudget, totalBudget,
+    //   byPlatform: { facebook, instagram, google } } where each byPlatform
+    //   entry is { averageImpression, averagePopularity, averageBudget, totalBudget }.
+    async getCompetitorBudgetStats(name) {
+      const platformConfigs = [
+        { index: 'search_mix', impField: 'facebook_ad.impression', popField: 'facebook_ad.popularity', budField: 'facebook.averagebudget' },
+        { index: 'instagram_search_mix', impField: 'instagram_ad.impression', popField: 'instagram_ad.popularity', budField: 'instagram.averagebudget' },
+        { index: 'google_ads_data', impField: 'impression', popField: 'popularity', budField: 'averagebudget' },
+      ];
+
+      const fetchOne = async (client, { index, impField, popField, budField }) => {
+        const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
+        const ownerClause = buildOwnerClause(index, name);
+        const res = await client.search({
+          index,
+          size: 0,
+          body: {
+            query: {
+              bool: {
+                must: [ownerClause],
+                ...(filterClauses.length  && { filter:   filterClauses }),
+                ...(mustNotClauses.length && { must_not: mustNotClauses }),
+              },
+            },
+            aggs: {
+              impressions: {
+                filter: { exists: { field: impField } },
+                aggs: {
+                  total_imp: { sum: { field: impField } },
+                  imp_count: { value_count: { field: impField } },
+                },
+              },
+              popularity: {
+                filter: { exists: { field: `${popField}.current` } },
+                aggs: {
+                  total_pop: { sum: { field: `${popField}.current`, missing: 0 } },
+                  pop_count: { value_count: { field: `${popField}.current` } },
+                },
+              },
+              budget: {
+                filter: { exists: { field: budField } },
+                aggs: {
+                  // No stored "total budget" field exists — only a per-ad
+                  // average. The alias name keeps the derivation explicit.
+                  sum_avg_budget: { sum: { field: budField } },
+                  budget_count:   { value_count: { field: budField } },
+                },
+              },
+            },
+          },
+        });
+
+        const a = res?.aggregations || {};
+
+        const imp = a.impressions || {};
+        const avgImpression = (imp.imp_count?.value || 0) > 0
+          ? (imp.total_imp?.value || 0) / (imp.imp_count?.value || 0)
+          : 0;
+
+        const pop = a.popularity || {};
+        const avgPopularity = (pop.pop_count?.value || 0) > 0
+          ? (pop.total_pop?.value || 0) / (pop.pop_count?.value || 0)
+          : 0;
+
+        const bud = a.budget || {};
+        const totalBudget = bud.sum_avg_budget?.value || 0;
+        const avgBudget = (bud.budget_count?.value || 0) > 0
+          ? totalBudget / (bud.budget_count?.value || 0)
+          : 0;
+
+        return { averageImpression: avgImpression, averagePopularity: avgPopularity, averageBudget: avgBudget, totalBudget };
+      };
+
+      let facebookStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
+      let instagramStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
+      let googleStats = { averageImpression: 0, averagePopularity: 0, averageBudget: 0, totalBudget: 0 };
+
+      for (const [serverName, serverData] of Object.entries(this.esServers)) {
+        try {
+          const client = this.esClient[serverName];
+          for (const cfg of platformConfigs) {
+            if (!serverData.indexes.includes(cfg.index)) continue;
+            const stats = await fetchOne(client, cfg);
+            if (cfg.index === 'search_mix') facebookStats = stats;
+            else if (cfg.index === 'instagram_search_mix') instagramStats = stats;
+            else if (cfg.index === 'google_ads_data') googleStats = stats;
+          }
+        } catch (serverErr) {
+          // One ES cluster (network) is down/slow → skip it and keep the data
+          // from the others. Better partial stats than a failed request.
+          logger.error(`[getCompetitorBudgetStats] server "${serverName}" failed — skipping, returning partial result: ${serverErr.message}`);
+          continue;
+        }
+      }
+
+      const getValidAverage = (fbVal, igVal, ggVal = 0) => {
+        const values = [];
+        if (fbVal > 0) values.push(fbVal);
+        if (igVal > 0) values.push(igVal);
+        if (ggVal > 0) values.push(ggVal);
+        return values.length > 0
+          ? Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(2))
+          : 0;
+      };
+
+      const averageImpression = getValidAverage(facebookStats.averageImpression, instagramStats.averageImpression, googleStats.averageImpression);
+      const averagePopularity = getValidAverage(facebookStats.averagePopularity, instagramStats.averagePopularity, googleStats.averagePopularity);
+      const averageBudget = getValidAverage(facebookStats.averageBudget, instagramStats.averageBudget, googleStats.averageBudget);
+      // totalBudget is a real sum across platforms (not an average).
+      const totalBudget = Number(
+        ((facebookStats.totalBudget || 0) + (instagramStats.totalBudget || 0) + (googleStats.totalBudget || 0)).toFixed(2)
+      );
+
+      return {
+        averageImpression,
+        averagePopularity,
+        averageBudget,
+        totalBudget,
+        byPlatform: { facebook: facebookStats, instagram: instagramStats, google: googleStats },
+      };
     }
 
     // Per-platform ad counts for a single advertiser/competitor name.
@@ -1292,6 +1282,57 @@ const getAdvertiserAdCount = async (advertiser) => {
     // Returns each competitor of that brand with its ad count in the window,
     // sorted desc. from/to are "YYYY-MM-DD" (default: last 30 days). When
     // all === true the date filter is dropped (all-time counts).
+    // POST /competitors-trend-batch  Body: { request_id, days? }
+    // Returns the project's own brand trend plus every MONITORED competitor's
+    // trend (unmonitored competitors on the table have no snapshot rows —
+    // snapshotService only snapshots monitoring[], not the full competitors[]
+    // list, to avoid wasting ES load on competitors nobody is tracking).
+    // days is clamped to 7 or 30 (the two windows the UI toggles between).
+    // One batched call so a 20+ row table doesn't fire N+1 requests.
+    async getCompetitorsTrend(req, res) {
+      try {
+        const { request_id, days } = req?.body || {};
+        if (!request_id) {
+          return res.send(Response.validationFailResp("Missing request_id in request body", ""));
+        }
+        const windowDays = Number(days) === 30 ? 30 : 7;
+
+        const project = await Competitors_request.findById(request_id, { monitoring: 1 }).lean();
+        if (!project) {
+          return res.send(Response.userFailResp("Brand request not found", ""));
+        }
+
+        const cutoff = nowIST().subtract(windowDays - 1, "days").format("YYYY-MM-DD");
+        const brandKey = String(request_id);
+        const competitorIds = (project.monitoring || []).map((id) => String(id));
+
+        const [brandRows, competitorRows] = await Promise.all([
+          CompetitorSnapshot.find({ subject_type: "brand", subject_key: brandKey, date: { $gte: cutoff } })
+            .sort({ date: 1 }).lean(),
+          competitorIds.length
+            ? CompetitorSnapshot.find({ subject_type: "competitor", subject_key: { $in: competitorIds }, date: { $gte: cutoff } })
+                .sort({ date: 1 }).lean()
+            : [],
+        ]);
+
+        const competitors = {};
+        competitorRows.forEach((r) => {
+          if (!competitors[r.subject_key]) competitors[r.subject_key] = [];
+          competitors[r.subject_key].push({ date: r.date, ...r.metrics });
+        });
+
+        return res.send(Response.userSuccessResp("Competitor trend fetched", {
+          request_id,
+          days: windowDays,
+          brand: brandRows.map((r) => ({ date: r.date, ...r.metrics })),
+          competitors,
+        }));
+      } catch (error) {
+        logger.error(`[getCompetitorsTrend] ${error.message}`);
+        return res.send(Response.userFailResp("Internal server error", error.message));
+      }
+    }
+
     async getCompetitorAdsByRange(req, res) {
       try {
         const { request_id, from, to, all } = req?.body || {};

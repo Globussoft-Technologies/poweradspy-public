@@ -27,16 +27,17 @@ const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRow
  * (status 4) the stored image_ocr is also selected so it can be re-sent.
  */
 async function leaseImageAds(exec, status, withOcr) {
-  const ocrCol = withOcr ? ', facebook_ad_variants.image_ocr' : '';
+  const ocrCol = withOcr ? ', variants.image_ocr' : '';
   const sql = `
-    SELECT facebook_ad_variants.facebook_ad_id AS ad_id,
-           facebook_ad_variants.image_url${ocrCol}
-      FROM facebook_ad_variants
-      LEFT JOIN facebook_ad ON facebook_ad.id = facebook_ad_variants.facebook_ad_id
-     WHERE facebook_ad.type = 'IMAGE'
-       AND facebook_ad_variants.image_url_status = ?
-       AND facebook_ad.last_seen BETWEEN DATE_SUB(NOW(), INTERVAL 10 DAY) AND NOW()
-     ORDER BY facebook_ad_variants.facebook_ad_id DESC
+    SELECT STRAIGHT_JOIN variants.facebook_ad_id AS ad_id,
+           variants.image_url${ocrCol}
+      FROM facebook_ad_variants AS variants
+      FORCE INDEX (idx_image_url_status_facebook_ad_id)
+      INNER JOIN facebook_ad AS ads ON ads.id = variants.facebook_ad_id
+     WHERE variants.image_url_status = ?
+       AND ads.type = 'IMAGE'
+       AND ads.last_seen BETWEEN DATE_SUB(NOW(), INTERVAL 10 DAY) AND NOW()
+     ORDER BY variants.facebook_ad_id DESC
      LIMIT 20`;
   return rows(await exec.query(sql, [status]));
 }

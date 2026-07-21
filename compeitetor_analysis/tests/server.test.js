@@ -72,6 +72,8 @@ vi.mock("../utils/socket.js", () => ({ initSocket: initSocketSpy }));
 // dataReportCron pulls in node-cron, which throws on load in this env and kills
 // the worker fork — stub it so importing server.js performs no real cron setup.
 vi.mock("../core/mailer/dataReportCron.js", () => ({ initDataReportCron: vi.fn() }));
+// Same node-cron issue via the new competitor-snapshot cron (NEW).
+vi.mock("../core/Dashboard/snapshotCron.js", () => ({ initSnapshotCron: vi.fn() }));
 
 let readFileSyncSpy, exitSpy;
 

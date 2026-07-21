@@ -32,15 +32,36 @@
  * sweeping the full 200M+ doc history every run. Pass --full for an
  * occasional complete rebuild.
  *
+ * Scale (measured against production, 2026-07-03 — ~197M docs,
+ * ~21.5M distinct target_keyword all-time, ~464k in the default 18mo scope):
+ * the per-bucket cardinality aggs are the dominant cost, and their
+ * `precision_threshold` matters far more than doc count. At the shared
+ * Tier-1 precision (40000) + batch=200, one composite page took ~18.5s —
+ * a full 464k-keyword sweep would take ~12 HOURS, unworkable as a cron.
+ * At precision=1000 (DEFAULT_BULK_PRECISION) + batch=1000, one page took
+ * ~300-370ms — a full sweep takes ~3 MINUTES. Do not raise --precision back
+ * toward the Tier-1 value without re-measuring against production first;
+ * this job's cost scales with (buckets swept × cardinality aggs per bucket),
+ * not with total index size, so it's easy to accidentally make this slow
+ * again by adding another cardinality sub-agg per bucket.
+ *
+ * The MySQL side needed the same care — see resolveKeywordIds()'s comment:
+ * loading all of `google_text_keywords` upfront OOM-crashed against
+ * production's ~42M rows (fixed by resolving per-page instead), and the
+ * WHERE clause must NOT wrap `keyword` in LOWER()/TRIM() or it bypasses the
+ * index entirely (measured 80.7s/page vs. 46ms/page for the same 1000-row
+ * lookup — an 1730x difference from one function call).
+ *
  * SAFETY: dry-run by default (computes + reports, writes nothing). Pass
  * --commit to write. Refuses to write into a non-empty table unless --truncate
  * is given (same contract as backfillKeywordAggregates.js).
  *
  * Usage:
- *   node src/services/google/jobs/refreshKeywordStats.js                 # dry run, trailing 18mo
+ *   node src/services/google/jobs/refreshKeywordStats.js                  # dry run, trailing 18mo
  *   node src/services/google/jobs/refreshKeywordStats.js --commit --truncate
- *   node ... --full                    # no lookback filter, sweep entire history
- *   node ... --batch=200 --limit=5000  # composite page size / cap keywords (testing)
+ *   node ... --full                     # no lookback filter, sweep entire history
+ *   node ... --batch=1000 --limit=5000  # composite page size / cap keywords (testing)
+ *   node ... --precision=5000           # raise cardinality precision (slower — see Scale note above)
  */
 
 require('dotenv').config();
@@ -50,9 +71,7 @@ const {
   buildBaseQuery,
   readAggs,
   AGG_FIELD,
-  UNIQUE_ADS,
-  UNIQUE_ADVERTISERS,
-  UNIQUE_DOMAINS,
+  cardinalityAgg,
   last2WindowAggs,
   majorityTermsAgg,
   majorityBucketKey,
@@ -62,16 +81,30 @@ const NETWORK = 'google';
 const LOOKBACK_MONTHS = 18;
 const INSERT_FLUSH = 500;
 
+// Cardinality precision for this bulk sweep — deliberately NOT the shared
+// UNIQUE_ADS/etc. constants (precision 40000), which are sized for the
+// single-bucket Tier-1 live endpoints. Measured against production ES
+// (~197M docs, ~464k distinct keywords in the default 18mo scope): the same
+// 5-cardinality-agg/5-terms-agg set per bucket costs ~18.5s per 200-bucket
+// page at precision 40000 (~12h full sweep — unworkable as a cron) vs.
+// ~300-370ms per 1000-bucket page at precision 1000 (~3min full sweep).
+// Proxy "competition"/"volume" scores don't need HyperLogLog-exact counts —
+// precision 1000 is exact up to 1000 distinct values per keyword and only
+// approximate (small error) above that, which is fine for a ranking score.
+const DEFAULT_BULK_PRECISION = 1000;
+const DEFAULT_BATCH = 1000;
+
 function log(...a) { console.log('[refresh-keyword-stats]', ...a); }
 
 function parseArgs(argv) {
-  const args = { commit: false, truncate: false, full: false, batch: 200, limit: 0 };
+  const args = { commit: false, truncate: false, full: false, batch: DEFAULT_BATCH, limit: 0, precision: DEFAULT_BULK_PRECISION };
   for (const a of argv.slice(2)) {
     if (a === '--commit') args.commit = true;
     else if (a === '--truncate') args.truncate = true;
     else if (a === '--full') args.full = true;
-    else if (a.startsWith('--batch=')) args.batch = parseInt(a.split('=')[1], 10) || 200;
+    else if (a.startsWith('--batch=')) args.batch = parseInt(a.split('=')[1], 10) || DEFAULT_BATCH;
     else if (a.startsWith('--limit=')) args.limit = parseInt(a.split('=')[1], 10) || 0;
+    else if (a.startsWith('--precision=')) args.precision = parseInt(a.split('=')[1], 10) || DEFAULT_BULK_PRECISION;
   }
   return args;
 }
@@ -86,10 +119,35 @@ function buildScopedQuery(index, full) {
   return buildBaseQuery({ from_date: ymd(from), to_date: ymd(to) }, index);
 }
 
-// Map of keyword(lower) → [keyword_id, ...] — a string can map to several ids
-// (one per country); a row is written for each, same as the Tier-2 backfill.
-async function loadKeywordMap(sql) {
-  const rows = await sql.query('SELECT id, LOWER(TRIM(keyword)) AS k FROM google_text_keywords WHERE keyword IS NOT NULL');
+// Resolve JUST the keywords in one composite-agg page to [keyword_id, ...]
+// (a string can map to several ids, one per country — same as Tier 2). This
+// used to be a single upfront `SELECT * FROM google_text_keywords` loaded
+// into one giant in-memory Map — fine against dev's ~5k rows, but production
+// has ~42M rows and that query OOM-crashed the process even with a 4GB heap
+// (measured 2026-07-03). Since this job runs in-process via the cron (not a
+// child process — see cronManager.js), that crash would take down the whole
+// pas_node_api worker, not just the job. Resolving per-page instead bounds
+// memory to one page's worth of keywords (≤ --batch, default 1000).
+//
+// The WHERE clause intentionally does NOT wrap `keyword` in LOWER()/TRIM() —
+// doing so was measured at 80.7s per 1000-keyword page against production
+// (a function on an indexed column defeats the index, forcing a full 42M-row
+// scan every page — confirmed via EXPLAIN). `google_text_keywords.keyword`'s
+// collation (utf8mb3_unicode_ci) is already case-insensitive, so passing the
+// already-lowercased ES values straight into an unwrapped `keyword IN (...)`
+// matches correctly AND uses the index (measured 46ms for the same page,
+// EXPLAIN: range scan on `keyword_2`, ~3 rows per key). Trade-off: a keyword
+// stored with stray leading/trailing whitespace in MySQL won't match (no
+// TRIM) — accepted as equivalent to the existing "garbage target_keyword"
+// unmapped-keyword rate this job already tolerates and reports.
+async function resolveKeywordIds(sql, keywords) {
+  const lowered = [...new Set(keywords.map((k) => String(k || '').trim().toLowerCase()).filter(Boolean))];
+  if (!lowered.length) return new Map();
+  const placeholders = lowered.map(() => '?').join(', ');
+  const rows = await sql.query(
+    `SELECT id, LOWER(keyword) AS k FROM google_text_keywords WHERE keyword IN (${placeholders})`,
+    lowered
+  );
   const map = new Map();
   for (const r of rows) {
     if (!r.k) continue;
@@ -142,10 +200,14 @@ function makeStatsWriter(sql, commit) {
   };
 }
 
-// Paginated composite sweep on target_keyword alone. Calls onBucket(row) per keyword.
-async function sweep(elastic, index, query, pageSize, limit, onBucket) {
+// Paginated composite sweep on target_keyword alone. Calls onBucket(row) per
+// keyword, with `row.kwIds` already resolved to google_text_keywords ids for
+// this page (see resolveKeywordIds — bounded per-page, not a full-table load).
+// `precision` sizes the per-bucket cardinality aggs — see DEFAULT_BULK_PRECISION.
+async function sweep(elastic, index, query, pageSize, limit, precision, sql, onBucket) {
   const sources = [{ kw: { terms: { field: AGG_FIELD.keyword } } }];
-  const windows = last2WindowAggs('last_seen');
+  const bulkAdsCard = cardinalityAgg('id', precision);
+  const windows = last2WindowAggs('last_seen', new Date(), bulkAdsCard);
   let after = null;
   let total = 0;
   let pages = 0;
@@ -162,9 +224,9 @@ async function sweep(elastic, index, query, pageSize, limit, onBucket) {
           pairs: {
             composite,
             aggs: {
-              ads: UNIQUE_ADS,
-              advertisers: UNIQUE_ADVERTISERS,
-              domains: UNIQUE_DOMAINS,
+              ads: bulkAdsCard,
+              advertisers: cardinalityAgg(AGG_FIELD.advertiser, precision),
+              domains: cardinalityAgg(AGG_FIELD.domain, precision),
               category_terms: majorityTermsAgg('category'),
               sub_category_terms: majorityTermsAgg('subCategory'),
               type_terms: majorityTermsAgg('type', 5),
@@ -181,6 +243,9 @@ async function sweep(elastic, index, query, pageSize, limit, onBucket) {
     const agg = readAggs(res)?.pairs;
     const buckets = agg?.buckets || [];
     if (!buckets.length) break;
+
+    const kwIdMap = await resolveKeywordIds(sql, buckets.map((b) => b.key.kw));
+
     for (const b of buckets) {
       const positionBuckets = b.position_terms?.buckets || [];
       const topBucket = positionBuckets.find((pb) => String(pb.key).toUpperCase() === 'TOP');
@@ -191,6 +256,7 @@ async function sweep(elastic, index, query, pageSize, limit, onBucket) {
 
       await onBucket({
         kw: b.key.kw,
+        kwIds: kwIdMap.get(String(b.key.kw || '').trim().toLowerCase()) || null,
         ads_total: b.ads?.value ?? 0,
         advertisers_total: b.advertisers?.value ?? 0,
         domains_total: b.domains?.value ?? 0,
@@ -247,11 +313,11 @@ async function computeCompetitionScores(sql, commit) {
  * DB connection lifecycle) and by the cron registry (which runs inside the
  * already-connected server process; see src/jobs/cronManager.js).
  *
- * `args` = { commit, truncate, full, batch, limit } (defaults applied — see parseArgs).
+ * `args` = { commit, truncate, full, batch, limit, precision } (defaults applied — see parseArgs).
  */
 async function runKeywordStatsRefresh(args = {}) {
-  const opts = { commit: false, truncate: false, full: false, batch: 200, limit: 0, ...args };
-  log(`mode=${opts.commit ? 'COMMIT' : 'DRY-RUN'} scope=${opts.full ? 'FULL' : `trailing ${LOOKBACK_MONTHS}mo`} batch=${opts.batch}${opts.limit ? ` limit=${opts.limit}` : ''}${opts.truncate ? ' truncate' : ''}`);
+  const opts = { commit: false, truncate: false, full: false, batch: DEFAULT_BATCH, limit: 0, precision: DEFAULT_BULK_PRECISION, ...args };
+  log(`mode=${opts.commit ? 'COMMIT' : 'DRY-RUN'} scope=${opts.full ? 'FULL' : `trailing ${LOOKBACK_MONTHS}mo`} batch=${opts.batch} precision=${opts.precision}${opts.limit ? ` limit=${opts.limit}` : ''}${opts.truncate ? ' truncate' : ''}`);
 
   const sql = databaseManager.getSQL(NETWORK);
   const elastic = databaseManager.getElastic(NETWORK);
@@ -269,21 +335,19 @@ async function runKeywordStatsRefresh(args = {}) {
   }
 
   const query = buildScopedQuery(index, opts.full);
-  const keywordMap = await loadKeywordMap(sql);
-  log(`loaded ${keywordMap.size} distinct keyword strings from google_text_keywords`);
 
   const stats = { keywords: 0, rows: 0, unmapped: 0 };
   const sampleRows = [];
   const writer = makeStatsWriter(sql, opts.commit);
 
-  await sweep(elastic, index, query, opts.batch, opts.limit, async (row) => {
+  await sweep(elastic, index, query, opts.batch, opts.limit, opts.precision, sql, async (row) => {
     stats.keywords++;
-    const kwIds = keywordMap.get((row.kw || '').toLowerCase());
-    if (!kwIds) { stats.unmapped++; return; }
-    for (const keyword_id of kwIds) {
+    if (!row.kwIds) { stats.unmapped++; return; }
+    for (const keyword_id of row.kwIds) {
       stats.rows++;
       const record = { keyword_id, ...row };
       delete record.kw;
+      delete record.kwIds;
       if (sampleRows.length < 8) sampleRows.push({ kw: row.kw, keyword_id, ads_total: row.ads_total, advertisers_total: row.advertisers_total, growth_pct: row.growth_pct });
       await writer.add(record);
     }

@@ -29,7 +29,8 @@ const REGISTRY = {
       commit: jobCfg.commit !== false,
       truncate: !!jobCfg.truncate,
       full: !!jobCfg.full,
-      batch: jobCfg.batch || 200,
+      batch: jobCfg.batch || 1000,
+      precision: jobCfg.precision || 1000, // see refreshKeywordStats.js's "Scale" doc comment before raising this
     }),
 };
 

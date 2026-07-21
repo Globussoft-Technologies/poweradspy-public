@@ -800,3 +800,36 @@ a font * {
     --tw-gradient-to: #f1f5f9 var(--tw-gradient-to-position);
   }
 }
+
+/* ============================================================================
+   DARK MODE CARD HARDENING LAYER
+   ----------------------------------------------------------------------------
+   The ad-grid cards (MasonryCard/Masonry/SavedAdsPage) hardcode bg-[#0f111a]
+   instead of the theme-card token — the light-mode layer above flips this
+   same class to solid #ffffff so cards pop against the page, but in dark
+   mode it sits only ~1% luminance above the #0a0a0a page bg, paired with a
+   10% white border and a black box-shadow that has no contrast on a
+   near-black background. Net effect: the card that's meant to be the
+   focal point disappears into the page. Scoped to [data-theme="dark"] only
+   (midnight already has its own distinct palette).
+   ========================================================================== */
+[data-theme="dark"] {
+  .bg-\[\#0f111a\]     { background-color: #1c1c1f; }
+  .bg-\[\#0f111a\]\/80 { background-color: rgb(28 28 31 / 0.85); }
+  .bg-\[\#0f111a\]\/90 { background-color: rgb(28 28 31 / 0.92); }
+
+  /* Card borders were a flat 10-25% white on a near-black card — brighten
+     so the edge reads without relying on hover state. */
+  .border-white\/10 { border-color: rgb(255 255 255 / 0.14); }
+  .hover\:border-white\/25:hover { border-color: rgb(255 255 255 / 0.32); }
+
+  /* Tailwind's default shadow-lg/2xl are low-opacity black, invisible
+     against a black card on a black page. Add a soft light rim alongside
+     a deeper black falloff so elevation is actually visible. */
+  .shadow-lg {
+    box-shadow: 0 6px 16px -2px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.04);
+  }
+  .hover\:shadow-2xl:hover {
+    box-shadow: 0 16px 32px -6px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.08);
+  }
+}

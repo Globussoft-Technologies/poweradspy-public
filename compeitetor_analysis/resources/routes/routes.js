@@ -12,6 +12,9 @@ import memberController from "../../core/Members/memberController.js";
 import manualSendController from "../../core/mailer/manualSendController.js";
 import userController from "../../core/Users/userController.js";
 import memberOverviewController from "../../core/Members/memberOverviewController.js";
+import snapshotController from "../../core/Dashboard/snapshotController.js";
+import alertRulesController from "../../core/Dashboard/alertRulesController.js";
+import activityFeedController from "../../core/Dashboard/activityFeedController.js";
 
 const app = express(); 
 const router = express.Router();
@@ -64,6 +67,15 @@ router.get("/get-comp-users-count", competitorController.getCompUsersCount);
 router.get("/get-all-users", userController.getAllUsers);
 router.post("/user-brand-stats", dashboardController.getUserBrandStats);
 router.post("/competitor-ads-by-range", dashboardController.getCompetitorAdsByRange);
+router.post("/competitors-trend-batch", dashboardController.getCompetitorsTrend);
+
+// ── Competitor snapshot rollup (NEW) — manual/debug trigger for the
+//    snapshot → alert-evaluation → change-detection chain. See snapshotCron.js
+//    for the scheduled version. Same pre-auth placement as /keyword-notify/run
+//    above (an ops trigger, not user data). ──
+router.get("/snapshot/run", snapshotController.run);
+router.get("/snapshot/last-run", snapshotController.lastRun);
+router.get("/alert-rules/run", alertRulesController.run);
 
 router.post("/get-lcs", advertiserController.getLCS);
 router.post("/get-engagement", advertiserController.getEngagementData);
@@ -128,5 +140,16 @@ router.post("/check-competitor-process", competitorController.checkCompetitorPro
 router.post("/delete-project", competitorController.deleteProject);
 router.post("/add-manual-competitor", competitorController.addManualCompetitor);
 router.post("/delete-competitor", competitorController.deleteCompetitor);
+
+// ── Threshold-based competitor alerts (NEW) ──
+router.post("/alert-rules/list", alertRulesController.list);
+router.post("/alert-rules/create", alertRulesController.create);
+router.post("/alert-rules/update", alertRulesController.update);
+router.post("/alert-rules/delete", alertRulesController.delete);
+
+// ── "What changed" activity feed (NEW) — shared activity_events store with
+//    the alert rules above (category "alert" vs "change"). ──
+router.post("/activity-feed/list", activityFeedController.list);
+router.post("/activity-feed/mark-read", activityFeedController.markRead);
 
 export default router;

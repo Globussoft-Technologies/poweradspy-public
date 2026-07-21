@@ -17,6 +17,16 @@ class DashboardController {
       return await DashboardService.getUserBrandStats(req, res);
     }
 
+    async getCompetitorsTrend(req,res) {
+      /*
+    #swagger.tags = ['Dashboard']
+    #swagger.description = 'Batched per-project competitor trend for sparklines: the project brand plus every monitored competitor, over the last 7 or 30 days. Body: { request_id, days? (7|30, default 7) }'
+    #swagger.responses[200] = { description: 'Competitor trend fetched' }
+    #swagger.responses[400] = { description: 'Missing request_id | Brand request not found' }
+*/
+      return await DashboardService.getCompetitorsTrend(req, res);
+    }
+
     async getCompetitorAdsByRange(req,res) {
       /*
     #swagger.tags = ['Dashboard']
