@@ -350,10 +350,17 @@ describe("middleware/planAccess > Keyword Explorer (isKeywordExplorerUserAllowed
   });
 
   it("hasKeywordExplorerAccess: empty allow-list + plan-tier restricted to a different plan → denied", async () => {
-    planSvc.getConfig.mockResolvedValue([{ _id: "keyword_explorer" }]);
+    planSvc.getConfig.mockResolvedValue([{ _id: "keyword_explorer", allowed_plan_ids: [102] }]);
     planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: false } });
     const { hasKeywordExplorerAccess } = freshSut();
     expect(await hasKeywordExplorerAccess({ user: { id: 999, plan_id: 101 } })).toBe(false);
+  });
+
+  it("hasKeywordExplorerAccess: allowed_plan_ids:null is unrestricted even if shared status is stale", async () => {
+    planSvc.getConfig.mockResolvedValue([{ _id: "keyword_explorer", allowed_plan_ids: null }]);
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: false } });
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 999, plan_id: 36 } })).toBe(true);
   });
 
   it("hasKeywordExplorerAccess: plan-tier grants access even with an empty allow-list", async () => {

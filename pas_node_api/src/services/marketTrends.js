@@ -58,6 +58,13 @@ async function isAllowedByPlan(req) {
     if (planId === undefined || planId === null) return false;
     const planConfig = await planAccessService.getConfig();
     if (!planConfig || planConfig.length === 0) return false;
+    // Preserve the plan-access contract at the feature boundary as well as in
+    // getFilterStatus(): null/undefined means unrestricted. This direct check
+    // prevents a stale/older shared status implementation in a deployed worker
+    // from turning an explicitly open beta feature into a false subscription
+    // denial. An explicit [] still means deny everyone and is not bypassed.
+    const featureDoc = planConfig.find((doc) => doc._id === 'market_trends');
+    if (featureDoc && featureDoc.allowed_plan_ids == null) return true;
     const network = req.body?.network || req.query?.network || 'all';
     const filterStatus = planAccessService.getFilterStatus(planId, network, planConfig);
     return filterStatus?.market_trends?.enabled === true;

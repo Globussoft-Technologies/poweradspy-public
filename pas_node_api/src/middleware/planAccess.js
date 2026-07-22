@@ -376,6 +376,11 @@ async function isKeywordExplorerAllowedByPlan(req) {
     if (planId === undefined || planId === null) return false;
     const planConfig = await planAccessService.getConfig();
     if (!planConfig || planConfig.length === 0) return false;
+    // null/undefined is the documented unrestricted setting. Resolve it here
+    // explicitly so this feature cannot be falsely locked by a stale/older
+    // shared filter-status implementation. Explicit [] remains deny-all.
+    const featureDoc = planConfig.find((doc) => doc._id === 'keyword_explorer');
+    if (featureDoc && featureDoc.allowed_plan_ids == null) return true;
     const filterStatus = planAccessService.getFilterStatus(planId, 'all', planConfig);
     return filterStatus?.keyword_explorer?.enabled === true;
   } catch (_e) {

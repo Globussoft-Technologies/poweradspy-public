@@ -123,12 +123,21 @@ describe("marketTrends router > GET /access — OR of both mechanisms", () => {
 
   it("empty allowedUserIds + plan-tier restricted to a different plan → denied (the real incident this fixed: an admin-configured allowed_plan_ids restriction must actually take effect)", async () => {
     freshSut();
-    planSvc.getConfig.mockResolvedValue([{ _id: "market_trends" }]);
+    planSvc.getConfig.mockResolvedValue([{ _id: "market_trends", allowed_plan_ids: [102] }]);
     planSvc.getFilterStatus.mockReturnValue({ market_trends: { enabled: false } }); // e.g. allowed_plan_ids: [102], this user is on 101
     const req = { user: { id: 999, plan_id: 101 } };
     const res = mkRes();
     await lastHandler("/access")(req, res);
     expect(res.body.data.enabled).toBe(false);
+  });
+
+  it("allowed_plan_ids:null is directly treated as unrestricted even if shared status is stale", async () => {
+    freshSut();
+    planSvc.getConfig.mockResolvedValue([{ _id: "market_trends", allowed_plan_ids: null }]);
+    planSvc.getFilterStatus.mockReturnValue({ market_trends: { enabled: false } });
+    const res = mkRes();
+    await lastHandler("/access")({ user: { id: 999, plan_id: 36 } }, res);
+    expect(res.body.data.enabled).toBe(true);
   });
 
   it("mechanism 1 only: unlisted user_id but their plan's market_trends filter is enabled → enabled=true", async () => {
