@@ -153,13 +153,37 @@ function getEs(net = 'facebook') {
 }
 function esBody(r) { return r && r.body ? r.body : r; }
 
+// A single dashboard load asks several panels for the same max(last_seen).
+// Coalesce only calls that are currently in flight; completed values are not
+// retained, so production data freshness is exactly the same as before.
+const dateMaxInflight = new WeakMap();
+function getCoalescedDateMax(es, field) {
+  const index = es.indexName || 'search_mix';
+  let entries = dateMaxInflight.get(es);
+  if (!entries) { entries = new Map(); dateMaxInflight.set(es, entries); }
+  const key = `${index}:${field}`;
+  const inflight = entries.get(key);
+  if (inflight) return inflight;
+
+  const promise = es.search({
+    index,
+    request_cache: true,
+    body: { size: 0, aggs: { a: { max: { field } } } },
+  }).then((r) => esBody(r).aggregations?.a || null);
+  entries.set(key, promise);
+  promise.then(
+    () => { if (entries.get(key) === promise) entries.delete(key); },
+    () => { if (entries.get(key) === promise) entries.delete(key); }
+  );
+  return promise;
+}
+
 // Anchor the window to the newest ad (max last_seen), not wall-clock now, so a
 // stale/dev index still shows a populated window. Falls back to Date.now().
 async function getAnchorMs(es, field = 'facebook_ad.last_seen') {
   if (!es) return Date.now();
   try {
-    const r = await es.search({ index: es.indexName || 'search_mix', body: { size: 0, aggs: { _a: { max: { field } } } } });
-    const v = esBody(r).aggregations?._a?.value;
+    const v = (await getCoalescedDateMax(es, field))?.value;
     return (typeof v === 'number' && v > 0) ? v : Date.now();
   } catch { return Date.now(); }
 }
@@ -170,7 +194,7 @@ async function aggWithFallback(es, buildBody, candidates) {
   let last = null;
   for (const f of candidates) {
     try {
-      const r = await es.search({ index, body: buildBody(f) });
+      const r = await es.search({ index, request_cache: true, body: buildBody(f) });
       return { ok: true, field: f, aggs: esBody(r).aggregations || {} };
     } catch (e) { last = e; }
   }
@@ -353,7 +377,8 @@ async function getOverview(req, res) {
 
   const country = String(raw.country || '').trim();
   const custom = parseRange(raw);
-  const anchorMs = custom ? 0 : await globalTrendAnchor(nets);
+  const trendDates = custom ? { anchorMs: 0, byNet: {} } : await resolveTrendDates(nets);
+  const anchorMs = trendDates.anchorMs;
   const startMs = custom ? custom.fromMs : anchorMs - days * 86400000;
   const endMs = custom ? custom.toMs : anchorMs;
 
@@ -361,7 +386,7 @@ async function getOverview(req, res) {
   const maps = {};
   const present = [];
   await Promise.all(nets.map(async (net) => {
-    const m = await dailySeries(net, startMs, endMs, country);
+    const m = await dailySeries(net, startMs, endMs, country, trendDates.byNet[net]);
     if (m && Object.keys(m).length) { maps[net] = m; present.push(net); }
   }));
   present.sort((a, b) => TREND_NETWORKS.indexOf(a) - TREND_NETWORKS.indexOf(b));
@@ -497,30 +522,33 @@ const NET_DATE_CANDIDATES = {
 async function resolveNetDate(es, net) {
   for (const f of (NET_DATE_CANDIDATES[net] || ['last_seen'])) {
     try {
-      const r = await es.search({ index: es.indexName, body: { size: 0, aggs: { a: { max: { field: f } } } } });
-      const a = esBody(r).aggregations?.a;
+      const a = await getCoalescedDateMax(es, f);
       if (a && a.value != null && a.value_as_string) return { field: f, maxMs: a.value };
     } catch { /* try next */ }
   }
   return null;
 }
 // Latest data point across the requested networks (aligns the shared time axis).
-async function globalTrendAnchor(nets) {
+async function resolveTrendDates(nets) {
   let anchor = 0;
+  const byNet = {};
   await Promise.all(nets.map(async (net) => {
     const es = getEs(net);
     if (!es) return;
     const d = await resolveNetDate(es, net);
-    if (d && d.maxMs > anchor) anchor = d.maxMs;
+    if (d) {
+      byNet[net] = d;
+      if (d.maxMs > anchor) anchor = d.maxMs;
+    }
   }));
-  return anchor || Date.now();
+  return { anchorMs: anchor || Date.now(), byNet };
 }
 // { 'YYYY-MM-DD': count } for a network in [startMs,endMs], placeholder ads
 // excluded, optionally filtered to a country.
-async function dailySeries(net, startMs, endMs, country) {
+async function dailySeries(net, startMs, endMs, country, resolvedDate) {
   const es = getEs(net);
   if (!es) return null;
-  const d = await resolveNetDate(es, net);
+  const d = resolvedDate || await resolveNetDate(es, net);
   if (!d) return null;
   const f = d.field;
   const cc = countryClause(net, country);
@@ -528,6 +556,7 @@ async function dailySeries(net, startMs, endMs, country) {
   try {
     const r = await es.search({
       index: es.indexName,
+      request_cache: true,
       body: {
         size: 0,
         query: { bool: { filter: [{ range: { [f]: { gte: fmt(startMs), lte: fmt(endMs), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must_not: placeholderMustNot() } },
@@ -641,6 +670,7 @@ async function regionsForNet(net, days, advertiser, custom) {
   try {
     const r = await es.search({
       index: es.indexName,
+      request_cache: true,
       body: {
         size: 0,
         query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(ac ? [ac] : [])] } },
@@ -704,6 +734,7 @@ async function searchDaily(net, q, days, country, custom) {
   try {
     const r = await es.search({
       index: es.indexName,
+      request_cache: true,
       body: {
         size: 0,
         query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must: [{ match: { [advField]: q } }] } },
@@ -753,14 +784,14 @@ async function keywordsForNet(net, cfg, days, size, country, advertiser, custom)
   const es = getEs(net);
   if (!es) return [];
   try {
-    const mx = await es.search({ index: es.indexName, body: { size: 0, aggs: { a: { max: { field: cfg.date } } } } });
-    const anchor = esBody(mx).aggregations?.a?.value;
+    const anchor = (await getCoalescedDateMax(es, cfg.date))?.value;
     if (!anchor) return [];
     const start = custom ? custom.fromMs : anchor - days * 86400000;
     const end = custom ? custom.toMs : anchor;
     const extra = extraFilters(net, country, advertiser);
     const r = await es.search({
       index: es.indexName,
+      request_cache: true,
       body: { size: 0, query: { bool: { filter: [{ range: { [cfg.date]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...extra] } }, aggs: { items: { terms: { field: cfg.field, size } } } },
     });
     return (esBody(r).aggregations?.items?.buckets || []).filter((b) => String(b.key).trim() !== '')

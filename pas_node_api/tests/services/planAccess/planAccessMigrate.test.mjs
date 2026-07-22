@@ -35,7 +35,10 @@ require.cache[seedPath] = {
   id: seedPath, filename: seedPath, loaded: true,
   exports: {
     planBillingMetadata: { _id: "plan_billing_metadata", plan_info: { "999": { tier: "Legacy" } } },
-    DEFAULT_PLAN_GROUPS: { _id: "plan_groups", groups: { Free: { plans: [20] } } },
+    DEFAULT_PLAN_GROUPS: {
+      _id: "plan_groups",
+      groups: { Free: { plans: [20] }, Basic: { plans: [36] }, Palladium: { plans: [57] } },
+    },
   },
 };
 
@@ -44,9 +47,11 @@ require.cache[seedPath] = {
 // is unit-tested separately in restructure2026.test.mjs).
 const restructurePath = require.resolve("../../../src/services/planAccess/restructure2026");
 const mergeContributions = vi.fn((docs) => docs);
+const getContributionDocs = vi.fn(() => []);
+const getPlanIds = vi.fn(() => ({}));
 require.cache[restructurePath] = {
   id: restructurePath, filename: restructurePath, loaded: true,
-  exports: { mergeContributions, getContributionDocs: vi.fn(() => []), getPlanIds: vi.fn(() => ({})), getPlanGroups: vi.fn(() => ({})) },
+  exports: { mergeContributions, getContributionDocs, getPlanIds, getPlanGroups: vi.fn(() => ({})) },
 };
 
 let logSpy, errSpy, exitSpy;
@@ -60,6 +65,8 @@ beforeEach(() => {
   getDB.mockReset().mockResolvedValue(fakeDb);
   closeDB.mockReset().mockResolvedValue();
   mergeContributions.mockReset().mockImplementation((docs) => docs);
+  getContributionDocs.mockReset().mockReturnValue([]);
+  getPlanIds.mockReset().mockReturnValue({});
   logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {});
@@ -100,18 +107,36 @@ describe("services/planAccess/planAccessMigrate (config.json-driven, additive-on
 
   it("--apply: array field missing an element live → $addToSet with $each, never overwrites the whole array", async () => {
     fsReadFileSyncSpy.mockReturnValueOnce(JSON.stringify([{ _id: "gender", allowed_plan_ids: [1, 2, 3] }]));
+    getContributionDocs.mockReturnValue([{ _id: "gender", allowed_plan_ids: [1, 2, 3] }]);
     fakeFindOne.mockResolvedValueOnce({ _id: "gender", allowed_plan_ids: [1, 2, 99] }); // has extra live-only value 99
     await reloadSut(["--apply"]);
     expect(fakeUpdateOne).toHaveBeenCalledWith(
       { _id: "gender" },
-      { $addToSet: { allowed_plan_ids: { $each: [1, 2, 3] } } }
+      { $addToSet: { allowed_plan_ids: { $each: [3] } } }
     );
+  });
+
+  it("does not replay legacy base arrays into existing docs", async () => {
+    fsReadFileSyncSpy.mockReturnValueOnce(JSON.stringify([{ _id: "gender", allowed_plan_ids: [1, 2, 3] }]));
+    fakeFindOne.mockImplementation(async ({ _id }) => {
+      if (_id === "gender") return { _id, allowed_plan_ids: [1, 99] };
+      if (_id === "plan_billing_metadata") return { _id, plan_info: { "999": { tier: "Legacy" } } };
+      if (_id === "plan_groups") return { _id, groups: { Free: { plans: [20] }, Basic: { plans: [36] }, Palladium: { plans: [57] } } };
+      return null;
+    });
+
+    await reloadSut(["--apply"]);
+
+    expect(fakeUpdateOne.mock.calls.some(([filter]) => filter._id === "gender")).toBe(false);
   });
 
   it("--apply: object-map field only sets keys absent live, never overwrites an existing key's value", async () => {
     fsReadFileSyncSpy.mockReturnValueOnce(JSON.stringify([
       { _id: "competitor_limits", plan_limits: { "101": { brandLimit: 1 }, "5": { brandLimit: 999 } } },
     ]));
+    getContributionDocs.mockReturnValue([
+      { _id: "competitor_limits", plan_limits: { "101": { brandLimit: 1 }, "5": { brandLimit: 999 } } },
+    ]);
     // live already has "5" with a DIFFERENT (real, diverged) value — must not be touched.
     fakeFindOne.mockResolvedValueOnce({ _id: "competitor_limits", plan_limits: { "5": { brandLimit: 3 } } });
     await reloadSut(["--apply"]);
@@ -128,7 +153,7 @@ describe("services/planAccess/planAccessMigrate (config.json-driven, additive-on
     fakeFindOne.mockImplementation(async ({ _id }) => {
       if (_id === "static_doc") return { _id: "static_doc" };
       if (_id === "plan_billing_metadata") return { _id: "plan_billing_metadata", plan_info: { "999": { tier: "Legacy" } } };
-      if (_id === "plan_groups") return { _id: "plan_groups", groups: { Free: { plans: [20] } } };
+      if (_id === "plan_groups") return { _id: "plan_groups", groups: { Free: { plans: [20] }, Basic: { plans: [36] }, Palladium: { plans: [57] } } };
       return null;
     });
     await reloadSut(["--apply"]);
@@ -149,6 +174,70 @@ describe("services/planAccess/planAccessMigrate (config.json-driven, additive-on
     fakeFindOne.mockResolvedValue(null);
     await reloadSut([]);
     expect(mergeContributions).toHaveBeenCalledTimes(1);
+  });
+
+  it("additively grants both open-beta features to legacy paid + configured current plans", async () => {
+    fsReadFileSyncSpy.mockReturnValueOnce(JSON.stringify([
+      { _id: "market_trends", stage: "beta", allowed_plan_ids: null },
+      { _id: "keyword_explorer", stage: "beta", allowed_plan_ids: null },
+    ]));
+    getPlanIds.mockReturnValue({ basic: 72, basicYearly: 76 });
+    fakeFindOne.mockImplementation(async ({ _id }) => {
+      if (_id === "market_trends" || _id === "keyword_explorer") return { _id, allowed_plan_ids: [999] };
+      if (_id === "plan_billing_metadata") return { _id, plan_info: { "999": { tier: "Legacy" } } };
+      if (_id === "plan_groups") return { _id, groups: { Free: { plans: [20] }, Basic: { plans: [36] }, Palladium: { plans: [57] } } };
+      return null;
+    });
+
+    await reloadSut(["--apply"]);
+
+    for (const featureId of ["market_trends", "keyword_explorer"]) {
+      expect(fakeUpdateOne).toHaveBeenCalledWith(
+        { _id: featureId },
+        { $addToSet: {
+          allowed_plan_ids: { $each: [36, 57, 72, 76] },
+          migration_versions: { $each: ["open_beta_paid_plans_v1"] },
+        } },
+      );
+    }
+  });
+
+  it("preserves a live null open-beta setting instead of narrowing it", async () => {
+    fsReadFileSyncSpy.mockReturnValueOnce(JSON.stringify([
+      { _id: "market_trends", stage: "beta", allowed_plan_ids: null },
+    ]));
+    fakeFindOne.mockImplementation(async ({ _id }) => {
+      if (_id === "market_trends") return { _id, allowed_plan_ids: null };
+      if (_id === "plan_billing_metadata") return { _id, plan_info: { "999": { tier: "Legacy" } } };
+      if (_id === "plan_groups") return { _id, groups: { Free: { plans: [20] }, Basic: { plans: [36] }, Palladium: { plans: [57] } } };
+      return null;
+    });
+
+    await reloadSut(["--apply"]);
+
+    expect(fakeUpdateOne).toHaveBeenCalledWith(
+      { _id: "market_trends" },
+      { $addToSet: { migration_versions: { $each: ["open_beta_paid_plans_v1"] } } },
+    );
+  });
+
+  it("does not re-enable a beta plan disabled in admin after the rollout", async () => {
+    fsReadFileSyncSpy.mockReturnValueOnce(JSON.stringify([
+      { _id: "market_trends", stage: "beta", allowed_plan_ids: null },
+    ]));
+    getPlanIds.mockReturnValue({ basic: 72, basicYearly: 76 });
+    fakeFindOne.mockImplementation(async ({ _id }) => {
+      if (_id === "market_trends") {
+        return { _id, allowed_plan_ids: [36, 57, 76], migration_versions: ["open_beta_paid_plans_v1"] };
+      }
+      if (_id === "plan_billing_metadata") return { _id, plan_info: { "999": { tier: "Legacy" } } };
+      if (_id === "plan_groups") return { _id, groups: { Free: { plans: [20] }, Basic: { plans: [36] }, Palladium: { plans: [57] } } };
+      return null;
+    });
+
+    await reloadSut(["--apply"]);
+
+    expect(fakeUpdateOne.mock.calls.some(([filter]) => filter._id === "market_trends")).toBe(false);
   });
 
   it("getDB rejects → error path logs + exits(1)", async () => {

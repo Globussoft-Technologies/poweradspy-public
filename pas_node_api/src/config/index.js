@@ -386,11 +386,8 @@ const config = {
   // Intelligence suite (Winning Ads / Trends / Tech & Funnel / Creative).
   // Fully additive + gated: when disabled, the router is never mounted (app.js).
   // Default OFF (opt-in) so production is unaffected until explicitly enabled.
-  //   allowedUserIds: NO LONGER CONSUMED by marketTrends.js as of 2026-07-13 — Market
-  //   Trends access is now plan-tier-based via plan_access_config's `market_trends`
-  //   filter doc (PRD FR-17 beta→GA), enforced through planAccessMiddleware. Kept
-  //   here only in case another intelligence-suite feature wants a plain allow-list
-  //   later; it is otherwise dead config.
+  //   allowedUserIds: optional per-user override. Market Trends access is this
+  //   allow-list OR the plan_access_config `market_trends` entitlement.
   intelligence: {
     enabled: getVal(fileConfig.intelligence?.enabled, 'INTELLIGENCE_ENABLED', toBool) === true,
     allowedUserIds: (() => {
@@ -405,11 +402,10 @@ const config = {
   // + gated: when disabled, the /keywords/* Google routes 404 so the APIs are
   // inert. Mirrors the frontend VITE_ENABLE_KEYWORD_EXPLORER flag. Default OFF
   // (opt-in) so production is unaffected until explicitly enabled.
-  //   allowedUserIds: optional per-user allow-list (same contract as
-  //   intelligence.allowedUserIds). When non-empty, ONLY those users get the
-  //   feature + APIs (everyone else is 403'd and the UI hides it). Empty/unset =
-  //   nobody (fail closed). JSON array in config.json or a
-  //   comma-separated string in the env var.
+  //   allowedUserIds: optional per-user override (same contract as
+  //   intelligence.allowedUserIds). Access is this allow-list OR the
+  //   plan_access_config `keyword_explorer` entitlement. Empty/unset contributes
+  //   no access. JSON array in config.json or a comma-separated env value.
   keywordExplorer: {
     enabled: getVal(fileConfig.keywordExplorer?.enabled, 'KEYWORD_EXPLORER_ENABLED', toBool) === true,
     allowedUserIds: (() => {

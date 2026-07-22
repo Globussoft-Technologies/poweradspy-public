@@ -1228,6 +1228,26 @@ describe("adminRoutes > PUT /api/plan-access/config", () => {
     await h({ body: { planId: 1, filters: { myFilter: false } } }, res);
     expect(res.body.code).toBe(200);
   });
+  it("revoking one plan from an unrestricted filter preserves every other configured plan", async () => {
+    const col = fakePlanCol({
+      findOne: vi.fn(async ({ _id }) => {
+        if (_id === "market_trends") return { _id, allowed_plan_ids: null };
+        if (_id === "plan_groups") return { _id, groups: { Basic: { plans: [36, 37] }, Palladium: { plans: [57] } } };
+        return null;
+      }),
+    });
+    sduiDb.getDB.mockResolvedValue({ collection: () => col });
+    const h = lastHandler("put", "/api/plan-access/config");
+    const res = mkRes();
+    await h({ body: { planId: 36, filters: { market_trends: false } } }, res);
+
+    expect(col.updateOne).toHaveBeenCalledWith(
+      { _id: "market_trends" },
+      { $set: expect.objectContaining({ allowed_plan_ids: [37, 57] }) },
+      { upsert: true },
+    );
+    expect(res.body.code).toBe(200);
+  });
   it("filter not present anywhere and shouldHave=false → explicit []", async () => {
     const col = fakePlanCol({});
     sduiDb.getDB.mockResolvedValue({ collection: () => col });

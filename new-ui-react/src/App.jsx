@@ -196,6 +196,22 @@ const PageAccessLoading = () => (
   </div>
 );
 
+const PageAccessError = ({ onRetry }) => (
+  <div className="relative flex-1 h-full flex items-center justify-center px-6">
+    <div className="max-w-md text-center">
+      <p className="text-sm font-medium text-theme-text-primary">We couldn't verify your feature access.</p>
+      <p className="mt-1 text-sm text-theme-text-muted">Your plan has not been marked as restricted. Please retry the access check.</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-4 rounded-lg bg-theme-accent px-4 py-2 text-sm font-medium text-white"
+      >
+        Try again
+      </button>
+    </div>
+  </div>
+);
+
 const App = () => {
   const ui = useSelector(state => state.ui);
   const dispatch = useDispatch();
@@ -597,24 +613,31 @@ const App = () => {
   // `resolved` starts false so a page refresh/direct-load on the intelligence tab
   // doesn't flash LockedFeaturePreview for the brief window before this fetch
   // answers — the page renders a neutral loading state instead until resolved.
-  const [intelAccess, setIntelAccess] = useState({ enabled: false, stage: 'beta', networks: null, resolved: false });
+  const [intelAccess, setIntelAccess] = useState({ enabled: false, stage: 'beta', networks: null, resolved: false, error: false });
+  const [intelAccessAttempt, setIntelAccessAttempt] = useState(0);
   useEffect(() => {
-    if (!INTEL_ENV_ON || !token) { setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true }); return; }
-    fetchMarketTrendsAccess().then((r) => setIntelAccess({ ...r, resolved: true })).catch(() => setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true }));
-  }, [token]);
+    if (!INTEL_ENV_ON || !token) { setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true, error: false }); return; }
+    setIntelAccess((previous) => ({ ...previous, resolved: false, error: false }));
+    fetchMarketTrendsAccess()
+      .then((r) => setIntelAccess({ ...r, resolved: true, error: false }))
+      .catch(() => setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true, error: true }));
+  }, [token, intelAccessAttempt]);
 
-  // Keywords Explorer per-user access — same allow-listed pattern intelAccess used
-  // to follow (still a hard hide for this one, no plan-tier/locked-preview rewiring
-  // yet — see docs/PLAN_ACCESS.md's "Explicitly not covered" list). Show the
-  // nav/page/modal only when the env flag is on AND the server allow-listed
-  // this user (config.keywordExplorer.allowedUserIds). Defaults to hidden.
-  // `keywordExplorerResolved` guards the same refresh-flash as intelAccess above.
+  // Keywords Explorer access is resolved server-side from the user override OR
+  // plan entitlement. `keywordExplorerResolved` prevents a refresh flash, while
+  // request failures get a retry state rather than a false subscription modal.
   const [keywordExplorerAllowed, setKeywordExplorerAllowed] = useState(false);
   const [keywordExplorerResolved, setKeywordExplorerResolved] = useState(false);
+  const [keywordExplorerAccessError, setKeywordExplorerAccessError] = useState(false);
+  const [keywordExplorerAccessAttempt, setKeywordExplorerAccessAttempt] = useState(0);
   useEffect(() => {
-    if (!KEYWORD_EXPLORER_ON || !token) { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); return; }
-    fetchKeywordExplorerAccess().then((v) => { setKeywordExplorerAllowed(v); setKeywordExplorerResolved(true); }).catch(() => { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); });
-  }, [token]);
+    if (!KEYWORD_EXPLORER_ON || !token) { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); setKeywordExplorerAccessError(false); return; }
+    setKeywordExplorerResolved(false);
+    setKeywordExplorerAccessError(false);
+    fetchKeywordExplorerAccess()
+      .then((v) => { setKeywordExplorerAllowed(v); setKeywordExplorerResolved(true); })
+      .catch(() => { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); setKeywordExplorerAccessError(true); });
+  }, [token, keywordExplorerAccessAttempt]);
 
   const filterKey = useMemo(
     () => JSON.stringify(sdui.filterValues),
@@ -1243,8 +1266,9 @@ const App = () => {
     if (sdui.loading || sdui.activePlatforms.length === 0) return;
     // In guest mode, wait for guest state to load before fetching ads
     if (guest?.isGuest && guest?.loading) return;
-    // Don't fetch ads while on the projects page
-    if (location.pathname === '/projects') return;
+    // These pages render their own data sources. In particular, a direct reload
+    // on /market-trends must not trigger the Ads Library search endpoint first.
+    if (['/projects', '/market-trends', '/keywords-explorer', '/saved'].includes(location.pathname)) return;
     loadAds();
     return () => controller.abort();
   }, [
@@ -1793,6 +1817,8 @@ const App = () => {
         {INTEL_ENV_ON && ui.activePage === "intelligence" ? (
           !intelAccess.resolved ? (
             <PageAccessLoading />
+          ) : intelAccess.error ? (
+            <PageAccessError onRetry={() => setIntelAccessAttempt((n) => n + 1)} />
           ) : intelAccess.enabled ? (
             <MarketTrends
               onDrill={(kind, value) => {
@@ -1814,6 +1840,8 @@ const App = () => {
         ) : ui.activePage === "keywords-explorer" && KEYWORD_EXPLORER_ON ? (
           !keywordExplorerResolved ? (
             <PageAccessLoading />
+          ) : keywordExplorerAccessError ? (
+            <PageAccessError onRetry={() => setKeywordExplorerAccessAttempt((n) => n + 1)} />
           ) : keywordExplorerAllowed ? (
             <KeywordsExplorerPage onOpenKeyword={openKeywordExplorer} />
           ) : (

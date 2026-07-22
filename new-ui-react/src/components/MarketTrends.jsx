@@ -48,12 +48,8 @@ async function apiGet(path, params = {}) {
 // while unresolved, in which case the caller should treat every network as
 // available rather than locking everything out.
 export async function fetchMarketTrendsAccess() {
-  try {
-    const r = await apiGet('/access');
-    return { enabled: !!r?.data?.enabled, stage: r?.data?.stage || 'beta', networks: r?.data?.networks ?? null };
-  } catch {
-    return { enabled: false, stage: 'beta', networks: null };
-  }
+  const r = await apiGet('/access');
+  return { enabled: !!r?.data?.enabled, stage: r?.data?.stage || 'beta', networks: r?.data?.networks ?? null };
 }
 
 // ─── CSV ────────────────────────────────────────────────────────────────────

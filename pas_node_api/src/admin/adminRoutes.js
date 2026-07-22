@@ -51,6 +51,24 @@ async function getTopTierPlanIds(col) {
   }
 }
 
+// Materializes the legacy null/undefined "all plans" representation when an
+// admin revokes one plan. Without this, unchecking a single plan is a no-op
+// (or can collapse to [] and deny everybody). The explicit list keeps every
+// other configured plan enabled while making that one admin choice effective.
+async function getAllConfiguredPlanIds(col) {
+  const doc = await col.findOne({ _id: 'plan_groups' });
+  const { DEFAULT_PLAN_GROUPS } = require('../services/planAccess/planAccessSeed');
+  const groups = doc?.groups || DEFAULT_PLAN_GROUPS.groups || {};
+  const ids = new Set();
+  for (const group of Object.values(groups)) {
+    for (const id of group?.plans || []) {
+      const numericId = Number(id);
+      if (Number.isInteger(numericId) && numericId > 0) ids.add(numericId);
+    }
+  }
+  return [...ids];
+}
+
 async function getPlanAccessCollection() {
   // Reuse the shared getDB() singleton instead of opening a new MongoClient on every call.
   // A fresh MongoClient per-request bypasses the authenticated connection pool and fails
@@ -817,6 +835,7 @@ router.put('/api/plan-access/config', express.json(), requireEditorRole, async (
     // Update filter allowed_plan_ids and platform_support
     if (filters || filterPlatforms) {
       const allTargetIds = new Set([...Object.keys(filters || {}), ...Object.keys(filterPlatforms || {})]);
+      let configuredPlanIds = null;
 
       for (const tid of allTargetIds) {
         const setFields = {};
@@ -826,11 +845,17 @@ router.put('/api/plan-access/config', express.json(), requireEditorRole, async (
           // If no MongoDB doc exists yet, use seed JSON as base so we don't clobber the full
           // allowed_plan_ids list with [] just because one plan is being revoked.
           const seedDoc = !doc ? seedConfig.find(s => s._id === tid) : null;
-          const arr = (doc && doc.allowed_plan_ids) || (seedDoc && seedDoc.allowed_plan_ids) || [];
+          const liveAllowed = doc ? doc.allowed_plan_ids : seedDoc?.allowed_plan_ids;
+          const unrestricted = liveAllowed == null && !!(doc || seedDoc);
+          const arr = Array.isArray(liveAllowed) ? liveAllowed : [];
           const hasIt = arr.includes(pid);
           const shouldHave = filters[tid];
           if (shouldHave && !hasIt) {
-            setFields.allowed_plan_ids = [...arr, pid];
+            // null/undefined already grants every plan, so no write is needed.
+            if (!unrestricted) setFields.allowed_plan_ids = [...arr, pid];
+          } else if (!shouldHave && unrestricted) {
+            if (!configuredPlanIds) configuredPlanIds = await getAllConfiguredPlanIds(col);
+            setFields.allowed_plan_ids = configuredPlanIds.filter((id) => id !== pid);
           } else if (!shouldHave && hasIt) {
             setFields.allowed_plan_ids = arr.filter(p => p !== pid);
           } else if (!shouldHave && !doc && !seedDoc) {

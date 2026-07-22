@@ -34,7 +34,8 @@ Both default to **off**. Backend `enabled:false` → router never mounted (the
 ```
 or env: `INTELLIGENCE_ALLOWED_USER_IDS=281,500,1234`
 
-- **empty/unset** → all authenticated users (when enabled)
+- **empty/unset** → the user-ID override contributes no access; the plan-tier
+  `market_trends` entitlement decides access
 - **non-empty** → only those user ids (others 403'd; UI hides the tab via `/access`)
 - Change the list → edit config + restart backend. No frontend rebuild (UI
   re-probes `/access` each load).
@@ -73,6 +74,12 @@ full history and the "empty list ≠ everyone" semantics fix are in
 3. **`GET /access`** returns this same resolved list as `networks` (`null` while
    unresolved) — the frontend uses it to compute `AVAILABLE_NETWORKS` and does
    **not** hide restricted chips (see § 4).
+4. **Beta plan coverage.** `planAccessMigrate.js --apply` performs a versioned,
+   one-time additive repair ensuring
+   every legacy paid Basic-to-Palladium ID and every configured current
+   monthly/yearly ID is present in both `market_trends` and `keyword_explorer`.
+   Existing IDs and all unrelated plan settings are never removed or replaced.
+   After the marker is written, later admin UI disables survive script reruns.
 
 ---
 
@@ -180,7 +187,9 @@ Every number is a **count of ads** (time series grouped by the network's
   ads"). No full-page reload on any interaction.
 - **Export CSV** — the current window's data, client-side.
 - **Reload persistence** — own URL `/market-trends` (App.jsx URL-sync effect maps
-  it to `activePage='intelligence'`), so refresh stays on the page.
+  it to `activePage='intelligence'`), so refresh stays on the page. The global
+  Ads Library loader explicitly skips this route, so refreshing Market Trends
+  does not call `/api/v1/common/ads/search`.
 
 **Theme:** the page uses the app's **dark-first** classes (`text-white`,
 `text-white/60`, `text-white/70`, `bg-theme-bg`, `bg-theme-card`,
@@ -248,6 +257,15 @@ automatically (`es.esMajor`).
 - Window anchored to each network's own `max(last_seen)`, not wall-clock now, so
   stale/dev data still renders.
 - No "top domains" — `search_mix` has no aggregatable domain field.
+
+### Production query performance
+- Aggregation requests opt into Elasticsearch's request cache. Query bodies and
+  returned counts are unchanged.
+- Concurrent panels asking for the same `max(last_seen)` share one in-flight ES
+  request. Completed values are not retained, so fresh data is not delayed by
+  an application-level TTL.
+- The overview resolves each network's date field/anchor once and reuses it for
+  its daily histogram instead of issuing the same max aggregation twice.
 
 ---
 

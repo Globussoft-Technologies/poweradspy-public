@@ -2224,16 +2224,16 @@ const postGoogleIntel = async (path, body) => {
 
 // Per-user access probe for Keywords Explorer (mirrors fetchMarketTrendsAccess).
 // GET /api/v1/google/keywords/access → { data: { enabled } }, where enabled =
-// feature flag on AND this user is allow-listed. Returns false on any error.
+// feature flag on AND either the user override or plan entitlement grants it.
+// Request failures throw so the UI does not mislabel them as plan denials.
 export const fetchKeywordExplorerAccess = async () => {
-  try {
-    const res = await fetch(`${PAS_API_BASE}/api/v1/google/keywords/access`, {
-      headers: { ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}) },
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    return !!data?.data?.enabled;
-  } catch { return false; }
+  const res = await fetch(`${PAS_API_BASE}/api/v1/google/keywords/access`, {
+    headers: { ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}) },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`keywords/access failed: ${res.status}`);
+  const data = await res.json();
+  return !!data?.data?.enabled;
 };
 
 export const getGoogleKeywordInsight = ({ keyword, from_date, to_date, country, top_n, interval, creatives, user_id = 281 } = {}) =>

@@ -22,10 +22,12 @@ const planSvc = { getConfig: vi.fn(async () => []), getFilterStatus: vi.fn(() =>
 require.cache[planSvcPath] = { id: planSvcPath, filename: planSvcPath, loaded: true, exports: planSvc };
 
 const dbMgrPath = require.resolve("../../src/database/DatabaseManager");
-require.cache[dbMgrPath] = { id: dbMgrPath, filename: dbMgrPath, loaded: true, exports: { getElastic: vi.fn() } };
+const getElastic = vi.fn();
+require.cache[dbMgrPath] = { id: dbMgrPath, filename: dbMgrPath, loaded: true, exports: { getElastic } };
 
 const registryPath = require.resolve("../../src/services/ServiceRegistry");
-require.cache[registryPath] = { id: registryPath, filename: registryPath, loaded: true, exports: { getService: vi.fn() } };
+const getService = vi.fn();
+require.cache[registryPath] = { id: registryPath, filename: registryPath, loaded: true, exports: { getService } };
 
 const configPath = require.resolve("../../src/config");
 let configExports = { intelligence: { enabled: true, allowedUserIds: [] } };
@@ -60,6 +62,8 @@ beforeEach(() => {
   planSvc.getConfig.mockReset().mockResolvedValue([]);
   planSvc.getFilterStatus.mockReset().mockReturnValue({});
   planSvc.getAllowedPlatforms.mockReset().mockReturnValue([]);
+  getService.mockReset();
+  getElastic.mockReset();
   configExports = { intelligence: { enabled: true, allowedUserIds: [] } };
 });
 // restrictNetworkToPlan is the last middleware before the real handler in every
@@ -83,6 +87,28 @@ describe("marketTrends router > module load", () => {
       expect(chain(path)).toBeDefined();
       expect(chain(path)).toContain(authMiddleware);
     }
+  });
+});
+
+describe("marketTrends router > production aggregation efficiency", () => {
+  it("resolves max(last_seen) once and reuses it for the overview histogram", async () => {
+    const search = vi.fn(async ({ body }) => {
+      if (body.aggs?.a?.max) {
+        return { aggregations: { a: { value: 1784678400000, value_as_string: "2026-07-22T00:00:00.000Z" } } };
+      }
+      return { aggregations: { d: { buckets: [{ key_as_string: "2026-07-22", doc_count: 7 }] } } };
+    });
+    const es = { indexName: "search_mix", esMajor: 7, search };
+    getService.mockImplementation((net) => net === "facebook" ? { db: { elastic: es } } : null);
+    freshSut();
+
+    const res = mkRes();
+    await lastHandler("/trends/overview")({ query: { network: "facebook", days: 30 }, body: {} }, res);
+
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(search.mock.calls.filter(([request]) => request.body.aggs?.a?.max)).toHaveLength(1);
+    expect(search.mock.calls.every(([request]) => request.request_cache === true)).toBe(true);
+    expect(res.body.data.total).toBe(7);
   });
 });
 

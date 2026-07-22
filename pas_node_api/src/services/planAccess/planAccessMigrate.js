@@ -31,6 +31,14 @@
  *                                             editable source of truth after
  *                                             the admin panel touches it —
  *                                             this script only fills gaps).
+ *   - Open-beta feature docs                -> market_trends and
+ *                                             keyword_explorer add every legacy
+ *                                             Basic-to-Palladium ID plus every
+ *                                             configured current plan ID once.
+ *                                             A migration marker makes later
+ *                                             admin UI disables authoritative.
+ *                                             Live extras remain untouched; null
+ *                                             remains null (already unrestricted).
  *
  * This script never does a full-document replaceOne. A previous version of
  * this file did (and additionally targeted a hardcoded, inaccessible 'pas_dev'
@@ -46,10 +54,74 @@ const fs = require('fs');
 
 const { getDB, closeDB } = require('../sdui/db');
 const { planBillingMetadata, DEFAULT_PLAN_GROUPS } = require('./planAccessSeed');
-const { getContributionDocs } = require('./restructure2026');
+const { getContributionDocs, getPlanIds, getPlanGroups } = require('./restructure2026');
 
 const CONFIG_PATH = path.join(__dirname, 'plan_config.json');
 const APPLY = process.argv.includes('--apply');
+const OPEN_BETA_FEATURE_IDS = new Set(['market_trends', 'keyword_explorer']);
+const OPEN_BETA_MIGRATION = 'open_beta_paid_plans_v1';
+const LEGACY_PAID_GROUPS = ['Basic', 'Standard', 'Premium', 'Platinum', 'Titanium', 'Palladium'];
+
+/**
+ * Build the open-beta plan list without hardcoded IDs. Legacy IDs come from
+ * plan_groups; current monthly/yearly IDs come from config.pricing.planIds.
+ * Free and Custom are intentionally outside the Basic-to-Palladium rollout.
+ */
+function getOpenBetaPlanIds() {
+  const legacyIds = LEGACY_PAID_GROUPS.flatMap((group) => DEFAULT_PLAN_GROUPS?.groups?.[group]?.plans || []);
+  const currentIds = Object.values(getPlanIds()).filter((id) => Number.isFinite(id));
+  return [...new Set([...legacyIds, ...currentIds].map(Number).filter((id) => Number.isFinite(id) && id > 0))];
+}
+
+function addOpenBetaPlanIds(sourceDocs) {
+  const requiredPlanIds = getOpenBetaPlanIds();
+  return sourceDocs.map((doc) => OPEN_BETA_FEATURE_IDS.has(doc._id)
+    ? {
+        ...doc,
+        allowed_plan_ids: [...new Set([...(Array.isArray(doc.allowed_plan_ids) ? doc.allowed_plan_ids : []), ...requiredPlanIds])],
+        migration_versions: [...new Set([...(Array.isArray(doc.migration_versions) ? doc.migration_versions : []), OPEN_BETA_MIGRATION])],
+      }
+    : doc);
+}
+
+function deepMergeAdditive(target, source) {
+  const out = { ...(target || {}) };
+  for (const [key, value] of Object.entries(source || {})) {
+    if (key === '_id') continue;
+    if (Array.isArray(value)) {
+      out[key] = [...new Set([...(Array.isArray(out[key]) ? out[key] : []), ...value])];
+    } else if (isPlainObject(value)) {
+      out[key] = deepMergeAdditive(out[key], value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Existing live documents receive ONLY current-plan contributions plus the two
+ * open-beta grants. Base JSON arrays are deliberately excluded here: replaying
+ * them could re-add a legacy entitlement an admin intentionally revoked.
+ * Missing documents still receive the complete source document.
+ */
+function buildExistingPatchMap(contributionDocs) {
+  const map = new Map();
+  const add = (doc) => {
+    const current = map.get(doc._id) || { _id: doc._id };
+    map.set(doc._id, { _id: doc._id, ...deepMergeAdditive(current, doc) });
+  };
+  for (const doc of contributionDocs) add(doc);
+
+  const currentGroups = getPlanGroups();
+  if (Object.keys(currentGroups).length > 0) add({ _id: 'plan_groups', groups: currentGroups });
+
+  const betaPlanIds = getOpenBetaPlanIds();
+  for (const featureId of OPEN_BETA_FEATURE_IDS) {
+    add({ _id: featureId, allowed_plan_ids: betaPlanIds, migration_versions: [OPEN_BETA_MIGRATION] });
+  }
+  return map;
+}
 
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -83,21 +155,35 @@ function collectFields(obj, prefix, arrayPaths, mapPaths) {
   }
 }
 
-async function migrateDoc(col, sourceDoc) {
+async function migrateDoc(col, sourceDoc, existingPatchDoc) {
   const liveDoc = await col.findOne({ _id: sourceDoc._id });
 
   if (!liveDoc) {
     return { op: 'insert', exec: () => col.insertOne(sourceDoc) };
   }
 
+  let effectivePatchDoc = existingPatchDoc || { _id: sourceDoc._id };
+  // Once this one-time rollout has run, admin UI choices are the source of
+  // truth. In particular, do not re-add a plan an admin disabled later.
+  if (OPEN_BETA_FEATURE_IDS.has(sourceDoc._id)
+      && liveDoc.migration_versions?.includes(OPEN_BETA_MIGRATION)) {
+    const { allowed_plan_ids: _ignoredPlanIds, migration_versions: _ignoredMarker, ...rest } = effectivePatchDoc;
+    effectivePatchDoc = rest;
+  }
+
   const arrayPaths = [];
   const mapPaths = [];
-  collectFields(sourceDoc, '', arrayPaths, mapPaths);
+  collectFields(effectivePatchDoc, '', arrayPaths, mapPaths);
 
   const addToSet = {};
   for (const { path: p, value } of arrayPaths) {
     if (value.length === 0) continue;
-    addToSet[p] = { $each: value };
+    const liveValue = p.split('.').reduce((o, k) => (o ? o[k] : undefined), liveDoc);
+    // null/undefined already means unrestricted access. Preserve that broader
+    // live setting and avoid $addToSet against a non-array field.
+    if (OPEN_BETA_FEATURE_IDS.has(sourceDoc._id) && p === 'allowed_plan_ids' && liveValue == null) continue;
+    const missing = value.filter((item) => !Array.isArray(liveValue) || !liveValue.includes(item));
+    if (missing.length > 0) addToSet[p] = { $each: missing };
   }
 
   const set = {};
@@ -141,8 +227,12 @@ async function migrate() {
   // Merge in the 2026-restructure tiers, resolved from config.pricing.planIds —
   // none of the docs above hardcode those plan IDs. See restructure2026.js.
   const { mergeContributions } = require('./restructure2026');
+  const contributionDocs = getContributionDocs();
   allSourceDocs = mergeContributions(allSourceDocs);
+  allSourceDocs = addOpenBetaPlanIds(allSourceDocs);
+  const existingPatchMap = buildExistingPatchMap(contributionDocs);
   console.log(`(2026-restructure contributions merged in from config.pricing.planIds: ${JSON.stringify(getContributionDocs().length ? 'yes' : 'no configured plan IDs — skipped')})`);
+  console.log(`(open-beta access: ${getOpenBetaPlanIds().length} paid legacy/current plan IDs will be ensured for market_trends + keyword_explorer)`);
 
   const db = await getDB();
   const col = db.collection('plan_access_config');
@@ -150,7 +240,7 @@ async function migrate() {
 
   const plans = [];
   for (const doc of allSourceDocs) {
-    const plan = await migrateDoc(col, doc);
+    const plan = await migrateDoc(col, doc, existingPatchMap.get(doc._id));
     plans.push({ id: doc._id, ...plan });
   }
 
@@ -176,6 +266,7 @@ async function migrate() {
     }));
   }
   console.log(`\nDone. ${active.length} docs updated.`);
+  console.log('Restart/reload every running API worker now, or allow up to 5 minutes for each worker\'s in-memory plan-access cache to expire.');
   await closeDB();
 }
 
