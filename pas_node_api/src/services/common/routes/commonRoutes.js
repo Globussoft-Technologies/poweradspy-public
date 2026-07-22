@@ -177,9 +177,11 @@ router.post(
 );
 
 // POST /api/v1/common/ads/getAdInsightData?network=<net>
-// Curated single-ad insight (one flat JSON object) for one ad, only if it has
-// both call_to_action and destination_url. Not the SSE getAdInsights — this is a
-// filtered, competitor-analysis field set incl. URL + landing-page info.
+// Paginated curated ad-insight feed (page of 10, newest-active first):
+// { network, page, page_size?, post_owner_id?, include_html? } → array of ads
+// that have BOTH call_to_action and destination_url. Only the 6 networks that
+// carry those fields are supported (facebook, instagram, linkedin, quora,
+// reddit, youtube); others (tiktok, pinterest, gdn, google, native) → 400.
 router.post(
   '/ads/getAdInsightData',
   authMiddleware,

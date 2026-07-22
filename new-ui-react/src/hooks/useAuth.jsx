@@ -4,6 +4,7 @@ import { fetchPlanAccess, fetchOnboardingStatus, trackEvent } from '../services/
 import { openModal } from '../store/uiSlice';
 
 const AuthContext = createContext(null);
+const ONBOARDING_DISMISS_KEY_PREFIX = 'pas_onboarding_dismissed_';
 
 // Node.js logout route — clears cookie + redirects to aMember logout
 const LOGOUT_URL = (import.meta.env.VITE_PAS_API_BASE_URL || '') + '/logout';
@@ -30,6 +31,33 @@ const SESSION_STATE_KEYS = [
 const FILTER_STATE_KEYS = ['sdui.filterValues', 'sdui.activePlatforms', 'persist:root'];
 const FILTER_RETENTION_MS = 24 * 60 * 60 * 1000; // 24h
 const FILTER_LOGOUT_TS_KEY = 'pas_filters_logout_at';
+
+export function getOnboardingDismissKey(userId) {
+  if (!userId) return '';
+  return `${ONBOARDING_DISMISS_KEY_PREFIX}${userId}`;
+}
+
+export function dismissOnboardingForUserId(userId) {
+  const key = getOnboardingDismissKey(userId);
+  if (!key) return;
+  try { localStorage.setItem(key, '1'); } catch {}
+}
+
+export function clearOnboardingDismissForUserId(userId) {
+  const key = getOnboardingDismissKey(userId);
+  if (!key) return;
+  try { localStorage.removeItem(key); } catch {}
+}
+
+export function isOnboardingDismissedForUserId(userId) {
+  const key = getOnboardingDismissKey(userId);
+  if (!key) return false;
+  try { return localStorage.getItem(key) === '1'; } catch { return false; }
+}
+
+function shouldResetOnboardingDismiss(userLike) {
+  return userLike?.needsOnboarding !== false;
+}
 
 // Called on logout: leaves filter/UI selections in place but starts a 24h
 // retention clock, and immediately wipes everything else session-specific.
@@ -161,6 +189,9 @@ function bootstrapAuth() {
     // every page load (e.g. the reload the /logout redirect chain itself triggers),
     // or the timestamp gets consumed before the 24h window ever elapses.
     expireStaleFilters();
+    if (isFreshLogin && shouldResetOnboardingDismiss(payload)) {
+      clearOnboardingDismissForUserId(payload.user_id || payload.id);
+    }
     localStorage.setItem('authUser', JSON.stringify(payload));
     if (isFreshLogin || isEnvLogin) {
       trackEvent('loginPage', {
@@ -213,6 +244,8 @@ export function AuthProvider({ children }) {
     const path = window.location.pathname;
     if (!token || !user) return;
     if (path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')) return;
+    const userId = user.user_id || user.id;
+    if (isOnboardingDismissedForUserId(userId)) return;
 
     if (user.needsOnboarding === true) {
       dispatch(openModal('isOnboardingModalOpen'));
@@ -247,6 +280,9 @@ export function AuthProvider({ children }) {
   }, [planAccess]);
 
   const logout = () => {
+    if (shouldResetOnboardingDismiss(user)) {
+      clearOnboardingDismissForUserId(user?.user_id || user?.id);
+    }
     // Clear all auth data from localStorage
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');

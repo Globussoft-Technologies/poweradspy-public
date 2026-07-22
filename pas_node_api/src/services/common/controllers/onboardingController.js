@@ -95,6 +95,9 @@ exports.saveOnboarding = async (req, res) => {
     if (countryList.length > MAX_COUNTRIES) {
       return res.status(400).json({ code: 400, message: `countries: max ${MAX_COUNTRIES} allowed` });
     }
+    if (competitorList.length === 0) {
+      return res.status(400).json({ code: 400, message: 'At least one competitor is required' });
+    }
     if (countryList.length === 0) {
       return res.status(400).json({ code: 400, message: 'At least one country is required' });
     }

@@ -3,6 +3,7 @@ import { X, Search, TrendingUp, Users, Clock, Loader2, ArrowRight, Sparkles, Glo
 import { searchOnboardingCategory, saveOnboarding, fetchOnboardingPreview, fetchCompetitorSuggestions } from "../../services/api";
 import { fetchSDUIConfig } from "../../services/sduiService";
 import { findCountryOptions } from "../../utils/countryFilter";
+import { dismissOnboardingForUserId } from "../../hooks/useAuth";
 
 const MAX_COMPETITORS = 3;
 const MAX_COUNTRIES = 3;
@@ -355,12 +356,22 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
   };
 
 
-  const canSubmit = !!selectedCategory && countries.length > 0 && !submitting;
+  const canSubmit = !!selectedCategory && countries.length > 0 && competitors.length > 0 && !submitting;
+
+  const handleSkip = useCallback(() => {
+    try {
+      const raw = localStorage.getItem('authUser');
+      const authUser = raw ? JSON.parse(raw) : null;
+      dismissOnboardingForUserId(authUser?.user_id || authUser?.id);
+    } catch {}
+    onClose?.();
+  }, [onClose]);
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) {
       if (!selectedCategory) setError("Pick a category from the suggestions.");
       else if (countries.length === 0) setError("Pick at least one country.");
+      else if (competitors.length === 0) setError("Pick at least one competitor.");
       return;
     }
     setError("");
@@ -469,7 +480,7 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
                   onChange={setCompetitors}
                   max={MAX_COMPETITORS}
                   minQueryLength={2}
-                  helperText={selectedCategory ? `Type a brand/company name to get legit suggestions from competitor DB for ${selectedCategory.major_category}.` : "Pick a niche first, then type a brand/company name."}
+                  helperText={selectedCategory ? `Required: pick at least 1 competitor, up to ${MAX_COMPETITORS}. Suggestions come from competitor DB for ${selectedCategory.major_category}.` : "Pick a niche first, then type a brand/company name. Competitor is required."}
                 />
               </div>
 
@@ -486,7 +497,7 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
               <div className="flex justify-end items-center gap-2.5 pt-1 border-t border-theme-border -mx-4 px-4 pt-4">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleSkip}
                   className="px-3 py-2 text-sm font-medium text-theme-text-muted hover:text-theme-text transition-colors whitespace-nowrap"
                 >
                   Skip

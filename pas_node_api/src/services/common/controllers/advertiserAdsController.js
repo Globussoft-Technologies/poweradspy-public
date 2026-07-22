@@ -39,8 +39,10 @@ const SUPPORTED = [...Object.keys(NETWORK_SQL_TABLE), 'tiktok'];
 
 // The table name is chosen only from the hard-coded map above (never from user
 // input), so interpolating it is not an injection vector; post_owner_id is
-// always passed as a bound parameter.
-function buildSql(table, hasLimit) {
+// always passed as a bound parameter. LIMIT is inlined as a validated integer
+// because mysql2's prepared `execute()` rejects a bound LIMIT param ("Incorrect
+// arguments to mysqld_stmt_execute").
+function buildSql(table, limit) {
   return `
     SELECT ${table}.id AS ad_id,
            DATE_FORMAT(${table}.first_seen, '%Y-%m-%d') AS first_seen,
@@ -48,7 +50,7 @@ function buildSql(table, hasLimit) {
     FROM ${table}
     WHERE ${table}.post_owner_id = ?
     ORDER BY ${table}.first_seen ASC, ${table}.id ASC
-    ${hasLimit ? 'LIMIT ?' : ''}`.trim();
+    ${limit ? `LIMIT ${Math.max(1, Math.trunc(limit))}` : ''}`.trim();
 }
 
 // Normalize any first_seen representation (epoch seconds/ms, ISO, or
@@ -73,9 +75,7 @@ async function fetchFromSql(table, service, postOwnerId, limit) {
   const { db } = service;
   if (!db || !db.sql) return { code: 503, message: 'SQL database connection not available' };
 
-  const params = [postOwnerId];
-  if (limit) params.push(limit);
-  const rows = await db.sql.query(buildSql(table, !!limit), params);
+  const rows = await db.sql.query(buildSql(table, limit), [postOwnerId]);
 
   const data = (rows || []).map((r) => ({ ad_id: r.ad_id, first_seen: r.first_seen, last_seen: r.last_seen }));
   return { code: 200, data };

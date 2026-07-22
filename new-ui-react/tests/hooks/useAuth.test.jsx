@@ -2,15 +2,26 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, render } from "@testing-library/react";
 
-const { fetchPlanAccessSpy, trackEventSpy } = vi.hoisted(() => ({
+const { fetchPlanAccessSpy, fetchOnboardingStatusSpy, trackEventSpy, dispatchSpy } = vi.hoisted(() => ({
   fetchPlanAccessSpy: vi.fn(),
+  fetchOnboardingStatusSpy: vi.fn(),
   trackEventSpy: vi.fn(),
+  dispatchSpy: vi.fn(),
 }));
 
 vi.mock("../../src/services/api", () => ({
   fetchPlanAccess: fetchPlanAccessSpy,
+  fetchOnboardingStatus: fetchOnboardingStatusSpy,
   trackEvent: trackEventSpy,
 }));
+
+vi.mock("react-redux", async () => {
+  const actual = await vi.importActual("react-redux");
+  return {
+    ...actual,
+    useDispatch: () => dispatchSpy,
+  };
+});
 
 // Helper: build a JWT with payload + optional expiration
 function makeJwt(payload) {
@@ -41,6 +52,8 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   fetchPlanAccessSpy.mockReset().mockResolvedValue(null);
+  fetchOnboardingStatusSpy.mockReset().mockResolvedValue(null);
+  dispatchSpy.mockReset();
   setUrl("");
   vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
 });
@@ -266,6 +279,7 @@ describe("useAuth > logout", () => {
     localStorage.setItem("persist:root", "x");
     localStorage.setItem("sdui.filterValues", "v");
     localStorage.setItem("sdui_config_cache", "y");
+    localStorage.setItem("pas_onboarding_dismissed_1", "1");
 
     Object.defineProperty(window, "location", {
       writable: true, configurable: true,
@@ -281,6 +295,7 @@ describe("useAuth > logout", () => {
     expect(localStorage.getItem("authToken")).toBeNull();
     expect(localStorage.getItem("authUser")).toBeNull();
     expect(localStorage.getItem("sdui_config_cache")).toBeNull();
+    expect(localStorage.getItem("pas_onboarding_dismissed_1")).toBeNull();
     // Filters/UI state survive the logout itself — only the retention window expiring wipes them.
     expect(localStorage.getItem("persist:root")).toBe("x");
     expect(localStorage.getItem("sdui.filterValues")).toBe("v");
@@ -376,5 +391,91 @@ describe("useAuth > getAuthToken", () => {
   it("returns '' when no token", async () => {
     const mod = await loadSut();
     expect(mod.getAuthToken()).toBe("");
+  });
+});
+
+describe("useAuth > onboarding dismiss behavior", () => {
+  it("fresh login clears onboarding dismiss key for that user", async () => {
+    const token = makeJwt({ id: 7, user_id: 7, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("pas_onboarding_dismissed_7", "1");
+    setUrl(`?token=${token}`);
+    await loadSut();
+    expect(localStorage.getItem("pas_onboarding_dismissed_7")).toBeNull();
+  });
+
+  it("fresh login keeps onboarding dismiss key when user is already completed", async () => {
+    const token = makeJwt({ id: 12, user_id: 12, needsOnboarding: false, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("pas_onboarding_dismissed_12", "1");
+    setUrl(`?token=${token}`);
+    await loadSut();
+    expect(localStorage.getItem("pas_onboarding_dismissed_12")).toBe("1");
+  });
+
+  it("needsOnboarding true opens onboarding modal", async () => {
+    const token = makeJwt({ id: 1, user_id: 1, needsOnboarding: true, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+    expect(dispatchSpy).toHaveBeenCalledWith({ payload: "isOnboardingModalOpen", type: "ui/openModal" });
+  });
+
+  it("dismissed onboarding skip suppresses modal even when JWT says true", async () => {
+    const token = makeJwt({ id: 8, user_id: 8, needsOnboarding: true, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    localStorage.setItem("pas_onboarding_dismissed_8", "1");
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to onboarding status when JWT lacks needsOnboarding", async () => {
+    const token = makeJwt({ id: 9, user_id: 9, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    fetchOnboardingStatusSpy.mockResolvedValueOnce({ needsOnboarding: true });
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(fetchOnboardingStatusSpy).toHaveBeenCalled();
+    expect(dispatchSpy).toHaveBeenCalledWith({ payload: "isOnboardingModalOpen", type: "ui/openModal" });
+  });
+
+  it("dismissed onboarding skip suppresses fallback status modal too", async () => {
+    const token = makeJwt({ id: 10, user_id: 10, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    localStorage.setItem("pas_onboarding_dismissed_10", "1");
+    fetchOnboardingStatusSpy.mockResolvedValueOnce({ needsOnboarding: true });
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(fetchOnboardingStatusSpy).not.toHaveBeenCalled();
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  it("completed users keep onboarding dismiss key on logout", async () => {
+    vi.useFakeTimers();
+    const token = makeJwt({ id: 2, user_id: 2, needsOnboarding: false, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    localStorage.setItem("authUser", JSON.stringify({ id: 2, user_id: 2, needsOnboarding: false }));
+    localStorage.setItem("pas_onboarding_dismissed_2", "1");
+
+    Object.defineProperty(window, "location", {
+      writable: true, configurable: true,
+      value: { ...window.location, href: "" },
+    });
+
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+    act(() => { result.current.logout(); });
+
+    expect(localStorage.getItem("pas_onboarding_dismissed_2")).toBe("1");
+    vi.useRealTimers();
   });
 });

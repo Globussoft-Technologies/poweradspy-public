@@ -9478,6 +9478,180 @@ paths:
                     type: string
                     example: "linkedin service not available"
 
+  /api/v1/common/ads/getAdInsightData:
+    post:
+      tags: [Common]
+      summary: Paginated curated ad-insight feed (ads with call_to_action + destination_url)
+      description: |
+        Returns a **page** of curated ad-insight objects for one network,
+        newest-active first. Page is 1-indexed: page 1 → ads 1-10, page 2 → 11-20, …
+
+        **Only ads that have BOTH `call_to_action` and `destination_url`** are
+        returned. Because of that, only the six networks that carry both fields
+        are supported: `facebook`, `instagram`, `linkedin`, `quora`, `reddit`,
+        `youtube`. Other networks (`tiktok`, `pinterest`, `gdn`, `google`,
+        `native`) don't store these fields and return **400**.
+
+        Not the SSE `getAdInsights` — this is a plain JSON list. Each item mirrors
+        the app's ad-detail field shape. LinkedIn additionally resolves
+        `redirect_url` / `final_url`, and (opt-in via `include_html`)
+        `landing_page_html`. Optional `post_owner_id` (alias `competitor_id`)
+        narrows the feed to one advertiser.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [network]
+              properties:
+                network:
+                  type: string
+                  enum: [facebook, instagram, linkedin, quora, reddit, youtube]
+                  default: facebook
+                  description: Target ad network (only these six are supported)
+                page:
+                  type: integer
+                  default: 1
+                  minimum: 1
+                  description: 1-indexed page number (page 1 = ads 1-10)
+                  example: 1
+                page_size:
+                  type: integer
+                  default: 10
+                  maximum: 50
+                  description: Ads per page (default 10, capped at 50)
+                post_owner_id:
+                  type: integer
+                  description: Optional — narrow the feed to one advertiser (alias competitor_id)
+                  example: 1792
+                competitor_id:
+                  type: integer
+                  description: Alias for post_owner_id
+                include_html:
+                  type: boolean
+                  default: false
+                  description: LinkedIn only — include landing_page_html per ad (heavy)
+            example:
+              network: linkedin
+              page: 1
+      responses:
+        '200':
+          description: One page of curated ad insights, newest-active first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Ad insights fetched successfully
+                  network:
+                    type: string
+                    example: linkedin
+                  page:
+                    type: integer
+                    example: 1
+                  page_size:
+                    type: integer
+                    example: 10
+                  count:
+                    type: integer
+                    example: 10
+                  has_more:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id:
+                          type: integer
+                          example: 44425
+                        network:
+                          type: string
+                          example: linkedin
+                        post_owner_id:
+                          type: integer
+                          example: 1792
+                        post_owner:
+                          type: string
+                          example: Creality 3D Scanner
+                        ad_title:
+                          type: string
+                        ad_description:
+                          type: string
+                        call_to_action:
+                          type: string
+                          example: Learn More
+                        status:
+                          type: string
+                          example: Active
+                        ad_type:
+                          type: string
+                          example: VIDEO
+                        language:
+                          type: string
+                          example: English
+                        country:
+                          type: string
+                          example: United States
+                        first_seen:
+                          type: string
+                          format: date
+                          example: "2026-07-02"
+                        last_seen:
+                          type: string
+                          format: date
+                          example: "2026-07-15"
+                        destination_url:
+                          type: string
+                        redirect_url:
+                          type: string
+                          nullable: true
+                        final_url:
+                          type: string
+                          nullable: true
+                        landing_page_html:
+                          type: string
+                          nullable: true
+                        landing_page_title:
+                          type: string
+                          nullable: true
+                        http_status_code:
+                          type: integer
+                          nullable: true
+        '400':
+          description: Unsupported network (no call_to_action / destination_url data)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 400
+                  message:
+                    type: string
+                    example: "Unsupported network: tiktok. This endpoint returns only ads that have both call_to_action and destination_url — available on: facebook, instagram, linkedin, quora, reddit, youtube"
+        '503':
+          description: Network service or database connection not available
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 503
+                  message:
+                    type: string
+                    example: "linkedin service not available"
+
   /api/v1/common/ads/search:
     post:
       tags: [Common]

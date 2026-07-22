@@ -3,79 +3,74 @@
 const serviceRegistry = require('../../ServiceRegistry');
 
 /**
- * Curated single-ad insight for one ad on one network.
+ * Paginated curated ad-insight feed for one network.
  *
- * Distinct from `getAdInsights` (which SSE-streams ~9 insight fetchers): this
- * endpoint returns ONE flat JSON object with a fixed, competitor-analysis field
- * set, and only for ads that actually carry both a call_to_action AND a
- * destination_url — ads missing either are treated as "does not qualify" (404).
+ * Input: { network, page, page_size?, post_owner_id?, include_html? } — NO ad_id.
+ * Returns a page of ads (default 10 per page, newest-active first), each a flat
+ * curated object identical in field shape to the app's ad-detail data. Page is
+ * 1-indexed: page 1 → ads 1-10, page 2 → 11-20, …
  *
- * The shared fields are sourced by reusing each network's existing
- * `getAdDetails` (the very same fetcher the `getAdInsights` stream runs for its
- * `adDetails` event), so field semantics stay identical to the rest of the app.
- * The URL + landing-page group is added per network; LinkedIn is wired here,
- * other networks return those "if available" fields as null until wired.
+ * ONLY ads with BOTH call_to_action AND destination_url present are returned.
+ * Those two live on `<network>_ad.call_to_action_id` and
+ * `<network>_ad_meta_data.destination_url`, so one indexed query selects a page
+ * of qualifying ids, each id is hydrated by reusing that network's existing
+ * getAdDetails (the same source getAdInsights streams for its `adDetails`
+ * event), and a final guard drops anything whose hydrated call_to_action /
+ * destination_url turns out absent.
  *
- * TikTok has no ad-detail store (no call_to_action / destination_url), so it
- * takes an ES-only branch: it returns what its `tiktok_ads` doc carries (title,
- * advertiser, timeline, language) with the CTA/destination filter relaxed and
- * the URL / landing-page fields null.
+ * Only the six networks that carry both fields are supported: facebook,
+ * instagram, linkedin, quora, reddit, youtube. Networks without them — tiktok
+ * (ES-only, no call_to_action/destination_url) and pinterest/gdn/google/native
+ * (no call_to_action at all) — are skipped: a request for one returns 400.
+ *
+ * LinkedIn additionally resolves final_url/redirect_url from
+ * linkedin_ad_outgoing_links and (opt-in via include_html) landing_page_html
+ * from linkedin_ad_html_lander_content.
  */
 
-const NETWORK = {
+// The networks whose ads can carry both call_to_action and destination_url.
+// Naming is uniform: <table>.call_to_action_id, and <meta>.<fk> = <table>.id
+// with <meta>.destination_url.
+const NETWORKS = {
   facebook: {
+    table: 'facebook_ad', meta: 'facebook_ad_meta_data', fk: 'facebook_ad_id',
     getAdDetails: require('../../facebook/controllers/adDetailController').getAdDetails,
     normalize:    require('../../facebook/helpers/paramParser').normalizeParams,
   },
   instagram: {
+    table: 'instagram_ad', meta: 'instagram_ad_meta_data', fk: 'instagram_ad_id',
     getAdDetails: require('../../instagram/controllers/adDetailController').getAdDetails,
     normalize:    require('../../instagram/helpers/paramParser').normalizeParams,
   },
-  pinterest: {
-    getAdDetails: require('../../pinterest/controllers/adDetailController').getAdDetails,
-    normalize:    require('../../pinterest/helpers/paramParser').normalizeParams,
-  },
-  youtube: {
-    getAdDetails: require('../../youtube/controllers/adDetailController').getAdDetails,
-    normalize:    require('../../youtube/helpers/paramParser').normalizeParams,
-  },
-  gdn: {
-    getAdDetails: require('../../gdn/controllers/adDetailController').getAdDetails,
-    normalize:    require('../../gdn/helpers/paramParser').normalizeParams,
-  },
-  google: {
-    getAdDetails: require('../../google/controllers/adDetailController').getAdDetails,
-    normalize:    require('../../google/helpers/paramParser').normalizeParams,
-  },
-  native: {
-    getAdDetails: require('../../native/controllers/adDetailController').getAdDetails,
-    normalize:    require('../../native/helpers/paramParser').normalizeParams,
-  },
   linkedin: {
+    table: 'linkedin_ad', meta: 'linkedin_ad_meta_data', fk: 'linkedin_ad_id',
     getAdDetails: require('../../linkedin/controllers/adDetailController').getAdDetails,
     normalize:    require('../../linkedin/helpers/paramParser').normalizeParams,
-    landing:      linkedinLanding,
-  },
-  reddit: {
-    getAdDetails: require('../../reddit/controllers/adDetailController').getAdDetails,
-    normalize:    require('../../reddit/helpers/paramParser').normalizeParams,
   },
   quora: {
+    table: 'quora_ad', meta: 'quora_ad_meta_data', fk: 'quora_ad_id',
     getAdDetails: require('../../quora/controllers/adDetailController').getAdDetails,
     normalize:    require('../../quora/helpers/paramParser').normalizeParams,
   },
-  tiktok: {
-    // ES-only: no getAdDetails. `fetch` returns a getAdDetails-shaped object so
-    // the shared assembly below works unchanged; `esOnly` relaxes the filter.
-    esOnly:    true,
-    normalize: require('../../tiktok/helpers/paramParser').normalizeParams,
-    fetch:     tiktokAdInsight,
+  reddit: {
+    table: 'reddit_ad', meta: 'reddit_ad_meta_data', fk: 'reddit_ad_id',
+    getAdDetails: require('../../reddit/controllers/adDetailController').getAdDetails,
+    normalize:    require('../../reddit/helpers/paramParser').normalizeParams,
+  },
+  youtube: {
+    table: 'youtube_ad', meta: 'youtube_ad_meta_data', fk: 'youtube_ad_id',
+    getAdDetails: require('../../youtube/controllers/adDetailController').getAdDetails,
+    normalize:    require('../../youtube/helpers/paramParser').normalizeParams,
   },
 };
 
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 50;
+const NULL_ENRICH = { redirect_url: null, final_url: null, landing_page_html: null, landing_page_title: null, http_status_code: null };
+
 // ── helpers ──────────────────────────────────────────────
 
-// The upstream paramParsers coerce 'NA'/null → '' — treat those, and blanks, as absent.
+// Upstream paramParsers coerce 'NA'/null → '' — treat those, and blanks, as absent.
 function present(v) {
   if (v == null) return false;
   const s = String(v).trim();
@@ -105,7 +100,6 @@ function toDateStr(v) {
 
 // Fallback ad status when a network's getAdDetails doesn't compute one.
 function computeStatus(lastSeen) {
-  if (!present(lastSeen)) return null;
   const d = toDateStr(lastSeen);
   if (!d) return null;
   const diffDays = Math.floor((Date.now() - new Date(`${d}T00:00:00Z`).getTime()) / 86400000);
@@ -124,9 +118,9 @@ function flattenRedirect(v) {
 // A single-value country out of whatever getAdDetails returns (string/array).
 function pickCountry(v) {
   if (Array.isArray(v)) {
-    const first = v.find((x) => present(x) || present(x?.country));
+    const first = v.find((x) => present(x) || present(x && x.country));
     if (!first) return null;
-    return present(first?.country) ? first.country : (present(first) ? String(first) : null);
+    return present(first && first.country) ? first.country : (present(first) ? String(first) : null);
   }
   return present(v) ? String(v).trim() : null;
 }
@@ -148,9 +142,10 @@ function parseHtmlText(v) {
   return s;
 }
 
-// ── LinkedIn landing-page / final-url enrichment ─────────
-async function linkedinLanding(db, adId, logger) {
-  const out = { redirect_url: null, final_url: null, landing_page_html: null, landing_page_title: null, http_status_code: null };
+// LinkedIn URL + (opt-in) landing enrichment. redirect/final are always fetched
+// (cheap); the html blob only when includeHtml is true.
+async function linkedinLanding(db, adId, logger, includeHtml) {
+  const out = { ...NULL_ENRICH };
   if (!db || !db.sql) return out;
   try {
     const rows = await db.sql.query(
@@ -164,189 +159,155 @@ async function linkedinLanding(db, adId, logger) {
   } catch (err) {
     logger?.warn?.('linkedinLanding outgoing lookup failed', { adId, error: err.message });
   }
-  try {
-    const rows = await db.sql.query(
-      'SELECT html_whitehat_lander_text FROM linkedin_ad_html_lander_content WHERE linkedin_ad_id = ? LIMIT 1',
-      [adId]
-    );
-    if (rows && rows[0]) out.landing_page_html = parseHtmlText(rows[0].html_whitehat_lander_text);
-  } catch (err) {
-    logger?.warn?.('linkedinLanding html lookup failed', { adId, error: err.message });
+  if (includeHtml) {
+    try {
+      const rows = await db.sql.query(
+        'SELECT html_whitehat_lander_text FROM linkedin_ad_html_lander_content WHERE linkedin_ad_id = ? LIMIT 1',
+        [adId]
+      );
+      if (rows && rows[0]) out.landing_page_html = parseHtmlText(rows[0].html_whitehat_lander_text);
+    } catch (err) {
+      logger?.warn?.('linkedinLanding html lookup failed', { adId, error: err.message });
+    }
   }
   // landing_page_title & http_status_code are not stored for LinkedIn → stay null.
   return out;
 }
 
-// ── TikTok ES-only ad fetch ──────────────────────────────
-// Returns a getAdDetails-shaped object from the `tiktok_ads` ES doc. Fields the
-// doc doesn't carry (call_to_action, destination_url, type, country, landing)
-// are null; the handler skips the CTA/destination filter for esOnly networks.
-async function tiktokAdInsight(db, adId, logger) {
-  if (!db || !db.elastic) return null;
-  const index = db.elastic.indexName || process.env.TT_ELASTIC_INDEX || 'tiktok_ads';
-  try {
-    const esResult = await db.elastic.search({
-      index,
-      body: {
-        size: 1,
-        _source: ['sql_id', 'ad_title', 'post_owner', 'post_owner_id', 'first_seen', 'last_seen', 'language'],
-        // sql_id may be mapped numeric or keyword — match either.
-        query: { terms: { sql_id: [Number(adId), String(adId)] } },
-        collapse: { field: 'sql_id' },
-      },
-    });
-    const hits = (esResult.hits || esResult.body?.hits)?.hits || [];
-    if (!hits.length) return null;
-    const src = hits[0]._source || {};
-    return {
-      id: present(src.sql_id) ? src.sql_id : hits[0]._id,
-      ad_id: present(src.sql_id) ? src.sql_id : hits[0]._id,
-      ad_title: present(src.ad_title) ? src.ad_title : null,
-      ad_text: null,
-      news_feed_description: null,
-      call_to_action: null,       // not stored for TikTok
-      destination_url: null,      // not stored for TikTok
-      type: null,
-      post_owner: present(src.post_owner) ? src.post_owner : null,
-      post_owner_id: present(src.post_owner_id) ? src.post_owner_id : null,
-      first_seen: src.first_seen ?? null,
-      last_seen: src.last_seen ?? null,
-      language: present(src.language) ? src.language : null,
-      country: null,
-      ad_status: null,
-      market_platform_urls: null,
-    };
-  } catch (err) {
-    logger?.error?.('tiktokAdInsight ES lookup failed', { adId, error: err.message });
-    return null;
-  }
+// Assemble one curated object from a getAdDetails-shaped `base`.
+function buildCuratedObject(base, network, enrich, postOwnerId) {
+  const redirectUrl = firstPresent(
+    enrich.redirect_url,
+    flattenRedirect(base.market_platform_urls && base.market_platform_urls.redirect_urls)
+  );
+  return {
+    // Basic Ad Information
+    ad_id: present(base.ad_id) ? Number(base.ad_id) : (present(base.id) ? Number(base.id) : null),
+    network,
+    post_owner_id: postOwnerId != null ? Number(postOwnerId) : (present(base.post_owner_id) ? Number(base.post_owner_id) : null),
+    post_owner: present(base.post_owner) ? base.post_owner : null,
+    ad_title: present(base.ad_title) ? base.ad_title : null,
+    ad_description: firstPresent(base.news_feed_description, base.ad_text),
+    call_to_action: present(base.call_to_action) ? base.call_to_action : null,
+    status: present(base.ad_status) ? base.ad_status : computeStatus(base.last_seen),
+    ad_type: present(base.type) ? base.type : null,
+    language: present(base.language) ? base.language : null,
+    country: pickCountry(base.country),
+    // Timeline
+    first_seen: toDateStr(base.first_seen),
+    last_seen: toDateStr(base.last_seen),
+    // URL Information
+    destination_url: present(base.destination_url) ? base.destination_url : null,
+    redirect_url: redirectUrl,
+    final_url: enrich.final_url,
+    // Landing Page Information (if available)
+    landing_page_html: enrich.landing_page_html,
+    landing_page_title: enrich.landing_page_title,
+    http_status_code: enrich.http_status_code,
+  };
+}
+
+// SQL that picks one page of qualifying ad ids (+ their advertiser). Identifiers
+// come only from the hard-coded NETWORKS map, never user input. LIMIT/OFFSET are
+// inlined as validated integers because mysql2's prepared `execute()` rejects
+// bound LIMIT/OFFSET params ("Incorrect arguments to mysqld_stmt_execute");
+// post_owner_id stays a bound parameter.
+function buildIdPageSql(m, hasOwner, limit, offset) {
+  const lim = Math.max(1, Math.trunc(limit));
+  const off = Math.max(0, Math.trunc(offset));
+  return `
+    SELECT t.id AS id, t.post_owner_id AS post_owner_id
+    FROM ${m.table} t
+    WHERE t.call_to_action_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM ${m.meta} md
+        WHERE md.${m.fk} = t.id AND md.destination_url IS NOT NULL AND md.destination_url <> ''
+      )
+      ${hasOwner ? 'AND t.post_owner_id = ?' : ''}
+    ORDER BY t.last_seen DESC, t.id DESC
+    LIMIT ${lim} OFFSET ${off}`.trim();
 }
 
 /**
  * POST /api/v1/common/ads/getAdInsightData?network=<net>
- * Body/query: { network, ad_id (or <network>_ad_id), user_id?, language? }
- * → { code, message, data: { ...curated fields } }
- * Only returns ads with both call_to_action and destination_url present (else 404).
+ * Body/query: { network, page=1, page_size=10, post_owner_id?, include_html? }
+ * → { code, message, network, page, page_size, count, has_more, data: [ {curated} ] }
+ * Only ads with both call_to_action and destination_url are returned; networks
+ * that don't carry those fields are unsupported (400).
  */
 async function getAdInsightData(req, res) {
   const raw = { ...req.body, ...req.query };
   const network = String(raw.network || 'facebook').toLowerCase().trim();
 
-  const cfg = NETWORK[network];
+  const cfg = NETWORKS[network];
   if (!cfg) {
     return res.status(400).json({
       code: 400,
-      message: `Unsupported network: ${network}. Available: ${Object.keys(NETWORK).join(', ')}`,
+      message: `Unsupported network: ${network}. This endpoint returns only ads that have both call_to_action and destination_url — available on: ${Object.keys(NETWORKS).join(', ')}`,
     });
   }
 
-  const p = cfg.normalize(raw);
-  const adIdRaw = firstPresent(p.ad_id, p[`${network}_ad_id`], raw.ad_id, raw[`${network}_ad_id`]);
-  if (!adIdRaw) {
-    return res.status(400).json({ code: 400, message: `Missing ad id (ad_id or ${network}_ad_id)` });
-  }
-  const adId = Number(adIdRaw);
-  if (!Number.isInteger(adId) || adId <= 0) {
-    return res.status(400).json({ code: 400, message: 'ad_id must be a positive integer' });
-  }
+  // Pagination + options.
+  const page = Math.max(1, parseInt(raw.page, 10) || 1);
+  const psRaw = parseInt(raw.page_size, 10);
+  const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(psRaw, MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE;
+  const offset = (page - 1) * pageSize;
+  const includeHtml = raw.include_html === true || String(raw.include_html).toLowerCase() === 'true';
+  const ownerRaw = firstPresent(raw.post_owner_id, raw.competitor_id);
+  const postOwnerId = ownerRaw != null && Number.isInteger(Number(ownerRaw)) && Number(ownerRaw) > 0 ? Number(ownerRaw) : null;
 
-  const userId = firstPresent(p.user_id, raw.user_id) || 281;   // read-only lookup; fetchers 401 without one
-  const language = firstPresent(p.language, raw.language) || 'en';
+  const userId = firstPresent(cfg.normalize(raw).user_id, raw.user_id) || 281;
+  const language = firstPresent(raw.language) || 'en';
 
   const service = serviceRegistry.getService(network);
   if (!service) {
     return res.status(503).json({ code: 503, message: `${network} service not available` });
   }
   const { db, log: logger } = service;
+  if (!db.sql) {
+    return res.status(503).json({ code: 503, message: 'SQL database connection not available' });
+  }
 
   try {
-    let base;
-    if (cfg.esOnly) {
-      // ES-only network (TikTok): no getAdDetails, and its docs carry no
-      // call_to_action / destination_url, so the qualifying filter is skipped.
-      base = await cfg.fetch(db, adId, logger);
-      if (!base) return res.status(404).json({ code: 404, message: 'Ad not found' });
-    } else {
-      const detail = await cfg.getAdDetails({ body: { ad_id: adId, user_id: userId, language }, query: {} }, db, logger);
-      if (!detail || detail.code !== 200 || !detail.data || (Array.isArray(detail.data) && detail.data.length === 0)) {
-        return res.status(404).json({ code: 404, message: 'Ad not found' });
-      }
-      base = Array.isArray(detail.data) ? detail.data[0] : detail.data;
+    const params = [];
+    if (postOwnerId != null) params.push(postOwnerId);
+    // pageSize + 1 to probe has_more.
+    const idRows = await db.sql.query(buildIdPageSql(cfg, postOwnerId != null, pageSize + 1, offset), params);
 
-      // ── Filter: both call_to_action AND destination_url must be present ──
-      if (!present(base.call_to_action) || !present(base.destination_url)) {
-        return res.status(404).json({
-          code: 404,
-          message: 'Ad does not qualify: call_to_action and destination_url are both required',
-        });
-      }
-    }
+    const hasMore = (idRows || []).length > pageSize;
+    const pageRows = (idRows || []).slice(0, pageSize);
 
-    // post_owner_id isn't in every getAdDetails SELECT — backfill from the ad table.
-    let postOwnerId = present(base.post_owner_id) ? Number(base.post_owner_id) : null;
-    if (postOwnerId == null && db.sql && NETWORK_TABLE[network]) {
+    const data = (await Promise.all(pageRows.map(async (row) => {
+      const adId = row.id;
       try {
-        const rows = await db.sql.query(`SELECT post_owner_id FROM ${NETWORK_TABLE[network]} WHERE id = ? LIMIT 1`, [adId]);
-        if (rows && rows[0] && present(rows[0].post_owner_id)) postOwnerId = Number(rows[0].post_owner_id);
+        const detail = await cfg.getAdDetails({ body: { ad_id: adId, user_id: userId, language }, query: {} }, db, logger);
+        if (!detail || detail.code !== 200 || !detail.data || (Array.isArray(detail.data) && detail.data.length === 0)) return null;
+        const base = Array.isArray(detail.data) ? detail.data[0] : detail.data;
+        const enrich = network === 'linkedin' ? await linkedinLanding(db, adId, logger, includeHtml) : NULL_ENRICH;
+        const obj = buildCuratedObject(base, network, enrich, row.post_owner_id);
+        // Final guard: strictly only ads with BOTH call_to_action and destination_url.
+        if (!present(obj.call_to_action) || !present(obj.destination_url)) return null;
+        return obj;
       } catch (err) {
-        logger?.warn?.('post_owner_id backfill failed', { network, adId, error: err.message });
+        logger?.warn?.('getAdInsightData hydrate failed', { network, adId, error: err.message });
+        return null;
       }
-    }
+    }))).filter(Boolean);
 
-    // URL + landing-page enrichment (LinkedIn wired; others null "if available").
-    let enrich = { redirect_url: null, final_url: null, landing_page_html: null, landing_page_title: null, http_status_code: null };
-    if (cfg.landing) enrich = { ...enrich, ...(await cfg.landing(db, adId, logger)) };
-
-    const redirectUrl = firstPresent(
-      enrich.redirect_url,
-      flattenRedirect(base.market_platform_urls && base.market_platform_urls.redirect_urls)
-    );
-
-    const data = {
-      // Basic Ad Information
-      ad_id: present(base.ad_id) ? Number(base.ad_id) : (present(base.id) ? Number(base.id) : adId),
+    return res.json({
+      code: 200,
       network,
-      post_owner_id: postOwnerId,
-      post_owner: present(base.post_owner) ? base.post_owner : null,
-      ad_title: present(base.ad_title) ? base.ad_title : null,
-      ad_description: firstPresent(base.news_feed_description, base.ad_text),
-      call_to_action: base.call_to_action,
-      status: present(base.ad_status) ? base.ad_status : computeStatus(base.last_seen),
-      ad_type: present(base.type) ? base.type : null,
-      language: present(base.language) ? base.language : null,
-      country: pickCountry(base.country),
-      // Timeline
-      first_seen: toDateStr(base.first_seen),
-      last_seen: toDateStr(base.last_seen),
-      // URL Information
-      destination_url: base.destination_url,
-      redirect_url: redirectUrl,
-      final_url: enrich.final_url,
-      // Landing Page Information (if available)
-      landing_page_html: enrich.landing_page_html,
-      landing_page_title: enrich.landing_page_title,
-      http_status_code: enrich.http_status_code,
-    };
-
-    return res.json({ code: 200, message: 'Ad insight fetched successfully', data });
+      page,
+      page_size: pageSize,
+      count: data.length,
+      has_more: hasMore,
+      data,
+      message: 'Ad insights fetched successfully',
+    });
   } catch (err) {
-    logger?.error?.('Error in getAdInsightData', { network, adId, error: err.message });
-    return res.status(500).json({ code: 500, message: 'Error fetching ad insight', error: err.message });
+    logger?.error?.('Error in getAdInsightData', { network, page, error: err.message });
+    return res.status(500).json({ code: 500, message: 'Error fetching ad insights', error: err.message });
   }
 }
-
-// network → SQL ad table, used only to backfill post_owner_id when getAdDetails omits it.
-const NETWORK_TABLE = {
-  facebook:  'facebook_ad',
-  instagram: 'instagram_ad',
-  pinterest: 'pinterest_ad',
-  youtube:   'youtube_ad',
-  gdn:       'gdn_ad',
-  google:    'google_text_ad',
-  native:    'native_ad',
-  linkedin:  'linkedin_ad',
-  reddit:    'reddit_ad',
-  quora:     'quora_ad',
-};
 
 module.exports = { getAdInsightData };
