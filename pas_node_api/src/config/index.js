@@ -472,6 +472,14 @@ const config = {
     apiUrl: getVal(fileConfig.competitorAnalysis?.apiUrl, 'COMPETITOR_ANALYSIS_API_URL') || '',
   },
 
+  onboarding: {
+    mode: (() => {
+      const raw = String(getVal(fileConfig.onboarding?.mode, 'ONBOARDING_MODE') || 'new_users').trim().toLowerCase();
+      return ['all', 'new_users', 'disabled'].includes(raw) ? raw : 'new_users';
+    })(),
+    newUsersAfterDate: getVal(fileConfig.onboarding?.newUsersAfterDate, 'ONBOARDING_NEW_USERS_AFTER_DATE') || '',
+  },
+
   // Shared secret to verify signed email-unsubscribe links (HMAC-SHA256 of the
   // email). MUST equal the value compeitetor_analysis signs with (config
   // `unsubscribe_secret` / env UNSUBSCRIBE_SECRET) so a token minted in the mail
@@ -603,6 +611,14 @@ config.reload = () => {
       }
       if (newFileConfig.pricing?.planIds !== undefined) {
         config.pricing.planIds = { ...newFileConfig.pricing.planIds };
+      }
+
+      if (newFileConfig.onboarding?.mode !== undefined) {
+        const raw = String(newFileConfig.onboarding.mode || '').trim().toLowerCase();
+        config.onboarding.mode = ['all', 'new_users', 'disabled'].includes(raw) ? raw : 'new_users';
+      }
+      if (newFileConfig.onboarding?.newUsersAfterDate !== undefined) {
+        config.onboarding.newUsersAfterDate = newFileConfig.onboarding.newUsersAfterDate || '';
       }
 
       return true;

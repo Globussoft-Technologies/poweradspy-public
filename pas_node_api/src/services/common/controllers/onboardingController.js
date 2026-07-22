@@ -22,6 +22,7 @@ const dbManager = require('../../../database/DatabaseManager');
 const serviceRegistry = require('../../ServiceRegistry');
 const logger = require('../../../logger');
 const config = require('../../../config');
+const { resolveNeedsOnboarding } = require('../helpers/onboardingEligibility');
 
 const log = logger.createChild('onboarding');
 
@@ -46,21 +47,9 @@ exports.getOnboardingStatus = async (req, res) => {
   try {
     const userId = req.user?.id || req.user?.user_id;
     if (!userId) return res.status(401).json({ code: 401, message: 'Unauthorized' });
-
-    const sql = dbManager.getSQL(NET);
-    if (!sql) {
-      // Fail open: never block the caller just because this lookup is unavailable.
-      log.warn('Onboarding status: DB unavailable, defaulting to not-needed', { userId });
-      return res.json({ code: 200, data: { needsOnboarding: false } });
-    }
-
-    const rows = rowsOf(await sql.query(
-      `SELECT onboarding_completed FROM ${TBL} WHERE am_id = ? LIMIT 1`,
-      [userId]
-    ));
-
-    const completed = rows[0]?.onboarding_completed === 1 || rows[0]?.onboarding_completed === true;
-    return res.json({ code: 200, data: { needsOnboarding: !completed } });
+    const userCreatedAt = req.user?.added || req.user?.created_at || req.user?.createdAt || null;
+    const needsOnboarding = await resolveNeedsOnboarding(userId, userCreatedAt);
+    return res.json({ code: 200, data: { needsOnboarding } });
   } catch (error) {
     log.error('Error in getOnboardingStatus', { error: error.message });
     // Fail open here too — a broken status check must not block login/UI.
@@ -346,6 +335,7 @@ exports.getOnboardingPreview = async (req, res) => {
 // advertisers list (SQL) only when no category has been picked yet.
 // A `query` always narrows by name (works in both modes).
 const ADVERTISER_LIST_SIZE = 25;
+const COMPETITOR_LIST_SIZE = 25;
 
 exports.getAdvertiserSuggestions = async (req, res) => {
   try {
@@ -399,5 +389,67 @@ exports.getAdvertiserSuggestions = async (req, res) => {
   } catch (error) {
     log.error('Error in getAdvertiserSuggestions', { error: error.message });
     return res.json({ code: 200, data: { advertisers: [] } }); // fail open
+  }
+};
+
+exports.getCompetitorSuggestions = async (req, res) => {
+  try {
+    const query = String(req.query?.query || '').trim();
+    const majorCategoryName = String(req.query?.major_category_name || '').trim();
+    const countries = typeof req.query?.countries === 'string' && req.query.countries
+      ? req.query.countries.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+
+    const mongo = dbManager.getMongo(NET);
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = query ? new RegExp(escaped, 'i') : null;
+
+    if (mongo) {
+      const docs = await mongo.collection('existing_competitors')
+        .find(query ? { advertiser: regex } : {}, { projection: { advertiser: 1, competitors: 1 } })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .limit(10)
+        .toArray();
+
+      const fromDb = [];
+      const seen = new Set();
+      for (const doc of docs) {
+        for (const item of doc?.competitors || []) {
+          const name = String(item?.competitor_name || '').trim();
+          if (!name) continue;
+          if (regex && !regex.test(name) && !regex.test(String(doc?.advertiser || ''))) continue;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          fromDb.push(name);
+          if (fromDb.length >= COMPETITOR_LIST_SIZE) break;
+        }
+        if (fromDb.length >= COMPETITOR_LIST_SIZE) break;
+      }
+
+      if (fromDb.length) {
+        return res.json({ code: 200, data: { competitors: fromDb, source: 'existing_competitors' } });
+      }
+    }
+
+    if (majorCategoryName) {
+      const service = serviceRegistry.getService('facebook');
+      if (service?.db) {
+        const topAdvertisers = await getTopAdvertisers(service, majorCategoryName, countries, COMPETITOR_LIST_SIZE);
+        let names = topAdvertisers.map(a => a.advertiser).filter(Boolean);
+        if (query) {
+          const q = query.toLowerCase();
+          names = names.filter(n => n.toLowerCase().includes(q));
+        }
+        if (names.length) {
+          return res.json({ code: 200, data: { competitors: names, source: 'category_advertisers_fallback' } });
+        }
+      }
+    }
+
+    return res.json({ code: 200, data: { competitors: [], source: 'none' } });
+  } catch (error) {
+    log.error('Error in getCompetitorSuggestions', { error: error.message });
+    return res.json({ code: 200, data: { competitors: [], source: 'error' } });
   }
 };

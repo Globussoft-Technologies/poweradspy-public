@@ -35,7 +35,7 @@ const {
   markNotificationAsRead: markPushAsRead,
   resetDailyKeywordStatus
 } = require('../controllers/pushNotificationController');
-const { getOnboardingStatus, saveOnboarding, getOnboardingPreview, getAdvertiserSuggestions } = require('../controllers/onboardingController');
+const { getOnboardingStatus, saveOnboarding, getOnboardingPreview, getAdvertiserSuggestions, getCompetitorSuggestions } = require('../controllers/onboardingController');
 const { sendMailDailyUpdate } = require('../controllers/dailyMailUpdateController');
 const { getTotalAdCount } = require('../controllers/totalAdCountController');
 const { getRecentAds } = require('../controllers/recentAdsController');
@@ -513,5 +513,6 @@ router.get('/onboarding/status', authMiddleware, asyncHandler(getOnboardingStatu
 router.post('/onboarding', authMiddleware, asyncHandler(saveOnboarding));
 router.post('/onboarding/preview-results', authMiddleware, asyncHandler(getOnboardingPreview));
 router.get('/onboarding/advertiser-suggest', authMiddleware, asyncHandler(getAdvertiserSuggestions));
+router.get('/onboarding/competitor-suggest', authMiddleware, asyncHandler(getCompetitorSuggestions));
 
 module.exports = router;

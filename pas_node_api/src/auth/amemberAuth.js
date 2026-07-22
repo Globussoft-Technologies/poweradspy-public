@@ -18,29 +18,10 @@ const { Router } = require('express');
 const { generateToken } = require('../middleware/auth');
 const config = require('../config');
 const logger = require('../logger');
-const dbManager = require('../database/DatabaseManager');
+const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
 
 const log = logger.createChild('amember-auth');
 const router = Router();
-
-// Same table/key onboardingController.js reads (am_user_action, keyed by am_id).
-// Kept local + fail-open: a failure here must never block the aMember login redirect.
-async function resolveNeedsOnboarding(userId) {
-  try {
-    const ident = (s, def) => (/^[A-Za-z0-9_]+$/.test(String(s || '')) ? String(s) : def);
-    const net = config.notifications?.tokenNetwork || 'facebook';
-    const tbl = ident(config.notifications?.tokenTable, 'am_user_action');
-    const sql = dbManager.getSQL(net);
-    if (!sql) return false;
-    const rows = await sql.query(`SELECT onboarding_completed FROM ${tbl} WHERE am_id = ? LIMIT 1`, [userId]);
-    const row = Array.isArray(rows[0]) ? rows[0][0] : rows[0];
-    const completed = row?.onboarding_completed === 1 || row?.onboarding_completed === true;
-    return !completed;
-  } catch (err) {
-    log.warn('resolveNeedsOnboarding failed, defaulting to false (fail-open)', { userId, error: err.message });
-    return false;
-  }
-}
 
 // Plan codes from config
 const PLANS = () => config.amember.plans;
@@ -239,6 +220,7 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     const name = amData.name || '';
     const email = amData.email || '';
     const subscriptions = amData.subscriptions || {};
+    const added = amData.added || amData.created_at || amData.createdAt || null;
 
     if (!userId) {
       return res.status(401).json({ code: 401, message: 'User not found in aMember' });
@@ -300,7 +282,7 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     const userSubscriptionType = computeSubscriptionType(subscriptions);
 
     // Step 6b: Onboarding status — additive, fail-open (see resolveNeedsOnboarding above).
-    const needsOnboarding = await resolveNeedsOnboarding(parseInt(userId, 10));
+    const needsOnboarding = await resolveNeedsOnboarding(parseInt(userId, 10), added);
 
     log.info('User authenticated', { userId, username, userSubscriptionType, expiryDate, platformAccess, needsOnboarding });
 
@@ -317,6 +299,7 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
       platformAccess,
       referrer: referrer || null,
       role: 'user',
+      added,
       needsOnboarding,
     };
 

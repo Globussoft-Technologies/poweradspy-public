@@ -146,6 +146,22 @@ export const fetchAdvertiserSuggestions = async (query, { majorCategoryName, cou
   }
 };
 
+export const fetchCompetitorSuggestions = async (query, { majorCategoryName, countries } = {}) => {
+  try {
+    const params = new URLSearchParams();
+    if (query) params.set('query', query);
+    if (majorCategoryName) params.set('major_category_name', majorCategoryName);
+    if (countries && countries.length) params.set('countries', countries.join(','));
+    const res = await fetch(`${PAS_API_BASE}/api/v1/common/onboarding/competitor-suggest?${params.toString()}`, { headers: authHeaders() });
+    await checkFor401(res);
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json.data?.competitors || [];
+  } catch {
+    return [];
+  }
+};
+
 /** Instant preview — trending / top advertisers / longest-running for the chosen category+countries+competitors. */
 export const fetchOnboardingPreview = async ({ major_category_id, major_category_name, sub_category_id, countries, competitors }) => {
   const res = await fetch(`${PAS_API_BASE}/api/v1/common/onboarding/preview-results`, {

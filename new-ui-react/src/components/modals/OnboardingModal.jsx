@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { X, Search, TrendingUp, Users, Clock, Loader2, ArrowRight, Sparkles, Globe2, Swords, ChevronDown, Check } from "lucide-react";
-import { searchOnboardingCategory, saveOnboarding, fetchOnboardingPreview, fetchAdvertiserSuggestions } from "../../services/api";
+import { searchOnboardingCategory, saveOnboarding, fetchOnboardingPreview, fetchCompetitorSuggestions } from "../../services/api";
 import { fetchSDUIConfig } from "../../services/sduiService";
 import { findCountryOptions } from "../../utils/countryFilter";
 
@@ -49,26 +49,21 @@ function StepDots({ step }) {
   );
 }
 
-// Click-to-open dropdown with a checkbox list — no typing required. Options can
-// be preloaded (e.g. countries, fetched once up front) or loaded lazily the
-// first time the dropdown opens (e.g. competitors, fetched from the live ad
-// index). Either way the user only ever clicks to select.
-function MultiSelectDropdown({ icon: Icon, label, placeholder, values, onChange, max, options, loadOptions, loading: externalLoading, resetKey }) {
+function SearchableMultiSelect({ icon: Icon, label, placeholder, values, onChange, max, options, onSearch, loading: externalLoading, resetKey, helperText, minQueryLength = 0 }) {
   const [open, setOpen] = useState(false);
-  const [loadedOptions, setLoadedOptions] = useState(options || null);
+  const [query, setQuery] = useState("");
+  const [loadedOptions, setLoadedOptions] = useState(options || []);
   const [loading, setLoading] = useState(false);
   const rootRef = useRef(null);
+  const debounceRef = useRef(null);
 
   useEffect(() => {
-    if (options) setLoadedOptions(options);
+    setLoadedOptions(options || []);
   }, [options]);
 
-  // When resetKey changes (e.g. the user picks a different category), drop the
-  // cached lazy-loaded list so the next open re-fetches a relevant one instead
-  // of showing stale options from the previous selection.
   useEffect(() => {
-    if (loadOptions) setLoadedOptions(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setQuery("");
+    if (!onSearch) setLoadedOptions(options || []);
   }, [resetKey]);
 
   useEffect(() => {
@@ -79,15 +74,32 @@ function MultiSelectDropdown({ icon: Icon, label, placeholder, values, onChange,
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
-  const openDropdown = async () => {
-    setOpen((prev) => !prev);
-    if (loadOptions && loadedOptions == null) {
-      setLoading(true);
-      const result = await loadOptions();
-      setLoadedOptions(result || []);
-      setLoading(false);
+  useEffect(() => {
+    if (!onSearch) {
+      const q = query.trim().toLowerCase();
+      const next = (options || []).filter((o) => !q || o.toLowerCase().includes(q));
+      setLoadedOptions(next);
+      return;
     }
-  };
+    if (!open) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (query.trim().length < minQueryLength) {
+      setLoadedOptions([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const result = await onSearch(query.trim());
+        setLoadedOptions(result || []);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query, onSearch, open, options, minQueryLength]);
 
   const toggle = (o) => {
     if (values.includes(o)) { onChange(values.filter(x => x !== o)); return; }
@@ -98,6 +110,7 @@ function MultiSelectDropdown({ icon: Icon, label, placeholder, values, onChange,
   const removeValue = (v) => onChange(values.filter(x => x !== v));
   const isLoading = loading || externalLoading;
   const list = loadedOptions || [];
+  const disabled = values.length >= max;
 
   return (
     <div ref={rootRef} className="relative">
@@ -127,22 +140,37 @@ function MultiSelectDropdown({ icon: Icon, label, placeholder, values, onChange,
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={openDropdown}
-        disabled={values.length >= max}
-        className="w-full flex items-center justify-between bg-theme-bg border border-theme-border rounded-lg px-3 py-2.5 text-sm text-theme-text-muted disabled:opacity-50 disabled:cursor-not-allowed hover:border-[#3762c1]/40 transition-all"
-      >
-        <span>{values.length >= max ? `Max ${max} selected` : placeholder}</span>
-        <ChevronDown size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-text-muted" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          disabled={disabled}
+          placeholder={disabled ? `Max ${max} selected` : placeholder}
+          className="w-full bg-theme-bg border border-theme-border rounded-lg pl-8 pr-9 py-2.5 text-sm text-theme-text placeholder:text-theme-text-muted focus:outline-none focus:border-[#3762c1]/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        />
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-text-muted"
+          tabIndex={-1}
+        >
+          <ChevronDown size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+      </div>
 
-      {open && values.length < max && (
+      {helperText && <p className="text-[11px] text-theme-text-muted mt-1.5">{helperText}</p>}
+
+      {open && !disabled && (
         <div className="absolute z-10 mt-1.5 w-full bg-theme-surface border border-theme-border rounded-lg shadow-xl max-h-52 overflow-y-auto custom-scrollbar">
           {isLoading ? (
             <div className="flex items-center gap-2 text-xs text-theme-text-muted px-3 py-3">
               <Loader2 size={13} className="animate-spin" /> Loading...
             </div>
+          ) : onSearch && query.trim().length < minQueryLength ? (
+            <p className="text-xs text-theme-text-muted px-3 py-3">Type at least {minQueryLength} letters.</p>
           ) : list.length === 0 ? (
             <p className="text-xs text-theme-text-muted px-3 py-3">Nothing available right now.</p>
           ) : (
@@ -318,13 +346,8 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
     return () => { cancelled = true; };
   }, [isOpen]);
 
-  // Competitor options are loaded lazily the first time the dropdown opens —
-  // real TOP ADVERTISERS IN THE SELECTED CATEGORY (falls back to a generic
-  // recent-advertisers list only if no category is picked yet — see
-  // MultiSelectDropdown's loadOptions + resetKey, which re-fetches whenever
-  // the category changes so the list stays relevant).
-  const loadCompetitorOptions = async () => {
-    const results = await fetchAdvertiserSuggestions("", {
+  const searchCompetitors = async (query) => {
+    const results = await fetchCompetitorSuggestions(query, {
       majorCategoryName: selectedCategory?.major_category,
       countries,
     });
@@ -422,35 +445,32 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
               </div>
 
               <div className="bg-theme-bg/60 border border-theme-border rounded-xl p-2.5">
-                <MultiSelectDropdown
+                <SearchableMultiSelect
                   icon={Globe2}
                   label="Countries"
-                  placeholder="Select countries..."
+                  placeholder="Search countries..."
                   options={countryOptions}
                   loading={countryOptions === null}
                   values={countries}
                   onChange={setCountries}
                   max={MAX_COUNTRIES}
+                  helperText="Type and pick up to 3 countries."
                 />
               </div>
 
               <div className="bg-theme-bg/60 border border-theme-border rounded-xl p-2.5">
-                <MultiSelectDropdown
+                <SearchableMultiSelect
                   icon={Swords}
                   label="Competitors"
-                  placeholder={selectedCategory ? "Select competitors..." : "Pick a niche first for relevant suggestions..."}
-                  loadOptions={loadCompetitorOptions}
+                  placeholder={selectedCategory ? "Search competitors..." : "Pick a niche first for relevant suggestions..."}
+                  onSearch={selectedCategory ? searchCompetitors : null}
                   resetKey={`${selectedCategory?.major_category_id || ''}|${countries.join(',')}`}
                   values={competitors}
                   onChange={setCompetitors}
                   max={MAX_COMPETITORS}
+                  minQueryLength={2}
+                  helperText={selectedCategory ? `Type a brand/company name to get legit suggestions from competitor DB for ${selectedCategory.major_category}.` : "Pick a niche first, then type a brand/company name."}
                 />
-                {selectedCategory && (
-                  <p className="text-[11px] text-theme-text-muted mt-1.5 flex items-center gap-1">
-                    <Sparkles size={11} className="text-[#6b99ff] shrink-0" />
-                    Showing top advertisers in {selectedCategory.major_category}
-                  </p>
-                )}
               </div>
 
               {error && (
