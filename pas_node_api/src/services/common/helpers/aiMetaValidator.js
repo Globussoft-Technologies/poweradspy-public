@@ -5,7 +5,8 @@
  *
  * Pure/synchronous: takes the raw `ai_meta` object and returns
  *   { errors: [{ field, message }], normalized: {…}, storedFields: [...] }
- * `normalized` is the cleaned object safe to write onto the ad's ES `ai` field.
+ * `normalized` is the cleaned object safe to write onto the ad's runtime AI-Meta
+ * ES field (`ai` normally, `ai_meta` only for production facebook).
  * `storedFields` lists the ai_meta keys that survived validation (for the response).
  *
  * v1.6 field set (8 core + colors + category classification group):

@@ -165,7 +165,8 @@ case-insensitively, stored uppercase. Named words (`"blue"`) and off-palette hex
 
 On a valid request the backend, for the given ad:
 
-1. **Stores the whole `ai_meta` object** on the ad's search document (ES `ai` field) — replaced wholesale
+1. **Stores the whole `ai_meta` object** on the ad's search document — normally under ES `ai`, but under
+   ES `ai_meta` for the production Facebook workaround — replaced wholesale
    each write (re-sending overwrites; stale fields from older shapes are dropped).
 2. **If a category is present:** assigns it to the ad — writes the dotted `${network}.category` /
    `${network}.subCategory` **names** and the flat `category_id` / `subCategory_id` **codes** on the ad doc,

@@ -1,8 +1,9 @@
 # AI-Meta ES Mapping — Apply Runbook
 
 **Applies to:** `AI_META_API_PAYLOAD_SPEC.md` **v1.6** · **Companion:** `AI_META_API_IMPLEMENTATION.md`
-**Goal:** create the `ai` object mapping on every network's `*_search_mix` (or ads) index **before** the
-DS pipeline starts POSTing AI-Meta, so filters/aggregations on `ai.*` work correctly.
+**Goal:** create the AI-Meta object mapping on every network's `*_search_mix` (or ads) index **before** the
+DS pipeline starts POSTing AI-Meta, so filters/aggregations on that field work correctly. The runtime uses
+`ai` by default, and `ai_meta` only for production Facebook to bypass the poisoned legacy mapping.
 
 **This mapping is designed to be:**
 - **Fast** — every categorical field is a `keyword` (doc-values, exact filter + aggregation); no
@@ -16,12 +17,13 @@ DS pipeline starts POSTing AI-Meta, so filters/aggregations on `ai.*` work corre
   index** and merges fields); we **never** `PUT <index>` (create). Re-running is a no-op `acknowledged`.
 - **No reindex** — pure additive mapping on the live, open index.
 
-> **You never applied the v1.1 mapping** — good. That means there is no legacy `ai` mapping to migrate;
+> **You never applied the v1.1 mapping** — good. That means there is no legacy AI-Meta mapping to migrate;
 > this is a **clean, additive** change. Adding a brand-new object field (and new sub-fields) to an
 > existing index is a **non-breaking mapping update — NO reindex, no downtime, no data rewrite.** The
 > only hard rule in Elasticsearch is: you may *add* fields freely, but you may not *change the type* of a
-> field that already exists. `ai` doesn't exist yet, so we're only adding. (The one caveat — if some
-> `ai` docs were already written and dynamically mapped — is handled in §5.)
+> field that already exists. For most environments the new field is still `ai`; for production Facebook it
+> is `ai_meta`. A stale legacy Facebook `ai` mapping does **not** block the workaround path, because that
+> one environment now writes to `ai_meta`.
 >
 > **Why not edge-ngram autocomplete?** An `edge_ngram` analyzer would need a custom analyzer in the
 > index **settings**, and you cannot add analysis settings to an open index — it requires a close/open
@@ -32,14 +34,14 @@ DS pipeline starts POSTing AI-Meta, so filters/aggregations on `ai.*` work corre
 
 ## 1. Why this must be done before the first write
 
-If a document with an `ai` object is indexed **before** the explicit mapping exists, ES 6.8 **dynamically**
+If a document with the runtime-selected AI-Meta object indexed **before** the explicit mapping exists, ES 6.8 **dynamically**
 guesses the types, and the guesses are wrong for our use:
 
 | Field | We want | Dynamic guess | Consequence if left wrong |
 |---|---|---|---|
-| `ai.colors` (`"#FFFFFF"`) | `keyword` | `text` + `.keyword` sub-field | can't do a clean exact-term/agg on the base field |
-| `ai.offers.value` (`25`) | `float` | `long` | later a `12.5` value **fails to index** (type conflict) |
-| `ai.offering_type` etc. | `keyword` | `text`+`keyword` | aggregations slower / on the wrong field |
+| `ai.colors` / `ai_meta.colors` (`"#FFFFFF"`) | `keyword` | `text` + `.keyword` sub-field | can't do a clean exact-term/agg on the base field |
+| `ai.offers.value` / `ai_meta.offers.value` (`25`) | `float` | `long` | later a `12.5` value **fails to index** (type conflict) |
+| `ai.offering_type` / `ai_meta.offering_type` etc. | `keyword` | `text`+`keyword` | aggregations slower / on the wrong field |
 
 Once a field is dynamically mapped, you **cannot** change its type in place — you'd have to reindex
 (§5). So: **map first, write second.**
@@ -48,13 +50,14 @@ Once a field is dynamically mapped, you **cannot** change its type in place — 
 
 ## 2. The mapping payload (v1.6)
 
-One `properties.ai` block, identical across every network. This is the body you PUT (the enclosing
-`PUT …/_mapping` differs per ES version — see §3).
+One field block, identical across every network apart from the field name. Use `properties.ai` for dev and
+normal environments; use `properties.ai_meta` only for production Facebook. The enclosing `PUT …/_mapping`
+differs per ES version — see §3.
 
 ```json
 {
   "properties": {
-    "ai": {
+    "ai_meta": {
       "properties": {
         "ad_type":       { "type": "keyword" },
         "intent":        { "type": "keyword" },
@@ -105,11 +108,11 @@ Design notes / why each type:
   Enum/hex values and the 4/8-char taxonomy codes — no analysis, no fuzzy needed.
 - **`category_id` / `subcategory_id` → `keyword`** (v1.6): the 4-char / 8-char taxonomy codes now carried
   inside `ai_meta`. Note these mirror the ad doc's existing top-level `category_id` / `subCategory_id`
-  fields (written by the classification path) — the `ai.*` copies live under the `ai` object.
+  fields (written by the classification path) — the `ai_meta.*` copies live under the `ai_meta` object.
 - **`offering` → `text`** base (full-text + fuzzy) **+ `offering.keyword`** (exact/agg) **+
   `offering.suggest`** (`completion`, autocomplete). This is the one free-text field a user types to
   search, so it carries the autocomplete sub-field. Multi-fields are auto-populated from the base value
-  at index time — the app writes `ai.offering` once and ES derives all three.
+  at index time — the app writes `ai_meta.offering` once and ES derives all three.
 - **`caption` → `text`** + `.keyword` — full-text/fuzzy search + exact; no autocomplete (it's a whole
   sentence, not a term you type-ahead).
 - **`roa.*` → `text`** only — free-form justification, searched not faceted.
@@ -120,15 +123,15 @@ Design notes / why each type:
 > **v1.5 dropped `brand` and `celebrity`.** Earlier drafts of this runbook gave `brand` a completion
 > sub-field for brand autocomplete — that field no longer exists, so autocomplete is on **`offering`
 > only**. If you want brand-name autocomplete later, it would come from the advertiser/post-owner data,
-> not `ai`.
+> not `ai_meta`.
 
 ### 2.1 Fuzzy search (no extra mapping — query-time only)
 Fuzziness is a query option on any analyzed (`text`) field; nothing special in the mapping:
 ```json
 GET gdn_search_mix_v2/_search
-{ "query": { "match": { "ai.offering": { "query": "printr parts", "fuzziness": "AUTO" } } } }
+{ "query": { "match": { "ai_meta.offering": { "query": "printr parts", "fuzziness": "AUTO" } } } }
 ```
-Also works on `ai.caption` and `ai.roa.*`. (`fuzziness:"AUTO"` = edit-distance 1 for 3–5 char terms,
+Also works on `ai_meta.caption` and `ai_meta.roa.*`. (`fuzziness:"AUTO"` = edit-distance 1 for 3–5 char terms,
 2 for longer.)
 
 ### 2.2 Autocomplete (the `offering.suggest` completion field)
@@ -360,9 +363,9 @@ curl -sS -X POST "https://<api-host>/api/v1/common/ai-meta" -H 'Content-Type: ap
 }'
 # → { "success": true, "stored_fields": [...], "category_sync": { "mirrored": true, ... }, "sql": {...} }
 
-# read back (should echo the ai object)
+# read back (should echo the ai_meta response field)
 curl -sS "https://<api-host>/api/v1/common/getAdCategory?platform=gdn&ad_id=<known_ad_id>"
-# → { ..., "ai": { "ad_type":"promotional", ... } }
+# → { ..., "ai_meta": { "ad_type":"promotional", ... } }
 ```
 
 **c) Aggregation works (proves keyword mapping):**

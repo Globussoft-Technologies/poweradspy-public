@@ -52,6 +52,7 @@ const networksConfig = require('../src/config/networks');
 
 const SQL_BATCH_SIZE = 500;
 const ES_TERMS_CHUNK = 500;
+const ES_SEARCH_REQUEST_TIMEOUT_MS = 120000;
 
 // network → { SQL table + id column that carry built_with/funnel, and the
 // ES field paths the search filters actually query (see the per-network
@@ -189,6 +190,55 @@ function esValue(source, field) {
   return field.split('.').reduce((o, k) => (o == null ? o : o[k]), source);
 }
 
+function isRetryableSearchError(err) {
+  const msg = `${err && err.name ? err.name : ''} ${err && err.message ? err.message : ''}`.toLowerCase();
+  return (
+    err?.name === 'TimeoutError' ||
+    err?.code === 'ETIMEDOUT' ||
+    err?.statusCode === 429 ||
+    err?.statusCode === 503 ||
+    msg.includes('rejected execution') ||
+    msg.includes('circuit breaking') ||
+    msg.includes('service unavailable')
+  );
+}
+
+async function runTermsSearch(elastic, cfg, idBatch) {
+  const searchFn = elastic?.client?.search ? elastic.client.search.bind(elastic.client) : elastic.search.bind(elastic);
+  const res = await searchFn({
+    index: elastic.indexName,
+    body: {
+      size: ES_TERMS_CHUNK * 2, // a given ad id can legitimately span >1 doc
+      sort: ['_doc'], // fastest stable traversal for exact-match scans on ES 6.8
+      _source: [cfg.esIdField, cfg.esBuiltWithField, cfg.esFunnelField],
+      query: { terms: { [cfg.esIdField]: idBatch.map((v) => (Number.isFinite(+v) ? +v : v)) } },
+    },
+  }, {
+    requestTimeout: ES_SEARCH_REQUEST_TIMEOUT_MS,
+    maxRetries: 0,
+  });
+  return (res && res.hits ? res.hits : res.body && res.body.hits ? res.body.hits : { hits: [] }).hits || [];
+}
+
+async function searchWithFallback(elastic, cfg, idBatch, label, depth = 0) {
+  try {
+    return await runTermsSearch(elastic, cfg, idBatch);
+  } catch (err) {
+    if (idBatch.length > 1 && isRetryableSearchError(err)) {
+      const mid = Math.ceil(idBatch.length / 2);
+      const left = idBatch.slice(0, mid);
+      const right = idBatch.slice(mid);
+      console.log(`   ↳ ES search retried with smaller batches for ${label} (${idBatch.length} → ${left.length} + ${right.length})`);
+      const [leftHits, rightHits] = await Promise.all([
+        searchWithFallback(elastic, cfg, left, `${label} [L]`, depth + 1),
+        searchWithFallback(elastic, cfg, right, `${label} [R]`, depth + 1),
+      ]);
+      return [...leftHits, ...rightHits];
+    }
+    throw err;
+  }
+}
+
 async function main() {
   const { apply, networks } = parseArgs(process.argv.slice(2));
   console.log(`\n=== backfill-built-with-es-sync — ${apply ? 'APPLY' : 'DRY RUN (no changes)'} ===`);
@@ -216,8 +266,10 @@ async function main() {
     let missingFunnel = 0;
     let docsFixed = 0;
     const sampleDrift = [];
+    let sqlBatchNo = 0;
 
     for await (const rows of readSqlRows(sql, cfg)) {
+      sqlBatchNo += 1;
       sqlRowsScanned += rows.length;
       const byAdId = new Map();
       for (const r of rows) {
@@ -228,16 +280,12 @@ async function main() {
       }
       const adIds = [...byAdId.keys()];
 
+      console.log(`   SQL batch ${sqlBatchNo}: ${rows.length} row(s), ${adIds.length} distinct ad id(s)`);
+
+      let esBatchNo = 0;
       for (const idBatch of chunk(adIds, ES_TERMS_CHUNK)) {
-        const res = await elastic.search({
-          index: elastic.indexName,
-          body: {
-            size: ES_TERMS_CHUNK * 2, // a given ad id can legitimately span >1 doc
-            _source: [cfg.esIdField, cfg.esBuiltWithField, cfg.esFunnelField],
-            query: { terms: { [cfg.esIdField]: idBatch.map((v) => (Number.isFinite(+v) ? +v : v)) } },
-          },
-        });
-        const hits = (res.hits || res.body.hits).hits || [];
+        esBatchNo += 1;
+        const hits = await searchWithFallback(elastic, cfg, idBatch, `${net} SQL batch ${sqlBatchNo} / ES batch ${esBatchNo} (${idBatch.length} ad ids)`);
         esDocsChecked += hits.length;
 
         const bulkOps = [];

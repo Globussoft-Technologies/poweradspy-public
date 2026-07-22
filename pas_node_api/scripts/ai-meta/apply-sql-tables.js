@@ -5,60 +5,62 @@
  * apply-sql-tables.js — create the per-network `<net>_ad_ai_meta` tables.
  *
  * SAFETY (does NOT touch existing data):
- *   - Every statement is `CREATE TABLE IF NOT EXISTS` — it NEVER drops, alters, or
- *     truncates an existing table. Re-running is a no-op on tables that already exist.
- *   - No writes to any existing table; the new table only adds a FK that REFERENCES
- *     <net>_ad(id) with ON DELETE CASCADE (cascade only fires if an ad row is deleted —
- *     it never deletes ad rows itself).
- *   - DRY-RUN by default: prints the DDL and what it would do. Pass --commit to execute.
+ *   - Every statement is `CREATE TABLE IF NOT EXISTS` — it never drops, alters,
+ *     or truncates an existing table.
+ *   - No writes hit existing business tables; the new table only references the
+ *     parent ad table with an FK.
+ *   - DRY-RUN by default: prints what it would do. Pass --commit to execute.
  *
  * USAGE:
- *   node scripts/ai-meta/apply-sql-tables.js                # dry-run (all networks)
- *   node scripts/ai-meta/apply-sql-tables.js --commit       # actually create them
- *   node scripts/ai-meta/apply-sql-tables.js --only=facebook,native [--commit]
+ *   node scripts/ai-meta/apply-sql-tables.js
+ *   node scripts/ai-meta/apply-sql-tables.js --commit
+ *   node scripts/ai-meta/apply-sql-tables.js --only=facebook,native
  *
- * Connection + per-network schema names are read from config.json
- * (databases.sql + networks.<net>.sql.database). Matches docs/AI_META_SQL_STORAGE.md.
+ * IMPORTANT:
+ *   - SQL host/schema resolution comes from the active environment through
+ *     dotenv/env → src/config → src/config/networks → DatabaseManager.
+ *   - This mirrors the working migration scripts already used in the repo.
  */
 
-const fs   = require('fs');
-const path = require('path');
+require('dotenv').config();
+const databaseManager = require('../../src/database/DatabaseManager');
+const networksConfig = require('../../src/config/networks');
 
-const CONFIG_PATH = path.resolve(__dirname, '../../config.json');
-const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-
-// network → { schema, adTable, fkCol, fkType }. Verified live: all <net>_ad.id are
-// INT UNSIGNED except tiktok_ads.id which is signed INT, so the FK column matches.
 const NETWORKS = {
-  facebook:  { schema: cfgDb('facebook'),  adTable: 'facebook_ad',    fkCol: 'facebook_ad_id',    fkType: 'INT UNSIGNED' },
-  instagram: { schema: cfgDb('instagram'), adTable: 'instagram_ad',   fkCol: 'instagram_ad_id',   fkType: 'INT UNSIGNED' },
-  gdn:       { schema: cfgDb('gdn'),       adTable: 'gdn_ad',         fkCol: 'gdn_ad_id',         fkType: 'INT UNSIGNED' },
-  youtube:   { schema: cfgDb('youtube'),   adTable: 'youtube_ad',     fkCol: 'youtube_ad_id',     fkType: 'INT UNSIGNED' },
-  google:    { schema: cfgDb('google'),    adTable: 'google_text_ad', fkCol: 'google_text_ad_id', fkType: 'INT UNSIGNED' },
-  native:    { schema: cfgDb('native'),    adTable: 'native_ad',      fkCol: 'native_ad_id',      fkType: 'INT UNSIGNED' },
-  linkedin:  { schema: cfgDb('linkedin'),  adTable: 'linkedin_ad',    fkCol: 'linkedin_ad_id',    fkType: 'INT UNSIGNED' },
-  reddit:    { schema: cfgDb('reddit'),    adTable: 'reddit_ad',      fkCol: 'reddit_ad_id',      fkType: 'INT UNSIGNED' },
-  quora:     { schema: cfgDb('quora'),     adTable: 'quora_ad',       fkCol: 'quora_ad_id',       fkType: 'INT UNSIGNED' },
-  pinterest: { schema: cfgDb('pinterest'), adTable: 'pinterest_ad',   fkCol: 'pinterest_ad_id',   fkType: 'INT UNSIGNED' },
-  tiktok:    { schema: cfgDb('tiktok'),    adTable: 'tiktok_ads',     fkCol: 'ad_id',             fkType: 'INT' },
+  facebook:  { adTable: 'facebook_ad',    fkCol: 'facebook_ad_id',    fkType: 'INT UNSIGNED' },
+  instagram: { adTable: 'instagram_ad',   fkCol: 'instagram_ad_id',   fkType: 'INT UNSIGNED' },
+  gdn:       { adTable: 'gdn_ad',         fkCol: 'gdn_ad_id',         fkType: 'INT UNSIGNED' },
+  youtube:   { adTable: 'youtube_ad',     fkCol: 'youtube_ad_id',     fkType: 'INT UNSIGNED' },
+  google:    { adTable: 'google_text_ad', fkCol: 'google_text_ad_id', fkType: 'INT UNSIGNED' },
+  native:    { adTable: 'native_ad',      fkCol: 'native_ad_id',      fkType: 'INT UNSIGNED' },
+  linkedin:  { adTable: 'linkedin_ad',    fkCol: 'linkedin_ad_id',    fkType: 'INT UNSIGNED' },
+  reddit:    { adTable: 'reddit_ad',      fkCol: 'reddit_ad_id',      fkType: 'INT UNSIGNED' },
+  quora:     { adTable: 'quora_ad',       fkCol: 'quora_ad_id',       fkType: 'INT UNSIGNED' },
+  pinterest: { adTable: 'pinterest_ad',   fkCol: 'pinterest_ad_id',   fkType: 'INT UNSIGNED' },
+  tiktok:    { adTable: 'tiktok_ads',     fkCol: 'ad_id',             fkType: 'INT' },
 };
 
-function cfgDb(net) {
-  const d = cfg.networks?.[net]?.sql?.database;
-  if (d) return d;
-  // fallback conventions if a network omits it
-  const fallback = { google: 'pasdev_gtext', tiktok: 'tiktok_database_development' };
-  return fallback[net] || `pasdev_${net}`;
+function parseArgs(argv) {
+  const args = { commit: false, networks: Object.keys(NETWORKS) };
+  for (const a of argv) {
+    if (a === '--commit') args.commit = true;
+    else if (a.startsWith('--only=')) {
+      args.networks = a.slice('--only='.length).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    }
+  }
+  const unknown = args.networks.filter((n) => !NETWORKS[n]);
+  if (unknown.length) throw new Error(`Unknown network(s): ${unknown.join(', ')}. Valid: ${Object.keys(NETWORKS).join(', ')}`);
+  return args;
 }
 
-function metaTable(net, adTable) {
-  // <ad-table>_ai_meta (matches docs/AI_META_SQL_STORAGE.md exactly)
+function metaTable(adTable) {
+  // Follows the documented `<ad-table>_ai_meta` naming convention exactly.
   return `${adTable}_ai_meta`;
 }
 
 function buildDDL(net, cfgNet) {
-  const table = metaTable(net, cfgNet.adTable);
-  return `CREATE TABLE IF NOT EXISTS \`${cfgNet.schema}\`.\`${table}\` (
+  const table = metaTable(cfgNet.adTable);
+  return `CREATE TABLE IF NOT EXISTS \`${table}\` (
   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   \`${cfgNet.fkCol}\` ${cfgNet.fkType} NOT NULL,
   ad_type        VARCHAR(32)  NULL,
@@ -85,63 +87,77 @@ function buildDDL(net, cfgNet) {
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`;
 }
 
-async function tableExists(conn, schema, table) {
-  const [r] = await conn.query(
-    'SELECT COUNT(*) n FROM information_schema.tables WHERE table_schema=? AND table_name=?',
-    [schema, table],
+async function tableExists(sql, table) {
+  const rows = await sql.query(
+    'SELECT COUNT(*) n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
+    [table]
   );
-  return r[0].n > 0;
+  return rows && rows[0] ? rows[0].n > 0 : false;
 }
 
-(async () => {
-  const args   = process.argv.slice(2);
-  const COMMIT = args.includes('--commit');
-  const onlyArg = args.find((a) => a.startsWith('--only='));
-  const only = onlyArg ? onlyArg.split('=')[1].split(',').map((s) => s.trim()) : null;
+async function schemaHost(sql) {
+  try {
+    const rows = await sql.query('SELECT @@hostname host, DATABASE() db');
+    return rows && rows[0] ? `${rows[0].host}/${rows[0].db}` : '(unknown)';
+  } catch {
+    return '(unknown)';
+  }
+}
 
-  let mysql;
-  try { mysql = require('mysql2/promise'); }
-  catch { console.error('mysql2 not installed (npm install mysql2)'); process.exit(1); }
+async function main() {
+  const { commit, networks } = parseArgs(process.argv.slice(2));
+  console.log(`\n=== AI-Meta SQL table apply — ${commit ? 'COMMIT' : 'DRY-RUN'} ===`);
+  console.log(`networks: ${networks.join(', ')}\n`);
 
-  const s = cfg.databases.sql;
-  const conn = await mysql.createConnection({ host: s.host, port: s.port, user: s.user, password: s.password, multipleStatements: false });
-
-  console.log(`\n=== AI-Meta SQL table apply — ${COMMIT ? 'COMMIT' : 'DRY-RUN'} ===`);
-  console.log(`host=${s.host}:${s.port} user=${s.user}\n`);
+  await databaseManager.connectAll(networksConfig);
 
   const summary = [];
-  for (const [net, c] of Object.entries(NETWORKS)) {
-    if (only && !only.includes(net)) continue;
-    const table = metaTable(net, c.adTable);
-    const label = `${net} → ${c.schema}.${table}`;
-    try {
-      // Parent ad table must exist for the FK.
-      if (!(await tableExists(conn, c.schema, c.adTable))) {
-        console.log(`✗ ${label}: parent table ${c.schema}.${c.adTable} NOT found — skipped`);
-        summary.push({ net, status: 'skipped_no_parent' }); continue;
-      }
-      const exists = await tableExists(conn, c.schema, table);
-      const ddl = buildDDL(net, c);
+  for (const net of networks) {
+    const sql = databaseManager.getSQL(net);
+    const cfgNet = NETWORKS[net];
+    if (!sql) {
+      console.log(`[${net}] SKIP — no SQL connection`);
+      summary.push({ net, status: 'no-sql' });
+      continue;
+    }
 
-      if (!COMMIT) {
-        console.log(`• ${label}: ${exists ? 'ALREADY EXISTS (no-op)' : 'would CREATE'}`);
-        console.log(ddl + '\n');
-        summary.push({ net, status: exists ? 'exists' : 'would_create' });
+    const where = await schemaHost(sql);
+    const table = metaTable(cfgNet.adTable);
+    const label = `${net} -> ${table} @ ${where}`;
+
+    try {
+      const parentExists = await tableExists(sql, cfgNet.adTable);
+      if (!parentExists) {
+        console.log(`[${net}] SKIP — ${label} parent table missing (${cfgNet.adTable})`);
+        summary.push({ net, status: 'missing-parent' });
         continue;
       }
 
-      await conn.query(ddl); // CREATE TABLE IF NOT EXISTS — safe no-op if present
-      const nowExists = await tableExists(conn, c.schema, table);
-      console.log(`✓ ${label}: ${exists ? 'already existed (no-op)' : 'CREATED'}${nowExists ? '' : ' (verify FAILED!)'}`);
+      const exists = await tableExists(sql, table);
+      const ddl = buildDDL(net, cfgNet);
+
+      if (!commit) {
+        console.log(`[${net}] ${exists ? 'ALREADY EXISTS' : 'WOULD CREATE'} — ${label}`);
+        if (!exists) console.log(ddl + '\n');
+        summary.push({ net, status: exists ? 'exists' : 'would-create' });
+        continue;
+      }
+
+      await sql.query(ddl);
+      console.log(`[${net}] ${exists ? 'NO-OP' : 'CREATED'} — ${label}`);
       summary.push({ net, status: exists ? 'existed' : 'created' });
     } catch (err) {
-      console.log(`✗ ${label}: ERROR ${err.message}`);
+      console.log(`[${net}] ERROR — ${label} — ${err.message}`);
       summary.push({ net, status: 'error', error: err.message });
     }
   }
 
-  console.log('\n--- summary ---');
-  for (const r of summary) console.log(`  ${r.net.padEnd(10)} ${r.status}${r.error ? ' — ' + r.error : ''}`);
-  if (!COMMIT) console.log('\n(DRY-RUN — nothing was changed. Re-run with --commit to apply.)');
-  await conn.end();
-})().catch((e) => { console.error('FATAL', e.message); process.exit(1); });
+  console.log('\n=== summary ===');
+  for (const s of summary) console.log('  ', JSON.stringify(s));
+  await databaseManager.disconnectAll();
+}
+
+main().catch((e) => {
+  console.error('FATAL', e);
+  databaseManager.disconnectAll().finally(() => process.exit(1));
+});

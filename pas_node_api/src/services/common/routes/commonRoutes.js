@@ -376,8 +376,9 @@ router.get(
 
 // POST /api/v1/common/ai-meta
 // Dedicated AI-Meta enrichment write path (AI_META_API_PAYLOAD_SPEC.md, Option B).
-// Validates the ai_meta payload and writes it onto the ad's `ai` ES field. Decoupled
-// from category classification. No auth — internal only.
+// Validates the ai_meta payload and writes it onto the runtime AI-Meta ES field
+// (`ai` normally, `ai_meta` only for production facebook). Decoupled from category
+// classification. No auth — internal only.
 router.post(
   '/ai-meta',
   asyncHandler(insertAiMeta)

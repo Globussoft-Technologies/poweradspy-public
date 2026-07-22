@@ -46,7 +46,7 @@ Each row in the response gained the following fields (additive — no existing f
 | `category_id` | string \| null | Flat `category_id` |
 | `subcategory_id` | string \| null | Flat `subCategory_id` |
 | `confidence_score` | number \| null | `0` once a human/AI category is assigned |
-| `ai` | object \| null | Read-back of any stored AI-Meta enrichment (see §2) |
+| `ai_meta` | object \| null | Read-back of any stored AI-Meta enrichment (see §2), regardless of whether ES stored it under `ai` or `ai_meta` |
 | `image_url_original` | string \| null | **Native only** — original scraped URL, fallback creative source |
 
 **Image URLs are now resolvable.** `ad_image` and `thumbnail` are passed through a `served()`
@@ -95,7 +95,7 @@ GET /api/v1/common/getAdCategory?platform=facebook&ad_id=13011
   "category": "Retail", "sub_category": "eCommerce",
   "category_id": "1234", "subcategory_id": "12340001",
   "confidence_score": 0,
-  "ai": { "ad_type": "promotional", "offering_type": "product", "...": "..." }
+  "ai_meta": { "ad_type": "promotional", "offering_type": "product", "...": "..." }
 }
 ```
 Responses: `200` (found), `400` (bad/missing platform or ad_id), `404` (ad not found), `503` (ES down).
@@ -105,7 +105,8 @@ Responses: `200` (found), `400` (bad/missing platform or ad_id), `404` (ad not f
 ## 2. AI-Meta enrichment
 
 Implements `AI_META_API_PAYLOAD_SPEC.md` **v1.6** (2026-07-13). Data is stored on the ad's ES doc
-under a single `ai` object (spec §7 mapping). Field set = 8 core (`ad_type`, `intent`, `hook`,
+under a single AI-Meta object (spec §7 mapping): normally the ES field is `ai`, but the
+production Facebook index uses `ai_meta` to bypass the poisoned legacy mapping. Field set = 8 core (`ad_type`, `intent`, `hook`,
 `offering_type`, `offers`, `offering`, `caption`, `roa`) + `colors` + the category classification group
 (`category`/`category_id`/`sub_category`/`subcategory_id`).
 
@@ -115,7 +116,7 @@ under a single `ai` object (spec §7 mapping). Field set = 8 core (`ad_type`, `i
 > **v1.6:** the category name **and its ids** (`category_id` 4-char, `subcategory_id` 8-char) now travel
 > inside `ai_meta` — the top-level classification fields are retired — so `/ai-meta` can drive the flat ES
 > ad-doc codes and maintain the master `category` taxonomy index on its own. With `status` gone there is no
-> partial/failed state — every payload is a completed enrichment, so the whole `ai` object is always
+> partial/failed state — every payload is a completed enrichment, so the whole `ai_meta` object is always
 > replaced. `colors` is a fixed **16-value HEX palette** (not the never-shipped named-word vocab).
 
 ### 2.1 Validator — `src/services/common/helpers/aiMetaValidator.js`
@@ -145,7 +146,7 @@ Pure/synchronous, fully unit-tested. Enforces the entire §3 contract:
 `newCatInsertion` accepts an optional `ai_meta` object alongside the (legacy top-level) category fields. It
 is **additive and non-blocking**: an invalid `ai_meta` never fails the category write — it is reported via
 `ai_meta_status: "validation_error"` + `ai_meta_errors`, while the category result stands. On success the
-`ai` object is written and dual-persisted to SQL (`ai_meta_sql`). Category on this path is still driven by
+AI-Meta object is written and dual-persisted to SQL (`ai_meta_sql`). Category on this path is still driven by
 the top-level classification (Step 1 taxonomy + Step 2 flat-code ad update), so the ai_meta category is not
 re-applied here. **Once the DS pipeline ships v1.6, `/ai-meta` (Option B) is the intended single endpoint;**
 Option A stays for backward compatibility.
@@ -154,7 +155,7 @@ Option A stays for backward compatibility.
 
 Standalone, spec-conformant write path. **As of v1.6 it is no longer decoupled from category** — because
 the category name + ids arrive inside `ai_meta`, this endpoint now, when a category is present:
-1. writes the `ai` object,
+1. writes the AI-Meta object to the environment/platform-appropriate ES field,
 2. maintains the master `category` taxonomy index (shared `syncMasterCategory`, using `category_id`/
    `subcategory_id`),
 3. mirrors the dotted names + flat 4/8-char codes onto the ad doc (`mirrorCategoryToEs`), and
@@ -188,10 +189,10 @@ must carry its ids (§2.1).
 
 ### 2.4 Write policy — idempotency (both options)
 
-A single painless script assigns the whole `ai` object atomically:
+A single painless script assigns the whole AI-Meta object atomically:
 
 ```painless
-ctx._source.ai = params.ai;
+ctx._source.<resolved_ai_field> = params.aiMeta;
 ```
 
 The object is **replaced** on every write (not doc-merged), so re-sending overwrites prior labels and
@@ -203,14 +204,14 @@ completed enrichment. Written with `refresh: wait_for` so it is immediately sear
 
 | Value | When |
 |---|---|
-| `stored` | full `ai` object written |
+| `stored` | full AI-Meta object written |
 | `validation_error` | payload failed validation (Option A only; Option B returns `400`) |
 | `ad_not_found` | ad id not in the platform index (Option A only; Option B returns `404`) |
 | `error` | ES update threw |
 
 ### 2.5 Read-back
 
-The stored `ai` object is returned by both `GET /getDescriptionDetails` (feed) and
+The stored AI-Meta object is returned as `ai_meta` by both `GET /getDescriptionDetails` (feed) and
 `GET /getAdCategory` (single ad), so the classifier can verify an enrichment write and skip
 already-enriched ads.
 
@@ -242,7 +243,7 @@ schema/design in `docs/AI_META_SQL_STORAGE.md`. In short:
 | # | Question | Decision |
 |---|---|---|
 | 1 | Endpoint choice | **Both** A (extend `newCatInsertion`) and B (dedicated `/ai-meta`), sharing one validator + writer. |
-| 2 | Idempotency | **Overwrite** — the whole `ai` object is replaced on every write. (`status` was dropped, so the earlier partial/failed policy no longer applies.) |
+| 2 | Idempotency | **Overwrite** — the whole AI-Meta object is replaced on every write. (`status` was dropped, so the earlier partial/failed policy no longer applies.) |
 | 3 | Indexing trigger | Direct ES write with `refresh: wait_for` — immediately searchable, no separate cron. |
 | 4 | Durable store | **Dual-write to SQL** (`<net>_ad_ai_meta`) alongside ES, non-fatal. category/sub_category sourced from the `ai_meta` object; category also synced to the pre-existing `<net>_ad.category_id` store where one exists (7/11 networks). |
 | 5 | Category location (v1.6) | Category **name + 4/8-char ids live inside `ai_meta`** (top-level classification fields retired). This lets **Option B (`/ai-meta`) be the single endpoint** — it maintains the taxonomy index and the flat ES codes from the ids. `newCatInsertion` (Option A) is kept as-is for backward compatibility; its taxonomy logic is now shared via `syncMasterCategory`. |
@@ -271,9 +272,9 @@ All `tests/services/common` suites green (615 tests).
 
 ## 5. Deployment notes
 
-1. **ES mapping (spec §7):** apply the explicit `ai` mapping to each network's index **before** first
+1. **ES mapping (spec §7):** apply the explicit AI-Meta mapping to each network's index **before** first
    write. The code writes the data regardless, but without the mapping ES 6.8 dynamic-maps sub-fields
-   (e.g. `ai.colors` as text+keyword, `ai.offers.value` as `long`) — and a later type change would
+   (e.g. `ai_meta.colors` as text+keyword, `ai_meta.offers.value` as `long`) — and a later type change would
    require a reindex. **Step-by-step runbook (per-network index list, ES 6.8 vs TikTok 8.x PUT forms,
    curl/Kibana/Node-script methods, verification, reindex fallback): [`AI_META_ES_MAPPING_RUNBOOK.md`](./AI_META_ES_MAPPING_RUNBOOK.md).**
 2. **CDN base:** `getDescriptionDetails` image resolution needs `config.cdn.baseUrl` (or

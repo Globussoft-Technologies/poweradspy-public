@@ -229,6 +229,20 @@ const InfoTooltip = ({ text }) => {
  * Download helpers – no external dependencies.
  * svgEl: the <svg> DOM element inside the chart container.
  */
+// Keep the full creative visible instead of forcing tall ads into a square crop.
+// The contained preview preserves the original ratio while the tile keeps a
+// consistent visual frame inside the horizontal gallery.
+const CreativeImageTile = ({ src, alt }) => (
+  <div className="flex-shrink-0 w-52 sm:w-56 h-64 sm:h-72 rounded-xl border border-white/10 overflow-hidden bg-white/5 p-2">
+    <img
+      src={src}
+      alt={alt}
+      className="w-full h-full object-contain"
+      loading="lazy"
+    />
+  </div>
+);
+
 const downloadSVG = (svgEl, filename) => {
   const serializer = new XMLSerializer();
   const svgStr = serializer.serializeToString(svgEl);
@@ -1649,17 +1663,11 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                   ) : (
                     <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
                       {competitorImages.map((src, i) => (
-                        <div
+                        <CreativeImageTile
                           key={i}
-                          className="flex-shrink-0 w-48 h-48 rounded-xl border border-white/10 overflow-hidden bg-white/5"
-                        >
-                          <img
-                            src={src}
-                            alt={`Competitor creative ${i + 1}`}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                          />
-                        </div>
+                          src={src}
+                          alt={`Competitor creative ${i + 1}`}
+                        />
                       ))}
                     </div>
                   )}
@@ -1673,17 +1681,11 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                   ) : (
                     <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
                       {brandImages.map((src, i) => (
-                        <div
+                        <CreativeImageTile
                           key={i}
-                          className="flex-shrink-0 w-48 h-48 rounded-xl border border-white/10 overflow-hidden bg-white/5"
-                        >
-                          <img
-                            src={src}
-                            alt={`Brand creative ${i + 1}`}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                          />
-                        </div>
+                          src={src}
+                          alt={`Brand creative ${i + 1}`}
+                        />
                       ))}
                     </div>
                   )}

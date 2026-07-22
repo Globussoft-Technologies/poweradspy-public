@@ -14,6 +14,25 @@ const { getDisplayableMediaFilter } = require('../helpers/displayableMediaFilter
 const CDN_BASE = ((config && config.cdn && config.cdn.baseUrl) || process.env.CDN_BASE_URL || '').replace(/\/+$/, '');
 
 /**
+ * Resolve which ES object field stores AI-Meta for a given platform/environment.
+ * Dev and all normal environments keep using the original `ai` field; only the
+ * production facebook index is diverted to `ai_meta` to bypass the poisoned mapping.
+ */
+function getAiMetaEsField(platform) {
+  return config.env === 'production' && platform === 'facebook' ? 'ai_meta' : 'ai';
+}
+
+// Read-back stays backward-compatible: prefer the field configured for the current
+// environment/platform, but fall back to the other key so existing docs remain visible
+// during rollout and mixed-state indices are still inspectable.
+function readAiMetaFromSource(src, platform) {
+  const preferredField = getAiMetaEsField(platform);
+  if (src[preferredField] !== undefined) return src[preferredField];
+  const fallbackField = preferredField === 'ai_meta' ? 'ai' : 'ai_meta';
+  return src[fallbackField] ?? null;
+}
+
+/**
  * Turn a stored creative value into a fetchable http(s) URL. Already-absolute values
  * pass through untouched (youtube). NAS-relative paths (e.g. `/PowerAdspy/n2/native/adImage/…`)
  * get their mount prefix stripped and the CDN base prepended, so the classifier receives
@@ -56,23 +75,24 @@ async function findAdDoc(esForPlat, esIndex, idField, adId) {
 }
 
 /**
- * Write a validated `ai_meta` object onto the ad's ES doc under the `ai` field
+ * Write a validated `ai_meta` object onto the ad's ES doc under the resolved AI-Meta field
  * (see AI_META_API_PAYLOAD_SPEC.md §7 mapping).
  *
- * Idempotency: the whole `ai` object is REPLACED on every write (a painless assign,
+ * Idempotency: the whole stored AI-Meta object is REPLACED on every write (a painless assign,
  * not a doc-merge) so re-sending overwrites prior labels and stale sub-fields from an
  * older payload shape are dropped. v1.4 removed the `status` field, so there is no
  * longer a partial/status-only path — every payload is a completed enrichment.
  */
-async function writeAiMeta(esForPlat, esIndex, docId, normalized) {
+async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
+  const aiMetaField = getAiMetaEsField(platform);
   await esForPlat.update(withEsType(esForPlat, {
     index: esIndex,
     id:    docId,
     body: {
       script: {
-        source: 'ctx._source.ai = params.ai;',
+        source: `ctx._source.${aiMetaField} = params.aiMeta;`,
         lang:   'painless',
-        params: { ai: normalized },
+        params: { aiMeta: normalized },
       },
     },
     refresh: 'wait_for',
@@ -673,7 +693,7 @@ async function getDescriptionDetails(req, res) {
       if (src.confidence_score !== undefined) row.confidence_score = src.confidence_score;
       // Read-back of any stored AI-Meta enrichment so the classifier can verify a prior
       // /ai-meta (or newCatInsertion+ai_meta) write and skip already-enriched ads.
-      row.ai = src.ai ?? null;
+      row.ai_meta = readAiMetaFromSource(src, platform);
 
       if (src[cfg.ocrField] !== undefined) row.ocr = src[cfg.ocrField];
       if (cfg.destPageField && src[cfg.destPageField] !== undefined) {
@@ -922,7 +942,7 @@ async function newCatInsertion(req, res) {
 
     // ── Step 2b: Optional AI-Meta enrichment (Option A) ─────────────────
     // Additive: when the caller includes an `ai_meta` object we validate + write it
-    // onto the same ad doc's `ai` field. This never fails the category write — an
+    // onto the same ad doc's runtime AI-Meta field. This never fails the category write — an
     // invalid ai_meta is reported back as `ai_meta_status='validation_error'` while
     // the category result stands. The dedicated POST /ai-meta endpoint (Option B) is
     // the strict path that 400s on invalid payloads.
@@ -935,7 +955,7 @@ async function newCatInsertion(req, res) {
         aiMetaResult = { ai_meta_status: 'ad_not_found' };
       } else {
         try {
-          await writeAiMeta(esForPlat, esIndex, adDocId, aiNormalized);
+          await writeAiMeta(esForPlat, esIndex, adDocId, aiNormalized, platform);
           aiMetaResult = { ai_meta_status: 'stored', ai_meta_stored_fields: storedFields };
           gdnService.log?.info(`[newCatInsertion] ai_meta stored for ad_id=${ad_id}`);
 
@@ -1051,7 +1071,7 @@ async function getAdCategory(req, res) {
       category_id:     src.category_id    ?? null,
       subcategory_id:  src.subCategory_id ?? null,
       confidence_score: src.confidence_score ?? null,
-      ai:              src.ai ?? null,
+      ai_meta:         readAiMetaFromSource(src, platform),
     });
   } catch (err) {
     service.log?.error(`[getAdCategory] platform=${platform} ad_id=${adId} error: ${err.message}`);
@@ -1121,7 +1141,7 @@ async function insertAiMeta(req, res) {
       });
     }
 
-    await writeAiMeta(es, esIndex, adHit._id, normalized);
+    await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
     service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
 
     // Category (v1.6: name + ids inside ai_meta) — maintain the master `category`

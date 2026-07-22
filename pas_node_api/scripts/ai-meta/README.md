@@ -3,8 +3,8 @@
 One-off maintenance scripts that provision the storage the AI-Meta write path needs
 (spec **v1.6** — see `docs/AI_META_API_PAYLOAD_SPEC.md`, `docs/AI_META_SQL_STORAGE.md`,
 `docs/AI_META_ES_MAPPING_RUNBOOK.md`). Connection details + per-network schema/index
-names are read from `config.json` (`databases.sql`, `databases.elastic`,
-`databases.elastic_tiktok`, and `networks.<net>.*`).
+names are resolved the same way the app does in the active environment:
+dotenv/env → `src/config` → `src/config/networks` → `DatabaseManager`.
 
 All three are **idempotent** and default to a **safe/dry-run** mode. Nothing here modifies
 existing ad data except the explicit, flagged cutover in `reindex-ai-mapping.js --swap`.
@@ -20,7 +20,7 @@ node scripts/ai-meta/apply-sql-tables.js --only=facebook,native --commit
 for all, signed `INT` for tiktok). 17 columns incl. `category_id`/`subcategory_id` and
 `caption TEXT`.
 
-## 2. `apply-es-mapping.js` — add the `ai` mapping to each live index
+## 2. `apply-es-mapping.js` — add the AI-Meta mapping to each live index
 ```
 node scripts/ai-meta/apply-es-mapping.js                 # dry-run (prints PUT body)
 node scripts/ai-meta/apply-es-mapping.js --commit        # apply to all 11
@@ -28,13 +28,14 @@ node scripts/ai-meta/apply-es-mapping.js --only=tiktok --commit
 ```
 Additive `PUT <index>/_mapping` only — never creates an index, never reindexes, never
 deletes. Detects ES major (6 typed `/doc` vs 7+/8 typeless) and resolves the per-network
-index + cluster the same way the app does. If an index has a pre-existing incompatible
-`ai` mapping, ES rejects the PUT with a 400 and the script reports it (data untouched) —
-that index then needs script 3.
+index + cluster the same way the app does. Dev and normal environments map the `ai`
+field; production Facebook maps `ai_meta` so the poisoned legacy `ai` mapping can be
+ignored in place.
 
-## 3. `reindex-ai-mapping.js` — fix indices that already had a stale `ai` mapping
-Only needed for indices where a pre-v1.5 prototype doc had already dynamically mapped
-`ai.*` as `text` (ES can't change a field's base type in place). Two phases:
+## 3. `reindex-ai-mapping.js` — legacy repair for stale `ai` mappings
+Only needed if you still choose to repair an old `ai` mapping in place. With the current
+runtime workaround, production Facebook can bypass its poisoned `ai` mapping by writing
+to `ai_meta`, so this script is no longer part of the normal production rollout.
 ```
 node scripts/ai-meta/reindex-ai-mapping.js --only=instagram          # phase 1: reindex only (non-destructive)
 node scripts/ai-meta/reindex-ai-mapping.js --only=instagram --swap   # phase 2: cut over (DESTRUCTIVE)
@@ -73,8 +74,7 @@ doc (`product_type`/`brand`/`status`) that had forced a `text` mapping; they wer
 back to their original concrete names (script 4). The app reads/writes the same index names
 throughout.
 
-> **Prod rollout:** run scripts **1 & 2** against the prod env's `config.json`. Only if
-> script 2 reports a 400 mapping conflict on an index (a pre-existing `ai` mapping), run
-> **3** (reindex) then **4** (finalize) for that index. Take schema/index names from the
-> target env's config (they differ from dev's `pasdev_*`), and prefer a low-ingestion
-> window for 3 & 4.
+> **Prod rollout:** run scripts **1 & 2** with the production environment loaded. The current
+> code path writes to `ai_meta` only for production Facebook, so that poisoned `ai` mapping
+> does not need a reindex just to resume AI-Meta writes. The scripts now resolve schema/index
+> names from the live environment the same way the app itself does.

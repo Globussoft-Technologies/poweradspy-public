@@ -15,6 +15,9 @@ require.cache[catCtrlPath] = {
   exports: { syncCategory },
 };
 
+const config = require("../../../../src/config");
+const originalEnv = config.env;
+
 const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta } = require(
   "../../../../src/services/common/controllers/addCategoryController"
 );
@@ -44,6 +47,7 @@ function mkService({ esSearch, esIndex, esUpdate, sql, log = { info: vi.fn(), wa
 beforeEach(() => {
   serviceRegistry.getService.mockReset();
   syncCategory.mockReset().mockResolvedValue();
+  config.env = originalEnv;
 });
 
 describe("addCategoryController > getDescriptionDetails", () => {
@@ -963,7 +967,7 @@ describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", (
     const search = vi.fn(async () => ({ hits: { hits: [{ _id: "x", _source: {
       "facebook.category": "Retail", "facebook.subCategory": "eCommerce",
       category_id: "1234", subCategory_id: "12340001", confidence_score: 0,
-      ai: { ad_type: "promotional", offering_type: "product" },
+      ai_meta: { ad_type: "promotional", offering_type: "product" },
     }}]}}));
     serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
     const res = mkRes();
@@ -973,7 +977,7 @@ describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", (
       platform: "facebook", ad_id: "13011",
       category: "Retail", sub_category: "eCommerce",
       category_id: "1234", subcategory_id: "12340001", confidence_score: 0,
-      ai: { ad_type: "promotional", offering_type: "product" },
+      ai_meta: { ad_type: "promotional", offering_type: "product" },
     });
   });
 });
@@ -1025,7 +1029,7 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.statusCode).toBe(503);
   });
 
-  it("200 success replaces the whole ai object + returns stored_fields", async () => {
+  it("200 success replaces the whole ai object in development + returns stored_fields", async () => {
     const updateFn = vi.fn(async () => {});
     esWithAd([{ _id: "ad-1" }], updateFn);
     const res = mkRes();
@@ -1034,11 +1038,25 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.body.success).toBe(true);
     expect(res.body.message).toBe("AI-Meta labels stored successfully");
     expect(res.body.stored_fields).toEqual(expect.arrayContaining(["ad_type", "offering_type"]));
-    // painless script assigns the whole ai object (no replace flag in v1.4)
+    // Development keeps the original `ai` field because its mapping is already correct.
     const call = updateFn.mock.calls[0][0];
-    expect(call.body.script.source).toContain("ctx._source.ai = params.ai");
-    expect(call.body.script.params.ai.ad_type).toBe("promotional");
-    expect(call.body.script.params.ai.offering_type).toBe("product");
+    expect(call.body.script.source).toContain("ctx._source.ai = params.aiMeta");
+    expect(call.body.script.params.aiMeta.ad_type).toBe("promotional");
+    expect(call.body.script.params.aiMeta.offering_type).toBe("product");
+  });
+
+  it("production facebook writes to ai_meta to bypass the poisoned ai mapping", async () => {
+    config.env = "production";
+    const update = vi.fn(async () => {});
+    serviceRegistry.getService.mockReturnValue(mkService({
+      esSearch: vi.fn(async () => ({ hits: { hits: [{ _id: "es-1", _source: {} }] } })),
+      esUpdate: update,
+    }));
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "48979890", network: "facebook", ai_meta: VALID_AI_META } }, res);
+    expect(res.statusCode).toBe(200);
+    const call = update.mock.calls.find((c) => c[0].body?.script)?.[0];
+    expect(call.body.script.source).toContain("ctx._source.ai_meta = params.aiMeta");
   });
 });
 
@@ -1063,7 +1081,7 @@ describe("addCategoryController > newCatInsertion + ai_meta (Option A)", () => {
     expect(res.body.ai_meta_status).toBe("stored");
     expect(res.body.ai_meta_stored_fields).toEqual(expect.arrayContaining(["ad_type", "offering_type"]));
     // two updates: category doc-merge + ai script
-    const hasAiScript = updateFn.mock.calls.some((c) => c[0].body.script && c[0].body.script.params.ai);
+    const hasAiScript = updateFn.mock.calls.some((c) => c[0].body.script && c[0].body.script.params.aiMeta);
     expect(hasAiScript).toBe(true);
   });
 

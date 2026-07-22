@@ -2,35 +2,36 @@
 'use strict';
 
 /**
- * apply-es-mapping.js — add the explicit `ai` object mapping to each network's
- * live search index (docs/AI_META_ES_MAPPING_RUNBOOK.md, spec v1.6).
+ * apply-es-mapping.js — add the explicit AI-Meta object mapping to each live
+ * search index.
  *
  * SAFETY (does NOT touch existing data):
  *   - Only ever does `PUT <index>/_mapping` — an ADDITIVE mapping update on the
  *     EXISTING index. It never creates an index, never reindexes, never deletes,
  *     and never rewrites documents.
- *   - If the index does not exist, it is SKIPPED (never created).
- *   - A putMapping that would conflict with an existing incompatible `ai.*` type is
- *     REJECTED by Elasticsearch with a 400 — the script reports it and moves on; your
- *     data is left exactly as-is (see the runbook §5 reindex fallback for that case).
- *   - DRY-RUN by default: prints the target index + mapping body. Pass --commit to apply.
+ *   - If the index does not exist, it is SKIPPED.
+ *   - DRY-RUN by default: prints the target index + mapping body. Pass --commit
+ *     to apply.
  *
  * USAGE:
- *   node scripts/ai-meta/apply-es-mapping.js               # dry-run (all networks)
- *   node scripts/ai-meta/apply-es-mapping.js --commit      # apply the mapping
- *   node scripts/ai-meta/apply-es-mapping.js --only=facebook,tiktok [--commit]
+ *   node scripts/ai-meta/apply-es-mapping.js
+ *   node scripts/ai-meta/apply-es-mapping.js --commit
+ *   node scripts/ai-meta/apply-es-mapping.js --only=facebook,tiktok
  *
- * Node URLs / creds are read from config.json (databases.elastic + elastic_tiktok);
- * per-network index names from src/config/networks (same resolution the app uses).
+ * IMPORTANT:
+ *   - Connection details are resolved the same way the app does in the active
+ *     environment: dotenv/env → src/config → src/config/networks →
+ *     DatabaseManager.
+ *   - Dev/normal environments map `ai`; production facebook maps `ai_meta`.
  */
 
-const fs   = require('fs');
-const path = require('path');
+require('dotenv').config();
+const config = require('../../src/config');
+const databaseManager = require('../../src/database/DatabaseManager');
+const networksConfig = require('../../src/config/networks');
 
-const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../config.json'), 'utf8'));
-const networksCfg = require('../../src/config/networks');
-
-// The v1.6 `ai` mapping — identical across every network (docs/AI_META_ES_MAPPING_RUNBOOK.md §2).
+// Shared AI-Meta field properties. Only the top-level field name varies by
+// environment/platform; the sub-field mapping stays identical.
 const AI_PROPS = {
   ad_type:       { type: 'keyword' },
   intent:        { type: 'keyword' },
@@ -41,105 +42,107 @@ const AI_PROPS = {
   offering:      { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 }, suggest: { type: 'completion', max_input_length: 200 } } },
   caption:       { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } },
   roa:           { properties: { intent: { type: 'text' }, hook: { type: 'text' }, offering_type: { type: 'text' }, offering: { type: 'text' } } },
-  category:       { type: 'keyword' },
-  category_id:    { type: 'keyword' },
-  sub_category:   { type: 'keyword' },
-  subcategory_id: { type: 'keyword' },
+  category:      { type: 'keyword' },
+  category_id:   { type: 'keyword' },
+  sub_category:  { type: 'keyword' },
+  subcategory_id:{ type: 'keyword' },
 };
-const MAPPING_BODY = { properties: { ai: { properties: AI_PROPS } } };
 
-// network → which cluster + resolved index (matches the app's own resolution).
-function resolveTarget(net) {
-  const d = networksCfg[net]?.database;
-  if (!d) return null;
-  if (d.elastic_tiktok) return { cluster: 'elastic_tiktok', index: d.elastic_tiktok.index };
-  if (d.elastic)        return { cluster: 'elastic',        index: d.elastic.index };
-  return null;
-}
 const NETWORKS = ['facebook', 'instagram', 'gdn', 'youtube', 'google', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'tiktok'];
 
-function auth(c) { return 'Basic ' + Buffer.from(`${c.username}:${c.password}`).toString('base64'); }
-
-async function esFetch(node, headers, method, p, body) {
-  const r = await fetch(node + p, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body ? JSON.stringify(body) : undefined });
-  const text = await r.text();
-  let json; try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-  return { status: r.status, json, text };
-}
-
-// esMajor from GET / ; used to pick the typed (ES6) vs typeless (ES7+/8) _mapping URL.
-async function esMajor(node, headers) {
-  const r = await esFetch(node, headers, 'GET', '/');
-  const v = r.json?.version?.number;
-  return v ? parseInt(v.split('.')[0], 10) : null;
-}
-
-// Discover the existing mapping type name for ES6 (usually 'doc'); typeless for ES7+/8.
-async function resolveMappingPath(node, headers, index, major) {
-  if (major != null && major >= 7) return `/${index}/_mapping`;
-  const r = await esFetch(node, headers, 'GET', `/${index}/_mapping`);
-  const mappings = r.json?.[index]?.mappings || {};
-  const typeKey = Object.keys(mappings).find((k) => !['properties', '_meta', 'dynamic', '_source', 'dynamic_templates'].includes(k));
-  return `/${index}/_mapping/${typeKey || 'doc'}`; // ES6 needs the type in the path
-}
-
-(async () => {
-  const args   = process.argv.slice(2);
-  const COMMIT = args.includes('--commit');
-  const onlyArg = args.find((a) => a.startsWith('--only='));
-  const only = onlyArg ? onlyArg.split('=')[1].split(',').map((s) => s.trim()) : null;
-
-  console.log(`\n=== AI-Meta ES mapping apply — ${COMMIT ? 'COMMIT' : 'DRY-RUN'} ===\n`);
-
-  const clusterMeta = {}; // cluster → { node, headers, major }
-  const summary = [];
-
-  for (const net of NETWORKS) {
-    if (only && !only.includes(net)) continue;
-    const t = resolveTarget(net);
-    if (!t || !t.index) { console.log(`✗ ${net}: no ES index resolved — skipped`); summary.push({ net, status: 'no_index' }); continue; }
-
-    const cc = cfg.databases[t.cluster];
-    if (!cc?.node) { console.log(`✗ ${net}: cluster ${t.cluster} not configured — skipped`); summary.push({ net, status: 'no_cluster' }); continue; }
-
-    // one handshake per cluster
-    if (!clusterMeta[t.cluster]) {
-      const headers = { Authorization: auth(cc) };
-      const major = await esMajor(cc.node, headers).catch(() => null);
-      clusterMeta[t.cluster] = { node: cc.node, headers, major };
+function parseArgs(argv) {
+  const args = { commit: false, networks: NETWORKS };
+  for (const a of argv) {
+    if (a === '--commit') args.commit = true;
+    else if (a.startsWith('--only=')) {
+      args.networks = a.slice('--only='.length).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     }
-    const { node, headers, major } = clusterMeta[t.cluster];
-    const label = `${net} → ${node}/${t.index} (ES${major ?? '?'})`;
+  }
+  const unknown = args.networks.filter((n) => !NETWORKS.includes(n));
+  if (unknown.length) throw new Error(`Unknown network(s): ${unknown.join(', ')}. Valid: ${NETWORKS.join(', ')}`);
+  return args;
+}
+
+function aiFieldFor(net) {
+  return config.env === 'production' && net === 'facebook' ? 'ai_meta' : 'ai';
+}
+
+function mappingBodyFor(net) {
+  return { properties: { [aiFieldFor(net)]: { properties: AI_PROPS } } };
+}
+
+function resolvedEsNode(net) {
+  const db = networksConfig[net]?.database || {};
+  return db.elastic?.node || db.elastic_tiktok?.node || '(unknown-node)';
+}
+
+async function indexExists(client, index) {
+  try {
+    const res = await client.indices.exists({ index });
+    return typeof res === 'boolean' ? res : !!(res?.body ?? res);
+  } catch (err) {
+    if (err?.meta?.statusCode === 404) return false;
+    throw err;
+  }
+}
+
+async function main() {
+  const { commit, networks } = parseArgs(process.argv.slice(2));
+  console.log(`\n=== AI-Meta ES mapping apply — ${commit ? 'COMMIT' : 'DRY-RUN'} ===`);
+  console.log(`networks: ${networks.join(', ')}\n`);
+
+  await databaseManager.connectAll(networksConfig);
+
+  const summary = [];
+  for (const net of networks) {
+    const elastic = databaseManager.getElastic(net);
+    if (!elastic?.client || !elastic.indexName) {
+      console.log(`[${net}] SKIP — no Elasticsearch connection`);
+      summary.push({ net, status: 'no-elastic' });
+      continue;
+    }
+
+    const index = elastic.indexName;
+    const field = aiFieldFor(net);
+    const node = resolvedEsNode(net);
+    const label = `${net} -> ${node}/${index} (field=${field}, ES${elastic.esMajor ?? '?'})`;
 
     try {
-      // Index must already exist — we never create it.
-      const head = await esFetch(node, headers, 'GET', `/${t.index}`);
-      if (head.status === 404) { console.log(`✗ ${label}: index does NOT exist — skipped (never created by this script)`); summary.push({ net, status: 'index_missing' }); continue; }
-      if (head.status >= 400)  { console.log(`✗ ${label}: cannot read index (${head.status}) — skipped`); summary.push({ net, status: 'read_error' }); continue; }
-
-      const mappingPath = await resolveMappingPath(node, headers, t.index, major);
-
-      if (!COMMIT) {
-        console.log(`• ${label}\n    PUT ${mappingPath}\n    ${JSON.stringify(MAPPING_BODY)}\n`);
-        summary.push({ net, status: 'would_apply' });
+      const exists = await indexExists(elastic.client, index);
+      if (!exists) {
+        console.log(`[${net}] SKIP — ${label} index missing`);
+        summary.push({ net, status: 'index-missing' });
         continue;
       }
 
-      const res = await esFetch(node, headers, 'PUT', mappingPath, MAPPING_BODY);
-      if (res.status < 400 && res.json?.acknowledged !== false) {
-        console.log(`✓ ${label}: mapping applied (acknowledged)`);
-        summary.push({ net, status: 'applied' });
-      } else {
-        console.log(`✗ ${label}: PUT failed (${res.status}) — data untouched — ${res.text.slice(0, 300)}`);
-        summary.push({ net, status: 'put_failed', error: res.text.slice(0, 200) });
+      const body = mappingBodyFor(net);
+      if (!commit) {
+        console.log(`[${net}] WOULD APPLY — ${label}`);
+        console.log(JSON.stringify(body));
+        console.log('');
+        summary.push({ net, status: 'would-apply', field });
+        continue;
       }
+
+      const params = elastic.esMajor != null && elastic.esMajor < 7
+        ? { index, type: 'doc', body }
+        : { index, body };
+      await elastic.client.indices.putMapping(params);
+      console.log(`[${net}] APPLIED — ${label}`);
+      summary.push({ net, status: 'applied', field });
     } catch (err) {
-      console.log(`✗ ${label}: ERROR ${err.message}`);
-      summary.push({ net, status: 'error', error: err.message });
+      const reason = err?.meta?.body?.error?.reason || err.message;
+      console.log(`[${net}] ERROR — ${label} — ${reason}`);
+      summary.push({ net, status: 'error', field, error: reason });
     }
   }
 
-  console.log('\n--- summary ---');
-  for (const r of summary) console.log(`  ${r.net.padEnd(10)} ${r.status}${r.error ? ' — ' + r.error : ''}`);
-  if (!COMMIT) console.log('\n(DRY-RUN — nothing was changed. Re-run with --commit to apply.)');
-})().catch((e) => { console.error('FATAL', e.message); process.exit(1); });
+  console.log('\n=== summary ===');
+  for (const s of summary) console.log('  ', JSON.stringify(s));
+  await databaseManager.disconnectAll();
+}
+
+main().catch((e) => {
+  console.error('FATAL', e);
+  databaseManager.disconnectAll().finally(() => process.exit(1));
+});

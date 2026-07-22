@@ -108,7 +108,7 @@ components:
         `reason`→`roa`; added `caption`. **v1.6:** the category name **and its ids** now travel
         inside `ai_meta` (the top-level classification fields are retired) — `category_id` (4-char)
         is required with `category`, and `subcategory_id` (8-char, prefixed by `category_id`) with
-        `sub_category`. On write the whole `ai` object is REPLACED (re-sending overwrites prior labels).
+        `sub_category`. On write the whole AI-Meta object is REPLACED (re-sending overwrites prior labels).
       required: [ad_type, intent, hook, offering_type]
       properties:
         ad_type:
@@ -11652,7 +11652,7 @@ paths:
                       nullable: true
                       description: 0 when a human/AI category has been assigned.
                       example: 0
-                    ai:
+                    ai_meta:
                       nullable: true
                       allOf:
                         - $ref: '#/components/schemas/AiMeta'
@@ -11712,8 +11712,9 @@ paths:
                   description: Must start with category_id. Required if sub_category is provided
                 ai_meta:
                   description: |
-                    Optional AI-Meta enrichment (Option A). Validated and written onto the ad's `ai`
-                    field. Additive — an invalid `ai_meta` never fails the category write; it is
+                    Optional AI-Meta enrichment (Option A). Validated and written onto the ad's AI-Meta
+                    field (`ai` normally, `ai_meta` for production facebook). Additive — an invalid
+                    `ai_meta` never fails the category write; it is
                     reported back via `ai_meta_status: validation_error` + `ai_meta_errors`. For a
                     strict standalone write use POST /api/v1/common/ai-meta.
                   allOf:
@@ -11855,7 +11856,7 @@ paths:
                   category_id: { type: string, nullable: true, example: "1234" }
                   subcategory_id: { type: string, nullable: true, example: "12340001" }
                   confidence_score: { type: number, nullable: true, example: 0 }
-                  ai:
+                  ai_meta:
                     nullable: true
                     allOf:
                       - $ref: '#/components/schemas/AiMeta'
@@ -11873,9 +11874,10 @@ paths:
       summary: Write AI-Meta enrichment labels onto an ad (dedicated endpoint, Option B)
       description: |
         Standalone, strict AI-Meta write path (AI_META_API_PAYLOAD_SPEC.md v1.5). Validates the
-        payload and writes it onto the ad's `ai` field. Decoupled from category classification
-        — it never touches `${platform}.category`. The whole `ai` object is REPLACED on every
-        write (re-sending overwrites prior labels). Internal endpoint — no auth required.
+        payload and writes it onto the ad's AI-Meta field (`ai` normally, `ai_meta` for production
+        facebook). Decoupled from category classification — it never touches `${platform}.category`.
+        The whole stored AI-Meta object is REPLACED on every write (re-sending overwrites prior labels).
+        Internal endpoint — no auth required.
       requestBody:
         required: true
         content:
