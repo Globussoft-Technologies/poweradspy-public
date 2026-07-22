@@ -41,6 +41,7 @@ import {
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { useTheme } from "../../hooks/useTheme";
 import { iconColorClass } from "../../utils/iconColors";
+import { normalizeEcommercePlatformKey } from "../../utils/helper";
 import PlatformBadgesRow from "../shared/PlatformBadgesRow";
 
 import metaIcon from "../../assets/meta.svg";
@@ -1161,7 +1162,7 @@ const MasonryCard = ({
             const ecList = Array.isArray(ecRaw) ? ecRaw : ecRaw ? [ecRaw] : [];
             const ecLogos = ecList
               .map((name) => {
-                const src = MC_EC_IMGS[name.toLowerCase().replace(/\s+/g, "")];
+                const src = MC_EC_IMGS[normalizeEcommercePlatformKey(name)];
                 return src ? { key: `ec_${name}`, src, title: name } : null;
               })
               .filter(Boolean);

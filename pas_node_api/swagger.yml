@@ -9355,6 +9355,129 @@ paths:
                     type: string
                     example: "Facebook service not available"
 
+  /api/v1/common/ads/getAdvertiserAds:
+    post:
+      tags: [Common]
+      summary: All ads for one advertiser/competitor, with first_seen & last_seen (all networks)
+      description: |
+        For a given advertiser (a.k.a. **competitor** / `post_owner_id`), returns
+        **every ad** belonging to it together with each ad's `first_seen` and
+        `last_seen` date.
+
+        **`network` parameter** selects the platform:
+        `facebook` (default), `instagram`, `pinterest`, `youtube`, `gdn`, `google`, `native`, `linkedin`, `reddit`, `quora`, `tiktok`
+
+        Ten networks read from their per-network SQL ad table (`<network>_ad`,
+        Google's is `google_text_ad`) via a single indexed `WHERE post_owner_id = ?`.
+        **TikTok** has no SQL ad table, so it reads from Elasticsearch (capped at
+        10,000 ads per advertiser).
+
+        `ad_id` is the internal ad id used across the app; `first_seen` / `last_seen`
+        are `YYYY-MM-DD` strings, matching the values shown in the Ad Details modal.
+        Results are ordered oldest-first. Omit `limit` to return the whole ad set.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [post_owner_id]
+              properties:
+                network:
+                  type: string
+                  enum: [facebook, instagram, pinterest, youtube, gdn, google, native, linkedin, reddit, quora, tiktok]
+                  default: facebook
+                  description: Target ad network
+                post_owner_id:
+                  type: integer
+                  example: 1792
+                  description: Advertiser (competitor) id. `competitor_id` is accepted as an alias.
+                competitor_id:
+                  type: integer
+                  example: 1792
+                  description: Alias for post_owner_id (used only when post_owner_id is absent)
+                limit:
+                  type: integer
+                  description: Optional cap on number of ads returned. Omit to return all.
+            example:
+              network: linkedin
+              post_owner_id: 1792
+      responses:
+        '200':
+          description: Advertiser ads with first_seen & last_seen, oldest-first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: Advertiser ads fetched successfully
+                  network:
+                    type: string
+                    example: linkedin
+                  post_owner_id:
+                    type: integer
+                    example: 1792
+                  total:
+                    type: integer
+                    example: 3
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ad_id:
+                          type: integer
+                          example: 6823
+                        first_seen:
+                          type: string
+                          format: date
+                          example: "2026-07-02"
+                        last_seen:
+                          type: string
+                          format: date
+                          example: "2026-07-15"
+              example:
+                code: 200
+                message: Advertiser ads fetched successfully
+                network: linkedin
+                post_owner_id: 1792
+                total: 3
+                data:
+                  - { ad_id: 6823, first_seen: "2026-07-02", last_seen: "2026-07-15" }
+                  - { ad_id: 8593, first_seen: "2026-07-18", last_seen: "2026-07-21" }
+                  - { ad_id: 9123, first_seen: "2026-07-20", last_seen: "2026-07-22" }
+        '400':
+          description: Missing/invalid post_owner_id or unsupported network
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 400
+                  message:
+                    type: string
+                    example: "post_owner_id (competitor_id) must be a positive integer"
+        '503':
+          description: Network service or database connection not available
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 503
+                  message:
+                    type: string
+                    example: "linkedin service not available"
+
   /api/v1/common/ads/search:
     post:
       tags: [Common]

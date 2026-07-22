@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PlatformBadgesRow from "../shared/PlatformBadgesRow";
+import { normalizeEcommercePlatformKey } from "../../utils/helper";
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
 import mpConversionx from "../../assets/marketingPlatform/conversionx.co.png";
@@ -1375,6 +1376,32 @@ const AnalyticsModal = ({
     if (!isNaN(ts) && ts <= 0) return '—';
     return out;
   };
+  const renderDetailValueList = (value) => {
+    if (value === "—") return "—";
+
+    const items = [...new Set(
+      (Array.isArray(value) ? value : String(value).split(","))
+        .map((item) => String(item).trim())
+        .filter(Boolean),
+    )];
+
+    return (
+      <div className="flex max-w-[60%] flex-col items-end gap-1.5 text-right">
+        {items.map((item) => (
+          <span
+            key={item}
+            className={`rounded-lg border px-2.5 py-1 text-[13px] font-semibold leading-tight ${
+              isLight
+                ? "border-gray-200 bg-white text-gray-900"
+                : "border-white/15 bg-white/5 text-white/85"
+            }`}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    );
+  };
   const detailRows = (() => {
     const tt = tiktokAnalytics || {};
     if (isTikTok)
@@ -1558,6 +1585,7 @@ const AnalyticsModal = ({
           if (cats.length) return cats.join(", ");
           return Array.isArray(cat) ? cat.join(", ") : String(cat);
         })(),
+        renderValue: renderDetailValueList,
         icon: Layers,
         color: "text-violet-400",
       },
@@ -1569,6 +1597,7 @@ const AnalyticsModal = ({
           if (!sub) return "—";
           return Array.isArray(sub) ? sub.join(", ") : String(sub);
         })(),
+        renderValue: renderDetailValueList,
         icon: Layers,
         color: "text-fuchsia-400",
       },
@@ -1617,7 +1646,7 @@ const AnalyticsModal = ({
       {
         label: "ECOMMERCE PLATFORM",
         value: (() => {
-          const ec = d.built_with;
+          const ec = d.built_with || processedAd?.builtWith || ad?.builtWith;
           if (!ec) return "—";
           return Array.isArray(ec) ? ec.join(", ") : String(ec);
         })(),
@@ -1648,7 +1677,7 @@ const AnalyticsModal = ({
       {
         label: "FUNNEL",
         value: (() => {
-          const funnel = d.built_with_analytics_tracking;
+          const funnel = d.built_with_analytics_tracking || processedAd?.builtWithFunnel || ad?.builtWithFunnel;
           if (!funnel) return "—";
           return Array.isArray(funnel) ? funnel.join(", ") : String(funnel);
         })(),
@@ -1807,22 +1836,22 @@ const AnalyticsModal = ({
                   for (const mp of MARKET_PLATFORMS) {
                     if (lower.includes(mp.match) && !seen.has(mp.match)) {
                       seen.add(mp.match);
-                      const src = MARKETING_PLATFORM_IMGS[mp.file];
+                      const src = MARKETING_PLATFORM_IMGS[mp.match];
                       if (src) mpLogos.push({ key: mp.match, src, title: mp.title });
                     }
                   }
                 }
 
                 // --- Ecommerce Platform logos (from built_with) ---
-                const ecRaw = d.built_with || ad?.built_with;
+                const ecRaw = d.built_with || processedAd?.builtWith || ad?.builtWith || ad?.built_with;
                 const ecList = Array.isArray(ecRaw) ? ecRaw : ecRaw ? [ecRaw] : [];
                 const ecLogos = ecList.map(name => {
-                  const src = ECOMMERCE_PLATFORM_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                  const src = ECOMMERCE_PLATFORM_IMGS[normalizeEcommercePlatformKey(name)];
                   return src ? { key: `ec_${name}`, src, title: name } : null;
                 }).filter(Boolean);
 
                 // --- Funnel logos (from built_with_analytics_tracking) ---
-                const fnRaw = d.built_with_analytics_tracking || ad?.built_with_analytics_tracking;
+                const fnRaw = d.built_with_analytics_tracking || processedAd?.builtWithFunnel || ad?.builtWithFunnel || ad?.built_with_analytics_tracking;
                 const fnList = Array.isArray(fnRaw) ? fnRaw : fnRaw ? [fnRaw] : [];
                 const fnLogos = fnList.map(name => {
                   const src = FUNNEL_IMGS[name.toLowerCase().replace(/\s+/g, '')];
@@ -1942,7 +1971,11 @@ const AnalyticsModal = ({
               <div
                 className={`rounded-2xl border-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/10"}`}
               >
-                <div className="grid grid-cols-2 divide-x divide-white/10">
+                <div
+                  className={`grid grid-cols-2 divide-x ${
+                    isLight ? "divide-gray-200" : "divide-white/10"
+                  }`}
+                >
                   {detailRows.filter(item => !(["FUNNEL", "AFFILIATE", "ECOMMERCE PLATFORM", "CATEGORY", "SUB CATEGORY"].includes(item.label) && item.value === "—")).map((item, i, arr) => {
                     // A lone last item (odd count) stays in its single column so its
                     // label/value keep the same spacing as every other cell, instead of
@@ -1951,7 +1984,13 @@ const AnalyticsModal = ({
                     return (
                     <div
                       key={i}
-                      className={`flex items-center justify-between px-4 py-3 ${isEvenRow ? "border-b border-white/10" : ""}`}
+                      className={`flex items-center justify-between px-4 py-3 ${
+                        isEvenRow
+                          ? isLight
+                            ? "border-b border-gray-200"
+                            : "border-b border-white/10"
+                          : ""
+                      }`}
                     >
                       <div className="flex items-center gap-2.5">
                         <item.icon
@@ -1976,6 +2015,12 @@ const AnalyticsModal = ({
                         </div>
                       ) : item.renderValue ? (
                         item.renderValue(item.value)
+                      ) : item.wrap ? (
+                        <span
+                          className={`text-[14px] font-semibold whitespace-normal break-words text-right leading-tight max-w-[60%] ${isLight ? "text-gray-900" : "text-white/85"}`}
+                        >
+                          {item.value}
+                        </span>
                       ) : (
                         <span
                           className={`text-[14px] font-semibold truncate max-w-[60%] ${isLight ? "text-gray-900" : "text-white/85"}`}

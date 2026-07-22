@@ -6,6 +6,8 @@ const dns = require('dns').promises;
 const net = require('net');
 const { asyncHandler } = require('../../../middleware/errorHandler');
 const { searchAllNetworks, getAdsByAdvertiserAll } = require('../controllers/commonSearchController');
+const { getAdvertiserAds } = require('../controllers/advertiserAdsController');
+const { getAdInsightData } = require('../controllers/adInsightDataController');
 const { getAdInsights: fbAdInsights } = require('../controllers/commonInsightsController');
 const { getAdInsights: igAdInsights } = require('../controllers/instaCommonInsightsController');
 const { getAdInsights: pinAdInsights } = require('../controllers/pinterestCommonInsightsController');
@@ -161,6 +163,28 @@ router.post(
 
     return res.status(400).json({ code: 400, message: `Unsupported network: ${network}. Available: ${availableNetworks}` });
   })
+);
+
+// POST /api/v1/common/ads/getAdvertiserAds?network=<net>
+// For a given advertiser/competitor (post_owner_id, alias competitor_id), returns
+// every ad with its first_seen date: { data: [{ ad_id, first_seen }] }. Network
+// param selects the per-network SQL ad table (TikTok reads from ES).
+router.post(
+  '/ads/getAdvertiserAds',
+  authMiddleware,
+  planAccessMiddleware,
+  asyncHandler(getAdvertiserAds)
+);
+
+// POST /api/v1/common/ads/getAdInsightData?network=<net>
+// Curated single-ad insight (one flat JSON object) for one ad, only if it has
+// both call_to_action and destination_url. Not the SSE getAdInsights — this is a
+// filtered, competitor-analysis field set incl. URL + landing-page info.
+router.post(
+  '/ads/getAdInsightData',
+  authMiddleware,
+  planAccessMiddleware,
+  asyncHandler(getAdInsightData)
 );
 
 // GET/POST /api/v1/common/ads/ad-country?network=<net>&<net>_ad_id=<id>

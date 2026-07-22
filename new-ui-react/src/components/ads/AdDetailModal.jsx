@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
+import { normalizeEcommercePlatformKey } from "../../utils/helper";
 import {
   X,
   Play,
@@ -1786,7 +1787,7 @@ const AdDetailModal = ({
               const ecRaw = ad.builtWith;
               const ecList = Array.isArray(ecRaw) ? ecRaw : ecRaw ? [ecRaw] : [];
               const ecLogos = ecList.map(name => {
-                const src = DM_EC_IMGS[name.toLowerCase().replace(/\s+/g, '')];
+                const src = DM_EC_IMGS[normalizeEcommercePlatformKey(name)];
                 return src ? { key: `ec_${name}`, src, title: name } : null;
               }).filter(Boolean);
               const fnRaw = ad.builtWithFunnel;
