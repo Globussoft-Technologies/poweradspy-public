@@ -436,7 +436,7 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
             <StepDots step={step} />
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleSkip}
               className="p-1 text-theme-text-muted hover:text-theme-text hover:bg-white/10 rounded-full transition-colors"
               aria-label="Close"
             >
@@ -578,7 +578,14 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
                 )}
               />
 
-              <div className="flex justify-end pt-1 border-t border-theme-border -mx-4 px-4 pt-4">
+              <div className="flex justify-end items-center gap-2.5 pt-1 border-t border-theme-border -mx-4 px-4 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setStep("form")}
+                  className="px-3 py-2 text-sm font-medium text-theme-text-muted hover:text-theme-text transition-colors whitespace-nowrap"
+                >
+                  Back
+                </button>
                 <button
                   type="button"
                   onClick={() => {
