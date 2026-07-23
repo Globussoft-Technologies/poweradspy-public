@@ -4,19 +4,10 @@
  * landerTokenResolver
  *
  * The Google `built_with` (Ecommerce Platform) and `built_with_analytics_tracking`
- * (Funnel) fields on `google_ads_data` are indexed with an `edge_ngram`
- * `custom_analyzer`. An analyzed `match` on such a field collapses the query's
- * n-grams onto a single token position, so it matches ANY document sharing a
- * leading prefix — e.g. filtering "WooCommerce" also returns "Wix", "WordPress"
- * and "www.dell.com" (all start with "w").
- *
- * There is no populated keyword sub-field to `term`-match against, and we want
- * to avoid changing the ES mapping/data. Instead we ask Elasticsearch (via the
- * read-only `_analyze` API) for the exact token the field's own analyzer
- * produced for each filter value — the longest token is the fully-stemmed whole
- * value (e.g. "WooCommerce" -> "woocommerc", "Magento" -> "magent") — and then
- * `term`-match that token. This is exact (no prefix collapse), case-insensitive
- * (the analyzer lowercases), and adapts automatically to the analyzer's stemmer.
+ * (Funnel) fields on `google_ads_data_v2` are now keyword fields with a
+ * lowercase normalizer. That means the mapping already supports exact
+ * case-insensitive `term` matching, so there is no analyzer tokenization to
+ * resolve anymore.
  *
  * Results are cached per `(index, field, value)` for the process lifetime, so a
  * given filter value is analyzed at most once (the filter vocabulary is small
@@ -30,7 +21,7 @@ function _key(index, field, value) {
 }
 
 /**
- * Resolve filter values to the exact stemmed tokens indexed for `field`.
+ * Normalize filter values for the keyword mapping and dedupe them.
  *
  * @param {Object} elastic  - db.elastic wrapper (exposes `analyze`)
  * @param {string} index    - ES index name
@@ -52,25 +43,7 @@ async function resolveLongestTokens(elastic, index, field, values, logger) {
       continue;
     }
 
-    // Fallback (analyze unavailable/failing): the literal lowercased value. This
-    // is exact and never over-matches — it can only under-match a stemmed value,
-    // which is preferable to leaking unrelated platforms back in.
-    let token = value.toLowerCase();
-    try {
-      if (typeof elastic?.analyze === 'function') {
-        const res = await elastic.analyze({ index, body: { field, text: value } });
-        const tokens = (res?.tokens || res?.body?.tokens || []).map(t => t.token);
-        if (tokens.length) {
-          token = tokens.reduce((longest, t) => (t.length > longest.length ? t : longest), '');
-        }
-      }
-    } catch (err) {
-      logger?.warn?.(
-        `[google] _analyze failed for ${field}="${value}"; falling back to literal token`,
-        { error: err?.message },
-      );
-    }
-
+    const token = value.toLowerCase();
     _tokenCache.set(key, token);
     if (token) out.push(token);
   }

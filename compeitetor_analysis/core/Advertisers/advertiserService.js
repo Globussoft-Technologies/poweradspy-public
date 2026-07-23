@@ -1356,7 +1356,7 @@ class AdvertiserService {
           sortField: "duration",
         },
         {
-          index: "google_ads_data",
+          index: "google_ads_data_v2",
           field: "post_owner_name",
           searchFields: ["post_owner_name"],
           sortField: "days_running",
@@ -1424,7 +1424,7 @@ class AdvertiserService {
                 totals.instagram.longestRunningAds = longestAds;
               } else if (index === "youtube_ads_data") {
                 totals.youtube.longestRunningAds = longestAds;
-              } else if (index === "google_ads_data") {
+              } else if (index === "google_ads_data_v2") {
                 totals.google.longestRunningAds = longestAds;
               }
               /* v8 ignore stop */
@@ -1972,7 +1972,7 @@ class AdvertiserService {
           platform: "instagram"
         },
         {
-          index: "google_ads_data",
+          index: "google_ads_data_v2",
           field: "post_owner_name",
           searchFields: ["post_owner_name"],
           dateFields: [
@@ -2017,7 +2017,7 @@ class AdvertiserService {
           ], minimum_should_match: 1 } }], mustNot: [] };
         }
         /* v8 ignore next -- search_mix/instagram return earlier, so this if is only evaluated for google (always true); getAdCount's config has no youtube, so the false branch is unreachable */
-        if (index === "google_ads_data") {
+        if (index === "google_ads_data_v2") {
           return { filter: [], mustNot: [
             { bool: { filter: [{ term: { type: "IMAGE" } }, { bool: { should: [
               { bool: { must_not: [{ exists: { field: "new_nas_image_url" } }] } },
@@ -2141,14 +2141,14 @@ class AdvertiserService {
           field: "instagram_ad_post_owners.post_owner_name",
         },
         { index: "youtube_ads_data", field: "post_owner" },
-        { index: "google_ads_data", field: "post_owner_name" },
+        { index: "google_ads_data_v2", field: "post_owner_name" },
       ];
 
       const indexConfigs = [
         { index: "search_mix", field: "facebook_ad.type" },
         { index: "instagram_search_mix", field: "instagram_ad.type" },
         { index: "youtube_ads_data", field: "ad_type" },
-        { index: "google_ads_data", field: "type" },
+        { index: "google_ads_data_v2", field: "type" },
       ];
 
       let totals = {

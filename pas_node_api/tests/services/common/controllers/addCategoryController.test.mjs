@@ -195,6 +195,10 @@ describe("addCategoryController > getDescriptionDetails", () => {
       // Assert ES query uses the monotonic internal PK, not the public ad_id.
       expect(params.body.sort).toEqual([{ id: "asc" }]);
       expect(params.body.query.bool.must[0].range).toEqual({ id: { gt: 7 } });
+      // Google's live builder lowercases these term values via the index
+      // normalizer, so the common mirror must use the same literals.
+      expect(JSON.stringify(params.body.query.bool.filter)).toContain('"type":"image"');
+      expect(JSON.stringify(params.body.query.bool.filter)).toContain('"type":"organic search"');
       return { hits: { hits: [{ _source: {
         id: 42,
         ad_id: "pub_99",

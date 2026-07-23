@@ -3,7 +3,6 @@
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
-const { resolveLongestTokens } = require('../helpers/landerTokenResolver');
 
 const AD_DETAIL_SELECT = `
     google_text_ad.id                                       AS id,
@@ -84,21 +83,17 @@ async function getTopAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: p.post_date_btn_sort[0], upper_date: p.post_date_btn_sort[1] });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) builder.setDomainDate({ lower_date: p.domain_date_btn_sort[0], upper_date: p.domain_date_btn_sort[1] });
 
-  // Lander properties. `built_with`/`built_with_analytics_tracking` still sit on
-  // the legacy edge_ngram/multi-stemmer `custom_analyzer` (never migrated to the
-  // clean keyword mapping the rest of v2 uses), so raw filter values need to be
-  // resolved to their true indexed token first — see adSearchController.js for
-  // the full explanation. Other lander fields are on the clean keyword mapping
-  // and need no resolution.
+  // Lander properties. In v2, `built_with` and `built_with_analytics_tracking`
+  // are keyword fields with lowercase normalizers, so raw filter values can be
+  // passed straight through after lowercasing/deduping. Other lander fields are
+  // on the same keyword model.
   if (p.ecommerce) {
-    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with', ensureArray(p.ecommerce), logger);
-    if (tokens.length) builder.setBuiltWith(tokens);
+    builder.setBuiltWith(ensureArray(p.ecommerce));
   }
   if (p.track)           builder.setTrack(ensureArray(p.track));
   if (p.source)          builder.setSource(ensureArray(p.source));
   if (p.funnel) {
-    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with_analytics_tracking', ensureArray(p.funnel), logger);
-    if (tokens.length) builder.setFunnel(tokens);
+    builder.setFunnel(ensureArray(p.funnel));
   }
   if (p.affiliate)       builder.setAffiliate(ensureArray(p.affiliate));
   if (p.market_platform) builder.setMarketPlatform(ensureArray(p.market_platform));

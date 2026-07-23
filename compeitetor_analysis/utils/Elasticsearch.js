@@ -28,7 +28,7 @@ const esServers = {
     host: config.get("TEST_SEARCH_HOSTS1"),
     username: config.get("TEST_ELASTICSEARCH_USER2"),
     password: config.get("TEST_ELASTICSEARCH_PASS2"),
-    indexes: ["google_ads_data"],
+    indexes: ["google_ads_data_v2"],
   },
   server4: {
     host: config.get("TEST_SEARCH_HOSTS2"),

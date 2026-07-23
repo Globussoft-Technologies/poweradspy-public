@@ -18,14 +18,14 @@
  *   esDateField  - the ES field (in the network's primary search index) holding the registration
  *                  date. NOTE the naming/format split, confirmed against live mappings:
  *                    * search_mix indices → literal dotted key `<table>.domain_registered_date`, `yyyy-MM-dd`
- *                    * google_ads_data     → flat `domain_registered_date`, `yyyy-MM-dd`
+ *                    * google_ads_data_v2  → flat `domain_registered_date`, `yyyy-MM-dd`
  *                    * linkedin/youtube    → flat `domain_registration_date`, stored as epoch_second
  *   esDateFormat - 'ymd' (write the 'YYYY-MM-DD' string) | 'epoch' (write integer epoch seconds)
  *   esMatchField - the ES field that identifies an ad's doc, used to locate the docs to update
  *                  (the ES docs do NOT store the domain string). Confirmed by live probing:
  *                    * search_mix indices → `<adTable>.id`  (the ad's INTERNAL id, dotted key)
  *                    * youtube / linkedin → flat `ad_id`, holding the INTERNAL id
- *                    * google_ads_data     → flat `ad_id`, holding the PUBLIC ad_id
+ *                    * google_ads_data_v2  → flat `ad_id`, holding the PUBLIC ad_id
  *   esMatchId    - which SQL column of `adTable` supplies esMatchField's value: 'internal' (id) | 'public' (ad_id)
  *
  * Every domains table has a `domain` and a `domain_registered_date` column. The ES ad docs do NOT

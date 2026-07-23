@@ -45,10 +45,10 @@ describe("services/google/controllers/adCountController > getAdsCount", () => {
     }
   });
 
-  it("falls back to 'google_ads_data' literal when env missing", async () => {
+  it("falls back to 'google_ads_data_v2' literal when env missing", async () => {
     delete process.env.GOOG_ELASTIC_INDEX;
     const db = { elastic: { search: vi.fn(async () => ({ hits: { total: 0 } })) } };
     await getAdsCount({}, db, fakeLogger);
-    expect(db.elastic.search.mock.calls[0][0].index).toBe("google_ads_data");
+    expect(db.elastic.search.mock.calls[0][0].index).toBe("google_ads_data_v2");
   });
 });

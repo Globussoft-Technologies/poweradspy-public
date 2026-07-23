@@ -46,7 +46,7 @@ async function getKeywordInsight(req, db, logger) {
   if (!p.keyword) return { code: 400, message: 'Missing parameter: keyword is required' };
   if (!db.elastic) return { code: 503, message: 'Elasticsearch connection not available' };
 
-  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
+  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
   const topN = clampSize(p.top_n, 20, 100);
   const creativeN = clampSize(p.creatives, 12, 50);
   const { interval, format } = resolveInterval(p.interval);

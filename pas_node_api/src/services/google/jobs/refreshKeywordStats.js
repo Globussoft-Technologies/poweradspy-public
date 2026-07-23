@@ -368,7 +368,7 @@ async function runKeywordStatsRefresh(args = {}) {
   const sql = databaseManager.getSQL(NETWORK);
   const elastic = databaseManager.getElastic(NETWORK);
   if (!sql || !elastic) throw new Error('google SQL/Elastic connection unavailable');
-  const index = elastic.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
+  const index = elastic.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
 
   if (opts.commit) {
     const [{ c: existing }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');

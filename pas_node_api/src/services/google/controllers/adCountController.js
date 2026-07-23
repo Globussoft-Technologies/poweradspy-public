@@ -5,7 +5,7 @@ async function getAdsCount(req, db, logger) {
 
   try {
     const result = await db.elastic.search({
-      index: process.env.GOOG_ELASTIC_INDEX || 'google_ads_data',
+      index: process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2',
       body: {
         size: 0,
         track_total_hits: true,

@@ -154,7 +154,7 @@ describe("services/google/getAdsByAdvertiser", () => {
     }
   });
 
-  it("ES index falls back to 'google_ads_data' when both config and env missing (line 26 third operand)", async () => {
+  it("ES index falls back to 'google_ads_data_v2' when both config and env missing (line 26 third operand)", async () => {
     const origExports = require.cache[networksPath].exports;
     require.cache[networksPath].exports = { google: { database: { elastic: {} } } };
     delete require.cache[require.resolve("../../../../src/services/google/controllers/getAdsByAdvertiserController")];
@@ -165,7 +165,7 @@ describe("services/google/getAdsByAdvertiser", () => {
       const esSearch = vi.fn(async () => ({ body: { hits: { hits: [] } } }));
       const db = { sql: { query: vi.fn(async () => [[{ id: 5 }]]) }, elastic: { search: esSearch } };
       await reloaded.getAdsByAdvertiser({ body: { ad_id: 1 } }, db, fakeLogger);
-      expect(esSearch.mock.calls[0][0].index).toBe("google_ads_data");
+      expect(esSearch.mock.calls[0][0].index).toBe("google_ads_data_v2");
     } finally {
       if (origEnv !== undefined) process.env.GOOG_ELASTIC_INDEX = origEnv;
       require.cache[networksPath].exports = origExports;

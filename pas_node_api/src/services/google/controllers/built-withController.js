@@ -6,14 +6,14 @@
  * (exposed here as `updateBuiltWith` for naming parity with the other networks).
  *
  * Key differences vs the other networks:
- *  - The ES index is `google_ads_data` and the doc is matched by a flat `id`
+ *  - The ES index is `google_ads_data_v2` and the doc is matched by a flat `id`
  *    field (not `google_text_ad.id`).
  *  - The ES doc uses FLAT field names — `built_with`, `built_with_analytics_tracking`,
  *    `built_with_analytics_tracking_exact`, `affiliate_data`, `affiliate_data_exact`
  *    (no `google_text_ad_meta_data.` dotted prefix, unlike every other network).
  */
 
-const GOOGLE_ES_INDEX = 'google_ads_data';
+const GOOGLE_ES_INDEX = 'google_ads_data_v2';
 
 function normalizePipe(v) {
   if (v == null) return null;
@@ -132,9 +132,7 @@ async function updateBuiltWith(req, db, logger) {
               doc: {
                 built_with,
                 built_with_analytics_tracking,
-                built_with_analytics_tracking_exact: built_with_analytics_tracking,
                 affiliate_data,
-                affiliate_data_exact: affiliate_data,
               },
             },
           });

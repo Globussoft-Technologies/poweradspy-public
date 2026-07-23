@@ -250,7 +250,7 @@ module.exports = {
       },
       elastic: {
         enabled: toBool(netVal(netCfg.google?.elastic, 'enabled', 'GOOG_ELASTIC_ENABLED', false)),
-        index:   netVal(netCfg.google?.elastic, 'index', 'GOOG_ELASTIC_INDEX', 'google_ads_data'),
+        index:   netVal(netCfg.google?.elastic, 'index', 'GOOG_ELASTIC_INDEX', 'google_ads_data_v2'),
         node:    netVal(netCfg.google?.elastic, 'node',     'GOOG_ELASTIC_NODE',     config.databases.elastic.node,               true),
         auth: {
           username: netVal(netCfg.google?.elastic, 'username', 'GOOG_ELASTIC_USERNAME', config.databases.elastic.auth.username, true),

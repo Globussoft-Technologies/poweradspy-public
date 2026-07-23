@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
-    "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
+    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
     "setState","setCity","setAdType","setTargetKeyword","setTags","setLangDetect","setAdPosition",
     "setAdSubPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",

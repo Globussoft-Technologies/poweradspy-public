@@ -118,7 +118,7 @@ const AD_PREVIEW_FIELD_CANDIDATES = {
     ],
   },
   google: {
-    index: "google_ads_data",
+    index: "google_ads_data_v2",
     searchFields: ["post_owner_name", "post_owner_lower"],
     sortField: "last_seen",
     typeField: "type",
@@ -366,7 +366,7 @@ class  MonitorService{
         lastSeen: "instagram_ad.last_seen",
       },
       google:    {
-        index: "google_ads_data",
+        index: "google_ads_data_v2",
         fields: ["post_owner_name"],
         primaryField: "post_owner_name",
         lastSeen: "last_seen",
@@ -381,7 +381,7 @@ class  MonitorService{
     const serverKey = Object.keys(this.esServers).find((k) =>
       this.esServers[k].indexes.includes(cfg.index)
     );
-    /* v8 ignore next -- cfg.index (search_mix/instagram_search_mix/google_ads_data) is always mapped to a configured server */
+    /* v8 ignore next -- cfg.index (search_mix/instagram_search_mix/google_ads_data_v2) is always mapped to a configured server */
     if (!serverKey) return 0;
     const client = this.esClient[serverKey];
 
@@ -541,7 +541,7 @@ class  MonitorService{
         mediaFilter: IG_NAS_FILTER,
       },
       google:    {
-        index: "google_ads_data",
+        index: "google_ads_data_v2",
         fields: ["post_owner_name"],
         primaryField: "post_owner_name",
         excludeType: { field: "type", values: ["ORGANIC SEARCH"] },
@@ -554,7 +554,7 @@ class  MonitorService{
     const serverKey = Object.keys(this.esServers).find((k) =>
       this.esServers[k].indexes.includes(cfg.index)
     );
-    /* v8 ignore next -- cfg.index (search_mix/instagram_search_mix/google_ads_data) is always mapped to a configured server */
+    /* v8 ignore next -- cfg.index (search_mix/instagram_search_mix/google_ads_data_v2) is always mapped to a configured server */
     if (!serverKey) return 0;
     const client = this.esClient[serverKey];
 
@@ -685,7 +685,7 @@ class  MonitorService{
         },
         google: {
             statusField: "google_status",
-            index: "google_ads_data",
+            index: "google_ads_data_v2",
             esField: "post_owner_name",
             lastSeenField: "last_seen",
         },

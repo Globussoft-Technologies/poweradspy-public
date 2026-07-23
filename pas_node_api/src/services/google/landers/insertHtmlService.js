@@ -9,13 +9,13 @@
  * domain_age, outgoing_url[], redirects[], ad_category.
  *
  * Pipeline (faithful to the PHP):
- *   ES check (google_ads_data, flat `id`) → validate (all required) →
+ *   ES check (google_ads_data_v2, flat `id`) → validate (all required) →
  *   status-3 short-circuit → domain upsert (no dod_date) → country normalize →
  *   blackhat/whitehat bookkeeping → outgoing_links upsert (per entry) →
  *   ad_url redirect(R)/destination(D) upsert → html_lander upsert →
  *   google_text_ad.domain_id → meta update → ES doc update (FLAT fields).
  *
- * Returns { code, message, exe_time }. ES doc fields are FLAT (google_ads_data),
+ * Returns { code, message, exe_time }. ES doc fields are FLAT (google_ads_data_v2),
  * not dotted like facebook's search_mix.
  *
  * Legacy quirks preserved (commented): html_whitehat_lander_text always null;
@@ -81,7 +81,7 @@ async function insertHtmlContent(req, db, log) {
   const response = {};
   const sql = db?.sql;
   const elastic = db?.elastic;
-  const ES_INDEX = elastic?.indexName || 'google_ads_data';
+  const ES_INDEX = elastic?.indexName || 'google_ads_data_v2';
 
   const body = req.body;
   // ONLY the standard wrapped payload { ad_id, insertData: {...} } is accepted.
@@ -120,7 +120,7 @@ async function insertHtmlContent(req, db, log) {
 
     const firstAdId = postdata[0].ad_id;
 
-    // 1. Must exist in Elasticsearch (google_ads_data, flat id).
+    // 1. Must exist in Elasticsearch (google_ads_data_v2, flat id).
     const esFound = await elastic.search({
       index: ES_INDEX, type: ES_DOC_TYPE, body: { query: { match: { id: firstAdId } } },
     });

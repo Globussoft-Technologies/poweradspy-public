@@ -15,7 +15,7 @@
  *   html_lander upsert → gdn_ad.domain_id → meta update → ES doc update (DOTTED fields).
  *
  * Returns { code, message, exe_time }. ES doc fields are DOTTED (gdn_search_mix,
- * search_mix-style), not flat like google_ads_data.
+ * search_mix-style), not flat like google_ads_data_v2.
  *
  * Legacy quirks preserved (commented): html_whitehat_lander_text always null;
  * whitehat html stored under html_dc_blackhat_lander_text; outgoing update filters

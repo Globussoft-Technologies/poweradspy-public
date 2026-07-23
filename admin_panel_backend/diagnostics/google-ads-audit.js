@@ -9,7 +9,7 @@
  * (--run / --samples / --timeout / --noDup / --dupPageSize).
  *
  * Google specifics (verified against pas_node_api google adSearchController + insertion):
- *   • ES index / es_id   : GT_INDEX (google_ads_data) on es_id 4 (DEV forces 0).
+ *   • ES index / es_id   : GT_INDEX (google_ads_data_v2) on es_id 4 (DEV forces 0).
  *                          FLAT index — doc id field is `id` (the COLLAPSE field, so
  *                          the search inflates hits.total with duplicates and uses a
  *                          cardinality agg). The dup scan groups by `id`. Type = `type`.
@@ -46,7 +46,7 @@ runAuditCli({
   network: 'google',
   reportPrefix: 'google-audit',
   es: {
-    index: process.env.GT_INDEX || 'google_ads_data',
+    index: process.env.GT_INDEX || 'google_ads_data_v2',
     esId: 4,
     idField: 'id',
     displayableFilter: getDisplayableMediaFilter('google'),

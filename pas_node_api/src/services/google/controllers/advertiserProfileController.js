@@ -64,7 +64,7 @@ async function getAdvertiserProfile(req, db, logger) {
   const advertiserName = await resolveAdvertiserName(p, db);
   if (!advertiserName) return { code: 404, message: 'Advertiser not found' };
 
-  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
+  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
   const topN = clampSize(p.top_n, 25, 100);
   const creativeN = clampSize(p.creatives, 12, 50);
   const { interval, format } = resolveInterval(p.interval);

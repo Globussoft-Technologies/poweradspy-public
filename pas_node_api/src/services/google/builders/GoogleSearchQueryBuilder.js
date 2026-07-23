@@ -2,7 +2,7 @@
 require("dotenv").config();
 
 /**
- * GoogleSearchQueryBuilder — v2 index (google_ads_data, clean mapping).
+ * GoogleSearchQueryBuilder — v2 index (google_ads_data_v2, clean mapping).
  *
  * The index was reindexed off the old edge_ngram `custom_analyzer` onto:
  *   - content fields (text/title/newsfeed_description/news_feed_description/
@@ -33,7 +33,7 @@ const {
   shouldProfile,
 } = require("../../common/helpers/esQueryHelpers");
 
-const DEFAULT_GOOG_INDEX = process.env.GOOG_ELASTIC_INDEX || "google_ads_data";
+const DEFAULT_GOOG_INDEX = process.env.GOOG_ELASTIC_INDEX || "google_ads_data_v2";
 
 // Content fields searched by the keyword box (all on content_analyzer).
 const CONTENT_FIELDS = [

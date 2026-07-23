@@ -3,7 +3,7 @@
 /**
  * GTEXT (Google Text) delete pipeline — port of UserController@deleteads.
  * Cascade-delete google_text_* children + google_text_ad (one transaction), then remove
- * the doc from Elasticsearch `google_ads_data` (the live index the O-path writes to).
+ * the doc from Elasticsearch `google_ads_data_v2` (the live index the O-path writes to).
  *
  * Faithful-but-fixed: atomic transaction + structured errors. Accepts `id` (internal) or `ad_id`.
  */

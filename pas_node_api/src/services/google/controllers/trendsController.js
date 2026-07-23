@@ -38,7 +38,7 @@ async function getAdTrends(req, db, logger) {
   const p = normalizeParams({ ...req.body, ...req.query });
   if (!db.elastic) return { code: 503, message: 'Elasticsearch connection not available' };
 
-  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
+  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
   const { interval, format } = resolveInterval(p.interval);
   const dateField = resolveDateField(p.date_field);
   const splitField = SPLIT_FIELD[String(p.split || '').toLowerCase()] || null;

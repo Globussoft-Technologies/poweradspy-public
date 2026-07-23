@@ -99,7 +99,7 @@ const GOOGLE_NAS_MUST_NOT = {
 const NAS_FILTER_BY_INDEX = {
   search_mix:           { filter: FB_NAS_FILTER, must_not: [] },
   instagram_search_mix: { filter: IG_NAS_FILTER, must_not: [] },
-  google_ads_data:      {
+  google_ads_data_v2:   {
     filter: null,
     must_not: [
       GOOGLE_NAS_MUST_NOT,
@@ -133,7 +133,7 @@ const OWNER_FIELDS_BY_INDEX = {
     ],
     prefixField: 'instagram_ad_post_owners.post_owner_name',
   },
-  google_ads_data: {
+  google_ads_data_v2: {
     fields: ['post_owner_name'],
     prefixField: 'post_owner_name',
   },
@@ -144,7 +144,7 @@ const OWNER_FIELDS_BY_INDEX = {
 const AD_ID_FIELD_BY_INDEX = {
   search_mix:           'facebook_ad.id',
   instagram_search_mix: 'instagram_ad.id',
-  google_ads_data:      'id',
+  google_ads_data_v2:   'id',
 };
 
 function buildOwnerClause(index, competitor) {
@@ -820,13 +820,13 @@ const getAdvertiserAdCount = async (advertiser) => {
         const advertiserIndexConfigs = [
           { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name' },
           { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name' },
-          { index: 'google_ads_data', field: 'post_owner_name' }
+          { index: 'google_ads_data_v2', field: 'post_owner_name' }
         ];
     
         const countryIndexConfigs = [
           { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name', countryField: 'country_only.country' },
           { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' },
-          { index: 'google_ads_data', field: 'post_owner_name', countryField: 'country' }
+          { index: 'google_ads_data_v2', field: 'post_owner_name', countryField: 'country' }
         ];
     
         // Match the search builders: ads in a date bucket are those *last seen*
@@ -836,7 +836,7 @@ const getAdvertiserAdCount = async (advertiser) => {
         const dateFieldMap = {
           search_mix: ['facebook_ad.last_seen'],
           instagram_search_mix: ['instagram_ad.last_seen'],
-          google_ads_data: ['last_seen']
+          google_ads_data_v2: ['last_seen']
         };
     
         const getRange = (duration) => {
@@ -897,7 +897,7 @@ const getAdvertiserAdCount = async (advertiser) => {
           const index_to_platform = {
             'search_mix': 'facebook',
             'instagram_search_mix': 'instagram',
-            'google_ads_data': 'google'
+            'google_ads_data_v2': 'google'
           };
 
           const countPromises = relevantAdv.map(({index}) => {
@@ -924,13 +924,13 @@ const getAdvertiserAdCount = async (advertiser) => {
 
 
           const countryPromises = relevantCntry.map(({index, countryField}) => {
-            // google_ads_data.country is keyword-typed directly (no `.keyword`
+            // google_ads_data_v2.country is keyword-typed directly (no `.keyword`
             // sub-field), so `country.keyword` returns empty buckets. Facebook/
             // Instagram `*_country_only.country` is text WITH a `.keyword`
             // sub-field, so it needs the suffix. Append `.keyword` only when the
             // field isn't already keyword-aggregatable.
             const finalField =
-              index === 'google_ads_data' || countryField.endsWith('.keyword')
+              index === 'google_ads_data_v2' || countryField.endsWith('.keyword')
                 ? countryField
                 : `${countryField}.keyword`;
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
@@ -1038,7 +1038,7 @@ const getAdvertiserAdCount = async (advertiser) => {
       const platformConfigs = [
         { index: 'search_mix', impField: 'facebook_ad.impression', popField: 'facebook_ad.popularity', budField: 'facebook.averagebudget' },
         { index: 'instagram_search_mix', impField: 'instagram_ad.impression', popField: 'instagram_ad.popularity', budField: 'instagram.averagebudget' },
-        { index: 'google_ads_data', impField: 'impression', popField: 'popularity', budField: 'averagebudget' },
+        { index: 'google_ads_data_v2', impField: 'impression', popField: 'popularity', budField: 'averagebudget' },
       ];
 
       const fetchOne = async (client, { index, impField, popField, budField }) => {
@@ -1116,7 +1116,7 @@ const getAdvertiserAdCount = async (advertiser) => {
             const stats = await fetchOne(client, cfg);
             if (cfg.index === 'search_mix') facebookStats = stats;
             else if (cfg.index === 'instagram_search_mix') instagramStats = stats;
-            else if (cfg.index === 'google_ads_data') googleStats = stats;
+            else if (cfg.index === 'google_ads_data_v2') googleStats = stats;
           }
         } catch (serverErr) {
           // One ES cluster (network) is down/slow → skip it and keep the data
@@ -1165,12 +1165,12 @@ const getAdvertiserAdCount = async (advertiser) => {
       const indexPlatform = {
         search_mix: 'facebook',
         instagram_search_mix: 'instagram',
-        google_ads_data: 'google',
+        google_ads_data_v2: 'google',
       };
       const dateField = {
         search_mix: 'facebook_ad.last_seen',
         instagram_search_mix: 'instagram_ad.last_seen',
-        google_ads_data: 'last_seen',
+        google_ads_data_v2: 'last_seen',
       };
       const FMT = "YYYY-MM-DD HH:mm:ss";
       const ranges = {
@@ -1243,8 +1243,8 @@ const getAdvertiserAdCount = async (advertiser) => {
     async getCompetitorAdCountForRange(name, gte, lte) {
       // Mirror getCompetitorsCount: include google so the chart's ad counts
       // match (facebook + instagram + google).
-      const indexPlatform = { search_mix: 'facebook', instagram_search_mix: 'instagram', google_ads_data: 'google' };
-      const dateField = { search_mix: 'facebook_ad.last_seen', instagram_search_mix: 'instagram_ad.last_seen', google_ads_data: 'last_seen' };
+      const indexPlatform = { search_mix: 'facebook', instagram_search_mix: 'instagram', google_ads_data_v2: 'google' };
+      const dateField = { search_mix: 'facebook_ad.last_seen', instagram_search_mix: 'instagram_ad.last_seen', google_ads_data_v2: 'last_seen' };
       const hasRange = Boolean(gte && lte);
 
       const jobs = []; // { platform, promise }
@@ -2144,9 +2144,9 @@ async insertpaidSearch(req,res){
           { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name', countryField: 'country_only.country' },
           { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' },
           // Google contributes to the competitor's country distribution too — the
-          // "Top Country" column must reflect FB+IG+Google combined. google_ads_data
+          // "Top Country" column must reflect FB+IG+Google combined. google_ads_data_v2
           // .country is keyword-typed directly (no `.keyword` sub-field).
-          { index: 'google_ads_data', field: 'post_owner_name', countryField: 'country' }
+          { index: 'google_ads_data_v2', field: 'post_owner_name', countryField: 'country' }
         ];
         // Match the search builders: ads in a date bucket are those *last seen*
         // in that window — not just those first seen. Using firstSeenOn*
@@ -2257,11 +2257,11 @@ async insertpaidSearch(req,res){
           for (const { index, countryField } of countryIndexConfigs.filter(c => serverData.indexes.includes(c.index))) {
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
             const ownerClause = buildOwnerClause(index, competitor);
-            // google_ads_data.country is keyword-typed directly (no `.keyword`
+            // google_ads_data_v2.country is keyword-typed directly (no `.keyword`
             // sub-field); FB/IG `*_country_only.country` is text WITH a `.keyword`
             // sub-field. Append `.keyword` only when not already keyword-aggregatable.
             const finalField =
-              index === 'google_ads_data' || countryField.endsWith('.keyword')
+              index === 'google_ads_data_v2' || countryField.endsWith('.keyword')
                 ? countryField
                 : `${countryField}.keyword`;
             const r = await client.search({

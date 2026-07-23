@@ -3,7 +3,7 @@
 /**
  * Shared aggregation helpers for the Google "competitive intelligence" endpoints
  * (trends, keyword insight, advertiser profile) — the SpyFu/SEMrush-style
- * surfaces built on top of the existing `google_ads_data` index.
+ * surfaces built on top of the existing `google_ads_data_v2` index.
  *
  * Design notes:
  *  - All three endpoints reuse GoogleSearchQueryBuilder so they share *identical*
@@ -12,10 +12,9 @@
  *  - `id` is the ad dedup unit; unique counts use `cardinality(id)` (same field
  *    the search builder collapses on), NOT `hits.total`, which is inflated by the
  *    ~4% duplicate docs in the index.
- *  - Field forms below were verified against the live index (both bare-keyword
- *    and `.keyword` forms resolve). `country.keyword` matches the form the
- *    existing advertiser-country aggregation (adInsightsController) already runs.
- *    If a prod mapping change makes one non-aggregatable, flip the single entry.
+ *  - Field forms below are aligned to the v2 Google mapping. `country` is the
+ *    aggregatable field directly on the new index, while the fallback logic
+ *    below still tolerates older `.keyword` layouts if a stale worker hits one.
  */
 
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
@@ -26,7 +25,7 @@ const AGG_FIELD = {
   advertiser: 'post_owner_lower', // dedicated lowercased keyword field for advertiser aggregation
   domain: 'domain',
   keyword: 'target_keyword',
-  country: 'country.keyword',
+  country: 'country',
   position: 'ad_position',
   subPosition: 'ad_sub_position',
   type: 'type',
@@ -44,7 +43,7 @@ const UNIQUE_KEYWORDS = { cardinality: { field: AGG_FIELD.keyword, precision_thr
 // Tier-1 live endpoints, where cost is proportional to matched docs, not
 // bucket count. A bulk composite-agg sweep multiplies this cost by every
 // bucket in the page — measured against production ES (~197M docs,
-// google_ads_data), 5 cardinality-family sub-aggs at precision 40000 cost
+// google_ads_data_v2), 5 cardinality-family sub-aggs at precision 40000 cost
 // ~18.5s for a 200-bucket page (~12h for a full 464k-keyword sweep); the same
 // sub-aggs at precision 1000 cost ~300-370ms for a 1000-bucket page (~3min
 // full sweep). Use this factory for anything that runs per-bucket at scale.
@@ -153,7 +152,7 @@ function termsByUniqueAds(field, size, extraAggs = {}, exclude = null) {
  * back to bare `country` only if it returns empty or is unavailable.
  */
 async function fetchCountrySpread(elastic, index, query, size, logger) {
-  for (const field of ['country.keyword', 'country']) {
+  for (const field of ['country', 'country.keyword']) {
     try {
       const esResult = await elastic.search({
         index,

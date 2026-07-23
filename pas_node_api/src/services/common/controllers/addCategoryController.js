@@ -429,7 +429,7 @@ const PLATFORM_CONFIG = {
     service:      'google',
     index:        resolveIndex('google'),
     idField:      'ad_id',          // ad lookup key (newCatInsertion matches on this)
-    // google_ads_data is the only flat index with BOTH a distinct internal PK (`id`)
+    // google_ads_data_v2 is the only flat index with BOTH a distinct internal PK (`id`)
     // and the Google ad identifier (`ad_id`). getDescriptionDetails paginates on the
     // monotonic `id` and surfaces `ad_id` separately; everywhere else id === ad_id.
     descIdField:  'id',             // getDescriptionDetails pagination + response `id`

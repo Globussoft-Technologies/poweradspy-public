@@ -28,7 +28,7 @@ vi.mock("../../../utils/Elasticsearch.js", () => ({
   esServers: {
     server1: { host: "h1", indexes: ["search_mix", "youtube_ads_data"] },
     server2: { host: "h2", indexes: ["instagram_search_mix"] },
-    server3: { host: "h3", indexes: ["google_ads_data"] },
+    server3: { host: "h3", indexes: ["google_ads_data_v2"] },
     server4: { host: "h4", indexes: ["category"] },
   },
   checkElasticsearchHealth: vi.fn(),

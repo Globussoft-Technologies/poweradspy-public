@@ -268,7 +268,7 @@ async function getAdvertiserCountryData(req, db, logger) {
 
   const adYear = p.year || (adLastSeen ? new Date(adLastSeen).getFullYear() : new Date().getFullYear());
   const dateRange = getYearRange(adYear);
-  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
+  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
 
   const advertiserFilter = { match_phrase: { post_owner_name: postOwnerName } };
   const filterClauses = [advertiserFilter, { range: { last_seen: dateRange } }];
@@ -325,7 +325,7 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
 
   const dateRange = getCustomDateRange(from_date, to_date);
   const base = { from_date, to_date, post_owner_id };
-  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
+  const index = db.elastic?.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
 
   // For Google/GDN etc, we only support country in this specific request context
   const targetType = (type || 'country').toLowerCase();

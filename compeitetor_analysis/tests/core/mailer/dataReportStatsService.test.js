@@ -46,7 +46,7 @@ beforeEach(() => {
   for (const k of Object.keys(esServers)) delete esServers[k];
   for (const k of Object.keys(esClient)) delete esClient[k];
   esServers.srv = { indexes: [
-    "search_mix", "instagram_search_mix", "google_ads_data", "youtube_ads_data",
+    "search_mix", "instagram_search_mix", "google_ads_data_v2", "youtube_ads_data",
     "gdn_search_mix", "native_search_mix", "linkedin_ads_data", "quora_search_mix",
     "reddit_search_mix", "pinterest_search_mix", "tiktok_ads",
   ] };

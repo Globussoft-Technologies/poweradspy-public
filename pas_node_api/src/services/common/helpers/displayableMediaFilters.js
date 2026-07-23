@@ -229,6 +229,9 @@ const YOUTUBE_DISPLAY_UNDER_GDN = [
 //   1. IMAGE_MUST_NOT — exclude IMAGE ads without new_nas_image_url
 //   2. exclude ORGANIC SEARCH (applies whenever no type filter is set, which
 //      for the lifetime-total endpoint is always)
+// Mirrors google/builders/GoogleSearchQueryBuilder.js exactly: `type` is stored
+// through a lowercase normalizer there, so the term values here must stay
+// lowercase as well or the mirror silently diverges from the live search path.
 const GOOGLE = [
   {
     bool: {
@@ -236,7 +239,7 @@ const GOOGLE = [
         {
           bool: {
             filter: [
-              { term: { type: 'IMAGE' } },
+              { term: { type: 'image' } },
               {
                 bool: {
                   should: [
@@ -249,7 +252,7 @@ const GOOGLE = [
             ],
           },
         },
-        { match_phrase: { type: 'ORGANIC SEARCH' } },
+        { term: { type: 'organic search' } },
       ],
     },
   },

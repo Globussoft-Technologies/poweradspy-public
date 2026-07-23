@@ -5,7 +5,7 @@
  * "O" path uses (GoogleTextAdController::insertAdToMySqlDatabaseO, lines 1384-1438).
  *
  * Unlike GDN/Facebook (joined query with `<net>_ad.*` prefixed keys), the gtext "O" path
- * builds the doc IN-MEMORY with FLAT keys and indexes into `google_ads_data`.
+ * builds the doc IN-MEMORY with FLAT keys and indexes into `google_ads_data_v2`.
  * `target_keyword` is fanned into an array (split on `|`) by esDocBuilder.
  */
 
@@ -14,7 +14,7 @@
 // the insert/update/delete pipelines — the SAME convention the search controllers
 // use. So a cutover is just a config change (e.g. google_ads_data_v2 on the new
 // server); this constant only applies when no client index is available.
-const ES_INDEX = 'google_ads_data';
+const ES_INDEX = 'google_ads_data_v2';
 
 // Flat keys, in PHP order. esDocBuilder maps each from the in-memory data object.
 const META_INSERT_COLUMNS = [

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * GTEXT (Google Text) — Elasticsearch document builder (FLAT keys, index google_ads_data).
+ * GTEXT (Google Text) — Elasticsearch document builder (FLAT keys, index google_ads_data_v2).
  *
  * Faithful port of GoogleTextAdController::setParamsO() for the "O" path:
  *   - flat keys (no `<net>_ad.` prefix, no |langs fan-out),
@@ -26,7 +26,7 @@ function sentinel(v) {
   return v;
 }
 
-// google_ads_data date fields → coerced to yyyy-MM-dd HH:mm:ss; domain_registered_date = yyyy-MM-dd.
+// google_ads_data_v2 date fields → coerced to yyyy-MM-dd HH:mm:ss; domain_registered_date = yyyy-MM-dd.
 const ES_DATE_FIELDS = {
   post_date: 'datetime', last_seen: 'datetime', first_seen: 'datetime',
   firstSeenOnDesktop: 'datetime', firstSeenOnAndroid: 'datetime', firstSeenOnIos: 'datetime',
@@ -50,7 +50,7 @@ function keywordArray(v) {
 }
 
 /**
- * Build the flat google_ads_data doc from an in-memory data object.
+ * Build the flat google_ads_data_v2 doc from an in-memory data object.
  * @param {string[]} columns - META_INSERT_COLUMNS
  * @param {Object} data      - flat field map (the $gtss equivalent)
  * @param {Object} [opts.extra] - extras merged last (image_url_original, post_owner_image, new_nas_image_url, image_video_url)
@@ -82,3 +82,4 @@ function firstHitSource(esResponse) {
 }
 
 module.exports = { buildDoc, searchIdQuery, firstHitId, firstHitSource, keywordArray, sentinel, ES_INDEX };
+

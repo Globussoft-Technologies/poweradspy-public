@@ -9,9 +9,9 @@ const ES_DATA = {
     facebook : {lastseen:'facebook_ad.last_seen',country:'country_only.country',es_id:0,index : process.env.FB_INDEX},
     instagram : {lastseen:"instagram_ad.last_seen",country:"instagram_country_only.country",es_id:3,index:process.env.INSTA_INDEX},
     // Migrated off the legacy nested google_text_search_mix to the flat
-    // google_ads_data index. Its country field is already a `keyword` (no
+    // google_ads_data_v2 index. Its country field is already a `keyword` (no
     // `.keyword` subfield), so flag it to skip the `.keyword` suffix below.
-    google : {lastseen:"last_seen",country:"country",countryIsKeyword:true,es_id:4,index:process.env.GT_INDEX || 'google_ads_data'},
+    google : {lastseen:"last_seen",country:"country",countryIsKeyword:true,es_id:4,index:process.env.GT_INDEX || 'google_ads_data_v2'},
     quora : {lastseen:"quora_ad.last_seen",country:"quora_country_only.country",es_id:2,index:process.env.QUORA_INDEX},  
     native : {lastseen:"native_ad.last_seen",country:"native_country_only.country",es_id:1,index:process.env.NATIVE_INDEX},  
     gdn : {lastseen:"gdn_ad.last_seen",country:"gdn_country_only.country",es_id:2,index:process.env.GDN_INDEX},  
@@ -30,7 +30,7 @@ const countryStatsWithFilter = async (req, res) => {
     let responseType = "count";
  if(!network || !ES_DATA[network]) return res.status(400).json({message:"Please provide valid network"})
     // Country agg field: most networks store country as `text` with a
-    // `.keyword` subfield, but some indices (e.g. google_ads_data) store it as
+    // `.keyword` subfield, but some indices (e.g. google_ads_data_v2) store it as
     // a `keyword` directly — those set `countryIsKeyword` so we don't append
     // a non-existent `.keyword` subfield.
     const countryAggField = ES_DATA[network]['countryIsKeyword']

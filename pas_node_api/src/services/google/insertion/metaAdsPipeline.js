@@ -9,7 +9,7 @@
  * ctx = { db:{sql,elastic}, log, network:'google' }. Shared InsertionEngine batches.
  *
  * Faithful-but-fixed (MANIFEST §0.5): all INSERT writes in one transaction; image named
- * by the internal google_text_ad.id (post-commit, like GDN); ES doc is FLAT into google_ads_data.
+ * by the internal google_text_ad.id (post-commit, like GDN); ES doc is FLAT into google_ads_data_v2.
  *
  * NOTE: peripheral analytics side-tables (keyword_domain / keyword_advertiser /
  * google_keyword_audit / domain-screenshot / platform hit-counts) are intentionally
@@ -161,7 +161,7 @@ async function insertPath(ctx, rawAd, { translation, network }) {
     await repo.insertAccountActivity(sql, { system_id: n.system_id, google_ad_id: result.googleTextAdId, platform: 10, is_unique: 1 }).catch(() => {});
   }
 
-  // ES index (flat doc into google_ads_data)
+  // ES index (flat doc into google_ads_data_v2)
   await indexAd(ctx, result, n, { translation, imageUrl, source }).catch((e) => log.warn('gtext ES index failed', { error: e.message }));
   api.adgptInsert(buildAdgptPayload(n, result, imageUrl));
 

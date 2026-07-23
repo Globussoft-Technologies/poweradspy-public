@@ -8,7 +8,7 @@
  *   2. Bulk-set redirect_status = 2 for ALL fetched ids — note: unlike facebook the
  *      gtext version does NOT set status 5 for ads missing from ES; it just omits them.
  *   3. For each ad, resolve ISO codes (country_data.nicename → iso), then check ES
- *      `google_ads_data` (match on flat `id`). If present, emit the ad.
+ *      `google_ads_data_v2` (match on flat `id`). If present, emit the ad.
  *   4. Return { code, message, data, exe_time }.
  *
  * ISO accumulator `a` is shared across ads to mirror the legacy PHP.
@@ -27,7 +27,7 @@ async function getGoogleAdsWithCountry(db, log) {
   const started = Date.now();
   const sql = db?.sql;
   const elastic = db?.elastic;
-  const ES_INDEX = elastic?.indexName || 'google_ads_data';
+  const ES_INDEX = elastic?.indexName || 'google_ads_data_v2';
 
   try {
     if (!sql || !elastic) {

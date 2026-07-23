@@ -31,7 +31,7 @@
  *     google, the doc's `ad_id` field === the SQL PK `id` (verified live: fb 16175,
  *     ig 50001, yt 35431 all resolve on `id`, never on the `ad_id` column), so we
  *     match on `id`.
- *   - google_ads_data is the one index whose ES `ad_id` is the distinct Google ad
+ *   - google_ads_data_v2 is the one index whose ES `ad_id` is the distinct Google ad
  *     identifier (the numeric hash), which maps to the SQL `ad_id` column — so
  *     google matches on `ad_id`. This mirrors PLATFORM_CONFIG.google in the
  *     controller (idField='ad_id' vs the internal PK cursor).

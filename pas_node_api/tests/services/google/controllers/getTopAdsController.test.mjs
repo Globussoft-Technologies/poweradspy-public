@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry",
-    "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
+    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
     "setState","setCity","setAdType","setTargetKeyword","setTags","setLangDetect","setAdPosition",
     "setAdSubPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -327,7 +327,7 @@ describe("services/google/controllers/getTopAdsController > result paths", () =>
 
   it("db.elastic without indexName → lander index falls back to default", async () => {
     const search = vi.fn(async () => ({ hits: { hits: [], total: 0 } }));
-    const db = { elastic: { search } }; // no indexName → '' falls back to 'google_ads_data'
+    const db = { elastic: { search } }; // no indexName → '' falls back to 'google_ads_data_v2'
     const out = await getTopAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
     expect(out.code).toBe(200);
   });

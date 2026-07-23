@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Backfill `keyword_advertiser` and `keyword_domain` from the google_ads_data
+ * Backfill `keyword_advertiser` and `keyword_domain` from the google_ads_data_v2
  * corpus (Tier-2). These tables join a keyword to the advertisers / landing
  * domains that bid on it, with a per-pair ad `count` — the foundation for
  * keyword-gap and competitor analysis. They ship empty; this job populates them.
@@ -213,7 +213,7 @@ async function main() {
   const sql = databaseManager.getSQL(NETWORK);
   const elastic = databaseManager.getElastic(NETWORK);
   if (!sql || !elastic) throw new Error('google SQL/Elastic connection unavailable');
-  const index = elastic.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data';
+  const index = elastic.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
 
   const query = buildBaseQuery({}, index); // match_all + organic/NAS exclusions
   const keywordMap = await loadKeywordMap(sql);

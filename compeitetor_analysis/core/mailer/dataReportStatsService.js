@@ -22,7 +22,7 @@ import logger from "../../resources/logs/logger.log.js";
 const NETWORKS = [
   { key: "facebook",  label: "Facebook",  index: "search_mix",           dateField: "facebook_ad.last_seen"  },
   { key: "instagram", label: "Instagram", index: "instagram_search_mix", dateField: "instagram_ad.last_seen" },
-  { key: "google",    label: "Google",    index: "google_ads_data",      dateField: "last_seen"              },
+  { key: "google",    label: "Google",    index: "google_ads_data_v2",   dateField: "last_seen"              },
   { key: "youtube",   label: "YouTube",   index: "youtube_ads_data",     dateField: "last_seen"              },
   { key: "gdn",       label: "GDN",       index: "gdn_search_mix_v2",    dateField: "gdn_ad.last_seen"       },
   { key: "native",    label: "Native",    index: "native_search_mix_v2", dateField: "native_ad.last_seen"    },

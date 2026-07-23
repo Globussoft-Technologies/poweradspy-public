@@ -4,7 +4,6 @@ const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder')
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { resolveLongestTokens } = require('../helpers/landerTokenResolver');
 
 /**
  * Google ad search — mirrors SearchController::getAdsHandlerO.
@@ -144,7 +143,7 @@ async function searchFavoriteAds(p, db, logger) {
     const adIds = favRows.map(r => r.ad_id).filter(Boolean);
     if (!adIds.length) return { code: 200, data: [], total: 0, message: 'No favorite ads found' };
 
-    const esIndex = db.elastic?.indexName || 'google_ads_data';
+    const esIndex = db.elastic?.indexName || 'google_ads_data_v2';
     const take = parseInt(p.take, 10) || 20;
     const skip = (parseInt(p.skip, 10) || 0) * take;
     const MAX_ROUNDS = 3;
@@ -183,7 +182,7 @@ async function searchHiddenAds(p, db, logger) {
     const adIds = hiddenRows.map(r => r.ad_id).filter(Boolean);
     if (!adIds.length) return { code: 200, data: [], total: 0, message: 'No hidden ads found' };
 
-    const esIndex = db.elastic?.indexName || 'google_ads_data';
+    const esIndex = db.elastic?.indexName || 'google_ads_data_v2';
     const take = parseInt(p.take, 10) || 20;
     const skip = (parseInt(p.skip, 10) || 0) * take;
     const MAX_ROUNDS = 3;
@@ -268,25 +267,18 @@ async function searchAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: tsToDate(p.post_date_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.post_date_btn_sort[0], '23:59:59') });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) { const tsToDay = ts => new Date(Number(ts) * 1000).toISOString().slice(0, 10); builder.setDomainDate({ lower_date: tsToDay(p.domain_date_btn_sort[1]), upper_date: tsToDay(p.domain_date_btn_sort[0]) }); }
 
-  // Lander properties. `built_with`/`built_with_analytics_tracking` were NEVER
-  // migrated to the clean keyword mapping the rest of the v2 index uses (still
-  // `text` + the legacy edge_ngram/multi-stemmer `custom_analyzer`) — a raw
-  // `term` match against the filter's display value (e.g. "Convertri") almost
-  // never matches what that analyzer actually indexed (confirmed live: the
-  // analyzer turns "Convertri" into "convertr", not "convertri"). Resolve each
-  // value to its true indexed token first (cheap — cached per value for the
-  // process lifetime) so Ecommerce Platform and Funnel Type filters, alone or
-  // combined, actually match. Other lander fields (affiliate_data, source,
-  // market_platform) ARE on the clean keyword mapping and need no resolution.
+  // Lander properties. In v2, `built_with` and `built_with_analytics_tracking`
+  // are keyword fields with lowercase normalizers, so raw filter values can be
+  // passed straight through after lowercasing/deduping. Other lander fields
+  // (affiliate_data, source, market_platform) are already on the same keyword
+  // model.
   if (p.ecommerce) {
-    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with', ensureArray(p.ecommerce), logger);
-    if (tokens.length) builder.setBuiltWith(tokens);
+    builder.setBuiltWith(ensureArray(p.ecommerce));
   }
   if (p.track)           builder.setTrack(ensureArray(p.track));
   if (p.source)          builder.setSource(ensureArray(p.source));
   if (p.funnel) {
-    const tokens = await resolveLongestTokens(db.elastic, db.elastic.indexName, 'built_with_analytics_tracking', ensureArray(p.funnel), logger);
-    if (tokens.length) builder.setFunnel(tokens);
+    builder.setFunnel(ensureArray(p.funnel));
   }
   if (p.affiliate)       builder.setAffiliate(ensureArray(p.affiliate));
   if (p.market_platform) builder.setMarketPlatform(ensureArray(p.market_platform));
