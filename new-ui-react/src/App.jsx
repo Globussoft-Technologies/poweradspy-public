@@ -2038,6 +2038,9 @@ const App = () => {
           if (category) next.adcategory = [category];
           if (countries?.length) next.country_filter = countries;
           if (Object.keys(next).length) sdui.setAllFilters(next);
+          dispatch(setShowSavedAdsPage(false));
+          dispatch(setActivePage('ads'));
+          navigate('/');
         }}
       />
 

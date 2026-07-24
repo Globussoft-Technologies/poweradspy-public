@@ -11,7 +11,7 @@ const CATEGORY_DEBOUNCE_MS = 350;
 
 // Extract a flat, deduped list of {major_category, major_category_id,
 // sub_category, sub_category_id} matches out of the AI category-search
-// response, regardless of which of the DS team's shapes it comes back in —
+// response, regardless of which of the DS team's shapes it comes back in ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â
 // the service isn't ours to pin down, so normalize defensively instead of
 // assuming one field set.
 function normalizeCategoryList(json) {
@@ -223,7 +223,7 @@ function ResultSection({ icon: Icon, title, items, renderItem, emptyLabel }) {
 }
 
 // Type-to-search category picker, backed directly by the AI category-search
-// API (it's a semantic search endpoint — it has no "list everything" mode, it
+// API (it's a semantic search endpoint ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â it has no "list everything" mode, it
 // needs a real query to answer). Debounced as the user types; results are
 // still selected with a single click.
 function CategorySearch({ selected, onSelect }) {
@@ -319,7 +319,7 @@ function CategorySearch({ selected, onSelect }) {
   );
 }
 
-const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
+const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
   const [step, setStep] = useState("form"); // 'form' | 'loading' | 'results'
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [competitors, setCompetitors] = useState([]);
@@ -329,8 +329,8 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState({ trending: [], topAdvertisers: [], longestRunning: [] });
 
-  // Countries: real, DB-backed list — the SAME source the Ads Library
-  // sidebar's Country filter uses (MongoDB sdui_config → GET /api/sdui/config).
+  // Countries: real, DB-backed list ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â the SAME source the Ads Library
+  // sidebar's Country filter uses (MongoDB sdui_config ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ GET /api/sdui/config).
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
@@ -364,8 +364,9 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
       const authUser = raw ? JSON.parse(raw) : null;
       dismissOnboardingForUserId(authUser?.user_id || authUser?.id);
     } catch {}
+    onSkip?.();
     onClose?.();
-  }, [onClose]);
+  }, [onClose, onSkip]);
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) {
@@ -403,12 +404,12 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
     }
   }, [canSubmit, selectedCategory, competitors, countries]);
 
-  // Every hook above must run on every render regardless of isOpen — bailing
+  // Every hook above must run on every render regardless of isOpen ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â bailing
   // out before them (as this used to do) makes the component call fewer
   // hooks on the render where isOpen flips to false (e.g. clicking Skip),
   // which is a Rules-of-Hooks violation: React throws "Rendered fewer hooks
   // than expected" and, with no error boundary in the tree, that crashes the
-  // whole app to a blank screen. The bail-out itself is safe here — it only
+  // whole app to a blank screen. The bail-out itself is safe here ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â it only
   // has to happen before the JSX below is built.
   if (!isOpen) return null;
 
@@ -445,17 +446,17 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
           </div>
         </div>
 
-        <div className="overflow-y-auto px-4 py-3.5 custom-scrollbar">
+        <div className="overflow-y-auto px-4 py-4 custom-scrollbar">
           {step === "form" && (
-            <div className="flex flex-col gap-2.5">
-              <div className="bg-theme-bg/60 border border-theme-border rounded-xl p-2.5">
+            <div className="flex flex-col gap-3">
+              <div>
                 <CategorySearch
                   selected={selectedCategory}
                   onSelect={setSelectedCategory}
                 />
               </div>
 
-              <div className="bg-theme-bg/60 border border-theme-border rounded-xl p-2.5">
+              <div>
                 <SearchableMultiSelect
                   icon={Globe2}
                   label="Countries"
@@ -465,36 +466,32 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
                   values={countries}
                   onChange={setCountries}
                   max={MAX_COUNTRIES}
-                  helperText="Type and pick up to 3 countries."
+                  helperText="Pick up to 3 countries."
                 />
               </div>
 
-              <div className="bg-theme-bg/60 border border-theme-border rounded-xl p-2.5">
+              <div>
                 <SearchableMultiSelect
                   icon={Swords}
                   label="Competitors"
-                  placeholder={selectedCategory ? "Search competitors..." : "Pick a niche first for relevant suggestions..."}
+                  placeholder={selectedCategory ? `Search ${selectedCategory.major_category} competitors...` : "Pick a niche first..."}
                   onSearch={selectedCategory ? searchCompetitors : null}
                   resetKey={`${selectedCategory?.major_category_id || ''}|${countries.join(',')}`}
                   values={competitors}
                   onChange={setCompetitors}
                   max={MAX_COMPETITORS}
-                  minQueryLength={2}
-                  helperText={selectedCategory ? `Required: pick at least 1 competitor, up to ${MAX_COMPETITORS}. Suggestions come from competitor DB for ${selectedCategory.major_category}.` : "Pick a niche first, then type a brand/company name. Competitor is required."}
+                  minQueryLength={selectedCategory ? 0 : 2}
+                  helperText={selectedCategory ? `Suggestions are tailored to ${selectedCategory.major_category}.` : "Pick a niche first, then type a competitor name."}
                 />
               </div>
 
               {error && (
-                <p className="text-sm text-rose-400 bg-rose-400/10 border border-rose-400/20 rounded-lg px-3 py-2">
+                <p className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2.5">
                   {error}
                 </p>
               )}
 
-              <p className="text-[11px] text-theme-text-muted text-center px-2">
-                We'll tailor your Ads Library to this — you can change it anytime.
-              </p>
-
-              <div className="flex justify-end items-center gap-2.5 pt-1 border-t border-theme-border -mx-4 px-4 pt-4">
+              <div className="flex justify-end items-center gap-2.5 pt-2 border-t border-theme-border/70 -mx-4 px-4 pt-4">
                 <button
                   type="button"
                   onClick={handleSkip}
@@ -599,6 +596,7 @@ const OnboardingModal = ({ isOpen, onClose, onExplore }) => {
               </div>
             </div>
           )}
+
         </div>
       </div>
     </div>

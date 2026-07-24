@@ -261,6 +261,90 @@ async function getTopAdvertisers(service, majorCategoryName, countries, limit) {
   }
 }
 
+function normalizeName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+const COMPETITOR_NOISE_PATTERNS = [
+  /\bnew releases?\b/i,
+  /\bpress(?:e)?\b/i,
+  /\bmagazine\b/i,
+  /\bjournal\b/i,
+  /\bnews\b/i,
+  /\bdaily\b/i,
+  /\bweekly\b/i,
+  /\bmonthly\b/i,
+  /\bedition\b/i,
+  /\bbroadcast\b/i,
+  /\bpublication(?:s)?\b/i,
+  /\bofficial\b/i,
+  /\bmedia kit\b/i,
+];
+
+function isLikelyCompetitorName(name) {
+  const value = String(name || '').trim();
+  if (!value) return false;
+  if (value.length < 2 || value.length > 60) return false;
+  if (!/[A-Za-z]/.test(value)) return false;
+  if (COMPETITOR_NOISE_PATTERNS.some((pattern) => pattern.test(value))) return false;
+  if (/^[\W_]+$/.test(value)) return false;
+  if ((value.match(/\s+/g) || []).length > 6) return false;
+  return true;
+}
+
+async function getRelevantCompetitorsFromPool(mongo, topAdvertisers, query, limit) {
+  if (!mongo || !Array.isArray(topAdvertisers) || !topAdvertisers.length) return [];
+
+  const advertiserNames = topAdvertisers
+    .map((a) => String(a?.advertiser || '').trim())
+    .filter(Boolean);
+  if (!advertiserNames.length) return [];
+
+  const advertiserKeys = new Set(advertiserNames.map(normalizeName));
+  const escapedAdvertisers = advertiserNames
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .filter(Boolean);
+  if (!escapedAdvertisers.length) return [];
+
+  const docs = await mongo.collection('existing_competitors')
+    .find(
+      {
+        $or: escapedAdvertisers.map((name) => ({
+          advertiser: { $regex: new RegExp(`^${name}$`, 'i') },
+        })),
+      },
+      { projection: { advertiser: 1, competitors: 1 } }
+    )
+    .limit(Math.min(escapedAdvertisers.length, 25))
+    .toArray();
+
+  if (!docs.length) return [];
+
+  const q = String(query || '').trim().toLowerCase();
+  const minScore = q ? 1 : 2;
+  const ranked = new Map();
+
+  for (const doc of docs) {
+    const baseAdvertiser = normalizeName(doc?.advertiser);
+    for (const item of doc?.competitors || []) {
+      const name = String(item?.competitor_name || '').trim();
+      const key = normalizeName(name);
+      if (!name || !key) continue;
+      if (!isLikelyCompetitorName(name)) continue;
+      if (advertiserKeys.has(key) || key === baseAdvertiser) continue;
+      if (q && !key.includes(q)) continue;
+      const current = ranked.get(key) || { name, score: 0 };
+      current.score += 1;
+      ranked.set(key, current);
+    }
+  }
+
+  return [...ranked.values()]
+    .filter((item) => item.score >= minScore)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    .slice(0, limit)
+    .map((item) => item.name);
+}
 function withTimeout(promise, ms, label) {
   let handle;
   const timer = new Promise(resolve => {
@@ -402,10 +486,78 @@ exports.getCompetitorSuggestions = async (req, res) => {
     const countries = typeof req.query?.countries === 'string' && req.query.countries
       ? req.query.countries.split(',').map(s => s.trim()).filter(Boolean)
       : [];
-
     const mongo = dbManager.getMongo(NET);
+
     const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = query ? new RegExp(escaped, 'i') : null;
+
+    if (majorCategoryName) {
+      const service = serviceRegistry.getService('facebook');
+      if (service?.db) {
+        const topAdvertisers = await getTopAdvertisers(service, majorCategoryName, countries, COMPETITOR_LIST_SIZE);
+        const relevantCompetitors = await getRelevantCompetitorsFromPool(mongo, topAdvertisers, query, COMPETITOR_LIST_SIZE);
+        if (relevantCompetitors.length) {
+          return res.json({ code: 200, data: { competitors: relevantCompetitors, source: 'category_competitor_pool' } });
+        }
+
+        // When a category is already selected, avoid falling back to raw
+        // advertiser names. Those are usually the noisy "publisher / page"
+        // titles that make onboarding feel random. If the user actually typed
+        // a competitor name, we can still try a focused lookup in the
+        // existing pool and return only brand-like matches.
+        if (query && query.length >= 2 && mongo) {
+          const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const queryRegex = new RegExp(escapedQuery, 'i');
+          const docs = await mongo.collection('existing_competitors')
+            .find(
+              {
+                $or: [
+                  { advertiser: queryRegex },
+                  { 'competitors.competitor_name': queryRegex },
+                ],
+              },
+              { projection: { advertiser: 1, competitors: 1 } }
+            )
+            .sort({ updatedAt: -1, createdAt: -1 })
+            .limit(10)
+            .toArray();
+
+          const fromDb = [];
+          const seen = new Set();
+          for (const doc of docs) {
+            for (const item of doc?.competitors || []) {
+              const name = String(item?.competitor_name || '').trim();
+              if (!name || !isLikelyCompetitorName(name)) continue;
+              if (!queryRegex.test(name) && !queryRegex.test(String(doc?.advertiser || ''))) continue;
+              const key = name.toLowerCase();
+              if (seen.has(key)) continue;
+              seen.add(key);
+              fromDb.push(name);
+              if (fromDb.length >= COMPETITOR_LIST_SIZE) break;
+            }
+            if (fromDb.length >= COMPETITOR_LIST_SIZE) break;
+          }
+
+          if (fromDb.length) {
+            return res.json({ code: 200, data: { competitors: fromDb, source: 'category_competitor_query_lookup' } });
+          }
+        }
+
+        const topAdvertiserNames = topAdvertisers
+          .map((a) => String(a?.advertiser || '').trim())
+          .filter(Boolean)
+          .filter(isLikelyCompetitorName);
+        const q = query.toLowerCase();
+        const filteredTopAdvertisers = q
+          ? topAdvertiserNames.filter((name) => normalizeName(name).includes(q))
+          : topAdvertiserNames;
+        if (filteredTopAdvertisers.length) {
+          return res.json({ code: 200, data: { competitors: filteredTopAdvertisers.slice(0, COMPETITOR_LIST_SIZE), source: 'category_top_advertisers' } });
+        }
+
+        return res.json({ code: 200, data: { competitors: [], source: 'category_none' } });
+      }
+    }
 
     if (mongo) {
       const docs = await mongo.collection('existing_competitors')
@@ -431,22 +583,7 @@ exports.getCompetitorSuggestions = async (req, res) => {
       }
 
       if (fromDb.length) {
-        return res.json({ code: 200, data: { competitors: fromDb, source: 'existing_competitors' } });
-      }
-    }
-
-    if (majorCategoryName) {
-      const service = serviceRegistry.getService('facebook');
-      if (service?.db) {
-        const topAdvertisers = await getTopAdvertisers(service, majorCategoryName, countries, COMPETITOR_LIST_SIZE);
-        let names = topAdvertisers.map(a => a.advertiser).filter(Boolean);
-        if (query) {
-          const q = query.toLowerCase();
-          names = names.filter(n => n.toLowerCase().includes(q));
-        }
-        if (names.length) {
-          return res.json({ code: 200, data: { competitors: names, source: 'category_advertisers_fallback' } });
-        }
+        return res.json({ code: 200, data: { competitors: fromDb, source: 'existing_competitors_fallback' } });
       }
     }
 
