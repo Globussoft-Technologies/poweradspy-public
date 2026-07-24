@@ -175,14 +175,16 @@ async function linkedinLanding(db, adId, logger, includeHtml) {
 }
 
 // Assemble one curated object from a getAdDetails-shaped `base`.
-function buildCuratedObject(base, network, enrich, postOwnerId) {
+// `adId` is the internal `<table>.id` (the identifier the rest of the app uses,
+// e.g. /linkedin/<id> and getAdvertiserAds) — NOT the external `ad_id` column.
+function buildCuratedObject(base, network, enrich, postOwnerId, adId) {
   const redirectUrl = firstPresent(
     enrich.redirect_url,
     flattenRedirect(base.market_platform_urls && base.market_platform_urls.redirect_urls)
   );
   return {
     // Basic Ad Information
-    ad_id: present(base.ad_id) ? Number(base.ad_id) : (present(base.id) ? Number(base.id) : null),
+    ad_id: present(adId) ? Number(adId) : (present(base.id) ? Number(base.id) : null),
     network,
     post_owner_id: postOwnerId != null ? Number(postOwnerId) : (present(base.post_owner_id) ? Number(base.post_owner_id) : null),
     post_owner: present(base.post_owner) ? base.post_owner : null,
@@ -284,7 +286,7 @@ async function getAdInsightData(req, res) {
         if (!detail || detail.code !== 200 || !detail.data || (Array.isArray(detail.data) && detail.data.length === 0)) return null;
         const base = Array.isArray(detail.data) ? detail.data[0] : detail.data;
         const enrich = network === 'linkedin' ? await linkedinLanding(db, adId, logger, includeHtml) : NULL_ENRICH;
-        const obj = buildCuratedObject(base, network, enrich, row.post_owner_id);
+        const obj = buildCuratedObject(base, network, enrich, row.post_owner_id, row.id);
         // Final guard: strictly only ads with BOTH call_to_action and destination_url.
         if (!present(obj.call_to_action) || !present(obj.destination_url)) return null;
         return obj;
