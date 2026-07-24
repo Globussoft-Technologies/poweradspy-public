@@ -3,6 +3,7 @@
 const planAccessService = require('../services/planAccess/planAccessService');
 const config = require('../config');
 const logger = require('../logger');
+const { getCapabilityDecision } = require('../services/planControl/registries/routeClassification');
 const log = logger.createChild('plan-access');
 
 // Filters the frontend always sends as UI defaults — strip silently instead of triggering upgrade modal.
@@ -396,6 +397,12 @@ async function isKeywordExplorerAllowedByPlan(req) {
 async function hasKeywordExplorerAccess(req) {
   const uid = getAuthenticatedUserId(req);
   if (isKeywordExplorerUserAllowed(uid)) return true;
+  try {
+    const decision = await getCapabilityDecision(req, 'intelligence.keyword_explorer');
+    if (decision) return decision.allowed;
+  } catch (_error) {
+    // An installation without a readable active policy keeps its legacy gate.
+  }
   return isKeywordExplorerAllowedByPlan(req);
 }
 
@@ -415,7 +422,12 @@ async function requireKeywordExplorerEnabled(req, res, next) {
     return res.status(404).json({ code: 404, message: 'Not found' });
   }
   if (!(await hasKeywordExplorerAccess(req))) {
-    return res.status(403).json({ code: 403, message: 'Keywords Explorer is not enabled for this account', data: [] });
+    return res.status(403).json({
+      code: 403,
+      message: 'Keywords Explorer is not enabled for this account',
+      data: [],
+      ...(req.planControlDecision || {}),
+    });
   }
   next();
 }

@@ -2144,6 +2144,7 @@ let pv2Dirty = false;
 let pv2PreviewContext = null;
 let pv2ReadOnlyFamily = null;
 let pv2ReadOnlyPolicy = null;
+const pv2VariantSelection = {};
 
 function pv2Escape(value) { return escapeHtml(String(value ?? '')); }
 async function pv2Api(path, options = {}) {
@@ -2349,6 +2350,8 @@ function pvLoadPlanEditor() {
         : 'Viewing backend bootstrap defaults (read only; not stored)';
   document.getElementById('pv2-subtitle').textContent = `${family.familyId} · ${family.generation} · ${sourceLabel}`;
   const variants = family.variants || [];
+  const familyPolicy = pv2FamilyPolicy();
+  const selectedVariant = pv2VariantSelection[family.familyId] || '__family__';
   const salesSource = pvCurrentDraft
     ? `Stored in working draft ${pvCurrentDraft.draftId}.`
     : pvLivePolicy
@@ -2361,10 +2364,11 @@ function pvLoadPlanEditor() {
   document.getElementById('pv2-summary').innerHTML = `
     <div class="pv2-stat"><span class="pv2-kicker">Name customers see <span class="pv2-info" title="The friendly plan name shown in customer-facing screens.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.label)}</b></div><div class="pv2-explain">Display name only. Changing it does not change access.</div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Plan display order <span class="pv2-info" title="Previously called Tier Rank. A higher number places a plan higher in comparisons; it does not automatically grant features.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.tierRank)}</b></div><div class="pv2-explain">Higher number = higher plan in UI ordering. Feature access is still controlled below.</div></div>
-    <div class="pv2-stat"><span class="pv2-kicker">Billing options <span class="pv2-info" title="Monthly, yearly, trial or legacy billing product IDs that share this family's rules.">?</span></span><div style="margin-top:6px"><b>${variants.length} option${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="Choose which billing ID to simulate in Preview" style="width:100%;margin-top:6px">${variants.map((v) => `<option value="${pv2Escape(v.planId)}">${pv2Escape(v.billingCycle)} plan · billing ID #${pv2Escape(v.planId)}</option>`).join('')}</select><div class="pv2-explain">All these IDs belong to this one plan family, so you normally edit access once.</div></div>
+    <div class="pv2-stat"><span class="pv2-kicker">Rule scope / billing option <span class="pv2-info" title="Family default normally controls every billing ID. Select one ID to inspect or edit a billing-specific override.">?</span></span><div style="margin-top:6px"><b>${variants.length} billing option${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="Choose family defaults or a specific billing ID" style="width:100%;margin-top:6px" onchange="pv2VariantChanged()"><option value="__family__" ${selectedVariant === '__family__' ? 'selected' : ''}>Family default · normally all billing IDs</option>${variants.map((v) => { const hasOverride = Boolean(familyPolicy.variantOverrides?.[String(v.planId)]); return `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}${hasOverride ? ' · HAS OVERRIDE' : ' · follows family'}</option>`; }).join('')}</select><div id="pv2-variant-note" class="pv2-explain"></div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Available for new purchases <span class="pv2-info" title="Open means billing may sell this family to new customers. Closed keeps existing customers but prevents new signups.">?</span></span><div style="margin-top:6px"><b style="color:${family.openForNewSignups ? '#22c55e' : '#f59e0b'}">${family.openForNewSignups ? 'Yes, open' : 'No, closed'}</b></div><div class="pv2-explain">${family.openForNewSignups ? 'New customers may buy this plan.' : 'Existing plan IDs remain valid, but new sales are closed.'}</div><div class="pv2-source-note"><b>How this is known:</b> ${pv2Escape(salesSource)}</div>${editable ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pvEditFamily()">Edit plan details</button>' : ''}</div>`;
   pv2RenderNetworks();
   pvRenderCapabilities();
+  pv2RenderVariantNote();
   return true;
 }
 
@@ -2383,10 +2387,42 @@ function pv2FamilyPolicy() {
   return { generalNetworks: [], capabilities: {}, variantOverrides: {} };
 }
 
+function pv2SelectedVariantKey() {
+  const value = document.getElementById('pv2-variant')?.value
+    || pv2VariantSelection[pv2SelectedFamilyId]
+    || '__family__';
+  return value === '__family__' ? null : String(value);
+}
+
+function pv2VariantChanged() {
+  const value = document.getElementById('pv2-variant')?.value || '__family__';
+  pv2VariantSelection[pv2SelectedFamilyId] = value;
+  pv2RenderVariantNote();
+  pv2RenderNetworks();
+  pvRenderCapabilities();
+}
+
+function pv2RenderVariantNote() {
+  const note = document.getElementById('pv2-variant-note');
+  if (!note) return;
+  const variantKey = pv2SelectedVariantKey();
+  if (!variantKey) {
+    note.innerHTML = '<b>Editing family defaults.</b> Billing IDs without an override inherit these rules.';
+    return;
+  }
+  const override = pv2FamilyPolicy().variantOverrides?.[variantKey];
+  note.innerHTML = override
+    ? `<b style="color:#f59e0b">Billing override active for plan #${pv2Escape(variantKey)}.</b> Its hidden overrides take priority over the family defaults below.`
+    : `<b>Plan #${pv2Escape(variantKey)} follows family defaults.</b> Changing a control while this option is selected creates an explicit billing override.`;
+}
+
 function pv2RenderNetworks() {
   const policy = pv2FamilyPolicy();
   const editable = Boolean(pvCurrentDraft) && currentRole === 'editor';
-  const allowed = new Set(policy.generalNetworks || []);
+  const variantKey = pv2SelectedVariantKey();
+  const variantPolicy = variantKey ? policy.variantOverrides?.[variantKey] : null;
+  const networkOverrideActive = variantKey && Array.isArray(variantPolicy?.generalNetworks);
+  const allowed = new Set(networkOverrideActive ? variantPolicy.generalNetworks : (policy.generalNetworks || []));
   const allowedLabels = (pvCatalog.networks || [])
     .filter((network) => allowed.has(network.id))
     .map((network) => network.label || network.id);
@@ -2395,10 +2431,10 @@ function pv2RenderNetworks() {
     const currentPolicy = pvLivePolicy?.snapshot?.policies?.[pv2SelectedFamilyId]
       || pv2FamiliesData.snapshot?.policies?.[pv2SelectedFamilyId];
     const currentAllowed = currentPolicy?.generalNetworks || [];
-    const canCopyCurrent = editable && allowedLabels.length === 0 && currentAllowed.length > 0;
+    const canCopyCurrent = editable && !variantKey && allowedLabels.length === 0 && currentAllowed.length > 0;
     summary.className = `pv2-network-summary ${allowedLabels.length ? 'has-access' : 'no-access'}`;
     summary.innerHTML = allowedLabels.length
-      ? `<b>${allowedLabels.length} general network${allowedLabels.length === 1 ? '' : 's'} allowed:</b> ${allowedLabels.map(pv2Escape).join(', ')}`
+      ? `<b>${allowedLabels.length} ${variantKey ? `network${allowedLabels.length === 1 ? '' : 's'} effective for billing #${pv2Escape(variantKey)}` : `general network${allowedLabels.length === 1 ? '' : 's'} allowed`}:</b> ${allowedLabels.map(pv2Escape).join(', ')}${networkOverrideActive && editable ? ` <button type="button" class="btn btn-ghost btn-sm" onclick="pv2ResetVariantNetworks()">Remove billing network override</button>` : ''}`
       : `<b>No general networks allowed in this ${pvCurrentDraft ? 'draft' : 'plan'}.</b> Network-aware features using the family default will be unavailable.${canCopyCurrent ? ` <button type="button" class="btn btn-ghost btn-sm" onclick="pv2CopyCurrentNetworks()">Copy ${currentAllowed.length} current network${currentAllowed.length === 1 ? '' : 's'} into this draft</button>` : ''}`;
   }
   document.getElementById('pv2-networks').innerHTML = (pvCatalog.networks || []).map((network) => {
@@ -2422,10 +2458,26 @@ function pv2CopyCurrentNetworks() {
 }
 function pv2ToggleNetwork(networkId, checked) {
   const policy = pv2FamilyPolicy();
-  const set = new Set(policy.generalNetworks || []);
+  const variantKey = pv2SelectedVariantKey();
+  let target = policy;
+  if (variantKey) {
+    policy.variantOverrides ||= {};
+    target = (policy.variantOverrides[variantKey] ||= { capabilities: {} });
+    target.generalNetworks ||= [...(policy.generalNetworks || [])];
+  }
+  const set = new Set(target.generalNetworks || []);
   if (checked) set.add(networkId); else set.delete(networkId);
-  policy.generalNetworks = [...set];
-  pv2SetDirty(); pvRenderCapabilities();
+  target.generalNetworks = [...set];
+  pv2SetDirty(); pv2RenderVariantNote(); pv2RenderNetworks(); pvRenderCapabilities();
+}
+
+function pv2ResetVariantNetworks() {
+  if (!pvCurrentDraft || currentRole !== 'editor') return;
+  const variantKey = pv2SelectedVariantKey();
+  const override = variantKey && pv2FamilyPolicy().variantOverrides?.[variantKey];
+  if (!override) return;
+  delete override.generalNetworks;
+  pv2SetDirty(); pv2RenderVariantNote(); pv2RenderNetworks(); pvRenderCapabilities();
 }
 
 function pv2RenderCategoryOptions() {
@@ -2442,19 +2494,56 @@ function pv2Humanize(value) {
 }
 
 function pv2RuleForDisplay(policy, cap) {
-  const stored = policy.capabilities?.[cap.id];
-  if (stored) return stored;
-  if (cap.status === 'needs_review') {
+  let baseRule = policy.capabilities?.[cap.id];
+  if (!baseRule && cap.status === 'needs_review') {
     const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
     const generation = pv2Generations().find((item) => item.generationId === family?.generation);
-    return {
+    baseRule = {
       effect: generation?.newCapabilityDefault === 'deny' ? 'deny' : 'allow',
       reviewed: false,
       networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' },
       pendingDefault: true,
     };
   }
-  return { effect: 'inherit', networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' } };
+  baseRule ||= { effect: 'inherit', networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' } };
+  const variantKey = pv2SelectedVariantKey();
+  const variantRule = variantKey ? policy.variantOverrides?.[variantKey]?.capabilities?.[cap.id] : null;
+  if (!variantRule) return baseRule;
+  return {
+    ...baseRule,
+    ...variantRule,
+    networks: { ...(baseRule.networks || {}), ...(variantRule.networks || {}) },
+    limits: { ...(baseRule.limits || {}), ...(variantRule.limits || {}) },
+    variantOverride: true,
+  };
+}
+
+function pv2RuleForEdit(capId) {
+  const policy = pv2FamilyPolicy();
+  policy.capabilities ||= {};
+  const cap = (pvCatalog.capabilities || []).find((item) => item.id === capId) || {
+    id: capId,
+    networkAware: false,
+  };
+  const variantKey = pv2SelectedVariantKey();
+  if (!variantKey) {
+    return (policy.capabilities[capId] ||= {
+      effect: 'inherit',
+      networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' },
+    });
+  }
+  policy.variantOverrides ||= {};
+  const variantPolicy = (policy.variantOverrides[variantKey] ||= { capabilities: {} });
+  variantPolicy.capabilities ||= {};
+  if (!variantPolicy.capabilities[capId]) {
+    const effective = pv2RuleForDisplay(policy, cap);
+    variantPolicy.capabilities[capId] = {
+      effect: effective.effect || 'inherit',
+      networks: { ...(effective.networks || {}) },
+      ...(effective.limits ? { limits: { ...effective.limits } } : {}),
+    };
+  }
+  return variantPolicy.capabilities[capId];
 }
 
 function pv2ApplyCapabilityTree(parentId, action) {
@@ -2508,6 +2597,15 @@ function pvRenderCapabilities() {
   });
   body.innerHTML = caps.map((cap) => {
     const rule = pv2RuleForDisplay(policy, cap);
+    const variantKey = pv2SelectedVariantKey();
+    const explicitVariantRule = variantKey
+      ? policy.variantOverrides?.[variantKey]?.capabilities?.[cap.id]
+      : null;
+    const ruleScope = variantKey
+      ? explicitVariantRule
+        ? `<div class="pv2-variant-rule-badge override">BILLING #${pv2Escape(variantKey)} OVERRIDE</div>`
+        : `<div class="pv2-variant-rule-badge inherited">BILLING #${pv2Escape(variantKey)} FOLLOWS FAMILY</div>`
+      : '<div class="pv2-variant-rule-badge family">FAMILY DEFAULT RULE</div>';
     const parent = cap.parentCapability
       ? (pvCatalog.capabilities || []).find((item) => item.id === cap.parentCapability)
       : null;
@@ -2517,14 +2615,16 @@ function pvRenderCapabilities() {
       : children.length
         ? `<div class="pv2-parent-label">PARENT FEATURE · ${children.length} child${children.length === 1 ? '' : 'ren'}</div>`
         : '<div class="pv2-standalone-label">STANDALONE FEATURE</div>';
-    const treeActions = children.length
+    const treeActions = children.length && !variantKey
       ? `<div class="pv2-tree-actions">
           <span>Apply to this feature group:</span>
           <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','allow_tree')">Allow parent + children</button>
           <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','deny_tree')">Restrict whole group</button>
           <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','follow')">Children follow parent</button>
         </div>`
-      : '';
+      : children.length
+        ? '<div class="pv2-tree-actions"><span>Billing scope selected. Switch to Family default to change the whole parent group.</span></div>'
+        : '';
     const accessMeaning = parent
       ? rule.effect === 'inherit'
         ? `Effective access follows ${pv2Escape(parent.label)}.`
@@ -2538,29 +2638,56 @@ function pvRenderCapabilities() {
     const review = cap.status === 'needs_review'
       ? `<div style="margin-top:5px;color:${rule.reviewed ? '#22c55e' : '#f59e0b'}">${rule.reviewed ? 'This plan reviewed' : rule.pendingDefault && rule.effect === 'allow' ? 'Temporarily allowed · review needed' : 'Choose a plan decision'}</div>${editable ? `<button class="btn btn-ghost btn-sm" onclick="pv2ReviewCap('${pv2Escape(cap.id)}')">${rule.reviewed ? 'Review across plans' : 'Review decision'}</button>` : ''}`
       : '';
-    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Allowed = available, Restricted = locked, Use parent/default = follow the parent feature rule" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)"><option value="inherit" ${rule.effect === 'inherit' ? 'selected' : ''}>${parent ? 'Follow parent' : 'Use default'}</option><option value="allow" ${rule.effect === 'allow' ? 'selected' : ''}>Allow feature</option><option value="deny" ${rule.effect === 'deny' ? 'selected' : ''}>Restrict feature</option></select><div class="pv2-access-meaning">${accessMeaning}</div></td><td>${cap.networkAware ? `<select class="pv2-input" title="Use general networks or choose a smaller custom list only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>Use general networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Choose custom networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature does not receive network context, so a network rule would never be enforced">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
+    const accessOptions = variantKey
+      ? `<option value="__use_family__" ${explicitVariantRule ? '' : 'selected'}>Use family default</option><option value="allow" ${explicitVariantRule?.effect === 'allow' ? 'selected' : ''}>Override: allow feature</option><option value="deny" ${explicitVariantRule?.effect === 'deny' ? 'selected' : ''}>Override: restrict feature</option>${explicitVariantRule?.effect === 'inherit' ? '<option value="inherit" selected>Existing inherited override</option>' : ''}`
+      : `<option value="inherit" ${rule.effect === 'inherit' ? 'selected' : ''}>${parent ? 'Follow parent' : 'Use default'}</option><option value="allow" ${rule.effect === 'allow' ? 'selected' : ''}>Allow feature</option><option value="deny" ${rule.effect === 'deny' ? 'selected' : ''}>Restrict feature</option>`;
+    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}${ruleScope}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Family default normally controls every billing ID; billing overrides take priority" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)">${accessOptions}</select><div class="pv2-access-meaning">${variantKey && explicitVariantRule ? `This billing-specific decision overrides the family rule. Effective result: ${rule.effect === 'deny' ? 'Restricted' : 'Allowed'}.` : accessMeaning}</div></td><td>${cap.networkAware ? `<select class="pv2-input" title="Use general networks or choose a smaller custom list only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>Use general networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Choose custom networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature does not receive network context, so a network rule would never be enforced">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
   }).join('');
 }
 
 function pvUpdateCap(capId, field, value) {
   if (!pvCurrentDraft) return;
   const policy = pv2FamilyPolicy();
-  if (!policy.capabilities) policy.capabilities = {};
-  if (!policy.capabilities[capId]) policy.capabilities[capId] = { effect: 'inherit' };
-  if (field === 'effect') policy.capabilities[capId].effect = value;
-  if (field === 'networkMode') {
-    policy.capabilities[capId].networks = policy.capabilities[capId].networks || {};
-    policy.capabilities[capId].networks.mode = value;
-    if (value === 'custom') policy.capabilities[capId].networks.allowed ||= [];
+  policy.capabilities ||= {};
+  const variantKey = pv2SelectedVariantKey();
+  let targetCapabilities = policy.capabilities;
+  if (variantKey) {
+    policy.variantOverrides ||= {};
+    const variantPolicy = (policy.variantOverrides[variantKey] ||= { capabilities: {} });
+    variantPolicy.capabilities ||= {};
+    if (field === 'effect' && value === '__use_family__') {
+      delete variantPolicy.capabilities[capId];
+      if (!Object.keys(variantPolicy.capabilities).length && !Array.isArray(variantPolicy.generalNetworks)) {
+        delete policy.variantOverrides[variantKey];
+      }
+      pv2SetDirty(); pv2RenderVariantNote(); pvRenderCapabilities();
+      return;
+    }
+    targetCapabilities = variantPolicy.capabilities;
   }
-  pv2SetDirty(); pvRenderCapabilities();
+  if (!targetCapabilities[capId]) {
+    const effective = pv2RuleForDisplay(policy, (pvCatalog.capabilities || []).find((cap) => cap.id === capId) || {});
+    targetCapabilities[capId] = {
+      effect: effective.effect || 'inherit',
+      networks: { ...(effective.networks || {}) },
+      ...(effective.limits ? { limits: { ...effective.limits } } : {}),
+    };
+  }
+  if (field === 'effect') targetCapabilities[capId].effect = value;
+  if (field === 'networkMode') {
+    targetCapabilities[capId].networks = targetCapabilities[capId].networks || {};
+    targetCapabilities[capId].networks.mode = value;
+    if (value === 'custom') targetCapabilities[capId].networks.allowed ||= [];
+  }
+  pv2SetDirty(); pv2RenderVariantNote(); pvRenderCapabilities();
 }
 function pv2SetLimit(capId, name, value) {
-  const rule = (pv2FamilyPolicy().capabilities[capId] ||= { effect: 'inherit' });
+  if (!pvCurrentDraft || currentRole !== 'editor') return;
+  const rule = pv2RuleForEdit(capId);
   rule.limits ||= {};
   if (value === '') delete rule.limits[name];
   else rule.limits[name] = Number(value);
-  pv2SetDirty();
+  pv2SetDirty(); pv2RenderVariantNote(); pvRenderCapabilities();
 }
 function pv2ReviewCap(capId) {
   if (!pvCurrentDraft || currentRole !== 'editor') {
@@ -2631,14 +2758,16 @@ function pv2EditCapabilityNetworks(capId) {
     showToast?.('Select a safe working draft before changing custom networks.', 'error');
     return;
   }
-  const rule = pv2FamilyPolicy().capabilities[capId];
+  const rule = pv2RuleForEdit(capId);
+  rule.networks ||= { mode: 'custom', allowed: [] };
+  rule.networks.mode = 'custom';
   const current = new Set(rule.networks?.allowed || []);
   pv2OpenForm('Select feature networks', `
     <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">Only this feature uses this override. Unselected networks remain unavailable even when the family has general access.</p>
     ${(pvCatalog.networks || []).map((network) => `<label class="pv2-network"><input type="checkbox" name="networks" value="${pv2Escape(network.id)}" ${current.has(network.id) ? 'checked' : ''}> ${pv2Escape(network.label || network.id)}</label>`).join('')}
   `, (form) => {
     rule.networks.allowed = form.getAll('networks').map(String);
-    pv2SetDirty(); pvRenderCapabilities();
+    pv2SetDirty(); pv2RenderVariantNote(); pvRenderCapabilities();
     return true;
   }, { submitLabel: 'Use selected networks' });
 }
@@ -2873,7 +3002,11 @@ async function pvOpenPreview(capabilityId) {
   document.getElementById('pv2-preview-body').innerHTML = '<p style="color:var(--text-muted)">Calculating before/after impact…</p>';
   let simulation = null;
   if (pvCurrentDraft) {
-    const planId = Number(document.getElementById('pv2-variant')?.value);
+    const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+    const selectedVariant = pv2SelectedVariantKey();
+    const planId = selectedVariant
+      ? Number(selectedVariant)
+      : Number(family?.variants?.[0]?.planId);
     try {
       const result = await pv2Api(`/drafts/${encodeURIComponent(pvCurrentDraft.draftId)}/preview`, { method: 'POST', body: JSON.stringify({ capabilityId, familyId: pv2SelectedFamilyId, planId }) });
       simulation = result.data;
@@ -2992,7 +3125,7 @@ function pvOpenHowToUse() {
       ${[
         ['1', 'View any plan without a draft', 'Click Basic, Standard, Palladium or another family to open its current policy immediately in read-only mode. Creating a draft is never required just to inspect networks, features, limits or previews.'],
         ['2', 'Check the source banner first', 'The banner says exactly what you are viewing: LIVE policy, CURRENT LEGACY ACCESS converted read-only, backend bootstrap preview, or an editable WORKING DRAFT. It also shows the MongoDB collection, record and revision when applicable.'],
-        ['3', 'Understand generation, family and billing options', 'A generation is a complete model such as Legacy or 2026 Plans. A family is one product tier. Monthly, yearly, trial and legacy billing IDs stay together inside that family and normally share its rules.'],
+        ['3', 'Understand generation, family and billing options', 'A generation is a complete model such as Legacy or 2026 Plans. A family is one product tier. Family default normally controls every monthly, yearly, trial and legacy billing ID. Select a specific billing ID to reveal any HAS OVERRIDE rule that takes priority; choose Use family default to remove that feature override.'],
         ['4', 'Open one complete-policy draft to edit', 'A working draft contains every plan family, not only the family visible when it was created. While that draft is selected, switch Basic, Standard and Palladium directly—your unsaved browser edits remain in the same draft snapshot.'],
         ['5', 'Set and verify general networks', 'The green/amber summary lists the exact family-default networks in plain text. Checkboxes edit them only inside a safe draft. For an older blank migration draft, “Copy current networks into this draft” deliberately imports the current access without silently overwriting anything.'],
         ['6', 'Use parent and child feature controls', 'A restricted parent blocks every child. A child set to Follow parent automatically uses the parent decision. Parent actions can allow the group, restrict the group, or reset all children to follow; an individual child may still use a stricter/custom decision.'],
@@ -3121,4 +3254,4 @@ function pvEditFamily() {
 }
 
 window.addEventListener('beforeunload', (event) => { if (pv2Dirty) { event.preventDefault(); event.returnValue = ''; } });
-Object.assign(window, { pvLoadInit, pvCreateDraft, pvSelectDraft, pvExitDraft, pvDeleteDraft, pvSaveDraft, pvPublishDraft, pvLoadPlanEditor, pvUpdateCap, pvRenderFamilies, pvRenderCapabilities, pvGenerationChanged, pvOpenGenerationWizard, pvDuplicateGeneration, pvAddFamily, pvEditFamily, pvValidateDraft, pv2ShowNeedsReview, pvRestoreVersion, pvOpenPreview, pvClosePreview, pvOpenHowToUse, pvGoUnlockEditing, pv2SwitchPreviewState, pv2SelectFamily, pv2ToggleNetwork, pv2CopyCurrentNetworks, pv2ApplyCapabilityTree, pv2SetLimit, pv2ReviewCap, pv2EditCapabilityNetworks, pv2SubmitForm, pv2CloseForm });
+Object.assign(window, { pvLoadInit, pvCreateDraft, pvSelectDraft, pvExitDraft, pvDeleteDraft, pvSaveDraft, pvPublishDraft, pvLoadPlanEditor, pvUpdateCap, pvRenderFamilies, pvRenderCapabilities, pvGenerationChanged, pvOpenGenerationWizard, pvDuplicateGeneration, pvAddFamily, pvEditFamily, pvValidateDraft, pv2ShowNeedsReview, pvRestoreVersion, pvOpenPreview, pvClosePreview, pvOpenHowToUse, pvGoUnlockEditing, pv2SwitchPreviewState, pv2SelectFamily, pv2VariantChanged, pv2ToggleNetwork, pv2ResetVariantNetworks, pv2CopyCurrentNetworks, pv2ApplyCapabilityTree, pv2SetLimit, pv2ReviewCap, pv2EditCapabilityNetworks, pv2SubmitForm, pv2CloseForm });

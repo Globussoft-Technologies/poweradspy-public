@@ -30,6 +30,13 @@ require.cache[loggerPath] = {
   exports: { createChild: vi.fn(() => childLog) },
 };
 
+const routeControlPath = require.resolve("../../src/services/planControl/registries/routeClassification");
+const getCapabilityDecision = vi.fn(async () => null);
+require.cache[routeControlPath] = {
+  id: routeControlPath, filename: routeControlPath, loaded: true,
+  exports: { getCapabilityDecision },
+};
+
 // sdui/db is lazy-required inside getSduiQueryParamMap — pre-stub
 const sduiDbPath = require.resolve("../../src/services/sdui/db");
 const sduiToArray = vi.fn(async () => []);
@@ -63,8 +70,31 @@ beforeEach(() => {
   planSvc.getCompetitorLimits.mockReset().mockReturnValue({ brandLimit: 5, competitorLimit: 5 });
   planSvc.stripRestrictedFilters.mockReset().mockReturnValue({ planRestricted: [], platformRestricted: [] });
   planSvc.resolvePlanTier.mockReset().mockReturnValue("TIER_GOLD");
+  getCapabilityDecision.mockReset().mockResolvedValue(null);
   sduiToArray.mockReset().mockResolvedValue([]);
   sduiFind.mockClear(); sduiCollection.mockClear(); getDB.mockClear().mockResolvedValue(sduiDb);
+});
+
+describe("middleware/planAccess > central Keyword Explorer decisions", () => {
+  it("active Plan Control allow overrides a conflicting legacy denial", async () => {
+    configExports.keywordExplorer = { enabled: true, allowedUserIds: [] };
+    getCapabilityDecision.mockResolvedValue({ allowed: true, reasonCode: "ALLOWED" });
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: false } });
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 999, plan_id: 69 } })).toBe(true);
+    expect(getCapabilityDecision).toHaveBeenCalledWith(
+      expect.any(Object),
+      "intelligence.keyword_explorer",
+    );
+  });
+
+  it("active billing override denial beats an open legacy rule", async () => {
+    configExports.keywordExplorer = { enabled: true, allowedUserIds: [] };
+    getCapabilityDecision.mockResolvedValue({ allowed: false, reasonCode: "VARIANT_DENY" });
+    planSvc.getConfig.mockResolvedValue([{ _id: "keyword_explorer", allowed_plan_ids: null }]);
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 999, plan_id: 69 } })).toBe(false);
+  });
 });
 
 describe("middleware/planAccess > planAccessMiddleware (SQL user path)", () => {
@@ -382,6 +412,38 @@ describe("middleware/planAccess > Keyword Explorer (isKeywordExplorerUserAllowed
     planSvc.getConfig.mockRejectedValue(new Error("db-down"));
     const { hasKeywordExplorerAccess } = freshSut();
     expect(await hasKeywordExplorerAccess({ user: { id: 7, plan_id: 101 } })).toBe(true);
+  });
+
+  it("hasKeywordExplorerAccess: active Plan Control allow overrides a conflicting legacy deny", async () => {
+    getCapabilityDecision.mockResolvedValue({
+      allowed: true,
+      capabilityId: "intelligence.keyword_explorer",
+      reasonCode: "ALLOWED",
+    });
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: false } });
+    const { hasKeywordExplorerAccess } = freshSut();
+    expect(await hasKeywordExplorerAccess({ user: { id: 999, plan_id: 69 } })).toBe(true);
+  });
+
+  it("requireKeywordExplorerEnabled: exposes an active billing-variant denial", async () => {
+    const decision = {
+      allowed: false,
+      capabilityId: "intelligence.keyword_explorer",
+      reasonCode: "VARIANT_DENY",
+      showSubscriptionModal: true,
+    };
+    getCapabilityDecision.mockImplementation(async (req) => {
+      req.planControlDecision = decision;
+      return decision;
+    });
+    planSvc.getFilterStatus.mockReturnValue({ keyword_explorer: { enabled: true } });
+    const { requireKeywordExplorerEnabled } = freshSut();
+    const req = { user: { id: 999, plan_id: 69 } };
+    const res = mkRes(); const next = vi.fn();
+    await requireKeywordExplorerEnabled(req, res, next);
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toMatchObject({ reasonCode: "VARIANT_DENY", showSubscriptionModal: true });
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("requireKeywordExplorerEnabled: feature flag off → 404 regardless of access", async () => {

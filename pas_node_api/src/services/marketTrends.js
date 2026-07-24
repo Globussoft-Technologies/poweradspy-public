@@ -30,6 +30,7 @@ const serviceRegistry = require('./ServiceRegistry');
 const { authMiddleware } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const planAccessService = require('./planAccess/planAccessService');
+const { getCapabilityDecision } = require('./planControl/registries/routeClassification');
 
 // ─── Mechanism 1: per-user allow-list (config.json + userId) ─────────────────
 // This is a targeted OVERRIDE for specific user IDs, not a toggle for whether
@@ -76,16 +77,33 @@ async function isAllowedByPlan(req) {
 async function hasMarketTrendsAccess(req) {
   const uid = req.user?.id ?? req.body?.user_id ?? req.query?.user_id;
   if (isAllowedUser(uid)) return true;
+  const decision = await getMarketTrendsPolicyDecision(req);
+  if (decision) {
+    req.planControlDecision = decision;
+    return decision.allowed;
+  }
   return isAllowedByPlan(req);
 }
 
+async function getMarketTrendsPolicyDecision(req) {
+  try {
+    return getCapabilityDecision(req, 'intelligence.market_trends', {
+      network: (request) => request.query?.network || request.body?.network,
+    });
+  } catch (_error) {
+    // No active/readable v2 policy means the legacy gate remains the fallback.
+    return null;
+  }
+}
+
 async function accessGuard(req, res, next) {
-  if (await hasMarketTrendsAccess(req)) return marketTrendsCapability(req, res, next);
+  if (await hasMarketTrendsAccess(req)) return next();
   return res.status(403).json({
     code: 403,
     message: 'Market Trends is not enabled for this account',
     showSubscriptionModal: true,
     data: [],
+    ...(req.planControlDecision || {}),
   });
 }
 
@@ -116,6 +134,18 @@ function resolveMarketTrendsNetworks(planId, planConfig) {
 // tester) also skips restriction, matching that mechanism's intent.
 async function restrictNetworkToPlan(req, res, next) {
   try {
+    const policyNetworks = req.planControlDecision?.allowedNetworks;
+    if (Array.isArray(policyNetworks)) {
+      if (!policyNetworks.length) return next();
+      const requested = req.query?.network ?? req.body?.network;
+      const requestedList = (!requested || requested === 'all')
+        ? policyNetworks
+        : String(requested).split(',').map((item) => item.trim().toLowerCase()).filter((network) => policyNetworks.includes(network));
+      const clamped = (requestedList.length ? requestedList : policyNetworks).join(',');
+      if (req.query) req.query.network = clamped;
+      if (req.body) req.body.network = clamped;
+      return next();
+    }
     const planId = req.user?.userSubscriptionType ?? req.user?.plan_id;
     if (planId === undefined || planId === null) return next();
     const planConfig = await planAccessService.getConfig();
@@ -827,10 +857,6 @@ async function getKeywords(req, res) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────
 const router = Router();
-const { requireCapability } = require('./planControl/registries/routeClassification');
-const marketTrendsCapability = requireCapability('intelligence.market_trends', {
-  network: (req) => req.query?.network || req.body?.network,
-});
 router.get('/health', (req, res) => res.status(200).json({ code: 200, message: 'market trends enabled', data: { ok: true } }));
 router.get('/access', authMiddleware, asyncHandler(async (req, res) => {
   const [enabled, stage] = await Promise.all([hasMarketTrendsAccess(req), getMarketTrendsStage()]);
@@ -841,13 +867,27 @@ router.get('/access', authMiddleware, asyncHandler(async (req, res) => {
   try {
     const planId = req.user?.userSubscriptionType ?? req.user?.plan_id;
     if (planId !== undefined && planId !== null) {
-      const planConfig = await planAccessService.getConfig();
-      if (planConfig && planConfig.length > 0) networks = resolveMarketTrendsNetworks(planId, planConfig);
+      if (Array.isArray(req.planControlDecision?.allowedNetworks)) {
+        networks = req.planControlDecision.allowedNetworks;
+      } else {
+        const planConfig = await planAccessService.getConfig();
+        if (planConfig && planConfig.length > 0) networks = resolveMarketTrendsNetworks(planId, planConfig);
+      }
     }
   } catch (_e) {
     networks = null;
   }
-  res.status(200).json({ code: 200, message: 'ok', data: { enabled, stage, networks } });
+  res.status(200).json({
+    code: 200,
+    message: 'ok',
+    data: {
+      enabled,
+      stage,
+      networks,
+      reasonCode: req.planControlDecision?.reasonCode || null,
+      policyVersion: req.planControlDecision?.policyVersion || null,
+    },
+  });
 }));
 router.get('/trends/overview', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getOverview));
 router.get('/trends/categories', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getCategories));

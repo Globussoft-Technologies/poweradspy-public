@@ -7,6 +7,8 @@ const routerInstances = [];
 function FakeRouter() {
   const r = {
     routes: { get: {}, post: {} },
+    uses: [],
+    use: vi.fn((path, ...rest) => { r.uses.push({ path, handlers: rest }); }),
     get: vi.fn((path, ...rest) => { r.routes.get[path] = rest; }),
     post: vi.fn((path, ...rest) => { r.routes.post[path] = rest; }),
   };

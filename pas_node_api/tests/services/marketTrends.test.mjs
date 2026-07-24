@@ -21,6 +21,12 @@ const planSvcPath = require.resolve("../../src/services/planAccess/planAccessSer
 const planSvc = { getConfig: vi.fn(async () => []), getFilterStatus: vi.fn(() => ({})), getAllowedPlatforms: vi.fn(() => []) };
 require.cache[planSvcPath] = { id: planSvcPath, filename: planSvcPath, loaded: true, exports: planSvc };
 
+const routeControlPath = require.resolve("../../src/services/planControl/registries/routeClassification");
+const getCapabilityDecision = vi.fn(async () => null);
+require.cache[routeControlPath] = {
+  id: routeControlPath, filename: routeControlPath, loaded: true, exports: { getCapabilityDecision },
+};
+
 const dbMgrPath = require.resolve("../../src/database/DatabaseManager");
 const getElastic = vi.fn();
 require.cache[dbMgrPath] = { id: dbMgrPath, filename: dbMgrPath, loaded: true, exports: { getElastic } };
@@ -62,6 +68,7 @@ beforeEach(() => {
   planSvc.getConfig.mockReset().mockResolvedValue([]);
   planSvc.getFilterStatus.mockReset().mockReturnValue({});
   planSvc.getAllowedPlatforms.mockReset().mockReturnValue([]);
+  getCapabilityDecision.mockReset().mockResolvedValue(null);
   getService.mockReset();
   getElastic.mockReset();
   configExports = { intelligence: { enabled: true, allowedUserIds: [] } };
@@ -87,6 +94,43 @@ describe("marketTrends router > module load", () => {
       expect(chain(path)).toBeDefined();
       expect(chain(path)).toContain(authMiddleware);
     }
+  });
+});
+
+describe("marketTrends router > active Plan Control policy", () => {
+  it("uses the active policy instead of a conflicting legacy denial", async () => {
+    getCapabilityDecision.mockResolvedValue({
+      allowed: true,
+      reasonCode: "ALLOWED",
+      allowedNetworks: ["facebook"],
+      policyVersion: "policy-live",
+    });
+    planSvc.getFilterStatus.mockReturnValue({ market_trends: { enabled: false } });
+    freshSut();
+    const res = mkRes();
+    await lastHandler("/access")({ user: { id: 999, plan_id: 69 }, query: {}, body: {} }, res);
+    expect(res.body.data).toMatchObject({
+      enabled: true,
+      networks: ["facebook"],
+      reasonCode: "ALLOWED",
+      policyVersion: "policy-live",
+    });
+  });
+
+  it("reports an active billing-variant denial even when legacy access is open", async () => {
+    getCapabilityDecision.mockResolvedValue({
+      allowed: false,
+      reasonCode: "VARIANT_DENY",
+      allowedNetworks: [],
+      policyVersion: "policy-live",
+      showSubscriptionModal: true,
+    });
+    planSvc.getConfig.mockResolvedValue([{ _id: "market_trends", allowed_plan_ids: null }]);
+    freshSut();
+    const res = mkRes();
+    await lastHandler("/access")({ user: { id: 999, plan_id: 69 }, query: {}, body: {} }, res);
+    expect(res.body.data.enabled).toBe(false);
+    expect(res.body.data.reasonCode).toBe("VARIANT_DENY");
   });
 });
 

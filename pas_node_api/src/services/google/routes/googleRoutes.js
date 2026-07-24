@@ -91,11 +91,19 @@ function createGoogleRoutes(service) {
   // uses this to show/hide the nav item + page.
   router.get('/keywords/access', authMiddleware, async (req, res) => {
     const enabled = config.keywordExplorer?.enabled === true && (await hasKeywordExplorerAccess(req));
-    res.status(200).json({ code: 200, message: 'ok', data: { enabled } });
+    res.status(200).json({
+      code: 200,
+      message: 'ok',
+      data: {
+        enabled,
+        reasonCode: req.planControlDecision?.reasonCode || null,
+        policyVersion: req.planControlDecision?.policyVersion || null,
+      },
+    });
   });
 
-  // Keywords Explorer feature gate (KEYWORD_EXPLORER_ENABLED / config.json
-  // keywordExplorer.enabled + hasKeywordExplorerAccess). Single gate for the whole
+  // Keywords Explorer feature flag plus central Plan Control decision. One gate
+  // protects the whole group; legacy access is only a no-active-policy fallback.
   // /keywords/* group: feature off → 404, neither mechanism grants access → 403,
   // before any plan work. Mirrors the frontend's env flag + /keywords/access check.
   // Registered after the access probe so that probe stays reachable.
@@ -275,7 +283,6 @@ function createGoogleRoutes(service) {
   router.post(
     '/keywords/insight',
     ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await getKeywordInsight(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -302,8 +309,6 @@ function createGoogleRoutes(service) {
   // POST /api/v1/google/keywords/explorer — paginated/filterable/sortable keyword table
   router.post(
     '/keywords/explorer',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await getKeywordsExplorer(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -313,8 +318,6 @@ function createGoogleRoutes(service) {
   // POST /api/v1/google/keywords/ideas — related/matching terms for seed keyword(s)
   router.post(
     '/keywords/ideas',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await getKeywordIdeas(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -324,8 +327,6 @@ function createGoogleRoutes(service) {
   // Keyword Lists — user-curated named lists of keywords.
   router.post(
     '/keywords/lists',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await createKeywordList(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -336,8 +337,6 @@ function createGoogleRoutes(service) {
   // convention on the FE — every Tier-1/Explorer call is a POST, reads included.
   router.post(
     '/keywords/lists/get',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await listKeywordLists(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -346,8 +345,6 @@ function createGoogleRoutes(service) {
 
   router.post(
     '/keywords/lists/:id/rename',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await renameKeywordList(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -356,8 +353,6 @@ function createGoogleRoutes(service) {
 
   router.post(
     '/keywords/lists/:id/delete',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await deleteKeywordList(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -366,8 +361,6 @@ function createGoogleRoutes(service) {
 
   router.post(
     '/keywords/lists/:id/items/get',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await getKeywordListItems(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -376,8 +369,6 @@ function createGoogleRoutes(service) {
 
   router.post(
     '/keywords/lists/:id/items',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await addKeywordsToList(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -386,8 +377,6 @@ function createGoogleRoutes(service) {
 
   router.post(
     '/keywords/lists/:id/items/remove',
-    ...intelGate,
-    keywordExplorerCapability,
     asyncHandler(async (req, res) => {
       const result = await removeKeywordFromList(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -397,7 +386,6 @@ function createGoogleRoutes(service) {
   // POST /api/v1/google/keywords/import — CSV/TXT upload of seed keywords
   router.post(
     '/keywords/import',
-    ...intelGate,
     importUploadMw,
     asyncHandler(async (req, res) => {
       const result = await importKeywordsFile(req, service.db, service.log);

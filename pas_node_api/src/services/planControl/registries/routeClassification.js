@@ -50,34 +50,48 @@ function normalizeNetworks(value) {
   return String(value).split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
 }
 
+/**
+ * Single reusable entry point for evaluating one capability on an HTTP request.
+ * Feature modules should never import storage/resolver/evaluator separately.
+ * Returns null only when no active Plan Control policy exists, allowing old
+ * installations to use an explicit legacy fallback during migration.
+ */
+async function getCapabilityDecision(req, capabilityId, options = {}) {
+  const networks = typeof options.network === 'function'
+    ? normalizeNetworks(options.network(req))
+    : normalizeNetworks(options.network);
+  const { getLatestPolicy, resolvePlanIdentity, evaluateEntitlement } = runtime();
+  const policy = await getLatestPolicy();
+  if (!policy) return null;
+  const planId = req.user?.userSubscriptionType || req.user?.plan_id;
+  const decision = evaluateEntitlement({
+    user: req.user,
+    planIdentity: resolvePlanIdentity(planId, policy),
+    capabilityId,
+    requestedNetworks: networks,
+    action: typeof options.action === 'function' ? options.action(req) : options.action,
+    quotaStatus: options.quotaStatus?.(req),
+    policySnapshot: policy,
+  });
+  req._planControlCapability = { capabilityId, networks };
+  req.planControlDecision = decision;
+  return decision;
+}
+
 function requireCapability(capabilityId, options = {}) {
   const bindingId = `${capabilityId}:${_capabilityBindings.size}`;
   _capabilityBindings.set(bindingId, { capabilityId, options });
   return async function planCapabilityMiddleware(req, res, next) {
-    const networks = typeof options.network === 'function'
-      ? normalizeNetworks(options.network(req))
-      : [];
-    req._planControlCapability = { capabilityId, networks };
     try {
-      const { config, log, getLatestPolicy, resolvePlanIdentity, evaluateEntitlement } = runtime();
-      const policy = await getLatestPolicy();
-      if (!policy) {
+      const { config, log } = runtime();
+      const decision = await getCapabilityDecision(req, capabilityId, options);
+      if (!decision) {
         if (config.planControl?.enforcementMode === 'enforce') {
           return res.status(503).json({ code: 503, message: 'Entitlement policy unavailable.', reasonCode: 'POLICY_UNAVAILABLE' });
         }
         return next();
       }
       const planId = req.user?.userSubscriptionType || req.user?.plan_id;
-      const decision = evaluateEntitlement({
-        user: req.user,
-        planIdentity: resolvePlanIdentity(planId, policy),
-        capabilityId,
-        requestedNetworks: networks,
-        action: options.action,
-        quotaStatus: options.quotaStatus?.(req),
-        policySnapshot: policy,
-      });
-      req.planControlDecision = decision;
       if (!decision.allowed && config.planControl?.enforcementMode === 'enforce') {
         return res.status(403).json({
           code: 403,
@@ -89,7 +103,7 @@ function requireCapability(capabilityId, options = {}) {
         log.warn('plan-control-shadow-denial', {
           capabilityId,
           planId,
-          networks,
+          networks: req._planControlCapability?.networks || [],
           reasonCode: decision.reasonCode,
           path: req.originalUrl,
         });
@@ -215,6 +229,7 @@ module.exports = {
   CLASSIFICATIONS,
   ROUTE_CLASSIFICATIONS,
   requireCapability,
+  getCapabilityDecision,
   requireSearchCapabilities,
   requireConditionalCapability,
   fromBody,

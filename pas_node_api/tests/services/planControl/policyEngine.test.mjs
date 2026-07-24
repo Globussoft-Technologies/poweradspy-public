@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import identityModule from '../../../src/services/planControl/engine/planIdentityResolver.js';
 import evaluatorModule from '../../../src/services/planControl/engine/evaluator.js';
 import validationModule from '../../../src/services/planControl/engine/policyValidation.js';
+import capabilityModule from '../../../src/services/planControl/registries/capabilityRegistry.js';
 
 const { resolvePlanIdentity } = identityModule;
 const { evaluateEntitlement } = evaluatorModule;
 const { checksumSnapshot, diffSnapshots, validateSnapshot } = validationModule;
+const { getCapabilities } = capabilityModule;
 
 function snapshot() {
   return {
@@ -182,5 +186,34 @@ describe('plan-control policy engine', () => {
       before: 'allow',
       after: 'deny',
     });
+  });
+
+  it('keeps Plan Control internals behind the shared request enforcement layer', () => {
+    const srcRoot = path.join(process.cwd(), 'src');
+    const violations = [];
+    const visit = (directory) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const fullPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (fullPath === path.join(srcRoot, 'services', 'planControl')) continue;
+          visit(fullPath);
+          continue;
+        }
+        if (!entry.name.endsWith('.js')) continue;
+        const source = fs.readFileSync(fullPath, 'utf8');
+        if (/planControl[\\/](?:storage[\\/]storage|engine[\\/](?:evaluator|planIdentityResolver))/.test(source)) {
+          violations.push(path.relative(srcRoot, fullPath));
+        }
+      }
+    };
+    visit(srcRoot);
+    expect(violations, 'Feature modules must use requireCapability/getCapabilityDecision').toEqual([]);
+  });
+
+  it('requires every admin-controlled capability to declare its affected API routes', () => {
+    const missingRoutes = getCapabilities()
+      .filter((capability) => capability.planControlled && !(capability.routes || []).length)
+      .map((capability) => capability.id);
+    expect(missingRoutes).toEqual([]);
   });
 });
