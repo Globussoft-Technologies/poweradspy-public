@@ -93,6 +93,7 @@ import fnWishpond from "../../assets/funnels/wishpond.png";
 import fnFgFunnel from "../../assets/funnels/fgfunnel.webp";
 import fnFlexi from "../../assets/funnels/flexi.png";
 import fnWebflow from "../../assets/funnels/webflow.png";
+import fnFacebookPixel from "../../assets/funnels/facebook_pixel.png";
 import afAwin from "../../assets/afiliate_network/awin.png";
 import afCj from "../../assets/afiliate_network/cj.png";
 import afClickbank from "../../assets/afiliate_network/ClickBank.png";
@@ -106,6 +107,7 @@ import afShareasale from "../../assets/afiliate_network/shareasale.png";
 import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
 import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
 import afRefersion from "../../assets/afiliate_network/Refersion.webp";
+import afVertoz from "../../assets/afiliate_network/vertoz.jpg";
 
 const MC_MP_IMGS = {
   "agkn.com": mpAgkn,
@@ -161,6 +163,7 @@ const MC_FN_IMGS = {
   fgfunnel: fnFgFunnel,
   flexi: fnFlexi,
   webflow: fnWebflow,
+  facebookpixel: fnFacebookPixel,
 };
 const MC_AF_IMGS = {
   awin: afAwin,
@@ -179,6 +182,7 @@ const MC_AF_IMGS = {
   amazon: afAmazonAssociates,
   skimlinks: afSkimlinks,
   refersion: afRefersion,
+  vertoz: afVertoz,
 };
 
 const PLATFORM_ICONS = {

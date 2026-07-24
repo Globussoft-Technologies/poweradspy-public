@@ -72,6 +72,7 @@ import fnWishpond from "../../assets/funnels/wishpond.png";
 import fnFgFunnel from "../../assets/funnels/fgfunnel.webp";
 import fnFlexi from "../../assets/funnels/flexi.png";
 import fnWebflow from "../../assets/funnels/webflow.png";
+import fnFacebookPixel from "../../assets/funnels/facebook_pixel.png";
 
 const FUNNEL_IMGS = {
   'builderall': fnBuilderall,
@@ -91,6 +92,7 @@ const FUNNEL_IMGS = {
   'fgfunnel': fnFgFunnel,
   'flexi': fnFlexi,
   'webflow': fnWebflow,
+  'facebookpixel': fnFacebookPixel,
 };
 
 import afAwin from "../../assets/afiliate_network/awin.png";
@@ -106,6 +108,7 @@ import afShareasale from "../../assets/afiliate_network/shareasale.png";
 import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
 import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
 import afRefersion from "../../assets/afiliate_network/Refersion.webp";
+import afVertoz from "../../assets/afiliate_network/vertoz.jpg";
 
 const AFFILIATE_IMGS = {
   'awin': afAwin,
@@ -124,6 +127,7 @@ const AFFILIATE_IMGS = {
   'amazon': afAmazonAssociates,
   'skimlinks': afSkimlinks,
   'refersion': afRefersion,
+  'vertoz': afVertoz,
 };
 
 import {

@@ -418,25 +418,40 @@ async function fetchMonthlyLCSForAdvertiser(db, postOwnerName, dateRange) {
 
 /**
  * Batch-fetch ISO codes for multiple country names in a single query.
- * Returns a Map: nicename → { country, iso }
+ * Returns a Map keyed by a normalized country name:
+ * normalized nicename → { country, iso }
  */
 async function batchCountryLookup(db, names) {
   if (!db.sql || !names || names.length === 0) return new Map();
-  const uniqueNames = [...new Set(names)];
+  const uniqueNames = [...new Set(names.map(normalizeCountryKey).filter(Boolean))];
+  if (uniqueNames.length === 0) return new Map();
   const placeholders = uniqueNames.map(() => '?').join(',');
   try {
     const rows = await db.sql.query(
-      `SELECT nicename, nicename AS country, instagram_country_iso AS iso FROM country_data WHERE nicename IN (${placeholders})`,
+      `SELECT nicename, nicename AS country, instagram_country_iso AS iso FROM country_data WHERE LOWER(TRIM(nicename)) IN (${placeholders})`,
       uniqueNames
     );
     const map = new Map();
     if (rows) {
-      for (const row of rows) map.set(row.nicename, { country: row.country, iso: row.iso });
+      for (const row of rows) {
+        const key = normalizeCountryKey(row.nicename);
+        if (key) map.set(key, { country: row.country, iso: row.iso });
+      }
     }
     return map;
   } catch {
     return new Map();
   }
+}
+
+function normalizeCountryKey(country) {
+  return String(country ?? '').trim().toLowerCase();
+}
+
+function formatCountryName(country) {
+  const value = String(country ?? '').trim();
+  if (normalizeCountryKey(value) === 'all') return 'ALL';
+  return value.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 }
 
 // ─── 7. getAdvertiserLCSData ────────────────────────────
@@ -485,7 +500,7 @@ async function getAdvertiserLCSData(req, db, logger) {
  * Shared: country aggregation from ES hits.
  */
 async function aggregateCountryData(db, hits) {
-  const countryMap = {};
+  const countryMap = new Map();
   for (const hit of hits) {
     // Support both shapes — _source (legacy) and docvalue_fields (perf path).
     // docvalue fields always come back as arrays even for single values.
@@ -499,23 +514,26 @@ async function aggregateCountryData(db, hits) {
     if (!countries) continue;
     if (!Array.isArray(countries)) countries = [countries];
     for (const country of countries) {
-      if (!country) continue;
-      if (!countryMap[country]) countryMap[country] = new Set();
-      countryMap[country].add(adId);
+      const key = normalizeCountryKey(country);
+      if (!key) continue;
+      if (!countryMap.has(key)) {
+        countryMap.set(key, { originalName: String(country).trim(), adIds: new Set() });
+      }
+      countryMap.get(key).adIds.add(adId);
     }
   }
-  if (Object.keys(countryMap).length === 0) return null;
+  if (countryMap.size === 0) return null;
 
-  const isoMap = await batchCountryLookup(db, Object.keys(countryMap));
+  const isoMap = await batchCountryLookup(db, [...countryMap.keys()]);
   const result = [];
-  const sortedEntries = Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size);
+  const sortedEntries = [...countryMap.entries()].sort((a, b) => b[1].adIds.size - a[1].adIds.size);
 
-  for (const [name, idSet] of sortedEntries) {
-    const adIds = [...idSet];
-    const lookup = isoMap.get(name);
-    let country = lookup?.country || name;
+  for (const [key, entry] of sortedEntries) {
+    const adIds = [...entry.adIds];
+    const lookup = isoMap.get(key);
+    let country = lookup?.country || entry.originalName;
     let iso = fixCountryIso(country, lookup?.iso || null);
-    if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
+    country = formatCountryName(country);
     result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });
   }
   return result;

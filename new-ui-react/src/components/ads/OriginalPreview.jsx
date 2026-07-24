@@ -30,6 +30,9 @@ import pinterestIcon from "../../assets/pinterest.png";
  */
 const OriginalPreview = ({ ad, fillWidth = false }) => {
   const platform = (ad.network || "").toLowerCase();
+  const hideMetaEngagement =
+    ad.isMetaLib === true &&
+    (platform === "facebook" || platform === "instagram");
   const position = (ad.adPosition || "").toLowerCase();
   const adType = (ad.adType || "image").toLowerCase();
   const renderType = (ad.renderType || adType).toLowerCase();
@@ -64,6 +67,7 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
         position={position}
         adType={adType}
         fill={fillWidth}
+        hideEngagement={hideMetaEngagement}
       />
     );
   if (platform === "instagram")
@@ -73,6 +77,7 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
         position={position}
         adType={adType}
         fill={fillWidth}
+        hideEngagement={hideMetaEngagement}
       />
     );
   if (platform === "youtube")
@@ -132,7 +137,7 @@ const CardShell = ({
 );
 
 // ─── Facebook ────────────────────────────────────────────────────────────────
-const FacebookPreview = ({ ad, position, adType, fill }) => {
+const FacebookPreview = ({ ad, position, adType, fill, hideEngagement }) => {
   if (position.includes("side")) {
     return (
       <div
@@ -225,15 +230,17 @@ const FacebookPreview = ({ ad, position, adType, fill }) => {
             )}
           </div>
         </div>
-        {/* Engagement counts */}
-        <div className="px-3 py-1.5 flex items-center justify-between text-[11px] text-gray-500 border-t border-gray-200">
+        {!hideEngagement && (
+          <>
+            {/* Engagement counts */}
+            <div className="px-3 py-1.5 flex items-center justify-between text-[11px] text-gray-500 border-t border-gray-200">
           <span>{ad.likes || "0"} Likes</span>
           <span>
             {ad.comments || "0"} Comments · {ad.shares || "0"} Shares
           </span>
-        </div>
-        {/* Action bar */}
-        <div className="flex border-t border-gray-200">
+            </div>
+            {/* Action bar */}
+            <div className="flex border-t border-gray-200">
           <button className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50">
             <ThumbsUp size={16} /> Like
           </button>
@@ -243,14 +250,16 @@ const FacebookPreview = ({ ad, position, adType, fill }) => {
           <button className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50">
             <Share2 size={16} /> Share
           </button>
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </CardShell>
   );
 };
 
 // ─── Instagram ───────────────────────────────────────────────────────────────
-const InstagramPreview = ({ ad, position, adType, fill }) => {
+const InstagramPreview = ({ ad, position, adType, fill, hideEngagement }) => {
   if (
     position.includes("stories") ||
     position.includes("story") ||
@@ -344,18 +353,22 @@ const InstagramPreview = ({ ad, position, adType, fill }) => {
 
       {/* Footer — anchored */}
       <div className="flex-shrink-0 mt-auto">
-        <div className="flex items-center justify-between px-3 py-2">
-          <div className="flex items-center gap-4">
-            <Heart size={22} className="text-gray-900" />
-            <MessageCircle size={22} className="text-gray-900" />
-            <Send size={22} className="text-gray-900" />
+        {!hideEngagement && (
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center gap-4">
+              <Heart size={22} className="text-gray-900" />
+              <MessageCircle size={22} className="text-gray-900" />
+              <Send size={22} className="text-gray-900" />
+            </div>
+            <Bookmark size={22} className="text-gray-900" />
           </div>
-          <Bookmark size={22} className="text-gray-900" />
-        </div>
+        )}
         <div className="px-3 pb-3">
-          <p className="text-[13px] font-semibold text-gray-900 mb-1">
-            {ad.likes || "0"} likes
-          </p>
+          {!hideEngagement && (
+            <p className="text-[13px] font-semibold text-gray-900 mb-1">
+              {ad.likes || "0"} likes
+            </p>
+          )}
           <p className="text-[13px] text-gray-800 line-clamp-2">
             <span className="font-semibold">{ad.advertiser}</span>{" "}
             {ad.subtitle || ad.title}

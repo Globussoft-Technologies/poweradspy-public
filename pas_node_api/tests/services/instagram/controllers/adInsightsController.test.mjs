@@ -590,6 +590,27 @@ describe("services/instagram/controllers/adInsightsController > getAdvertiserCou
     expect(out.data[0].country).toBe("Germany");
     expect(out.data[0].ad_count).toBe(2);
   });
+  it("merges country values that differ only by case or surrounding whitespace", async () => {
+    const db = mkDb({
+      metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2026-01-01" },
+      countryRows: [{ nicename: "India", country: "India", iso: "IN" }],
+      esHits: [
+        { fields: { "instagram_ad.id": [147003], "instagram_country_only.country.keyword": ["INDIA"] } },
+        { fields: { "instagram_ad.id": [147414], "instagram_country_only.country.keyword": [" India "] } },
+      ],
+    });
+
+    const out = await getAdvertiserCountryData(
+      { body: { instagram_ad_id: "147003" }, query: {} }, db
+    );
+
+    expect(out.data).toEqual([{
+      country: "India",
+      iso: "IN",
+      ad_ids: [147003, 147414],
+      ad_count: 2,
+    }]);
+  });
   it("_source shape support", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" },
