@@ -51,6 +51,7 @@ const { authunticatePhpApi } = require('../controllers/phpAuthController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { freePlanCheck } = require('../../../middleware/freePlanCheck');
 const { planAccessMiddleware } = require('../../../middleware/planAccess');
+const { requireSearchCapabilities, requireCapability } = require('../../planControl/registries/routeClassification');
 const validator = require('../../../middleware/validator');
 const path = require('path');
 const os = require('os');
@@ -97,6 +98,7 @@ router.post(
   '/ads/search',
   authMiddleware,
   planAccessMiddleware,
+  requireSearchCapabilities(),
   validator(searchSchema),
   asyncHandler(searchAllNetworks)
 );
@@ -127,6 +129,7 @@ router.post(
   '/ads/getAdsByAdvertiser',
   authMiddleware,
   planAccessMiddleware,
+  requireCapability('ads.search', { network: (req) => req.body?.network || req.body?.platform || req.query?.network }),
   asyncHandler(getAdsByAdvertiserAll)
 );
 

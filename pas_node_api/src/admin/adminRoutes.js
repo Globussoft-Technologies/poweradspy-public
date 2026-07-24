@@ -89,6 +89,11 @@ const router = express.Router();
 
 // ─── Serve static admin UI files ──────────────────────────
 router.use('/ui', (req, res, next) => {
+  // The admin bundle changes independently of the customer frontend. Never let
+  // a cached app.js keep showing obsolete prompts or hide newly shipped tools.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   if (req.path.endsWith('.js') || req.path.endsWith('.css')) {
     const dest = req.headers['sec-fetch-dest'];
     const referer = req.headers.referer;

@@ -75,6 +75,12 @@ const config = {
     enabled: getVal(fileConfig.cache?.enabled, 'CACHE_ENABLED', toBool),
   },
 
+  planControl: {
+    enforcementMode: getVal(fileConfig.planControl?.enforcementMode, 'PLAN_CONTROL_ENFORCEMENT_MODE') || 'shadow',
+    shadowMode: getVal(fileConfig.planControl?.shadowMode, 'PLAN_CONTROL_SHADOW_MODE', toBool) ?? true,
+    policyCacheMs: getVal(fileConfig.planControl?.policyCacheMs, 'PLAN_CONTROL_POLICY_CACHE_MS', toInt) || 5000,
+  },
+
   localCache: {
     dir: getVal(fileConfig.localCache?.dir, 'LOCAL_CACHE_DIR'),
     cleanupIntervalMs: getVal(fileConfig.localCache?.cleanupIntervalMs, 'LOCAL_CACHE_CLEANUP_MS', toInt),

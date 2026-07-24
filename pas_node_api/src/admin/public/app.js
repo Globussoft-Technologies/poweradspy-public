@@ -16,6 +16,7 @@ let refreshInterval = null;
 let currentLogFile = null;
 let currentRole = 'viewer';
 let rawConfigData = {};
+let pv2PendingReviewItems = [];
 const tabLoaded = new Set(); // tracks which tabs have loaded data at least once
 
 // ─── Init ─────────────────────────────────────────────────
@@ -70,12 +71,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Date Filters
   document.getElementById('apply-filter-btn').addEventListener('click', applyDateFilter);
   document.getElementById('clear-filter-btn').addEventListener('click', clearDateFilter);
-
-  // Plan ID Validation
-  const paNewIdInput = document.getElementById('pa-new-plan-id');
-  if (paNewIdInput) {
-    paNewIdInput.addEventListener('input', debounce(paValidateNewId, 400));
-  }
 
   // SDUI Config
   document.getElementById('sdui-refresh-btn').addEventListener('click', loadSdui);
@@ -209,19 +204,17 @@ function updateRoleUI() {
   if (sduiDocs.length > 0) renderSduiDocs();
 
   // ── Plan Access tab ────────────────────────────────────
-  const paBadge = document.getElementById('pa-role-badge');
-  if (paBadge) {
-    paBadge.textContent = isEditor ? 'Viewing as: Editor' : 'Viewing as: Viewer';
-    paBadge.style.color = isEditor ? 'var(--success)' : 'var(--text-muted)';
+  document.querySelectorAll('#tab-plan-access button').forEach((button) => {
+    if (button.dataset.planRead !== 'true') button.disabled = !isEditor;
+  });
+  pv2RenderMode();
+  pv2RenderSource();
+  // Capability selects and draft actions are rendered from role state. Refresh
+  // them immediately after unlock so the user does not need another reload.
+  if (currentTab === 'plan-access' && pvCatalog?.capabilities?.length) {
+    pvLoadDrafts().catch(() => {});
+    if (pv2SelectedFamilyId) pvLoadPlanEditor();
   }
-  
-  const paAddPlanContainer = document.getElementById('pa-add-plan-container');
-  if (paAddPlanContainer) {
-    paAddPlanContainer.style.display = isEditor ? 'flex' : 'none';
-  }
-
-  // Ensure buttons on the plan access tab reflect the current role
-  if (paSelectedPlan) renderPADetail(paSelectedPlan);
 }
 
 async function handleLogin(e) {
@@ -285,14 +278,73 @@ function showDashboard() {
 
 async function loadPAReviewCount() {
   try {
-    const res = await fetch(API + '/plan-access/review-count');
+    const res = await fetch(API + '/plan-control/coverage', { credentials: 'same-origin' });
     if (!res.ok) return;
     const json = await res.json();
-    renderPANewFeatureBanner(json.data?.filters || []);
+    const needsReview = json.data?.needsReview || [];
+    pv2PendingReviewItems = json.data?.reviewItems || [];
+    const badge = document.getElementById('pa-review-badge');
+    const strip = document.getElementById('pa-review-strip');
+    const text = document.getElementById('pa-review-strip-text');
+    if (badge) {
+      badge.textContent = needsReview.length;
+      badge.style.display = needsReview.length ? 'inline-block' : 'none';
+    }
+    if (strip && sessionStorage.getItem('pa-review-dismissed') !== '1') {
+      strip.style.display = needsReview.length ? 'flex' : 'none';
+    }
+    if (text) {
+      const labels = [...new Set(pv2PendingReviewItems.map((item) => item.capabilityLabel).filter(Boolean))];
+      text.textContent = labels.length
+        ? `${labels.length} new feature(s) need a plan decision: ${labels.join(', ')}`
+        : `${needsReview.length} plan-controlled feature(s) need an admin decision before publish.`;
+    }
   } catch (e) { /* silent — non-critical */ }
 }
 
 // ─── Tab Navigation ───────────────────────────────────────
+async function paGoToReview() {
+  switchTab('plan-access');
+  await pvLoadInit();
+  const item = pv2PendingReviewItems[0];
+  if (!item) {
+    showToast?.('No pending plan decisions remain.', 'success');
+    return;
+  }
+  if (item.draftId && pv2Dirty && pvCurrentDraft?.draftId !== item.draftId) {
+    showToast?.('Save or discard the current unsaved edits before opening the review draft.', 'error');
+    return;
+  }
+  if (item.draftId && pvCurrentDraft?.draftId !== item.draftId) {
+    await pvSelectDraft(item.draftId);
+  }
+  const generation = document.getElementById('pv2-generation');
+  if (generation && item.generationId) generation.value = item.generationId;
+  pv2SelectedFamilyId = item.familyId;
+  pvRenderFamilies();
+  pvLoadPlanEditor();
+  const filter = document.getElementById('pv2-filter');
+  if (filter) filter.value = 'needs_review';
+  pvRenderCapabilities();
+  const row = document.querySelector(`[data-pv-capability="${CSS.escape(item.capabilityId)}"]`);
+  row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row?.animate(
+    [{ backgroundColor: 'rgba(245,158,11,.28)' }, { backgroundColor: 'transparent' }],
+    { duration: 1800 },
+  );
+  if (!item.draftId) {
+    showToast?.('This decision is in the live policy. Create a safe draft first, then use Review decision.', 'error');
+  } else {
+    showToast?.(`Opened ${item.capabilityLabel} for ${item.familyLabel}. Choose Allow or Restrict, then save the draft.`, 'success');
+  }
+}
+
+function paDismissReviewStrip() {
+  sessionStorage.setItem('pa-review-dismissed', '1');
+  const strip = document.getElementById('pa-review-strip');
+  if (strip) strip.style.display = 'none';
+}
+
 function switchTab(tab) {
   currentTab = tab;
   localStorage.setItem('pas_admin_tab', tab);
@@ -347,7 +399,7 @@ function refreshCurrentTab() {
     case 'database': loadDbStatus(); break;
     case 'nas': loadNasStorage(); break;
     case 'sdui': loadSdui(); break;
-    case 'plan-access': loadPlanAccessDocs(); break;
+    case 'plan-access': pvLoadInit(); break;
   }
 }
 
@@ -2080,807 +2132,993 @@ window.sduiChangeFilterType = sduiChangeFilterType;
 // PLAN ACCESS TAB — read-only, data from planAccessSeed.js
 // ═══════════════════════════════════════════════════════════════════════════════
 
-let paFilterDocs = [];
-let paPlatformDoc = null;
-let paLimitsDoc = null;
-let paSelectedPlan = null;
-let paCatFilter = 'all';
-let paCollapsedGroups = {}; // populated dynamically from MongoDB plan_groups doc
-let paDeletedPlanIds = [];  // { plan_id, group, deleted_at } — from MongoDB plan_groups doc
+let pvCurrentDraft = null;
+let pvLivePolicy = null;
+let pvCatalog = { capabilities: [], networks: [] };
 
-const PA_PLATFORMS = ['facebook','instagram','youtube','google','gdn','linkedin','reddit','quora','pinterest','tiktok','native'];
-const PA_PLAT_LABEL = { facebook:'FA', instagram:'IN', youtube:'YT', google:'GO', gdn:'GD', linkedin:'LI', reddit:'RE', quora:'QU', pinterest:'PI', tiktok:'TI', native:'NA' };
+// Plan Control v2 UI. Kept in this existing admin bundle so unrelated admin
+// sections and their loading behavior remain untouched.
+let pv2FamiliesData = { generations: [], families: [], snapshot: null, source: 'bootstrap_preview', storage: null };
+let pv2SelectedFamilyId = null;
+let pv2Dirty = false;
+let pv2PreviewContext = null;
+let pv2ReadOnlyFamily = null;
+let pv2ReadOnlyPolicy = null;
 
-// PA_PLAN_GROUPS is no longer hardcoded — populated dynamically from MongoDB plan_groups doc
-// const PA_PLAN_GROUPS = {
-//   'Free':      { plans: [20], color: '#94a3b8' },
-//   'Basic':     { plans: [2,5,9,14,15,25,40,49,52,59,64,71], color: '#6366f1' },
-//   'Standard':  { plans: [58,53,65,3,6,10,13,16,26,41], color: '#3b82f6' },
-//   'Premium':   { plans: [60,54,66,4,7,11,12,17,27,42], color: '#f59e0b' },
-//   'Platinum':  { plans: [61,55,67,22,34,23,24,28,37,43], color: '#ef4444' },
-//   'Titanium':  { plans: [29,35,44,56,62,68,31], color: '#8b5cf6' },
-//   'Palladium': { plans: [63,57,32,36,30,39,45,69], color: '#10b981' },
-//   'Custom':    { plans: [33,70,46], color: '#f97316' },
-// };
-let PA_PLAN_GROUPS = {};
-
-const PA_CAT_COLORS = {
-  search_by: '#3b82f6', filter: '#8b5cf6', demographics: '#ec4899', ad_properties: '#f59e0b',
-  lander: '#10b981', sort_by: '#06b6d4', dates: '#6366f1', engagement: '#f97316',
-  ai: '#a855f7', platform: '#ef4444', limits: '#14b8a6', sidebar: '#0ea5e9',
-  intelligence: '#22d3ee', // Market Trends, Keyword Explorer — beta features, still selectable per-plan here
-};
-
-async function loadPlanAccessDocs(showToastMsg = false) {
-  const btn = document.querySelector('#tab-plan-access .btn[onclick="loadPlanAccessDocs(true)"]');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Refreshing…'; }
-  try {
-    const res = await fetch(API + '/plan-access/config');
-    if (!res.ok) { showToast('Refresh failed: server returned ' + res.status, 'error'); return; }
-    const json = await res.json();
-    paFilterDocs   = json.data.filterDocs        || [];
-    paPlatformDoc  = json.data.platformAccessDoc || null;
-    paLimitsDoc    = json.data.competitorLimitsDoc || null;
-    renderPANewFeatureBanner(json.data.needsReviewFilters || []);
-    paEditMode     = false;
-    paEditSnapshot = { filters: {}, filterPlatforms: {}, platforms: [], limits: { brandLimit: 0, competitorLimit: 0 } };
-
-    // Populate PA_PLAN_GROUPS and paDeletedPlanIds from MongoDB plan_groups doc
-    const pgDoc = json.data.planGroupsDoc;
-    if (pgDoc && pgDoc.groups) {
-      PA_PLAN_GROUPS = pgDoc.groups;
-      paDeletedPlanIds = pgDoc.deleted_plan_ids || [];
-      // Initialise collapse state for any new groups; preserve existing user state
-      const groupKeys = Object.keys(PA_PLAN_GROUPS);
-      groupKeys.forEach((key, idx) => {
-        if (!(key in paCollapsedGroups)) {
-          paCollapsedGroups[key] = idx !== 0; // first group expanded, rest collapsed
-        }
-      });
-      // Remove stale keys that no longer exist in MongoDB
-      for (const key of Object.keys(paCollapsedGroups)) {
-        if (!PA_PLAN_GROUPS[key]) delete paCollapsedGroups[key];
-      }
-    }
-
-    // Default to Basic plan 2 on initial load
-    if (!paSelectedPlan) {
-      paSelectedPlan = 2;
-    }
-    renderPAGroups();
-    renderPADetail(paSelectedPlan);
-    if (showToastMsg) showToast('Plan access config refreshed', 'success');
-  } catch (e) {
-    console.error('Failed to load plan access config', e);
-    if (showToastMsg) showToast('Refresh failed: ' + e.message, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh'; }
-  }
-}
-
-function renderPAPlaceholder() {
-  const nameEl = document.getElementById('pa-plan-name');
-  const badgeEl = document.getElementById('pa-plan-group-badge');
-  const platEl = document.getElementById('pa-platforms');
-  const limEl = document.getElementById('pa-limits');
-  const catTabsEl = document.getElementById('pa-cat-tabs');
-  const tbody = document.getElementById('pa-filter-rows');
-  const editBtn = document.getElementById('pa-edit-btn');
-  const saveBtn = document.getElementById('pa-save-btn');
-
-  if (nameEl) nameEl.textContent = 'Select a plan';
-  if (badgeEl) badgeEl.textContent = '';
-  if (platEl) platEl.innerHTML = '<span style="color:var(--text-muted);font-size:12px">—</span>';
-  if (limEl) limEl.innerHTML = '<span style="color:var(--text-muted);font-size:12px">—</span>';
-  if (catTabsEl) catTabsEl.innerHTML = '<button class="btn btn-primary btn-sm pa-cat-btn" style="font-size:10px;padding:2px 8px" data-cat="all" onclick="paSwitchCat(\'all\')">All</button>';
-  if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-muted)">Select a plan from the sidebar to view filter access</td></tr>';
-  if (editBtn) editBtn.style.display = 'none';
-  if (saveBtn) saveBtn.style.display = 'none';
-}
-
-function renderPAGroups() {
-  const container = document.getElementById('pa-plan-groups');
-  if (!container) return;
-  let html = '';
-  for (const [groupName, group] of Object.entries(PA_PLAN_GROUPS)) {
-    if (groupName === 'Free') continue;
-    const isCollapsed = paCollapsedGroups[groupName];
-    html += `<div style="margin-bottom:12px">
-      <div onclick="paToogleGroupCollapse('${groupName}')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:4px 0;user-select:none">
-        <span style="font-size:10px;color:${group.color};width:12px;text-align:center">${isCollapsed ? '▶' : '▼'}</span>
-        <p style="font-size:9px;font-weight:700;color:${group.color};text-transform:uppercase;letter-spacing:.08em;margin:0;flex:1">${groupName}</p>
-        ${group.openForNewSignups === false ? `<span title="Not offered to new signups — existing subscribers are unaffected" style="font-size:8px;font-weight:700;color:#94a3b8;border:1px solid #94a3b8;border-radius:3px;padding:1px 4px">LEGACY</span>` : ''}
-      </div>`;
-
-    if (!isCollapsed) {
-      // Active plans
-      const activePlans = group.plans.filter(pid => !paDeletedPlanIds.some(d => d.plan_id === pid));
-      for (const pid of activePlans) {
-        const isSelected = paSelectedPlan === pid;
-        html += `<div style="display:flex;align-items:center;gap:2px;margin-top:2px" class="pa-plan-row">
-          <button onclick="paSelectPlan(${pid})" style="flex:1;text-align:left;padding:4px 8px;border-radius:5px;font-size:11px;font-family:var(--font-mono);cursor:pointer;border:none;
-            background:${isSelected ? group.color : 'transparent'};
-            color:${isSelected ? '#fff' : 'var(--text)'};
-            font-weight:${isSelected ? '600' : '400'}">${pid}</button>
-          ${currentRole === 'editor' ? `<button onclick="paDeletePlan(${pid},'${groupName}')" title="Soft-delete plan ${pid}" style="opacity:0;padding:2px 5px;border-radius:4px;border:none;background:transparent;color:#ef4444;cursor:pointer;font-size:11px;transition:opacity .15s" class="pa-del-btn">🗑</button>` : ''}
-        </div>`;
-      }
-
-      // Deleted plans for this group
-      const deletedInGroup = paDeletedPlanIds.filter(d => d.group === groupName);
-      if (deletedInGroup.length > 0) {
-        html += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
-          <p style="font-size:9px;color:var(--text-muted);margin:0 0 4px 8px;letter-spacing:.05em">DELETED (${deletedInGroup.length})</p>`;
-        for (const d of deletedInGroup) {
-          const isSelected = paSelectedPlan === d.plan_id;
-          html += `<div style="display:flex;align-items:center;gap:2px;margin-top:2px">
-            <button onclick="paSelectPlan(${d.plan_id})" style="flex:1;text-align:left;padding:4px 8px;border-radius:5px;font-size:11px;font-family:var(--font-mono);cursor:pointer;border:none;
-              background:${isSelected ? 'rgba(239,68,68,.2)' : 'transparent'};
-              color:#ef4444;text-decoration:line-through;opacity:.7">${d.plan_id}</button>
-            ${currentRole === 'editor' ? `<button onclick="paRestorePlan(${d.plan_id},'${groupName}')" title="Restore plan ${d.plan_id}" style="padding:2px 5px;border-radius:4px;border:none;background:transparent;color:#22c55e;cursor:pointer;font-size:11px">↩</button>` : ''}
-          </div>`;
-        }
-        html += '</div>';
-      }
-    }
-    html += '</div>';
-  }
-  container.innerHTML = html;
-
-  // Show trash icon only on row hover
-  container.querySelectorAll('.pa-plan-row').forEach(row => {
-    const btn = row.querySelector('.pa-del-btn');
-    if (!btn) return;
-    row.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
-    row.addEventListener('mouseleave', () => { btn.style.opacity = '0'; });
+function pv2Escape(value) { return escapeHtml(String(value ?? '')); }
+async function pv2Api(path, options = {}) {
+  const write = options.method && options.method !== 'GET';
+  const response = await fetch(`${API}/plan-control${path}`, {
+    credentials: 'same-origin',
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(write ? { 'x-admin-action': 'plan-control' } : {}),
+      ...(options.headers || {}),
+    },
   });
-}
-
-function paToogleGroupCollapse(groupName) {
-  const wasCollapsed = paCollapsedGroups[groupName];
-  // Close all groups first (accordion behaviour)
-  for (const key of Object.keys(paCollapsedGroups)) {
-    paCollapsedGroups[key] = true;
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.message || payload.conflict || `Request failed (${response.status})`);
+    error.status = response.status; error.payload = payload; throw error;
   }
-  // Toggle the clicked group — if it was open, leave it collapsed; if closed, expand it
-  paCollapsedGroups[groupName] = !wasCollapsed;
-  renderPAGroups();
+  return payload;
 }
 
-function paSelectPlan(planId) {
-  paSelectedPlan = planId;
-  paEditMode = false;
-  renderPAGroups();
-  renderPADetail(planId);
+function pv2Snapshot() {
+  return pvCurrentDraft?.snapshot || pvLivePolicy?.snapshot || pv2FamiliesData.snapshot || {};
 }
-
-async function paValidateNewId() {
-  const newId = document.getElementById('pa-new-plan-id').value.trim();
-  const statusEl = document.getElementById('pa-id-val-status');
-  if (!newId) { statusEl.textContent = ''; return; }
-
-  try {
-    const res = await fetch(`${API}/plan-access/check-id/${newId}`);
-    const json = await res.json();
-    if (json.exists) {
-      statusEl.textContent = '✕';
-      statusEl.style.color = '#ef4444';
-      statusEl.title = 'ID already exists in database';
-    } else {
-      statusEl.textContent = '✓';
-      statusEl.style.color = '#22c55e';
-      statusEl.title = 'ID available';
+function pv2Families() { return pv2Snapshot().planFamilies || pv2FamiliesData.families || []; }
+function pv2Generations() { return pv2Snapshot().generations || pv2FamiliesData.generations || []; }
+function pv2SetDirty(dirty = true) {
+  pv2Dirty = dirty;
+  const el = document.getElementById('pv2-dirty');
+  if (el) el.textContent = dirty ? 'Unsaved changes' : '';
+  if (dirty) {
+    const validation = document.getElementById('pv2-validation');
+    if (validation?.style.display !== 'none') {
+      validation.innerHTML = '<div class="pv2-kicker">Validation result outdated</div><p style="font-size:11px;color:#fde68a;margin-bottom:0">The draft changed after the last validation. Run “Validate & diff” again to see the current result.</p>';
     }
-  } catch (e) {
-    console.warn('ID validation failed:', e);
   }
 }
 
-async function paAddNewPlan() {
+async function pvLoadInit() {
+  try {
+    const [catalog, active, families, drafts, versions] = await Promise.all([
+      pv2Api('/catalog'), pv2Api('/versions/active'), pv2Api('/families'), pv2Api('/drafts'), pv2Api('/versions'),
+    ]);
+    pvCatalog = catalog.data;
+    pvLivePolicy = active.data;
+    pv2FamiliesData = families.data;
+    pv2RenderLive();
+    pv2RenderMode();
+    pv2RenderSource();
+    pv2RenderGenerationSelector();
+    pv2RenderDrafts(drafts.data || []);
+    pv2RenderHistory(versions.data || []);
+    pv2RenderCategoryOptions();
+    pvRenderFamilies();
+  } catch (error) {
+    showToast?.(`Plan Control failed to load: ${error.message}`, 'error');
+  }
+}
+
+function pv2RenderLive() {
+  const el = document.getElementById('pv2-live');
+  if (!el) return;
+  el.innerHTML = pvLivePolicy
+    ? `<span class="pv2-live-badge">LIVE</span> Policy revision ${Number(pvLivePolicy.revision) || 0} · <code>${pv2Escape(pvLivePolicy.versionId)}</code>`
+    : '<span class="pv2-not-live-badge">NOT PUBLISHED</span> Viewing legacy access or backend defaults';
+}
+
+function pv2RenderMode() {
+  const el = document.getElementById('pv2-mode');
+  if (!el) return;
   if (currentRole !== 'editor') {
-    showToast('Edit access required to add plans', 'error');
+    el.className = 'pv2-mode viewer';
+    el.innerHTML = '<b>View-only mode</b><span>Dropdowns are intentionally locked. Unlock editor access before changing any plan.</span><span style="flex:1"></span><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvGoUnlockEditing()">Unlock editing</button>';
     return;
   }
-  const newIdRaw = document.getElementById('pa-new-plan-id').value;
-  const newId = parseInt(newIdRaw);
-  const group = document.getElementById('pa-new-plan-group').value;
-  const statusEl = document.getElementById('pa-add-status');
-  const valStatus = document.getElementById('pa-id-val-status');
-
-  if (!newId || newId < 1) { statusEl.style.color = '#ef4444'; statusEl.textContent = 'Enter a valid plan ID'; return; }
-
-  // Check if plan already exists in any group (UI side)
-  for (const g of Object.values(PA_PLAN_GROUPS)) {
-    if (g.plans.includes(newId)) {
-      statusEl.style.color = '#ef4444';
-      statusEl.textContent = `Plan ${newId} already in sidebar`;
-      return;
-    }
-  }
-
-  // Server-side existence check
-  try {
-    const checkRes = await fetch(`${API}/plan-access/check-id/${newId}`);
-    const checkJson = await checkRes.json();
-    if (checkJson.exists) {
-      statusEl.style.color = '#ef4444';
-      statusEl.textContent = `Plan ${newId} already present in DB`;
-      return;
-    }
-  } catch (e) {}
-
-  // Pick a reference plan from same group to copy access from
-  const groupPlans = PA_PLAN_GROUPS[group].plans;
-  if (!groupPlans || !groupPlans.length) {
-    statusEl.style.color = '#ef4444';
-    statusEl.textContent = `No reference plan in group ${group}`;
-    return;
-  }
-  const refPid = groupPlans[0];
-
-  statusEl.style.color = 'var(--text-muted)';
-  statusEl.textContent = 'Adding...';
-
-  try {
-    const res = await fetch(API + '/plan-access/add-plan', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newPlanId: newId, refPlanId: refPid, group }),
-    });
-    const json = await res.json();
-    if (!res.ok) { statusEl.style.color = '#ef4444'; statusEl.textContent = json.message || 'Failed'; return; }
-
-    // Add to local PA_PLAN_GROUPS so sidebar updates immediately
-    PA_PLAN_GROUPS[group].plans.push(newId);
-    document.getElementById('pa-new-plan-id').value = '';
-    valStatus.textContent = '';
-    statusEl.style.color = '#22c55e';
-    statusEl.textContent = `Plan ${newId} added to ${group}`;
-
-    await loadPlanAccessDocs();
-    paSelectPlan(newId);
-  } catch (e) {
-    statusEl.style.color = '#ef4444';
-    statusEl.textContent = 'Error: ' + e.message;
-  }
+  el.className = 'pv2-mode editor';
+  el.innerHTML = pvCurrentDraft
+    ? `<b>Editing enabled</b><span>You are changing safe draft <code>${pv2Escape(pvCurrentDraft.draftId)}</code>. Customers are unaffected until Publish.</span>`
+    : '<b>Editor unlocked</b><span>Select an existing draft or create a safe draft. Live policy controls remain read-only.</span>';
 }
 
-function paSwitchCat(cat) {
-  // Flush current category checkboxes into snapshot before switching
-  if (paEditMode) paFlushDomToSnapshot();
-  paCatFilter = cat;
-  document.querySelectorAll('.pa-cat-btn').forEach(b => {
-    b.classList.toggle('btn-primary', b.dataset.cat === cat);
-    b.classList.toggle('btn-ghost', b.dataset.cat !== cat);
+function pv2RenderSource() {
+  const el = document.getElementById('pv2-source');
+  if (!el) return;
+  if (pvCurrentDraft) {
+    el.className = 'pv2-source draft';
+    const draftMode = currentRole === 'editor' ? 'EDITABLE' : 'READ ONLY — EDITOR LOCKED';
+    el.innerHTML = `<b>WORKING DRAFT — ${draftMode}</b><span>MongoDB <code>plan_policy_drafts</code> · record <code>${pv2Escape(pvCurrentDraft.draftId)}</code> · revision ${Number(pvCurrentDraft.draftRevision) || 0}. This is not live; customers are unaffected until Publish.</span><span style="flex:1"></span><button type="button" class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvExitDraft()">Exit draft & view current access</button>`;
+    return;
+  }
+  if (pvLivePolicy) {
+    el.className = 'pv2-source live';
+    el.innerHTML = `<b>LIVE PUBLISHED POLICY — READ ONLY</b><span>MongoDB <code>plan_policy_versions</code> · record <code>${pv2Escape(pvLivePolicy.versionId)}</code> · revision ${Number(pvLivePolicy.revision) || 0}. Select a safe working draft to edit.</span>`;
+    return;
+  }
+  if (pv2FamiliesData.source === 'legacy_config_preview') {
+    el.className = 'pv2-source legacy';
+    el.innerHTML = '<b>CURRENT LEGACY ACCESS — READ ONLY</b><span>Read from MongoDB <code>plan_access_config</code> and converted in memory for this preview. Nothing was migrated, saved, or published. Create a safe working draft to edit these rules.</span>';
+    return;
+  }
+  el.className = 'pv2-source bootstrap';
+  el.innerHTML = '<b>BOOTSTRAP PREVIEW — READ ONLY</b><span>Generated from backend plan code defaults; it is not a draft file, not stored in MongoDB, and not a published live policy. Create or select a safe working draft to edit.</span>';
+}
+
+function pvGoUnlockEditing() {
+  switchTab('config');
+  const panel = document.getElementById('unlock-edit-panel');
+  panel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('edit-key-input')?.focus();
+  showToast?.('Enter the editor hardware key, then return to Plan Validation.', 'success');
+}
+
+function pv2RenderGenerationSelector() {
+  const select = document.getElementById('pv2-generation');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = pv2Generations().map((generation) =>
+    `<option value="${pv2Escape(generation.generationId)}">${pv2Escape(generation.adminLabel)} · ${pv2Escape(generation.status)}</option>`
+  ).join('');
+  if (current && [...select.options].some((option) => option.value === current)) select.value = current;
+}
+
+function pvGenerationChanged() {
+  pv2SelectedFamilyId = null;
+  pvRenderFamilies();
+  document.getElementById('pv2-editor').style.display = 'none';
+  document.getElementById('pv2-empty').style.display = 'block';
+}
+
+function pvRenderFamilies() {
+  const container = document.getElementById('pv2-families');
+  if (!container) return;
+  const generation = document.getElementById('pv2-generation')?.value;
+  const query = (document.getElementById('pv2-family-search')?.value || '').trim().toLowerCase();
+  const rows = pv2Families().filter((family) => {
+    if (generation && family.generation !== generation) return false;
+    const haystack = `${family.familyId} ${family.label} ${family.adminLabel} ${(family.variants || []).map((v) => `${v.planId} ${v.billingCycle}`).join(' ')}`.toLowerCase();
+    return !query || haystack.includes(query);
   });
-  if (paSelectedPlan) renderPAFilterRows(paSelectedPlan);
+  container.innerHTML = rows.length ? rows.map((family) => `
+    <button type="button" data-plan-read="true" class="pv2-item pv2-family-button ${family.familyId === pv2SelectedFamilyId ? 'active' : ''}" aria-pressed="${family.familyId === pv2SelectedFamilyId}" onclick="pv2SelectFamily('${pv2Escape(family.familyId)}')">
+      <div style="display:flex;justify-content:space-between;gap:8px"><b style="font-size:12px">${pv2Escape(family.adminLabel)}</b><span style="font-size:9px;color:var(--text-muted)">${!pvCurrentDraft && pvLivePolicy ? '<span class="pv2-live-badge">LIVE POLICY</span>' : pv2Escape(family.status)}</span></div>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:5px">${(family.variants || []).map((variant) => `${pv2Escape(variant.billingCycle)} #${pv2Escape(variant.planId || 'unmapped')}`).join(' · ') || 'No billing variants'}</div>
+      <span class="pv2-family-open">View plan →</span>
+    </button>`).join('') : `<div style="font-size:11px;color:var(--text-muted);padding:10px">No matching families.</div>${pvCurrentDraft && generation ? '<button class="btn btn-primary btn-sm" style="width:100%" onclick="pvAddFamily()">+ Add plan family</button>' : ''}`;
 }
 
-function renderPADetail(planId) {
-  const pid = Number(planId);
-
-  // Header
-  let groupName = 'Unknown', groupColor = '#94a3b8';
-  for (const [name, g] of Object.entries(PA_PLAN_GROUPS)) {
-    if (g.plans.includes(pid)) { groupName = name; groupColor = g.color; break; }
-  }
-  const nameEl = document.getElementById('pa-plan-name');
-  const badgeEl = document.getElementById('pa-plan-group-badge');
-  if (nameEl) nameEl.textContent = 'Plan ' + pid;
-  if (badgeEl) {
-    badgeEl.textContent = groupName;
-    badgeEl.style.background = groupColor + '22';
-    badgeEl.style.color = groupColor;
-    badgeEl.style.border = '1px solid ' + groupColor + '55';
-  }
-
-  // Deleted badge + restore button
-  const isDeleted = paDeletedPlanIds.some(d => d.plan_id === pid);
-  const deletedEntry = paDeletedPlanIds.find(d => d.plan_id === pid);
-  let deletedBadgeEl = document.getElementById('pa-deleted-badge');
-  let restoreBtnEl   = document.getElementById('pa-restore-btn');
-  if (!deletedBadgeEl) {
-    deletedBadgeEl = document.createElement('span');
-    deletedBadgeEl.id = 'pa-deleted-badge';
-    deletedBadgeEl.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:99px;font-weight:600;margin-left:8px;background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef444444';
-    if (badgeEl) badgeEl.after(deletedBadgeEl);
-  }
-  if (!restoreBtnEl) {
-    restoreBtnEl = document.createElement('button');
-    restoreBtnEl.id = 'pa-restore-btn';
-    restoreBtnEl.className = 'btn btn-ghost btn-sm';
-    restoreBtnEl.style.cssText = 'color:#22c55e;border-color:#22c55e44';
-    restoreBtnEl.textContent = '↩ Restore';
-    const headerActions = document.querySelector('#tab-plan-access .btn[onclick="loadPlanAccessDocs()"]')?.parentElement;
-    if (headerActions) headerActions.prepend(restoreBtnEl);
-  }
-  deletedBadgeEl.textContent  = isDeleted ? '● Deleted' : '';
-  deletedBadgeEl.style.display = isDeleted ? '' : 'none';
-  restoreBtnEl.style.display   = (isDeleted && currentRole === 'editor') ? '' : 'none';
-  restoreBtnEl.onclick = () => paRestorePlan(pid, deletedEntry?.group);
-
-  // Edit/Save buttons — hidden for deleted plans
-  const editBtn = document.getElementById('pa-edit-btn');
-  const saveBtn = document.getElementById('pa-save-btn');
-  if (editBtn) {
-    editBtn.style.display = (currentRole === 'editor' && !isDeleted) ? '' : 'none';
-    editBtn.textContent = paEditMode ? '✕ Cancel' : '✏️ Edit';
-  }
-  if (saveBtn) {
-    saveBtn.style.display = (paEditMode && currentRole === 'editor' && !isDeleted) ? '' : 'none';
-  }
-
-  // Platforms
-  const platEl = document.getElementById('pa-platforms');
-  if (platEl && paPlatformDoc && paPlatformDoc.platform_plans) {
-    platEl.innerHTML = PA_PLATFORMS.map(p => {
-      const allowed = (paPlatformDoc.platform_plans[p] || []).includes(pid);
-      if (paEditMode) {
-        return `<label style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10px;font-weight:600;cursor:pointer;
-          background:var(--bg-secondary);border:1px solid var(--border);color:var(--text)">
-          <input type="checkbox" id="pa-plat-cb-${p}" data-plat="${p}" ${allowed ? 'checked' : ''} style="cursor:pointer"> ${p}
-        </label>`;
+async function pv2SelectFamily(familyId) {
+  pv2SelectedFamilyId = familyId;
+  pvRenderFamilies();
+  if (!pvCurrentDraft) {
+    document.getElementById('pv2-title').textContent = 'Loading plan…';
+    try {
+      const result = await pv2Api(`/families/${encodeURIComponent(familyId)}`);
+      // A direct read makes family viewing independent from draft state and
+      // from any stale list snapshot already held by the browser.
+      pv2ReadOnlyFamily = result.data?.family || null;
+      pv2ReadOnlyPolicy = result.data?.policy || null;
+    } catch (error) {
+      // The list endpoint already delivered a complete read-only snapshot.
+      // Use it as a resilient fallback instead of leaving a clickable family
+      // card that appears to do nothing during a transient detail request.
+      pv2ReadOnlyFamily = pv2Families().find((item) => item.familyId === familyId) || null;
+      pv2ReadOnlyPolicy = pv2FamiliesData.snapshot?.policies?.[familyId] || null;
+      if (!pv2ReadOnlyFamily) {
+        showToast?.(`Could not open this read-only plan: ${error.message}`, 'error');
+        return;
       }
-      return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10px;font-weight:600;
-        background:${allowed ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.1)'};
-        color:${allowed ? '#22c55e' : '#ef4444'};
-        border:1px solid ${allowed ? '#22c55e44' : '#ef444444'}">
-        ${allowed ? '✓' : '✗'} ${p}
-      </span>`;
-    }).join('');
-  }
-
-  // Market Trends networks — independent per-plan override, stored on the
-  // market_trends filter doc's network_overrides.<planId> (NOT platform_access).
-  // Falls back to this plan's Platform Access list when no override has been
-  // saved yet, so a never-configured plan behaves exactly as before this existed.
-  const mtEl = document.getElementById('pa-mt-networks');
-  if (mtEl) {
-    const mtDoc = paFilterDocs.find(f => f._id === 'market_trends');
-    const override = mtDoc?.network_overrides?.[String(pid)];
-    const mtAllowed = Array.isArray(override)
-      ? override
-      : (paPlatformDoc?.platform_plans ? PA_PLATFORMS.filter(p => (paPlatformDoc.platform_plans[p] || []).includes(pid)) : []);
-    mtEl.innerHTML = PA_PLATFORMS.map(p => {
-      const allowed = mtAllowed.includes(p);
-      if (paEditMode) {
-        return `<label style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10px;font-weight:600;cursor:pointer;
-          background:var(--bg-secondary);border:1px solid var(--border);color:var(--text)">
-          <input type="checkbox" id="pa-mt-cb-${p}" data-mtplat="${p}" ${allowed ? 'checked' : ''} style="cursor:pointer"> ${p}
-        </label>`;
-      }
-      return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10px;font-weight:600;
-        background:${allowed ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.1)'};
-        color:${allowed ? '#22c55e' : '#ef4444'};
-        border:1px solid ${allowed ? '#22c55e44' : '#ef444444'}">
-        ${allowed ? '✓' : '✗'} ${p}
-      </span>`;
-    }).join('');
-  }
-
-  // Limits
-  const limEl = document.getElementById('pa-limits');
-  if (limEl && paLimitsDoc && paLimitsDoc.plan_limits) {
-    const lim = paLimitsDoc.plan_limits[String(pid)] || { brandLimit: 0, competitorLimit: 0 };
-    if (paEditMode) {
-      limEl.innerHTML = `
-        <div style="text-align:center;padding:8px 20px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border)">
-          <input type="number" id="pa-edit-brand" value="${lim.brandLimit}" min="0" style="width:60px;font-size:16px;font-weight:700;text-align:center;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:2px;cursor:pointer">
-          <p style="font-size:10px;color:var(--text-muted);margin:4px 0 0 0">Brand Limit</p>
-        </div>
-        <div style="text-align:center;padding:8px 20px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border)">
-          <input type="number" id="pa-edit-comp" value="${lim.competitorLimit}" min="0" style="width:60px;font-size:16px;font-weight:700;text-align:center;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:2px;cursor:pointer">
-          <p style="font-size:10px;color:var(--text-muted);margin:4px 0 0 0">Competitor Limit</p>
-        </div>`;
-    } else {
-      limEl.innerHTML = `
-        <div style="text-align:center;padding:8px 20px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border)">
-          <p style="font-size:18px;font-weight:700;color:var(--text)">${lim.brandLimit}</p>
-          <p style="font-size:10px;color:var(--text-muted)">Brand Limit</p>
-        </div>
-        <div style="text-align:center;padding:8px 20px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border)">
-          <p style="font-size:18px;font-weight:700;color:var(--text)">${lim.competitorLimit}</p>
-          <p style="font-size:10px;color:var(--text-muted)">Competitor Limit</p>
-        </div>`;
     }
+  } else {
+    pv2ReadOnlyFamily = null;
+    pv2ReadOnlyPolicy = null;
   }
-
-  // Category tabs
-  const cats = [...new Set(paFilterDocs.map(f => f.category).filter(Boolean))];
-  const catTabsEl = document.getElementById('pa-cat-tabs');
-  if (catTabsEl) {
-    catTabsEl.innerHTML = `<button class="btn btn-primary btn-sm pa-cat-btn" style="font-size:10px;padding:2px 8px" data-cat="all" onclick="paSwitchCat('all')">All</button>` +
-      cats.map(c => `<button class="btn btn-ghost btn-sm pa-cat-btn" style="font-size:10px;padding:2px 8px" data-cat="${c}" onclick="paSwitchCat('${c}')">${c.replace(/_/g,' ')}</button>`).join('');
-  }
-
-  renderPAFilterRows(planId);
-}
-
-function renderPAFilterRows(planId) {
-  const pid = Number(planId);
-  const tbody = document.getElementById('pa-filter-rows');
-  if (!tbody) return;
-
-  const filtered = (paCatFilter === 'all' ? paFilterDocs : paFilterDocs.filter(f => f.category === paCatFilter))
-    .sort((a, b) => {
-      const aPri = a.needs_review ? 2 : a.is_new ? 1 : 0;
-      const bPri = b.needs_review ? 2 : b.is_new ? 1 : 0;
-      if (bPri !== aPri) return bPri - aPri;
-      return (a.label || a._id || '').localeCompare(b.label || b._id || '');
-    });
-
-  if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-muted)">No filters in this category</td></tr>';
+  if (!pvLoadPlanEditor()) {
+    showToast?.('This plan family could not be loaded from the selected source. Refresh Plan Validation and try again.', 'error');
     return;
   }
+  requestAnimationFrame(() => {
+    const title = document.getElementById('pv2-title');
+    title?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    title?.classList.add('pv2-selection-flash');
+    setTimeout(() => title?.classList.remove('pv2-selection-flash'), 900);
+  });
+}
 
-  tbody.innerHTML = filtered.map(f => {
-    // In edit mode use snapshot so category switches don't reset unsaved changes
-    // Match planAccessService.js semantics: null/undefined = allow all; [] = deny all; [ids] = check list
-    const allowed = paEditMode
-      ? (paEditSnapshot.filters[f._id] !== undefined ? paEditSnapshot.filters[f._id] : (!f.allowed_plan_ids || (f.allowed_plan_ids.length > 0 && f.allowed_plan_ids.includes(pid))))
-      : (!f.allowed_plan_ids || (f.allowed_plan_ids.length > 0 && f.allowed_plan_ids.includes(pid)));
-    const catColor = PA_CAT_COLORS[f.category] || '#6b7280';
+function pvLoadPlanEditor() {
+  const family = (!pvCurrentDraft && pv2ReadOnlyFamily?.familyId === pv2SelectedFamilyId)
+    ? pv2ReadOnlyFamily
+    : pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+  if (!family) return false;
+  const editable = Boolean(pvCurrentDraft) && currentRole === 'editor';
+  document.getElementById('pv2-empty').style.display = 'none';
+  document.getElementById('pv2-editor').style.display = 'flex';
+  document.getElementById('pv2-title').innerHTML = `${pv2Escape(family.adminLabel)}${!pvCurrentDraft && pvLivePolicy ? ' <span class="pv2-live-badge">LIVE</span>' : ''}`;
+  const sourceLabel = pvCurrentDraft
+    ? editable
+      ? `Editing working draft ${pvCurrentDraft.draftId} revision ${pvCurrentDraft.draftRevision}`
+      : `Viewing working draft ${pvCurrentDraft.draftId} revision ${pvCurrentDraft.draftRevision} (read only)`
+    : pvLivePolicy
+      ? `Viewing live policy revision ${pvLivePolicy.revision} (read only)`
+      : pv2FamiliesData.source === 'legacy_config_preview'
+        ? 'Viewing current legacy MongoDB access (read only; converted preview)'
+        : 'Viewing backend bootstrap defaults (read only; not stored)';
+  document.getElementById('pv2-subtitle').textContent = `${family.familyId} · ${family.generation} · ${sourceLabel}`;
+  const variants = family.variants || [];
+  const salesSource = pvCurrentDraft
+    ? `Stored in working draft ${pvCurrentDraft.draftId}.`
+    : pvLivePolicy
+      ? `Stored in live policy revision ${pvLivePolicy.revision}.`
+      : pv2FamiliesData.source === 'legacy_config_preview'
+        ? family.openForNewSignupsKnown === false
+          ? 'Not explicitly set in legacy plan_groups; Closed is the safe default.'
+          : `Read from plan_access_config → plan_groups → ${family.adminLabel} → openForNewSignups.`
+        : 'Defined by the backend plan-family default.';
+  document.getElementById('pv2-summary').innerHTML = `
+    <div class="pv2-stat"><span class="pv2-kicker">Name customers see <span class="pv2-info" title="The friendly plan name shown in customer-facing screens.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.label)}</b></div><div class="pv2-explain">Display name only. Changing it does not change access.</div></div>
+    <div class="pv2-stat"><span class="pv2-kicker">Plan display order <span class="pv2-info" title="Previously called Tier Rank. A higher number places a plan higher in comparisons; it does not automatically grant features.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.tierRank)}</b></div><div class="pv2-explain">Higher number = higher plan in UI ordering. Feature access is still controlled below.</div></div>
+    <div class="pv2-stat"><span class="pv2-kicker">Billing options <span class="pv2-info" title="Monthly, yearly, trial or legacy billing product IDs that share this family's rules.">?</span></span><div style="margin-top:6px"><b>${variants.length} option${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="Choose which billing ID to simulate in Preview" style="width:100%;margin-top:6px">${variants.map((v) => `<option value="${pv2Escape(v.planId)}">${pv2Escape(v.billingCycle)} plan · billing ID #${pv2Escape(v.planId)}</option>`).join('')}</select><div class="pv2-explain">All these IDs belong to this one plan family, so you normally edit access once.</div></div>
+    <div class="pv2-stat"><span class="pv2-kicker">Available for new purchases <span class="pv2-info" title="Open means billing may sell this family to new customers. Closed keeps existing customers but prevents new signups.">?</span></span><div style="margin-top:6px"><b style="color:${family.openForNewSignups ? '#22c55e' : '#f59e0b'}">${family.openForNewSignups ? 'Yes, open' : 'No, closed'}</b></div><div class="pv2-explain">${family.openForNewSignups ? 'New customers may buy this plan.' : 'Existing plan IDs remain valid, but new sales are closed.'}</div><div class="pv2-source-note"><b>How this is known:</b> ${pv2Escape(salesSource)}</div>${editable ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pvEditFamily()">Edit plan details</button>' : ''}</div>`;
+  pv2RenderNetworks();
+  pvRenderCapabilities();
+  return true;
+}
 
-    // Show all 11 platforms — green if supported, dim if not; clickable in edit mode
-    const platCells = PA_PLATFORMS.map(p => {
-      // snapshotPlats is the in-memory edit state for this filter's platforms.
-      // undefined = filter not in snapshot yet (fall back to MongoDB).
-      // {} = all allowed (admin reset via "Allowed" checkbox — missing key means unrestricted).
-      // { youtube: false } = youtube restricted, others unrestricted.
-      const snapshotPlats = paEditMode && paEditSnapshot.filterPlatforms
-        ? paEditSnapshot.filterPlatforms[f._id]
-        : undefined;
-      const platEnabled = paEditMode
-        ? (snapshotPlats !== undefined
-            ? snapshotPlats[p] !== false          // in snapshot: false=restricted, missing/true=allowed
-            : (f.platform_support || {})[p] !== false)  // not in snapshot: read from MongoDB doc
-        : (f.platform_support || {})[p] !== false;
-      // If filter is restricted for this plan, don't highlight any platform pill
-      const supported = allowed && platEnabled;
-      const baseStyle = `font-size:9px;padding:2px 6px;border-radius:4px;font-weight:600;transition:all .15s;
-        background:${supported ? 'rgba(34,197,94,.15)' : 'rgba(100,100,100,.1)'};
-        color:${supported ? '#22c55e' : 'var(--text-muted)'};border:1px solid ${supported ? 'rgba(34,197,94,.3)' : 'transparent'};`;
-      if (paEditMode) {
-        return `<span data-filter-plat="${f._id}:${p}" onclick="paToggleFilterPlat(this,'${f._id}','${p}')"
-          style="${baseStyle}cursor:pointer;" title="${p}">${PA_PLAT_LABEL[p]||p}</span>`;
-      }
-      return `<span style="${baseStyle}" title="${p}">${PA_PLAT_LABEL[p]||p}</span>`;
-    }).join('');
+function pv2FamilyPolicy() {
+  if (!pvCurrentDraft && pv2ReadOnlyFamily?.familyId === pv2SelectedFamilyId && pv2ReadOnlyPolicy) {
+    return pv2ReadOnlyPolicy;
+  }
+  const snapshot = pv2Snapshot();
+  const existing = snapshot.policies?.[pv2SelectedFamilyId];
+  if (existing) return existing;
+  if (pvCurrentDraft) {
+    pvCurrentDraft.snapshot.policies ||= {};
+    pvCurrentDraft.snapshot.policies[pv2SelectedFamilyId] = { generalNetworks: [], capabilities: {}, variantOverrides: {} };
+    return pvCurrentDraft.snapshot.policies[pv2SelectedFamilyId];
+  }
+  return { generalNetworks: [], capabilities: {}, variantOverrides: {} };
+}
 
-    return `<tr data-needs-review="${f.needs_review ? 'true' : 'false'}" style="border-bottom:1px solid var(--border);transition:background .1s${f.needs_review ? ';border-left:2px solid rgba(245,158,11,0.6)' : ''}" onmouseenter="this.style.background='var(--bg-secondary)'" onmouseleave="this.style.background=''">
-      <td style="padding:7px 8px;font-weight:500">
-        ${f.label || f._id}
-        ${f.needs_review ? '<span style="font-size:8px;font-weight:700;background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">REVIEW</span>' : f.is_new ? '<span style="font-size:8px;font-weight:700;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">NEW</span>' : ''}
-      </td>
-      <td style="padding:7px 8px">
-        <span style="font-size:9px;padding:1px 6px;border-radius:4px;font-weight:600;background:${catColor}22;color:${catColor}">${f.category || '—'}</span>
-      </td>
-      <td style="padding:7px 8px"><div style="display:flex;flex-wrap:wrap;gap:3px">${platCells}</div></td>
-      <td style="padding:7px 8px;text-align:center">
-        <span id="pa-filter-status-${f._id}" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:99px;
-          background:${allowed ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.1)'};
-          color:${allowed ? '#22c55e' : '#ef4444'}">
-          ${allowed ? '✓ Allowed' : '✗ Restricted'}
-        </span>
-      </td>
-      <td style="padding:7px 8px;text-align:center;display:${paEditMode ? 'table-cell' : 'none'}">
-        <input type="checkbox" id="pa-filter-cb-${f._id}" data-filter="${f._id}" ${allowed ? 'checked' : ''} onchange="paFilterAllowedChanged(this,'${f._id}')" style="width:14px;height:14px;cursor:pointer">
-      </td>
-    </tr>`;
+function pv2RenderNetworks() {
+  const policy = pv2FamilyPolicy();
+  const editable = Boolean(pvCurrentDraft) && currentRole === 'editor';
+  const allowed = new Set(policy.generalNetworks || []);
+  const allowedLabels = (pvCatalog.networks || [])
+    .filter((network) => allowed.has(network.id))
+    .map((network) => network.label || network.id);
+  const summary = document.getElementById('pv2-network-summary');
+  if (summary) {
+    const currentPolicy = pvLivePolicy?.snapshot?.policies?.[pv2SelectedFamilyId]
+      || pv2FamiliesData.snapshot?.policies?.[pv2SelectedFamilyId];
+    const currentAllowed = currentPolicy?.generalNetworks || [];
+    const canCopyCurrent = editable && allowedLabels.length === 0 && currentAllowed.length > 0;
+    summary.className = `pv2-network-summary ${allowedLabels.length ? 'has-access' : 'no-access'}`;
+    summary.innerHTML = allowedLabels.length
+      ? `<b>${allowedLabels.length} general network${allowedLabels.length === 1 ? '' : 's'} allowed:</b> ${allowedLabels.map(pv2Escape).join(', ')}`
+      : `<b>No general networks allowed in this ${pvCurrentDraft ? 'draft' : 'plan'}.</b> Network-aware features using the family default will be unavailable.${canCopyCurrent ? ` <button type="button" class="btn btn-ghost btn-sm" onclick="pv2CopyCurrentNetworks()">Copy ${currentAllowed.length} current network${currentAllowed.length === 1 ? '' : 's'} into this draft</button>` : ''}`;
+  }
+  document.getElementById('pv2-networks').innerHTML = (pvCatalog.networks || []).map((network) => {
+    const checked = allowed.has(network.id);
+    return `<label class="pv2-network"><input type="checkbox" ${checked ? 'checked' : ''} ${editable ? '' : 'disabled'} onchange="pv2ToggleNetwork('${pv2Escape(network.id)}',this.checked)">${pv2Escape(network.label)}</label>`;
+  }).join('');
+}
+function pv2CopyCurrentNetworks() {
+  if (!pvCurrentDraft || currentRole !== 'editor') return;
+  const sourcePolicy = pvLivePolicy?.snapshot?.policies?.[pv2SelectedFamilyId]
+    || pv2FamiliesData.snapshot?.policies?.[pv2SelectedFamilyId];
+  if (!sourcePolicy?.generalNetworks?.length) {
+    showToast?.('No current network access is available to copy.', 'error');
+    return;
+  }
+  pv2FamilyPolicy().generalNetworks = [...sourcePolicy.generalNetworks];
+  pv2SetDirty();
+  pv2RenderNetworks();
+  pvRenderCapabilities();
+  showToast?.('Current network access copied into this browser draft. Save draft when ready.', 'success');
+}
+function pv2ToggleNetwork(networkId, checked) {
+  const policy = pv2FamilyPolicy();
+  const set = new Set(policy.generalNetworks || []);
+  if (checked) set.add(networkId); else set.delete(networkId);
+  policy.generalNetworks = [...set];
+  pv2SetDirty(); pvRenderCapabilities();
+}
+
+function pv2RenderCategoryOptions() {
+  const select = document.getElementById('pv2-category');
+  if (!select) return;
+  select.innerHTML = '<option value="">All categories</option>' + (pvCatalog.categories || []).map((category) => `<option>${pv2Escape(category)}</option>`).join('');
+}
+
+function pv2Humanize(value) {
+  return String(value || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function pv2RuleForDisplay(policy, cap) {
+  const stored = policy.capabilities?.[cap.id];
+  if (stored) return stored;
+  if (cap.status === 'needs_review') {
+    const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+    const generation = pv2Generations().find((item) => item.generationId === family?.generation);
+    return {
+      effect: generation?.newCapabilityDefault === 'deny' ? 'deny' : 'allow',
+      reviewed: false,
+      networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' },
+      pendingDefault: true,
+    };
+  }
+  return { effect: 'inherit', networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' } };
+}
+
+function pv2ApplyCapabilityTree(parentId, action) {
+  if (!pvCurrentDraft || currentRole !== 'editor') {
+    showToast?.('Open a safe working draft before changing a feature group.', 'error');
+    return;
+  }
+  const policy = pv2FamilyPolicy();
+  policy.capabilities ||= {};
+  const parent = (pvCatalog.capabilities || []).find((cap) => cap.id === parentId);
+  const children = (pvCatalog.capabilities || []).filter((cap) => cap.parentCapability === parentId);
+  if (!parent || !children.length) return;
+  const ensureRule = (cap) => {
+    policy.capabilities[cap.id] ||= {
+      effect: 'inherit',
+      reviewed: cap.status !== 'needs_review',
+      networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' },
+    };
+    return policy.capabilities[cap.id];
+  };
+  if (action === 'allow_tree') ensureRule(parent).effect = 'allow';
+  if (action === 'deny_tree') ensureRule(parent).effect = 'deny';
+  for (const child of children) ensureRule(child).effect = 'inherit';
+  pv2SetDirty();
+  pvRenderCapabilities();
+  const message = action === 'allow_tree'
+    ? `${parent.label} allowed; ${children.length} children now follow the parent.`
+    : action === 'deny_tree'
+      ? `${parent.label} restricted; all ${children.length} children are blocked by the parent.`
+      : `${children.length} children now follow ${parent.label}; individual child overrides were cleared.`;
+  showToast?.(message, 'success');
+}
+
+function pvRenderCapabilities() {
+  const body = document.getElementById('pv2-capabilities');
+  if (!body || !pv2SelectedFamilyId) return;
+  const policy = pv2FamilyPolicy();
+  const editable = Boolean(pvCurrentDraft) && currentRole === 'editor';
+  const query = (document.getElementById('pv2-cap-search')?.value || '').toLowerCase();
+  const category = document.getElementById('pv2-category')?.value || '';
+  const state = document.getElementById('pv2-filter')?.value || '';
+  const caps = (pvCatalog.capabilities || []).filter((cap) => {
+    const rule = pv2RuleForDisplay(policy, cap);
+    const liveRule = pvLivePolicy?.snapshot?.policies?.[pv2SelectedFamilyId]?.capabilities?.[cap.id];
+    if (query && !`${cap.id} ${cap.label} ${cap.description}`.toLowerCase().includes(query)) return false;
+    if (category && cap.category !== category) return false;
+    if (state === 'needs_review' && cap.status !== 'needs_review') return false;
+    if ((state === 'allow' || state === 'deny') && rule.effect !== state) return false;
+    if (state === 'changed' && JSON.stringify(rule) === JSON.stringify(liveRule)) return false;
+    return true;
+  });
+  body.innerHTML = caps.map((cap) => {
+    const rule = pv2RuleForDisplay(policy, cap);
+    const parent = cap.parentCapability
+      ? (pvCatalog.capabilities || []).find((item) => item.id === cap.parentCapability)
+      : null;
+    const children = (pvCatalog.capabilities || []).filter((item) => item.parentCapability === cap.id);
+    const relation = parent
+      ? `<div class="pv2-child-of">↳ Child of <b>${pv2Escape(parent.label)}</b>${rule.effect === 'inherit' ? ' · automatically follows parent access' : ' · individual override'}</div>`
+      : children.length
+        ? `<div class="pv2-parent-label">PARENT FEATURE · ${children.length} child${children.length === 1 ? '' : 'ren'}</div>`
+        : '<div class="pv2-standalone-label">STANDALONE FEATURE</div>';
+    const treeActions = children.length
+      ? `<div class="pv2-tree-actions">
+          <span>Apply to this feature group:</span>
+          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','allow_tree')">Allow parent + children</button>
+          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','deny_tree')">Restrict whole group</button>
+          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','follow')">Children follow parent</button>
+        </div>`
+      : '';
+    const accessMeaning = parent
+      ? rule.effect === 'inherit'
+        ? `Effective access follows ${pv2Escape(parent.label)}.`
+        : rule.effect === 'allow'
+          ? `Child explicitly allowed, but ${pv2Escape(parent.label)} must also be allowed.`
+          : `Child explicitly restricted even if ${pv2Escape(parent.label)} is allowed.`
+      : children.length
+        ? 'Restricting this parent blocks every child. Inheriting children automatically follow it.'
+        : 'This feature has no parent or children.';
+    const limits = (cap.limitTypes || []).map((name) => `<label style="display:block;margin:3px 0" title="Maximum allowed usage for ${pv2Escape(cap.label)}"><span style="display:block;font-size:9px;color:var(--text-muted)">${pv2Escape(pv2Humanize(name))}</span><input class="pv2-input" type="number" min="0" style="width:78px;padding:4px" value="${pv2Escape(rule.limits?.[name] ?? '')}" placeholder="No limit" ${editable ? '' : 'disabled'} onchange="pv2SetLimit('${pv2Escape(cap.id)}','${pv2Escape(name)}',this.value)"></label>`).join('') || '<span style="color:var(--text-muted)" title="This feature has no registered usage limit">No limit</span>';
+    const review = cap.status === 'needs_review'
+      ? `<div style="margin-top:5px;color:${rule.reviewed ? '#22c55e' : '#f59e0b'}">${rule.reviewed ? 'This plan reviewed' : rule.pendingDefault && rule.effect === 'allow' ? 'Temporarily allowed · review needed' : 'Choose a plan decision'}</div>${editable ? `<button class="btn btn-ghost btn-sm" onclick="pv2ReviewCap('${pv2Escape(cap.id)}')">${rule.reviewed ? 'Review across plans' : 'Review decision'}</button>` : ''}`
+      : '';
+    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Allowed = available, Restricted = locked, Use parent/default = follow the parent feature rule" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)"><option value="inherit" ${rule.effect === 'inherit' ? 'selected' : ''}>${parent ? 'Follow parent' : 'Use default'}</option><option value="allow" ${rule.effect === 'allow' ? 'selected' : ''}>Allow feature</option><option value="deny" ${rule.effect === 'deny' ? 'selected' : ''}>Restrict feature</option></select><div class="pv2-access-meaning">${accessMeaning}</div></td><td>${cap.networkAware ? `<select class="pv2-input" title="Use general networks or choose a smaller custom list only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>Use general networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Choose custom networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature does not receive network context, so a network rule would never be enforced">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
   }).join('');
 }
 
-function paToggleEditMode() {
-  paEditMode = !paEditMode;
-  const editBtn = document.getElementById('pa-edit-btn');
-  const saveBtn = document.getElementById('pa-save-btn');
-  if (editBtn) editBtn.textContent = paEditMode ? '✕ Cancel' : '✏️ Edit';
-  if (saveBtn) saveBtn.style.display = paEditMode ? '' : 'none';
-  renderPADetail(paSelectedPlan);
-}
-
-// Called when admin checks/unchecks the "Allowed" checkbox for a filter.
-// Checking → reset platform_support to all-allowed ({}) so the next save clears old restrictions.
-// Unchecking → no platform change needed (restriction is enforced via allowed_plan_ids).
-function paFilterAllowedChanged(el, filterId) {
-  paEditSnapshot.filters[filterId] = el.checked;
-
-  if (el.checked) {
-    // Reset platform_support to all-allowed: {} means no restrictions (missing key = unrestricted).
-    if (!paEditSnapshot.filterPlatforms) paEditSnapshot.filterPlatforms = {};
-    paEditSnapshot.filterPlatforms[filterId] = {};
-    paExplicitlyChangedPlatforms.add(filterId);
+function pvUpdateCap(capId, field, value) {
+  if (!pvCurrentDraft) return;
+  const policy = pv2FamilyPolicy();
+  if (!policy.capabilities) policy.capabilities = {};
+  if (!policy.capabilities[capId]) policy.capabilities[capId] = { effect: 'inherit' };
+  if (field === 'effect') policy.capabilities[capId].effect = value;
+  if (field === 'networkMode') {
+    policy.capabilities[capId].networks = policy.capabilities[capId].networks || {};
+    policy.capabilities[capId].networks.mode = value;
+    if (value === 'custom') policy.capabilities[capId].networks.allowed ||= [];
   }
-
-  // Re-render so the corrected platEnabled logic picks up the snapshot change.
-  renderPADetail(paSelectedPlan);
+  pv2SetDirty(); pvRenderCapabilities();
 }
-
-// Toggle a filter's platform support when admin clicks a platform pill in edit mode
-function paToggleFilterPlat(el, filterId, plat) {
-  if (!paEditSnapshot.filterPlatforms) paEditSnapshot.filterPlatforms = {};
-  if (!paEditSnapshot.filterPlatforms[filterId]) {
-    // seed from current doc
-    const doc = paFilterDocs.find(f => f._id === filterId);
-    paEditSnapshot.filterPlatforms[filterId] = Object.assign({}, doc ? doc.platform_support : {});
-  }
-  const cur = paEditSnapshot.filterPlatforms[filterId][plat] !== false;
-  paEditSnapshot.filterPlatforms[filterId][plat] = !cur;
-  paExplicitlyChangedPlatforms.add(filterId);
-  // Update pill appearance immediately without full re-render
-  const now = !cur;
-  el.style.background = now ? 'rgba(34,197,94,.15)' : 'rgba(100,100,100,.1)';
-  el.style.color       = now ? '#22c55e' : 'var(--text-muted)';
-  el.style.border      = now ? '1px solid rgba(34,197,94,.3)' : '1px solid transparent';
-
-  // Auto-toggle "Allowed" checkbox + badge when all platforms are on or all are off
-  const platMap = paEditSnapshot.filterPlatforms[filterId];
-  const allOn  = PA_PLATFORMS.every(p => platMap[p] !== false);
-  const allOff = PA_PLATFORMS.every(p => platMap[p] === false);
-  if (allOn || allOff) {
-    const isAllowed = allOn;
-    paEditSnapshot.filters[filterId] = isAllowed;
-    const cb = document.getElementById('pa-filter-cb-' + filterId);
-    if (cb) cb.checked = isAllowed;
-    const badge = document.getElementById('pa-filter-status-' + filterId);
-    if (badge) {
-      badge.textContent  = isAllowed ? '✓ Allowed' : '✗ Restricted';
-      badge.style.background = isAllowed ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.1)';
-      badge.style.color      = isAllowed ? '#22c55e' : '#ef4444';
-    }
-  }
+function pv2SetLimit(capId, name, value) {
+  const rule = (pv2FamilyPolicy().capabilities[capId] ||= { effect: 'inherit' });
+  rule.limits ||= {};
+  if (value === '') delete rule.limits[name];
+  else rule.limits[name] = Number(value);
+  pv2SetDirty();
 }
-
-function renderPANewFeatureBanner(needsReviewFilters) {
-  const strip = document.getElementById('pa-review-strip');
-  const badge = document.getElementById('pa-review-badge');
-  const count = needsReviewFilters.length;
-  if (!count) {
-    if (strip) strip.style.display = 'none';
-    if (badge) { badge.style.display = 'none'; badge.textContent = ''; }
+function pv2ReviewCap(capId) {
+  if (!pvCurrentDraft || currentRole !== 'editor') {
+    showToast?.('Create or select a safe draft before reviewing a new feature.', 'error');
     return;
   }
-  const names = needsReviewFilters.map(f => f.label || f._id).join(', ');
-  const textEl = document.getElementById('pa-review-strip-text');
-  if (textEl) textEl.textContent = `${count} new feature${count > 1 ? 's' : ''} auto-assigned to Palladium — review plan access: ${names}`;
-  if (strip) strip.style.display = 'flex';
-  if (badge) { badge.style.display = 'inline-block'; badge.textContent = count; }
-}
-
-function paGoToReview() {
-  switchTab('plan-access');
-  // The filter-access table (where the REVIEW badge/row actually renders) only exists in
-  // the DOM once a plan is selected in the right-hand detail pane — with no plan selected,
-  // there is nothing for the scroll below to find, which is why "Review →" looked like it
-  // did nothing. New features are auto-assigned to a topTier plan_groups group, so jump to
-  // the first plan in whichever topTier group exists (old or new Palladium generation).
-  if (!paSelectedPlan) {
-    const topTierGroup = Object.values(PA_PLAN_GROUPS).find(g => g && g.topTier && g.plans && g.plans.length);
-    if (topTierGroup) paSelectPlan(topTierGroup.plans[0]);
-  }
-  setTimeout(() => {
-    const firstReview = document.querySelector('tr[data-needs-review="true"]');
-    if (firstReview) {
-      firstReview.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } else {
-      showToast('No plan with a pending review was found — check each plan tier manually.', 'error');
+  const cap = (pvCatalog.capabilities || []).find((item) => item.id === capId);
+  const policy = pv2FamilyPolicy();
+  policy.capabilities ||= {};
+  const defaultRule = pv2RuleForDisplay(policy, cap);
+  const rule = (policy.capabilities[capId] ||= {
+    effect: defaultRule.effect,
+    reviewed: false,
+    networks: { mode: cap?.networkAware ? 'inherit_general' : 'not_applicable' },
+  });
+  const allFamilies = pv2Families();
+  const reviewedCount = allFamilies.filter((family) => (
+    pvCurrentDraft.snapshot.policies?.[family.familyId]?.capabilities?.[capId]?.reviewed === true
+  )).length;
+  pv2OpenForm(`Review: ${cap?.label || capId}`, `
+    <div style="grid-column:1/-1;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary)">
+      <b>${pv2Escape(cap?.description || '')}</b>
+      <div class="pv2-explain" style="margin-top:7px">Frontend: ${pv2Escape(cap?.frontend?.location || 'Backend only')}</div>
+      <div class="pv2-explain">Affected APIs: ${pv2Escape((cap?.impact?.routes || []).join(', ') || 'See feature preview')}</div>
+      <div class="pv2-explain"><b>${reviewedCount} of ${allFamilies.length} plan families reviewed.</b></div>
+    </div>
+    <label style="grid-column:1/-1;display:flex;flex-direction:column;gap:7px;font-size:11px"><span><b>Where should this review apply?</b></span><select class="pv2-input" name="scope">
+      <option value="all_keep">All plan families — keep each plan’s current Allow/Restrict decision</option>
+      <option value="current">Only ${pv2Escape(pv2Families().find((item) => item.familyId === pv2SelectedFamilyId)?.adminLabel || 'this plan')}</option>
+      <option value="all_same">All plan families — apply the same decision selected below</option>
+    </select><small style="color:var(--text-muted)">“Keep current decisions” clears review warnings without flattening different plan access rules.</small></label>
+    <label style="grid-column:1/-1;display:flex;flex-direction:column;gap:7px;font-size:11px"><span><b>Decision for this plan / same-decision mode</b></span><select class="pv2-input" name="effect">
+      <option value="allow" ${rule.effect === 'allow' ? 'selected' : ''}>Allow — customers on this plan can use it</option>
+      <option value="deny" ${rule.effect !== 'allow' ? 'selected' : ''}>Restrict — show locked/upgrade state</option>
+    </select></label>
+    <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted);margin:0">This only updates the current draft. Save, Preview, and Validate before publishing.</p>
+  `, (form) => {
+    const scope = String(form.get('scope') || 'all_keep');
+    const selectedEffect = String(form.get('effect')) === 'allow' ? 'allow' : 'deny';
+    const targets = scope === 'current'
+      ? allFamilies.filter((family) => family.familyId === pv2SelectedFamilyId)
+      : allFamilies;
+    pvCurrentDraft.snapshot.policies ||= {};
+    for (const family of targets) {
+      const familyPolicy = (pvCurrentDraft.snapshot.policies[family.familyId] ||= {
+        generalNetworks: [],
+        capabilities: {},
+        variantOverrides: {},
+      });
+      familyPolicy.capabilities ||= {};
+      const generation = pv2Generations().find((item) => item.generationId === family.generation);
+      const familyRule = (familyPolicy.capabilities[capId] ||= {
+        effect: generation?.newCapabilityDefault === 'deny' ? 'deny' : 'allow',
+        networks: { mode: cap?.networkAware ? 'inherit_general' : 'not_applicable' },
+      });
+      if (scope === 'all_same' || scope === 'current') familyRule.effect = selectedEffect;
+      familyRule.reviewed = true;
+      familyRule.networks ||= { mode: cap?.networkAware ? 'inherit_general' : 'not_applicable' };
     }
-  }, 150);
+    pv2SetDirty();
+    pvRenderCapabilities();
+    showToast?.(`${cap?.label || capId}: ${targets.length} plan ${targets.length === 1 ? 'family' : 'families'} reviewed in this draft. Save and validate to refresh warnings.`, 'success');
+    return true;
+  }, { submitLabel: 'Save review decision' });
 }
-
-function paDismissReviewStrip() {
-  const strip = document.getElementById('pa-review-strip');
-  if (strip) strip.style.display = 'none';
-}
-
-async function paSavePlanAccess() {
-  const pid = paSelectedPlan;
-  if (!pid) return;
-
-  // Collect platform checkboxes
-  const platforms = Array.from(document.querySelectorAll('#pa-platforms input[type=checkbox]'))
-    .filter(cb => cb.checked).map(cb => cb.dataset.plat);
-
-  // Collect Market Trends' per-plan network override (independent of platforms above).
-  // Only sent if the section actually rendered (it's absent for plans with no market_trends
-  // doc loaded) — undefined here means adminRoutes.js leaves network_overrides untouched.
-  const mtCheckboxes = document.querySelectorAll('#pa-mt-networks input[type=checkbox]');
-  const mtNetworks = mtCheckboxes.length
-    ? Array.from(mtCheckboxes).filter(cb => cb.checked).map(cb => cb.dataset.mtplat)
-    : undefined;
-
-  // Collect limits
-  const brandLimit = parseInt(document.getElementById('pa-edit-brand')?.value || 0);
-  const competitorLimit = parseInt(document.getElementById('pa-edit-comp')?.value || 0);
-
-  // Collect filter toggles
-  const filters = {};
-  document.querySelectorAll('#pa-filter-rows input[type=checkbox]').forEach(cb => {
-    filters[cb.dataset.filter] = cb.checked;
-  });
-
-  // Only send platform_support for filters where the admin explicitly toggled a platform pill.
-  // Omitting a filter here means its platform_support in MongoDB stays untouched.
-  const changedFilterPlatforms = {};
-  for (const fid of paExplicitlyChangedPlatforms) {
-    if (paEditSnapshot.filterPlatforms[fid]) changedFilterPlatforms[fid] = paEditSnapshot.filterPlatforms[fid];
-  }
-
-  try {
-    const res = await fetch(API + '/plan-access/config', {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId: pid, platforms, limits: { brandLimit, competitorLimit }, filters, filterPlatforms: changedFilterPlatforms, mtNetworks }),
-    });
-    const json = await res.json();
-    if (res.ok) {
-      paEditMode = false;
-      await loadPlanAccessDocs();
-      paSelectedPlan = pid;
-      renderPADetail(pid);
-      showToast('Plan access saved', 'success');
-    } else {
-      showToast('Save failed: ' + json.message, 'error');
-    }
-  } catch (e) {
-    showToast('Save failed: ' + e.message, 'error');
-  }
-}
-
-// [DEPRECATED 2026-04-01] Old filter-centric render functions removed.
-// Plan access is now plan-centric view with edit capability.
-
-// function filterPACategory(cat) { ... }
-// function renderPADocs() {
-// [DEPRECATED 2026-04-01] Old savePADoc, deletePADoc, invalidatePACache removed.
-// Plan access now saves via API to plan_config.json
-// async function savePADoc() { ... }
-// async function deletePADoc(id) { ... }
-// async function invalidatePACache() { ... }
-
-// ── Edit / Save ────────────────────────────────────────────────────────────────
-
-let paEditMode = false;
-let paEditSnapshot = { filters: {}, platforms: [], limits: { brandLimit: 0, competitorLimit: 0 } };
-// Tracks which filters had platform pills explicitly toggled by the admin in this edit session.
-// Only these filters get their platform_support sent on save — others keep whatever is in MongoDB.
-let paExplicitlyChangedPlatforms = new Set();
-
-// Flush current DOM checkbox states into the in-memory snapshot.
-// Called before each category switch so no changes are lost when rows re-render.
-function paFlushDomToSnapshot() {
-  paFilterDocs.forEach(f => {
-    const cb = document.getElementById('pa-filter-cb-' + f._id);
-    if (cb) paEditSnapshot.filters[f._id] = cb.checked;
-  });
-  paEditSnapshot.platforms = PA_PLATFORMS.filter(p => {
-    const cb = document.getElementById('pa-plat-cb-' + p);
-    return cb && cb.checked;
-  });
-}
-
-function paToggleEdit() {
-  if (!paSelectedPlan) {
-    document.getElementById('pa-save-status').textContent = 'Select a plan first';
+function pv2EditCapabilityNetworks(capId) {
+  if (!pvCurrentDraft || currentRole !== 'editor') {
+    showToast?.('Select a safe working draft before changing custom networks.', 'error');
     return;
   }
-  const pid = Number(paSelectedPlan);
-
-  // Snapshot current data state for ALL filters (all categories) up-front
-  paEditSnapshot.filters = {};
-  paEditSnapshot.filterPlatforms = {};
-  paExplicitlyChangedPlatforms = new Set(); // reset — only track pills clicked in this session
-  paFilterDocs.forEach(f => {
-    // Match planAccessService.js semantics: null/undefined = allow all; [] = deny all; [ids] = check list
-    const allowed = !f.allowed_plan_ids || (f.allowed_plan_ids.length > 0 && f.allowed_plan_ids.includes(pid));
-    paEditSnapshot.filters[f._id] = allowed;
-    paEditSnapshot.filterPlatforms[f._id] = Object.assign({}, f.platform_support || {});
-  });
-  paEditSnapshot.platforms = paPlatformDoc
-    ? PA_PLATFORMS.filter(p => (paPlatformDoc.platform_plans[p] || []).includes(pid))
-    : [];
-  const lim = paLimitsDoc && paLimitsDoc.plan_limits ? (paLimitsDoc.plan_limits[String(pid)] || { brandLimit: 0, competitorLimit: 0 }) : { brandLimit: 0, competitorLimit: 0 };
-  paEditSnapshot.limits = { brandLimit: lim.brandLimit, competitorLimit: lim.competitorLimit };
-
-  paEditMode = true;
-  document.getElementById('pa-edit-btn').style.display   = 'none';
-  document.getElementById('pa-save-btn').style.display   = '';
-  document.getElementById('pa-cancel-btn').style.display = '';
-  document.getElementById('pa-th-toggle').style.display  = '';
-  document.getElementById('pa-save-status').textContent  = 'Edit mode — changes not saved yet';
-  document.getElementById('pa-limits').style.display      = 'none';
-  document.getElementById('pa-limits-edit').style.display = 'flex';
-  document.getElementById('pa-brand-limit').value      = lim.brandLimit;
-  document.getElementById('pa-competitor-limit').value = lim.competitorLimit;
-  renderPADetail(paSelectedPlan);
+  const rule = pv2FamilyPolicy().capabilities[capId];
+  const current = new Set(rule.networks?.allowed || []);
+  pv2OpenForm('Select feature networks', `
+    <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">Only this feature uses this override. Unselected networks remain unavailable even when the family has general access.</p>
+    ${(pvCatalog.networks || []).map((network) => `<label class="pv2-network"><input type="checkbox" name="networks" value="${pv2Escape(network.id)}" ${current.has(network.id) ? 'checked' : ''}> ${pv2Escape(network.label || network.id)}</label>`).join('')}
+  `, (form) => {
+    rule.networks.allowed = form.getAll('networks').map(String);
+    pv2SetDirty(); pvRenderCapabilities();
+    return true;
+  }, { submitLabel: 'Use selected networks' });
 }
 
-function paCancelEdit() {
-  paEditMode = false;
-  paEditSnapshot = { filters: {}, filterPlatforms: {}, platforms: [], limits: { brandLimit: 0, competitorLimit: 0 } };
-  paExplicitlyChangedPlatforms = new Set();
-  document.getElementById('pa-edit-btn').style.display   = '';
-  document.getElementById('pa-save-btn').style.display   = 'none';
-  document.getElementById('pa-cancel-btn').style.display = 'none';
-  document.getElementById('pa-th-toggle').style.display  = 'none';
-  document.getElementById('pa-save-status').textContent  = '';
-  document.getElementById('pa-limits').style.display      = 'flex';
-  document.getElementById('pa-limits-edit').style.display = 'none';
-  if (paSelectedPlan) renderPADetail(paSelectedPlan);
+function pv2RenderDrafts(drafts) {
+  const el = document.getElementById('pv2-drafts');
+  el.innerHTML = drafts.length ? drafts.map((draft) => `
+    <div class="pv2-item ${pvCurrentDraft?.draftId === draft.draftId ? 'active' : ''}" onclick="pvSelectDraft('${pv2Escape(draft.draftId)}')">
+      <div class="pv2-draft-actions">
+        <div style="min-width:0">
+          <b style="font-size:11px;display:block;overflow:hidden;text-overflow:ellipsis">${pv2Escape(draft.draftId)}</b>
+          <div style="font-size:9px;color:var(--text-muted);margin-top:4px">Complete-policy draft · revision ${draft.draftRevision}</div>
+          <div style="font-size:8px;color:#f59e0b;margin-top:3px">Contains every plan family, not only one plan</div>
+          <div style="font-size:8px;color:#64748b;margin-top:3px">Started from live revision ${draft.baseRevision}</div>
+        </div>
+        ${currentRole === 'editor' ? `<button class="pv2-icon-danger" title="Delete this unpublished draft" onclick="event.stopPropagation();pvDeleteDraft('${pv2Escape(draft.draftId)}',${Number(draft.draftRevision)})">Delete</button>` : ''}
+      </div>
+    </div>`).join('') : '<div style="font-size:10px;color:var(--text-muted)">No drafts. Create one before changing plans.</div>';
 }
+async function pvLoadDrafts() { const result = await pv2Api('/drafts'); pv2RenderDrafts(result.data || []); }
+function pv2RenderHistory(versions) {
+  document.getElementById('pv2-history').innerHTML = versions.length ? versions.map((version) => `<div class="pv2-item"><div style="display:flex;justify-content:space-between"><b style="font-size:11px">Revision ${version.revision}</b>${version.isActive ? '<span class="pv2-live-badge">LIVE</span>' : '<span style="font-size:9px;color:var(--text-muted)">HISTORICAL</span>'}</div><div style="font-size:9px;color:var(--text-muted);margin-top:4px">${pv2Escape(version.reason || '')}</div>${version.sourceDraftId ? `<div style="font-size:8px;color:#64748b;margin-top:3px">Published from draft: ${pv2Escape(version.sourceDraftId)}</div>` : ''}${version.isActive ? '' : `<button class="btn btn-ghost btn-sm" style="margin-top:5px" onclick="pvRestoreVersion('${pv2Escape(version.versionId)}')">Create rollback draft</button>`}</div>`).join('') : '<div style="font-size:10px;color:var(--text-muted)">No published versions.</div>';
+}
+async function pvLoadVersions() { const result = await pv2Api('/versions'); pv2RenderHistory(result.data || []); }
 
-async function paSave() {
-  if (!paSelectedPlan) return;
-  const pid = Number(paSelectedPlan);
-
-  // Flush any visible DOM checkboxes into snapshot before sending
-  paFlushDomToSnapshot();
-
-  // Read limits from inputs
-  paEditSnapshot.limits = {
-    brandLimit:      Number(document.getElementById('pa-brand-limit').value)      || 0,
-    competitorLimit: Number(document.getElementById('pa-competitor-limit').value) || 0,
-  };
-
-  const statusEl = document.getElementById('pa-save-status');
-  statusEl.textContent = 'Saving...';
-
-  try {
-    const token = typeof getAdminToken === 'function' ? getAdminToken() : (localStorage.getItem('adminToken') || '');
-    const res = await fetch(API + '/plan-access/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ planId: pid, platforms: paEditSnapshot.platforms, limits: paEditSnapshot.limits, filters: paEditSnapshot.filters }),
+function pvCreateDraft(familyId = pv2SelectedFamilyId) {
+  if (currentRole !== 'editor') return;
+  const family = pv2Families().find((item) => item.familyId === familyId);
+  const suggestedId = `plan-${familyId || 'update'}-${new Date().toISOString().slice(0, 10)}`;
+  pv2OpenForm('Create isolated draft', `
+    <div style="grid-column:1/-1">${pv2Field('Draft name', 'draftId', suggestedId, 'text', 'required pattern="[a-z0-9._-]+"')}</div>
+    <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">Starting work on <b>${pv2Escape(family?.adminLabel || 'the selected plan')}</b>. The complete live policy is copied—not only this family. Nothing changes for customers until validation and publish both succeed.</p>
+    <p style="grid-column:1/-1;font-size:10px;color:#f59e0b">Parallel drafts from the same live revision cannot both publish independently. After one publishes, the other must be rebased.</p>
+  `, async (form) => {
+    try {
+      const draftId = String(form.get('draftId') || '').trim();
+      const result = await pv2Api('/drafts', { method: 'POST', body: JSON.stringify({ draftId }) });
+      await pvLoadDrafts(); await pvSelectDraft(result.draft.draftId);
+      return true;
+    } catch (error) { showToast?.(error.message, 'error'); return false; }
+  }, { submitLabel: 'Create safe draft' });
+}
+async function pvSelectDraft(draftId) {
+  if (pv2Dirty) {
+    pv2ConfirmAction({
+      title: 'Discard unsaved edits?',
+      message: `You have changes that are not saved in ${pvCurrentDraft?.draftId || 'the current draft'}. Opening another draft will discard only those unsaved browser edits.`,
+      confirmLabel: 'Discard and open draft',
+      danger: true,
+      onConfirm: async () => {
+        pv2SetDirty(false);
+        await pvSelectDraft(draftId);
+      },
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.message || 'Save failed');
-    statusEl.textContent = '✓ Saved';
-    await loadPlanAccessDocs();
-    paCancelEdit();
-  } catch (e) {
-    statusEl.textContent = '✗ ' + e.message;
+    return;
   }
-}
-
-async function paDeletePlan(planId, group) {
-  if (!confirm(`Soft-delete plan ${planId}?\n\nUsers on this plan will immediately lose all access.\nThe plan mapping is preserved and can be restored anytime.`)) return;
   try {
-    const res = await fetch(`${API}/plan-access/plan/${planId}`, { method: 'DELETE', credentials: 'include' });
-    const json = await res.json();
-    if (!res.ok) { showToast(json.message || 'Delete failed', 'error'); return; }
-    showToast(json.message, 'success');
-    await loadPlanAccessDocs();
-    if (paSelectedPlan === planId) renderPADetail(planId);
-  } catch (e) {
-    showToast('Delete failed: ' + e.message, 'error');
+    const result = await pv2Api(`/drafts/${encodeURIComponent(draftId)}`);
+    pvCurrentDraft = result.data; pv2SetDirty(false);
+    pv2ReadOnlyFamily = null;
+    pv2ReadOnlyPolicy = null;
+    pv2RenderMode();
+    pv2RenderSource();
+    document.getElementById('pv2-save').disabled = false;
+    document.getElementById('pv2-validate').disabled = false;
+    document.getElementById('pv2-publish').disabled = false;
+    pv2RenderGenerationSelector(); pvRenderFamilies(); await pvLoadDrafts();
+    if (pv2SelectedFamilyId && pv2Families().some((family) => family.familyId === pv2SelectedFamilyId)) pvLoadPlanEditor();
+  } catch (error) { showToast?.(error.message, 'error'); }
+}
+function pvExitDraft() {
+  if (pv2Dirty) {
+    pv2ConfirmAction({
+      title: 'Exit without saving browser edits?',
+      message: `Unsaved browser edits in ${pvCurrentDraft?.draftId || 'this draft'} will be discarded. The saved MongoDB draft itself will not be deleted or changed.`,
+      confirmLabel: 'Discard browser edits & exit',
+      danger: true,
+      onConfirm: () => {
+        pv2SetDirty(false);
+        pvExitDraft();
+      },
+    });
+    return;
+  }
+  pvCurrentDraft = null;
+  document.getElementById('pv2-save').disabled = true;
+  document.getElementById('pv2-validate').disabled = true;
+  document.getElementById('pv2-publish').disabled = true;
+  pv2RenderMode();
+  pv2RenderSource();
+  pv2RenderGenerationSelector();
+  pvRenderFamilies();
+  pvLoadDrafts().catch(() => {});
+  if (pv2SelectedFamilyId && pv2Families().some((family) => family.familyId === pv2SelectedFamilyId)) {
+    pv2SelectFamily(pv2SelectedFamilyId);
   }
 }
-
-async function paRestorePlan(planId, group) {
+function pvDeleteDraft(draftId, draftRevision) {
+  if (currentRole !== 'editor') return;
+  const isCurrent = pvCurrentDraft?.draftId === draftId;
+  pv2ConfirmAction({
+    title: 'Delete unpublished draft?',
+    message: `"${draftId}" is only a working copy and is not live. Deleting it will not change customer access, but its unpublished edits cannot be recovered.`,
+    confirmLabel: 'Delete draft',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        await pv2Api(`/drafts/${encodeURIComponent(draftId)}`, {
+          method: 'DELETE',
+          body: JSON.stringify({ expectedDraftRevision: draftRevision }),
+        });
+        if (isCurrent) {
+          pvCurrentDraft = null;
+          pv2SetDirty(false);
+          document.getElementById('pv2-save').disabled = true;
+          document.getElementById('pv2-validate').disabled = true;
+          document.getElementById('pv2-publish').disabled = true;
+          pv2RenderMode();
+          pv2RenderSource();
+          pv2RenderGenerationSelector();
+          pvRenderFamilies();
+          if (pv2SelectedFamilyId && pv2Families().some((family) => family.familyId === pv2SelectedFamilyId)) {
+            pvLoadPlanEditor();
+          } else {
+            document.getElementById('pv2-editor').style.display = 'none';
+            document.getElementById('pv2-empty').style.display = 'block';
+          }
+        }
+        await pvLoadDrafts();
+        await loadPAReviewCount();
+        showToast?.(`Draft "${draftId}" deleted. Live plans were not changed.`, 'success');
+      } catch (error) {
+        showToast?.(error.status === 409 ? 'Draft changed in another tab. Reload before deleting it.' : error.message, 'error');
+      }
+    },
+  });
+}
+async function pvSaveDraft() {
+  if (!pvCurrentDraft) return false;
   try {
-    const res = await fetch(`${API}/plan-access/restore-plan/${planId}`, { method: 'POST', credentials: 'include' });
-    const json = await res.json();
-    if (!res.ok) { showToast(json.message || 'Restore failed', 'error'); return; }
-    showToast(json.message, 'success');
-    await loadPlanAccessDocs();
-    if (paSelectedPlan === planId) renderPADetail(planId);
-  } catch (e) {
-    showToast('Restore failed: ' + e.message, 'error');
+    const result = await pv2Api(`/drafts/${encodeURIComponent(pvCurrentDraft.draftId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ snapshot: pvCurrentDraft.snapshot, expectedDraftRevision: pvCurrentDraft.draftRevision }),
+    });
+    pvCurrentDraft = result.draft; pv2SetDirty(false); await pvLoadDrafts();
+    document.getElementById('pv2-subtitle').textContent = `Editing ${pvCurrentDraft.draftId} revision ${pvCurrentDraft.draftRevision}`;
+    showToast?.('Draft saved safely.', 'success');
+    await loadPAReviewCount();
+    return true;
+  } catch (error) {
+    if (error.status === 409) showToast?.(`This draft changed in another tab (latest revision ${error.payload.latestDraftRevision}). Reload before editing.`, 'error');
+    else showToast?.(error.message, 'error');
+    return false;
   }
 }
+async function pvValidateDraft() {
+  if (pv2Dirty && !(await pvSaveDraft())) return false;
+  try {
+    const result = await pv2Api(`/drafts/${encodeURIComponent(pvCurrentDraft.draftId)}/validate`, { method: 'POST' });
+    const data = result.data;
+    const panel = document.getElementById('pv2-validation'); panel.style.display = 'block';
+    const errorRows = (data.errors || []).map((issue) => `<p style="font-size:11px;border-left:3px solid #ef4444;padding-left:8px"><span style="color:#fca5a5;font-size:9px;font-weight:800">BLOCKING</span><br><b>${pv2Escape(issue.code)}</b> · ${pv2Escape(issue.path)}<br>${pv2Escape(issue.message)}</p>`).join('');
+    const warningRows = (data.warnings || []).map((issue) => `<p style="font-size:11px;border-left:3px solid #f59e0b;padding-left:8px"><span style="color:#fde68a;font-size:9px;font-weight:800">REVIEW WARNING</span><br><b>${pv2Escape(issue.code)}</b> · ${pv2Escape(issue.path)}<br>${pv2Escape(issue.message)}</p>`).join('');
+    panel.innerHTML = `<div class="pv2-kicker">Validation & exact diff</div><h3 style="color:${data.valid ? '#22c55e' : '#f87171'}">${data.valid ? `Ready for publish · ${(data.warnings || []).length} warning(s)` : `${data.errors.length} blocking issue(s) · ${(data.warnings || []).length} warning(s)`}</h3>${data.staleBase ? '<p style="color:#f59e0b">Live policy changed since this draft was created. Publishing will be blocked until rebased.</p>' : ''}${(data.warnings || []).some((issue) => issue.code === 'CAPABILITY_NEEDS_REVIEW') ? '<button type="button" class="btn btn-ghost btn-sm" onclick="pv2ShowNeedsReview()">Show new features to review</button>' : ''}<div style="max-height:260px;overflow:auto">${errorRows}${warningRows || (!errorRows ? '<p style="font-size:11px">No schema or policy errors.</p>' : '')}</div><details><summary style="font-size:11px;cursor:pointer">${data.diff.length} changed fields</summary><pre style="font-size:9px;white-space:pre-wrap">${pv2Escape(JSON.stringify(data.diff, null, 2))}</pre></details>`;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return data.valid;
+  } catch (error) { showToast?.(error.message, 'error'); return false; }
+}
+function pv2ShowNeedsReview() {
+  const filter = document.getElementById('pv2-filter');
+  if (filter) filter.value = 'needs_review';
+  pvRenderCapabilities();
+  document.querySelector('.pv2-table-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+async function pvPublishDraft() {
+  if (!pvCurrentDraft) return;
+  if (pv2Dirty && !(await pvSaveDraft())) return;
+  if (!(await pvValidateDraft())) return;
+  const draft = pvCurrentDraft;
+  pv2OpenForm('Publish plan changes', `
+    <div style="grid-column:1/-1;padding:12px;border:1px solid rgba(245,158,11,.35);border-radius:8px;background:rgba(245,158,11,.08)">
+      <b style="color:#fbbf24">This changes live customer access</b>
+      <div class="pv2-explain" style="margin-top:6px">Draft: ${pv2Escape(draft.draftId)} · base revision ${draft.baseRevision} · draft revision ${draft.draftRevision}</div>
+      <div class="pv2-explain">Publishing is atomic. If another tab changed the draft or live policy, it will be blocked safely.</div>
+    </div>
+    <label style="grid-column:1/-1;display:flex;flex-direction:column;gap:6px;font-size:11px"><span><b>Why are you making this change?</b></span><textarea class="pv2-input" name="reason" rows="3" required placeholder="Example: Enable AI Search for Platinum monthly and yearly plans"></textarea><small style="color:var(--text-muted)">This reason appears in audit history and helps future rollback decisions.</small></label>
+    <label style="grid-column:1/-1;display:flex;gap:8px;align-items:flex-start;font-size:11px"><input type="checkbox" name="confirmed" required style="margin-top:2px"><span>I reviewed the highlighted frontend preview and exact diff, and I understand this will become the live plan policy.</span></label>
+  `, async (form) => {
+    try {
+      const reason = String(form.get('reason') || '').trim();
+      if (!reason) return showToast?.('A clear publish reason is required.', 'error'), false;
+      const result = await pv2Api(`/drafts/${encodeURIComponent(draft.draftId)}/publish`, {
+        method: 'POST',
+        body: JSON.stringify({ expectedBaseRevision: draft.baseRevision, expectedDraftRevision: draft.draftRevision, reason }),
+      });
+      showToast?.(`Policy revision ${result.revision} published.`, 'success');
+      pvCurrentDraft = null;
+      pv2SetDirty(false);
+      await pvLoadInit();
+      await loadPAReviewCount();
+      return true;
+    } catch (error) {
+      showToast?.(error.status === 409 ? 'Live policy or draft changed. Nothing was published; reload and compare.' : error.message, 'error');
+      return false;
+    }
+  }, { submitLabel: 'Publish live policy', danger: true });
+}
+async function pvRestoreVersion(versionId) {
+  pv2OpenForm('Create rollback draft', `
+    <div style="grid-column:1/-1">${pv2Field('Rollback draft name', 'draftId', `rollback-${Date.now()}`, 'text', 'required pattern="[a-z0-9._-]+"')}</div>
+    <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">This does not roll back live access immediately. It creates a safe draft from the selected historical version so you can preview, validate and publish it deliberately.</p>
+  `, async (form) => {
+    try {
+      const draftId = String(form.get('draftId') || '').trim();
+      const result = await pv2Api(`/versions/${encodeURIComponent(versionId)}/restore-draft`, { method: 'POST', body: JSON.stringify({ draftId }) });
+      await pvLoadDrafts();
+      await pvSelectDraft(result.draft.draftId);
+      return true;
+    } catch (error) {
+      showToast?.(error.message, 'error');
+      return false;
+    }
+  }, { submitLabel: 'Create rollback draft' });
+}
 
-// Expose to window for inline onclick handlers
-window.loadPlanAccessDocs        = loadPlanAccessDocs;
-window.paSelectPlan              = paSelectPlan;
-window.paSwitchCat               = paSwitchCat;
-window.paToggleEdit              = paToggleEdit;
-window.paCancelEdit              = paCancelEdit;
-window.paSave                    = paSave;
-window.paFlushDomToSnapshot      = paFlushDomToSnapshot;
-window.paToggleFilterPlat        = paToggleFilterPlat;
-window.paFilterAllowedChanged    = paFilterAllowedChanged;
-window.paDeletePlan              = paDeletePlan;
-window.paRestorePlan             = paRestorePlan;
+async function pvOpenPreview(capabilityId) {
+  const cap = (pvCatalog.capabilities || []).find((item) => item.id === capabilityId);
+  if (!cap) return;
+  document.getElementById('pv2-preview').classList.add('open');
+  document.getElementById('pv2-preview').setAttribute('aria-hidden', 'false');
+  document.getElementById('pv2-preview-title').textContent = cap.label;
+  document.getElementById('pv2-preview-body').innerHTML = '<p style="color:var(--text-muted)">Calculating before/after impact…</p>';
+  let simulation = null;
+  if (pvCurrentDraft) {
+    const planId = Number(document.getElementById('pv2-variant')?.value);
+    try {
+      const result = await pv2Api(`/drafts/${encodeURIComponent(pvCurrentDraft.draftId)}/preview`, { method: 'POST', body: JSON.stringify({ capabilityId, familyId: pv2SelectedFamilyId, planId }) });
+      simulation = result.data;
+    } catch (error) { showToast?.(error.message, 'error'); }
+  }
+  const details = simulation?.capability || cap;
+  pv2PreviewContext = { details, simulation, state: simulation ? 'after' : 'feature' };
+  const decision = (item) => item ? `<div class="pv2-stat"><b style="color:${item.allowed ? '#22c55e' : '#f87171'}">${item.allowed ? 'Allowed' : 'Restricted'}</b><div style="font-size:10px;margin-top:6px">${pv2Escape(item.reasonCode)}</div><div style="font-size:9px;color:var(--text-muted);margin-top:5px">Networks: ${pv2Escape((item.allowedNetworks || []).join(', ') || 'none')}</div></div>` : '<div class="pv2-stat">Select a draft and family to simulate.</div>';
+  document.getElementById('pv2-preview-body').innerHTML = `
+    <section style="margin-bottom:20px;padding:13px;border:1px solid rgba(245,158,11,.28);border-radius:10px;background:rgba(245,158,11,.035)">
+      <div style="display:flex;align-items:flex-start;gap:10px"><div><div class="pv2-kicker" style="color:#fbbf24">Frontend screen — exact location</div><p style="font-size:10px;color:var(--text-muted);margin:5px 0 0">This is a safe simulated screenshot using mock data. Yellow highlights the feature; red shows its locked position.</p></div><span style="flex:1"></span><span style="font-size:9px;border:1px solid #fbbf24;color:#fbbf24;border-radius:99px;padding:4px 8px">SCREEN PREVIEW</span></div>
+      <div id="pv2-visual-preview">${pv2BuildVisualPreview(details, simulation, pv2PreviewContext.state)}</div>
+    </section>
+    <section style="margin-bottom:18px"><div class="pv2-kicker">What is this?</div><p style="font-size:12px;line-height:1.55">${pv2Escape(details.description)}</p><span style="font-size:10px">Section: ${pv2Escape(details.category)} · Parent feature: ${pv2Escape(details.parentCapability || 'Top-level feature')} · Owner: ${pv2Escape(details.owner)} · Status: ${pv2Escape(details.status)}</span></section>
+    <section style="margin-bottom:18px"><div class="pv2-kicker">Where users see it</div><p style="font-size:12px"><b>${pv2Escape(details.frontend?.location)}</b><br>Frontend route: <code>${pv2Escape(details.frontend?.route || 'backend only')}</code></p><div style="font-size:10px;color:var(--text-muted)">Controls: ${(details.frontend?.controls || []).map((control) => pv2Escape(control.label || control.id)).join(', ') || 'No visible control'}</div></section>
+    <section style="margin-bottom:18px"><div class="pv2-kicker">What gets restricted</div><p style="font-size:12px">${pv2Escape(details.impact?.message || details.lockedExperience?.message)}</p><ul>${(details.impact?.routes || (details.routes || []).map((r) => `${r.method} ${r.path}`)).map((route) => `<li style="font-size:11px"><code>${pv2Escape(route)}</code></li>`).join('')}</ul></section>
+    <section><div class="pv2-kicker">Customer before / after simulation</div><p style="font-size:10px;color:var(--text-muted)">Simulation only; backend enforcement remains authoritative.</p><div class="pv2-decision-grid">${decision(simulation?.before)}${decision(simulation?.after)}</div></section>`;
+  document.getElementById('pv2-preview-body').scrollTop = 0;
+}
+
+function pv2BuildVisualPreview(details, simulation, state) {
+  const route = details.frontend?.route || '/';
+  const location = details.frontend?.location || details.label;
+  const controls = details.frontend?.controls || [];
+  const controlLabel = controls[0]?.label || details.label;
+  const decision = state === 'before' ? simulation?.before : state === 'after' ? simulation?.after : null;
+  const restricted = decision && !decision.allowed;
+  const tabs = simulation ? `<div class="pv2-preview-tabs"><button class="pv2-preview-tab ${state === 'before' ? 'active' : ''}" onclick="pv2SwitchPreviewState('before')">Before · Live</button><button class="pv2-preview-tab ${state === 'after' ? 'active' : ''}" onclick="pv2SwitchPreviewState('after')">After · Draft</button></div>` : '';
+  let activeNav = 'Ads Library';
+  let page = '';
+
+  if (route === '/projects') {
+    activeNav = 'All Projects';
+    if (details.id === 'projects.analytics') {
+      page = `<div class="pv2-shot-title">Competitor Analytics</div><div class="pv2-shot-sub">Compare performance across your tracked brands</div><div class="pv2-shot-grid"><div class="pv2-shot-card pv2-target"><div class="pv2-shot-line short"></div><div class="pv2-shot-line"></div>${restricted ? '<span class="pv2-shot-lock">🔒 Upgrade to view analytics</span>' : ''}</div><div class="pv2-shot-card"><div class="pv2-shot-line short"></div><div class="pv2-shot-line"></div></div><div class="pv2-shot-card"><div class="pv2-shot-line short"></div><div class="pv2-shot-line"></div></div></div>`;
+    } else if (details.id === 'projects.members' || details.id === 'projects.brand_cc') {
+      page = `<div class="pv2-shot-title">Project Members</div><div class="pv2-shot-sub">Manage teammates and brand notifications</div><div class="pv2-shot-control pv2-target"><b>${pv2Escape(controlLabel)}</b><div class="pv2-shot-line" style="margin-top:7px"></div>${restricted ? '<span class="pv2-shot-lock">🔒 Member management locked</span>' : ''}</div><div class="pv2-shot-control">Brand notification recipients</div>`;
+    } else if (details.id === 'projects.alerts' || details.id === 'projects.activity_feed') {
+      page = `<div class="pv2-shot-title">All Projects</div><div class="pv2-shot-sub">Alerts and recent project changes</div><div class="pv2-shot-control pv2-target"><b>${pv2Escape(details.label)}</b><div class="pv2-shot-line" style="margin-top:7px"></div>${restricted ? '<span class="pv2-shot-lock">🔒 This section will be restricted</span>' : ''}</div><div class="pv2-shot-control">Recent competitor changes</div>`;
+    } else {
+      page = `<div class="pv2-shot-title">All Projects</div><div class="pv2-shot-sub">Track brands and discover their competitors</div><div class="pv2-shot-tools"><div class="pv2-shot-control pv2-target"><b>${pv2Escape(controlLabel)}</b>${restricted ? '<span class="pv2-shot-lock">🔒 Upgrade required</span>' : '<div style="color:#86efac;margin-top:5px;font-size:7px">Available on this plan</div>'}</div></div><div class="pv2-shot-grid"><div class="pv2-shot-card"><div class="pv2-shot-line"></div></div><div class="pv2-shot-card"><div class="pv2-shot-line"></div></div></div>`;
+    }
+  } else if (route === '/market-trends') {
+    activeNav = 'Market Trends';
+    page = `<div class="pv2-shot-title">Market Trends</div><div class="pv2-shot-sub">Explore winning categories, regions and keywords</div><div class="pv2-shot-control">Network · Facebook</div><div class="pv2-shot-grid"><div class="pv2-shot-card pv2-target"><div class="pv2-shot-line short"></div><div class="pv2-shot-line"></div>${restricted ? '<span class="pv2-shot-lock">🔒 Trends locked</span>' : ''}</div><div class="pv2-shot-card"><div class="pv2-shot-line"></div></div><div class="pv2-shot-card"><div class="pv2-shot-line"></div></div></div>`;
+  } else if (route === '/keywords-explorer') {
+    activeNav = 'Keyword Explorer';
+    page = `<div class="pv2-shot-title">Keyword Explorer</div><div class="pv2-shot-sub">Find keyword volume and competitive opportunities</div><div class="pv2-shot-control pv2-target"><b>Search keywords</b><div class="pv2-shot-line" style="margin-top:7px"></div>${restricted ? '<span class="pv2-shot-lock">🔒 Keyword Explorer locked</span>' : ''}</div><div class="pv2-shot-card" style="height:72px"><div class="pv2-shot-line"></div><div class="pv2-shot-line"></div><div class="pv2-shot-line short"></div></div>`;
+  } else {
+    activeNav = 'Ads Library';
+    page = `<div class="pv2-shot-title">Ads Library</div><div class="pv2-shot-sub">Search ads and narrow results with filters</div><div style="display:grid;grid-template-columns:115px 1fr;gap:7px"><div><div class="pv2-shot-control">Network</div><div class="pv2-shot-control pv2-target"><b>${pv2Escape(controlLabel)}</b>${restricted ? '<span class="pv2-shot-lock">🔒 Upgrade</span>' : '<div style="font-size:7px;color:#86efac;margin-top:5px">Enabled</div>'}</div><div class="pv2-shot-control">Date range</div></div><div class="pv2-shot-grid" style="grid-template-columns:repeat(2,1fr)"><div class="pv2-shot-card" style="height:78px"><div class="pv2-shot-line"></div></div><div class="pv2-shot-card" style="height:78px"><div class="pv2-shot-line"></div></div></div></div>`;
+  }
+
+  const navItems = ['Ads Library', 'Market Trends', 'Keyword Explorer', 'All Projects'];
+  return `${tabs}<div class="pv2-shot ${restricted ? 'pv2-shot-restricted' : ''}"><div class="pv2-shot-bar"><span class="pv2-shot-dot"></span><span class="pv2-shot-dot"></span><span class="pv2-shot-dot"></span><span class="pv2-shot-url">poweradspy.com${pv2Escape(route)}</span></div><div class="pv2-shot-app"><div class="pv2-shot-nav"><div class="pv2-shot-logo"></div>${navItems.map((item) => `<div class="pv2-shot-navitem ${item === activeNav ? 'active' : ''}">${item}</div>`).join('')}</div><div class="pv2-shot-page">${page}</div></div></div><div class="pv2-shot-caption"><b>Highlighted:</b> ${pv2Escape(location)}<br>${restricted ? 'Draft ke baad ye highlighted control locked/upgrade state mein dikhega.' : 'Yellow highlight exact frontend location dikhata hai jise ye capability control karti hai.'}</div>`;
+}
+
+function pv2SwitchPreviewState(state) {
+  if (!pv2PreviewContext) return;
+  pv2PreviewContext.state = state;
+  const target = document.getElementById('pv2-visual-preview');
+  if (target) target.innerHTML = pv2BuildVisualPreview(pv2PreviewContext.details, pv2PreviewContext.simulation, state);
+}
+function pvClosePreview() { document.getElementById('pv2-preview').classList.remove('open'); document.getElementById('pv2-preview').setAttribute('aria-hidden', 'true'); }
+
+let pv2FormHandler = null;
+function pv2OpenForm(title, body, handler, options = {}) {
+  document.getElementById('pv2-form-title').textContent = title;
+  document.getElementById('pv2-form-body').innerHTML = body;
+  pv2FormHandler = handler;
+  const submit = document.getElementById('pv2-form-submit');
+  const cancel = document.getElementById('pv2-form-cancel');
+  submit.textContent = options.submitLabel || 'Apply changes';
+  submit.style.background = options.danger ? '#b91c1c' : '';
+  submit.style.borderColor = options.danger ? '#ef4444' : '';
+  submit.disabled = currentRole !== 'editor' && options.readOnly !== true;
+  cancel.style.display = options.hideCancel ? 'none' : '';
+  document.getElementById('pv2-form-modal').classList.remove('hidden');
+}
+function pv2CloseForm() {
+  document.getElementById('pv2-form-modal').classList.add('hidden');
+  pv2FormHandler = null;
+}
+async function pv2SubmitForm(event) {
+  event.preventDefault();
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
+    if (await pv2FormHandler?.(new FormData(event.currentTarget)) !== false) pv2CloseForm();
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+function pv2Field(label, name, value = '', type = 'text', extra = '') {
+  return `<label style="display:flex;flex-direction:column;gap:6px;font-size:11px"><span>${pv2Escape(label)}</span><input class="pv2-input" name="${pv2Escape(name)}" type="${type}" value="${pv2Escape(value)}" ${extra}></label>`;
+}
+function pv2ExplainedField(label, help, name, value = '', type = 'text', extra = '') {
+  return `<label style="display:flex;flex-direction:column;gap:5px;font-size:11px"><span><b>${pv2Escape(label)}</b></span><small style="color:var(--text-muted);line-height:1.35">${pv2Escape(help)}</small><input class="pv2-input" name="${pv2Escape(name)}" type="${type}" value="${pv2Escape(value)}" ${extra}></label>`;
+}
+
+function pv2ConfirmAction({ title, message, confirmLabel = 'Confirm', danger = false, onConfirm }) {
+  pv2OpenForm(title, `
+    <div style="grid-column:1/-1;padding:13px;border:1px solid ${danger ? 'rgba(248,113,113,.32)' : 'var(--border)'};border-radius:8px;background:${danger ? 'rgba(248,113,113,.07)' : 'var(--bg-secondary)'}">
+      <p style="font-size:12px;line-height:1.55;margin:0;color:var(--text)">${pv2Escape(message)}</p>
+    </div>
+  `, async () => {
+    await onConfirm?.();
+    return true;
+  }, { submitLabel: confirmLabel, danger });
+}
+
+function pvOpenHowToUse() {
+  pv2OpenForm('How to use Plan Control safely', `
+    <div class="pv2-help" style="grid-column:1/-1">
+      <div style="padding:12px;border:1px solid rgba(99,102,241,.3);background:rgba(99,102,241,.08);border-radius:9px;margin-bottom:8px"><b style="color:#c7d2fe">Simple rule:</b> customers change only after Publish. Everything before that is a safe draft.</div>
+      ${[
+        ['1', 'View any plan without a draft', 'Click Basic, Standard, Palladium or another family to open its current policy immediately in read-only mode. Creating a draft is never required just to inspect networks, features, limits or previews.'],
+        ['2', 'Check the source banner first', 'The banner says exactly what you are viewing: LIVE policy, CURRENT LEGACY ACCESS converted read-only, backend bootstrap preview, or an editable WORKING DRAFT. It also shows the MongoDB collection, record and revision when applicable.'],
+        ['3', 'Understand generation, family and billing options', 'A generation is a complete model such as Legacy or 2026 Plans. A family is one product tier. Monthly, yearly, trial and legacy billing IDs stay together inside that family and normally share its rules.'],
+        ['4', 'Open one complete-policy draft to edit', 'A working draft contains every plan family, not only the family visible when it was created. While that draft is selected, switch Basic, Standard and Palladium directly—your unsaved browser edits remain in the same draft snapshot.'],
+        ['5', 'Set and verify general networks', 'The green/amber summary lists the exact family-default networks in plain text. Checkboxes edit them only inside a safe draft. For an older blank migration draft, “Copy current networks into this draft” deliberately imports the current access without silently overwriting anything.'],
+        ['6', 'Use parent and child feature controls', 'A restricted parent blocks every child. A child set to Follow parent automatically uses the parent decision. Parent actions can allow the group, restrict the group, or reset all children to follow; an individual child may still use a stricter/custom decision.'],
+        ['7', 'Choose feature-specific networks where applicable', 'Network-aware rows can use the family’s general networks or a smaller custom list. “Same for every network” means that feature does not receive network context, so a custom network rule would not be enforced.'],
+        ['8', 'Set limits only where registered', 'Brand Limit, Token Limit, Member Limit and similar fields appear only when runtime code registered that limit type. Empty means no configured limit; 0 means zero usage allowed.'],
+        ['9', 'Review a new feature at the right scope', 'Review only this family, review all families while preserving each existing Allow/Restrict decision (safest bulk option), or explicitly apply one decision to all families. Pending compatibility reviews are warnings, not blockers; strict-deny unreviewed allows remain blocked.'],
+        ['10', 'Use the highlighted frontend preview', 'View frontend opens a browser-like screen. Yellow marks the exact customer control; red shows where it becomes locked. The drawer also lists affected APIs and the simulated before/after result.'],
+        ['11', 'Save, then Validate & diff', 'Save increments the draft revision. Any edit marks old validation results as outdated. Validate separates BLOCKING errors from REVIEW WARNINGS and shows every changed field before publish.'],
+        ['12', 'Publish once, with a reason', 'Publish is the only live action. It creates immutable history and a LIVE badge, records the source draft and deletes that published draft. Another tab holding an older revision cannot overwrite it.'],
+      ].map(([number, title, text]) => `<div class="pv2-help-step"><span class="pv2-help-num">${number}</span><div><h4>${title}</h4><p>${text}</p></div></div>`).join('')}
+      <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:9px">
+        <h4>Quick glossary</h4>
+        <p><b>Complete-policy draft:</b> one unpublished snapshot containing all generations, families and rules. It is not a Basic-only or Palladium-only draft.</p>
+        <p><b>Plan display order:</b> sorting/position only; it does not automatically grant access.</p>
+        <p><b>Billing option:</b> provider product ID for monthly, yearly, trial, legacy or a future billing cycle.</p>
+        <p><b>Available for new purchases:</b> whether new customers may buy it. The plan card explains whether this value came from live policy, the draft, legacy plan_groups or a safe missing-value default.</p>
+        <p><b>Blocking error:</b> invalid or unsafe policy that cannot publish. <b>Review warning:</b> visible follow-up work that does not block an unrelated compatibility-mode change.</p>
+        <p><b>Lifecycle:</b> draft, active, legacy or archived state of the plan definition.</p>
+      </div>
+      <div style="margin-top:10px;padding:12px;border:1px solid rgba(245,158,11,.3);background:rgba(245,158,11,.07);border-radius:9px">
+        <h4>Two browser tabs editing the same draft</h4>
+        <p>Both tabs start at the same draft revision. The first successful Save increments it. A later Save from the stale tab receives <code>DRAFT_CHANGED</code>; if the first tab already published, the stale tab receives <code>Draft not found</code>. It cannot overwrite the published data. Reload and create a fresh draft from the latest LIVE revision to continue.</p>
+      </div>
+      <div style="margin-top:10px;padding:12px;border:1px solid rgba(34,197,94,.25);background:rgba(34,197,94,.06);border-radius:9px">
+        <h4>When developers add a future feature</h4>
+        <p>Register its parent, frontend location, protected APIs, locked behavior, network applicability and supported limit names in the capability registry. It then appears automatically in the correct category and review queue. Compatibility mode temporarily allows an unreviewed feature to avoid a surprise 403 and reports a non-blocking warning; a generation can deliberately choose strict deny. The system never invents business meaning, a network rule or token enforcement—the developer must wire the runtime context and limit consumption.</p>
+      </div>
+    </div>
+  `, () => true, { submitLabel: 'Got it', hideCancel: true, readOnly: true });
+}
+
+function pvOpenGenerationWizard(forceClone = false) {
+  if (!pvCurrentDraft || currentRole !== 'editor') return showToast?.('Create or select a draft first. Generations never change live policy directly.', 'error');
+  const source = document.getElementById('pv2-generation')?.value || '';
+  pv2OpenForm('Create plan generation', `
+    ${pv2ExplainedField('Internal generation ID', 'Permanent technical key, for example 2027-growth.', 'generationId', '', 'text', 'required placeholder="2027-growth" pattern="[a-z0-9._-]+"')}
+    ${pv2ExplainedField('Name admins see', 'Friendly name that distinguishes this complete plan model.', 'adminLabel', '', 'text', 'required placeholder="2027 Growth Plans"')}
+    <label style="display:flex;flex-direction:column;gap:5px;font-size:11px"><span><b>How should it start?</b></span><small style="color:var(--text-muted)">Clone copies plan rules but removes billing IDs. Blank starts every feature safely restricted.</small><select class="pv2-input" name="sourceMode"><option value="clone" ${forceClone ? 'selected' : ''}>Copy selected generation’s rules</option><option value="blank">Start blank with features restricted</option></select></label>
+    <label style="display:flex;flex-direction:column;gap:5px;font-size:11px"><span><b>Design status</b></span><small style="color:var(--text-muted)">Draft is still being designed. Validated means its structure has already been reviewed.</small><select class="pv2-input" name="status"><option value="draft">Draft — still designing</option><option value="validated">Validated — structure reviewed</option></select></label>
+    <label style="display:flex;flex-direction:column;gap:5px;font-size:11px"><span><b>Who may buy it initially?</b></span><small style="color:var(--text-muted)">New generations should not be publicly sold until billing IDs and policies are verified.</small><select class="pv2-input" name="salesStatus"><option value="not_live">Nobody — not live</option><option value="internal">Internal/testing only</option></select></label>
+    <label style="display:flex;flex-direction:column;gap:5px;font-size:11px"><span><b>When a future feature is registered</b></span><small style="color:var(--text-muted)">Compatibility mode avoids surprise 403 errors but still keeps the feature visible in the review queue.</small><select class="pv2-input" name="newCapabilityDefault"><option value="needs_review">Temporarily allow everyone + ask admin to review</option><option value="deny">Strict mode: restrict until reviewed</option></select></label>
+    <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">Monthly, yearly, legacy, trial, or any future billing variant is configured inside each family. New capabilities always appear in this generation's review queue.</p>
+  `, (form) => {
+    const generationId = String(form.get('generationId') || '').trim();
+    const adminLabel = String(form.get('adminLabel') || '').trim();
+    const sourceMode = String(form.get('sourceMode'));
+    pvCurrentDraft.snapshot.generations ||= [];
+    if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(generationId)) return showToast?.('Invalid generation ID.', 'error'), false;
+    if (pvCurrentDraft.snapshot.generations.some((item) => item.generationId === generationId)) return showToast?.('Generation ID already exists.', 'error'), false;
+    pvCurrentDraft.snapshot.generations.push({
+      generationId, adminLabel, customerLabel: adminLabel, description: '',
+      status: String(form.get('status')), salesStatus: String(form.get('salesStatus')),
+      basedOnGenerationId: sourceMode === 'clone' ? source || null : null,
+      newCapabilityDefault: String(form.get('newCapabilityDefault')), createdAt: new Date().toISOString(),
+    });
+    if (sourceMode === 'clone' && source) {
+      const suffix = generationId.split('-').at(-1);
+      for (const original of pv2Families().filter((family) => family.generation === source)) {
+        let familyId = `${original.familyId.replace(/-[^-]+$/, '')}-${suffix}`;
+        if (pv2Families().some((family) => family.familyId === familyId)) familyId = `${original.familyId}-${generationId}`;
+        const copy = JSON.parse(JSON.stringify(original));
+        Object.assign(copy, { familyId, generation: generationId, adminLabel: `${copy.label} (${adminLabel})`, status: 'draft', openForNewSignups: false, variants: [] });
+        pvCurrentDraft.snapshot.planFamilies.push(copy);
+        const sourcePolicy = pvCurrentDraft.snapshot.policies?.[original.familyId] || { generalNetworks: [], capabilities: {}, variantOverrides: {} };
+        pvCurrentDraft.snapshot.policies[familyId] = JSON.parse(JSON.stringify(sourcePolicy));
+      }
+    }
+    pv2SetDirty(); pv2RenderGenerationSelector();
+    document.getElementById('pv2-generation').value = generationId; pvGenerationChanged();
+    showToast?.('Generation added to this draft. Add verified billing variants before publishing.', 'success');
+    return true;
+  }, { submitLabel: 'Add generation to draft' });
+}
+function pvDuplicateGeneration() { pvOpenGenerationWizard(true); }
+
+function pv2OpenFamilyForm(family = null) {
+  if (!pvCurrentDraft || currentRole !== 'editor') return;
+  const generation = family?.generation || document.getElementById('pv2-generation')?.value;
+  const variants = (family?.variants || []).map((variant) =>
+    `${variant.billingCycle}:${variant.planId}:${variant.billingProvider || 'amember'}:${variant.status || 'active'}`
+  ).join('\n');
+  pv2OpenForm(family ? 'Edit plan family' : 'Add plan family', `
+    ${pv2ExplainedField('Internal family ID', 'Permanent technical key used by policy history. It cannot be renamed later.', 'familyId', family?.familyId || '', 'text', `required pattern="[a-z0-9._-]+" ${family ? 'readonly' : ''}`)}
+    ${pv2ExplainedField('Name customers see', 'Friendly plan name shown in customer-facing screens.', 'label', family?.label || '', 'text', 'required')}
+    ${pv2ExplainedField('Name admins see', 'Include the generation/year so current and legacy plans are never confused.', 'adminLabel', family?.adminLabel || '', 'text', 'required')}
+    ${pv2ExplainedField('Plan display order', 'Higher number places the plan higher in comparisons. It does not grant features automatically.', 'tierRank', family?.tierRank ?? 10, 'number', 'min="0" required')}
+    <label style="display:flex;flex-direction:column;gap:5px;font-size:11px"><span><b>Plan lifecycle</b></span><small style="color:var(--text-muted);line-height:1.35">Draft = being designed, Active = current, Legacy = existing customers, Archived = history only.</small><select class="pv2-input" name="status">${['draft','active','legacy','custom','archived','deleted'].map((status) => `<option value="${status}" ${family?.status === status ? 'selected' : ''}>${pv2Humanize(status)}</option>`).join('')}</select></label>
+    <label style="display:flex;flex-direction:column;gap:6px;font-size:11px"><span><b>Available for new purchases</b></span><small style="color:var(--text-muted);line-height:1.35">Turn off to stop new sales while keeping existing customers and billing IDs valid.</small><span><input name="openForNewSignups" type="checkbox" ${family?.openForNewSignups ? 'checked' : ''}> Allow new customers to buy this plan</span></label>
+    <label style="grid-column:1/-1;display:flex;flex-direction:column;gap:6px;font-size:11px"><span><b>Billing options</b> — one per line: cycle : billing ID : provider : status</span><small style="color:var(--text-muted)">Monthly and yearly IDs listed here share this family’s rules. Supports legacy, trial, custom or future cycles. Duplicate IDs are blocked across every generation.</small><textarea class="pv2-input" name="variants" rows="5" placeholder="monthly:101:amember:active&#10;yearly:102:amember:active">${pv2Escape(variants)}</textarea></label>
+  `, (form) => {
+    const familyId = String(form.get('familyId') || '').trim();
+    if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(familyId)) return showToast?.('Invalid family ID.', 'error'), false;
+    if (!family && pv2Families().some((item) => item.familyId === familyId)) return showToast?.('Family ID already exists.', 'error'), false;
+    const parsed = String(form.get('variants') || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const [billingCycle, rawPlanId, billingProvider = 'amember', status = 'active'] = line.split(':').map((part) => part.trim());
+      return { planId: Number(rawPlanId), billingCycle, billingProvider, status, verified: true };
+    });
+    if (parsed.some((variant) => !variant.billingCycle || !Number.isInteger(variant.planId) || variant.planId <= 0)) return showToast?.('Each billing line needs a cycle and positive numeric plan ID.', 'error'), false;
+    if (new Set(parsed.map((variant) => variant.planId)).size !== parsed.length) return showToast?.('Billing IDs must be unique.', 'error'), false;
+    const requested = new Set(parsed.map((variant) => variant.planId));
+    const collision = pv2Families().flatMap((item) => item.familyId === familyId ? [] : (item.variants || []).map((variant) => ({ planId: Number(variant.planId), family: item.adminLabel }))).find((entry) => requested.has(entry.planId));
+    if (collision) return showToast?.(`Billing ID ${collision.planId} already belongs to ${collision.family}.`, 'error'), false;
+    const target = family || { familyId, generation, description: '' };
+    Object.assign(target, {
+      label: String(form.get('label')).trim(), adminLabel: String(form.get('adminLabel')).trim(),
+      tierRank: Number(form.get('tierRank')), status: String(form.get('status')),
+      openForNewSignups: form.get('openForNewSignups') === 'on', variants: parsed,
+    });
+    if (!family) {
+      pvCurrentDraft.snapshot.planFamilies.push(target);
+      pvCurrentDraft.snapshot.policies[familyId] = {
+        generalNetworks: [],
+        capabilities: Object.fromEntries((pvCatalog.capabilities || []).map((cap) => [cap.id, { effect: 'deny', reviewed: cap.status !== 'needs_review', networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' } }])),
+        variantOverrides: {},
+      };
+      pv2SelectedFamilyId = familyId;
+    }
+    pv2SetDirty(); pvRenderFamilies(); pvLoadPlanEditor();
+    return true;
+  }, { submitLabel: family ? 'Save plan details' : 'Add plan family' });
+}
+function pvAddFamily() { pv2OpenFamilyForm(); }
+function pvEditFamily() {
+  const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+  if (family) pv2OpenFamilyForm(family);
+}
+
+window.addEventListener('beforeunload', (event) => { if (pv2Dirty) { event.preventDefault(); event.returnValue = ''; } });
+Object.assign(window, { pvLoadInit, pvCreateDraft, pvSelectDraft, pvExitDraft, pvDeleteDraft, pvSaveDraft, pvPublishDraft, pvLoadPlanEditor, pvUpdateCap, pvRenderFamilies, pvRenderCapabilities, pvGenerationChanged, pvOpenGenerationWizard, pvDuplicateGeneration, pvAddFamily, pvEditFamily, pvValidateDraft, pv2ShowNeedsReview, pvRestoreVersion, pvOpenPreview, pvClosePreview, pvOpenHowToUse, pvGoUnlockEditing, pv2SwitchPreviewState, pv2SelectFamily, pv2ToggleNetwork, pv2CopyCurrentNetworks, pv2ApplyCapabilityTree, pv2SetLimit, pv2ReviewCap, pv2EditCapabilityNetworks, pv2SubmitForm, pv2CloseForm });

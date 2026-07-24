@@ -447,7 +447,17 @@ const getRestoreViewState = (addAdvertiserDraft) => {
 };
 
 const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCountryClick, setProjectContext, onBrandLimitReached }) => {
-  const { user: authUser, token: authToken, planAccess } = useAuth();
+  const {
+    user: authUser,
+    token: authToken,
+    planAccess,
+    getCapabilityLimit,
+    getCapabilityDecision,
+  } = useAuth();
+  // A missing decision means the account is still on the legacy plan response.
+  // Only an explicit unified-policy denial locks a child control.
+  const capabilityAllowed = (capabilityId) =>
+    getCapabilityDecision(capabilityId)?.allowed !== false;
   const [competitorUserId, setCompetitorUserId] = useState(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isProjectLoading, setIsProjectLoading] = useState(false);
@@ -1251,6 +1261,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   };
 
   const handleSubmitData = async () => {
+    if (!capabilityAllowed("projects.competitors.discovery")) {
+      showToast("Your current plan does not include competitor discovery.", "error");
+      return;
+    }
     if (!websiteLink || selectedKeywords.length === 0) return;
     setViewState(3); // Loading screen
     setIsPreparingCompetitors(true); // keep the buffer up through fetch + ES enrich
@@ -1641,6 +1655,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   };
 
   const toggleMonitoringStatus = async (project, competitor) => {
+    if (!capabilityAllowed("projects.competitors.monitoring")) {
+      showToast("Your current plan does not include competitor monitoring.", "error");
+      return;
+    }
     // "0" = Enable, "1" = Disable (Node.js backend expectation)
     const newStatus = competitor.isMonitored ? "1" : "0";
     try {
@@ -1696,7 +1714,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   // at submit time (the server still enforces this too — insertCompRequests's brand
   // quota check — this is just a faster, friendlier front door to the same limit).
   const startNewProject = () => {
-    const brandLimit = planAccess?.competitorLimits?.brandLimit;
+    if (!capabilityAllowed("projects.brand.create")) {
+      onBrandLimitReached?.();
+      return;
+    }
+    const brandLimit = getCapabilityLimit('projects.brand.create', 'brandLimit')
+      ?? planAccess?.competitorLimits?.brandLimit;
     if (typeof brandLimit === "number" && projects.length >= brandLimit) {
       onBrandLimitReached?.();
       return;
@@ -1732,6 +1755,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   };
 
   const openAddCompetitorModal = () => {
+    if (!capabilityAllowed("projects.manage")) {
+      showToast("Your current plan does not include project management.", "error");
+      return;
+    }
     setManualCompName("");
     setManualCompUrl("");
     setShowAddCompetitorModal(true);
@@ -1739,6 +1766,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
 
   // ── Rename brand ──────────────────────────────────────────────────────
   const openRenameBrandModal = () => {
+    if (!capabilityAllowed("projects.manage")) {
+      showToast("Your current plan does not include project management.", "error");
+      return;
+    }
     setRenameBrandValue(activeProject?.advertiser || "");
     setShowRenameBrandModal(true);
   };
@@ -2068,12 +2099,34 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <MembersManager userId={competitorUserId} projects={projects} />
+              {capabilityAllowed("projects.members") ? (
+                <MembersManager userId={competitorUserId} projects={projects} />
+              ) : (
+                <button
+                  disabled
+                  title="Your current plan does not include project members"
+                  className="px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 border border-theme-border text-theme-text-muted opacity-60 cursor-not-allowed"
+                >
+                  <Users size={18} /> Members locked
+                </button>
+              )}
               <button
                 onClick={startNewProject}
-                className="bg-[#335296] hover:bg-[#3762c1] text-white shadow-lg shadow-[#3759a3]/25 px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all"
+                title={
+                  capabilityAllowed("projects.brand.create")
+                    ? "Add New Advertiser"
+                    : "Your current plan does not include brand creation"
+                }
+                className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${
+                  capabilityAllowed("projects.brand.create")
+                    ? "bg-[#335296] hover:bg-[#3762c1] text-white shadow-lg shadow-[#3759a3]/25"
+                    : "bg-theme-border text-theme-text-muted cursor-not-allowed"
+                }`}
               >
-                <Plus size={18} /> Add New Advertiser
+                <Plus size={18} />{" "}
+                {capabilityAllowed("projects.brand.create")
+                  ? "Add New Advertiser"
+                  : "Advertiser creation locked"}
               </button>
             </div>
           </div>
@@ -2094,13 +2147,25 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (!capabilityAllowed("projects.manage")) {
+                          showToast("Your current plan does not include project management.", "error");
+                          return;
+                        }
                         setProjectToDelete({
                           id: proj.id,
                           advertiser: proj.advertiser,
                         });
                       }}
-                      className="absolute top-4 right-4 p-2 rounded-xl text-theme-text-muted hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all border border-transparent hover:border-red-500/20"
-                      title="Delete Advertiser"
+                      className={`absolute top-4 right-4 p-2 rounded-xl opacity-0 group-hover:opacity-100 transition-all border border-transparent ${
+                        capabilityAllowed("projects.manage")
+                          ? "text-theme-text-muted hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20"
+                          : "text-theme-text-muted cursor-not-allowed"
+                      }`}
+                      title={
+                        capabilityAllowed("projects.manage")
+                          ? "Delete Advertiser"
+                          : "Project management is locked on this plan"
+                      }
                     >
                       <Trash2 size={16} />
                     </button>
@@ -2409,10 +2474,26 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
 
               <button
                 onClick={handleSubmitData}
-                disabled={selectedKeywords.length === 0}
-                className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${selectedKeywords.length > 0 ? "bg-[#335296] hover:bg-[#3762c1] text-white shadow-[#3759a3]/25" : "bg-theme-border text-theme-text-muted cursor-not-allowed"}`}
+                disabled={
+                  selectedKeywords.length === 0 ||
+                  !capabilityAllowed("projects.competitors.discovery")
+                }
+                title={
+                  capabilityAllowed("projects.competitors.discovery")
+                    ? "Generate Competitors"
+                    : "Competitor discovery is locked on this plan"
+                }
+                className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                  selectedKeywords.length > 0 &&
+                  capabilityAllowed("projects.competitors.discovery")
+                    ? "bg-[#335296] hover:bg-[#3762c1] text-white shadow-[#3759a3]/25"
+                    : "bg-theme-border text-theme-text-muted cursor-not-allowed"
+                }`}
               >
-                Generate Competitors <Sparkles size={18} />
+                {capabilityAllowed("projects.competitors.discovery")
+                  ? "Generate Competitors"
+                  : "Competitor discovery locked"}{" "}
+                <Sparkles size={18} />
               </button>
             </div>
           </div>
@@ -2460,8 +2541,16 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 </h1>
                 <button
                   onClick={openRenameBrandModal}
-                  title={`Rename brand "${activeProject.advertiser}"`}
-                  className="p-2 rounded-lg text-theme-text-muted hover:text-[#6b99ff] hover:bg-[#3762c1]/10 border border-theme-border hover:border-[#3759a3]/40 transition-all"
+                  title={
+                    capabilityAllowed("projects.manage")
+                      ? `Rename brand "${activeProject.advertiser}"`
+                      : "Project management is locked on this plan"
+                  }
+                  className={`p-2 rounded-lg text-theme-text-muted border border-theme-border transition-all ${
+                    capabilityAllowed("projects.manage")
+                      ? "hover:text-[#6b99ff] hover:bg-[#3762c1]/10 hover:border-[#3759a3]/40"
+                      : "cursor-not-allowed opacity-50"
+                  }`}
                 >
                   <Edit2 size={16} />
                 </button>
@@ -2563,10 +2652,21 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 </div>
                 <button
                   onClick={openAddCompetitorModal}
-                  title={`Manually add a competitor to "${activeProject?.advertiser}"`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-[#335296] hover:bg-[#3762c1] text-white transition-all shadow-sm whitespace-nowrap"
+                  title={
+                    capabilityAllowed("projects.manage")
+                      ? `Manually add a competitor to "${activeProject?.advertiser}"`
+                      : "Project management is locked on this plan"
+                  }
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all shadow-sm whitespace-nowrap ${
+                    capabilityAllowed("projects.manage")
+                      ? "bg-[#335296] hover:bg-[#3762c1] text-white"
+                      : "bg-theme-border text-theme-text-muted cursor-not-allowed"
+                  }`}
                 >
-                  <Plus size={13} /> Add Competitor
+                  <Plus size={13} />{" "}
+                  {capabilityAllowed("projects.manage")
+                    ? "Add Competitor"
+                    : "Add locked"}
                 </button>
                 <button
                   onClick={() => {
@@ -2794,8 +2894,21 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                               onClick={() =>
                                 toggleMonitoringStatus(activeProject, comp)
                               }
-                              className={`p-1.5 rounded-lg transition-colors ${comp.isMonitored ? "text-[#6b99ff] bg-[#3762c1]/10" : "text-gray-400 bg-gray-500/10 hover:bg-theme-border"}`}
-                              title={comp.isMonitored ? "Enabled" : "Disabled"}
+                              disabled={!capabilityAllowed("projects.competitors.monitoring")}
+                              className={`p-1.5 rounded-lg transition-colors ${
+                                !capabilityAllowed("projects.competitors.monitoring")
+                                  ? "text-gray-500 bg-gray-500/10 cursor-not-allowed"
+                                  : comp.isMonitored
+                                    ? "text-[#6b99ff] bg-[#3762c1]/10"
+                                    : "text-gray-400 bg-gray-500/10 hover:bg-theme-border"
+                              }`}
+                              title={
+                                capabilityAllowed("projects.competitors.monitoring")
+                                  ? comp.isMonitored
+                                    ? "Enabled"
+                                    : "Disabled"
+                                  : "Competitor monitoring is locked on this plan"
+                              }
                             >
                               {comp.isMonitored ? (
                                 <Eye size={16} />
@@ -3099,34 +3212,52 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                 comp.totalAds === 0 &&
                                 (activeProject?.summary?.total_ads_tracked ||
                                   0) === 0;
+                              const analyticsLocked =
+                                !capabilityAllowed("projects.analytics");
+                              const compareDisabled =
+                                noAdsToCompare || analyticsLocked;
                               return (
                                 <div className="flex items-center justify-center gap-2">
                                   <button
-                                    disabled={noAdsToCompare}
+                                    disabled={compareDisabled}
                                     onClick={() => {
-                                      if (!noAdsToCompare) {
+                                      if (!compareDisabled) {
                                         setCompareCompetitor(comp);
                                         setViewState(5);
                                       }
                                     }}
                                     title={
-                                      noAdsToCompare
+                                      analyticsLocked
+                                        ? "Competitor analytics is locked on this plan"
+                                        : noAdsToCompare
                                         ? "No competitor or advertiser ads available to compare"
                                         : ""
                                     }
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap border ${noAdsToCompare ? "bg-[#3762c1]/5 border-[#3759a3]/10 text-[#6b99ff]/50 cursor-not-allowed" : "bg-[#3762c1]/10 hover:bg-[#3762c1]/20 border-[#3759a3]/20 text-[#6b99ff]"}`}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap border ${compareDisabled ? "bg-[#3762c1]/5 border-[#3759a3]/10 text-[#6b99ff]/50 cursor-not-allowed" : "bg-[#3762c1]/10 hover:bg-[#3762c1]/20 border-[#3759a3]/20 text-[#6b99ff]"}`}
                                   >
-                                    Compare
+                                    {analyticsLocked ? "Analytics locked" : "Compare"}
                                   </button>
                                   <button
-                                    onClick={() =>
+                                    onClick={() => {
+                                      if (!capabilityAllowed("projects.manage")) {
+                                        showToast("Your current plan does not include project management.", "error");
+                                        return;
+                                      }
                                       setCompetitorToDelete({
                                         advertiser: activeProject.advertiser,
                                         competitor: comp,
-                                      })
+                                      });
+                                    }}
+                                    title={
+                                      capabilityAllowed("projects.manage")
+                                        ? "Delete competitor"
+                                        : "Project management is locked on this plan"
                                     }
-                                    title="Delete competitor"
-                                    className="p-1.5 rounded-lg text-theme-text-muted hover:text-red-400 hover:bg-red-500/10 border border-theme-border hover:border-red-500/20 transition-all"
+                                    className={`p-1.5 rounded-lg border border-theme-border transition-all ${
+                                      capabilityAllowed("projects.manage")
+                                        ? "text-theme-text-muted hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20"
+                                        : "text-theme-text-muted cursor-not-allowed opacity-50"
+                                    }`}
                                   >
                                     <Trash2 size={14} />
                                   </button>

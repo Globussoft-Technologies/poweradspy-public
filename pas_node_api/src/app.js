@@ -22,10 +22,12 @@ const { generateToken } = require('./middleware/auth');
 
 // Admin
 const adminRoutes = require('./admin/adminRoutes');
+const planControlAdminRoutes = require('./services/planControl/routes/adminRoutes');
 
 // Auth
 const authRoutes = require('./auth/authRoutes');
 const amemberAuth = require('./auth/amemberAuth');
+const planControlCustomerRoutes = require('./services/planControl/routes/customerRoutes');
 
 // API Docs (Swagger UI — secured with admin credentials)
 const mountSwagger = require('./docs/swaggerRoute');
@@ -80,6 +82,8 @@ async function createApp() {
   // 10. Admin dashboard (must be before DB-dependent routes)
   if (config.admin.enabled !== false) {
     app.use('/admin', adminRoutes);
+    // Mount plan control admin API explicitly since it uses its own router
+    app.use('/admin/api/plan-control', planControlAdminRoutes);
   }
 
   await databaseManager.connectAll(networksConfig);
@@ -95,6 +99,7 @@ async function createApp() {
 
   // Auth (login / logout / me / refresh)
   app.use('/api/v1/auth', authRoutes);
+  app.use('/api/v1/auth', planControlCustomerRoutes);
 
   // aMember login redirect (GET /loginpage/:encodedUsername)
   app.use('/', amemberAuth);

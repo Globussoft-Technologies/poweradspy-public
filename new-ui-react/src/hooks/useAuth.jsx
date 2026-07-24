@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
-import { fetchPlanAccess, fetchOnboardingStatus, trackEvent } from '../services/api';
+import { fetchPlanAccess, fetchEntitlements, fetchOnboardingStatus, trackEvent } from '../services/api';
 import { openModal } from '../store/uiSlice';
 
 const AuthContext = createContext(null);
@@ -150,6 +150,32 @@ const SDUI_TO_PLAN_ACCESS = {
   adgpt:                'adgpt_access',
 };
 
+const LEGACY_TO_CAPABILITY = {
+  keyword_search: 'ads.search.keyword',
+  advertiser_search: 'ads.search.advertiser',
+  domain_search: 'ads.search.domain',
+  country: 'filter.country',
+  gender: 'filter.gender',
+  age: 'filter.age',
+  ad_type: 'filter.ad_type',
+  ad_position: 'filter.ad_position',
+  call_to_action: 'filter.call_to_action',
+  category: 'filter.category',
+  language: 'filter.language',
+  ad_budget_sort: 'sort.ad_budget',
+  affiliate_network: 'filter.affiliate_network',
+  ecommerce_platform: 'filter.ecommerce_platform',
+  marketing_platform: 'filter.marketing_platform',
+  traffic_source: 'filter.traffic_source',
+  funnel: 'filter.funnel',
+  google_transparency: 'google.transparency.search',
+  market_trends: 'intelligence.market_trends',
+  keyword_explorer: 'intelligence.keyword_explorer',
+  ad_analytics: 'intelligence.competitive',
+  project_access: 'projects.access',
+};
+const capabilityForLegacyId = (id) => LEGACY_TO_CAPABILITY[id] || `legacy.${id}`;
+
 // Synchronous auth bootstrap — runs once at module load, BEFORE any React render.
 // Resolves ?token= URL param → localStorage → env fallback, so child hooks (useSDUI, etc.)
 // always see a valid token on their first API call. Otherwise the first fetch fires
@@ -222,15 +248,17 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(_initialAuth.user);
   const [loading] = useState(false);
   const [planAccess, setPlanAccess] = useState(null);
+  const [entitlements, setEntitlements] = useState(null);
   const dispatch = useDispatch();
 
   // Fetch plan access restrictions once user is authenticated (skip on public/guest routes)
   useEffect(() => {
     const path = window.location.pathname;
     if (!token || path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')) return;
-    fetchPlanAccess().then(data => {
-      if (data) setPlanAccess(data);
-    }).catch(() => {});
+    Promise.allSettled([fetchPlanAccess(), fetchEntitlements()]).then(([legacy, unified]) => {
+      if (legacy.status === 'fulfilled' && legacy.value) setPlanAccess(legacy.value);
+      if (unified.status === 'fulfilled' && unified.value) setEntitlements(unified.value);
+    });
   }, [token]);
 
   // First-login onboarding popup. Prefer the needsOnboarding flag baked into a
@@ -264,20 +292,47 @@ export function AuthProvider({ children }) {
    * @returns {boolean} true if restricted (user cannot use this filter)
    */
   const isFilterRestricted = useCallback((sduiFilterId) => {
+    if (entitlements?.capabilities) {
+      const planAccessId = SDUI_TO_PLAN_ACCESS[sduiFilterId] || sduiFilterId;
+      const decision = entitlements.capabilities[capabilityForLegacyId(planAccessId)];
+      if (decision) return !decision.allowed;
+    }
     if (!planAccess?.filters) return false;
     const planAccessId = SDUI_TO_PLAN_ACCESS[sduiFilterId] || sduiFilterId;
     const status = planAccess.filters[planAccessId];
     return status ? !status.enabled : false;
-  }, [planAccess]);
+  }, [planAccess, entitlements]);
 
   // Returns true when a filter has an explicit plan-access entry (enabled OR disabled).
   // Used by SchemaRenderer to avoid cascading to section-level restrictions when the
   // filter itself has a known, authoritative status.
   const filterHasPlanEntry = useCallback((sduiFilterId) => {
+    if (entitlements?.capabilities) {
+      const planAccessId = SDUI_TO_PLAN_ACCESS[sduiFilterId] || sduiFilterId;
+      if (entitlements.capabilities[capabilityForLegacyId(planAccessId)] !== undefined) return true;
+    }
     if (!planAccess?.filters) return false;
     const planAccessId = SDUI_TO_PLAN_ACCESS[sduiFilterId] || sduiFilterId;
     return planAccess.filters[planAccessId] !== undefined;
-  }, [planAccess]);
+  }, [planAccess, entitlements]);
+
+  const getCapabilityDecision = useCallback(
+    (capabilityId) => entitlements?.capabilities?.[capabilityId] || null,
+    [entitlements],
+  );
+  const canUseCapability = useCallback(
+    (capabilityId) => getCapabilityDecision(capabilityId)?.allowed === true,
+    [getCapabilityDecision],
+  );
+  const canUseCapabilityOnNetwork = useCallback((capabilityId, network) => {
+    const decision = getCapabilityDecision(capabilityId);
+    if (!decision?.allowed) return false;
+    return !network || (decision.allowedNetworks || []).includes(String(network).toLowerCase());
+  }, [getCapabilityDecision]);
+  const getCapabilityLimit = useCallback(
+    (capabilityId, limitName) => getCapabilityDecision(capabilityId)?.limits?.[limitName] ?? null,
+    [getCapabilityDecision],
+  );
 
   const logout = () => {
     if (shouldResetOnboardingDismiss(user)) {
@@ -301,7 +356,7 @@ export function AuthProvider({ children }) {
   const isAuthenticated = !!token && !!user;
 
   return (
-    <AuthContext.Provider value={{ token, user, isAuthenticated, loading, logout, planAccess, setPlanAccess, isFilterRestricted, filterHasPlanEntry }}>
+    <AuthContext.Provider value={{ token, user, isAuthenticated, loading, logout, planAccess, setPlanAccess, entitlements, setEntitlements, isFilterRestricted, filterHasPlanEntry, canUseCapability, canUseCapabilityOnNetwork, getCapabilityLimit, getCapabilityDecision }}>
       {children}
     </AuthContext.Provider>
   );

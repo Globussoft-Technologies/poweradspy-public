@@ -509,6 +509,7 @@ function resolvePlanTier(planId, config) {
 }
 
 module.exports = {
+  BODY_KEY_TO_FILTER_ID,
   getConfig,
   updateConfig,
   getAllowedPlatforms,

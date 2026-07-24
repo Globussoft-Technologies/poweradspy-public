@@ -64,6 +64,23 @@ export const fetchPlanAccess = async (network) => {
 };
 
 /**
+ * Unified capability decisions. Returns null while the new policy has not been
+ * activated so callers can safely fall back to the legacy plan-access response
+ * during rollout.
+ */
+export const fetchEntitlements = async () => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/auth/entitlements`, {
+    headers: {
+      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+    },
+  });
+  await checkFor401(res);
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data || null;
+};
+
+/**
  * Fetch the display-only plan/pricing catalog for the upgrade modal (PricingModal).
  * Which generation (legacy / 2026-restructure / both) is returned is controlled
  * server-side by config.pricing.activePlanGeneration — public endpoint, no auth.

@@ -229,6 +229,8 @@ const App = () => {
     filterHasPlanEntry,
     planAccess,
     setPlanAccess,
+    entitlements,
+    canUseCapability,
   } = useAuth();
 
   // ── Guest Mode ────────────────────────────────────────────────────────
@@ -1025,30 +1027,32 @@ const App = () => {
   //   ? (planAccess.filters?.project_access?.enabled === true ||
   //       (planAccess.competitorLimits?.brandLimit ?? 0) > 0)
   //   : false;
-  const canAccessProjects = planAccess
-    ? planAccess.filters?.project_access?.enabled === true
-    : false;
+  const canAccessProjects = entitlements
+    ? canUseCapability('projects.access')
+    : (planAccess ? planAccess.filters?.project_access?.enabled === true : false);
 
   // Guard: if user somehow lands on "projects" without plan access, redirect to ads and show pricing modal
   useEffect(() => {
-    if (ui.activePage === "projects" && planAccess && !canAccessProjects) {
+    if (ui.activePage === "projects" && (entitlements || planAccess) && !canAccessProjects) {
       dispatch(setActivePage("ads"));
       dispatch(openModal('isPricingModalOpen'));
     }
-  }, [ui.activePage, planAccess, canAccessProjects, dispatch]);
+  }, [ui.activePage, entitlements, planAccess, canAccessProjects, dispatch]);
 
   // Guard: block analytics modal for plans without ad_analytics access.
   // Runs regardless of how selectedAdForAnalytics was set (button, URL init, popstate, etc.)
   useEffect(() => {
     if (!selectedAdForAnalytics) return;
-    if (!planAccess) return; // planAccess not yet loaded — wait for it to settle
-    const canAccessAnalytics = planAccess.filters?.ad_analytics?.enabled === true;
+    if (!entitlements && !planAccess) return;
+    const canAccessAnalytics = entitlements
+      ? canUseCapability('intelligence.competitive')
+      : planAccess.filters?.ad_analytics?.enabled === true;
     if (!canAccessAnalytics) {
       setSelectedAdForAnalytics(null);
       window.history.replaceState(null, '', '/');
       dispatch(openModal('isPricingModalOpen'));
     }
-  }, [selectedAdForAnalytics, planAccess, dispatch]);
+  }, [selectedAdForAnalytics, entitlements, planAccess, canUseCapability, dispatch]);
 
   useEffect(() => {
     const controller = new AbortController();

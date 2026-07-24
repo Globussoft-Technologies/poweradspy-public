@@ -80,7 +80,7 @@ async function hasMarketTrendsAccess(req) {
 }
 
 async function accessGuard(req, res, next) {
-  if (await hasMarketTrendsAccess(req)) return next();
+  if (await hasMarketTrendsAccess(req)) return marketTrendsCapability(req, res, next);
   return res.status(403).json({
     code: 403,
     message: 'Market Trends is not enabled for this account',
@@ -827,6 +827,10 @@ async function getKeywords(req, res) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────
 const router = Router();
+const { requireCapability } = require('./planControl/registries/routeClassification');
+const marketTrendsCapability = requireCapability('intelligence.market_trends', {
+  network: (req) => req.query?.network || req.body?.network,
+});
 router.get('/health', (req, res) => res.status(200).json({ code: 200, message: 'market trends enabled', data: { ok: true } }));
 router.get('/access', authMiddleware, asyncHandler(async (req, res) => {
   const [enabled, stage] = await Promise.all([hasMarketTrendsAccess(req), getMarketTrendsStage()]);
