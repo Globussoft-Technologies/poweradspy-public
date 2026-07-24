@@ -222,6 +222,16 @@ describe("planAccessService > getFilterStatus", () => {
     const config = [{ _id: "f1", category: "filter", allowed_plan_ids: [] }];
     expect(freshSut().getFilterStatus(5, "all", config).f1.planAllowed).toBe(false);
   });
+  it("temporarily grants Google Transparency when the auto-seeded plan list omitted the plan", () => {
+    const config = [{
+      _id: "google_transparency",
+      category: "sidebar",
+      allowed_plan_ids: [],
+      platform_support: { google: true },
+    }];
+    expect(freshSut().getFilterStatus(5, "google", config).google_transparency)
+      .toEqual({ enabled: true, planAllowed: true });
+  });
   it("network='all' skips platform_support check", () => {
     const config = [{ _id: "f1", category: "filter", platform_support: { facebook: false } }];
     expect(freshSut().getFilterStatus(5, "all", config).f1.enabled).toBe(true);

@@ -18,6 +18,13 @@ let _configCache = null;
 let _configCacheAt = 0;
 let _configFetchInflight = null;
 
+// Google Transparency shipped as a new SDUI document before its plan entitlement
+// was configured. The admin auto-seed therefore restricted it to the top tier and
+// started blocking otherwise-authorized Google searches. Keep it available to all
+// active plans for now; the plan-control revamp will replace this compatibility
+// grant with an explicit, versioned capability policy.
+const TEMPORARILY_UNRESTRICTED_FILTER_IDS = new Set(['google_transparency']);
+
 /**
  * Make config.pricing.planIds authoritative for 2026 plan-group membership.
  *
@@ -268,7 +275,9 @@ function getFilterStatus(planId, network, config) {
     // Check if the plan is in the allowed list for this filter
     // null/undefined = legacy "all allowed"; empty array [] = restricted for all; populated = check list
     let planAllowed = false;
-    if (!doc.allowed_plan_ids) {
+    if (TEMPORARILY_UNRESTRICTED_FILTER_IDS.has(filterId)) {
+      planAllowed = true;
+    } else if (!doc.allowed_plan_ids) {
       planAllowed = true;
     } else if (doc.allowed_plan_ids.length > 0 && doc.allowed_plan_ids.includes(pid)) {
       planAllowed = true;
