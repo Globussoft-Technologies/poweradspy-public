@@ -2352,6 +2352,9 @@ function pvLoadPlanEditor() {
   const variants = family.variants || [];
   const familyPolicy = pv2FamilyPolicy();
   const selectedVariant = pv2VariantSelection[family.familyId] || '__family__';
+  const overriddenVariantCount = variants.filter((variant) => (
+    Boolean(familyPolicy.variantOverrides?.[String(variant.planId)])
+  )).length;
   const salesSource = pvCurrentDraft
     ? `Stored in working draft ${pvCurrentDraft.draftId}.`
     : pvLivePolicy
@@ -2364,7 +2367,7 @@ function pvLoadPlanEditor() {
   document.getElementById('pv2-summary').innerHTML = `
     <div class="pv2-stat"><span class="pv2-kicker">Name customers see <span class="pv2-info" title="The friendly plan name shown in customer-facing screens.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.label)}</b></div><div class="pv2-explain">Display name only. Changing it does not change access.</div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Plan display order <span class="pv2-info" title="Previously called Tier Rank. A higher number places a plan higher in comparisons; it does not automatically grant features.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.tierRank)}</b></div><div class="pv2-explain">Higher number = higher plan in UI ordering. Feature access is still controlled below.</div></div>
-    <div class="pv2-stat"><span class="pv2-kicker">Rule scope / billing option <span class="pv2-info" title="Family default normally controls every billing ID. Select one ID to inspect or edit a billing-specific override.">?</span></span><div style="margin-top:6px"><b>${variants.length} billing option${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="Choose family defaults or a specific billing ID" style="width:100%;margin-top:6px" onchange="pv2VariantChanged()"><option value="__family__" ${selectedVariant === '__family__' ? 'selected' : ''}>Family default · normally all billing IDs</option>${variants.map((v) => { const hasOverride = Boolean(familyPolicy.variantOverrides?.[String(v.planId)]); return `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}${hasOverride ? ' · HAS OVERRIDE' : ' · follows family'}</option>`; }).join('')}</select><div id="pv2-variant-note" class="pv2-explain"></div></div>
+    <div class="pv2-stat"><span class="pv2-kicker">Rule scope / billing option <span class="pv2-info" title="Family default normally controls every billing ID. Select one ID to inspect or edit a billing-specific override.">?</span></span><div style="margin-top:6px"><b>${variants.length} billing option${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="Choose family defaults or a specific billing ID" style="width:100%;margin-top:6px" onchange="pv2VariantChanged()"><option value="__family__" ${selectedVariant === '__family__' ? 'selected' : ''}>Family default · normally all billing IDs</option>${variants.map((v) => { const hasOverride = Boolean(familyPolicy.variantOverrides?.[String(v.planId)]); return `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}${hasOverride ? ' · HAS OVERRIDE' : ' · follows family'}</option>`; }).join('')}</select><div id="pv2-variant-note" class="pv2-explain"></div>${overriddenVariantCount ? `<div class="pv2-source-note"><b>${overriddenVariantCount} billing ID${overriddenVariantCount === 1 ? '' : 's'} currently override family defaults.</b>${editable ? ` <button type="button" class="btn btn-ghost btn-sm" style="margin-top:7px" onclick="pv2MakeAllVariantsFollowFamily()">Make all ${variants.length} IDs follow family</button>` : ''}</div>` : '<div class="pv2-source-note"><b>All billing IDs follow this family.</b></div>'}</div>
     <div class="pv2-stat"><span class="pv2-kicker">Available for new purchases <span class="pv2-info" title="Open means billing may sell this family to new customers. Closed keeps existing customers but prevents new signups.">?</span></span><div style="margin-top:6px"><b style="color:${family.openForNewSignups ? '#22c55e' : '#f59e0b'}">${family.openForNewSignups ? 'Yes, open' : 'No, closed'}</b></div><div class="pv2-explain">${family.openForNewSignups ? 'New customers may buy this plan.' : 'Existing plan IDs remain valid, but new sales are closed.'}</div><div class="pv2-source-note"><b>How this is known:</b> ${pv2Escape(salesSource)}</div>${editable ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pvEditFamily()">Edit plan details</button>' : ''}</div>`;
   pv2RenderNetworks();
   pvRenderCapabilities();
@@ -2414,6 +2417,29 @@ function pv2RenderVariantNote() {
   note.innerHTML = override
     ? `<b style="color:#f59e0b">Billing override active for plan #${pv2Escape(variantKey)}.</b> Its hidden overrides take priority over the family defaults below.`
     : `<b>Plan #${pv2Escape(variantKey)} follows family defaults.</b> Changing a control while this option is selected creates an explicit billing override.`;
+}
+
+function pv2MakeAllVariantsFollowFamily() {
+  if (!pvCurrentDraft || currentRole !== 'editor') {
+    showToast?.('Open a safe working draft before changing billing overrides.', 'error');
+    return;
+  }
+  const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+  const policy = pv2FamilyPolicy();
+  const overrideCount = Object.keys(policy.variantOverrides || {}).length;
+  if (!overrideCount) return;
+  pv2ConfirmAction({
+    title: `Apply ${family?.label || 'family'} defaults to every billing ID`,
+    message: `This clears all billing-specific feature, network and limit overrides for ${overrideCount} billing IDs in this draft. Every existing and future billing ID in this family will then use the family defaults. Live customers do not change until you Save, Validate and Publish.`,
+    confirmLabel: 'Make every ID follow family',
+    onConfirm: () => {
+      policy.variantOverrides = {};
+      pv2VariantSelection[pv2SelectedFamilyId] = '__family__';
+      pv2SetDirty();
+      pvLoadPlanEditor();
+      showToast?.(`All ${family?.variants?.length || 0} billing IDs now follow ${family?.label || 'the family'} in this draft.`, 'success');
+    },
+  });
 }
 
 function pv2RenderNetworks() {
@@ -2601,6 +2627,11 @@ function pvRenderCapabilities() {
     const explicitVariantRule = variantKey
       ? policy.variantOverrides?.[variantKey]?.capabilities?.[cap.id]
       : null;
+    const capabilityOverrideIds = !variantKey
+      ? Object.entries(policy.variantOverrides || {})
+        .filter(([, variantPolicy]) => Boolean(variantPolicy?.capabilities?.[cap.id]))
+        .map(([planId]) => planId)
+      : [];
     const ruleScope = variantKey
       ? explicitVariantRule
         ? `<div class="pv2-variant-rule-badge override">BILLING #${pv2Escape(variantKey)} OVERRIDE</div>`
@@ -2641,8 +2672,42 @@ function pvRenderCapabilities() {
     const accessOptions = variantKey
       ? `<option value="__use_family__" ${explicitVariantRule ? '' : 'selected'}>Use family default</option><option value="allow" ${explicitVariantRule?.effect === 'allow' ? 'selected' : ''}>Override: allow feature</option><option value="deny" ${explicitVariantRule?.effect === 'deny' ? 'selected' : ''}>Override: restrict feature</option>${explicitVariantRule?.effect === 'inherit' ? '<option value="inherit" selected>Existing inherited override</option>' : ''}`
       : `<option value="inherit" ${rule.effect === 'inherit' ? 'selected' : ''}>${parent ? 'Follow parent' : 'Use default'}</option><option value="allow" ${rule.effect === 'allow' ? 'selected' : ''}>Allow feature</option><option value="deny" ${rule.effect === 'deny' ? 'selected' : ''}>Restrict feature</option>`;
-    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}${ruleScope}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Family default normally controls every billing ID; billing overrides take priority" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)">${accessOptions}</select><div class="pv2-access-meaning">${variantKey && explicitVariantRule ? `This billing-specific decision overrides the family rule. Effective result: ${rule.effect === 'deny' ? 'Restricted' : 'Allowed'}.` : accessMeaning}</div></td><td>${cap.networkAware ? `<select class="pv2-input" title="Use general networks or choose a smaller custom list only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>Use general networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Choose custom networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature does not receive network context, so a network rule would never be enforced">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
+    const applyToAllBillingIds = capabilityOverrideIds.length
+      ? `<button type="button" class="btn btn-ghost btn-sm" style="margin-top:7px" ${editable ? '' : 'disabled'} onclick="pv2ApplyFeatureToAllVariants('${pv2Escape(cap.id)}')">Apply family rule to all billing IDs</button><div class="pv2-access-meaning">${capabilityOverrideIds.length} billing override${capabilityOverrideIds.length === 1 ? '' : 's'} will be removed.</div>`
+      : '';
+    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}${ruleScope}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Family default normally controls every billing ID; billing overrides take priority" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)">${accessOptions}</select><div class="pv2-access-meaning">${variantKey && explicitVariantRule ? `This billing-specific decision overrides the family rule. Effective result: ${rule.effect === 'deny' ? 'Restricted' : 'Allowed'}.` : accessMeaning}</div>${applyToAllBillingIds}</td><td>${cap.networkAware ? `<select class="pv2-input" title="Use general networks or choose a smaller custom list only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>Use general networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Choose custom networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature does not receive network context, so a network rule would never be enforced">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
   }).join('');
+}
+
+function pv2ApplyFeatureToAllVariants(capId) {
+  if (!pvCurrentDraft || currentRole !== 'editor') {
+    showToast?.('Open a safe working draft before changing billing overrides.', 'error');
+    return;
+  }
+  const cap = (pvCatalog.capabilities || []).find((item) => item.id === capId);
+  const policy = pv2FamilyPolicy();
+  const affectedIds = Object.entries(policy.variantOverrides || {})
+    .filter(([, variantPolicy]) => Boolean(variantPolicy?.capabilities?.[capId]))
+    .map(([planId]) => planId);
+  if (!affectedIds.length) return;
+  pv2ConfirmAction({
+    title: `Apply ${cap?.label || capId} family rule to every billing ID`,
+    message: `This removes the ${cap?.label || capId} override from billing IDs ${affectedIds.join(', ')} in this draft. They will follow the family access, networks and limits shown in this row. Live customers do not change until Publish.`,
+    confirmLabel: `Apply to all ${affectedIds.length} overridden IDs`,
+    onConfirm: () => {
+      for (const planId of affectedIds) {
+        const variantPolicy = policy.variantOverrides?.[planId];
+        if (!variantPolicy?.capabilities) continue;
+        delete variantPolicy.capabilities[capId];
+        if (!Object.keys(variantPolicy.capabilities).length && !Array.isArray(variantPolicy.generalNetworks)) {
+          delete policy.variantOverrides[planId];
+        }
+      }
+      pv2SetDirty();
+      pvLoadPlanEditor();
+      showToast?.(`${cap?.label || capId} now follows the family rule for every billing ID in this draft.`, 'success');
+    },
+  });
 }
 
 function pvUpdateCap(capId, field, value) {
@@ -3125,7 +3190,7 @@ function pvOpenHowToUse() {
       ${[
         ['1', 'View any plan without a draft', 'Click Basic, Standard, Palladium or another family to open its current policy immediately in read-only mode. Creating a draft is never required just to inspect networks, features, limits or previews.'],
         ['2', 'Check the source banner first', 'The banner says exactly what you are viewing: LIVE policy, CURRENT LEGACY ACCESS converted read-only, backend bootstrap preview, or an editable WORKING DRAFT. It also shows the MongoDB collection, record and revision when applicable.'],
-        ['3', 'Understand generation, family and billing options', 'A generation is a complete model such as Legacy or 2026 Plans. A family is one product tier. Family default normally controls every monthly, yearly, trial and legacy billing ID. Select a specific billing ID to reveal any HAS OVERRIDE rule that takes priority; choose Use family default to remove that feature override.'],
+        ['3', 'Understand generation, family and billing options', 'A generation is a complete model such as Legacy or 2026 Plans. A family is one product tier. Family default normally controls every monthly, yearly, trial and legacy billing ID. For one feature, use Apply family rule to all billing IDs. To remove every feature/network/limit exception at once, use Make all IDs follow family. Both actions change only the safe draft until Publish.'],
         ['4', 'Open one complete-policy draft to edit', 'A working draft contains every plan family, not only the family visible when it was created. While that draft is selected, switch Basic, Standard and Palladium directly—your unsaved browser edits remain in the same draft snapshot.'],
         ['5', 'Set and verify general networks', 'The green/amber summary lists the exact family-default networks in plain text. Checkboxes edit them only inside a safe draft. For an older blank migration draft, “Copy current networks into this draft” deliberately imports the current access without silently overwriting anything.'],
         ['6', 'Use parent and child feature controls', 'A restricted parent blocks every child. A child set to Follow parent automatically uses the parent decision. Parent actions can allow the group, restrict the group, or reset all children to follow; an individual child may still use a stricter/custom decision.'],
@@ -3141,9 +3206,25 @@ function pvOpenHowToUse() {
         <p><b>Complete-policy draft:</b> one unpublished snapshot containing all generations, families and rules. It is not a Basic-only or Palladium-only draft.</p>
         <p><b>Plan display order:</b> sorting/position only; it does not automatically grant access.</p>
         <p><b>Billing option:</b> provider product ID for monthly, yearly, trial, legacy or a future billing cycle.</p>
+        <p><b>Family default:</b> the normal feature, network and limit rules shared by every billing ID that does not have an exception.</p>
+        <p><b>HAS OVERRIDE:</b> this billing ID has at least one explicit feature, network or limit exception. It does not necessarily mean the feature currently visible in the table is overridden.</p>
+        <p><b>Follows family:</b> this billing ID has no explicit exception and automatically receives the family defaults.</p>
         <p><b>Available for new purchases:</b> whether new customers may buy it. The plan card explains whether this value came from live policy, the draft, legacy plan_groups or a safe missing-value default.</p>
         <p><b>Blocking error:</b> invalid or unsafe policy that cannot publish. <b>Review warning:</b> visible follow-up work that does not block an unrelated compatibility-mode change.</p>
         <p><b>Lifecycle:</b> draft, active, legacy or archived state of the plan definition.</p>
+      </div>
+      <div style="margin-top:10px;padding:12px;border:1px solid rgba(99,102,241,.3);background:rgba(99,102,241,.07);border-radius:9px">
+        <h4>Family defaults and billing IDs — exact behavior</h4>
+        <p><b>Changing Family default:</b> immediately changes every billing ID marked <i>follows family</i> in the current draft. A billing ID marked <i>HAS OVERRIDE</i> keeps its explicit exception until you deliberately remove it.</p>
+        <p style="margin-top:8px"><b>Apply one feature to every billing ID:</b> stay on Family default, set that feature to Allow/Restrict and click <i>Apply family rule to all billing IDs</i> in the same feature row. Only that feature's billing-specific access, feature-network and limit overrides are removed. Other feature exceptions remain untouched.</p>
+        <p style="margin-top:8px"><b>Apply the complete family to every billing ID:</b> click <i>Make all N IDs follow family</i> in the Rule scope / billing option card. This removes every billing-specific feature, network and limit override for the family. Use this only when monthly, yearly, trial, platform and legacy IDs should be identical.</p>
+        <p style="margin-top:8px"><b>Why HAS OVERRIDE may remain after fixing one feature:</b> that billing ID can still have an exception for another feature, general networks or a limit. Select the billing ID to inspect its remaining orange override badges, or use the whole-family action if no exceptions should remain.</p>
+        <p style="margin-top:8px"><b>Future billing IDs:</b> a newly added monthly/yearly/custom billing ID follows the family automatically unless an admin deliberately creates a billing-specific override for it.</p>
+        <p style="margin-top:8px"><b>Safety:</b> both bulk actions only modify the selected safe draft. Check Validate &amp; diff before Publish. Until Publish succeeds, active customers and the LIVE policy do not change.</p>
+      </div>
+      <div style="margin-top:10px;padding:12px;border:1px solid rgba(34,197,94,.25);background:rgba(34,197,94,.06);border-radius:9px">
+        <h4>Example: allow Market Trends for every Palladium billing ID</h4>
+        <p>Open Palladium in a safe draft → keep <b>Family default</b> selected → search <b>Market Trends</b> → choose <b>Allow feature</b> → click <b>Apply family rule to all billing IDs</b> in that row → confirm → Save Draft → Validate &amp; diff → Publish. The diff should remove or replace every Market Trends billing override, so IDs such as yearly #69 can no longer return <code>VARIANT_DENY</code> for this feature.</p>
       </div>
       <div style="margin-top:10px;padding:12px;border:1px solid rgba(245,158,11,.3);background:rgba(245,158,11,.07);border-radius:9px">
         <h4>Two browser tabs editing the same draft</h4>
@@ -3254,4 +3335,4 @@ function pvEditFamily() {
 }
 
 window.addEventListener('beforeunload', (event) => { if (pv2Dirty) { event.preventDefault(); event.returnValue = ''; } });
-Object.assign(window, { pvLoadInit, pvCreateDraft, pvSelectDraft, pvExitDraft, pvDeleteDraft, pvSaveDraft, pvPublishDraft, pvLoadPlanEditor, pvUpdateCap, pvRenderFamilies, pvRenderCapabilities, pvGenerationChanged, pvOpenGenerationWizard, pvDuplicateGeneration, pvAddFamily, pvEditFamily, pvValidateDraft, pv2ShowNeedsReview, pvRestoreVersion, pvOpenPreview, pvClosePreview, pvOpenHowToUse, pvGoUnlockEditing, pv2SwitchPreviewState, pv2SelectFamily, pv2VariantChanged, pv2ToggleNetwork, pv2ResetVariantNetworks, pv2CopyCurrentNetworks, pv2ApplyCapabilityTree, pv2SetLimit, pv2ReviewCap, pv2EditCapabilityNetworks, pv2SubmitForm, pv2CloseForm });
+Object.assign(window, { pvLoadInit, pvCreateDraft, pvSelectDraft, pvExitDraft, pvDeleteDraft, pvSaveDraft, pvPublishDraft, pvLoadPlanEditor, pvUpdateCap, pvRenderFamilies, pvRenderCapabilities, pvGenerationChanged, pvOpenGenerationWizard, pvDuplicateGeneration, pvAddFamily, pvEditFamily, pvValidateDraft, pv2ShowNeedsReview, pvRestoreVersion, pvOpenPreview, pvClosePreview, pvOpenHowToUse, pvGoUnlockEditing, pv2SwitchPreviewState, pv2SelectFamily, pv2VariantChanged, pv2MakeAllVariantsFollowFamily, pv2ApplyFeatureToAllVariants, pv2ToggleNetwork, pv2ResetVariantNetworks, pv2CopyCurrentNetworks, pv2ApplyCapabilityTree, pv2SetLimit, pv2ReviewCap, pv2EditCapabilityNetworks, pv2SubmitForm, pv2CloseForm });
