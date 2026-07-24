@@ -5,7 +5,7 @@ const axios = require('axios');
 const dns = require('dns').promises;
 const net = require('net');
 const { asyncHandler } = require('../../../middleware/errorHandler');
-const { searchAllNetworks, getAdsByAdvertiserAll } = require('../controllers/commonSearchController');
+const { searchAllNetworks, getAdsByAdvertiserAll, searchAdvertiserNames } = require('../controllers/commonSearchController');
 const { getAdvertiserAds } = require('../controllers/advertiserAdsController');
 const { getAdInsightData } = require('../controllers/adInsightDataController');
 const { getAdInsights: fbAdInsights } = require('../controllers/commonInsightsController');
@@ -66,6 +66,14 @@ const searchSchema = {
   },
 };
 
+const advertiserNamesSchema = {
+  body: {
+    page:            { type: 'number' },
+    page_size:       { type: 'number' },
+    min_days_active: { type: 'number' },
+  },
+};
+
 // CSV upload for the synthetic keyword bulk-insert → temp file on disk, streamed + parsed,
 // then unlinked by the controller. Size capped at config.keywordSearch.syntheticMaxUploadMb.
 const SYNTHETIC_KW_TMP = path.join(os.tmpdir(), 'pas-synthetic-keywords');
@@ -101,6 +109,18 @@ router.post(
   requireSearchCapabilities(),
   validator(searchSchema),
   asyncHandler(searchAllNetworks)
+);
+
+// POST /api/common/advertiser/names
+// Slim partner-facing search: same fan-out engine as /ads/search, smaller
+// payload/response. `min_days_active` is resolved server-side into a last_seen
+// date range (today - N days → today).
+router.post(
+  '/advertiser/names',
+  authMiddleware,
+  // planAccessMiddleware,
+  validator(advertiserNamesSchema),
+  asyncHandler(searchAdvertiserNames)
 );
 
 // POST /api/v1/common/catsearch — proxy to DS team's AI category search

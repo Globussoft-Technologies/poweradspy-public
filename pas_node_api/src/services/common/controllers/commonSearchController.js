@@ -28,6 +28,21 @@ const { getAdsByAdvertiser: qrAdsByAdvertiser } = require('../../quora/controlle
 const { getAdsByAdvertiser: natAdsByAdvertiser } = require('../../native/controllers/getAdsByAdvertiserController');
 const { getAdsByAdvertiser: gdnAdsByAdvertiser } = require('../../gdn/controllers/getAdsByAdvertiserController');
 
+// Network → searchAds handler map (used by searchAdvertiserNames).
+const NETWORK_SEARCH = {
+  facebook:  fbSearchAds,
+  instagram: igSearchAds,
+  youtube:   ytSearchAds,
+  gdn:       gdnSearchAds,
+  linkedin:  liSearchAds,
+  native:    natSearchAds,
+  reddit:    redSearchAds,
+  quora:     qrSearchAds,
+  pinterest: pinSearchAds,
+  google:    googSearchAds,
+  tiktok:    ttSearchAds,
+};
+
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
 
 function withTimeout(promise, ms, name) {
@@ -519,4 +534,434 @@ async function getAdsByAdvertiserAll(req, res) {
   }
 }
 
-module.exports = { searchAllNetworks, getAdsByAdvertiserAll };
+// ─── Advertiser Names (slim, partner-facing search) ─────────────────────────
+//
+// POST /api/v1/common/advertiser/names
+// Same fan-out engine as searchAllNetworks (each network's own searchAds
+// pipeline), but with a small, stable payload/response contract:
+//
+//   Payload:
+//     keyword         string   — match ad copy/creative text        (optional)
+//     industry        string   — advertiser industry filter         (optional)
+//     category        string   — ad category filter                 (optional)
+//     geography       string   — country/region where the ad runs   (optional)
+//     platform        csv enum — meta,google,tiktok,youtube,gdn,…   (optional, default all)
+//     min_days_active int      — only ads last seen within the last N days.
+//                                Computed SERVER-SIDE: last_seen range =
+//                                [today - N days, today].            (optional)
+//     page            int      — 1-based page number                (default 1)
+//     page_size       int      — results per page                   (default 100, max 100)
+//
+//   Response:
+//     { page, page_size, total_results, results: [ {
+//         company_name, domain, platform, ad_creative_snippet,
+//         ad_first_seen, ad_last_seen, days_active, ad_url,
+//         industry, geography, category } ] }
+
+// Public platform enum → internal network list. `meta` = Facebook + Instagram.
+const ADVERTISER_PLATFORM_MAP = {
+  meta:      ['facebook', 'instagram'],
+  facebook:  ['facebook'],
+  instagram: ['instagram'],
+  google:    ['google'],
+  gdn:       ['gdn'],
+  youtube:   ['youtube'],
+  tiktok:    ['tiktok'],
+  linkedin:  ['linkedin'],
+  pinterest: ['pinterest'],
+  reddit:    ['reddit'],
+  quora:     ['quora'],
+  native:    ['native'],
+};
+
+// Internal network → public platform label (facebook/instagram collapse to meta).
+function toPlatformLabel(network) {
+  return (network === 'facebook' || network === 'instagram') ? 'meta' : network;
+}
+
+function advFirstVal(...vals) {
+  for (const v of vals) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    return v;
+  }
+  return null;
+}
+
+// Domain is not a hydrated column on every network — fall back to parsing the
+// hostname out of whichever ad URL the network did return.
+function advExtractDomain(ad) {
+  const direct = advFirstVal(ad.domain, ad.domain_name);
+  if (direct) return String(direct).replace(/^www\./, '');
+  const url = advFirstVal(
+    ad.ad_url, ad.destination_url, ad.initial_url, ad.final_url, ad.redirect_url,
+    ad.link_url, ad.lander_url,
+    ad.market_platform_urls?.destination_url, ad.market_platform_urls?.final_url
+  );
+  if (!url) return null;
+  try { return new URL(String(url)).hostname.replace(/^www\./, '') || null; }
+  catch { return null; }
+}
+
+// Normalise first_seen/last_seen (Date, epoch seconds/ms, or "YYYY-MM-DD[ HH:mm:ss]")
+// to "YYYY-MM-DD".
+function advDateStr(v) {
+  if (v === null || v === undefined || v === '') return null;
+  let ms;
+  if (v instanceof Date) ms = v.getTime();
+  else if (typeof v === 'number') ms = v < 1e11 ? v * 1000 : v;
+  else ms = Date.parse(String(v).replace(' ', 'T'));
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function advDaysActive(ad, firstSeen, lastSeen) {
+  const dr = Number(ad.days_running);
+  if (Number.isFinite(dr) && dr > 0) return dr;
+  if (firstSeen && lastSeen) {
+    const diff = Math.floor((Date.parse(lastSeen) - Date.parse(firstSeen)) / 86400000);
+    return Math.max(1, diff);
+  }
+  return null;
+}
+
+function advSnippet(ad) {
+  const text = advFirstVal(ad.ad_text, ad.text, ad.ad_title, ad.title, ad.news_feed_description, ad.description);
+  if (!text) return null;
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > 200 ? s.slice(0, 197) + '...' : s;
+}
+
+// ─── ES enrichment for category / country ───────────────────────────────────
+// The per-network searchAds pipelines hydrate image/text/URL data from SQL but
+// do NOT return category or country on the ad row. Those values are indexed in
+// Elasticsearch, so we look them up by ad id and overlay them before mapping.
+
+function advGetPath(obj, path) {
+  if (obj == null) return undefined;
+  const parts = path.split('.');
+  let cur = obj;
+  for (const p of parts) {
+    if (cur == null) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+// ES sources in this project are mostly flat dotted keys (e.g. 'facebook_ad.id'),
+// but some may be nested objects. Try literal key first, then nested path.
+function advGetField(obj, path) {
+  if (obj == null) return undefined;
+  if (Object.prototype.hasOwnProperty.call(obj, path)) return obj[path];
+  return advGetPath(obj, path);
+}
+
+const ES_ID_FIELDS = {
+  facebook:  'facebook_ad.id',
+  instagram: 'instagram_ad.id',
+  youtube:   'youtube_ad.id',
+  gdn:       'gdn_ad.id',
+  linkedin:  'linkedin_ad.id',
+  native:    'native_ad.id',
+  reddit:    'reddit_ad.id',
+  quora:     'quora_ad.id',
+  pinterest: 'pinterest_ad.id',
+  google:    'id',
+  tiktok:    'sql_id',
+};
+
+function advPickCategory(src, network) {
+  const keys = [
+    `${network}_ad.ad_category`,
+    `${network}_ad.category`,
+    `${network}.category`,
+    `${network}.subCategory`,
+    `${network}.ad_category`,
+    'ad_category',
+    'category',
+    'industry',
+    'page_category',
+    'sub_category',
+    'subcategory',
+  ];
+  for (const k of keys) {
+    const v = advGetField(src, k);
+    if (v === undefined || v === null || v === '') continue;
+    if (Array.isArray(v)) return v.filter(Boolean).join(', ');
+    return String(v);
+  }
+  return null;
+}
+
+function advPickCountry(src, network) {
+  const keys = [
+    `${network}_user_countries`,
+    `${network}_ad_url.country_code`,
+    `${network}_country_only.country`,
+    'country_only.country',
+    `${network}.country`,
+    'country',
+    'countries',
+    'country_code',
+    'region',
+  ];
+  for (const k of keys) {
+    const v = advGetField(src, k);
+    if (v === undefined || v === null || v === '') continue;
+    if (Array.isArray(v)) return v.filter(Boolean).join(', ');
+    return String(v);
+  }
+  return null;
+}
+
+// SQL fallback for category when the ES doc doesn't store it.
+const SQL_CATEGORY_MAP = {
+  facebook:  { adTable: 'facebook_ad',      categoryTable: 'facebook_category',      adIdCol: 'facebook_ad.id',      catIdCol: 'facebook_ad.category_id',      catNameCol: 'facebook_category.category_name' },
+  instagram: { adTable: 'instagram_ad',     categoryTable: 'instagram_category',     adIdCol: 'instagram_ad.id',     catIdCol: 'instagram_ad.category_id',     catNameCol: 'instagram_category.category_name' },
+  youtube:   { adTable: 'youtube_ad',       categoryTable: 'youtube_category',       adIdCol: 'youtube_ad.id',       catIdCol: 'youtube_ad.category_id',       catNameCol: 'youtube_category.category_name' },
+  gdn:       { adTable: 'gdn_ad',           categoryTable: 'gdn_category',           adIdCol: 'gdn_ad.id',           catIdCol: 'gdn_ad.category_id',           catNameCol: 'gdn_category.category_name' },
+  native:    { adTable: 'native_ad',        categoryTable: 'native_category',        adIdCol: 'native_ad.id',        catIdCol: 'native_ad.category_id',        catNameCol: 'native_category.category_name' },
+  linkedin:  { adTable: 'linkedin_ad',      categoryTable: 'linkedin_category',      adIdCol: 'linkedin_ad.id',      catIdCol: 'linkedin_ad.category_id',      catNameCol: 'linkedin_category.category_name' },
+  reddit:    { adTable: 'reddit_ad',        categoryTable: 'reddit_category',        adIdCol: 'reddit_ad.id',        catIdCol: 'reddit_ad.category_id',        catNameCol: 'reddit_category.category_name' },
+  quora:     { adTable: 'quora_ad',         categoryTable: 'quora_category',         adIdCol: 'quora_ad.id',         catIdCol: 'quora_ad.category_id',         catNameCol: 'quora_category.category_name' },
+  pinterest: { adTable: 'pinterest_ad',     categoryTable: 'pinterest_category',     adIdCol: 'pinterest_ad.id',     catIdCol: 'pinterest_ad.category_id',     catNameCol: 'pinterest_category.category_name' },
+  google:    { adTable: 'google_text_ad',   categoryTable: 'google_text_category',   adIdCol: 'google_text_ad.id',   catIdCol: 'google_text_ad.category_id',   catNameCol: 'google_text_category.category_name' },
+  tiktok:    { adTable: 'tiktok_ad',        categoryTable: 'tiktok_category',        adIdCol: 'tiktok_ad.id',        catIdCol: 'tiktok_ad.category_id',        catNameCol: 'tiktok_category.category_name' },
+};
+
+async function advEnrichCategoryFromSql(adsByNetwork) {
+  for (const [net, ads] of Object.entries(adsByNetwork)) {
+    if (!ads || ads.length === 0) continue;
+    const service = serviceRegistry.getService(net);
+    if (!service?.db?.sql) continue;
+
+    const ids = ads.map(a => a.ad_id).filter(Boolean);
+    if (ids.length === 0) continue;
+
+    // Generic category table fallback.
+    const cfg = SQL_CATEGORY_MAP[net];
+    if (cfg) {
+      try {
+        const placeholders = ids.map(() => '?').join(',');
+        const sql = `SELECT ${cfg.adIdCol} AS ad_id, ${cfg.catNameCol} AS category_name FROM ${cfg.adTable} LEFT JOIN ${cfg.categoryTable} ON ${cfg.catIdCol} = ${cfg.categoryTable}.id WHERE ${cfg.adIdCol} IN (${placeholders})`;
+        const rows = await service.db.sql.query(sql, ids);
+        const map = new Map(rows.map(r => [String(r.ad_id), r.category_name]));
+        for (const ad of ads) {
+          if (!ad.category) {
+            const cat = map.get(String(ad.ad_id));
+            if (cat) ad.category = cat;
+          }
+        }
+      } catch (err) {
+        if (service.log) service.log.warn('Advertiser names SQL category fallback failed', { network: net, error: err.message });
+      }
+    }
+
+    // Facebook-specific: page_category lives in facebook_lib_page_details.
+    if (net === 'facebook') {
+      const missing = ads.filter(ad => !ad.category).map(a => a.ad_id).filter(Boolean);
+      if (missing.length > 0) {
+        try {
+          const placeholders = missing.map(() => '?').join(',');
+          const sql = `SELECT DISTINCT facebook_ad_id AS ad_id, page_category AS category_name FROM facebook_lib_page_details WHERE facebook_ad_id IN (${placeholders}) AND page_category IS NOT NULL AND page_category != ''`;
+          const rows = await service.db.sql.query(sql, missing);
+          const map = new Map(rows.map(r => [String(r.ad_id), r.category_name]));
+          for (const ad of ads) {
+            if (!ad.category) {
+              const cat = map.get(String(ad.ad_id));
+              if (cat) ad.category = cat;
+            }
+          }
+        } catch (err) {
+          if (service.log) service.log.warn('Advertiser names SQL page_category fallback failed', { network: net, error: err.message });
+        }
+      }
+    }
+  }
+}
+
+async function advEnrichCategoryCountry(adsByNetwork) {
+  for (const [net, ads] of Object.entries(adsByNetwork)) {
+    if (!ads || ads.length === 0) continue;
+    const service = serviceRegistry.getService(net);
+    if (!service?.db?.elastic) continue;
+    const indexName = service.db.elastic.indexName;
+    const idField = ES_ID_FIELDS[net];
+    if (!indexName || !idField) continue;
+    const ids = ads.map(a => a.ad_id).filter(Boolean).map(String);
+    if (ids.length === 0) continue;
+    try {
+      const result = await service.db.elastic.search({
+        index: indexName,
+        body: {
+          query: { terms: { [idField]: ids } },
+          size: ids.length,
+          _source: true,
+        },
+      });
+      if (service.log) {
+        const hits = result.hits || result.body?.hits;
+        service.log.info('Advertiser names ES enrichment', {
+          network: net,
+          requestedIds: ids.length,
+          returnedHits: hits?.hits?.length ?? 0,
+        });
+      }
+      const hits = result.hits || result.body?.hits;
+      const map = new Map((hits?.hits || []).map(h => {
+        const src = h._source || {};
+        const key = String(advGetField(src, idField) ?? h._id);
+        return [key, src];
+      }));
+      for (const ad of ads) {
+        const src = map.get(String(ad.ad_id));
+        if (!src) continue;
+        if (!ad.category) ad.category = advPickCategory(src, net);
+        if (!ad.country)  ad.country  = advPickCountry(src, net);
+      }
+    } catch (err) {
+      // Enrichment is best-effort; never fail the whole request.
+      if (service.log) service.log.warn('Advertiser names ES enrichment failed', { network: net, error: err.message });
+    }
+  }
+}
+
+// Map one hydrated ad (any network) to the slim output row.
+function advMapAd(ad, network) {
+  const firstSeen = advDateStr(ad.first_seen);
+  const lastSeen  = advDateStr(ad.last_seen);
+  const category  = advFirstVal(ad.category, ad.ad_category, ad.category_name);
+  return {
+    company_name:        advFirstVal(ad.post_owner, ad.advertiser_name, ad.advertiser, ad.page_name, ad.name),
+    domain:              advExtractDomain(ad),
+    platform:            toPlatformLabel(network),
+    ad_creative_snippet: advSnippet(ad),
+    ad_first_seen:       firstSeen,
+    ad_last_seen:        lastSeen,
+    days_active:         advDaysActive(ad, firstSeen, lastSeen),
+    ad_url:              advFirstVal(ad.ad_url, ad.destination_url, ad.link_url, ad.initial_url, ad.redirect_url),
+    industry:            advFirstVal(ad.industry, category),
+    geography:           advFirstVal(ad.country, ad.country_code),
+    category:            category !== null && category !== undefined ? String(category) : null,
+  };
+}
+
+async function searchAdvertiserNames(req, res) {
+  const body = req.body || {};
+
+  // Pagination — this API is 1-based (page=1 → first page); the per-network
+  // searchAds pipeline is 0-based (`skip`), so convert here.
+  const page     = Math.max(1, parseInt(body.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(body.page_size, 10) || 100));
+
+  // Platform enum → network list. No platform → every registered network.
+  let networks;
+  if (body.platform) {
+    const tokens = String(body.platform).split(',').map(p => p.trim().toLowerCase()).filter(Boolean);
+    networks = [...new Set(tokens.flatMap(p => ADVERTISER_PLATFORM_MAP[p] || []))];
+    if (networks.length === 0) {
+      return res.status(400).json({
+        code: 400,
+        message: `Unknown platform: ${body.platform}. Supported: ${Object.keys(ADVERTISER_PLATFORM_MAP).join(', ')}`,
+      });
+    }
+  } else {
+    networks = Object.keys(NETWORK_SEARCH);
+  }
+
+  // Plan gate — intersect with the caller's allowed platforms.
+  const allowedPlatforms = req.planAccess?.allowedPlatforms || null;
+  if (allowedPlatforms) networks = networks.filter(n => allowedPlatforms.includes(n));
+  if (networks.length === 0) {
+    return res.status(403).json({ code: 403, message: 'No requested platform is available on your plan.' });
+  }
+
+  // min_days_active — CRITICAL, computed server-side: N=3 → last_seen range is
+  // [today - 3 days, today]. Transported as the shared [endTs, startTs]
+  // seen_btn_sort unix-second pair every network's searchAds already applies.
+  const minDays = parseInt(body.min_days_active, 10);
+  let seenBtnSort = null;
+  if (Number.isFinite(minDays) && minDays > 0) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    seenBtnSort = [nowSec, nowSec - minDays * 86400];
+  }
+
+  // industry + category both filter on the shared ad-category taxonomy.
+  const adcategory = [...new Set(
+    [body.industry, body.category]
+      .flatMap(v => (Array.isArray(v) ? v : [v]))
+      .map(v => (typeof v === 'string' ? v.trim() : v))
+      .filter(v => v !== null && v !== undefined && v !== '')
+  )];
+
+  const userId = body.user_id || req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ code: 401, message: 'Unauthorized: user_id missing' });
+  }
+
+  const ms = config.apiTimeouts?.networkSearchTimeoutMs || 15000;
+  const tasks = [];
+  for (const net of networks) {
+    const service = serviceRegistry.getService(net);
+    const searchFn = NETWORK_SEARCH[net];
+    if (!service || !service.db || !searchFn) continue;
+    // Translated per-network request — same shape searchAllNetworks forwards,
+    // carrying ONLY the slim filters so no stray dashboard params leak in.
+    const netReq = {
+      ...req,
+      query: {},
+      body: {
+        user_id: userId,
+        ...(body.keyword   ? { keyword: String(body.keyword).trim() } : {}),
+        ...(body.geography ? { country: [String(body.geography).trim()] } : {}),
+        ...(adcategory.length ? { adcategory } : {}),
+        ...(seenBtnSort ? { seen_btn_sort: seenBtnSort } : {}),
+        newest_sort: 'desc',
+        take: pageSize,
+        skip: page - 1,
+      },
+    };
+    tasks.push(withTimeout(searchFn(netReq, service.db, service.log), ms, net));
+  }
+
+  const settled = await Promise.allSettled(tasks);
+
+  const adsByNetwork = {};
+  const errors = {};
+  let totalResults = 0;
+  for (const s of settled) {
+    if (s.status !== 'fulfilled') continue;
+    const r = s.value;
+    if (r.code !== 200) {
+      errors[r.network] = r.message || `${r.network} error (${r.code})`;
+      continue;
+    }
+    totalResults += r.total ?? (Array.isArray(r.data) ? r.data.length : 0);
+    if (Array.isArray(r.data) && r.data.length > 0) {
+      adsByNetwork[r.network] = r.data;
+      for (const ad of r.data) ad.network = ad.network || r.network;
+    }
+  }
+
+  // Overlay category / country from ES (the search index holds the canonical values).
+  await advEnrichCategoryCountry(adsByNetwork);
+  // If ES didn't store category, fall back to the SQL category table.
+  await advEnrichCategoryFromSql(adsByNetwork);
+
+  const results = [];
+  for (const [net, ads] of Object.entries(adsByNetwork)) {
+    for (const ad of ads) results.push(advMapAd(ad, net));
+  }
+
+  return res.status(200).json({
+    code: 200,
+    page,
+    page_size: pageSize,
+    total_results: totalResults,
+    results,
+    message: results.length ? 'Advertisers fetched successfully' : 'No advertisers found',
+    ...(Object.keys(errors).length > 0 && { errors }),
+  });
+}
+
+module.exports = { searchAllNetworks, getAdsByAdvertiserAll, searchAdvertiserNames };
