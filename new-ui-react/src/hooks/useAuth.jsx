@@ -276,7 +276,19 @@ export function AuthProvider({ children }) {
     if (isOnboardingDismissedForUserId(userId)) return;
 
     if (user.needsOnboarding === true) {
-      dispatch(openModal('isOnboardingModalOpen'));
+      fetchOnboardingStatus().then(data => {
+        if (data?.needsOnboarding) {
+          dispatch(openModal('isOnboardingModalOpen'));
+        } else {
+          try {
+            const raw = localStorage.getItem('authUser');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              localStorage.setItem('authUser', JSON.stringify({ ...parsed, needsOnboarding: false }));
+            }
+          } catch {}
+        }
+      }).catch(() => {});
       return;
     }
     if (user.needsOnboarding === undefined) {

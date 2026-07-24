@@ -68,6 +68,13 @@ function SearchableMultiSelect({ icon: Icon, label, placeholder, values, onChang
   }, [resetKey]);
 
   useEffect(() => {
+    if (values.length >= max) {
+      setQuery("");
+      setOpen(false);
+    }
+  }, [values.length, max]);
+
+  useEffect(() => {
     function handleClickOutside(e) {
       if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
     }
@@ -149,7 +156,7 @@ function SearchableMultiSelect({ icon: Icon, label, placeholder, values, onChang
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           disabled={disabled}
-          placeholder={disabled ? `Max ${max} selected` : placeholder}
+          placeholder={disabled ? `Max ${max} Selected` : placeholder}
           className="w-full bg-theme-bg border border-theme-border rounded-lg pl-8 pr-9 py-2.5 text-sm text-theme-text placeholder:text-theme-text-muted focus:outline-none focus:border-[#3762c1]/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         />
         <button
@@ -387,6 +394,13 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
         competitors,
         countries,
       });
+      try {
+        const raw = localStorage.getItem('authUser');
+        const authUser = raw ? JSON.parse(raw) : null;
+        if (authUser) {
+          localStorage.setItem('authUser', JSON.stringify({ ...authUser, needsOnboarding: false }));
+        }
+      } catch {}
       const results = await fetchOnboardingPreview({
         major_category_id: selectedCategory.major_category_id,
         major_category_name: selectedCategory.major_category,
