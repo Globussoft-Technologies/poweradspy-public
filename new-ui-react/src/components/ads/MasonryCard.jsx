@@ -13,7 +13,6 @@ import {
   EyeOff,
   Share2,
   MessageCircle,
-  Heart,
   Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
@@ -31,6 +30,7 @@ import {
   Type,
   Star,
   ShieldCheck,
+  Bookmark,
 } from "lucide-react";
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import {
@@ -902,18 +902,18 @@ const MasonryCard = ({
               {badge.label}
             </span>
 
-            {/* Like / Favourite */}
+            {/* Save / unsave */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 if (guest?.isRestricted || guest?.isPublicLanding) {
-                  guest?.showGuestWarning?.("Please login to save favourites");
+                  guest?.showGuestWarning?.("Please login to save ads");
                   return;
                 }
                 onToggleFavourite?.(ad);
               }}
               title={
-                isFavourite ? "Remove from favourites" : "Add to favourites"
+                isFavourite ? "Remove from saved" : "Save ad"
               }
               className={`w-8 h-8 rounded-md backdrop-blur-md border flex items-center justify-center transition-colors ${
                 isFavourite
@@ -921,10 +921,12 @@ const MasonryCard = ({
                   : "bg-black/55 border-white/15 hover:bg-black/75"
               }`}
             >
-              <Heart
+              <Bookmark
                 size={14}
                 className={
-                  isFavourite ? "fill-rose-500 text-rose-500" : "text-zinc-100"
+                  isFavourite
+                    ? "fill-[#6b99ff] text-[#6b99ff]"
+                    : "text-zinc-100"
                 }
               />
             </button>
@@ -939,7 +941,7 @@ const MasonryCard = ({
             </button>
 
             {/* Hide / Unhide — only render if the parent wired up a handler.
-                SavedAdsPage's Favourites tab intentionally omits onHideAd so
+                SavedAdsPage's Saved tab intentionally omits onHideAd so
                 the hide affordance stays out of that view. */}
             {isHidden ? (
               onUnhide && (

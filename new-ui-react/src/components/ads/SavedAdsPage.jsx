@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useSelector, useDispatch } from "react-redux";
-import { Heart, EyeOff } from "lucide-react";
+import { Bookmark, EyeOff } from "lucide-react";
 import { fetchAds } from "../../services/api";
 import PlatformTab from "../shared/PlatformTab";
 import Masonry from "./Masonry";
@@ -38,7 +38,7 @@ const SKELETON_HEIGHTS = [200, 260, 180, 300, 220, 240, 190, 270, 210, 250, 185,
 
 // ── Tabs config ────────────────────────────────────────────────────────────────
 const TABS = [
-  { id: "favourites", label: "Favourites", icon: Heart, apiKey: "favorite" },
+  { id: "favourites", label: "Saved", icon: Bookmark, apiKey: "favorite" },
   { id: "hidden", label: "Hidden", icon: EyeOff, apiKey: "hidden" },
 ];
 
@@ -352,7 +352,7 @@ const SavedAdsPage = ({
             </div>
           </div>
 
-          {/* Favourite/Hidden tabs — right side */}
+          {/* Saved/Hidden tabs — right side */}
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex gap-1">
               {TABS.map(({ id, label, icon: Icon }) => {
@@ -406,9 +406,9 @@ const SavedAdsPage = ({
           <div className="flex flex-col items-center justify-center h-64 gap-3 text-theme-text-muted">
             {activeTab === "favourites" ? (
               <>
-                <Heart size={40} className="opacity-20" />
-                <p className="text-sm font-medium">No favourite ads yet</p>
-                <p className="text-xs opacity-60">Click the heart icon on any ad to save it here</p>
+                <Bookmark size={40} className="opacity-20" />
+                <p className="text-sm font-medium">No saved ads yet</p>
+                <p className="text-xs opacity-60">Click the save icon on any ad to store it here</p>
               </>
             ) : (
               <>
@@ -443,10 +443,10 @@ const SavedAdsPage = ({
                       try {
                         if (activeTab === "hidden") {
                           // Favouriting from the Hidden tab moves the ad into
-                          // Favourites — so it must also be unhidden, otherwise
+                          // Saved — so it must also be unhidden, otherwise
                           // it lingers in both lists. Unhide FIRST, then
-                          // favourite, so favourite is the last write (and the
-                          // surviving "Added to Favourites" toast).
+                          // save, so save is the last write (and the surviving
+                          // "Added to Saved" toast).
                           await onUnHideAd({ ...ad, hideType: isAdvHidden ? 1 : 2 });
                         }
                         await onToggleFavourite(ad);
@@ -496,7 +496,7 @@ const SavedAdsPage = ({
         onToggleFavourite={async (ad) => {
           if (activeTab === "hidden") {
             // Same as the card handler: favouriting a hidden ad also unhides it
-            // so it doesn't remain in both lists. Unhide first, then favourite.
+            // so it doesn't remain in both lists. Unhide first, then save.
             await onUnHideAd?.({ ...ad, hideType: ad.hideType === 1 ? 1 : 2 });
             await onToggleFavourite?.(ad);
             setAds((prev) => prev.filter((a) => String(a.adId || a.id) !== String(ad.adId || ad.id)));

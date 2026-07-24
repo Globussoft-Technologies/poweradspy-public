@@ -149,7 +149,7 @@ const Sidebar = ({
             {isLoggedIn && (allowedPlatforms == null || allowedPlatforms.length > 0) && (
               <NavItem
                 icon={<Bookmark size={isOpen ? 16 : 18} />}
-                label={t("favourite_hidden_ads")}
+                label={t("saved_hidden_ads")}
                 active={showSavedAdsPage}
                 onClick={() => onShowSavedAdsPage?.()}
                 collapsed={!isOpen}

@@ -952,7 +952,7 @@ const App = () => {
           next.delete(favKey);
           return next;
         });
-        showToast("Removed from Favourites", "success");
+        showToast("Removed from Saved", "success");
         trackEvent('unHide', { ad_id: ad.adId, network: ad.network, unhidetype: 3, post_owner_id: ad.postOwnerId ?? 'NA' });
       } else {
         await hideAds({
@@ -966,11 +966,11 @@ const App = () => {
           next.add(favKey);
           return next;
         });
-        showToast("Added to Favourites", "success");
+        showToast("Added to Saved", "success");
         trackEvent('favAds', { ad_id: ad.adId, network: ad.network, hidetype: 3, post_owner_id: ad.postOwnerId ?? 'NA' });
       }
     } catch (err) {
-      setActionError("Failed to update favourite. Please try again.");
+      setActionError("Failed to update saved ad. Please try again.");
     }
   }, [favouriteAdIds, showToast]);
 
@@ -2102,7 +2102,7 @@ const App = () => {
 
             {/* Feature bullets */}
             <ul className="w-full space-y-2 text-sm text-gray-600 dark:text-gray-400">
-              {['View full ad details & creatives', 'Apply filters across all platforms', 'Track engagement & performance data', 'Save favourites and manage projects', 'Monitor competitors & track rival ad strategies with Projects'].map(f => (
+              {['View full ad details & creatives', 'Apply filters across all platforms', 'Track engagement & performance data', 'Save ads and manage projects', 'Monitor competitors & track rival ad strategies with Projects'].map(f => (
                 <li key={f} className="flex items-center gap-2">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   {f}

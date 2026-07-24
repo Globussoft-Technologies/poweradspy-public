@@ -76,10 +76,10 @@ export const getCountryInfo = (code) => {
   // previously rendered a bogus "UN" flag) and dropping it from the list
   // entirely also isn't right — it left competitors whose ads are ALL
   // untargeted with a blank Top Country cell despite genuinely having ads.
-  // Flag it as global so callers render a globe icon + "Global reach" label
+  // Flag it as global so callers render a globe icon + "Global Reach" label
   // instead of either a fake flag or nothing.
   if (target === "all") {
-    return { f: null, n: "Global reach", isGlobal: true };
+    return { f: null, n: "Global Reach", isGlobal: true };
   }
 
   const _map = {
@@ -372,6 +372,42 @@ const RESTORE_ANALYTICS_FLAG = "pas_restore_analytics_view";
 // CompetitorComparison, so persisting just the name is enough to
 // reconstruct it on reload — no need to round-trip the whole competitor row.
 const RESTORE_COMPARE_COMPETITOR_KEY = "pas_dashboard_compare_competitor_name";
+// Persist the in-progress Add New Advertiser flow so a refresh returns the user
+// to the same setup wizard instead of dumping them back to My Projects.
+const RESTORE_ADD_ADVERTISER_KEY = "pas_dashboard_add_advertiser_draft";
+
+const readJsonSessionItem = (key) => {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeJsonSessionItem = (key, value) => {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* sessionStorage unavailable — refresh restore simply won't work */
+  }
+};
+
+const clearSessionItem = (key) => {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    /* sessionStorage unavailable — nothing to clear */
+  }
+};
+
+const readAddAdvertiserDraft = () => {
+  const draft = readJsonSessionItem(RESTORE_ADD_ADVERTISER_KEY);
+  if (!draft || typeof draft !== "object") return null;
+  const viewState = Number(draft.viewState);
+  if (![1, 2, 3].includes(viewState)) return null;
+  return { ...draft, viewState };
+};
 
 // Still called from the drill-down click handlers below — now redundant with
 // the continuous sessionStorage sync, but harmless to leave (same value,
@@ -390,8 +426,11 @@ const markReturnToAnalytics = () => {
 // viewState 5 additionally requires a persisted competitor name — without
 // it CompetitorComparison has nothing to render, so fall back to 4 (still
 // requires the project id) rather than showing a broken view 5.
-const getRestoreViewState = () => {
+const getRestoreViewState = (addAdvertiserDraft) => {
   try {
+    if (addAdvertiserDraft) {
+      return addAdvertiserDraft.viewState === 3 ? 2 : addAdvertiserDraft.viewState;
+    }
     if (!sessionStorage.getItem(RESTORE_ANALYTICS_FLAG)) return 0;
     if (!localStorage.getItem("pas_dashboard_selected_proj_id")) return 0;
     const persistedView = localStorage.getItem("pas_dashboard_view");
@@ -429,9 +468,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const joinedRoomsRef = useRef(new Set());
 
   const [projects, setProjects] = useState([]);
-  const initialRestoreViewState = getRestoreViewState();
+  const [restoredAddAdvertiserDraft] = useState(() => readAddAdvertiserDraft());
+  const initialRestoreViewState = getRestoreViewState(restoredAddAdvertiserDraft);
   const [selectedProjectId, setSelectedProjectId] = useState(() =>
-    initialRestoreViewState !== 0
+    initialRestoreViewState === 4 || initialRestoreViewState === 5
       ? localStorage.getItem("pas_dashboard_selected_proj_id") || null
       : null,
   );
@@ -462,21 +502,45 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     );
   };
 
-  const [websiteLink, setWebsiteLink] = useState("");
+  const [websiteLink, setWebsiteLink] = useState(
+    () => restoredAddAdvertiserDraft?.websiteLink || "",
+  );
   const [showAdvertiserSuggestions, setShowAdvertiserSuggestions] =
     useState(false);
   const advertiserInputWrapperRef = useRef(null);
   const advertiserInputRef = useRef(null);
-  const [selectedKeywords, setSelectedKeywords] = useState([]);
-  const [keywordSuggestions, setKeywordSuggestions] =
-    useState(KEYWORDS_SUGGESTIONS);
+  const [selectedKeywords, setSelectedKeywords] = useState(
+    () => Array.isArray(restoredAddAdvertiserDraft?.selectedKeywords)
+      ? restoredAddAdvertiserDraft.selectedKeywords
+      : [],
+  );
+  const [keywordSuggestions, setKeywordSuggestions] = useState(() =>
+    Array.isArray(restoredAddAdvertiserDraft?.keywordSuggestions) &&
+    restoredAddAdvertiserDraft.keywordSuggestions.length > 0
+      ? restoredAddAdvertiserDraft.keywordSuggestions
+      : KEYWORDS_SUGGESTIONS,
+  );
   const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
-  const [fetchedContentRefId, setFetchedContentRefId] = useState("");
-  const [maxCompetitors, setMaxCompetitors] = useState("15");
-  const [customKeyword, setCustomKeyword] = useState("");
-  const [selectedCountries, setSelectedCountries] = useState([]);
-  const [countrySearch, setCountrySearch] = useState("");
-  const [isCountryAccordionOpen, setIsCountryAccordionOpen] = useState(false);
+  const [fetchedContentRefId, setFetchedContentRefId] = useState(
+    () => restoredAddAdvertiserDraft?.fetchedContentRefId || "",
+  );
+  const [maxCompetitors, setMaxCompetitors] = useState(
+    () => restoredAddAdvertiserDraft?.maxCompetitors || "15",
+  );
+  const [customKeyword, setCustomKeyword] = useState(
+    () => restoredAddAdvertiserDraft?.customKeyword || "",
+  );
+  const [selectedCountries, setSelectedCountries] = useState(
+    () => Array.isArray(restoredAddAdvertiserDraft?.selectedCountries)
+      ? restoredAddAdvertiserDraft.selectedCountries
+      : [],
+  );
+  const [countrySearch, setCountrySearch] = useState(
+    () => restoredAddAdvertiserDraft?.countrySearch || "",
+  );
+  const [isCountryAccordionOpen, setIsCountryAccordionOpen] = useState(
+    () => Boolean(restoredAddAdvertiserDraft?.isCountryAccordionOpen),
+  );
   const [compareCompetitor, setCompareCompetitor] = useState(() =>
     initialRestoreViewState === 5
       ? { name: localStorage.getItem(RESTORE_COMPARE_COMPETITOR_KEY) }
@@ -570,6 +634,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 id: proj._id ? String(proj._id) : `real_proj_${idx}`,
                 project_id: proj._id ? String(proj._id) : null, // competitors_request._id → brand-cc (same value as `id` now; kept for any future consumer that specifically wants the raw Mongo id under this name)
                 advertiser: proj.project_name,
+                // Preserve the saved target country so exports and project UI
+                // can show the exact region the user picked during creation.
+                country: Array.isArray(proj.country)
+                  ? proj.country.filter(Boolean)
+                  : proj.country
+                    ? [proj.country]
+                    : [],
                 // While still generating, show the originally requested count
                 // so an in-progress project reads as "42/100", not "42/42"
                 // (which reads as already done). But once generation has
@@ -592,6 +663,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             mappedProjects = fetchedProjectsStrings.map((projName, idx) => ({
               id: `real_proj_${idx}`,
               advertiser: projName,
+              country: [],
               initialCompetitorCount: 0,
               initialMonitoredCount: 0,
               competitors: [],
@@ -617,16 +689,16 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             dashboard_Advertisers: mappedProjects.map((p) => p.advertiser),
           });
 
-          if (mappedProjects.length === 0 && active) {
+          if (mappedProjects.length === 0 && active && initialRestoreViewState === 0) {
             setViewState(1);
           }
-        } else if (active) {
+        } else if (active && initialRestoreViewState === 0) {
           trackProjectEvent('Dashboard', { dashboard_Advertisers: 'NA' });
           setViewState(1);
         }
       } catch (err) {
         console.error("Failed to load dashboard projects", err);
-        if (active) setViewState(1);
+        if (active && initialRestoreViewState === 0) setViewState(1);
       } finally {
         if (active) setIsLoadingProjects(false);
       }
@@ -703,6 +775,40 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       /* sessionStorage unavailable — refresh restore simply won't work */
     }
   }, [viewState]);
+
+  // Keep the Add New Advertiser wizard alive across refreshes while the user is
+  // still in that flow. We store the last interactive step in sessionStorage so
+  // reloading the page lands the user back on the setup screen instead of the
+  // projects list.
+  useEffect(() => {
+    if (viewState === 1 || viewState === 2 || viewState === 3) {
+      writeJsonSessionItem(RESTORE_ADD_ADVERTISER_KEY, {
+        viewState: viewState === 3 ? 2 : viewState,
+        websiteLink,
+        selectedKeywords,
+        keywordSuggestions,
+        fetchedContentRefId,
+        maxCompetitors,
+        customKeyword,
+        selectedCountries,
+        countrySearch,
+        isCountryAccordionOpen,
+      });
+    } else {
+      clearSessionItem(RESTORE_ADD_ADVERTISER_KEY);
+    }
+  }, [
+    viewState,
+    websiteLink,
+    selectedKeywords,
+    keywordSuggestions,
+    fetchedContentRefId,
+    maxCompetitors,
+    customKeyword,
+    selectedCountries,
+    countrySearch,
+    isCountryAccordionOpen,
+  ]);
 
   // Keep the persisted compare-competitor name in sync with viewState 5, the
   // same way selectedProjectId is kept in sync with viewState 4 — needed so a
@@ -1195,6 +1301,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       const newProject = {
         id: projectId,
         advertiser: normalizedAdvertiser,
+        country: selectedCountryNames,
         initialCompetitorCount: parseInt(maxCompetitors, 10),
         initialMonitoredCount: 0,
         competitors: [],
@@ -2465,6 +2572,34 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   onClick={() => {
                     const comps = activeProject?.competitors || [];
                     if (!comps.length) return;
+                    const getSelectedCountriesForComp = (comp) => {
+                      const match = comp?.specificToMatch;
+                      if (!match) return [];
+
+                      const rawCountry = Array.isArray(match)
+                        ? match
+                        : match.country ??
+                          match.countries ??
+                          match.location ??
+                          Object.entries(match).find(([key]) =>
+                            /country/i.test(key),
+                          )?.[1];
+
+                      const normalizedCountryList = Array.isArray(rawCountry)
+                        ? rawCountry
+                        : rawCountry
+                          ? [rawCountry]
+                          : [];
+
+                      return getDisplayCountries(normalizedCountryList).filter(
+                        (country) => !getCountryInfo(country).isGlobal,
+                      );
+                    };
+                    // Show the extra report column only when at least one row
+                    // actually carries a real country-specific match.
+                    const includeSelectedCountryColumn = comps.some(
+                      (comp) => getSelectedCountriesForComp(comp).length > 0,
+                    );
                     const headers = [
                       "Competitor",
                       "Monitoring Status",
@@ -2476,18 +2611,32 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                       "Top Countries",
                       "Estimated Total Ad Budget ($)",
                     ];
-                    const rows = comps.map((c) => [
-                      c.name || "",
-                      c.isMonitored ? "Enabled" : "Disabled",
-                      c.impressions || "0",
-                      c.popularity || "0%",
-                      c.totalAds || "0",
-                      c.todayAds ?? "0",
-                      (c.platforms || []).join(" | "),
-                      (c.countries || []).join(" | "),
-                      c.budget || "$0",
-                    ]);
-                    const csv = [headers, ...rows]
+                    const csvHeaders = includeSelectedCountryColumn
+                      ? [headers[0], "Selected Country", ...headers.slice(1)]
+                      : headers;
+                    const rows = comps.map((c) => {
+                      const selectedCountryLabel = getSelectedCountriesForComp(c)
+                        .map((country) => getCountryInfo(country).n)
+                        .join(" | ");
+                      const topCountries = getDisplayCountries(c.countries)
+                        .map((country) => getCountryInfo(country).n)
+                        .join(" | ");
+                      const baseRow = [
+                        c.name || "",
+                        c.isMonitored ? "Enabled" : "Disabled",
+                        c.impressions || "0",
+                        c.popularity || "0%",
+                        c.totalAds || "0",
+                        c.todayAds ?? "0",
+                        (c.platforms || []).join(" | "),
+                        topCountries,
+                        c.budget || "$0",
+                      ];
+                      return includeSelectedCountryColumn
+                        ? [c.name || "", selectedCountryLabel, ...baseRow.slice(1)]
+                        : baseRow;
+                    });
+                    const csv = [csvHeaders, ...rows]
                       .map((r) =>
                         r
                           .map((v) => `"${String(v).replace(/"/g, '""')}"`)

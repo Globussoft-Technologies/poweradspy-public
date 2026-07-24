@@ -9,7 +9,6 @@ import {
   Share2,
   MessageCircle,
   ExternalLink,
-  Heart,
   Star,
   StarHalf,
   Clock,
@@ -31,6 +30,7 @@ import {
   ChevronRight,
   Smartphone,
   Download,
+  Bookmark,
 } from "lucide-react";
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import OriginalPreview from "./OriginalPreview";
@@ -1006,17 +1006,18 @@ const AdDetailModal = ({
               </div>
               <button
                 onClick={() => {
-                  if (guest?.showGuestWarning("Please login to save favourites")) return;
+                  if (guest?.showGuestWarning("Please login to save ads")) return;
                   onToggleFavourite?.(ad);
                 }}
+                title={isFavourite ? "Remove from saved" : "Save ad"}
                 className="p-2 rounded-lg transition-colors hover:bg-white/5"
               >
-                <Heart
+                <Bookmark
                   size={18}
                   className={
                     isFavourite
-                      ? "fill-red-500 text-red-500"
-                      : "text-white/30 hover:text-red-400"
+                      ? "fill-[#6b99ff] text-[#6b99ff]"
+                      : "text-white/30 hover:text-[#6b99ff]"
                   }
                 />
               </button>
@@ -1034,9 +1035,9 @@ const AdDetailModal = ({
 
               {/* Eye / Hide dropdown */}
               <div className="relative">
-                <button
-                  ref={hideButtonRef}
-                  onClick={() => {
+              <button
+                ref={hideButtonRef}
+                onClick={() => {
                     if (!showHideMenu && hideButtonRef.current) {
                       const rect = hideButtonRef.current.getBoundingClientRect();
                       setHideMenuPos({
@@ -1046,10 +1047,11 @@ const AdDetailModal = ({
                     }
                     setShowHideMenu((v) => !v);
                   }}
-                  className="p-2 rounded-lg transition-colors hover:bg-white/5"
-                >
+                title={showHideMenu ? "Close hide menu" : "Hide ad or advertiser"}
+                className="p-2 rounded-lg transition-colors hover:bg-white/5"
+              >
                   <EyeOff size={18} className="text-white/30 hover:text-white/70" />
-                </button>
+              </button>
               </div>
             </div>
 
