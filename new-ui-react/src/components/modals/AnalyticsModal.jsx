@@ -227,6 +227,7 @@ import LanderDetails from "./analytics/LanderDetails";
 import Demographics from "./analytics/Demographics";
 import CountryAnalytics from "./analytics/CountryAnalytics";
 import TikTokTimeAnalysis from "./analytics/TikTokTimeAnalysis";
+import TransparencyDelivery from "./analytics/TransparencyDelivery";
 
 // ─── Platform engagement rules ───────────────────────────────────────
 const ENGAGEMENT_RULES = {
@@ -351,12 +352,17 @@ const ASPECT_RATIOS = {
   google: { _default: ["auto"] },
 };
 
-function getAspectStyle(platform, position, adAspectRatio) {
+export const normalizePlatformSlug = (platform) => {
+  if (Number(platform) === 18) return "google";
+  return String(platform ?? "").trim().toLowerCase();
+};
+
+export function getAspectStyle(platform, position, adAspectRatio) {
   if (adAspectRatio && adAspectRatio !== "auto") {
     return { aspectRatio: adAspectRatio.replace(":", "/") };
   }
-  const p = (platform || "").toLowerCase();
-  const pos = (position || "").toLowerCase();
+  const p = normalizePlatformSlug(platform);
+  const pos = String(position ?? "").toLowerCase();
   const ratioMap = ASPECT_RATIOS[p] || {};
   const ratios = ratioMap[pos] || ratioMap._default || ["4/5"];
   const r = ratios[0];
@@ -1173,8 +1179,12 @@ const AnalyticsModal = ({
   const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(ad?.id, ad?.network, 281, 'en', ad?.postOwnerId);
   const adDetailsData = insights.adDetails?.[0] || insights.adDetails || null;
   const tiktokAnalytics = insights.analytics || null;
+  const isTransparency =
+    Number(ad?.platform) === 18 ||
+    ad?.isGoogleTransparency === true ||
+    Number(adDetailsData?.platform) === 18;
   const isTikTok =
-    (ad?.network || ad?.platform || "").toLowerCase() === "tiktok";
+    normalizePlatformSlug(ad?.network || ad?.platform) === "tiktok";
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -1256,19 +1266,32 @@ const AnalyticsModal = ({
       // payload can carry a different (or differently-shaped) popularity field,
       // which would otherwise make the same ad show a different rating here.
       merged.popularity = ad.popularity ?? merged.popularity;
+      if (isTransparency) {
+        if (!merged.countryDetails?.length && ad.countryDetails?.length) {
+          merged.countryDetails = ad.countryDetails;
+        }
+        merged.impressionRange = merged.impressionRange || ad.impressionRange || null;
+        // The common search contract distinguishes producer values from SQL
+        // operational fallbacks. Keep those nullable card values authoritative
+        // even if the legacy insights endpoint returns a generated SQL date.
+        merged.firstSeenRaw = ad.firstSeenRaw ?? null;
+        merged.lastSeenRaw = ad.lastSeenRaw ?? null;
+        merged.postDateRaw = ad.postDateRaw ?? null;
+        merged.subnetwork = merged.subnetwork || ad.subnetwork || null;
+      }
       if (!merged.tiktokLibraryUrl && ad.tiktokLibraryUrl) merged.tiktokLibraryUrl = ad.tiktokLibraryUrl;
       if (!merged.network && ad.network) merged.network = ad.network;
       return merged;
     }
     return ad;
-  }, [ad, adDetailsData, tiktokAnalytics, isTikTok]);
+  }, [ad, adDetailsData, tiktokAnalytics, isTikTok, isTransparency]);
 
   const ctx = useMemo(() => {
     const a = processedAd || ad || {};
     // Prefer platform_network from adDetails (backend canonical), then fall back to card network
-    const platform = ((adDetailsData?.platform_network) || a.network || a.platform || 'facebook').toLowerCase();
-    const adType = (a.adType || a.ad_type || 'image').toLowerCase();
-    const position = (a.ad_position || a.position || '').toLowerCase();
+    const platform = normalizePlatformSlug((adDetailsData?.platform_network) || a.network || a.platform || 'facebook');
+    const adType = String(a.adType || a.ad_type || 'image').toLowerCase();
+    const position = String(a.ad_position || a.position || '').toLowerCase();
     const platformRules = ENGAGEMENT_RULES[platform] || ENGAGEMENT_RULES.facebook;
     let rules = platformRules[position] || platformRules[adType] || platformRules._default || {};
     if (platform === 'facebook' && adType.includes('video') && platformRules._videoOverride) rules = platformRules._videoOverride;
@@ -1276,7 +1299,7 @@ const AnalyticsModal = ({
     const typeBadge = AD_TYPE_CONFIG[typeKey];
     const likes = a.likes || 0;
     const views = a.views || 0;
-    const impressions = a.impressions || 0;
+    const impressions = typeof a.impressions === "object" ? 0 : (a.impressions || 0);
     const shares = a.share || a.shares || 0;
     const comments = a.comments || 0;
     const popularity = a.popularity || 0;
@@ -1346,7 +1369,9 @@ const AnalyticsModal = ({
   // For TikTok, media fields (video_cover, video_url) come from the analytics SSE event, not adDetails
   const d = isTikTok
     ? { ...(adDetailsData || {}), ...(tiktokAnalytics || {}), ...(ad || {}) }
-    : (adDetailsData || ad || {});
+    : isTransparency
+      ? { ...(ad || {}), ...(processedAd || {}), ...(adDetailsData || {}) }
+      : (adDetailsData || ad || {});
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
   const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
 
@@ -1365,6 +1390,25 @@ const AnalyticsModal = ({
     if (s.includes('T')) return s.split('T')[0];
     if (s.includes(' ')) return s.split(' ')[0];
     return s;
+  };
+  const transparencyDate = (val) => {
+    const formatted = fmtDate(val);
+    if (
+      !val ||
+      formatted === '\u2014' ||
+      formatted.startsWith('1970-01-01') ||
+      formatted.startsWith('1000-01-01') ||
+      formatted.startsWith('0001-01-01') ||
+      formatted.startsWith('0000-00-00')
+    ) return "--";
+    const date = new Date(val);
+    if (Number.isNaN(date.getTime())) return "--";
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(date);
   };
   // Domain Reg Date only: WHOIS often has no data → date defaults to the Unix epoch
   // ("1970-01-01", or "1969-12-31" after a tz shift) / a zero-date. No real domain
@@ -1460,13 +1504,17 @@ const AnalyticsModal = ({
     return [
       {
         label: "FIRST SEEN",
-        value: fmtDate(d.first_seen),
+        value: isTransparency
+          ? transparencyDate(processedAd?.firstSeenRaw ?? ad?.firstSeenRaw)
+          : fmtDate(d.first_seen),
         icon: Calendar,
         color: "text-blue-400",
       },
       {
         label: "LAST SEEN",
-        value: fmtDate(d.last_seen),
+        value: isTransparency
+          ? transparencyDate(processedAd?.lastSeenRaw ?? ad?.lastSeenRaw)
+          : fmtDate(d.last_seen),
         icon: Activity,
         color: "text-emerald-400",
       },
@@ -1479,6 +1527,7 @@ const AnalyticsModal = ({
         // (0001-01-01) when the crawler never supplied a real publish date — show "—" (no date)
         // instead of the garbage value.
         value: (() => {
+          if (isTransparency) return "--";
           const pd = fmtDate(d.post_date);
           if (!pd || pd === '—' || pd.startsWith('1970-01-01') || pd.startsWith('0000-00-00') || pd.startsWith('0001-01-01')) return '—';
           return pd;
@@ -1516,7 +1565,9 @@ const AnalyticsModal = ({
       }]),
       {
         label: "AD LANGUAGE",
-        value: formatLanguage(d.language || d.lang || d.adLanguage || d.ad_language),
+        value: isTransparency && !(d.language || d.lang || d.adLanguage || d.ad_language)
+          ? "--"
+          : formatLanguage(d.language || d.lang || d.adLanguage || d.ad_language),
         icon: Globe,
         color: "text-[#6b99ff]",
       },
@@ -1527,8 +1578,12 @@ const AnalyticsModal = ({
         color: "text-pink-400",
       },
       {
-        label: "AD POSITION",
+        label: isTransparency ? "PLATFORM" : "AD POSITION",
         value: (() => {
+          if (isTransparency) {
+            const platformName = d.subnetwork || processedAd?.subnetwork || ad?.subnetwork;
+            return platformName ? String(platformName).toUpperCase() : "--";
+          }
           const pos = d.ad_position || ad?.adPosition || ad?.position || "";
           return pos ? pos.toUpperCase() : "—";
         })(),
@@ -2047,6 +2102,24 @@ const AnalyticsModal = ({
               ad={ad}
             />
 
+            {isTransparency && (
+              <TransparencyDelivery
+                isLight={isLight}
+                subnetwork={d.subnetwork || processedAd?.subnetwork || ad?.subnetwork}
+                impressions={d.impressions || processedAd?.impressionRange || ad?.impressionRange}
+                countryDetails={
+                  (Array.isArray(d.country_details) && d.country_details.length
+                    ? d.country_details
+                    : null) ||
+                  (processedAd?.countryDetails?.length ? processedAd.countryDetails : null) ||
+                  ad?.countryDetails ||
+                  []
+                }
+                firstSeen={processedAd?.firstSeenRaw ?? ad?.firstSeenRaw}
+                lastSeen={processedAd?.lastSeenRaw ?? ad?.lastSeenRaw}
+              />
+            )}
+
             {/* Target Audience — Facebook & Instagram (right after Basic Info) */}
             {["facebook", "instagram"].includes(ctx.platform) && (
               <AudienceSection
@@ -2090,7 +2163,7 @@ const AnalyticsModal = ({
             {/* Demographics / TikTok time analysis / Google keywords / Native TargetSite */}
             {isTikTok ? (
               <TikTokTimeAnalysis analytics={tiktokAnalytics} />
-            ) : ctx.platform === "google" ? (
+            ) : ctx.platform === "google" && !isTransparency ? (
               <TargetedKeywords
                 adDetails={adDetailsData}
                 ad={ad}
@@ -2107,7 +2180,7 @@ const AnalyticsModal = ({
                 targetSiteData={insights.targetSite}
                 isLight={isLight}
               />
-            ) : !["gdn", "pinterest", "reddit", "linkedin", "youtube", "quora"].includes(
+            ) : !isTransparency && !["gdn", "pinterest", "reddit", "linkedin", "youtube", "quora"].includes(
                 ctx.platform,
               ) && !(insightErrors.userData && !insights.advertiserUserData) ? (
               <Demographics

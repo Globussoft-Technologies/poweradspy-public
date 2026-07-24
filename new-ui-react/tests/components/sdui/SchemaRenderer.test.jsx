@@ -134,6 +134,51 @@ describe("SchemaRenderer > section wrapping", () => {
     );
     expect(queryByTestId("doc-section")).toBeNull();
   });
+  it("Google Transparency renders directly so its title is not duplicated", () => {
+    const { queryByTestId, getByTestId } = render(
+      <SchemaRenderer
+        activePlatforms={["google"]}
+        document={{
+          _id: "google_transparency",
+          title: "Transparency Ads",
+          filters: [{
+            _id: "google_transparency_ads",
+            type: "checkbox",
+            label: "Transparency Ads",
+          }],
+        }}
+      />,
+    );
+    expect(queryByTestId("doc-section")).toBeNull();
+    expect(getByTestId("stub-google_transparency_ads")).toHaveAttribute(
+      "data-label",
+      "Transparency Ads",
+    );
+    expect(
+      getByTestId("stub-google_transparency_ads").parentElement,
+    ).toHaveClass("px-2.5");
+  });
+
+  it("shows when Google is part of a mixed selection and hides without Google", () => {
+    const document = {
+      _id: "google_transparency",
+      title: "Google Transparency Ads",
+      filters: [{ _id: "f1", type: "checkbox", label: "Transparency Ads" }],
+    };
+    const { container, rerender } = render(
+      <SchemaRenderer
+        document={document}
+        activePlatforms={["facebook", "google"]}
+      />,
+    );
+    expect(container.innerHTML).not.toBe("");
+
+    rerender(
+      <SchemaRenderer document={document} activePlatforms={["facebook"]} />,
+    );
+    expect(container.innerHTML).toBe("");
+  });
+
   it("isDirectToggle by title containing 'verified' (case-insensitive)", () => {
     const { queryByTestId } = render(
       <SchemaRenderer

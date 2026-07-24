@@ -1,0 +1,30 @@
+{
+  "properties": {
+    "advertiser_id": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+    "subnetwork": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+    "region_code": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+    "impressions_min": { "type": "long" },
+    "impressions_max": { "type": "long" },
+    "impressions_operator": { "type": "keyword" },
+    "ad_url": { "type": "keyword", "index": false, "doc_values": false },
+    "video_url_original": { "type": "keyword", "index": false, "doc_values": false },
+    "othermultimedia": { "type": "keyword", "index": false, "doc_values": false },
+    "country_details": {
+      "type": "nested",
+      "dynamic": false,
+      "properties": {
+        "country": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "country_code": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "first_seen": { "type": "date", "format": "strict_date_optional_time" },
+        "last_seen": { "type": "date", "format": "strict_date_optional_time" },
+        "times_shown": {
+          "properties": {
+            "min": { "type": "long" },
+            "max": { "type": "long" },
+            "operator": { "type": "keyword" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -30,6 +30,7 @@ import {
   Search,
   Type,
   Star,
+  ShieldCheck,
 } from "lucide-react";
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import {
@@ -205,6 +206,10 @@ const AD_TYPE_ICONS = {
   text: Type,
 };
 
+const isVideoMediaUrl = (url) =>
+  typeof url === "string" &&
+  /\.(?:mp4|webm|mov|m4v|ogv|ogg)(?:$|[?#])/i.test(url);
+
 const formatStat = (val) => {
   if (val == null || val === "" || val === "N/A") return null;
   // Already a formatted string with units (e.g. "195.4K", "39%") — pass
@@ -286,13 +291,17 @@ const MasonryCard = ({
   const adTypeLower = (ad.adType || "image").toLowerCase();
   const badge = AD_TYPE_BADGES[adTypeLower] || AD_TYPE_BADGES.image;
   const TypeIcon = AD_TYPE_ICONS[adTypeLower] || ImageIcon;
-  const isVideo = adTypeLower === "video";
+  const renderTypeLower = (ad.renderType || adTypeLower).toLowerCase();
+  const isVideo = renderTypeLower === "video";
+  const isGoogleTransparency =
+    ad.isGoogleTransparency === true ||
+    (platform === "google" && Number(ad.platform) === 18);
   const isTextOnlyAd =
-    adTypeLower === "text" ||
-    adTypeLower === "organic_search" ||
-    adTypeLower === "native_ad";
-  const isBannerAd = adTypeLower === "banner";
-  const isTextImageAd = adTypeLower === "text-image";
+    renderTypeLower === "text" ||
+    renderTypeLower === "organic_search" ||
+    renderTypeLower === "native_ad";
+  const isBannerAd = renderTypeLower === "banner";
+  const isTextImageAd = renderTypeLower === "text-image";
   const isActive = (ad.status || "").toLowerCase() === "active";
   const hasMediaOverlay = !isTextOnlyAd && !isBannerAd && !isTextImageAd;
 
@@ -464,6 +473,10 @@ const MasonryCard = ({
     // `carouselMedia` is already DefaultImage-filtered in mapAdToCard; also skip
     // the cover when it's the placeholder so a broken first slide doesn't render.
     const coverOk = ad.thumbnail && !ad.thumbnail.includes("DefaultImage");
+    if (isGoogleTransparency) {
+      const primary = isVideo ? effectiveVideoUrl : (coverOk ? ad.thumbnail : "");
+      return [...new Set([primary, ...media].filter(Boolean))];
+    }
     // The cover/slide split only applies to IMAGE carousels. A VIDEO ad keeps its
     // poster in `ad_image_video` (a single slide) while its `image_video_url` cover
     // is the SAME creative — prepending it turns one video into a bogus 2-slide
@@ -473,12 +486,22 @@ const MasonryCard = ({
       return [ad.thumbnail, ...media];
     }
     return media;
-  }, [ad.thumbnail, ad.carouselMedia, isVideo]);
+  }, [ad.thumbnail, ad.carouselMedia, isVideo, isGoogleTransparency, effectiveVideoUrl]);
 
   const hasCarousel = carouselImages.length > 1;
-  const currentImg = hasCarousel
+  const currentImg = isGoogleTransparency
+    ? carouselImages[activeIndex] || ad.thumbnail || ""
+    : hasCarousel
     ? carouselImages[activeIndex]
     : ad.thumbnail || "";
+  const currentMediaIsVideo =
+    isGoogleTransparency &&
+    ((isVideo && currentImg === effectiveVideoUrl) || isVideoMediaUrl(currentImg));
+  const cardShowsVideo =
+    isGoogleTransparency && carouselImages.length > 0
+      ? currentMediaIsVideo
+      : isVideo;
+  const currentVideoUrl = currentMediaIsVideo ? currentImg : effectiveVideoUrl;
   const rawTitleStr =
     (ad.carouselTitles?.length > activeIndex
       ? ad.carouselTitles[activeIndex]
@@ -534,6 +557,13 @@ const MasonryCard = ({
     setIsImageLoading(true);
   }, [currentImg]);
 
+  useEffect(() => {
+    if (isGoogleTransparency) {
+      setIsPlaying(false);
+      setVideoUnavailable(false);
+    }
+  }, [activeIndex, isGoogleTransparency]);
+
   useEffect(
     () => () => {
       if (imgRetryTimerRef.current) clearTimeout(imgRetryTimerRef.current);
@@ -542,8 +572,8 @@ const MasonryCard = ({
   );
 
   React.useEffect(() => {
-    if (!ad.thumbnail && adTypeLower !== "text") onImageReady?.(ad.id);
-  }, [ad.id, ad.thumbnail, adTypeLower, onImageReady]);
+    if (!ad.thumbnail && renderTypeLower !== "text") onImageReady?.(ad.id);
+  }, [ad.id, ad.thumbnail, renderTypeLower, onImageReady]);
 
   const starRating = useMemo(
     () => (ad.popularity ? getStarRating(ad.popularity) : 0),
@@ -693,12 +723,12 @@ const MasonryCard = ({
             </div>
           ) : (
             <div className="relative w-full h-full min-h-[220px]">
-              {isPlaying && isVideo && (effectiveVideoUrl || embedUrl) ? (
+              {isPlaying && cardShowsVideo && (currentVideoUrl || embedUrl) ? (
                 <>
-                  {effectiveVideoUrl ? (
+                  {currentVideoUrl ? (
                     <video
-                      key={effectiveVideoUrl}
-                      src={effectiveVideoUrl}
+                      key={currentVideoUrl}
+                      src={currentVideoUrl}
                       className="relative z-20 w-full object-contain bg-black"
                       style={{ height: lockedHeight || 220 }}
                       autoPlay
@@ -732,17 +762,32 @@ const MasonryCard = ({
               ) : (
                 <>
                   {!imgError && !ad.previewUnavailable && (
-                    <img
-                      key={`${currentImg}_${imgRetryCount}`}
-                      src={currentImg}
-                      alt={currentTitle}
-                      decoding="async"
-                      onLoad={handleImgLoad}
-                      onError={handleImgError}
-                      className={`absolute inset-0 w-full h-full object-cover block transition-opacity duration-300 ${
-                        isImageLoading ? "opacity-0" : "opacity-100"
-                      }`}
-                    />
+                    currentMediaIsVideo ? (
+                      <video
+                        key={`${currentImg}_${imgRetryCount}`}
+                        src={currentImg}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        onLoadedData={handleImgLoad}
+                        onError={handleVideoError}
+                        className={`absolute inset-0 w-full h-full object-cover block transition-opacity duration-300 ${
+                          isImageLoading ? "opacity-0" : "opacity-100"
+                        }`}
+                      />
+                    ) : (
+                      <img
+                        key={`${currentImg}_${imgRetryCount}`}
+                        src={currentImg}
+                        alt={currentTitle}
+                        decoding="async"
+                        onLoad={handleImgLoad}
+                        onError={handleImgError}
+                        className={`absolute inset-0 w-full h-full object-cover block transition-opacity duration-300 ${
+                          isImageLoading ? "opacity-0" : "opacity-100"
+                        }`}
+                      />
+                    )
                   )}
                   {isImageLoading && !imgError && !ad.previewUnavailable && (
                     <div className="absolute inset-0 z-20 media-shimmer pointer-events-none" />
@@ -777,7 +822,7 @@ const MasonryCard = ({
               </div>
 
               {/* Play affordance for videos */}
-              {isVideo && !isPlaying && !videoUnavailable && (
+              {cardShowsVideo && !isPlaying && !videoUnavailable && (
                 <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
                   <button
                     className="w-14 h-14 bg-black/55 backdrop-blur-md rounded-full flex items-center justify-center border border-white/25 shadow-[0_0_20px_rgba(0,0,0,0.5)] transform transition-all group-hover:scale-110 group-hover:bg-black/70 pointer-events-auto"
@@ -786,7 +831,7 @@ const MasonryCard = ({
                       // Nothing playable (no direct media URL and no
                       // YouTube/Facebook watch URL in ad_url). Hide the play
                       // affordance and let the thumbnail stand on its own.
-                      if (!effectiveVideoUrl && !embedUrl) {
+                      if (!currentVideoUrl && !embedUrl) {
                         setVideoUnavailable(true);
                         return;
                       }
@@ -828,6 +873,16 @@ const MasonryCard = ({
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {isGoogleTransparency && (
+            <div
+              title="Google Ads Transparency"
+              className="absolute top-2 left-12 z-30 pointer-events-none flex items-center gap-1 rounded-full border border-blue-300/40 bg-blue-950/80 px-2 py-1 text-[9px] font-bold tracking-wide text-blue-100 shadow-lg backdrop-blur-md"
+            >
+              <ShieldCheck size={13} className="text-blue-300" />
+              <span>Transparency</span>
             </div>
           )}
 

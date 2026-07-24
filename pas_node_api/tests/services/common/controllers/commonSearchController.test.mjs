@@ -182,6 +182,31 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(res.json.mock.calls[0][0].meta.planAccess.planId).toBe("p1");
   });
 
+  it("Google Transparency toggle searches only Google even when other networks were selected", async () => {
+    registryReturns({
+      facebook: svc("fb"),
+      instagram: svc("ig"),
+      google: svc("google"),
+    });
+    const res = mockRes();
+    await searchAllNetworks({
+      body: {
+        network: ["facebook", "instagram", "google"],
+        google_transparency_ads: true,
+        google_transparency_subnetwork: "SEARCH",
+      },
+      query: {},
+    }, res);
+
+    expect(searchAds.google).toHaveBeenCalledOnce();
+    expect(searchAds.facebook).not.toHaveBeenCalled();
+    expect(searchAds.instagram).not.toHaveBeenCalled();
+    expect(searchAds.google.mock.calls[0][0].body).toMatchObject({
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "SEARCH",
+    });
+  });
+
   it("sduiApplicable restricts networks", async () => {
     registryReturns({ facebook: svc("fb"), instagram: svc("ig") });
     getApplicableNetworks.mockResolvedValue(["facebook"]);

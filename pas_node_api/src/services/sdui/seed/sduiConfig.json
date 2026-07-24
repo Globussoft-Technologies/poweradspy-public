@@ -477,6 +477,7 @@
             "category",
             "ad_type",
             "ad_position",
+            "google_transparency",
             "country",
             "state",
             "city",
@@ -11293,6 +11294,108 @@
       }
     ],
     "flag": true
+  },
+  {
+    "_id": "google_transparency",
+    "config_type": "sidebar",
+    "title": "GOOGLE TRANSPARENCY ADS",
+    "rank": 9,
+    "display_mode": "accordion",
+    "visible": true,
+    "flag": true,
+    "collapsed_by_default": false,
+    "meta": "Show only Google Ads Transparency platform-18 creatives and optionally filter their subnetwork.",
+    "icon": {
+      "type": "none",
+      "value": null
+    },
+    "filters": [
+      {
+        "_id": "google_transparency_ads",
+        "group_id": "google_transparency",
+        "label": "Transparency Ads",
+        "type": "toggle_switch",
+        "rank": 1,
+        "query_param": "google_transparency_ads",
+        "multi_select": false,
+        "visible": true,
+        "platform_applicability": [
+          "google"
+        ],
+        "options": []
+      },
+      {
+        "_id": "google_transparency_subnetwork",
+        "group_id": "google_transparency",
+        "label": "Platform",
+        "type": "dropdown",
+        "rank": 2,
+        "query_param": "google_transparency_subnetwork",
+        "multi_select": false,
+        "visible": true,
+        "depends_on": "google_transparency_ads",
+        "platform_applicability": [
+          "google"
+        ],
+        "options": [
+          {
+            "_id": "gt_subnetwork_all",
+            "filter_id": "google_transparency_subnetwork",
+            "label": "All",
+            "value": "all",
+            "rank": 1,
+            "selected_by_default": true,
+            "platform_applicability": ["google"]
+          },
+          {
+            "_id": "gt_subnetwork_maps",
+            "filter_id": "google_transparency_subnetwork",
+            "label": "MAPS",
+            "value": "MAPS",
+            "rank": 2,
+            "selected_by_default": false,
+            "platform_applicability": ["google"]
+          },
+          {
+            "_id": "gt_subnetwork_play",
+            "filter_id": "google_transparency_subnetwork",
+            "label": "PLAY",
+            "value": "PLAY",
+            "rank": 3,
+            "selected_by_default": false,
+            "platform_applicability": ["google"]
+          },
+          {
+            "_id": "gt_subnetwork_shopping",
+            "filter_id": "google_transparency_subnetwork",
+            "label": "SHOPPING",
+            "value": "SHOPPING",
+            "rank": 4,
+            "selected_by_default": false,
+            "platform_applicability": ["google"]
+          },
+          {
+            "_id": "gt_subnetwork_search",
+            "filter_id": "google_transparency_subnetwork",
+            "label": "SEARCH",
+            "value": "SEARCH",
+            "rank": 5,
+            "selected_by_default": false,
+            "platform_applicability": ["google"]
+          },
+          {
+            "_id": "gt_subnetwork_youtube",
+            "filter_id": "google_transparency_subnetwork",
+            "label": "YOUTUBE",
+            "value": "YOUTUBE",
+            "rank": 6,
+            "selected_by_default": false,
+            "platform_applicability": ["google"]
+          }
+        ]
+      }
+    ],
+    "created_at": "2026-07-23T00:00:00.000Z"
   },
   {
     "_id": "ad_sub_position",

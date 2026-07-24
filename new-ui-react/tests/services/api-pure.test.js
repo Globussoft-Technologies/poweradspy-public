@@ -17,7 +17,79 @@ const {
   buildCampaignPrompt,
   getYoutubeEmbedUrl,
   getVideoEmbedUrl,
+  buildSearchPayload,
 } = await import("../../src/services/api.js");
+
+describe("api > Google Transparency search payload", () => {
+  it("toggle forces Google platform 18 and uppercases the selected subnetwork", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["google"],
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "search",
+    });
+    expect(payload).toMatchObject({
+      network: ["google"],
+      platform: 18,
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "SEARCH",
+    });
+  });
+
+  it("All keeps platform 18 filtering without adding a subnetwork constraint", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["google"],
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "all",
+    });
+    expect(payload.platform).toBe(18);
+    expect(payload.google_transparency_subnetwork).toBe("NA");
+  });
+
+  it("disabled toggle preserves the normal multi-network flow", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook", "google"],
+      google_transparency_ads: false,
+      google_transparency_subnetwork: "SEARCH",
+    });
+    expect(payload.network).toEqual(["facebook", "google"]);
+    expect(payload.platform).toBe("NA");
+    expect(payload.google_transparency_subnetwork).toBe("NA");
+  });
+
+  it("stale enabled value cannot hijack selections without Google", () => {
+    const facebook = buildSearchPayload({
+      activePlatforms: ["facebook"],
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "SEARCH",
+    });
+    expect(facebook.network).toEqual(["facebook"]);
+    expect(facebook.platform).toBe("NA");
+    expect(facebook.google_transparency_ads).toBe(false);
+    expect(facebook.google_transparency_subnetwork).toBe("NA");
+
+    const withoutGoogle = buildSearchPayload({
+      activePlatforms: ["facebook", "instagram", "youtube"],
+      google_transparency_ads: true,
+    });
+    expect(withoutGoogle.network).toEqual(["facebook", "instagram", "youtube"]);
+    expect(withoutGoogle.platform).toBe("NA");
+    expect(withoutGoogle.google_transparency_ads).toBe(false);
+  });
+
+  it("works when Google is selected together with Instagram", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["instagram", "google"],
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "YOUTUBE",
+    });
+    expect(payload).toMatchObject({
+      network: ["google"],
+      platform: 18,
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "YOUTUBE",
+    });
+  });
+});
 
 describe("api > formatNumber", () => {
   it("undefined/null/empty → null", () => {
@@ -92,6 +164,101 @@ describe("api > mapAdToCard", () => {
   it("network derived from platform numeric ID", () => {
     expect(mapAdToCard({ platform: 1 }).network).toBe("facebook");
     expect(mapAdToCard({ platform: 10 }).network).toBe("tiktok");
+    expect(mapAdToCard({ platform: 18 }).network).toBe("google");
+  });
+
+  it("platform 18 TEXT renders its canonical image URL as media", () => {
+    const out = mapAdToCard({
+      platform: 18,
+      network: "google",
+      type: "TEXT",
+      subnetwork: "search",
+      image_video_url: "/pas-dev/stream/gt/adT/202607/18.jpg",
+      image_url_original: "https://cdn.example/original.jpg",
+      othermultimedia: [
+        "/pas-dev/stream/gt/otherMultiMedia/202607/18_0.jpg",
+        "/pas-dev/stream/gt/otherMultiMedia/202607/18_1.mp4",
+      ],
+      impressions: { min: 0, max: 1000, operator: "range" },
+      country_details: [{
+        country: "Germany",
+        country_code: "DE",
+        first_seen: "2025-12-12T00:00:00Z",
+        last_seen: "2025-12-21T00:00:00Z",
+        times_shown: { min: 0, max: 1000, operator: "range" },
+      }],
+      first_seen: "2025-12-12T00:00:00Z",
+      last_seen: "2025-12-21T00:00:00Z",
+      post_date: null,
+    });
+
+    expect(out).toMatchObject({
+      platform: 18,
+      network: "google",
+      isGoogleTransparency: true,
+      adType: "text",
+      renderType: "image",
+      subnetwork: "SEARCH",
+      impressionRange: { min: 0, max: 1000, operator: "range" },
+      firstSeenRaw: "2025-12-12T00:00:00Z",
+      lastSeenRaw: "2025-12-21T00:00:00Z",
+      postDateRaw: null,
+    });
+    expect(out.countryDetails).toEqual([
+      expect.objectContaining({ country: "Germany", country_code: "DE" }),
+    ]);
+    expect(out.thumbnail).toContain("/pas-dev/stream/gt/adT/202607/18.jpg");
+    expect(out.carouselMedia).toHaveLength(2);
+    expect(out.carouselMedia[0]).toContain("18_0.jpg");
+    expect(out.carouselMedia[1]).toContain("18_1.mp4");
+    expect(out).not.toHaveProperty("store");
+  });
+
+  it("platform 18 TEXT stays text-only when image_video_url is absent", () => {
+    const out = mapAdToCard({
+      platform: 18,
+      network: "google",
+      type: "TEXT",
+      ad_title: "Text-only transparency creative",
+    });
+    expect(out.adType).toBe("text");
+    expect(out.renderType).toBe("text");
+    expect(out.thumbnail).toBe("");
+  });
+
+  it("platform 18 chooses video rendering from canonical image_video_url", () => {
+    const video = mapAdToCard({
+      platform: 18,
+      network: "google",
+      type: "IMAGE",
+      image_video_url: "/pas-dev/stream/gt/adVideo/202607/18.mp4",
+      video_url_original: "https://cdn.example/original.mp4",
+    });
+    expect(video.adType).toBe("image");
+    expect(video.renderType).toBe("video");
+    expect(video.videoUrl).toContain("18.mp4");
+    expect(video.videoUrlFallback).toBe("");
+
+    const image = mapAdToCard({
+      platform: 18,
+      network: "google",
+      type: "VIDEO",
+      image_video_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
+    });
+    expect(image.adType).toBe("video");
+    expect(image.renderType).toBe("image");
+    expect(image.thumbnail).toContain("18.jpg");
+  });
+
+  it("legacy Google TEXT cards are not promoted by platform-18 media rules", () => {
+    const out = mapAdToCard({
+      platform: 4,
+      network: "google",
+      type: "TEXT",
+      image_url_original: "https://cdn.example/legacy-google.jpg",
+    });
+    expect(out.isGoogleTransparency).toBe(false);
+    expect(out.adType).toBe("text");
   });
   it("tiktok video has 9:16 aspect ratio", () => {
     const out = mapAdToCard({ network: "tiktok", video_cover: "http://x/c.jpg" });

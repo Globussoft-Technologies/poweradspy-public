@@ -1,7 +1,10 @@
 'use strict';
 
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
-const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
+const {
+  normalizeParams, ensureArray, parsePagination, parseSort,
+  parseCountryDeliveryFilters, cleanAdsData,
+} = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
@@ -54,6 +57,7 @@ LEFT JOIN google_text_ad_post_owners ON google_text_ad.post_owner_id = google_te
  * ES → response field mapping (mirrors PHP $fieldMap in getAdsByOrderByFieldNew).
  */
 const ES_FIELD_MAP = {
+  image_video_url: 'image_video_url',
   new_nas_image_url: 'image_video_url',
   title: 'ad_title',
   text: 'ad_text',
@@ -75,6 +79,9 @@ const ES_FIELD_MAP = {
   dislikes: 'dislikes',
   views: 'views',
   days_running: 'days_running',
+  platform: 'platform',
+  subnetwork: 'subnetwork',
+  othermultimedia: 'othermultimedia',
 };
 
 function dedupeRows(rows) {
@@ -251,6 +258,22 @@ async function searchAds(req, db, logger) {
   if (p.state)          builder.setState(ensureArray(p.state));
   if (p.city)           builder.setCity(ensureArray(p.city));
   if (p.type)           builder.setAdType(ensureArray(p.type));
+  const transparencyOnly =
+    p.google_transparency_ads === true ||
+    p.google_transparency_ads === 1 ||
+    p.google_transparency_ads === 'true' ||
+    Number(p.platform) === 18;
+  if (transparencyOnly) {
+    builder.setPlatform([18]);
+    const subnetwork = String(p.google_transparency_subnetwork || '').trim();
+    if (
+      subnetwork &&
+      subnetwork.toLowerCase() !== 'all' &&
+      subnetwork.toLowerCase() !== 'na'
+    ) {
+      builder.setSubnetwork([subnetwork.toUpperCase()]);
+    }
+  }
   if (p.target_keywords) builder.setTargetKeyword(ensureArray(p.target_keywords));
   if (p.tags)           builder.setTags(ensureArray(p.tags));
   if (p.lang)           builder.setLangDetect(ensureArray(p.lang));
@@ -266,6 +289,8 @@ async function searchAds(req, db, logger) {
   if (Array.isArray(p.seen_btn_sort) && p.seen_btn_sort.length === 2) builder.setLastSeen({ lower_date: tsToDate(p.seen_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.seen_btn_sort[0], '23:59:59') });
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: tsToDate(p.post_date_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.post_date_btn_sort[0], '23:59:59') });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) { const tsToDay = ts => new Date(Number(ts) * 1000).toISOString().slice(0, 10); builder.setDomainDate({ lower_date: tsToDay(p.domain_date_btn_sort[1]), upper_date: tsToDay(p.domain_date_btn_sort[0]) }); }
+  const countryDelivery = parseCountryDeliveryFilters(p);
+  if (countryDelivery) builder.setCountryDelivery(countryDelivery);
 
   // Lander properties. In v2, `built_with` and `built_with_analytics_tracking`
   // are keyword fields with lowercase normalizers, so raw filter values can be
@@ -403,8 +428,11 @@ async function searchAds(req, db, logger) {
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['id'] || hit._source['ad_id'] || hit._id), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
-      const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : ad.language;
-      return {
+      const isTransparency = Number(src.platform ?? ad.platform) === 18;
+      const language = (src['lang_detect'] && langMap)
+        ? resolveLanguageName(langMap, src['lang_detect'])
+        : isTransparency ? null : ad.language;
+      const normalized = {
         ...ad,
         language,
         market_platform_urls: {
@@ -416,6 +444,60 @@ async function searchAds(req, db, logger) {
           destination_url: src['destination_url'] || null,
         },
       };
+      if (isTransparency) {
+        // Platform 18 uses SQL-safe placeholders internally. Never leak those
+        // placeholders as real values to the frontend.
+        for (const field of [
+          'ad_title', 'ad_text', 'news_feed_description', 'destination_url',
+          'redirect_url', 'first_seen',
+        ]) {
+          if (normalized[field] === '' || normalized[field] === undefined) normalized[field] = null;
+        }
+        if (normalized.post_date == null || Number(normalized.post_date) <= 0) {
+          normalized.post_date = null;
+        }
+        normalized.platform = 18;
+        normalized.subnetwork = src.subnetwork || normalized.subnetwork || null;
+        normalized.country_details = Array.isArray(src.country_details)
+          ? src.country_details
+          : null;
+        normalized.impressions = {
+          min: src.impressions_min ?? null,
+          max: src.impressions_max ?? null,
+          operator: src.impressions_operator ?? null,
+        };
+        normalized.first_seen = src.first_seen || normalized.first_seen || null;
+        normalized.last_seen = src.last_seen || normalized.last_seen || null;
+        // Transparency has no city targeting field. Never expose a legacy SQL
+        // placeholder as real targeting data.
+        normalized.city = null;
+        normalized.image_url_original = src.image_url_original || null;
+        normalized.video_url_original = src.video_url_original || null;
+        const primaryNasUrl = src.image_video_url
+          || src.new_nas_image_url
+          || src.nas_video_url
+          || null;
+        const originalPrimaryUrl = String(normalized.type || src.type).toUpperCase() === 'VIDEO'
+          ? normalized.video_url_original
+          : normalized.image_url_original;
+        normalized.image_video_url = primaryNasUrl || originalPrimaryUrl || null;
+        const nasOtherMedia = Array.isArray(src.othermultimedia) ? src.othermultimedia : [];
+        const storedOtherMedia = nasOtherMedia.filter(Boolean);
+        if (storedOtherMedia.length) normalized.othermultimedia = storedOtherMedia;
+        else delete normalized.othermultimedia;
+        for (const internalField of [
+          'image_url_nas',
+          'nas_video_url',
+          'othermultimedia_original',
+          'carousel_media',
+          'store',
+          'language_id',
+          'lang_detect',
+        ]) {
+          delete normalized[internalField];
+        }
+      }
+      return normalized;
     });
 
     return { code: 200, data: cleanAdsData(finalAds), total, message: 'Ads fetched successfully', _timing: { es_ms: esElapsed, sql_ms: sqlElapsed, total_ms: totalMs } };

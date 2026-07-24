@@ -160,6 +160,13 @@ describe("Google builder > clause generators", () => {
     expect(b.setSize("bogus")._size).toBe(20);
   });
 
+  it("platform and subnetwork filters produce exact ES clauses", () => {
+    b.setPlatform([18]).setSubnetwork(["SEARCH"]);
+    const json = JSON.stringify(b.build().body.query.bool.filter || []);
+    expect(json).toContain('"platform":18');
+    expect(json).toContain('"subnetwork":"SEARCH"');
+  });
+
   it("setStatus(array) → Array.isArray truthy branch (line 151)", () => {
     expect(b.setStatus(["x", "y"])._params.status).toEqual(["x", "y"]);
   });
@@ -202,5 +209,17 @@ describe("Google builder > ip-based country boost", () => {
 describe("Google builder > SEARCH_SOURCE_FIELDS", () => {
   it("static class property exists", () => {
     expect(Array.isArray(Builder.SEARCH_SOURCE_FIELDS)).toBe(true);
+  });
+
+  it("keeps Google Transparency discriminator and media fields in search hits", () => {
+    expect(Builder.SEARCH_SOURCE_FIELDS).toEqual(expect.arrayContaining([
+      "platform",
+      "image_url_original",
+      "image_video_url",
+      "new_nas_image_url",
+      "video_url_original",
+      "nas_video_url",
+      "othermultimedia",
+    ]));
   });
 });

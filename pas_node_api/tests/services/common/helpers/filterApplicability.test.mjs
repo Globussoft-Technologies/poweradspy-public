@@ -37,7 +37,27 @@ describe("filterApplicability > getApplicableNetworks (input shape)", () => {
     getSDUIConfig.mockResolvedValue({});
     const { getApplicableNetworks } = freshSut();
     expect(await getApplicableNetworks({
-      gender: null, country: "", state: "NA", city: [], type: ["NA", ""], adcategory: undefined,
+      gender: null, country: "", state: "NA", city: [], type: ["NA", ""],
+      verified: false, google_transparency_ads: 0, another_toggle: "false",
+      adcategory: undefined,
+    })).toBeNull();
+  });
+
+  it("disabled Google Transparency toggle does not restrict a Facebook request", async () => {
+    getSDUIConfig.mockResolvedValue({
+      sidebar: [{
+        filters: [{
+          _id: "google_transparency_ads",
+          query_param: "google_transparency_ads",
+          platform_applicability: ["google"],
+        }],
+      }],
+    });
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({
+      network: ["facebook"],
+      google_transparency_ads: false,
+      google_transparency_subnetwork: "NA",
     })).toBeNull();
   });
 });

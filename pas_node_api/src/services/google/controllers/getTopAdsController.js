@@ -1,7 +1,10 @@
 'use strict';
 
 const GoogleSearchQueryBuilder = require('../builders/GoogleSearchQueryBuilder');
-const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
+const {
+  normalizeParams, ensureArray, parsePagination, parseSort,
+  parseCountryDeliveryFilters, cleanAdsData,
+} = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 
 const AD_DETAIL_SELECT = `
@@ -82,6 +85,8 @@ async function getTopAds(req, db, logger) {
   if (Array.isArray(p.seen_btn_sort) && p.seen_btn_sort.length === 2) builder.setLastSeen({ lower_date: p.seen_btn_sort[0], upper_date: p.seen_btn_sort[1] });
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) builder.setPostDate({ lower_date: p.post_date_btn_sort[0], upper_date: p.post_date_btn_sort[1] });
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) builder.setDomainDate({ lower_date: p.domain_date_btn_sort[0], upper_date: p.domain_date_btn_sort[1] });
+  const countryDelivery = parseCountryDeliveryFilters(p);
+  if (countryDelivery) builder.setCountryDelivery(countryDelivery);
 
   // Lander properties. In v2, `built_with` and `built_with_analytics_tracking`
   // are keyword fields with lowercase normalizers, so raw filter values can be

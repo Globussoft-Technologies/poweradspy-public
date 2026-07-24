@@ -91,15 +91,25 @@ async function searchAllNetworks(req, res) {
   // When platform=15 (Meta Ads Library) is active, override reqNetworks to only
   // query Facebook and Instagram, regardless of which networks the user selected.
   // This ensures Meta Ads Library ads only come from Meta's native platforms.
+  const isGoogleTransparency =
+    req.body?.google_transparency_ads === true ||
+    req.body?.google_transparency_ads === 1 ||
+    req.body?.google_transparency_ads === 'true' ||
+    req.body?.platform === 18 ||
+    req.body?.platform === '18';
+  if (isGoogleTransparency) {
+    reqNetworks = ['google'];
+  }
+
   const isMetaAdsLibrary = req.body?.platform === 15 || req.body?.platform === '15';
-  if (isMetaAdsLibrary && reqNetworks !== 'all') {
+  if (!isGoogleTransparency && isMetaAdsLibrary && reqNetworks !== 'all') {
     // Intersect user's selected networks with Meta platforms only
     reqNetworks = reqNetworks.filter(n => ['facebook', 'instagram'].includes(n));
     if (reqNetworks.length === 0) {
       // User selected Meta Ads Library but no Meta platforms — default to both
       reqNetworks = ['facebook', 'instagram'];
     }
-  } else if (isMetaAdsLibrary && reqNetworks === 'all') {
+  } else if (!isGoogleTransparency && isMetaAdsLibrary && reqNetworks === 'all') {
     // 'all' mode with Meta Ads Library → only query Meta platforms
     reqNetworks = ['facebook', 'instagram'];
   }
@@ -358,7 +368,10 @@ async function searchAllNetworks(req, res) {
   // only on empty results — so the common case (results found) stays fast.
   // Each discovery call uses take=1 so it's basically a count check.
   const userPickedSpecific = reqNetworks !== 'all';
-  if (userPickedSpecific && data.length === 0) {
+  // A platform-18 request is intentionally Google-only. Do not run the normal
+  // cross-network empty-result discovery, because those controllers do not
+  // understand the Transparency discriminator and would query unrelated ads.
+  if (userPickedSpecific && data.length === 0 && !isGoogleTransparency) {
     const NETWORK_FNS = {
       facebook: [fbService, fbSearchAds, searchReq],
       instagram: [igService, igSearchAds, searchReq],

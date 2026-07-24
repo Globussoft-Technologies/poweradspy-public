@@ -127,7 +127,9 @@ async function downloadToTemp(url, ext, network = '') {
       // Extension from the server's own Content-Type (so a video URL in other_multimedia becomes
       // .mp4, an image .jpg, etc.). `ext` is only a fallback when the server sends no recognizable
       // type. The NAS still validates the final extension.
-      const realExt = mime.extension(res.headers['content-type']) || ext;
+      const contentType = String(res.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      const contentExt = /^(?:image|video)\//.test(contentType) ? mime.extension(contentType) : null;
+      const realExt = contentExt || ext;
       _tmpSeq = (_tmpSeq + 1) % 1e6;
       tmp = path.join(os.tmpdir(), `ins_${process.pid}_${Date.now()}_${_tmpSeq}.${realExt}`);
       await streamToFile(res.data, tmp);
@@ -222,22 +224,66 @@ async function uploadVideo(link, id, network) {
  * suffixed with their index to stay unique within the otherMultiMedia folder.
  * @param {string[]} urls
  */
-async function uploadMultimedia(urls, type, id, network) {
+async function uploadMultimedia(urls, type, id, network, options = {}) {
   const list = Array.isArray(urls) ? urls : [urls];
+  const indexes = Array.isArray(options.indexes) ? options.indexes : [];
   // Both media types off → skip carousel entirely. (When only one is off, per-item storeInNas still gates.)
   if (!storeImage() && !storeVideo()) {
     return { facebook_ad_id: id, ad_type: type, ad_image_video: JSON.stringify(list.map(() => DEFAULT_IMAGE)) };
   }
   // download + upload all items in PARALLEL, preserving input order
   const paths = await Promise.all(list.map(async (url, i) => {
+    const storageIndex = Number.isInteger(indexes[i]) ? indexes[i] : i;
     const tmp = await downloadToTemp(url, 'webp', network);
-    if (!tmp) { nasMediaFail('download', { adId: `${id}_${i}`, network, type: 'OTHERMULTIMEDIA', url, reason: 'source download failed (expired/blocked URL?)' }); return DEFAULT_IMAGE; }
+    if (!tmp) { nasMediaFail('download', { adId: `${id}_${storageIndex}`, network, type: 'OTHERMULTIMEDIA', url, reason: 'source download failed (expired/blocked URL?)' }); return DEFAULT_IMAGE; }
     try {
-      const p = await storeInNas('OTHERMULTIMEDIA', tmp, id, network, `${id}_${i}`);
+      const p = await storeInNas(
+        'OTHERMULTIMEDIA',
+        tmp,
+        id,
+        network,
+        `${id}_${storageIndex}`,
+        { store: options.store }
+      );
       return String(p).includes('DefaultImage') ? null : p;
     } finally { cleanup(tmp); }
   }));
   return { facebook_ad_id: id, ad_type: type, ad_image_video: JSON.stringify(paths) };
+}
+
+const TRANSPARENCY_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp', 'tif', 'tiff', 'svg']);
+
+function extensionFromUrl(url, fallback = 'webp') {
+  try {
+    const ext = path.extname(new URL(url).pathname).replace(/^\./, '').toLowerCase();
+    if (TRANSPARENCY_IMAGE_EXTS.has(ext)) return ext;
+  } catch { /* use fallback */ }
+  return fallback;
+}
+
+/**
+ * A platform-18 TEXT creative may still have an image. Keep every existing
+ * Google media folder unchanged and add only the missing gt/adT folder.
+ */
+async function uploadTransparencyTextImage(link, id) {
+  const tmp = await downloadToTemp(link, extensionFromUrl(link), 'google');
+  if (!tmp) {
+    nasMediaFail('download', {
+      adId: id,
+      network: 'google',
+      type: 'GT_TEXT',
+      url: link,
+      reason: 'source download failed (expired/blocked URL?)',
+    });
+    return null;
+  }
+  try {
+    const nasPath = await storeInNas('GT_TEXT', tmp, id, 'google', `${id}`);
+    if (!nasPath || String(nasPath).includes('DefaultImage')) return null;
+    return { nas_path: nasPath, image_video_url: nasPath };
+  } finally {
+    cleanup(tmp);
+  }
 }
 
 /**
@@ -334,6 +380,7 @@ function mediaIssueWarning(paths = {}, type) {
 
 module.exports = {
   uploadPostOwner, uploadImage, uploadThumbnail, uploadVideo, uploadMultimedia,
+  uploadTransparencyTextImage, extensionFromUrl,
   downloadToTemp, mediaIssueWarning, DEFAULT_IMAGE, DEFAULT_VIDEO,
   fetchPrimaryMedia, storePrimaryFromTemp, cleanupFetched,
 };

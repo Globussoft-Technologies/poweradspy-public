@@ -50,6 +50,47 @@ function parseSort(params) {
   return { field: 'last_seen', order: 'desc' };
 }
 
+function parseDeliveryDate(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const raw = String(value).replace(/\bSept\b/, 'Sep');
+  const googleDisplayDate = /^(?:\d{1,2}\s+[A-Za-z]{3}\s+\d{4}|[A-Za-z]{3}\s+\d{1,2},\s+\d{4})$/.test(raw);
+  const date = /^\d{10,13}$/.test(raw)
+    ? new Date(Number(raw) * (raw.length === 10 ? 1000 : 1))
+    : new Date(googleDisplayDate ? `${raw} UTC` : raw);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function parseDeliveryDateRange(value) {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const gte = parseDeliveryDate(value[0]);
+  const lte = parseDeliveryDate(value[1]);
+  if (!gte || !lte || gte > lte) return null;
+  return { gte, lte };
+}
+
+function parseCountryDeliveryFilters(params) {
+  const firstSeen = parseDeliveryDateRange(params.country_first_seen);
+  const lastSeen = parseDeliveryDateRange(params.country_last_seen);
+  const rawTimes = params.country_times_shown || params.times_shown;
+  let timesShown = null;
+  if (Array.isArray(rawTimes) && rawTimes.length === 2) {
+    const min = Number(rawTimes[0]);
+    const max = Number(rawTimes[1]);
+    if (Number.isSafeInteger(min) && Number.isSafeInteger(max) && min >= 0 && min <= max) {
+      timesShown = { min, max };
+    }
+  }
+  const countryCodes = params.country_detail_code ? ensureArray(params.country_detail_code) : [];
+  if (!countryCodes.length && !firstSeen && !lastSeen && !timesShown) return null;
+  return {
+    countries: params.country ? ensureArray(params.country) : [],
+    countryCodes,
+    firstSeen,
+    lastSeen,
+    timesShown,
+  };
+}
+
 function withCdn(url) {
   if (!url || !CDN_BASE) return url;
   if (typeof url !== 'string') return url;
@@ -87,4 +128,8 @@ function cleanAdsData(ads = []) {
   });
 }
 
-module.exports = { normalizeValue, normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData, CDN_BASE };
+module.exports = {
+  normalizeValue, normalizeParams, ensureArray, parsePagination, parseSort,
+  parseDeliveryDate, parseDeliveryDateRange, parseCountryDeliveryFilters,
+  cleanAdsData, CDN_BASE,
+};

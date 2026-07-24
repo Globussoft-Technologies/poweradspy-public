@@ -126,7 +126,9 @@ class ServiceRegistry {
 
       // 2. Mount dynamic routes from files (e.g., /api/v1/facebook/ads/search)
       if (service.routesPath) {
-        const files = fs.readdirSync(service.routesPath).filter(f => f.endsWith('.js'));
+        // Deterministic order matters when an additive route intentionally
+        // intercepts a discriminator and falls through to a legacy router.
+        const files = fs.readdirSync(service.routesPath).filter(f => f.endsWith('.js')).sort();
 
         for (const file of files) {
           try {

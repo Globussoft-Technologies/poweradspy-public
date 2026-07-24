@@ -14,7 +14,7 @@ function FakeBuilder(indexName) {
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry",
     "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
     "setState","setCity","setAdType","setTargetKeyword","setTags","setLangDetect","setAdPosition",
-    "setAdSubPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
+    "setAdSubPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate","setCountryDelivery",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
     "setHtmlContent","setNeedle","setAdDetailId","setNotCountry",
   ]) self[k] = fluent(k);
@@ -31,10 +31,11 @@ const ensureArray = vi.fn((v) => Array.isArray(v) ? v : (v == null || v === "" ?
 let parsePaginationImpl = () => ({ size: 20, from: 0 });
 const parsePagination = vi.fn((...args) => parsePaginationImpl(...args));
 const parseSort = vi.fn(() => ({ field: "google_ad.last_seen", order: "desc" }));
+const parseCountryDeliveryFilters = vi.fn(() => null);
 const cleanAdsData = vi.fn((rows) => rows);
 require.cache[paramsPath] = {
   id: paramsPath, filename: paramsPath, loaded: true,
-  exports: { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData },
+  exports: { normalizeParams, ensureArray, parsePagination, parseSort, parseCountryDeliveryFilters, cleanAdsData },
 };
 
 // ── Mock searchCursorCache ──────────────
@@ -60,6 +61,7 @@ beforeEach(() => {
   ensureArray.mockClear().mockImplementation((v) => Array.isArray(v) ? v : (v == null || v === "" ? [] : [v]));
   parsePagination.mockClear();
   parseSort.mockClear().mockImplementation(() => ({ field: "google_ad.last_seen", order: "desc" }));
+  parseCountryDeliveryFilters.mockClear().mockReturnValue(null);
   cleanAdsData.mockClear().mockImplementation((rows) => rows);
   buildQueryHash.mockClear().mockImplementation(() => "qhash");
   saveCursor.mockClear();

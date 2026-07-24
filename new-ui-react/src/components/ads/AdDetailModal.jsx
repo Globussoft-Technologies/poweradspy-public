@@ -465,12 +465,12 @@ const AdDetailModal = ({
     // is the SAME creative — prepending it turns one video into a bogus 2-slide
     // carousel. Skip the prepend for videos; genuine carousels (≥2 real slides in
     // `carouselMedia`, image or video) are unaffected.
-    const isVideoAd = (ad?.adType || "").toLowerCase() === "video";
+    const isVideoAd = (ad?.renderType || ad?.adType || "").toLowerCase() === "video";
     if (!isVideoAd && coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
       return [ad.thumbnail, ...media];
     }
     return media;
-  }, [ad?.thumbnail, ad?.carouselMedia, ad?.adType]);
+  }, [ad?.thumbnail, ad?.carouselMedia, ad?.adType, ad?.renderType]);
 
   // YouTube and Facebook ads ship their playable URL in `ad_url` (mapped to
   // ad.adUrl) — not in ad.videoUrl — so for those we embed via iframe rather
@@ -546,7 +546,10 @@ const AdDetailModal = ({
     pinterest: "Pinterest",
     tiktok: "TikTok",
   };
-  const platformDisplayName = PLATFORM_NAMES[displayNetwork] || ad.badgeNetwork || ad.network || "";
+  const platformDisplayName =
+    ad.isGoogleTransparency && ad.subnetwork
+      ? String(ad.subnetwork).toUpperCase()
+      : PLATFORM_NAMES[displayNetwork] || ad.badgeNetwork || ad.network || "";
 
   // Format position for display (e.g. SEARCHFEED_DISCOVERY → Search Feed Discovery)
   const formatPosition = (pos) => {
@@ -559,7 +562,8 @@ const AdDetailModal = ({
   const adTypeLower = (ad.adType || "image").toLowerCase();
   const badge = AD_TYPE_BADGES[adTypeLower] || AD_TYPE_BADGES.image;
   const TypeIcon = AD_TYPE_ICONS[adTypeLower] || Image;
-  const isVideo = adTypeLower === "video";
+  const renderTypeLower = (ad.renderType || adTypeLower).toLowerCase();
+  const isVideo = renderTypeLower === "video";
   const isActive = (ad.status || "").toLowerCase() === "active";
 
   const starRating = ad.popularity ? getStarRating(ad.popularity) : 0;
@@ -724,13 +728,13 @@ const AdDetailModal = ({
                       </div>
                     )}
                   </>
-                ) : adTypeLower === "text" ? (
+                ) : renderTypeLower === "text" ? (
                   <div className="relative flex items-center justify-center w-full min-h-[320px] h-full z-[1] p-8 bg-gradient-to-br from-indigo-950/40 to-slate-900/40">
                     <p className="2xl:text-base text-sm font-medium leading-relaxed text-zinc-300 text-center line-clamp-6">
                       {currentTitle ? `"${currentTitle}"` : 'Text Ad'}
                     </p>
                   </div>
-                ) : adTypeLower === "banner" && !currentImg ? (
+                ) : renderTypeLower === "banner" && !currentImg ? (
                   <div className="relative flex items-center justify-center w-full min-h-[320px] h-full z-[1] p-8 bg-gradient-to-br from-indigo-950/40 to-slate-900/40">
                     <div className="flex flex-col items-center gap-3 text-center max-w-sm">
                       {ad.subtitle && (
@@ -750,7 +754,7 @@ const AdDetailModal = ({
                       )}
                     </div>
                   </div>
-                ) : adTypeLower === "text-image" ? (
+                ) : renderTypeLower === "text-image" ? (
                   <div className="relative w-full min-h-[320px] h-full flex items-center justify-center overflow-hidden z-[1]">
                     {currentImg && (
                       <img
@@ -1408,10 +1412,10 @@ const AdDetailModal = ({
                       Platform
                     </span>
                     <span
-                      className="font-bold"
+                      className="font-medium flex items-center gap-1"
                       style={{ color: "var(--color-text-secondary)" }}
                     >
-                      {platformDisplayName}
+                      <Monitor size={9} /> {platformDisplayName}
                     </span>
                   </>
                 )}
@@ -1631,12 +1635,12 @@ const AdDetailModal = ({
       </span>
 
       <span
-        className="font-bold text-[11px]"
+        className="font-semibold text-[11px] flex items-center gap-1"
         style={{
           color: "var(--color-text-secondary)",
         }}
       >
-        {platformDisplayName}
+        <Monitor size={10} /> {platformDisplayName}
       </span>
     </>
   )}

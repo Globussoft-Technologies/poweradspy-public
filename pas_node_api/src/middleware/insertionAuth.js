@@ -47,6 +47,25 @@ function signaturesMatch(expectedHex, providedHex) {
   }
 }
 
+function bodyItems(body) {
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.ads)) return body.ads;
+  return [body];
+}
+
+function hasPlatformBypass(body, allowPlatformBypass) {
+  if (allowPlatformBypass === null || allowPlatformBypass === undefined) return false;
+  const allowed = (Array.isArray(allowPlatformBypass)
+    ? allowPlatformBypass
+    : [allowPlatformBypass]
+  ).map(String);
+  const items = bodyItems(body);
+  return items.length > 0 && items.every((item) =>
+    item?.platform !== undefined &&
+    allowed.includes(String(item.platform))
+  );
+}
+
 function insertionAuth(req, res, next) {
   try {
     const { signatureHeader, secretKey, allowPlatformBypass } = config.insertion;
@@ -78,9 +97,9 @@ function insertionAuth(req, res, next) {
     }
 
     // No signature → allow only the configured platform bypass.
-    const platform = req.body?.platform;
-    if (allowPlatformBypass !== null && platform !== undefined &&
-        String(platform) === String(allowPlatformBypass)) {
+    // Require every item to use the bypass platform. This prevents an unsigned
+    // mixed batch from carrying non-bypass ads.
+    if (hasPlatformBypass(req.body, allowPlatformBypass)) {
       return next();
     }
 
@@ -92,4 +111,4 @@ function insertionAuth(req, res, next) {
   }
 }
 
-module.exports = { insertionAuth };
+module.exports = { insertionAuth, hasPlatformBypass };

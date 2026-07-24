@@ -179,7 +179,7 @@ async function _getIndex() {
  */
 function isActiveValue(v) {
   if (v == null) return false;
-  if (v === 'NA' || v === '') return false;
+  if (v === false || v === 0 || v === 'false' || v === 'NA' || v === '') return false;
   if (Array.isArray(v)) {
     if (v.length === 0) return false;
     // All-NA array (e.g. ['NA']) → inactive

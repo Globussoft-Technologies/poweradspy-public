@@ -70,6 +70,7 @@ const TYPE_SUBFOLDER = {
   THUMBNAIL: 'thumbnail/',
   POSTOWNER: 'postowner/',
   OTHERMULTIMEDIA: 'otherMultiMedia/',
+  GT_TEXT: 'adT/',
   LANDERS: 'landers/',
   WHITEHAT: 'whiteHatAd/',
   BLACKHAT: 'blackHatAd/',
@@ -177,7 +178,7 @@ async function storeInNas(type, filePath, adId, network, keyBaseName, opts = {})
 
     // Master kill-switch: when this media category is disabled (config.insertion.nas.store), do NOT upload,
     // do NOT queue, write NO file. Just return the fallback so the ad saves without this media.
-    if (!storeEnabled(category)) {
+    if (opts.store?.[category] === false || !storeEnabled(category)) {
       return failVal;
     }
     const chain = transportChain();

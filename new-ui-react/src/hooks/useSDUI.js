@@ -158,6 +158,37 @@ export function useSDUI() {
         try { localStorage.setItem(LS_PLATFORMS_KEY, JSON.stringify(activePlatforms)); } catch {}
     }, [activePlatforms]);
 
+    // Google Transparency controls exist whenever Google is selected.
+    // Leaving Google deletes the toggle + dependent value. Turning the toggle
+    // off deletes its subnetwork too, so re-enabling always starts fresh at
+    // the UI's default "All" option.
+    useEffect(() => {
+        const hasGoogle = activePlatforms.some(
+            platform => String(platform).toLowerCase() === 'google'
+        );
+        setFilterValues(prev => {
+            const shouldDeleteToggle =
+                !hasGoogle &&
+                prev.google_transparency_ads !== undefined;
+            const shouldDeleteSubnetwork =
+                prev.google_transparency_subnetwork !== undefined &&
+                (!hasGoogle || prev.google_transparency_ads !== true);
+            if (!shouldDeleteToggle && !shouldDeleteSubnetwork) {
+                return prev;
+            }
+            const next = { ...prev };
+            if (shouldDeleteToggle) delete next.google_transparency_ads;
+            if (shouldDeleteSubnetwork) {
+                delete next.google_transparency_subnetwork;
+            }
+            return next;
+        });
+    }, [
+        activePlatforms,
+        filterValues.google_transparency_ads,
+        filterValues.google_transparency_subnetwork,
+    ]);
+
     // ── Filter setters — stable references ──────────────────────────────────
     const setFilter = useCallback((filterId, value) => {
         setFilterValues(prev => {

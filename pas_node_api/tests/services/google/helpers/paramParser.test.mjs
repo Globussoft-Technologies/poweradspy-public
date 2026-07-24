@@ -91,6 +91,31 @@ describe("services/google/helpers/paramParser > parseSort", () => {
   });
 });
 
+describe("services/google/helpers/paramParser > country delivery filters", () => {
+  it("normalizes RFC3339 country seen dates and a valid impression range", () => {
+    expect(mod.parseCountryDeliveryFilters({
+      country: ["Germany"],
+      country_detail_code: "DE",
+      country_first_seen: ["2025-12-12T00:00:00Z", "2025-12-20T23:59:59Z"],
+      country_last_seen: ["2025-12-12T00:00:00Z", "2025-12-21T23:59:59Z"],
+      times_shown: [0, 1000],
+    })).toEqual({
+      countries: ["Germany"],
+      countryCodes: ["DE"],
+      firstSeen: { gte: "2025-12-12", lte: "2025-12-20" },
+      lastSeen: { gte: "2025-12-12", lte: "2025-12-21" },
+      timesShown: { min: 0, max: 1000 },
+    });
+  });
+
+  it("rejects reversed dates and invalid impression bounds", () => {
+    expect(mod.parseCountryDeliveryFilters({
+      country_first_seen: ["2025-12-20", "2025-12-12"],
+      times_shown: [1000, 0],
+    })).toBeNull();
+  });
+});
+
 describe("services/google/helpers/paramParser > withCdn (via cleanAdsData)", () => {
   function ad(post_owner_image) { return { id: 1, ad_id: 2, post_owner_image }; }
   it("empty/http unchanged", () => {

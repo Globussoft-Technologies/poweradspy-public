@@ -308,6 +308,7 @@ class DatabaseManager {
         client,
         esMajor,
         indexName: elasticConfig.index,
+        get:    (params) => client.get(params),
         search: (params) => client.search(params),
         analyze:(params) => client.indices.analyze(params),
         count:  (params) => client.count(params),

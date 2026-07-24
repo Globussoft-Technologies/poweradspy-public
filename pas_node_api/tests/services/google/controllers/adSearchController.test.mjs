@@ -13,8 +13,8 @@ function FakeBuilder(indexName) {
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
     "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
-    "setState","setCity","setAdType","setTargetKeyword","setTags","setLangDetect","setAdPosition",
-    "setAdSubPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
+    "setState","setCity","setAdType","setPlatform","setSubnetwork","setTargetKeyword","setTags","setLangDetect","setAdPosition",
+    "setAdSubPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate","setCountryDelivery",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
     "setOcr","setCelebrity","setImageObject","setLogo","setHtmlContent","setNeedle",
     "setAdDetailId","setNotCountry",
@@ -32,10 +32,11 @@ const normalizeParams = vi.fn((raw) => raw);
 const ensureArray = vi.fn((v) => Array.isArray(v) ? v : (v == null || v === "" ? [] : [v]));
 const parsePagination = vi.fn(() => ({ size: 20, from: 0 }));
 const parseSort = vi.fn(() => ({ field: "google_ad.last_seen", order: "desc" }));
+const parseCountryDeliveryFilters = vi.fn(() => null);
 const cleanAdsData = vi.fn((rows) => rows);
 require.cache[paramsPath] = {
   id: paramsPath, filename: paramsPath, loaded: true,
-  exports: { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData },
+  exports: { normalizeParams, ensureArray, parsePagination, parseSort, parseCountryDeliveryFilters, cleanAdsData },
 };
 
 // ── Mock searchCursorCache ────────────────────────────────────────────────
@@ -60,6 +61,7 @@ beforeEach(() => {
   ensureArray.mockClear().mockImplementation((v) => Array.isArray(v) ? v : (v == null || v === "" ? [] : [v]));
   parsePagination.mockClear().mockImplementation(() => ({ size: 20, from: 0 }));
   parseSort.mockClear().mockImplementation(() => ({ field: "google_ad.last_seen", order: "desc" }));
+  parseCountryDeliveryFilters.mockClear().mockReturnValue(null);
   cleanAdsData.mockClear().mockImplementation((rows) => rows);
   buildQueryHash.mockClear().mockImplementation(() => "qhash");
   saveCursor.mockClear();
@@ -345,6 +347,78 @@ describe("services/google/controllers/adSearchController > regular searchAds", (
     expect(out.data[0].foo).toBe("bar");
   });
 
+  it("platform 18 returns the compact media contract", async () => {
+    const esHits = [{
+      _source: {
+        id: 18,
+        platform: 18,
+        subnetwork: "SHOPPING",
+        country_details: [{
+          country: "India",
+          country_code: "IN",
+          first_seen: "2026-07-05T00:00:00Z",
+          last_seen: "2026-07-21T09:15:00Z",
+          times_shown: { min: 1000, max: null, operator: "over" },
+        }],
+        impressions_min: 1000,
+        impressions_max: null,
+        impressions_operator: "over",
+        store: { image: true, video: false },
+        post_date: null,
+        first_seen: null,
+        lang_detect: null,
+        title: "",
+        text: "",
+        newsfeed_description: "",
+        image_url_original: "https://cdn.example/original-image.jpg",
+        image_video_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
+        new_nas_image_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
+        video_url_original: "https://cdn.example/original-video.mp4",
+        nas_video_url: null,
+        othermultimedia: [
+          null,
+          "/pas-dev/stream/gt/otherMultiMedia/202607/18_1.mp4",
+        ],
+        othermultimedia_original: [
+          "https://cdn.example/carousel-original.jpg",
+          "https://cdn.example/carousel-original.mp4",
+        ],
+      },
+    }];
+    const db = { elastic: { search: vi.fn(async () => mkEsHits(esHits)) } };
+
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+
+    expect(out.data[0]).toMatchObject({
+      platform: 18,
+      subnetwork: "SHOPPING",
+      city: null,
+      impressions: { min: 1000, max: null, operator: "over" },
+      country_details: [expect.objectContaining({
+        country: "India",
+        country_code: "IN",
+      })],
+      language: null,
+      post_date: null,
+      first_seen: null,
+      ad_title: null,
+      ad_text: null,
+      news_feed_description: null,
+      image_url_original: "https://cdn.example/original-image.jpg",
+      image_video_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
+      video_url_original: "https://cdn.example/original-video.mp4",
+      othermultimedia: [
+        "/pas-dev/stream/gt/otherMultiMedia/202607/18_1.mp4",
+      ],
+    });
+    for (const field of [
+      "language_id", "lang_detect", "image_url_nas", "nas_video_url", "store",
+      "othermultimedia_original", "carousel_media",
+    ]) {
+      expect(out.data[0]).not.toHaveProperty(field);
+    }
+  });
+
   it("deep page (from >= SAFE_FROM): uses cached cursor → search_after", async () => {
     parsePagination.mockReturnValue({ size: 20, from: 9000 });
     getCursor.mockReturnValue(["cursor-val"]);
@@ -365,6 +439,38 @@ describe("services/google/controllers/adSearchController > regular searchAds", (
     };
     await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
     expect(db.elastic.search.mock.calls[0][0].body.from).toBe(8980);
+  });
+
+  it("preserves Transparency subnetwork in the SQL-backed search API response", async () => {
+    const esHits = [{
+      _source: {
+        id: 178906,
+        platform: 18,
+        subnetwork: "SHOPPING",
+        type: "IMAGE",
+      },
+    }];
+    let sqlCall = 0;
+    const db = {
+      elastic: { search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: {
+        query: vi.fn(async () => {
+          sqlCall += 1;
+          return sqlCall === 1
+            ? [{ id: 178906, ad_id: 178906, type: "IMAGE" }]
+            : [];
+        }),
+      },
+    };
+
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+
+    expect(out.code).toBe(200);
+    expect(out.data[0]).toMatchObject({
+      ad_id: 178906,
+      platform: 18,
+      subnetwork: "SHOPPING",
+    });
   });
 
   it("500 + logger.error when ES search throws", async () => {
@@ -401,6 +507,48 @@ describe("services/google/controllers/adSearchController > regular searchAds", (
       "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
       "setHtmlContent","setNeedle","setAdDetailId","setNotCountry","setIpBasedCountry",
     ]));
+  });
+
+  it("platform 18 toggle restricts Google search by platform and selected subnetwork", async () => {
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) } };
+    await searchAds({
+      body: {
+        user_id: "u",
+        google_transparency_ads: true,
+        google_transparency_subnetwork: "search",
+      },
+      query: {},
+    }, db, fakeLogger);
+
+    expect(builderCalls[0].calls).toContainEqual(["setPlatform", [[18]]]);
+    expect(builderCalls[0].calls).toContainEqual(["setSubnetwork", [["SEARCH"]]]);
+  });
+
+  it("platform 18 All/NA sentinel applies platform without a fake subnetwork term", async () => {
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) } };
+    await searchAds({
+      body: {
+        user_id: "u",
+        google_transparency_ads: true,
+        google_transparency_subnetwork: "NA",
+      },
+      query: {},
+    }, db, fakeLogger);
+
+    expect(builderCalls[0].calls).toContainEqual(["setPlatform", [[18]]]);
+    expect(builderCalls[0].calls.find(([name]) => name === "setSubnetwork")).toBeUndefined();
+  });
+
+  it("wires parsed country delivery filters into the builder", async () => {
+    const delivery = {
+      countries: ["Germany"], countryCodes: ["DE"],
+      lastSeen: { gte: "2025-12-12", lte: "2025-12-21" },
+      timesShown: { min: 0, max: 1000 },
+    };
+    parseCountryDeliveryFilters.mockReturnValue(delivery);
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) } };
+    await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls).toContainEqual(["setCountryDelivery", [delivery]]);
   });
 
   it("similar_ad_id || adDetail_id branch uses adDetail_id fallback", async () => {

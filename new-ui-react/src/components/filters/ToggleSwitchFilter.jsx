@@ -11,7 +11,7 @@ const ToggleSwitchFilter = ({ label, value, onChange, disabled = false }) => {
     return (
       <div className="px-3 py-2 opacity-35 cursor-not-allowed" title="Not available for this platform">
         <div className="w-full flex items-center justify-between">
-          <span className="text-[14px] text-theme-text-muted capitalize tracking-wider">
+          <span className="whitespace-nowrap text-[14px] text-theme-text-muted capitalize tracking-wider">
             {label}
           </span>
           <div className="relative w-6 h-3 2xl:w-8 2xl:h-4 rounded-full bg-[#333]">
@@ -28,7 +28,7 @@ const ToggleSwitchFilter = ({ label, value, onChange, disabled = false }) => {
         onClick={() => onChange(!isOn)}
         className="w-full flex items-center justify-between group"
       >
-        <span className="text-[14px] text-theme-text-secondary capitalize tracking-wider group-hover:text-theme-text transition-colors">
+        <span className="whitespace-nowrap text-[14px] text-theme-text-secondary capitalize tracking-wider group-hover:text-theme-text transition-colors">
           {label}
         </span>
         <div

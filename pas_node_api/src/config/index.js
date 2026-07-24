@@ -206,10 +206,16 @@ const config = {
     // HMAC secret for x-signature auth. config.json first, then env INSERTION_SECRET_KEY (mirrors PHP).
     secretKey: getVal(fileConfig.insertion?.secretKey, 'INSERTION_SECRET_KEY') || '',
     signatureHeader: (getVal(fileConfig.insertion?.signatureHeader, 'INSERTION_SIGNATURE_HEADER') || 'x-signature').toLowerCase(),
-    // body.platform value that bypasses signature auth (PHP platform==12). null disables the bypass.
+    // body.platform value/list that bypasses signature auth (PHP platform==12). null disables the bypass.
     allowPlatformBypass: fileConfig.insertion?.allowPlatformBypass !== undefined
       ? fileConfig.insertion.allowPlatformBypass
       : '12',
+    // Temporary step-by-step platform-18 insertion trace. Disable after rollout verification.
+    transparencyDebug: getVal(
+      fileConfig.insertion?.transparencyDebug,
+      'GOOGLE_TRANSPARENCY_DEBUG',
+      toBool
+    ) === true,
     // Secret token for the secure delete endpoint (PHP API_DELETE_TOKEN). config.json → env.
     deleteToken: getVal(fileConfig.insertion?.deleteToken, 'API_DELETE_TOKEN') || '',
     // ES field prefix carried over on UPDATE re-index (PHP TRANSLATION_FEILD).

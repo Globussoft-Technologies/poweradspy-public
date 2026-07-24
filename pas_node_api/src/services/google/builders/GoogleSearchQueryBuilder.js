@@ -113,6 +113,8 @@ class GoogleSearchQueryBuilder {
   setAdCategory(v) { this._params.adCategory = Array.isArray(v) ? v : [v]; return this; }
   setSubCategory(v) { this._params.subCategory = Array.isArray(v) ? v : [v]; return this; }
   setAdType(v) { this._params.type = Array.isArray(v) ? v : [v]; return this; }
+  setPlatform(v) { this._params.platform = Array.isArray(v) ? v : [v]; return this; }
+  setSubnetwork(v) { this._params.subnetwork = Array.isArray(v) ? v : [v]; return this; }
   setAdPosition(v) { this._params.adPosition = Array.isArray(v) ? v : [v]; return this; }
   setAdSubPosition(v) { this._params.adSubPosition = Array.isArray(v) ? v : [v]; return this; }
   setGender(v) { this._params.gender = Array.isArray(v) ? v : [v]; return this; }
@@ -137,6 +139,7 @@ class GoogleSearchQueryBuilder {
   setLastSeen(v) { this._params.lastSeen = v; return this; }
   setPostDate(v) { this._params.postDate = v; return this; }
   setDomainDate(v) { this._params.domainDate = v; return this; }
+  setCountryDelivery(v) { this._params.countryDelivery = v || null; return this; }
   setLowerAgeSeen(v) { this._params.lowerAgeSeen = v; return this; }
   setHtmlContent(v) { this._params.htmlContent = v; return this; }
 
@@ -239,6 +242,8 @@ class GoogleSearchQueryBuilder {
   _getAdCategoryEnv()   { const c = this._params.adCategory;   return c && c.length ? asFilter(termFilter("category", c)) : null; }
   _getSubCategoryEnv()  { const s = this._params.subCategory;  return s && s.length ? asFilter(termFilter("subCategory", s)) : null; }
   _getTypeEnv()         { const t = this._params.type;         return t && t.length ? asFilter(termFilter("type", t)) : null; }
+  _getPlatformEnv()     { const p = this._params.platform;     return p && p.length ? asFilter(termFilter("platform", p)) : null; }
+  _getSubnetworkEnv()   { const s = this._params.subnetwork;   return s && s.length ? asFilter(termFilter("subnetwork", s)) : null; }
   _getAdPositionEnv()   { const a = this._params.adPosition;   return a && a.length ? asFilter(termFilter("ad_position", a)) : null; }
   _getAdSubPositionEnv(){ const a = this._params.adSubPosition;return a && a.length ? asFilter(termFilter("ad_sub_position", a)) : null; }
   _getTargetKeywordEnv(){ const t = this._params.targetKeyword;return t && t.length ? asFilter(termFilter("target_keyword", t)) : null; }
@@ -326,7 +331,108 @@ class GoogleSearchQueryBuilder {
   _getLastSeenEnv() {
     const l = this._params.lastSeen;
     if (!l || !l.lower_date || !l.upper_date) return null;
-    return asFilter({ range: { last_seen: { gte: l.lower_date, lte: l.upper_date, format: "yyyy-MM-dd HH:mm:ss" } } });
+    const nestedFilters = [{
+      range: {
+        "country_details.last_seen": {
+          gte: String(l.lower_date).slice(0, 10),
+          lte: String(l.upper_date).slice(0, 10),
+          format: "yyyy-MM-dd",
+        },
+      },
+    }];
+    if (this._params.country?.length) {
+      nestedFilters.unshift(termFilter("country_details.country", this._params.country));
+    }
+    return asFilter({
+      bool: {
+        should: [
+          {
+            bool: {
+              filter: [{ range: { last_seen: { gte: l.lower_date, lte: l.upper_date, format: "yyyy-MM-dd HH:mm:ss" } } }],
+              // Legacy docs and the valid platform-18 records whose detail list
+              // is empty use top-level last_seen. If searchable per-country
+              // dates exist, require the nested branch so a selected country
+              // and date always refer to the same delivery row.
+              must_not: [{
+                nested: {
+                  path: "country_details",
+                  query: { exists: { field: "country_details.last_seen" } },
+                  score_mode: "none",
+                },
+              }],
+            },
+          },
+          { nested: { path: "country_details", query: { bool: { filter: nestedFilters } }, score_mode: "none" } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  }
+
+  /**
+   * Platform-18 per-country delivery filters. Every condition is kept inside
+   * one nested query, so Germany/date/impressions cannot accidentally match
+   * three different country_details rows.
+   */
+  _getCountryDeliveryEnv() {
+    const d = this._params.countryDelivery;
+    if (!d) return null;
+    const filters = [];
+    const countries = d.countries?.length ? d.countries : this._params.country;
+    if (countries?.length) filters.push(termFilter("country_details.country", countries));
+    if (d.countryCodes?.length) filters.push(termFilter("country_details.country_code", d.countryCodes));
+    for (const [name, field] of [
+      ["firstSeen", "country_details.first_seen"],
+      ["lastSeen", "country_details.last_seen"],
+    ]) {
+      const range = d[name];
+      if (!range || (!range.gte && !range.lte)) continue;
+      filters.push({
+        range: {
+          [field]: {
+            ...(range.gte ? { gte: range.gte } : {}),
+            ...(range.lte ? { lte: range.lte } : {}),
+            format: "yyyy-MM-dd",
+          },
+        },
+      });
+    }
+    const shown = d.timesShown;
+    if (shown && (shown.min !== undefined || shown.max !== undefined)) {
+      // Interval-overlap semantics:
+      // stored max >= requested min (or unbounded "over"), and
+      // stored min <= requested max (or unbounded "under").
+      if (shown.min !== undefined && shown.min !== null && shown.min !== "") {
+        filters.push({
+          bool: {
+            should: [
+              { range: { "country_details.times_shown.max": { gte: Number(shown.min) } } },
+              { term: { "country_details.times_shown.operator": "over" } },
+            ],
+            minimum_should_match: 1,
+          },
+        });
+      }
+      if (shown.max !== undefined && shown.max !== null && shown.max !== "") {
+        filters.push({
+          bool: {
+            should: [
+              { range: { "country_details.times_shown.min": { lte: Number(shown.max) } } },
+              { term: { "country_details.times_shown.operator": "under" } },
+            ],
+            minimum_should_match: 1,
+          },
+        });
+      }
+    }
+    if (!filters.length) return null;
+    return asFilter({
+      nested: {
+        path: "country_details",
+        query: { bool: { filter: filters } },
+        score_mode: "none",
+      },
+    });
   }
 
   _getPostDateEnv() {
@@ -367,11 +473,11 @@ class GoogleSearchQueryBuilder {
   _collectEnvelopes() {
     const generators = [
       "_getCountryEnv", "_getStateEnv", "_getCityEnv",
-      "_getTypeEnv", "_getAdPositionEnv", "_getAdSubPositionEnv",
+      "_getTypeEnv", "_getPlatformEnv", "_getSubnetworkEnv", "_getAdPositionEnv", "_getAdSubPositionEnv",
       "_getAdCategoryEnv", "_getSubCategoryEnv", "_getTargetKeywordEnv",
       "_getLangDetectEnv", "_getBuiltWithEnv", "_getSourceEnv", "_getFunnelEnv",
       "_getAffiliateEnv", "_getTrackEnv", "_getMarketPlatformEnv",
-      "_getLastSeenEnv", "_getPostDateEnv", "_getDomainDateEnv", "_getNeedleEnv",
+      "_getLastSeenEnv", "_getPostDateEnv", "_getDomainDateEnv", "_getCountryDeliveryEnv", "_getNeedleEnv",
       "_getUrlEnv", "_getKeywordEnv", "_getPostOwnerNameEnv", "_getHtmlContentEnv",
     ];
     const out = [];
@@ -451,6 +557,7 @@ class GoogleSearchQueryBuilder {
 GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "id",
   "ad_id",
+  "image_video_url",
   "new_nas_image_url",
   "title",
   "text",
@@ -473,6 +580,20 @@ GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "ad_position",
   "ad_sub_position",
   "country",
+  "country_details",
+  "platform",
+  "advertiser_id",
+  "subnetwork",
+  "region_code",
+  "impressions_min",
+  "impressions_max",
+  "impressions_operator",
+  "image_url_original",
+  "video_url_original",
+  "nas_video_url",
+  "othermultimedia",
+  "language_id",
+  "lang_detect",
   "domain",
   "category",
   "subCategory",

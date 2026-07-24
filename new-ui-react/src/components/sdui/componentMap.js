@@ -19,6 +19,7 @@ import DatePresetFilter from '../filters/DatePresetFilter';
 import SegmentedControl from '../filters/SegmentedControl';
 import PlatformToggle from '../filters/PlatformToggle';
 import AutocompleteFilter from '../filters/AutocompleteFilter';
+import DropdownFilter from '../filters/DropdownFilter';
 
 const COMPONENT_MAP = {
     // Text / search
@@ -32,6 +33,7 @@ const COMPONENT_MAP = {
     nested_multiselect:  NestedMultiselectFilter,
     chip_multi_select:   ChipMultiSelect,
     combobox:            ComboboxFilter,
+    dropdown:            DropdownFilter,
 
     // Ranges / sliders
     range_slider:        SliderFilter,

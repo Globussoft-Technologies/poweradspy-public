@@ -47,6 +47,12 @@
         "source": { "type": "keyword", "normalizer": "lowercase_normalizer" },
         "status": { "type": "integer" },
         "platform": { "type": "integer" },
+        "advertiser_id": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "subnetwork": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "region_code": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "impressions_min": { "type": "long" },
+        "impressions_max": { "type": "long" },
+        "impressions_operator": { "type": "keyword" },
         "days_running": { "type": "integer" },
         "target_page": { "type": "integer" },
         "ad_ranking": { "type": "long" },
@@ -94,6 +100,26 @@
         "url_redirects":   { "type": "keyword", "ignore_above": 2048 },
         "final_url":       { "type": "keyword", "ignore_above": 2048 },
         "g_temp_url":      { "type": "keyword", "ignore_above": 2048 },
+        "ad_url":          { "type": "keyword", "index": false, "doc_values": false },
+        "video_url_original": { "type": "keyword", "index": false, "doc_values": false },
+        "othermultimedia":  { "type": "keyword", "index": false, "doc_values": false },
+        "country_details": {
+          "type": "nested",
+          "dynamic": false,
+          "properties": {
+            "country": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+            "country_code": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+            "first_seen": { "type": "date", "format": "strict_date_optional_time" },
+            "last_seen": { "type": "date", "format": "strict_date_optional_time" },
+            "times_shown": {
+              "properties": {
+                "min": { "type": "long" },
+                "max": { "type": "long" },
+                "operator": { "type": "keyword" }
+              }
+            }
+          }
+        },
 
         "_comment_nas": "new_nas_image_url MUST stay indexed (queried via exists + empty-check in the IMAGE_MUST_NOT filter). In v2 reference `new_nas_image_url` directly (drop the .keyword subfield in the query).",
         "new_nas_image_url": { "type": "keyword", "ignore_above": 1024 },

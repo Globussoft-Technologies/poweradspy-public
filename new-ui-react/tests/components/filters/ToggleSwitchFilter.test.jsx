@@ -4,6 +4,19 @@ import { render, fireEvent } from "@testing-library/react";
 import ToggleSwitchFilter from "../../../src/components/filters/ToggleSwitchFilter.jsx";
 
 describe("ToggleSwitchFilter", () => {
+  it("keeps toggle labels on one line without changing the standard font size", () => {
+    const { getByText } = render(
+      <ToggleSwitchFilter
+        label="Google Transparency Ads"
+        onChange={() => {}}
+      />,
+    );
+    expect(getByText("Google Transparency Ads")).toHaveClass(
+      "whitespace-nowrap",
+      "text-[14px]",
+    );
+  });
+
   it("renders label", () => {
     const { getByText } = render(<ToggleSwitchFilter label="Verified" onChange={() => {}} />);
     expect(getByText("Verified")).toBeInTheDocument();

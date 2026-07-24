@@ -32,6 +32,30 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
   const platform = (ad.network || "").toLowerCase();
   const position = (ad.adPosition || "").toLowerCase();
   const adType = (ad.adType || "image").toLowerCase();
+  const renderType = (ad.renderType || adType).toLowerCase();
+  const isGoogleTransparency =
+    ad.isGoogleTransparency === true ||
+    (platform === "google" && Number(ad.platform) === 18);
+
+  // Transparency's "Show Original" means the source creative itself, without
+  // a simulated Google Search layout, cropping, overlays, or aspect changes.
+  if (isGoogleTransparency && renderType === "image") {
+    const originalImage = ad.imageOriginalUrl || ad.thumbnail || "";
+    return (
+      <div
+        className={`flex items-center justify-center bg-transparent ${fillWidth ? "w-full h-full" : "w-full"}`}
+      >
+        {originalImage && (
+          <img
+            src={originalImage}
+            alt={ad.title || "Original ad creative"}
+            className="block max-w-full h-auto object-contain"
+            onError={(e) => (e.currentTarget.style.display = "none")}
+          />
+        )}
+      </div>
+    );
+  }
 
   if (platform === "facebook")
     return (

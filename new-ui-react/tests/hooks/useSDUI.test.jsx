@@ -180,6 +180,57 @@ describe("useSDUI > setters + getters", () => {
     act(() => { result.current.clearAll(); });
     expect(result.current.filterValues).toEqual({});
   });
+
+  it("clears hidden Transparency state after leaving the Google tab", async () => {
+    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    localStorage.setItem("sdui.filterValues", JSON.stringify({
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "SHOPPING",
+      country: ["India"],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.filterValues.google_transparency_ads).toBe(true);
+
+    act(() => { result.current.setActivePlatforms(["facebook"]); });
+    expect(result.current.filterValues).toEqual({ country: ["India"] });
+  });
+
+  it("clears the dependent subnetwork when Transparency is disabled", async () => {
+    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    localStorage.setItem("sdui.filterValues", JSON.stringify({
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "SEARCH",
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    act(() => { result.current.setFilter("google_transparency_ads", false); });
+
+    expect(result.current.filterValues.google_transparency_ads).toBe(false);
+    expect(result.current.filterValues).not.toHaveProperty(
+      "google_transparency_subnetwork",
+    );
+  });
+
+  it("keeps Transparency state when Google remains in a mixed selection", async () => {
+    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    localStorage.setItem("sdui.filterValues", JSON.stringify({
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "SHOPPING",
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    act(() => {
+      result.current.setActivePlatforms(["instagram", "google"]);
+    });
+
+    expect(result.current.filterValues).toMatchObject({
+      google_transparency_ads: true,
+      google_transparency_subnetwork: "SHOPPING",
+    });
+  });
 });
 
 describe("useSDUI > totalActiveFilters", () => {

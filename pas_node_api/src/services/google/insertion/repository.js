@@ -101,6 +101,11 @@ async function getJoinedAd(exec, adId) {
  */
 async function deleteAdCascade(exec, internalId) {
   const childDeletes = [
+    // Platform-18 Google Transparency extensions. Keep these explicit even
+    // though the current DDL also has ON DELETE CASCADE, so deletion remains
+    // compatible with environments that have older/non-cascading FKs.
+    ['google_transparency_country_delivery', 'google_text_ad_id'],
+    ['google_transparency_ad_payload', 'google_text_ad_id'],
     ['google_text_html_content', 'google_text_ad_id'],
     ['google_text_ad_countries', 'google_text_ad_id'],
     ['google_text_ad_countries_only', 'google_text_ad_id'],

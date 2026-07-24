@@ -298,6 +298,7 @@ const PLATFORM_ID_TO_NETWORK = {
   10: 'tiktok',
   11: 'twitter',
   12: 'gdn',
+  18: 'google',
 };
 
 // Map ad type — supports more granular types from API
@@ -343,7 +344,9 @@ const calcEngPerDay = (raw) => {
 
 export const mapAdToCard = (raw) => {
   const resolvedNetwork = (raw.platform_network || raw.network || PLATFORM_ID_TO_NETWORK[Number(raw.platform)] || '').toLowerCase();
+  const isGoogleTransparency = resolvedNetwork === 'google' && Number(raw.platform) === 18;
   const isTikTok = resolvedNetwork.toLowerCase() === 'tiktok' || !!raw.video_cover;
+  const mappedAdType = mapAdType(raw.type);
   // NAS-cached copy of the creative — used as the primary source when present
   // (and the base URL is configured). `liveVideoUrl` is the live CDN URL the
   // ad shipped with; it's the primary when there's no NAS copy and the runtime
@@ -353,9 +356,22 @@ export const mapAdToCard = (raw) => {
   const nasVideoUrl = (raw.nas_video_url && NAS_VIDEO_BASE_URL)
     ? `${NAS_VIDEO_BASE_URL}${raw.nas_video_url.startsWith('/') ? '' : '/'}${raw.nas_video_url}`
     : '';
-  const liveVideoUrl = resolvedNetwork === 'quora'
+  const liveVideoUrl = isGoogleTransparency
+    ? resolveNasUrl(raw.video_url_original || raw.video_url || '')
+    : resolvedNetwork === 'quora'
     ? (resolveNasUrl(raw.image_url_original || '') || resolveNasUrl(raw.video_url || ''))
     : (resolveNasUrl(raw.video_url || '') || resolveNasUrl(raw.image_url_original || ''));
+  const transparencyPrimaryUrl = isGoogleTransparency
+    ? resolveNasUrl(raw.image_video_url || '')
+    : '';
+  const transparencyPrimaryIsVideo = isGoogleTransparency
+    && /\.(?:mp4|webm|mov|m4v|ogv|ogg)(?:$|[?#])/i.test(transparencyPrimaryUrl);
+  const gtOriginalImageUrl = resolveNasUrl(raw.image_url_original || '');
+  const transparencyOtherMedia = isGoogleTransparency
+    ? (Array.isArray(raw.othermultimedia) ? raw.othermultimedia : [])
+        .map(resolveNasUrl)
+        .filter((url) => typeof url === 'string' && url && !url.includes('DefaultImage'))
+    : [];
   return {
     id: raw.ad_id || raw.sql_id || raw.id,
     advertiser: raw.post_owner || 'Unknown',
@@ -369,7 +385,11 @@ export const mapAdToCard = (raw) => {
     thumbnail: raw.preview_unavailable === true
       ? ''
       : (() => {
-          const t = resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || '')));
+          const t = isGoogleTransparency
+            ? (!transparencyPrimaryIsVideo
+              ? transparencyPrimaryUrl
+              : '')
+            : resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || '')));
           // The backend stores "/DefaultImage.jpg" as the variant image for ads with no
           // creative (e.g. TEXT ads). It's a dead path that 404s and renders as "preview
           // unavailable" — same marker filtered from carouselMedia below. Treat it as no
@@ -380,12 +400,16 @@ export const mapAdToCard = (raw) => {
     // NAS-cached video first; fall through to the live CDN URL when there's no
     // NAS copy (or VITE_NAS_VIDEO_URL is unset, which would otherwise yield a
     // relative `/stream/...` path that 404s against the app origin).
-    videoUrl: nasVideoUrl || liveVideoUrl,
+    videoUrl: isGoogleTransparency
+      ? (transparencyPrimaryIsVideo ? transparencyPrimaryUrl : '')
+      : nasVideoUrl || liveVideoUrl,
     // Played when `videoUrl` fails at runtime. When NAS is the primary this is
     // the live CDN URL, so a NAS 410/expiry transparently falls back to the CDN.
     // For Quora without a NAS copy the primary is image_url_original and this is
     // the video_url alternate. Empty when there's no distinct fallback.
-    videoUrlFallback: nasVideoUrl
+    videoUrlFallback: isGoogleTransparency
+      ? ''
+      : nasVideoUrl
       ? liveVideoUrl
       : (resolvedNetwork === 'quora' && resolveNasUrl(raw.image_url_original || ''))
         ? resolveNasUrl(raw.video_url || '')
@@ -395,9 +419,38 @@ export const mapAdToCard = (raw) => {
     views: formatNumber(raw.views),
     shares: formatNumber(raw.share || raw.shares),
     impressions: formatNumber(raw.impression || raw.impressions),
+    // Transparency delivery values are ranges, not exact engagement counts.
+    // Keep the structured data intact for AnalyticsModal instead of coercing
+    // it through formatNumber (which intentionally only accepts scalars).
+    impressionRange: isGoogleTransparency && raw.impressions && typeof raw.impressions === 'object'
+      ? {
+          min: raw.impressions.min ?? null,
+          max: raw.impressions.max ?? null,
+          operator: raw.impressions.operator ?? null,
+        }
+      : null,
+    countryDetails: isGoogleTransparency
+      ? (() => {
+          if (Array.isArray(raw.country_details)) return raw.country_details;
+          if (typeof raw.country_details === 'string') {
+            try {
+              const parsed = JSON.parse(raw.country_details);
+              return Array.isArray(parsed) ? parsed : [];
+            } catch {
+              return [];
+            }
+          }
+          return [];
+        })()
+      : [],
+    firstSeenRaw: raw.first_seen ?? null,
+    lastSeenRaw: raw.last_seen ?? null,
+    postDateRaw: raw.post_date ?? null,
     title: raw.ad_title || '',
     carouselMedia: (() => {
-      let val = raw.ad_image_video || raw.carousel_media;
+      let val = isGoogleTransparency
+        ? transparencyOtherMedia
+        : raw.ad_image_video || raw.carousel_media;
       if (typeof val === 'string' && val.trim().startsWith('[') && val.trim().endsWith(']')) {
         try { val = JSON.parse(val); } catch (e) { }
       }
@@ -424,14 +477,21 @@ export const mapAdToCard = (raw) => {
     adText : raw.ad_text || '',
     adType: (() => {
       if (isTikTok) return 'video';
-      const mapped = mapAdType(raw.type);
+      if (isGoogleTransparency) return mappedAdType;
       // Reddit text ads sometimes carry a real image — promote them to 'image' so
       // the card renders the creative instead of the title-only text fallback.
-      if (mapped === 'text' && resolvedNetwork === 'reddit' && (raw.image_url_original || raw.image_video_url)) {
+      if (mappedAdType === 'text' && resolvedNetwork === 'reddit' && (raw.image_url_original || raw.image_video_url)) {
         return 'image';
       }
-      return mapped;
+      return mappedAdType;
     })(),
+    // Preserve the payload type for the visible badge. Transparency creatives
+    // can use a different renderer when image_video_url contains media.
+    renderType: isGoogleTransparency
+      ? (transparencyPrimaryIsVideo
+        ? 'video'
+        : transparencyPrimaryUrl ? 'image' : mappedAdType)
+      : null,
     textImageTitle: raw.text_image_title || '',
     adUrl: raw.ad_url || raw.library_url || '',
     tiktokLibraryUrl: isTikTok ? (raw.library_url || '') : '',
@@ -439,6 +499,13 @@ export const mapAdToCard = (raw) => {
     adPosition: raw.ad_position || '',
     destinationUrl: raw.destination_url || '',
     network: resolvedNetwork,
+    platform: Number(raw.platform) || null,
+    subnetwork: isGoogleTransparency
+      ? (raw.subnetwork ? String(raw.subnetwork).toUpperCase() : null)
+      : null,
+    isGoogleTransparency,
+    imageOriginalUrl: isGoogleTransparency ? gtOriginalImageUrl || null : null,
+    videoOriginalUrl: isGoogleTransparency ? liveVideoUrl || null : null,
     // YouTube DISPLAY ads are surfaced under GDN. Show the GDN badge while
     // keeping network:'youtube' so ad-detail / insights still route to YouTube.
     badgeNetwork: raw.ad_origin === 'youtube_display' ? 'gdn' : resolvedNetwork,
@@ -866,6 +933,18 @@ export const buildSearchPayload = (filters = {}) => {
   const commentdata = pick('commentdata');
   const verified = pick('verified_filter', 'verified', 'is_verified');
   const metaAdsLib = pick('meta_ads_lib_filter', 'meta_ads_lib', 'meta_ads_library');
+  const googleTransparencyAds = pick(
+    'google_transparency_ads',
+    'google_transparency_filter',
+  );
+  const googleTransparencySubnetwork = pick(
+    'google_transparency_subnetwork',
+    'google_transparency_platform',
+  );
+  const googleTransparencyRequested =
+    googleTransparencyAds === true ||
+    googleTransparencyAds === 1 ||
+    googleTransparencyAds === 'true';
   const market_platform = pick('market_platform', 'marketing_platform_filter', 'marketing_platform', 'marketingPlatform');
   const post_date_btn_sort = pick('post_date_btn_sort');
   const seen_btn_sort = pick('seen_btn_sort');
@@ -887,6 +966,11 @@ export const buildSearchPayload = (filters = {}) => {
   const baseNetworks = activePlatforms?.length
     ? activePlatforms.map(p => p.toLowerCase())
     : [(activePlatform || 'facebook').toLowerCase()];
+  // The toggle is valid whenever Google is among the selected networks. If
+  // Google is removed, ignore any stale persisted value.
+  const googleTransparencyEnabled =
+    googleTransparencyRequested &&
+    baseNetworks.includes('google');
 
   const networks = restrictedPlatforms.size > 0
     ? baseNetworks.filter(p => restrictedPlatforms.has(p))
@@ -898,7 +982,7 @@ export const buildSearchPayload = (filters = {}) => {
 
   // No frontend network narrowing — all selected platforms are always queried.
   // Each backend controller reads only the fields it supports and ignores the rest.
-  const resolvedNetworks = finalNetworks;
+  const resolvedNetworks = googleTransparencyEnabled ? ['google'] : finalNetworks;
 
   // youtube_display_ads: include YouTube DISPLAY ads (ad_origin === 'youtube_display' —
   // the ads surfaced under GDN) EXCEPT when the selection already covers GDN. The ALL
@@ -1140,9 +1224,20 @@ export const buildSearchPayload = (filters = {}) => {
     userSubscription: 'NA',
     not_country: '',
     adDetail_id: 'NA',
-    platform: (ps(resolvedNetworks, 'meta_ads_lib_filter') || ps(resolvedNetworks, 'meta_ads_lib')) &&
-      (metaAdsLib === true || metaAdsLib === 1 || metaAdsLib === 'true') &&
-      (resolvedNetworks.includes('facebook') || resolvedNetworks.includes('instagram')) ? 15 : 'NA',
+    platform: googleTransparencyEnabled
+      ? 18
+      : (ps(resolvedNetworks, 'meta_ads_lib_filter') || ps(resolvedNetworks, 'meta_ads_lib')) &&
+        (metaAdsLib === true || metaAdsLib === 1 || metaAdsLib === 'true') &&
+        (resolvedNetworks.includes('facebook') || resolvedNetworks.includes('instagram')) ? 15 : 'NA',
+    google_transparency_ads: googleTransparencyEnabled,
+    google_transparency_subnetwork: (() => {
+      if (!googleTransparencyEnabled) return 'NA';
+      const selected = Array.isArray(googleTransparencySubnetwork)
+        ? googleTransparencySubnetwork[0]
+        : googleTransparencySubnetwork;
+      if (!selected || String(selected).toLowerCase() === 'all') return 'NA';
+      return String(selected).toUpperCase();
+    })(),
     platform_positions: (ps(resolvedNetworks, 'meta_ads_lib_filter') || ps(resolvedNetworks, 'meta_ads_lib')) &&
       (metaAdsLib === true || metaAdsLib === 1 || metaAdsLib === 'true')
       ? ['facebook', 'instagram']

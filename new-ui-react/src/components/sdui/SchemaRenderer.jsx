@@ -29,6 +29,14 @@ const SchemaRenderer = ({
   onFilterChangeRef.current = onFilterChange;
 
   if (!doc || doc.visible === false) return null;
+  if (
+    doc._id === "google_transparency" &&
+    !activePlatforms.some(
+      (platform) => String(platform).toLowerCase() === "google",
+    )
+  ) {
+    return null;
+  }
 
   const renderFilters = () => {
     if (!doc.filters || doc.filters.length === 0) return null;
@@ -152,6 +160,7 @@ const SchemaRenderer = ({
       const isDirectToggle =
         doc._id === "verified_filter" ||
         doc._id === "meta_ads_lib" ||
+        doc._id === "google_transparency" ||
         doc.title?.toLowerCase().includes("verified") ||
         doc.title?.toLowerCase().includes("meta ads");
       const skipLabel =
@@ -221,6 +230,7 @@ const SchemaRenderer = ({
   const isDirectToggle =
     doc._id === "verified_filter" ||
     doc._id === "meta_ads_lib" ||
+    doc._id === "google_transparency" ||
     doc.title?.toLowerCase().includes("verified") ||
     doc.title?.toLowerCase().includes("meta ads");
 
