@@ -2361,13 +2361,13 @@ function pvLoadPlanEditor() {
         ? family.openForNewSignupsKnown === false
           ? 'Not explicitly set in legacy plan_groups; Closed is the safe default.'
           : `Read from plan_access_config → plan_groups → ${family.adminLabel} → openForNewSignups.`
-        : 'Defined by the backend plan-family default.';
+        : 'Defined by backend plan settings.';
   document.getElementById('pv2-summary').innerHTML = `
     <div class="pv2-stat"><span class="pv2-kicker">Name customers see <span class="pv2-info" title="The friendly plan name shown in customer-facing screens.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.label)}</b></div><div class="pv2-explain">Display name only. Changing it does not change access.</div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Plan display order <span class="pv2-info" title="Previously called Tier Rank. A higher number places a plan higher in comparisons; it does not automatically grant features.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.tierRank)}</b></div><div class="pv2-explain">Higher number = higher plan in UI ordering. Feature access is still controlled below.</div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Select billing plan ID <span class="pv2-info" title="Choose the exact billing ID to inspect or edit. Normal changes affect only this selected ID.">?</span></span><div style="margin-top:6px"><b>${variants.length} plan ID${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="Choose a billing plan ID" style="width:100%;margin-top:6px" onchange="pv2VariantChanged()">${variants.map((v) => `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}</option>`).join('')}</select><div id="pv2-variant-note" class="pv2-source-note"></div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Available for new purchases <span class="pv2-info" title="Open means billing may sell this family to new customers. Closed keeps existing customers but prevents new signups.">?</span></span><div style="margin-top:6px"><b style="color:${family.openForNewSignups ? '#22c55e' : '#f59e0b'}">${family.openForNewSignups ? 'Yes, open' : 'No, closed'}</b></div><div class="pv2-explain">${family.openForNewSignups ? 'New customers may buy this plan.' : 'Existing plan IDs remain valid, but new sales are closed.'}</div><div class="pv2-source-note"><b>How this is known:</b> ${pv2Escape(salesSource)}</div>${editable ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pvEditFamily()">Edit plan details</button>' : ''}</div>
-    <div class="pv2-stat" style="grid-column:1/-1"><label style="display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.4"><input id="pv2-apply-all-family" type="checkbox" ${showFamilyCopy ? 'checked' : ''} ${editable ? '' : 'disabled'} onchange="pv2ApplyAllChanged(this.checked)"> <span><b>Apply to all family IDs by copying one plan ID</b><br><span style="color:var(--text-muted)">Checking this only opens the copy tool. Nothing changes until you choose the source ID and confirm.</span></span></label><div id="pv2-family-copy-panel" style="display:${showFamilyCopy ? 'block' : 'none'};margin-top:10px;padding:10px;border:1px solid rgba(245,158,11,.35);border-radius:7px;background:rgba(245,158,11,.06)"><b style="font-size:11px">Which plan ID's complete settings should apply to the whole family?</b><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:7px"><select id="pv2-family-copy-source" class="pv2-input" style="min-width:220px;flex:1">${variants.map((v) => `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}</option>`).join('')}</select><button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2CopySelectedPlanToFamily()">Copy selected source ID to all family IDs</button></div><div class="pv2-explain">Copies effective feature access, general networks, feature-specific networks and limits. Existing per-ID overrides are cleared in this draft.</div></div></div>`;
+    <div class="pv2-stat" style="grid-column:1/-1"><label style="display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.4"><input id="pv2-apply-all-family" type="checkbox" ${showFamilyCopy ? 'checked' : ''} ${editable ? '' : 'disabled'} onchange="pv2ApplyAllChanged(this.checked)"> <span><b>Same settings for all plan IDs</b><br><span id="pv2-apply-all-note" style="color:var(--text-muted)">${showFamilyCopy ? `When you Save, plan #${pv2Escape(selectedVariant)} settings will apply to every plan ID in ${pv2Escape(family.adminLabel)}.` : `Off: changes apply only to plan #${pv2Escape(selectedVariant)}.`}</span></span></label></div>`;
   pv2RenderNetworks();
   pvRenderCapabilities();
   pv2RenderVariantNote();
@@ -2399,8 +2399,13 @@ function pv2SelectedVariantKey() {
 function pv2VariantChanged() {
   const value = document.getElementById('pv2-variant')?.value || '';
   pv2VariantSelection[pv2SelectedFamilyId] = value;
-  const copySource = document.getElementById('pv2-family-copy-source');
-  if (copySource) copySource.value = value;
+  const applyAllNote = document.getElementById('pv2-apply-all-note');
+  if (applyAllNote) {
+    const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+    applyAllNote.textContent = pv2ApplyAllSelection[pv2SelectedFamilyId]
+      ? `When you Save, plan #${value} settings will apply to every plan ID in ${family?.adminLabel || 'this plan'}.`
+      : `Off: changes apply only to plan #${value}.`;
+  }
   pv2RenderVariantNote();
   pv2RenderNetworks();
   pvRenderCapabilities();
@@ -2408,10 +2413,12 @@ function pv2VariantChanged() {
 
 function pv2ApplyAllChanged(checked) {
   pv2ApplyAllSelection[pv2SelectedFamilyId] = Boolean(checked);
-  const panel = document.getElementById('pv2-family-copy-panel');
-  if (panel) panel.style.display = checked ? 'block' : 'none';
-  const copySource = document.getElementById('pv2-family-copy-source');
-  if (checked && copySource) copySource.value = pv2SelectedVariantKey() || '';
+  const planId = pv2SelectedVariantKey();
+  const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+  const note = document.getElementById('pv2-apply-all-note');
+  if (note) note.textContent = checked
+    ? `When you Save, plan #${planId} settings will apply to every plan ID in ${family?.adminLabel || 'this plan'}.`
+    : `Off: changes apply only to plan #${planId}.`;
 }
 
 function pv2CopySelectedPlanToFamily() {
@@ -2420,17 +2427,12 @@ function pv2CopySelectedPlanToFamily() {
     return;
   }
   const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
-  const sourcePlanId = String(document.getElementById('pv2-family-copy-source')?.value || pv2SelectedVariantKey() || '');
+  const sourcePlanId = String(pv2SelectedVariantKey() || '');
   const sourceVariant = (family?.variants || []).find((variant) => String(variant.planId) === sourcePlanId);
   if (!family || !sourceVariant) {
     showToast?.('Choose a valid source plan ID from this family.', 'error');
     return;
   }
-  pv2ConfirmAction({
-    title: `Copy billing #${sourcePlanId} to all ${family.adminLabel} IDs`,
-    message: `Billing #${sourcePlanId}'s complete effective feature access, general networks, feature-specific networks and limits will become the family rule. All existing billing-ID overrides in ${family.adminLabel} will be cleared. This changes only the safe draft until Publish.`,
-    confirmLabel: `Copy #${sourcePlanId} to all ${family.variants?.length || 0} IDs`,
-    onConfirm: () => {
       const policy = pv2FamilyPolicy();
       const sourcePolicy = policy.variantOverrides?.[sourcePlanId] || {};
       const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -2455,7 +2457,7 @@ function pv2CopySelectedPlanToFamily() {
           };
         }
         baseRule ||= {
-          effect: 'inherit',
+          effect: capability?.defaultPolicy === 'deny' ? 'deny' : 'allow',
           networks: { mode: capability?.networkAware ? 'inherit_general' : 'not_applicable' },
         };
         const sourceRule = sourcePolicy.capabilities?.[capabilityId];
@@ -2475,20 +2477,14 @@ function pv2CopySelectedPlanToFamily() {
       pv2ApplyAllSelection[pv2SelectedFamilyId] = false;
       pv2VariantSelection[pv2SelectedFamilyId] = sourcePlanId;
       pv2SetDirty();
-      pvLoadPlanEditor();
-      showToast?.(`Billing #${sourcePlanId} is now the family template in this draft. Save, validate and publish when ready.`, 'success');
-    },
-  });
+      return true;
 }
 
 function pv2RenderVariantNote() {
   const note = document.getElementById('pv2-variant-note');
   if (!note) return;
   const variantKey = pv2SelectedVariantKey();
-  const override = pv2FamilyPolicy().variantOverrides?.[variantKey];
-  note.innerHTML = override
-    ? `<b>Selected ID #${pv2Escape(variantKey)} only.</b> It currently has one or more overrides; changes below affect only this ID.`
-    : `<b>Selected ID #${pv2Escape(variantKey)} only.</b> It currently follows the family; changing a setting creates an override only for this ID.`;
+  note.innerHTML = `<b>Editing plan #${pv2Escape(variantKey)}.</b> Changes below affect only this plan ID.`;
 }
 
 function pv2RenderNetworks() {
@@ -2505,7 +2501,7 @@ function pv2RenderNetworks() {
   if (summary) {
     summary.className = `pv2-network-summary ${allowedLabels.length ? 'has-access' : 'no-access'}`;
     summary.innerHTML = allowedLabels.length
-      ? `<b>${allowedLabels.length} network${allowedLabels.length === 1 ? '' : 's'} effective for billing #${pv2Escape(variantKey)}:</b> ${allowedLabels.map(pv2Escape).join(', ')}${networkOverrideActive && editable ? ` <button type="button" class="btn btn-ghost btn-sm" onclick="pv2ResetVariantNetworks()">Make selected ID use family networks</button>` : ''}`
+      ? `<b>${allowedLabels.length} network${allowedLabels.length === 1 ? '' : 's'} enabled for plan #${pv2Escape(variantKey)}:</b> ${allowedLabels.map(pv2Escape).join(', ')}${networkOverrideActive && editable ? ` <button type="button" class="btn btn-ghost btn-sm" onclick="pv2ResetVariantNetworks()">Reset networks for this ID</button>` : ''}`
       : `<b>No general networks allowed for billing #${pv2Escape(variantKey)}.</b> Network-aware features using general networks will be unavailable for this ID.`;
   }
   document.getElementById('pv2-networks').innerHTML = (pvCatalog.networks || []).map((network) => {
@@ -2565,7 +2561,7 @@ function pv2RuleForDisplay(policy, cap) {
       pendingDefault: true,
     };
   }
-  baseRule ||= { effect: 'inherit', networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' } };
+  baseRule ||= { effect: cap.defaultPolicy === 'deny' ? 'deny' : 'allow', networks: { mode: cap.networkAware ? 'inherit_general' : 'not_applicable' } };
   const variantKey = pv2SelectedVariantKey();
   const variantRule = variantKey ? policy.variantOverrides?.[variantKey]?.capabilities?.[cap.id] : null;
   if (!variantRule) return baseRule;
@@ -2600,6 +2596,16 @@ function pv2RuleForEdit(capId) {
   return variantPolicy.capabilities[capId];
 }
 
+function pv2CapabilityIsEnabled(policy, cap, seen = new Set()) {
+  if (!cap || seen.has(cap.id)) return true;
+  seen.add(cap.id);
+  const rule = pv2RuleForDisplay(policy, cap);
+  if (rule.effect === 'deny') return false;
+  if (!cap.parentCapability) return true;
+  const parent = (pvCatalog.capabilities || []).find((item) => item.id === cap.parentCapability);
+  return pv2CapabilityIsEnabled(policy, parent, seen);
+}
+
 function pv2ApplyCapabilityTree(parentId, action) {
   if (!pvCurrentDraft || currentRole !== 'editor') {
     showToast?.('Open a safe working draft before changing a feature group.', 'error');
@@ -2622,10 +2628,10 @@ function pv2ApplyCapabilityTree(parentId, action) {
   pv2SetDirty();
   pvRenderCapabilities();
   const message = action === 'allow_tree'
-    ? `${parent.label} allowed; ${children.length} children now follow the parent.`
+    ? `${parent.label} enabled; ${children.length} children now use the same setting.`
     : action === 'deny_tree'
-      ? `${parent.label} restricted; all ${children.length} children are blocked by the parent.`
-      : `${children.length} children now follow ${parent.label}; individual child overrides were cleared.`;
+      ? `${parent.label} disabled; all ${children.length} children are disabled.`
+      : `${children.length} children now use the same setting as ${parent.label}.`;
   showToast?.(message, 'success');
 }
 
@@ -2639,40 +2645,36 @@ function pvRenderCapabilities() {
   const state = document.getElementById('pv2-filter')?.value || '';
   const caps = (pvCatalog.capabilities || []).filter((cap) => {
     const rule = pv2RuleForDisplay(policy, cap);
+    const enabled = pv2CapabilityIsEnabled(policy, cap);
     const liveRule = pvLivePolicy?.snapshot?.policies?.[pv2SelectedFamilyId]?.capabilities?.[cap.id];
     if (query && !`${cap.id} ${cap.label} ${cap.description}`.toLowerCase().includes(query)) return false;
     if (category && cap.category !== category) return false;
     if (state === 'needs_review' && cap.status !== 'needs_review') return false;
-    if ((state === 'allow' || state === 'deny') && rule.effect !== state) return false;
+    if (state === 'allow' && !enabled) return false;
+    if (state === 'deny' && enabled) return false;
     if (state === 'changed' && JSON.stringify(rule) === JSON.stringify(liveRule)) return false;
     return true;
   });
   body.innerHTML = caps.map((cap) => {
     const rule = pv2RuleForDisplay(policy, cap);
+    const enabled = pv2CapabilityIsEnabled(policy, cap);
     const variantKey = pv2SelectedVariantKey();
-    const explicitVariantRule = variantKey
-      ? policy.variantOverrides?.[variantKey]?.capabilities?.[cap.id]
-      : null;
-    const ruleScope = variantKey
-      ? explicitVariantRule
-        ? `<div class="pv2-variant-rule-badge override">BILLING #${pv2Escape(variantKey)} OVERRIDE</div>`
-        : `<div class="pv2-variant-rule-badge inherited">BILLING #${pv2Escape(variantKey)} FOLLOWS FAMILY</div>`
-      : '';
+    const ruleScope = `<div class="pv2-variant-rule-badge family">PLAN #${pv2Escape(variantKey)}</div>`;
     const parent = cap.parentCapability
       ? (pvCatalog.capabilities || []).find((item) => item.id === cap.parentCapability)
       : null;
     const children = (pvCatalog.capabilities || []).filter((item) => item.parentCapability === cap.id);
     const relation = parent
-      ? `<div class="pv2-child-of">↳ Child of <b>${pv2Escape(parent.label)}</b>${rule.effect === 'inherit' ? ' · automatically follows parent access' : ' · individual override'}</div>`
+      ? `<div class="pv2-child-of">↳ Child of <b>${pv2Escape(parent.label)}</b></div>`
       : children.length
         ? `<div class="pv2-parent-label">PARENT FEATURE · ${children.length} child${children.length === 1 ? '' : 'ren'}</div>`
         : '<div class="pv2-standalone-label">STANDALONE FEATURE</div>';
     const treeActions = children.length
       ? `<div class="pv2-tree-actions">
-          <span>Apply to this group for billing #${pv2Escape(variantKey)} only:</span>
-          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','allow_tree')">Allow parent + children</button>
-          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','deny_tree')">Restrict whole group</button>
-          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','follow')">Children follow parent</button>
+          <span>Plan #${pv2Escape(variantKey)}:</span>
+          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','allow_tree')">Enable parent + children</button>
+          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','deny_tree')">Disable parent + children</button>
+          <button type="button" class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2ApplyCapabilityTree('${pv2Escape(cap.id)}','follow')">Children same as parent</button>
         </div>`
       : '';
     const accessMeaning = parent
@@ -2688,11 +2690,9 @@ function pvRenderCapabilities() {
     const review = cap.status === 'needs_review'
       ? `<div style="margin-top:5px;color:${rule.reviewed ? '#22c55e' : '#f59e0b'}">${rule.reviewed ? 'This plan reviewed' : rule.pendingDefault && rule.effect === 'allow' ? 'Temporarily allowed · review needed' : 'Choose a plan decision'}</div>${editable ? `<button class="btn btn-ghost btn-sm" onclick="pv2ReviewCap('${pv2Escape(cap.id)}')">${rule.reviewed ? 'Review across plans' : 'Review decision'}</button>` : ''}`
       : '';
-    const accessOptions = `<option value="__use_family__" ${explicitVariantRule ? '' : 'selected'}>Use family default</option><option value="allow" ${explicitVariantRule?.effect === 'allow' ? 'selected' : ''}>Override: allow feature</option><option value="deny" ${explicitVariantRule?.effect === 'deny' ? 'selected' : ''}>Override: restrict feature</option>${explicitVariantRule?.effect === 'inherit' ? '<option value="inherit" selected>Existing inherited override</option>' : ''}`;
-    const scopeMeaning = explicitVariantRule
-        ? `This billing-specific decision overrides the family rule. Effective result: ${rule.effect === 'deny' ? 'Restricted' : 'Allowed'}.`
-        : `Billing #${pv2Escape(variantKey)} currently follows the family. Changing it creates an override only for this ID.`;
-    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}${ruleScope}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Edit only billing #${pv2Escape(variantKey)}" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)">${accessOptions}</select><div class="pv2-access-meaning">${scopeMeaning}</div></td><td>${cap.networkAware ? `<select class="pv2-input" title="Use general networks or choose a smaller custom list only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>Use general networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Choose custom networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature does not receive network context, so a network rule would never be enforced">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
+    const accessOptions = `<option value="allow" ${enabled ? 'selected' : ''}>Enable</option><option value="deny" ${enabled ? '' : 'selected'}>Disable</option>`;
+    const scopeMeaning = `${enabled ? 'Enabled' : 'Disabled'} for plan #${pv2Escape(variantKey)}.`;
+    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}${ruleScope}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Enable or disable for plan #${pv2Escape(variantKey)}" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)">${accessOptions}</select><div class="pv2-access-meaning">${scopeMeaning}</div></td><td>${cap.networkAware ? `<select class="pv2-input" title="Use all enabled networks or select networks only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>All enabled networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Select networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature has the same setting on every network">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
   }).join('');
 }
 
@@ -2725,6 +2725,10 @@ function pvUpdateCap(capId, field, value) {
     };
   }
   if (field === 'effect') targetCapabilities[capId].effect = value;
+  if (field === 'effect' && value === 'allow') {
+    const cap = (pvCatalog.capabilities || []).find((item) => item.id === capId);
+    if (cap?.parentCapability) pv2RuleForEdit(cap.parentCapability).effect = 'allow';
+  }
   if (field === 'networkMode') {
     targetCapabilities[capId].networks = targetCapabilities[capId].networks || {};
     targetCapabilities[capId].networks.mode = value;
@@ -2766,13 +2770,13 @@ function pv2ReviewCap(capId) {
       <div class="pv2-explain"><b>${reviewedCount} of ${allFamilies.length} plan families reviewed.</b></div>
     </div>
     <label style="grid-column:1/-1;display:flex;flex-direction:column;gap:7px;font-size:11px"><span><b>Where should this review apply?</b></span><select class="pv2-input" name="scope">
-      <option value="all_keep">All plan families — keep each plan’s current Allow/Restrict decision</option>
+      <option value="all_keep">All plans — keep each plan’s current Enable/Disable setting</option>
       <option value="current">Only ${pv2Escape(pv2Families().find((item) => item.familyId === pv2SelectedFamilyId)?.adminLabel || 'this plan')}</option>
       <option value="all_same">All plan families — apply the same decision selected below</option>
     </select><small style="color:var(--text-muted)">“Keep current decisions” clears review warnings without flattening different plan access rules.</small></label>
     <label style="grid-column:1/-1;display:flex;flex-direction:column;gap:7px;font-size:11px"><span><b>Decision for this plan / same-decision mode</b></span><select class="pv2-input" name="effect">
-      <option value="allow" ${rule.effect === 'allow' ? 'selected' : ''}>Allow — customers on this plan can use it</option>
-      <option value="deny" ${rule.effect !== 'allow' ? 'selected' : ''}>Restrict — show locked/upgrade state</option>
+      <option value="allow" ${rule.effect === 'allow' ? 'selected' : ''}>Enable</option>
+      <option value="deny" ${rule.effect !== 'allow' ? 'selected' : ''}>Disable</option>
     </select></label>
     <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted);margin:0">This only updates the current draft. Save, Preview, and Validate before publishing.</p>
   `, (form) => {
@@ -2814,7 +2818,7 @@ function pv2EditCapabilityNetworks(capId) {
   rule.networks.mode = 'custom';
   const current = new Set(rule.networks?.allowed || []);
   pv2OpenForm('Select feature networks', `
-    <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">Only this feature uses this override. Unselected networks remain unavailable even when the family has general access.</p>
+    <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">Choose the networks enabled for this feature. Unchecked networks stay disabled.</p>
     ${(pvCatalog.networks || []).map((network) => `<label class="pv2-network"><input type="checkbox" name="networks" value="${pv2Escape(network.id)}" ${current.has(network.id) ? 'checked' : ''}> ${pv2Escape(network.label || network.id)}</label>`).join('')}
   `, (form) => {
     rule.networks.allowed = form.getAll('networks').map(String);
@@ -2959,13 +2963,19 @@ function pvDeleteDraft(draftId, draftRevision) {
 async function pvSaveDraft() {
   if (!pvCurrentDraft) return false;
   try {
+    const appliedToAll = pv2ApplyAllSelection[pv2SelectedFamilyId] === true;
+    const appliedPlanId = appliedToAll ? pv2SelectedVariantKey() : null;
+    if (appliedToAll && !pv2CopySelectedPlanToFamily()) return false;
     const result = await pv2Api(`/drafts/${encodeURIComponent(pvCurrentDraft.draftId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ snapshot: pvCurrentDraft.snapshot, expectedDraftRevision: pvCurrentDraft.draftRevision }),
     });
     pvCurrentDraft = result.draft; pv2SetDirty(false); await pvLoadDrafts();
     document.getElementById('pv2-subtitle').textContent = `Editing ${pvCurrentDraft.draftId} revision ${pvCurrentDraft.draftRevision}`;
-    showToast?.('Draft saved safely.', 'success');
+    showToast?.(appliedToAll
+      ? `Draft saved. Plan #${appliedPlanId} settings now apply to every plan ID in this family.`
+      : 'Draft saved safely.', 'success');
+    if (appliedToAll) pvLoadPlanEditor();
     await loadPAReviewCount();
     return true;
   } catch (error) {
@@ -3065,7 +3075,7 @@ async function pvOpenPreview(capabilityId) {
   }
   const details = simulation?.capability || cap;
   pv2PreviewContext = { details, simulation, state: simulation ? 'after' : 'feature' };
-  const decision = (item) => item ? `<div class="pv2-stat"><b style="color:${item.allowed ? '#22c55e' : '#f87171'}">${item.allowed ? 'Allowed' : 'Restricted'}</b><div style="font-size:10px;margin-top:6px">${pv2Escape(item.reasonCode)}</div><div style="font-size:9px;color:var(--text-muted);margin-top:5px">Networks: ${pv2Escape((item.allowedNetworks || []).join(', ') || 'none')}</div></div>` : '<div class="pv2-stat">Select a draft and family to simulate.</div>';
+  const decision = (item) => item ? `<div class="pv2-stat"><b style="color:${item.allowed ? '#22c55e' : '#f87171'}">${item.allowed ? 'Enabled' : 'Disabled'}</b><div style="font-size:10px;margin-top:6px">${pv2Escape(item.reasonCode)}</div><div style="font-size:9px;color:var(--text-muted);margin-top:5px">Networks: ${pv2Escape((item.allowedNetworks || []).join(', ') || 'none')}</div></div>` : '<div class="pv2-stat">Select a draft and plan to preview.</div>';
   document.getElementById('pv2-preview-body').innerHTML = `
     <section style="margin-bottom:20px;padding:13px;border:1px solid rgba(245,158,11,.28);border-radius:10px;background:rgba(245,158,11,.035)">
       <div style="display:flex;align-items:flex-start;gap:10px"><div><div class="pv2-kicker" style="color:#fbbf24">Frontend screen — exact location</div><p style="font-size:10px;color:var(--text-muted);margin:5px 0 0">This is a safe simulated screenshot using mock data. Yellow highlights the feature; red shows its locked position.</p></div><span style="flex:1"></span><span style="font-size:9px;border:1px solid #fbbf24;color:#fbbf24;border-radius:99px;padding:4px 8px">SCREEN PREVIEW</span></div>
@@ -3178,11 +3188,11 @@ function pvOpenHowToUse() {
         ['2', 'Check the source banner first', 'The banner says exactly what you are viewing: LIVE policy, CURRENT LEGACY ACCESS converted read-only, backend bootstrap preview, or an editable WORKING DRAFT. It also shows the MongoDB collection, record and revision when applicable.'],
         ['3', 'Select the exact billing plan ID', 'The dropdown lists every real monthly, yearly, trial, platform and legacy plan ID in this family. Choose one ID and edit it normally; features, networks and limits then change only for that selected ID.'],
         ['4', 'Open one complete-policy draft to edit', 'A working draft contains every plan family, not only the family visible when it was created. While that draft is selected, switch Basic, Standard and Palladium directly—your unsaved browser edits remain in the same draft snapshot.'],
-        ['5', 'Set and verify networks for the selected ID', 'The green/amber summary names the exact networks effective for the billing ID selected above. Changing a checkbox creates or updates only that ID’s network override in the safe draft.'],
-        ['6', 'Use parent and child feature controls', 'A restricted parent blocks every child. Parent actions apply to the currently selected billing ID only: allow the group, restrict the group, or reset its children to follow. You can still customize an individual child for that ID.'],
+        ['5', 'Enable networks for the selected ID', 'The green/amber summary names the exact networks enabled for the selected plan ID. Check or uncheck the networks you want.'],
+        ['6', 'Use parent and child feature controls', 'A disabled parent disables every child. For the selected plan ID, use Enable parent + children, Disable parent + children, or Children same as parent.'],
         ['7', 'Choose feature-specific networks where applicable', 'Network-aware rows can use the family’s general networks or a smaller custom list. “Same for every network” means that feature does not receive network context, so a custom network rule would not be enforced.'],
         ['8', 'Set limits only where registered', 'Brand Limit, Token Limit, Member Limit and similar fields appear only when runtime code registered that limit type. Empty means no configured limit; 0 means zero usage allowed.'],
-        ['9', 'Review a new feature at the right scope', 'Review only this family, review all families while preserving each existing Allow/Restrict decision (safest bulk option), or explicitly apply one decision to all families. Pending compatibility reviews are warnings, not blockers; strict-deny unreviewed allows remain blocked.'],
+        ['9', 'Review a new feature', 'Choose Enable or Disable, then choose whether the review is for this plan or all plans. Pending review warnings remain visible until saved.'],
         ['10', 'Use the highlighted frontend preview', 'View frontend opens a browser-like screen. Yellow marks the exact customer control; red shows where it becomes locked. The drawer also lists affected APIs and the simulated before/after result.'],
         ['11', 'Save, then Validate & diff', 'Save increments the draft revision. Any edit marks old validation results as outdated. Validate separates BLOCKING errors from REVIEW WARNINGS and shows every changed field before publish.'],
         ['12', 'Publish once, with a reason', 'Publish is the only live action. It creates immutable history and a LIVE badge, records the source draft and deletes that published draft. Another tab holding an older revision cannot overwrite it.'],
@@ -3192,26 +3202,24 @@ function pvOpenHowToUse() {
         <p><b>Complete-policy draft:</b> one unpublished snapshot containing all generations, families and rules. It is not a Basic-only or Palladium-only draft.</p>
         <p><b>Plan display order:</b> sorting/position only; it does not automatically grant access.</p>
         <p><b>Billing option:</b> provider product ID for monthly, yearly, trial, legacy or a future billing cycle.</p>
-        <p><b>Family default:</b> the normal feature, network and limit rules shared by every billing ID that does not have an exception.</p>
-        <p><b>HAS OVERRIDE:</b> this billing ID has at least one explicit feature, network or limit exception. It does not necessarily mean the feature currently visible in the table is overridden.</p>
-        <p><b>Follows family:</b> this billing ID has no explicit exception and automatically receives the family defaults.</p>
+        <p><b>Selected plan ID:</b> the exact monthly, yearly, trial, platform or legacy ID currently being edited.</p>
+        <p><b>Same settings for all plan IDs:</b> when checked, Save uses the selected plan ID’s complete settings for every ID in that plan.</p>
         <p><b>Available for new purchases:</b> whether new customers may buy it. The plan card explains whether this value came from live policy, the draft, legacy plan_groups or a safe missing-value default.</p>
         <p><b>Blocking error:</b> invalid or unsafe policy that cannot publish. <b>Review warning:</b> visible follow-up work that does not block an unrelated compatibility-mode change.</p>
         <p><b>Lifecycle:</b> draft, active, legacy or archived state of the plan definition.</p>
       </div>
       <div style="margin-top:10px;padding:12px;border:1px solid rgba(99,102,241,.3);background:rgba(99,102,241,.07);border-radius:9px">
-        <h4>Copy one plan ID to the complete family — step by step</h4>
-        <p><b>1.</b> Select the exact plan ID you want to prepare, for example <i>yearly #69</i>.</p>
-        <p style="margin-top:8px"><b>2.</b> Keep the family-copy checkbox off while editing. Set that ID’s features, general networks, custom feature networks, parent/child decisions and limits. These edits affect only the selected ID.</p>
-        <p style="margin-top:8px"><b>3.</b> When one ID has the correct complete setup, check <i>Apply to all family IDs by copying one plan ID</i>. Checking the box alone changes nothing.</p>
-        <p style="margin-top:8px"><b>4.</b> A second dropdown appears. Choose which plan ID should be the source template. It can be the ID you just edited or any other ID in the family.</p>
-        <p style="margin-top:8px"><b>5.</b> Click <i>Copy selected source ID to all family IDs</i> and confirm. The source ID’s complete effective settings become the family rule, and existing per-ID overrides in that family are cleared.</p>
-        <p style="margin-top:8px"><b>6.</b> Save Draft → Validate &amp; diff → Publish. Current customers do not change before Publish.</p>
-        <p style="margin-top:8px"><b>Future billing IDs:</b> a new monthly/yearly/custom ID automatically receives this copied family rule unless an admin later creates an override only for that ID.</p>
+        <h4>Simple plan setup — step by step</h4>
+        <p><b>1.</b> Select one plan ID, for example <i>yearly #69</i>.</p>
+        <p style="margin-top:8px"><b>2.</b> Set each feature to <b>Enable</b> or <b>Disable</b>. Select its networks and limits if needed.</p>
+        <p style="margin-top:8px"><b>3.</b> If only this ID should change, leave <i>Same settings for all plan IDs</i> off.</p>
+        <p style="margin-top:8px"><b>4.</b> If every ID should get these settings, check <i>Same settings for all plan IDs</i>.</p>
+        <p style="margin-top:8px"><b>5.</b> Click <b>Save Draft</b>. When the checkbox is on, Save applies the selected ID’s complete settings to every plan ID.</p>
+        <p style="margin-top:8px"><b>6.</b> Validate &amp; diff → Publish. Customers change only after Publish.</p>
       </div>
       <div style="margin-top:10px;padding:12px;border:1px solid rgba(34,197,94,.25);background:rgba(34,197,94,.06);border-radius:9px">
         <h4>Example: allow Market Trends for every Palladium billing ID</h4>
-        <p>Open Palladium in a safe draft → select <b>yearly #69</b> → set Market Trends to <b>Override: allow feature</b> → enable the family-copy checkbox → choose <b>yearly #69</b> as the source → click <b>Copy selected source ID to all family IDs</b> → confirm → Save Draft → Validate &amp; diff → Publish. Every Palladium billing ID then follows #69’s complete setup, so an old Market Trends override cannot keep returning <code>VARIANT_DENY</code>.</p>
+        <p>Open Palladium → select <b>yearly #69</b> → set Market Trends to <b>Enable</b> → check <b>Same settings for all plan IDs</b> → Save Draft → Validate &amp; diff → Publish.</p>
       </div>
       <div style="margin-top:10px;padding:12px;border:1px solid rgba(245,158,11,.3);background:rgba(245,158,11,.07);border-radius:9px">
         <h4>Two browser tabs editing the same draft</h4>
