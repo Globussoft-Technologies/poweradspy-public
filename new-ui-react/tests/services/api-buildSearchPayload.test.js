@@ -13,6 +13,36 @@ beforeEach(async () => {
   ({ buildSearchPayload } = await import("../../src/services/api.js"));
 });
 
+describe("buildSearchPayload > AI-Meta", () => {
+  it("sends the logical AI-Meta toggle when enabled", () => {
+    const payload = buildSearchPayload({
+      has_ai_meta: true,
+      activePlatforms: ["facebook", "google"],
+      filterPlatformSupport: { has_ai_meta: ["facebook", "google"] },
+    });
+
+    expect(payload.has_ai_meta).toBe(true);
+  });
+
+  it("does not activate the filter from a persisted false value", () => {
+    const payload = buildSearchPayload({ has_ai_meta: false, activePlatforms: ["facebook"] });
+    expect(payload.has_ai_meta).toBe(false);
+  });
+
+  it("forwards selected contract filters without embedding their options", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook"],
+      ai_ad_type: ["promotional"],
+      ai_intent: ["conversion"],
+      ai_offer_value: [10, 50],
+    });
+
+    expect(payload.ai_ad_type).toEqual(["promotional"]);
+    expect(payload.ai_intent).toEqual(["conversion"]);
+    expect(payload.ai_offer_value).toEqual([10, 50]);
+  });
+});
+
 describe("buildSearchPayload > network resolution", () => {
   it("default activePlatform=facebook when nothing provided", () => {
     const p = buildSearchPayload();

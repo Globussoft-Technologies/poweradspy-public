@@ -254,6 +254,30 @@ describe("useSDUI > totalActiveFilters", () => {
     });
     expect(result.current.totalActiveFilters).toBe(3);
   });
+
+  it("counts a configured nested category and its selected children once", async () => {
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "ai_meta",
+        filters: [{
+          _id: "ai_category_id",
+          type: "nested_multiselect",
+          parent_filter_id: "ai_category_id",
+          child_filter_id: "ai_subcategory_id",
+        }],
+      }],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => {
+      result.current.setAllFilters({
+        ai_category_id: ["1005"],
+        ai_subcategory_id: ["10050001", "10050002"],
+        ai_intent: ["conversion"],
+      });
+    });
+    expect(result.current.totalActiveFilters).toBe(2);
+  });
 });
 
 describe("useSDUI > buildQueryParams", () => {

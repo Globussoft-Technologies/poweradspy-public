@@ -24,7 +24,7 @@ const NETWORK_AD_ID_FIELD = {
  * Sends the ad's network in the payload so the backend routes to the correct handler.
  * Returns progressively loaded data as each event arrives.
  */
-export function useAdInsights(adId, network = 'facebook', userId = 281, language = 'en', postOwnerId = null) {
+export function useAdInsights(adId, network = 'facebook', userId = 281, language = 'en', postOwnerId = null, includeAiMeta = false) {
   const [insights, setInsights] = useState({
     adDetails: null,
     analytics: null,
@@ -37,6 +37,7 @@ export function useAdInsights(adId, network = 'facebook', userId = 281, language
     advertiserCountryData: null,
     pageDetails: null,
     targetSite: null,
+    aiMeta: null,
   });
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
@@ -60,6 +61,7 @@ export function useAdInsights(adId, network = 'facebook', userId = 281, language
       advertiserCountryData: null,
       pageDetails: null,
       targetSite: null,
+      aiMeta: null,
     });
     setErrors({});
     setNotFound(false);
@@ -87,6 +89,28 @@ export function useAdInsights(adId, network = 'facebook', userId = 281, language
           }),
           signal: controller.signal,
         });
+
+        if (includeAiMeta) {
+          // AI-Meta is ES-only. Start this optional read after the main stream
+          // request so it cannot delay or alter the analytics request itself.
+          Promise.resolve(fetch(
+            `${PAS_API_BASE}/api/v1/common/getAdCategory?platform=${encodeURIComponent((network || 'facebook').toLowerCase())}&ad_id=${encodeURIComponent(adId)}`,
+            {
+              headers: { 'Authorization': `Bearer ${PAS_API_TOKEN}` },
+              signal: controller.signal,
+            },
+          ))
+            .then(async (response) => response?.ok ? response.json() : null)
+            .then((payload) => {
+              const aiMeta = payload?.ai_meta ?? payload?.data?.ai_meta ?? null;
+              if (!controller.signal.aborted) {
+                setInsights((previous) => ({ ...previous, aiMeta }));
+              }
+            })
+            .catch(() => {
+              // AI-Meta is optional; its read failure must not interrupt analytics.
+            });
+        }
 
         if (!res.ok) {
           setLoading(false);
@@ -154,7 +178,7 @@ export function useAdInsights(adId, network = 'facebook', userId = 281, language
     return () => {
       controller.abort();
     };
-  }, [adId, network, userId, language]);
+  }, [adId, network, userId, language, includeAiMeta]);
 
   return { insights, loading, notFound, notFoundForId, errors };
 }

@@ -4,6 +4,7 @@ const LinkedinSearchQueryBuilder = require('../builders/LinkedinSearchQueryBuild
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
 
 // Shared SQL fragment for fetching full ad details by IDs
 const AD_DETAIL_SELECT = `
@@ -351,6 +352,7 @@ async function searchAds(req, db, logger) {
 
   // Build and execute
   const esParams = builder.build();
+  applyAiMetaFilters(esParams, 'linkedin', p);
   // ─── Deep pagination: swap from/size → search_after ──
   const queryHash = buildQueryHash(p);
   if (from >= SAFE_FROM) {

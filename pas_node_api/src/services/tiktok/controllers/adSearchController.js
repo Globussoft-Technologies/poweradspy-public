@@ -4,6 +4,7 @@ const TiktokSearchQueryBuilder = require('../builders/TiktokSearchQueryBuilder')
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { COUNTRY_LABEL_TO_ISO } = require('../helpers/countries');
 const { LANG_ISO_TO_ES } = require('../helpers/languages');
+const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
 
 // Resolve language values sent by frontend (ISO codes or full names) to ES field values.
 function resolveLanguageValues(values) {
@@ -341,6 +342,7 @@ async function searchAds(req, db, logger) {
     });
   }
   const esParams = builder.build();
+  applyAiMetaFilters(esParams, 'tiktok', p);
 
 
   logger.info('Executing TikTok ad search', { from: esParams.body.from, size: esParams.body.size, sortField: sort.field });

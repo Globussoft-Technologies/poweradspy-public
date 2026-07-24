@@ -7,6 +7,7 @@ const {
 } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
 
 /**
  * Google ad search — mirrors SearchController::getAdsHandlerO.
@@ -322,6 +323,7 @@ async function searchAds(req, db, logger) {
   if (p.not_country)     builder.setNotCountry(p.not_country);
 
   const esParams = builder.build();
+  applyAiMetaFilters(esParams, 'google', p);
 
   // Deep pagination
   const queryHash = buildQueryHash(p);

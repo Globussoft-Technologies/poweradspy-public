@@ -12,6 +12,10 @@ const DocumentSection = ({ document: doc, children }) => {
 
   if (!doc) return null;
 
+  // SDUI titles are normalized for the existing title-case presentation, but
+  // product acronyms must retain their canonical capitalization.
+  const displayTitle = doc.title?.toLowerCase().replace(/\bai\b/g, "AI");
+
   const handleToggle = () => {
     const willExpand = isCollapsed;
     setIsCollapsed(!isCollapsed);
@@ -42,7 +46,7 @@ const DocumentSection = ({ document: doc, children }) => {
             />
           )}
           <span className="text-[14px] text-theme-text-secondary tracking-wider group-hover:text-theme-text transition-colors capitalize">
-            {doc.title?.toLowerCase()}
+            {displayTitle}
           </span>
         </div>
         <ChevronDown

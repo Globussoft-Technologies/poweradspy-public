@@ -32,6 +32,7 @@
 
 const databaseManager = require('../../../database/DatabaseManager');
 const { matchFilter, multiFieldMatchFilter } = require('../../common/helpers/esQueryHelpers');
+const { getAiMetaFilterClauses } = require('../../common/helpers/aiMetaSearchFilter');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 const {
   AD_DETAIL_SELECT: YT_SELECT,
@@ -196,6 +197,10 @@ function buildSharedFilters(p) {
   // the selected language (e.g. English ads appear when German is selected).
   const langFilter = matchFilter('ad_language', p.lang);
   if (langFilter) filter.push(langFilter);
+
+  // GDN also surfaces YouTube DISPLAY ads, so they must honor every selected
+  // AI-Meta field instead of bypassing the main GDN query's predicates.
+  filter.push(...getAiMetaFilterClauses('youtube', p));
 
   return { must, filter };
 }

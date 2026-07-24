@@ -171,6 +171,7 @@ import {
   ChevronRight,
   X,
   FileText,
+  Sparkles,
   Youtube,
   Megaphone,
 } from "lucide-react";
@@ -1180,7 +1181,7 @@ const AnalyticsModal = ({
 }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
-  const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(ad?.id, ad?.network, 281, 'en', ad?.postOwnerId);
+  const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(ad?.id, ad?.network, 281, 'en', ad?.postOwnerId, true);
   const adDetailsData = insights.adDetails?.[0] || insights.adDetails || null;
   const tiktokAnalytics = insights.analytics || null;
   const isTransparency =
@@ -1376,6 +1377,41 @@ const AnalyticsModal = ({
     : isTransparency
       ? { ...(ad || {}), ...(processedAd || {}), ...(adDetailsData || {}) }
       : (adDetailsData || ad || {});
+  // `getAdCategory` provides AI-Meta independently from the SQL-first details
+  // stream. Fall back to an inline value for callers that already include it.
+  const aiMeta = insights.aiMeta || d.ai_meta || processedAd?.ai_meta || ad?.ai_meta || null;
+  const formatAiMetaToken = (value) => {
+    if (value === null || value === undefined) return "";
+    const text = String(value).trim();
+    if (!text) return "";
+    return text
+      .split(/[_\s]+/)
+      .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part)
+      .join(" ");
+  };
+  const aiMetaVariableRows = (() => {
+    if (!aiMeta || typeof aiMeta !== "object") return [];
+    const roa = aiMeta.roa && typeof aiMeta.roa === "object" ? aiMeta.roa : {};
+    const offers = Array.isArray(aiMeta.offers)
+      ? aiMeta.offers
+          .map(({ type, value }) => {
+            const label = formatAiMetaToken(type);
+            if (!label) return "";
+            return value == null ? label : `${label}: ${value}`;
+          })
+          .filter(Boolean)
+          .join(", ")
+      : "";
+    return [
+      ["OFFERING", aiMeta.offering],
+      ["CAPTION", aiMeta.caption],
+      ["OFFER", offers],
+      ["ROA INTENT", roa.intent],
+      ["ROA HOOK", roa.hook],
+      ["ROA OFFERING TYPE", roa.offering_type],
+      ["ROA OFFERING", roa.offering],
+    ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+  })();
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
   const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
 
@@ -2105,6 +2141,42 @@ const AnalyticsModal = ({
               tiktokAnalytics={tiktokAnalytics}
               ad={ad}
             />
+
+            {aiMetaVariableRows.length > 0 && (
+              <section className="px-6">
+                <h2
+                  className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
+                >
+                  <Sparkles size={16} />
+                  AI Insights
+                </h2>
+                <div
+                  className={`rounded-2xl border-2 divide-y ${
+                    isLight
+                      ? "bg-gray-50/50 border-gray-200 divide-gray-200"
+                      : "bg-white/[0.02] border-white/10 divide-white/10"
+                  }`}
+                >
+                  {aiMetaVariableRows.map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="grid grid-cols-[minmax(130px,180px)_minmax(0,1fr)] items-start gap-5 px-4 py-3"
+                    >
+                      <span className="text-[12px] font-bold text-[#aaa]">
+                        {label}
+                      </span>
+                      <span
+                        className={`min-w-0 text-[14px] font-semibold whitespace-normal break-words leading-relaxed ${
+                          isLight ? "text-gray-900" : "text-white/85"
+                        }`}
+                      >
+                        {String(value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {isTransparency && (
               <TransparencyDelivery

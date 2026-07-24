@@ -830,8 +830,23 @@ export const FILTER_PLATFORM_SUPPORT = {
   ad_sub_position:['google'],
   image_size:     ['gdn'],
   native_network: ['native'],
+  has_ai_meta:    ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'google', 'tiktok'],
   language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google'],
 };
+
+// SDUI option labels remain configuration data. This allowlist only defines
+// the logical request keys accepted by the API's AI-Meta filter contract.
+const AI_META_FILTER_KEYS = [
+  'ai_ad_type',
+  'ai_intent',
+  'ai_hook',
+  'ai_offering_type',
+  'ai_offer_type',
+  'ai_offer_value',
+  'ai_colors',
+  'ai_category_id',
+  'ai_subcategory_id',
+];
 
 // Returns true if at least one platform in `nets` supports the named filter field.
 // Accepts an optional dynamic map (from config) that overrides the hardcoded fallback.
@@ -967,6 +982,13 @@ export const buildSearchPayload = (filters = {}) => {
   const seen_btn_sort = pick('seen_btn_sort');
   const domain_date_btn_sort = pick('domain_date_btn_sort');
   const imageSize = pick('image_size_filter', 'image_size', 'size');
+  const hasAiMeta = pick('has_ai_meta', 'hasAiMeta');
+  const hasAiMetaRequested = hasAiMeta === true || hasAiMeta === 1 || hasAiMeta === '1' || hasAiMeta === 'true';
+  const aiMetaFilterPayload = Object.fromEntries(
+    AI_META_FILTER_KEYS
+      .filter((key) => filters[key] !== undefined && filters[key] !== null && filters[key] !== '')
+      .map((key) => [key, filters[key]]),
+  );
 
   // Build a map of ad type value → platform_applicability from config options passed in
   const adTypeOptions = filters.adTypeOptions || [];
@@ -1247,6 +1269,10 @@ export const buildSearchPayload = (filters = {}) => {
         (metaAdsLib === true || metaAdsLib === 1 || metaAdsLib === 'true') &&
         (resolvedNetworks.includes('facebook') || resolvedNetworks.includes('instagram')) ? 15 : 'NA',
     google_transparency_ads: googleTransparencyEnabled,
+    // Keep the physical ES field decision in the API. The client only sends
+    // the logical filter state from the SDUI configuration.
+    has_ai_meta: ps(resolvedNetworks, 'has_ai_meta') && hasAiMetaRequested,
+    ...aiMetaFilterPayload,
     google_transparency_subnetwork: (() => {
       if (!googleTransparencyEnabled) return 'NA';
       const selected = Array.isArray(googleTransparencySubnetwork)

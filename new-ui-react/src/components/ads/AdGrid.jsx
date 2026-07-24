@@ -190,12 +190,24 @@ const AdGrid = ({
       if (!f._id) continue;
       if (f.label) categoryMap[f._id] = f.label;
       if (!f.options?.length) continue;
-      optionMap[f._id] = {};
-      for (const opt of f.options) {
-        const val = opt.value ?? opt.label ?? opt;
-        const lbl = opt.label ?? opt.value ?? opt;
-        optionMap[f._id][String(val)] = String(lbl);
-      }
+
+      const addOptionLabels = (filterId, options) => {
+        if (!optionMap[filterId]) optionMap[filterId] = {};
+        for (const opt of options) {
+          const val = opt.value ?? opt.label ?? opt;
+          const lbl = opt.label ?? opt.value ?? opt;
+          optionMap[filterId][String(val)] = String(lbl);
+
+          // Nested SDUI filters store child values under a separate state key.
+          // Map their labels there so active-filter chips never fall back to IDs.
+          const children = opt.children || opt.sub_options || [];
+          if (children.length) {
+            addOptionLabels(f.child_filter_id || filterId, children);
+          }
+        }
+      };
+
+      addOptionLabels(f._id, f.options);
     }
     return { filterOptionLabels: optionMap, filterCategoryLabels: categoryMap };
   }, [config]);
@@ -217,21 +229,19 @@ const AdGrid = ({
     return { ..._seenToggleLabels.current };
   }, [config]);
 
-  // Build parent → ordered children leaves (and reverse map) from the nested
-  // category filter. Used to absorb subcategory chips into their parent's
-  // cluster instead of rendering them as siblings.
-  const parentToLeaves = useMemo(() => {
-    if (!config) return {};
+  // Build metadata for every nested SDUI filter. Each filter owns a parent
+  // state key and a child state key, which lets ChipCluster work for both the
+  // legacy taxonomy and Meta AI's independent category taxonomy.
+  const nestedFilterConfigs = useMemo(() => {
+    if (!config) return [];
     const allFilters = [
       ...(config.searchbar?.flatMap((d) => d.filters || []) || []),
       ...(config.navbar?.flatMap((d) => d.filters || []) || []),
       ...(config.sidebar?.flatMap((d) => d.filters || []) || []),
     ];
-    const nested = allFilters.find(
-      (f) => f.type === "nested_select" || f.type === "nested_multiselect",
+    const nestedFilters = allFilters.filter(
+      (filter) => filter.type === "nested_select" || filter.type === "nested_multiselect",
     );
-    if (!nested) return {};
-    const p2l = {};
     const collect = (node) => {
       const kids = node.children || node.sub_options || [];
       if (kids.length === 0) {
@@ -239,11 +249,16 @@ const AdGrid = ({
       }
       return kids.flatMap(collect);
     };
-    for (const parent of nested.options || []) {
-      const pVal = parent.value ?? parent.label;
-      p2l[pVal] = collect(parent);
-    }
-    return p2l;
+    return nestedFilters.map((filter) => ({
+      parentKey: filter.parent_filter_id || "adcategory",
+      childKey: filter.child_filter_id || "subcategory",
+      leavesByParent: Object.fromEntries(
+        (filter.options || []).map((parent) => [
+          parent.value ?? parent.label,
+          collect(parent),
+        ]),
+      ),
+    }));
   }, [config]);
 
   // Which parent's children are shown inline. The most recently selected
@@ -252,9 +267,12 @@ const AdGrid = ({
   const prevParentsRef = useRef([]);
 
   useEffect(() => {
-    const parents = Array.isArray(filterValues.adcategory)
-      ? filterValues.adcategory
-      : [];
+    const parents = nestedFilterConfigs.flatMap(({ parentKey, childKey }) => {
+      const selected = Array.isArray(filterValues[parentKey])
+        ? filterValues[parentKey]
+        : filterValues[parentKey] ? [filterValues[parentKey]] : [];
+      return selected.map((value) => `${parentKey}:${childKey}:${value}`);
+    });
     const prev = prevParentsRef.current;
     const added = parents.find((p) => !prev.includes(p));
     if (added) {
@@ -266,7 +284,7 @@ const AdGrid = ({
       setExpandedParent(null);
     }
     prevParentsRef.current = parents;
-  }, [filterValues.adcategory, expandedParent]);
+  }, [filterValues, nestedFilterConfigs, expandedParent]);
 
   // chipGroups: ordered list of render units. Each is either:
   //   { type: 'cluster', parent: {value,label}, children: [{value,label}] }
@@ -275,41 +293,47 @@ const AdGrid = ({
   // chip row doesn't fan out into a dozen sibling chips.
   const chipGroups = useMemo(() => {
     const groups = [];
-    const adcategory = Array.isArray(filterValues.adcategory)
-      ? filterValues.adcategory
-      : [];
-    const subcategory = Array.isArray(filterValues.subcategory)
-      ? filterValues.subcategory
-      : [];
-
-    // 1. One cluster per selected parent. Iterated in reverse so the most
-    //    recently selected parent renders first.
     const absorbed = new Set();
-    const parentsOrdered = [...adcategory].reverse();
-    for (const pVal of parentsOrdered) {
-      const pLabel =
-        filterOptionLabels.adcategory?.[String(pVal)] ?? String(pVal);
-      const leaves = parentToLeaves[pVal] || [];
-      const leafIndex = new Map(leaves.map((l) => [l.value, l]));
-      const selectedChildren = subcategory
-        .filter((v) => leafIndex.has(v))
-        .map((v) => {
-          const leaf = leafIndex.get(v);
-          return { value: v, label: leaf.label ?? v };
+
+    // One cluster per selected parent. Iterated in reverse so the most
+    // recently selected parent renders first.
+    for (const { parentKey, childKey, leavesByParent } of nestedFilterConfigs) {
+      const parents = Array.isArray(filterValues[parentKey])
+        ? filterValues[parentKey]
+        : filterValues[parentKey] ? [filterValues[parentKey]] : [];
+      const children = Array.isArray(filterValues[childKey])
+        ? filterValues[childKey]
+        : [];
+      for (const parentValue of [...parents].reverse()) {
+        const leaves = leavesByParent[parentValue] || [];
+        const leafIndex = new Map(leaves.map((leaf) => [leaf.value, leaf]));
+        const selectedChildren = children
+          .filter((value) => leafIndex.has(value))
+          .map((value) => {
+            const leaf = leafIndex.get(value);
+            return { value, label: leaf.label ?? value };
+          });
+        selectedChildren.forEach((child) => absorbed.add(`${childKey}:${child.value}`));
+        groups.push({
+          type: "cluster",
+          clusterId: `${parentKey}:${childKey}:${parentValue}`,
+          parentKey,
+          childKey,
+          leaves,
+          parent: {
+            value: parentValue,
+            label: filterOptionLabels[parentKey]?.[String(parentValue)] ?? String(parentValue),
+          },
+          children: selectedChildren,
         });
-      selectedChildren.forEach((c) => absorbed.add(c.value));
-      groups.push({
-        type: "cluster",
-        parent: { value: pVal, label: pLabel },
-        children: selectedChildren,
-      });
+      }
     }
 
     // Ensure the currently expanded parent renders first so the wide pill
     // doesn't get pushed off-screen behind collapsed siblings.
     if (expandedParent) {
       const idx = groups.findIndex(
-        (g) => g.type === "cluster" && g.parent.value === expandedParent,
+        (group) => group.type === "cluster" && group.clusterId === expandedParent,
       );
       if (idx > 0) {
         const [g] = groups.splice(idx, 1);
@@ -323,18 +347,20 @@ const AdGrid = ({
     for (const [key, value] of Object.entries(filterValues)) {
 
       if (key === '_autoSortField') continue;
-      if (key === "adcategory") continue;
-      if (key === "subcategory") {
+      const nestedParent = nestedFilterConfigs.some(({ parentKey }) => parentKey === key);
+      if (nestedParent) continue;
+      const nestedChild = nestedFilterConfigs.find(({ childKey }) => childKey === key);
+      if (nestedChild) {
         if (Array.isArray(value)) {
           for (const v of value) {
-            if (absorbed.has(v)) continue;
+            if (absorbed.has(`${key}:${v}`)) continue;
             // Orphan subcategory — its parent isn't selected. Render as a
             // standalone chip so the user can still see/remove it.
             const displayLabel =
-              filterOptionLabels.subcategory?.[String(v)] ?? String(v);
+              filterOptionLabels[key]?.[String(v)] ?? String(v);
             otherChips.push({
               type: "chip",
-              filterId: "subcategory",
+              filterId: key,
               value: v,
               label: displayLabel,
             });
@@ -403,7 +429,7 @@ const AdGrid = ({
     return [...groups, ...otherChips.reverse()];
   }, [
     filterValues,
-    parentToLeaves,
+    nestedFilterConfigs,
     filterToggleLabels,
     filterOptionLabels,
     filterCategoryLabels,
@@ -875,36 +901,50 @@ const AdGrid = ({
                   const parentValue = group.parent.value;
                   return (
                     <ChipCluster
-                      key={`cluster-${parentValue}`}
+                      key={`cluster-${group.clusterId}`}
                       parent={group.parent}
                       items={group.children}
-                      isExpanded={expandedParent === parentValue}
-                      onExpand={() => setExpandedParent(parentValue)}
+                      isExpanded={expandedParent === group.clusterId}
+                      onExpand={() => setExpandedParent(group.clusterId)}
                       onCollapse={() => setExpandedParent(null)}
-                      onRemoveParent={() => removeChip("adcategory", parentValue)}
-                      onRemoveChild={(childValue) => {
-                        // Strip the leaf from subcategory, then mirror
-                        // SchemaRenderer.handleChildChange: if no leaves of
-                        // this parent remain selected, drop the parent from
-                        // adcategory too so the cluster doesn't linger empty.
-                        const currentSubs = Array.isArray(filterValues.subcategory)
-                          ? filterValues.subcategory
+                      onRemoveParent={() => {
+                        const currentParents = Array.isArray(filterValues[group.parentKey])
+                          ? filterValues[group.parentKey]
                           : [];
-                        const nextSubs = currentSubs.filter((v) => v !== childValue);
-                        setFilter("subcategory", nextSubs);
-                        const parentLeaves = (parentToLeaves[parentValue] || []).map(
-                          (l) => l.value,
+                        const currentChildren = Array.isArray(filterValues[group.childKey])
+                          ? filterValues[group.childKey]
+                          : [];
+                        setFilter(
+                          group.parentKey,
+                          currentParents.filter((value) => value !== parentValue),
                         );
-                        const parentStillHasChild = parentLeaves.some((l) =>
-                          nextSubs.includes(l),
+                        // Removing a parent also removes only that branch's
+                        // leaves, without affecting selections in other parents.
+                        setFilter(
+                          group.childKey,
+                          currentChildren.filter(
+                            (value) => !group.leaves.some((leaf) => leaf.value === value),
+                          ),
+                        );
+                      }}
+                      onRemoveChild={(childValue) => {
+                        // Mirror SchemaRenderer.handleChildChange: when the
+                        // last leaf is removed, also remove its parent marker.
+                        const currentChildren = Array.isArray(filterValues[group.childKey])
+                          ? filterValues[group.childKey]
+                          : [];
+                        const nextChildren = currentChildren.filter((value) => value !== childValue);
+                        setFilter(group.childKey, nextChildren);
+                        const parentStillHasChild = group.leaves.some((leaf) =>
+                          nextChildren.includes(leaf.value),
                         );
                         if (!parentStillHasChild) {
-                          const currentParents = Array.isArray(filterValues.adcategory)
-                            ? filterValues.adcategory
+                          const currentParents = Array.isArray(filterValues[group.parentKey])
+                            ? filterValues[group.parentKey]
                             : [];
                           setFilter(
-                            "adcategory",
-                            currentParents.filter((p) => p !== parentValue),
+                            group.parentKey,
+                            currentParents.filter((value) => value !== parentValue),
                           );
                         }
                       }}

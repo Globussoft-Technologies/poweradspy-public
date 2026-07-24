@@ -4,6 +4,7 @@ const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
 
 // ─── SQL fragments ───────────────────────────────────────────────────────────
 //
@@ -328,6 +329,7 @@ async function searchAds(req, db, logger) {
   if (p.not_country) builder.setNotCountry(p.not_country);
 
   const esParams = builder.build();
+  applyAiMetaFilters(esParams, 'youtube', p);
 
   // ─── Deep pagination: swap from/size → search_after ───────────────────
   const queryHash = buildQueryHash(p);

@@ -4,6 +4,7 @@ const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
 
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
@@ -456,6 +457,7 @@ async function searchAds(req, db, logger) {
 
   // Build and execute
   const esParams = builder.build();
+  applyAiMetaFilters(esParams, 'facebook', p);
 
   // ─── Deep pagination: swap from/size → search_after ──
   const queryHash = buildQueryHash(p);

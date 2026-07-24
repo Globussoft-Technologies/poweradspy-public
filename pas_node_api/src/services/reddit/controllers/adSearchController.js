@@ -4,6 +4,7 @@ const RedditSearchQueryBuilder = require('../builders/RedditSearchQueryBuilder')
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
 
 const AD_DETAIL_SELECT = `
     reddit_ad.id                                    AS id,
@@ -274,6 +275,7 @@ async function searchAds(req, db, logger) {
   if (p.not_country)      builder.setNotCountry(p.not_country);
 
   const esParams = builder.build();
+  applyAiMetaFilters(esParams, 'reddit', p);
 
   // Deep pagination
   const queryHash = buildQueryHash(p);

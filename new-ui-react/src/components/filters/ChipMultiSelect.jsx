@@ -3,9 +3,17 @@ import { X, Search } from "lucide-react";
 
 /**
  * ChipMultiSelect — Renders options as clickable chip/pill buttons with search.
- * Used for CTA, age ranges, and similar compact multi-select filters.
+ * SDUI can opt into a visible label and a smaller option preview for dense groups.
  */
-const ChipMultiSelect = ({ options = [], selected = [], onChange, label, showSearch = true }) => {
+const ChipMultiSelect = ({
+  options = [],
+  selected = [],
+  onChange,
+  label,
+  showSearch = true,
+  showLabel = false,
+  previewLimit = 12,
+}) => {
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -28,12 +36,18 @@ const ChipMultiSelect = ({ options = [], selected = [], onChange, label, showSea
 
   // When search is active, show all filtered results; otherwise use expand logic
   const optionsToUse = searchQuery.trim() ? filteredOptions : options;
-  const displayOptions = showAll ? optionsToUse : optionsToUse.slice(0, 12);
-  const hiddenCount = optionsToUse.length - 12;
+  const safePreviewLimit = Math.max(1, Number(previewLimit) || 12);
+  const displayOptions = showAll ? optionsToUse : optionsToUse.slice(0, safePreviewLimit);
+  const hiddenCount = Math.max(0, optionsToUse.length - safePreviewLimit);
 
   return (
     <div className="px-3 py-2">
       <div>
+        {showLabel && label && (
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-theme-text-secondary">
+            {label}
+          </div>
+        )}
         {/* Search bar - only show if showSearch is true */}
         {showSearch && (
           <div className="relative mb-2">

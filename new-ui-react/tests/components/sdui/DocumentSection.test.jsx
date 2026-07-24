@@ -24,6 +24,12 @@ describe("DocumentSection", () => {
     );
     expect(getByText("filters")).toBeInTheDocument();
   });
+  it("preserves the AI acronym in normalized titles", () => {
+    const { getByText } = render(
+      <DocumentSection document={{ title: "META AI" }}>child</DocumentSection>,
+    );
+    expect(getByText("meta AI")).toBeInTheDocument();
+  });
   it("renders SDUIIcon when icon.type is not 'none'", () => {
     const { getByTestId } = render(
       <DocumentSection document={DOC}>x</DocumentSection>,

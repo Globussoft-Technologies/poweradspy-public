@@ -60,6 +60,12 @@ describe("ChipMultiSelect", () => {
     );
     expect(getByPlaceholderText("Search CTA...")).toBeInTheDocument();
   });
+  it("shows a visible parent label only when configured", () => {
+    const { getByText } = render(
+      <ChipMultiSelect label="Ad Type" showLabel options={["A"]} onChange={() => {}} />,
+    );
+    expect(getByText("Ad Type")).toBeInTheDocument();
+  });
   it("showSearch=false hides the search input", () => {
     const { queryByPlaceholderText, queryByTestId } = render(
       <ChipMultiSelect options={["A"]} showSearch={false} onChange={() => {}} />,
@@ -85,6 +91,14 @@ describe("ChipMultiSelect", () => {
       <ChipMultiSelect options={opts} onChange={() => {}} />,
     );
     expect(getByText(/\+ 3 more/)).toBeInTheDocument();
+  });
+  it("uses the configured preview limit before showing '+N more'", () => {
+    const opts = Array.from({ length: 6 }, (_, i) => `Opt${i}`);
+    const { getByText, queryByText } = render(
+      <ChipMultiSelect options={opts} previewLimit={4} onChange={() => {}} />,
+    );
+    expect(getByText(/\+ 2 more/)).toBeInTheDocument();
+    expect(queryByText("Opt4")).toBeNull();
   });
   it("expand → 'Show less'", () => {
     const opts = Array.from({ length: 15 }, (_, i) => `Opt${i}`);

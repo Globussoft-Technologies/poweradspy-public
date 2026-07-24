@@ -62,13 +62,16 @@ const SchemaRenderer = ({
       }
 
       const value = filterValues[filter._id];
-      // For nested filters, merge adcategory_subcategory child selections so child checkboxes appear selected
-      const adcategorySubcategoryValues = filterValues["subcategory"] || [];
+      // Nested SDUI filters can override these ids. Legacy category filters
+      // retain their historical `adcategory`/`subcategory` state keys.
+      const nestedParentFilterId = filter.parent_filter_id || "adcategory";
+      const nestedChildFilterId = filter.child_filter_id || "subcategory";
+      const nestedChildValues = filterValues[nestedChildFilterId] || [];
       const mergedSelected =
         filter.type === "nested_select" || filter.type === "nested_multiselect"
           ? [
               ...(Array.isArray(value) ? value : value ? [value] : []),
-              ...adcategorySubcategoryValues,
+              ...nestedChildValues,
             ]
           : undefined;
 
@@ -124,7 +127,7 @@ const SchemaRenderer = ({
       // shares a name — leaving orphan chips that don't clear when the
       // originating parent is removed.
       const handleChildChange = (childValues, parentValue) => {
-        onFilterChangeRef.current("subcategory", childValues);
+        onFilterChangeRef.current(nestedChildFilterId, childValues);
         if (!parentValue) return;
         const collectLeaves = (node) => {
           const kids = node.children || node.sub_options || [];
@@ -145,11 +148,11 @@ const SchemaRenderer = ({
         const parentStillHasChild = parentLeaves.some((l) =>
           childValues.includes(l),
         );
-        const cur = filterValues["adcategory"];
+        const cur = filterValues[nestedParentFilterId];
         const arr = Array.isArray(cur) ? cur : cur ? [cur] : [];
         const without = arr.filter((p) => p !== parentValue);
         onFilterChangeRef.current(
-          "adcategory",
+          nestedParentFilterId,
           parentStillHasChild ? [...without, parentValue] : without,
         );
       };
@@ -179,6 +182,10 @@ const SchemaRenderer = ({
         multiSelect: filter.multi_select,
         queryParam: filter.query_param,
         placeholder: filter.placeholder || (skipLabel && filter.label ? `Search ${filter.label}...` : undefined),
+        // Dense SDUI groups can expose their parent label and a short preview
+        // without changing the behavior of existing chip filters.
+        showLabel: filter.show_label === true,
+        previewLimit: filter.preview_limit,
 
         // Show search bar for FilterCheckboxList (disable for budget, traffic source, age, and ad_sub_position)
         showSearch: !["budget_filter", "source_filter", "age_filter", "ad_sub_position"].includes(filter._id),

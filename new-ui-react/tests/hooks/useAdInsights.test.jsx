@@ -73,6 +73,17 @@ describe("useAdInsights > happy path streaming", () => {
     expect(result.current.insights.adDetailsMeta).toBeDefined();
   });
 
+  it("loads optional AI-Meta without delaying the insight stream", async () => {
+    globalThis.fetch
+      .mockResolvedValueOnce(makeSseResponse(['event: done\ndata: {}\n\n']))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ai_meta: { offering: "printer parts" } }) });
+    const { result } = renderHook(() => useAdInsights("a1", "facebook", 281, "en", null, true));
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+
+    expect(globalThis.fetch.mock.calls[1][0]).toMatch(/getAdCategory/);
+    expect(result.current.insights.aiMeta).toEqual({ offering: "printer parts" });
+  });
+
   it("done event → loading=false", async () => {
     globalThis.fetch.mockResolvedValueOnce(makeSseResponse([
       'event: done\ndata: {}\n\n',

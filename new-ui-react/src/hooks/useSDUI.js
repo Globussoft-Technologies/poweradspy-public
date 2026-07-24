@@ -251,18 +251,59 @@ export function useSDUI() {
     }, [config]);
 
     // ── Count active filters ────────────────────────────────────────────────
-    // 'adcategory' is a parent-marker helper — exclude it from the count.
-    // 'subcategory' counts as 1 if any items are selected (category-wise, not per-subcategory).
+    // A nested SDUI filter stores the selected parent and leaves separately.
+    // Group those implementation keys so one category selection counts once.
+    const nestedFilterKeyToGroup = useMemo(() => {
+        const groups = [{ parent: 'adcategory', child: 'subcategory' }];
+        const allFilters = [
+            ...(config?.searchbar?.flatMap(d => d.filters || []) || []),
+            ...(config?.navbar?.flatMap(d => d.filters || []) || []),
+            ...(config?.sidebar?.flatMap(d => d.filters || []) || []),
+        ];
+
+        for (const filter of allFilters) {
+            if (filter.type !== 'nested_select' && filter.type !== 'nested_multiselect') continue;
+            groups.push({
+                parent: filter.parent_filter_id || 'adcategory',
+                child: filter.child_filter_id || 'subcategory',
+            });
+        }
+
+        const keyToGroup = new Map();
+        for (const { parent, child } of groups) {
+            const groupId = `${parent}:${child}`;
+            keyToGroup.set(parent, groupId);
+            keyToGroup.set(child, groupId);
+        }
+        return keyToGroup;
+    }, [config]);
+
     const totalActiveFilters = useMemo(() => {
+        // Preserve the legacy category contract: `adcategory` is only a
+        // parent marker, while its `subcategory` key represents the filter.
         const EXCLUDED_KEYS = new Set(['adcategory', '_autoSortField']);
+        const countedNestedGroups = new Set();
         return Object.entries(filterValues).reduce((total, [key, v]) => {
             if (EXCLUDED_KEYS.has(key)) return total;
+            const isActive = Array.isArray(v)
+                ? v.length > 0
+                : typeof v === 'boolean'
+                    ? v
+                    : v !== null && v !== undefined && v !== '';
+            if (!isActive) return total;
+
+            const nestedGroup = nestedFilterKeyToGroup.get(key);
+            if (nestedGroup) {
+                if (countedNestedGroups.has(nestedGroup)) return total;
+                countedNestedGroups.add(nestedGroup);
+                return total + 1;
+            }
             if (Array.isArray(v)) return total + (v.length > 0 ? 1 : 0);
             if (typeof v === 'boolean') return total + (v ? 1 : 0);
             if (v === null || v === undefined || v === '') return total;
             return total + 1;
         }, 0);
-    }, [filterValues]);
+    }, [filterValues, nestedFilterKeyToGroup]);
 
     // ── Effective platforms — restricted by active platform-specific filters ──
     // If a filter that is active has platform_applicability restricted to specific

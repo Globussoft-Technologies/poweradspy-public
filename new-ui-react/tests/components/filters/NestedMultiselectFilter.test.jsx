@@ -173,6 +173,15 @@ describe("NestedMultiselectFilter > Select-all (tri-state)", () => {
     fireEvent.click(getByTitle("Deselect all"));
     expect(onChildChange).toHaveBeenCalledWith([], "fashion");
   });
+  it("does not retain the parent value when deselecting all children", () => {
+    const onChildChange = vi.fn();
+    const { getByTitle } = render(
+      <NestedMultiselectFilter options={TREE} selected={["fashion", "shoes", "hats"]}
+        onChange={() => {}} onChildChange={onChildChange} />,
+    );
+    fireEvent.click(getByTitle("Deselect all"));
+    expect(onChildChange).toHaveBeenCalledWith([], "fashion");
+  });
   it("with some leaves selected → 'Select remaining'", () => {
     const onChildChange = vi.fn();
     const { getByTitle } = render(

@@ -103,7 +103,12 @@ const NestedMultiselectFilter = ({
     const parentValue = parent.value ?? parent.label;
     const leaves = collectLeafValues(parent);
     const allSelected = leaves.every((v) => selected.includes(v));
-    const otherSelected = selected.filter((v) => !leaves.includes(v));
+    // `selected` is the merged parent + child state supplied by SchemaRenderer.
+    // Never feed the parent marker back into the child filter when bulk
+    // selecting/deselecting, or it survives as an orphan numeric filter chip.
+    const otherSelected = selected.filter(
+      (v) => v !== parentValue && !leaves.includes(v),
+    );
     if (allSelected) {
       onChildChange(otherSelected, parentValue);
     } else {

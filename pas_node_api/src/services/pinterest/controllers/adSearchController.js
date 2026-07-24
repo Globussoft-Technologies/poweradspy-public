@@ -4,6 +4,7 @@ const PinterestSearchQueryBuilder = require('../builders/PinterestSearchQueryBui
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
 
 const AD_DETAIL_SELECT = `
     pinterest_ad.id                                     AS id,
@@ -209,6 +210,7 @@ async function searchAds(req, db, logger) {
   if (p.not_country)     builder.setNotCountry(p.not_country);
 
   const esParams = builder.build();
+  applyAiMetaFilters(esParams, 'pinterest', p);
   const queryHash = buildQueryHash(p);
   if (from >= SAFE_FROM) {
     const cursor = getCursor(queryHash, from);
