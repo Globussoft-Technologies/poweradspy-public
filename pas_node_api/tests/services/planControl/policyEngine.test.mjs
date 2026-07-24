@@ -93,6 +93,21 @@ describe('plan-control policy engine', () => {
     })).toMatchObject({ allowed: false, reasonCode: 'NETWORK_NOT_PERMITTED' });
   });
 
+  it('treats network "all" as every network enabled by the plan', () => {
+    const policy = snapshot();
+    const identity = resolvePlanIdentity(101, policy);
+    expect(evaluateEntitlement({
+      user: {},
+      planIdentity: identity,
+      capabilityId: 'ads.search',
+      requestedNetworks: ['all'],
+      policySnapshot: policy,
+    })).toMatchObject({
+      allowed: true,
+      allowedNetworks: ['facebook', 'instagram'],
+    });
+  });
+
   it('applies a yearly-only override without changing monthly access', () => {
     const policy = snapshot();
     const monthly = resolvePlanIdentity(101, policy);

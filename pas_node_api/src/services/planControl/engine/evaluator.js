@@ -263,11 +263,20 @@ function evaluateEntitlement(input) {
     if (requestedNetworks.length === 0) {
       baseContext.allowedNetworks = [...allowedSet];
     } else {
-      const deniedNetworks = requestedNetworks.filter(
+      // "all" is the frontend/API wildcard meaning "use every network this
+      // plan permits". It is not a real network ID and must not be compared
+      // literally with facebook/instagram/etc.
+      const requestsAll = requestedNetworks.some(
+        (n) => String(n).toLowerCase() === 'all'
+      );
+      const concreteRequestedNetworks = requestedNetworks.filter(
+        (n) => String(n).toLowerCase() !== 'all'
+      );
+      const deniedNetworks = concreteRequestedNetworks.filter(
         (n) => !allowedSet.has(n.toLowerCase())
       );
 
-      if (deniedNetworks.length > 0) {
+      if (deniedNetworks.length > 0 || (requestsAll && allowedSet.size === 0)) {
         // At least one requested network is not permitted
         return makeDecision(false, NETWORK_NOT_PERMITTED, {
           ...baseContext,
