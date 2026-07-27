@@ -24,9 +24,13 @@ import { useAuth } from "../../hooks/useAuth.jsx";
  * Data is fetched live from /keywords/insight (ES) — not the keyword_stats rollup.
  */
 const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeyword, onUpgrade }) => {
-  const { canUseCapabilityOnNetwork } = useAuth();
-  const analyticsAllowed = canUseCapabilityOnNetwork("intelligence.keyword_explorer.analytics", "google");
-  const sectionAllowed = (suffix) => canUseCapabilityOnNetwork(`intelligence.keyword_explorer.analytics.${suffix}`, "google");
+  const { getCapabilityDecision, canUseCapabilityOnNetwork } = useAuth();
+  const allowed = (capabilityId) => {
+    if (!getCapabilityDecision(capabilityId)) return true;
+    return canUseCapabilityOnNetwork(capabilityId, "google");
+  };
+  const analyticsAllowed = allowed("intelligence.keyword_explorer.analytics");
+  const sectionAllowed = (suffix) => allowed(`intelligence.keyword_explorer.analytics.${suffix}`);
   const [state, setState] = useState({ loading: true, data: null, error: null });
   const [shown, setShown] = useState(false);
 

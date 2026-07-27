@@ -37,7 +37,11 @@ class ServiceRegistry {
       .map(dirent => dirent.name);
 
     for (const folder of folders) {
-      if (['common', 'networks', 'cache', 'database', 'health', 'logger', 'middleware', 'utils'].includes(folder)) continue;
+      // Infrastructure services with explicitly mounted routers must never be
+      // treated as network adapters. Plan Control mounts separate admin/auth
+      // routers in app.js; auto-discovering them under /api/v1/planControl
+      // attempts to invoke Express Router objects as network route factories.
+      if (['common', 'networks', 'cache', 'database', 'health', 'logger', 'middleware', 'utils', 'planControl'].includes(folder)) continue;
 
       const servicePath = path.join(servicesDir, folder);
       const routesPath = path.join(servicePath, 'routes');

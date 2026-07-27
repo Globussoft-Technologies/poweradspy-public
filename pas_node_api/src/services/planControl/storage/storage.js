@@ -16,6 +16,7 @@ const COLLECTION_VERSIONS = 'plan_policy_versions';
 const COLLECTION_DRAFTS = 'plan_policy_drafts';
 const COLLECTION_STATE = 'plan_policy_state';
 const ACTIVE_POINTER_ID = 'active';
+const MAX_POLICY_VERSIONS = 20;
 const policyEvents = new EventEmitter();
 let indexesReady = false;
 let policyCache = { value: null, loadedAt: 0 };
@@ -36,15 +37,41 @@ function normalizedDraft(draft) {
   return draft ? { ...draft, draftRevision: draftRevisionOf(draft) } : null;
 }
 
+async function pruneOldPolicyVersions(versions, activeVersionId) {
+  const expiredVersions = await versions
+    .find({}, { projection: { _id: 1, versionId: 1 } })
+    .sort({ revision: -1, createdAt: -1 })
+    .skip(MAX_POLICY_VERSIONS)
+    .toArray();
+  const expiredIds = expiredVersions
+    .filter((item) => item.versionId !== activeVersionId)
+    .map((item) => item._id);
+  if (!expiredIds.length) return 0;
+  await versions.deleteMany({ _id: { $in: expiredIds } });
+  log.info('Pruned old plan policy history', {
+    retained: MAX_POLICY_VERSIONS,
+    removed: expiredIds.length,
+  });
+  return expiredIds.length;
+}
+
 async function collections() {
   const db = await getDB();
   if (!indexesReady) {
+    const versions = db.collection(COLLECTION_VERSIONS);
+    const state = db.collection(COLLECTION_STATE);
     await Promise.all([
-      db.collection(COLLECTION_VERSIONS).createIndex({ versionId: 1 }, { unique: true }),
-      db.collection(COLLECTION_VERSIONS).createIndex({ revision: -1 }),
+      versions.createIndex({ versionId: 1 }, { unique: true }),
+      versions.createIndex({ revision: -1 }),
       db.collection(COLLECTION_DRAFTS).createIndex({ draftId: 1 }, { unique: true }),
     ]);
     indexesReady = true;
+    try {
+      const pointer = await state.findOne({ _id: ACTIVE_POINTER_ID });
+      await pruneOldPolicyVersions(versions, pointer?.versionId);
+    } catch (error) {
+      log.error('Unable to prune old plan policy history during startup', { error: error.message });
+    }
   }
   return {
     versions: db.collection(COLLECTION_VERSIONS),
@@ -269,6 +296,13 @@ async function publishDraft(draftId, options, adminSession) {
     ? { draftId, draftRevision: { $exists: false } }
     : { draftId, draftRevision: expectedDraftRevision };
   await drafts.deleteOne(publishedDraftFilter);
+  try {
+    await pruneOldPolicyVersions(versions, versionId);
+  } catch (error) {
+    // Publishing is already live at this point. Retention cleanup is retried
+    // after the next successful publish instead of reporting a false failure.
+    log.error('Unable to prune old plan policy history', { error: error.message });
+  }
   policyCache = { value: version, loadedAt: Date.now() };
   policyEvents.emit('published', { versionId, revision });
   log.info('Policy published', { versionId, revision, actor: version.createdBy.adminId });
@@ -292,7 +326,7 @@ async function listVersions(limit = 20) {
   const pointer = await getActivePointer();
   const rows = await versions.find({}, { projection: { snapshot: 0 } })
     .sort({ revision: -1, createdAt: -1 })
-    .limit(Math.min(Math.max(Number(limit) || 20, 1), 100))
+    .limit(Math.min(Math.max(Number(limit) || MAX_POLICY_VERSIONS, 1), MAX_POLICY_VERSIONS))
     .toArray();
   return rows.map((row) => ({ ...row, isActive: row.versionId === pointer?.versionId }));
 }

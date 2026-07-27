@@ -66,6 +66,7 @@ describe("ServiceRegistry > loadAll — dynamic services", () => {
           { name: "instagram", isDirectory: () => true },
           { name: "common", isDirectory: () => true },     // excluded
           { name: "networks", isDirectory: () => true },   // excluded
+          { name: "planControl", isDirectory: () => true }, // explicitly mounted in app.js
           { name: "noroutes", isDirectory: () => true },   // no routes/ → skipped
           { name: "file.js", isDirectory: () => false },   // file, not dir
         ];
@@ -78,6 +79,7 @@ describe("ServiceRegistry > loadAll — dynamic services", () => {
     expect(reg.getService("facebook")).toBeTruthy();
     expect(reg.getService("instagram")).toBeTruthy();
     expect(reg.getService("common")).toBeNull();
+    expect(reg.getService("planControl")).toBeNull();
     expect(reg.getService("noroutes")).toBeNull();
   });
 });

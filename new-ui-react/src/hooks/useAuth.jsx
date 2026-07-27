@@ -339,7 +339,13 @@ export function AuthProvider({ children }) {
   const canUseCapabilityOnNetwork = useCallback((capabilityId, network) => {
     const decision = getCapabilityDecision(capabilityId);
     if (!decision?.allowed) return false;
-    return !network || (decision.allowedNetworks || []).includes(String(network).toLowerCase());
+    if (!network) return true;
+    const allowedNetworks = decision.allowedNetworks || [];
+    if (allowedNetworks.length) return allowedNetworks.includes(String(network).toLowerCase());
+    // Older API versions returned [] for allowed network-aware children whose
+    // saved policy still used `not_applicable`. New decisions include
+    // networkMode, where an empty effective list is a real denial.
+    return !decision.networkMode;
   }, [getCapabilityDecision]);
   const getCapabilityLimit = useCallback(
     (capabilityId, limitName) => getCapabilityDecision(capabilityId)?.limits?.[limitName] ?? null,

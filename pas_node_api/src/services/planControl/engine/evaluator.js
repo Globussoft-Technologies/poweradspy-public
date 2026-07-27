@@ -79,6 +79,7 @@ function makeDecision(allowed, reasonCode, context = {}) {
     planId: context.planId || null,
     requestedNetworks: context.requestedNetworks || [],
     allowedNetworks: context.allowedNetworks || [],
+    ...(context.networkMode ? { networkMode: context.networkMode } : {}),
     limits: context.limits || {},
     policyVersion: context.policyVersion || null,
     showSubscriptionModal: shouldShowSubscriptionModal(reasonCode),
@@ -240,6 +241,7 @@ function evaluateEntitlement(input) {
     const networkMode = storedNetworkMode === 'not_applicable'
       ? 'inherit_general'
       : storedNetworkMode;
+    baseContext.networkMode = networkMode;
 
     if (networkMode === 'custom') {
       // Per-capability network override
