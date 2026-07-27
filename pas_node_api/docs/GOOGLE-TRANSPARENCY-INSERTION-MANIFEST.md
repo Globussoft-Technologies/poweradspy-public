@@ -59,6 +59,8 @@ With the checked-in rules:
   `type=IMAGE`;
 - `thumbnail` is explicit null for non-video creatives and a required absolute
   HTTP(S) URL when `type=VIDEO`;
+- `type=TEXT` requires meaningful creative content: at least one non-empty
+  `ad_title`, non-empty `ad_text`, or absolute HTTP(S) `image_url_original`;
 - `subnetwork` is required and non-null for every creative type; only `MAPS`,
   `PLAY`, `SHOPPING`, `SEARCH`, and `YOUTUBE` are accepted;
 - every country row contains `first_seen`, `last_seen`, and `times_shown`;

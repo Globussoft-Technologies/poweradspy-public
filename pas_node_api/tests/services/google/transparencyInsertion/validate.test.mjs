@@ -13,7 +13,7 @@ const valid = {
   post_owner: 'VIVOLTA',
   post_owner_image: null,
   ad_title: null,
-  ad_text: null,
+  ad_text: 'Text creative',
   image_url_original: null,
   video_url_original: null,
   thumbnail: null,
@@ -142,6 +142,38 @@ describe('Google Transparency contract validation', () => {
       ...valid,
       type: 'TEXT',
       image_url_original: null,
+    })).toEqual({ code: 200 });
+  });
+
+  it('requires TEXT ads to contain a title, text, or image URL', () => {
+    const out = validateTransparencyPayload({
+      ...valid,
+      type: 'TEXT',
+      ad_title: '   ',
+      ad_text: null,
+      image_url_original: null,
+    });
+    expect(out).toMatchObject({
+      code: 422,
+      errors: expect.arrayContaining([
+        {
+          field: 'ad_title|ad_text|image_url_original',
+          message: expect.stringContaining('at least one'),
+          required_any_of: ['ad_title', 'ad_text', 'image_url_original'],
+        },
+      ]),
+    });
+  });
+
+  it.each([
+    { ad_title: 'Text headline', ad_text: null, image_url_original: null },
+    { ad_title: null, ad_text: 'Text body', image_url_original: null },
+    { ad_title: null, ad_text: null, image_url_original: 'https://cdn.example/text-image.jpg' },
+  ])('accepts a TEXT ad when one supported content field is present', (content) => {
+    expect(validateTransparencyPayload({
+      ...valid,
+      type: 'TEXT',
+      ...content,
     })).toEqual({ code: 200 });
   });
 

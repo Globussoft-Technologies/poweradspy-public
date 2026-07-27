@@ -65,7 +65,7 @@ function payload(overrides = {}) {
     ad_id: 'CR14607596898010267649',
     advertiser_id: 'AR05119626735096168449',
     ad_url: 'https://adstransparency.google.com/advertiser/AR05119626735096168449/creative/CR14607596898010267649',
-    post_owner: 'VIVOLTA', post_owner_image: null, ad_title: null, ad_text: null,
+    post_owner: 'VIVOLTA', post_owner_image: null, ad_title: null, ad_text: 'Text creative',
     image_url_original: null, video_url_original: null, thumbnail: null,
     othermultimedia: [],
     destination_url: null, redirect_url: null, country: ['Germany'],
@@ -521,6 +521,27 @@ describe('Google Transparency pipeline', () => {
       code: 422,
       errors: expect.arrayContaining([
         expect.objectContaining({ field: 'subnetwork' }),
+      ]),
+    });
+    expect(repo.withTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty TEXT creative before opening a transaction', async () => {
+    const out = await processTransparencyAd(payload({
+      type: 'TEXT',
+      ad_title: null,
+      ad_text: '   ',
+      image_url_original: null,
+    }), {
+      db: { sql: {}, elastic: null },
+      log,
+    });
+    expect(out).toMatchObject({
+      code: 422,
+      errors: expect.arrayContaining([
+        expect.objectContaining({
+          field: 'ad_title|ad_text|image_url_original',
+        }),
       ]),
     });
     expect(repo.withTransaction).not.toHaveBeenCalled();

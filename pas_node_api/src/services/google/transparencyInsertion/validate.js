@@ -188,6 +188,21 @@ function validateTransparencyPayload(data, rules = TRANSPARENCY_RULES) {
       (typeof data.image_url_original !== 'string' || !isHttpUrl(data.image_url_original))) {
     issue(errors, 'image_url_original', 'is required and must be a non-empty absolute HTTP(S) URL when type is IMAGE');
   }
+  if (!disabled(rules, 'type') && data.type === 'TEXT') {
+    const hasTitle = !disabled(rules, 'ad_title') &&
+      typeof data.ad_title === 'string' && data.ad_title.trim() !== '';
+    const hasText = !disabled(rules, 'ad_text') &&
+      typeof data.ad_text === 'string' && data.ad_text.trim() !== '';
+    const hasImage = !disabled(rules, 'image_url_original') &&
+      typeof data.image_url_original === 'string' && isHttpUrl(data.image_url_original);
+    if (!hasTitle && !hasText && !hasImage) {
+      errors.push({
+        field: 'ad_title|ad_text|image_url_original',
+        message: 'TEXT ads require at least one non-empty ad_title, non-empty ad_text, or absolute HTTP(S) image_url_original',
+        required_any_of: ['ad_title', 'ad_text', 'image_url_original'],
+      });
+    }
+  }
   if (checkable(data, rules, 'subnetwork') && !SUBNETWORKS.has(data.subnetwork)) issue(errors, 'subnetwork', 'contains an unsupported value');
   if (checkable(data, rules, 'network') && data.network !== 'google') issue(errors, 'network', 'must equal google');
   if (checkable(data, rules, 'source') && data.source !== 'desktop') issue(errors, 'source', 'must equal desktop');
