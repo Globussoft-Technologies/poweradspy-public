@@ -431,11 +431,18 @@ router.get('/api/sdui/docs/:id', async (req, res) => {
 
 // Auto-seed plan_access_config with Palladium IDs when a new sidebar SDUI doc is created.
 // Fire-and-forget — GET /api/plan-access/config is a safety-net fallback if this fails.
+function resolveSidebarPlanAccessId(docId) {
+  // Keep the SDUI doc ID → plan-access ID mapping in one place so create/delete
+  // paths stay aligned. Most sidebar docs use the same ID in both collections;
+  // only a few legacy names need an alias.
+  const SDUI_TO_PA_ID = { cta: 'call_to_action', source: 'traffic_source', sidebar_budget: 'ad_budget_sort' };
+  return SDUI_TO_PA_ID[docId] || docId;
+}
+
 async function autoSeedPlanAccessForSduiDoc(docId, docTitle, configType) {
   if (configType !== 'sidebar') return;
   try {
-    const SDUI_TO_PA_ID = { cta: 'call_to_action', source: 'traffic_source', sidebar_budget: 'ad_budget_sort' };
-    const paId = SDUI_TO_PA_ID[docId] || docId;
+    const paId = resolveSidebarPlanAccessId(docId);
     const { col, client } = await getPlanAccessCollection();
     const existing = await col.findOne({ _id: paId });
     if (!existing) {
@@ -471,8 +478,54 @@ router.put('/api/sdui/docs/:id', express.json(), requireEditorRole, async (req, 
   try {
     const doc = req.body;
     if (!doc) return res.status(400).json({ code: 400, message: 'Invalid JSON' });
+    const previousDoc = await getDoc(req.params.id);
     await saveSnapshot(req.params.id);
     await updateDoc(req.params.id, doc);
+
+    // Keep the entitlement row aligned with the SDUI sidebar doc.
+    // The SDUI editor currently keeps the same _id on update, so this sync
+    // mainly prevents title/category drift and recreates the entitlement row
+    // if someone deleted it manually from plan_access_config.
+    if ((previousDoc || doc)?.config_type === 'sidebar') {
+      const paId = resolveSidebarPlanAccessId(req.params.id);
+      try {
+        const { col, client } = await getPlanAccessCollection();
+        const existing = await col.findOne({ _id: paId });
+        const now = new Date().toISOString();
+        if (existing) {
+          await col.updateOne(
+            { _id: paId },
+            {
+              $set: {
+                label: doc.title || previousDoc?.title || existing.label || paId,
+                category: doc.category || previousDoc?.category || existing.category || 'sidebar',
+                updated_at: now,
+              },
+            }
+          );
+          log.info('Synced plan_access_config row after SDUI sidebar update', { docId: req.params.id, paId });
+        } else {
+          const topTierPlanIds = await getTopTierPlanIds(col);
+          await col.insertOne({
+            _id: paId,
+            label: doc.title || previousDoc?.title || paId,
+            category: doc.category || previousDoc?.category || 'sidebar',
+            allowed_plan_ids: topTierPlanIds,
+            needs_review: true,
+            created_at: now,
+            updated_at: now,
+          });
+          log.info('Recreated missing plan_access_config row after SDUI sidebar update', { docId: req.params.id, paId });
+        }
+        await client.close();
+      } catch (planAccessErr) {
+        log.warn('Failed to sync matching plan_access_config row after SDUI update', {
+          docId: req.params.id,
+          error: planAccessErr.message,
+        });
+      }
+    }
+
     const sys = req.adminSession.systemAuth;
     const audit = sys ? `\n\n🛡️ <b>Audit Log:</b>\n- System: <code>${sys.hostname}</code>\n- OS: <code>${sys.platform} (${sys.arch})</code>\n- User: <code>${sys.username}</code>\n- IP: <code>${req.ip || req.connection?.remoteAddress || 'unknown'}</code>\n- Time: <code>${new Date().toISOString()}</code>` : '';
     sendTelegramAlert(`✏️ <b>SDUI Document Updated</b>\n\n- ID: <code>${req.params.id}</code>\n- Title: <code>${doc.title || ''}</code>\n- Type: <code>${doc.config_type || ''}</code>${audit}`);
@@ -512,8 +565,28 @@ router.patch('/api/sdui/docs/:id/visible', express.json(), requireEditorRole, as
 
 router.delete('/api/sdui/docs/:id', requireEditorRole, async (req, res) => {
   try {
+    const doc = await getDoc(req.params.id);
     await saveSnapshot(req.params.id);
     await deleteDoc(req.params.id);
+
+    // Keep the plan-access collection in sync with the SDUI sidebar document.
+    // Deleting the UI doc should also remove its entitlement row so old access
+    // rules do not linger in local MongoDB and confuse later edits.
+    if (doc?.config_type === 'sidebar') {
+      const paId = resolveSidebarPlanAccessId(req.params.id);
+      try {
+        const { col, client } = await getPlanAccessCollection();
+        await col.deleteOne({ _id: paId });
+        await client.close();
+        log.info('Deleted matching plan_access_config row for removed SDUI sidebar doc', { docId: req.params.id, paId });
+      } catch (planAccessErr) {
+        log.warn('Failed to delete matching plan_access_config row after SDUI delete', {
+          docId: req.params.id,
+          error: planAccessErr.message,
+        });
+      }
+    }
+
     const sys = req.adminSession.systemAuth;
     const audit = sys ? `\n\n🛡️ <b>Audit Log:</b>\n- System: <code>${sys.hostname}</code>\n- OS: <code>${sys.platform} (${sys.arch})</code>\n- User: <code>${sys.username}</code>\n- IP: <code>${req.ip || req.connection?.remoteAddress || 'unknown'}</code>\n- Time: <code>${new Date().toISOString()}</code>` : '';
     sendTelegramAlert(`🗑️ <b>SDUI Document Deleted</b>\n\n- ID: <code>${req.params.id}</code>${audit}`);

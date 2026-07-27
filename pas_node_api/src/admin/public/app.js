@@ -1081,11 +1081,13 @@ let sduiEditOrig    = null;   // pristine snapshot for rollback/diff
 let sduiEditMTab    = 'document';
 let sduiDeleteId    = null;
 let sduiPendingSave = null;
+let sduiPlatformMatrixState = {};
+let sduiPlatformMatrixPlatform = 'facebook';
 
 // ─── Helpers ──────────────────────────────────────────────
 function sduiDeep(o) { return JSON.parse(JSON.stringify(o)); }
 function sduiIsPosInt(v) { return /^\d+$/.test(String(v)) && parseInt(v) >= 1; }
-function sduiIsCamel(v)  { return /^[a-z][a-zA-Z0-9]*$/.test(v); }
+function sduiIsCamel(v)  { return /^[a-z][a-zA-Z0-9_]*$/.test(v); }
 function sduiIsSnake(v)  { return /^[a-z][a-z0-9_]*$/.test(v); }
 function sduiNvl(v, d)   { return (v === null || v === undefined) ? d : v; }
 function sduiFArr(v) {
@@ -1097,6 +1099,107 @@ function sduiSelectHtml(id, opts, cur) {
   return `<select id="${id}" class="sfi">${opts.map(o =>
     `<option value="${escapeHtml(o)}"${o === cur ? ' selected' : ''}>${escapeHtml(o)}</option>`
   ).join('')}</select>`;
+}
+
+function sduiInitPlatformMatrixState(doc) {
+  const matrix = doc?.filters?.[0]?.platform_filter_matrix || {};
+  sduiPlatformMatrixState = sduiDeep(matrix);
+  const preferred = SDUI_PLATFORMS.find(p => Object.prototype.hasOwnProperty.call(matrix, p));
+  sduiPlatformMatrixPlatform = preferred || SDUI_PLATFORMS[0];
+}
+
+function sduiGetSidebarMatrixDocs() {
+  return (sduiDocs || [])
+    .filter(d => d && d.config_type === 'sidebar' && d._id !== 'platforms')
+    .sort((a, b) => (a.rank || 0) - (b.rank || 0));
+}
+
+function sduiSetPlatformMatrixPlatform(platform) {
+  if (!platform) return;
+  sduiPlatformMatrixPlatform = platform;
+  sduiRenderModalBody();
+}
+
+function sduiTogglePlatformMatrix(sectionId, checked) {
+  const platform = sduiPlatformMatrixPlatform || SDUI_PLATFORMS[0];
+  if (!sduiPlatformMatrixState[platform]) sduiPlatformMatrixState[platform] = [];
+  const cur = new Set(sduiPlatformMatrixState[platform]);
+  if (checked) cur.add(sectionId);
+  else cur.delete(sectionId);
+  sduiPlatformMatrixState[platform] = Array.from(cur);
+  const countEl = document.getElementById(`pm-count-${platform}`);
+  if (countEl) countEl.textContent = `${sduiPlatformMatrixState[platform].length} sections selected`;
+}
+
+function sduiRenderPlatformMatrixPanel() {
+  const doc = sduiEditDoc;
+  if (!doc || doc._id !== 'platforms') return '';
+
+  const sidebarDocs = sduiGetSidebarMatrixDocs();
+  const platform = sduiPlatformMatrixPlatform || SDUI_PLATFORMS[0];
+  const allowed = new Set(sduiPlatformMatrixState[platform] || []);
+  const current = sduiPlatformMatrixState[platform] || [];
+  const selectedCount = current.length;
+  const availableCount = sidebarDocs.length;
+  const matchesPlatform = (pa) => {
+    if (!pa || pa === 'all') return true;
+    const list = Array.isArray(pa) ? pa : [pa];
+    return list.includes(platform);
+  };
+  const effectiveVisibleDocs = sidebarDocs.filter(section => {
+    if (!section || section.visible === false || section.flag === false) return false;
+    if (section.filters?.length > 0) {
+      const childPAs = section.filters
+        .map(f => f.platform_applicability)
+        .filter(pa => pa && pa !== 'all');
+      if (childPAs.length > 0) {
+        const anyChildMatches = childPAs.some(pa => matchesPlatform(pa));
+        if (!anyChildMatches) return false;
+        return true;
+      }
+    }
+    return matchesPlatform(section.platform_applicability);
+  });
+  const effectiveVisibleCount = effectiveVisibleDocs.length;
+  const effectiveVisibleNames = effectiveVisibleDocs.map(section => section.title || section._id);
+  const hiddenCount = Math.max(0, selectedCount - effectiveVisibleCount);
+
+  return `
+    <div class="sdui-cpanel" style="margin-top:12px;border-color:rgba(99,102,241,.22)">
+      <div class="sdui-cpanel-title">Platform Filter Matrix</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        ${SDUI_PLATFORMS.map(p => `
+          <button type="button" class="btn btn-sm ${p === platform ? 'btn-primary' : 'btn-ghost'}" onclick="sduiSetPlatformMatrixPlatform('${p}')">
+            ${escapeHtml(p)}
+          </button>
+        `).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">
+        <div><b>${escapeHtml(platform)}</b> has <b id="pm-count-${platform}">${selectedCount}</b> selected matrix section${selectedCount === 1 ? '' : 's'} out of <b>${availableCount}</b> available sidebar option${availableCount === 1 ? '' : 's'}.</div>
+        <div>The sidebar frontend currently renders <b>${effectiveVisibleCount}</b> section${effectiveVisibleCount === 1 ? '' : 's'}</div>
+        <div>Those visible sections come from each section's own <code>platform_applicability</code>, not from the matrix alone.</div>
+        ${selectedCount === 0 ? '<div style="color:#fcd34d;margin-top:4px">This platform has no matrix whitelist yet, but sections can still appear if they opt into the platform directly.</div>' : ''}
+      </div>
+      ${effectiveVisibleNames.length ? `
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Frontend-visible sections:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          ${effectiveVisibleNames.map(name => `<span style="padding:6px 10px;border:1px solid rgba(148,163,184,.22);border-radius:999px;background:rgba(15,23,42,.2);color:var(--text-muted);font-size:11px">${escapeHtml(name)}</span>`).join('')}
+        </div>
+      ` : ''}
+      <div style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow:auto;padding:2px 2px 4px">
+        ${sidebarDocs.map(section => {
+          const checked = allowed.has(section._id);
+          const label = section.title || section._id;
+          return `
+            <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid ${checked ? 'rgba(99,102,241,.45)' : 'rgba(148,163,184,.25)'};border-radius:999px;background:${checked ? 'rgba(99,102,241,.12)' : 'rgba(15,23,42,.2)'};color:${checked ? '#c7d2fe' : 'var(--text-muted)'};cursor:pointer;font-size:11px">
+              <input type="checkbox" ${checked ? 'checked' : ''} onchange="sduiTogglePlatformMatrix('${section._id}', this.checked)">
+              <span>${escapeHtml(label)}</span>
+            </label>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
 }
 
 // ─── Load & render cards ──────────────────────────────────
@@ -1197,6 +1300,7 @@ function openSduiEdit(id) {
   sduiEditDoc  = sduiDeep(doc);
   sduiEditOrig = sduiDeep(doc);
   sduiEditMTab = 'document';
+  sduiInitPlatformMatrixState(doc);
 
   // header
   const badge = document.getElementById('sdui-modal-badge');
@@ -1224,6 +1328,8 @@ function openSduiEdit(id) {
 function closeSduiModal() {
   document.getElementById('sdui-edit-modal').classList.add('hidden');
   sduiEditDoc = null; sduiEditOrig = null;
+  sduiPlatformMatrixState = {};
+  sduiPlatformMatrixPlatform = 'facebook';
 }
 
 function sduiRollback() {
@@ -1317,7 +1423,8 @@ function sduiRenderDocTab() {
       <textarea id="e-meta" class="sfi sfi-ta" rows="3" placeholder="Describe what this filter group does...">${escapeHtml(d.meta || '')}</textarea>
       <span class="sfe" id="e-meta-err"></span>
       <span class="sfh">Used for tooltips and accessibility labels</span>
-    </div>`;
+    </div>
+    ${sduiRenderPlatformMatrixPanel()}`;
 }
 
 function sduiBindDocEvents() {
@@ -1408,9 +1515,9 @@ function sduiRenderFilterBody(f, fi) {
       </div>
       <div class="sfg">
         <label class="sfl">Query Param <span style="color:#ef4444">*</span></label>
-        <input id="${p}-qp" class="sfi" style="font-family:var(--font-mono);font-size:11px" value="${escapeHtml(f.query_param || '')}" placeholder="camelCase">
+        <input id="${p}-qp" class="sfi" style="font-family:var(--font-mono);font-size:11px" value="${escapeHtml(f.query_param || '')}" placeholder="camelCase or snake_case">
         <span class="sfe" id="${p}-qp-err"></span>
-        <span class="sfh">camelCase e.g. sortBy</span>
+        <span class="sfh">camelCase or snake_case, e.g. sortBy or ai_ad_type</span>
       </div>
     </div>
     <div style="display:flex;gap:16px;margin:10px 0">
@@ -1603,6 +1710,7 @@ function sduiRenderJsonTab() {
     <div>
       <textarea id="sdui-json-editor" class="sdui-json-view" style="width:100%;resize:vertical;outline:none;cursor:text;min-height:400px;max-height:600px" spellcheck="false">${escapeHtml(json)}</textarea>
       <div id="sdui-json-err" style="display:none;color:#f87171;font-size:11px;margin-top:6px;padding:4px 8px;background:rgba(239,68,68,.1);border-radius:4px"></div>
+      <div id="sdui-json-issues" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(245,158,11,.35);border-radius:10px;background:rgba(245,158,11,.08);color:#fbbf24;font-size:11px;line-height:1.45"></div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
         <button class="btn btn-ghost btn-sm" onclick="sduiResetJson()">Reset</button>
         <button class="btn btn-primary btn-sm" onclick="sduiApplyJson()">Apply JSON →</button>
@@ -1610,9 +1718,103 @@ function sduiRenderJsonTab() {
     </div>`;
 }
 
+function sduiIsQueryParamLike(value) {
+  return typeof value === 'string' && /^[a-z][a-zA-Z0-9_]*$/.test(value);
+}
+
+function sduiValidateDocDetailed(doc, opts = {}) {
+  const issues = [];
+  const requireFilters = opts.requireFilters !== false;
+  const add = (path, message, hint) => issues.push({ path, message, hint });
+
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+    add('(root)', 'Document must be a JSON object.', 'Paste a full SDUI document, not a JSON array or primitive value.');
+    return issues;
+  }
+
+  if (!doc._id) add('_id', 'Document _id is required.', 'Use a lowercase identifier like `ai_meta`.');
+  else if (!/^[a-z0-9_-]+$/.test(doc._id)) add('_id', 'Document _id must use lowercase letters, numbers, underscores, or hyphens.', 'Example: `ai_meta`.');
+
+  if (!doc.config_type) add('config_type', 'Config type is required.', 'Use `sidebar`, `navbar`, or `searchbar`.');
+  if (!doc.title || !String(doc.title).trim()) add('title', 'Title is required.', 'Use an all-caps label such as `CATEGORY` or `PLATFORMS`.');
+  else if (!/^[A-Z][A-Z0-9\s&\/\-\.]*$/.test(String(doc.title))) add('title', 'Title should be uppercase for the SDUI admin form.', 'The admin form expects a label like `CATEGORY` or `PLATFORMS`.');
+  if (!Number.isInteger(doc.rank) || doc.rank < 1) add('rank', 'Rank must be a positive integer.', 'Ranks control ordering inside the sidebar.');
+  if (!doc.display_mode) add('display_mode', 'Display mode is required.', 'Use `accordion` for sidebar filter groups.');
+  if (!doc.meta || !String(doc.meta).trim()) add('meta', 'Meta description is required.', 'Describe what this filter group does in one sentence.');
+  if (doc.icon && doc.icon.type !== 'none' && !doc.icon.value) add('icon.value', 'Icon value is required when the icon type is not `none`.', 'Provide an inline SVG or absolute URL.');
+
+  if (requireFilters && doc.config_type === 'sidebar' && (!Array.isArray(doc.filters) || doc.filters.length === 0)) {
+    add('filters', 'Sidebar documents should include at least one filter.', 'Add the filters now, or create the document first and add filters later in the edit modal.');
+  }
+
+  (doc.filters || []).forEach((f, fi) => {
+    const path = `filters[${fi}]`;
+    if (!f._id) add(`${path}._id`, 'Filter _id is required.', 'Use a stable lowercase identifier.');
+    if (!f.group_id) add(`${path}.group_id`, 'Filter group_id is required.', 'This should match the parent sidebar document _id.');
+    if (!f.label || !String(f.label).trim()) add(`${path}.label`, 'Filter label is required.', 'Use the label shown to admins and users.');
+    if (!f.type || !String(f.type).trim()) add(`${path}.type`, 'Filter type is required.', 'Examples: `chip_multi_select`, `nested_multiselect`, `range_slider`.');
+    if (!Number.isInteger(f.rank) || f.rank < 1) add(`${path}.rank`, 'Filter rank must be a positive integer.', 'Ranks decide the order inside the sidebar section.');
+    if (!sduiIsQueryParamLike(f.query_param)) add(`${path}.query_param`, 'Query param must be snake_case or camelCase.', 'Examples: `ai_ad_type`, `google_transparency_ads`, `avgBudget`.');
+
+    const hasOptions = Array.isArray(f.options) && f.options.length > 0;
+    if ((f.type === 'chip_multi_select' || f.type === 'checkbox' || f.type === 'radio' || f.type === 'dropdown' || f.type === 'nested_multiselect') && !hasOptions) {
+      add(`${path}.options`, 'This filter type usually needs options.', 'Add at least one option so the filter can render in the UI.');
+    }
+    if (f.type === 'nested_multiselect') {
+      if (!f.parent_filter_id) add(`${path}.parent_filter_id`, 'Nested multiselect filters need parent_filter_id.', 'The AI category filter should point to itself as the parent key.');
+      if (!f.child_filter_id) add(`${path}.child_filter_id`, 'Nested multiselect filters need child_filter_id.', 'The AI category filter should reference the subcategory key.');
+    }
+    if (f.type === 'range_slider' && (!Array.isArray(f.options) || f.options.length > 0)) {
+      add(`${path}.options`, 'Range sliders usually keep options empty.', 'Remove the options array unless the backend explicitly needs it.');
+    }
+
+    (f.options || []).forEach((o, oi) => {
+      const op = `${path}.options[${oi}]`;
+      if (!o._id) add(`${op}._id`, 'Option _id is required.', 'Use snake_case for option identifiers.');
+      if (!o.label || !String(o.label).trim()) add(`${op}.label`, 'Option label is required.', 'This is the text users see.');
+      if (o.value === undefined || o.value === null || String(o.value).trim() === '') add(`${op}.value`, 'Option value is required.', 'This is the stored payload for the option.');
+      if (!Number.isInteger(o.rank) || o.rank < 1) add(`${op}.rank`, 'Option rank must be a positive integer.', 'Ranks decide the order inside the option list.');
+
+      (o.children || []).forEach((c, ci) => {
+        const cp = `${op}.children[${ci}]`;
+        if (!c._id) add(`${cp}._id`, 'Child option _id is required.', 'Use snake_case for nested option identifiers.');
+        if (!c.label || !String(c.label).trim()) add(`${cp}.label`, 'Child option label is required.', 'This is the text shown for the nested option.');
+        if (c.value === undefined || c.value === null || String(c.value).trim() === '') add(`${cp}.value`, 'Child option value is required.', 'This is the stored payload for the nested option.');
+        if (!Number.isInteger(c.rank) || c.rank < 1) add(`${cp}.rank`, 'Child option rank must be a positive integer.', 'Ranks decide the order inside the nested list.');
+      });
+    });
+  });
+
+  return issues;
+}
+
+function sduiRenderIssueBox(elId, issues, emptyHint) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!issues || !issues.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="font-weight:600;color:#f59e0b;margin-bottom:6px">Validation issues</div>
+    <ul style="margin:0;padding-left:18px">
+      ${issues.map(issue => `
+        <li style="margin-bottom:8px">
+          <div><code style="color:#fde68a">${escapeHtml(issue.path)}</code>: ${escapeHtml(issue.message)}</div>
+          ${issue.hint ? `<div style="color:#fcd34d;margin-top:2px">${escapeHtml(issue.hint)}</div>` : ''}
+        </li>
+      `).join('')}
+    </ul>
+    ${emptyHint ? `<div style="margin-top:8px;color:#fcd34d">${escapeHtml(emptyHint)}</div>` : ''}
+  `;
+}
+
 function sduiApplyJson() {
   const el = document.getElementById('sdui-json-editor');
   const errEl = document.getElementById('sdui-json-err');
+  const issuesEl = document.getElementById('sdui-json-issues');
   if (!el) return;
   try {
     const parsed = JSON.parse(el.value);
@@ -1620,19 +1822,29 @@ function sduiApplyJson() {
     parsed.config_type = sduiEditDoc.config_type;
     sduiEditDoc = parsed;
     errEl.style.display = 'none';
+    sduiRenderIssueBox('sdui-json-issues', sduiValidateDocDetailed(sduiEditDoc), 'Fix these fields before saving the document.');
     showToast('JSON applied — switch tabs to see reflected values', 'success');
   } catch (e) {
     errEl.textContent = 'Invalid JSON: ' + e.message;
     errEl.style.display = 'block';
+    if (issuesEl) {
+      issuesEl.style.display = 'none';
+      issuesEl.innerHTML = '';
+    }
   }
 }
 
 function sduiResetJson() {
   const el = document.getElementById('sdui-json-editor');
   const errEl = document.getElementById('sdui-json-err');
+  const issuesEl = document.getElementById('sdui-json-issues');
   if (!el) return;
   el.value = JSON.stringify(sduiEditDoc, null, 2);
   errEl.style.display = 'none';
+  if (issuesEl) {
+    issuesEl.style.display = 'none';
+    issuesEl.innerHTML = '';
+  }
   showToast('JSON reset to current state', 'info');
 }
 
@@ -1844,6 +2056,9 @@ function sduiCollectDoc() {
     }
     return f;
   });
+  if (d._id === 'platforms' && d.filters[0]) {
+    d.filters[0].platform_filter_matrix = sduiDeep(sduiPlatformMatrixState || {});
+  }
   return d;
 }
 
@@ -1862,7 +2077,7 @@ function sduiValidate(d) {
     if (!f._id || !sduiIsSnake(f._id))                         errs[`${p}-fid`]   = 'Filter _id must be snake_case (e.g. ad_type)';
     if (!f.label || !f.label.trim())                           errs[`${p}-label`] = 'Label is required';
     if (!sduiIsPosInt(f.rank))                                 errs[`${p}-rank`]  = 'Rank must be ≥ 1';
-    if (!f.query_param || !sduiIsCamel(f.query_param))         errs[`${p}-qp`]    = 'Must be camelCase (e.g. sortBy)';
+    if (!f.query_param || !sduiIsCamel(f.query_param))         errs[`${p}-qp`]    = 'Must be camelCase or snake_case (e.g. sortBy or ai_ad_type)';
     const pa = f.platform_applicability;
     if (pa !== 'all' && (!Array.isArray(pa) || !pa.length))   errs[`${p}-pa`]    = 'Select at least one platform or "All"';
 
@@ -1891,14 +2106,54 @@ function sduiApplyErrors(errs) {
   document.querySelectorAll('.sfi.err').forEach(el => el.classList.remove('err'));
   document.querySelectorAll('.sfe.show').forEach(el => { el.textContent = ''; el.classList.remove('show'); });
   const keys = Object.keys(errs);
-  if (!keys.length) { document.getElementById('sdui-modal-err-summary').classList.add('hidden'); return false; }
+  const summaryEl = document.getElementById('sdui-modal-err-summary');
+  if (!keys.length) {
+    if (summaryEl) {
+      summaryEl.classList.add('hidden');
+      summaryEl.innerHTML = '';
+    }
+    return false;
+  }
   keys.forEach(k => {
     const input = document.getElementById(k) || document.getElementById(`e-${k}`);
     if (input) input.classList.add('err');
     const errEl = document.getElementById(`${k}-err`) || document.getElementById(`e-${k}-err`);
     if (errEl) { errEl.textContent = errs[k]; errEl.classList.add('show'); }
   });
-  document.getElementById('sdui-modal-err-summary').classList.remove('hidden');
+  if (summaryEl) {
+    const prettyKey = (k) => {
+      let m = k.match(/^fi(\d+)-fid$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · filter id`;
+      m = k.match(/^fi(\d+)-label$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · label`;
+      m = k.match(/^fi(\d+)-rank$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · rank`;
+      m = k.match(/^fi(\d+)-qp$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · query param`;
+      m = k.match(/^fi(\d+)-pa$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · platform applicability`;
+      m = k.match(/^fi(\d+)-ph$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · placeholder`;
+      m = k.match(/^fi(\d+)-min$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · min`;
+      m = k.match(/^fi(\d+)-max$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · max`;
+      m = k.match(/^fi(\d+)-step$/);
+      if (m) return `Filter ${Number(m[1]) + 1} · step`;
+      m = k.match(/^oid-(\d+)-(\d+)$/);
+      if (m) return `Filter ${Number(m[1]) + 1} option ${Number(m[2]) + 1} · option id`;
+      m = k.match(/^olbl-(\d+)-(\d+)$/);
+      if (m) return `Filter ${Number(m[1]) + 1} option ${Number(m[2]) + 1} · label`;
+      m = k.match(/^oval-(\d+)-(\d+)$/);
+      if (m) return `Filter ${Number(m[1]) + 1} option ${Number(m[2]) + 1} · value`;
+      m = k.match(/^ork-(\d+)-(\d+)$/);
+      if (m) return `Filter ${Number(m[1]) + 1} option ${Number(m[2]) + 1} · rank`;
+      return k.replace(/-/g, ' ');
+    };
+    const items = keys.map(k => `<li style="margin-bottom:4px"><code style="color:#fde68a">${escapeHtml(prettyKey(k))}</code>: ${escapeHtml(errs[k])}</li>`).join('');
+    summaryEl.innerHTML = `<div style="font-weight:600;margin-bottom:4px">Fix ${keys.length} validation issue${keys.length === 1 ? '' : 's'}:</div><ul style="margin:0;padding-left:18px">${items}</ul>`;
+    summaryEl.classList.remove('hidden');
+  }
   return true;
 }
 
@@ -1948,7 +2203,7 @@ async function sduiDoSave() {
 function openSduiCreate() {
   if (currentRole !== 'editor') return;
   // Reset form fields
-  ['sdui-create-id','sdui-create-title','sdui-create-rank','sdui-create-meta','sdui-create-ivalue'].forEach(id => {
+  ['sdui-create-id','sdui-create-title','sdui-create-rank','sdui-create-meta','sdui-create-ivalue','sdui-create-json'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -1963,6 +2218,7 @@ function openSduiCreate() {
   const itypeEl = document.getElementById('sdui-create-itype');
   if (itypeEl) { itypeEl.value = 'none'; document.getElementById('sdui-create-ivalue-wrap').style.display = 'none'; }
   document.getElementById('sdui-create-err').textContent = '';
+  sduiRenderIssueBox('sdui-create-json-issues', []);
   document.getElementById('sdui-create-modal').classList.remove('hidden');
   document.getElementById('sdui-create-id').focus();
 }
@@ -1970,34 +2226,58 @@ function openSduiCreate() {
 async function sduiDoCreate() {
   const g = id => document.getElementById(id);
   const errEl = g('sdui-create-err');
+  const issueElId = 'sdui-create-json-issues';
   errEl.textContent = '';
+  sduiRenderIssueBox(issueElId, []);
 
-  const _id          = (g('sdui-create-id').value || '').trim();
-  const config_type  = g('sdui-create-type').value;
-  const title        = (g('sdui-create-title').value || '').trim().toUpperCase();
-  const rank         = parseInt(g('sdui-create-rank').value) || 1;
-  const display_mode = g('sdui-create-dmode').value;
-  const visible      = g('sdui-create-visible').checked;
-  const flag         = g('sdui-create-flag').checked;
-  const collapsed_by_default = g('sdui-create-collapsed').checked;
-  const meta         = (g('sdui-create-meta').value || '').trim();
-  const iconType     = g('sdui-create-itype').value;
-  const iconValue    = (g('sdui-create-ivalue').value || '').trim();
+  const rawJsonEl = g('sdui-create-json');
+  const rawJson = (rawJsonEl && rawJsonEl.value ? rawJsonEl.value : '').trim();
+  const usingJson = !!rawJson;
+  let doc;
 
-  // Validate
-  if (!_id)           { errEl.textContent = '_id is required'; return; }
-  if (!/^[a-z0-9_-]+$/.test(_id)) { errEl.textContent = '_id must be lowercase alphanumeric, underscores, or hyphens'; return; }
-  if (!title)         { errEl.textContent = 'Title is required'; return; }
-  if (!meta)          { errEl.textContent = 'Meta description is required'; return; }
-  if (iconType !== 'none' && !iconValue) { errEl.textContent = 'Icon value is required when icon type is set'; return; }
+  if (usingJson) {
+    try {
+      doc = JSON.parse(rawJson);
+    } catch (e) {
+      errEl.textContent = 'Invalid JSON: ' + e.message;
+      sduiRenderIssueBox(issueElId, [{ path: '(root)', message: 'The pasted payload is not valid JSON.', hint: 'Fix the syntax error shown above before creating the document.' }]);
+      return;
+    }
+  } else {
+    const _id          = (g('sdui-create-id').value || '').trim();
+    const config_type  = g('sdui-create-type').value;
+    const title        = (g('sdui-create-title').value || '').trim().toUpperCase();
+    const rank         = parseInt(g('sdui-create-rank').value) || 1;
+    const display_mode = g('sdui-create-dmode').value;
+    const visible      = g('sdui-create-visible').checked;
+    const flag         = g('sdui-create-flag').checked;
+    const collapsed_by_default = g('sdui-create-collapsed').checked;
+    const meta         = (g('sdui-create-meta').value || '').trim();
+    const iconType     = g('sdui-create-itype').value;
+    const iconValue    = (g('sdui-create-ivalue').value || '').trim();
 
-  const doc = {
-    _id, config_type, title, rank, display_mode,
-    visible, flag, collapsed_by_default, meta,
-    icon: { type: iconType, value: iconType !== 'none' ? iconValue : null },
-    filters: [],
-    created_at: new Date().toISOString(),
-  };
+    doc = {
+      _id, config_type, title, rank, display_mode,
+      visible, flag, collapsed_by_default, meta,
+      icon: { type: iconType, value: iconType !== 'none' ? iconValue : null },
+      filters: [],
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  doc.visible = doc.visible !== undefined ? doc.visible : true;
+  doc.flag = doc.flag !== undefined ? doc.flag : true;
+  doc.collapsed_by_default = doc.collapsed_by_default !== undefined ? doc.collapsed_by_default : false;
+  doc.icon = doc.icon || { type: 'none', value: null };
+  doc.filters = Array.isArray(doc.filters) ? doc.filters : [];
+  doc.created_at = doc.created_at || new Date().toISOString();
+
+  const issues = sduiValidateDocDetailed(doc, { requireFilters: usingJson });
+  if (issues.length) {
+    errEl.textContent = 'Fix the validation issues below before creating the document.';
+    sduiRenderIssueBox(issueElId, issues, 'The document should match the SDUI schema before it is saved.');
+    return;
+  }
 
   const btn = g('sdui-create-confirm');
   btn.disabled = true; btn.textContent = '⏳ Creating...';
@@ -2014,8 +2294,8 @@ async function sduiDoCreate() {
       sduiDocs.push(created);
       renderSduiDocs();
       document.getElementById('sdui-create-modal').classList.add('hidden');
-      showToast(`Document "${_id}" created — opening editor to add filters`, 'success');
-      // Auto-open edit modal so user can add filters immediately
+      showToast(`Document "${created._id}" created successfully`, 'success');
+      // If the user created from JSON, keep the raw payload available in the edit modal.
       setTimeout(() => openSduiEdit(String(created._id)), 300);
     } else {
       errEl.textContent = json.message || 'Create failed';

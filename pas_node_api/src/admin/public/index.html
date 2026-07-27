@@ -513,12 +513,12 @@
         <button class="sdui-mtab" data-mtab="json">JSON</button>
       </div>
       <div id="sdui-modal-body" class="modal-body"></div>
-      <div class="modal-footer" style="justify-content:space-between">
-        <div style="display:flex;align-items:center;gap:8px">
+      <div class="modal-footer" style="justify-content:space-between;align-items:center">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">
           <button class="btn btn-ghost btn-sm" id="sdui-rollback-btn" style="color:#f59e0b" data-tip="Discard all unsaved edits and revert to original">↩ Rollback Edits</button>
-          <span id="sdui-modal-err-summary" class="error-text hidden" style="font-size:11px">Fix errors before saving.</span>
+          <div id="sdui-modal-err-summary" class="error-text hidden" style="font-size:11px;max-width:360px;max-height:72px;overflow:auto;line-height:1.35;min-width:0"></div>
         </div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-shrink:0">
           <button class="btn btn-ghost btn-sm" id="sdui-modal-cancel">Cancel</button>
           <button class="btn btn-primary btn-sm" id="sdui-modal-save">✓ Review &amp; Submit</button>
         </div>
@@ -543,11 +543,11 @@
 
   <!-- SDUI Create Document Modal -->
   <div id="sdui-create-modal" class="modal-overlay hidden" style="z-index:10002">
-    <div class="modal-box" style="max-width:580px;max-height:90vh">
+    <div class="modal-box" style="max-width:840px;max-height:90vh">
       <div class="modal-header">
         <div>
-          <h3 style="font-size:15px;font-weight:600">✦ Create New SDUI Document</h3>
-          <p style="font-size:11px;color:var(--text-muted);margin-top:2px">All required fields must be filled before creating.</p>
+          <h3 style="font-size:15px;font-weight:600">✦ Create / Import SDUI Document</h3>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:2px">Use the form below or paste a full JSON document directly.</p>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('sdui-create-modal').classList.add('hidden')">✕</button>
       </div>
@@ -635,6 +635,18 @@
         <div class="sfg">
           <label class="sfl">Meta Description <span style="color:#ef4444">*</span></label>
           <textarea id="sdui-create-meta" class="sfi sfi-ta" rows="2" placeholder="Describe what this filter group does…"></textarea>
+          <span class="sfh">Leave the JSON box empty to create the document from this form, then add filters later in the editor.</span>
+        </div>
+
+        <!-- JSON import -->
+        <div class="sdui-cpanel">
+          <div class="sdui-cpanel-title">JSON Import</div>
+          <div class="sfg">
+            <label class="sfl">Raw JSON Payload</label>
+            <textarea id="sdui-create-json" class="sfi sfi-ta" rows="12" spellcheck="false" placeholder='Paste a full SDUI document here. If filled, this JSON becomes the source of truth for the new document.'></textarea>
+            <span class="sfh">Paste a complete SDUI document here to create the record directly from JSON. Field-level validation issues will appear below.</span>
+          </div>
+          <div id="sdui-create-json-issues" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid rgba(245,158,11,.35);border-radius:10px;background:rgba(245,158,11,.08);color:#fbbf24;font-size:11px;line-height:1.45"></div>
         </div>
 
         <!-- Error line -->
@@ -642,7 +654,7 @@
       </div>
       <div class="modal-footer" style="justify-content:space-between">
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('sdui-create-modal').classList.add('hidden')">Cancel</button>
-        <button id="sdui-create-confirm" class="btn btn-primary btn-sm" onclick="sduiDoCreate()">✦ Create Document</button>
+        <button id="sdui-create-confirm" class="btn btn-primary btn-sm" onclick="sduiDoCreate()">✦ Create / Import</button>
       </div>
     </div>
   </div>

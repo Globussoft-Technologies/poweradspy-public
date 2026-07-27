@@ -1079,7 +1079,7 @@ function collectDoc(){
 }
 
 // ── validation ────────────────────────────────────────────────────────────────
-function isCamelCase(v){ return /^[a-z][a-zA-Z0-9]*$/.test(v); }
+function isCamelCase(v){ return /^[a-z][a-zA-Z0-9_]*$/.test(v); }
 function isSnakeCase(v){ return /^[a-z][a-z0-9_]*$/.test(v); }
 function isPosInt(v){ return /^\d+$/.test(String(v)) && parseInt(v)>=1; }
 
@@ -1096,7 +1096,7 @@ function validateDoc(d){
     var p = 'fi'+fi;
     if(!f.label||!f.label.trim())           errs[p+'-label']      = 'Label is required';
     if(!isPosInt(f.rank))                   errs[p+'-rank']       = 'Rank must be ≥ 1';
-    if(!f.query_param||!isCamelCase(f.query_param)) errs[p+'-qp'] = 'Must be camelCase (e.g. sortBy, adTypes)';
+    if(!f.query_param||!isCamelCase(f.query_param)) errs[p+'-qp'] = 'Must be camelCase or snake_case (e.g. sortBy, ai_ad_type)';
     var pa = f.platform_applicability;
     if(pa!=='all' && (!Array.isArray(pa)||!pa.length)) errs[p+'-pa'] = 'Select at least one platform or "All"';
 

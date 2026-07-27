@@ -17,6 +17,7 @@ const dbManager = require('../database/DatabaseManager');
 const config = require('../config');
 const logger = require('../logger');
 const planAccessService = require('../services/planAccess/planAccessService');
+const { overlayAiMetaLegacyDecision } = require('../services/planControl/legacyPlanAccessBridge');
 const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
 
 const log = logger.createChild('auth');
@@ -181,6 +182,7 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
   }
 
   const filters = planAccessService.getFilterStatus(planId, network, config2);
+  await overlayAiMetaLegacyDecision(req, network, filters);
   const competitorLimits = planAccessService.getCompetitorLimits(planId, config2);
   // planTier drives PricingModal.jsx's "show only upgrade tiers" filter (currentPlanTier
   // prop) — this route is a separate implementation from planAccessMiddleware and was

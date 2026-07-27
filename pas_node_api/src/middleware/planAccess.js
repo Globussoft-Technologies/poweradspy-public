@@ -4,6 +4,7 @@ const planAccessService = require('../services/planAccess/planAccessService');
 const config = require('../config');
 const logger = require('../logger');
 const { getCapabilityDecision } = require('../services/planControl/registries/routeClassification');
+const { overlayAiMetaLegacyDecision } = require('../services/planControl/legacyPlanAccessBridge');
 const log = logger.createChild('plan-access');
 
 // Filters the frontend always sends as UI defaults — strip silently instead of triggering upgrade modal.
@@ -122,6 +123,7 @@ async function planAccessMiddleware(req, res, next) {
 
       // Build dynamic SDUI query param map (same as SQL user path)
       const aMemberSduiMap = await getSduiQueryParamMap();
+      await overlayAiMetaLegacyDecision(req, aMemberNetwork, filterStatus);
 
       // Strip restricted filters from request body — enforces plan-level filter access for aMember users
       const { planRestricted: aMemberPlanRestricted, platformRestricted: aMemberPlatformRestricted } =
@@ -198,6 +200,7 @@ async function planAccessMiddleware(req, res, next) {
 
     // Compute filter status for the requested platform(s)
     const filterStatus = planAccessService.getFilterStatus(planId, network, planConfig);
+    await overlayAiMetaLegacyDecision(req, network, filterStatus);
 
     // Build dynamic query param map from SDUI config (cached, 5 min TTL).
     // Covers new SDUI filters added via admin dashboard without code changes.

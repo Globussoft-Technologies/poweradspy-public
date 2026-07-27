@@ -5,6 +5,7 @@ const { EventEmitter } = require('events');
 const { getDB } = require('../../../services/sdui/db');
 const logger = require('../../../logger');
 const config = require('../../../config');
+const { syncLegacyPlanAccessFromPolicy } = require('../legacyPlanAccessSync');
 const {
   checksumSnapshot,
   diffSnapshots,
@@ -305,6 +306,19 @@ async function publishDraft(draftId, options, adminSession) {
   }
   policyCache = { value: version, loadedAt: Date.now() };
   policyEvents.emit('published', { versionId, revision });
+
+  // Keep legacy plan_access_config rows in sync for capabilities that still
+  // need a backward-compatible Mongo mirror after plan-control publish.
+  try {
+    await syncLegacyPlanAccessFromPolicy(version.snapshot);
+  } catch (error) {
+    log.warn('Published policy activated, but legacy plan-access sync failed', {
+      versionId,
+      revision,
+      error: error.message,
+    });
+  }
+
   log.info('Policy published', { versionId, revision, actor: version.createdBy.adminId });
   return { success: true, versionId, revision, checksum: version.checksum };
 }
