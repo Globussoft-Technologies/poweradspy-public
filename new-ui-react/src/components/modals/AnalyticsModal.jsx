@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PlatformBadgesRow from "../shared/PlatformBadgesRow";
-import { normalizeEcommercePlatformKey } from "../../utils/helper";
+import {
+  calculateRunningDays,
+  normalizeEcommercePlatformKey,
+} from "../../utils/helper";
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
 import mpConversionx from "../../assets/marketingPlatform/conversionx.co.png";
@@ -1308,16 +1311,11 @@ const AnalyticsModal = ({
     const shares = a.share || a.shares || 0;
     const comments = a.comments || 0;
     const popularity = a.popularity || 0;
-    // Running days = last_seen − post_date (post > 0 rejects the date sentinels);
-    // fall back to first_seen → last_seen when post_date is missing/invalid.
-    const end = a.last_seen ? new Date(a.last_seen).getTime() : NaN;
-    const postT = a.post_date ? new Date(a.post_date).getTime() : NaN;
-    const firstT = a.first_seen ? new Date(a.first_seen).getTime() : NaN;
-    const dayMs = 86400000;
-    const wholeDays = (a, b) => Math.max(1, Math.floor(b / dayMs) - Math.floor(a / dayMs));
-    const runningDays = (!isNaN(postT) && postT > 0 && !isNaN(end) && end >= postT)
-      ? wholeDays(postT, end)
-      : ((!isNaN(firstT) && !isNaN(end)) ? wholeDays(firstT, end) : null);
+    const runningDays = calculateRunningDays({
+      lastSeen: a.last_seen ?? a.lastSeenRaw ?? a.lastSeen,
+      postDate: a.post_date ?? a.postDateRaw ?? a.date,
+      firstSeen: a.first_seen ?? a.firstSeenRaw ?? a.firstSeen,
+    });
     const items = [];
     // Engagement icons share MasonryCard's STAT_CONFIG base palette but route through
     // iconColorClass so they darken for good contrast in light theme (same as the Ad
@@ -1412,6 +1410,31 @@ const AnalyticsModal = ({
       ["ROA OFFERING", roa.offering],
     ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
   })();
+  const firstAvailable = (...values) =>
+    values.find((value) => value != null && value !== "");
+  const analyticsRunningDays = calculateRunningDays({
+    lastSeen: firstAvailable(
+      d.last_seen,
+      processedAd?.lastSeenRaw,
+      ad?.lastSeenRaw,
+      processedAd?.lastSeen,
+      ad?.lastSeen,
+    ),
+    postDate: firstAvailable(
+      d.post_date,
+      processedAd?.postDateRaw,
+      ad?.postDateRaw,
+      processedAd?.date,
+      ad?.date,
+    ),
+    firstSeen: firstAvailable(
+      d.first_seen,
+      processedAd?.firstSeenRaw,
+      ad?.firstSeenRaw,
+      processedAd?.firstSeen,
+      ad?.firstSeen,
+    ),
+  });
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
   const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
 
@@ -1504,7 +1527,7 @@ const AnalyticsModal = ({
         },
         {
           label: "RUNNING DAYS",
-          value: (tt.days_running || d.days_running || ctx.runningDays) ? `${tt.days_running || d.days_running || ctx.runningDays} days` : "—",
+          value: analyticsRunningDays ? `${analyticsRunningDays} days` : "—",
           icon: Clock,
           color: "text-orange-400",
         },
@@ -1577,29 +1600,7 @@ const AnalyticsModal = ({
       }]),
       ...(ctx.platform === 'quora' ? [] : [{
         label: "RUNNING DAYS",
-        // Running days = last_seen − post_date, computed from the same `d` dates shown
-        // above (epoch or datetime string), irrespective of the backend days_running.
-        value: (() => {
-          const toMs = (val) => {
-            if (!val) return NaN;
-            const s = String(val).trim();
-            if (/^\d{9,13}$/.test(s)) { const num = Number(s); return num < 1e10 ? num * 1000 : num; }
-            return Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
-          };
-          const last = toMs(d.last_seen);
-          const post = toMs(d.post_date);
-          // Prefer last_seen − post_date; when post_date is missing/invalid (null/1970),
-          // fall back to last_seen − first_seen.
-          const start = (!isNaN(post) && post > 0) ? post : toMs(d.first_seen);
-          if (!isNaN(start) && start > 0 && !isNaN(last) && last >= start) {
-            // Whole calendar-day difference (floor each to its day boundary), so a
-            // time-of-day in the timestamps doesn't round the count up by a day.
-            const dayMs = 86400000;
-            const diff = Math.floor(last / dayMs) - Math.floor(start / dayMs);
-            return `${Math.max(1, diff)} days`;
-          }
-          return ctx.runningDays ? `${ctx.runningDays} days` : "—";
-        })(),
+        value: analyticsRunningDays ? `${analyticsRunningDays} days` : "—",
         icon: Clock,
         color: "text-orange-400",
       }]),

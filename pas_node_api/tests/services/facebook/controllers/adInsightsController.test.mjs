@@ -270,6 +270,20 @@ describe("services/facebook/controllers/adInsightsController > getFacebookAdCoun
       { body: { facebook_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     )).data[0]).toEqual({ country: "Germany", iso: "DE" });
   });
+  it('skips "Not available" while retaining valid ad-level countries', async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [{ country: "Germany", iso: "DE" }]) },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
+        "country_only.country": ["Germany", " Not Available "],
+      } }] } })) },
+    };
+    const out = await getFacebookAdCountry(
+      { body: { facebook_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
+    );
+    expect(out.code).toBe(200);
+    expect(out.data).toEqual([{ country: "Germany", iso: "DE" }]);
+    expect(db.sql.query).toHaveBeenCalledTimes(1);
+  });
   it("SQL no match → raw name + iso null", async () => {
     const db = {
       sql: { query: vi.fn(async () => []) },
@@ -847,6 +861,23 @@ describe("services/facebook/controllers/adInsightsController > getAdvertiserCoun
       { body: { facebook_ad_id: "1" }, query: {} },
       mkDb({ metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" }, esHits: [{ _source: { "facebook_ad.id": 1, "country_only.country": "italy" } }] })
     )).data[0].country).toBe("Italy");
+  });
+  it('skips "Not available" while retaining valid advertiser countries', async () => {
+    const out = await getAdvertiserCountryData(
+      { body: { facebook_ad_id: "1" }, query: {} },
+      mkDb({
+        metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" },
+        esHits: [
+          { fields: { "facebook_ad.id": [1], "country_only.country.keyword": ["Germany", "Not available"] } },
+          { fields: { "facebook_ad.id": [2], "country_only.country.keyword": [" not AVAILABLE "] } },
+        ],
+        countryRows: [{ nicename: "Germany", country: "Germany", iso: "DE" }],
+      })
+    );
+    expect(out.code).toBe(200);
+    expect(out.data).toEqual([
+      { country: "Germany", iso: "DE", ad_ids: [1], ad_count: 1 },
+    ]);
   });
   it("docvalue countries fallback (not .keyword)", async () => {
     expect((await getAdvertiserCountryData(

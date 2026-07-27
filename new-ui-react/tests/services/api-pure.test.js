@@ -312,21 +312,45 @@ describe("api > mapAdToCard", () => {
   it("calcEngPerDay: days defaults to 1 when missing", () => {
     expect(mapAdToCard({ likes: 500 }).engPerDay).toBe("500");
   });
-  it("runningDays: explicit days_running used when >0", () => {
-    expect(mapAdToCard({ days_running: 7 }).runningDays).toBe(7);
+  it("runningDays: does not use the backend days_running value", () => {
+    expect(mapAdToCard({ days_running: 7 }).runningDays).toBeNull();
   });
-  it("runningDays: computed from first/last seen when no days_running", () => {
+  it("runningDays: uses first_seen when post_date is missing", () => {
     const out = mapAdToCard({ first_seen: "2025-01-01", last_seen: "2025-01-05" });
     expect(out.runningDays).toBe(4);
   });
-  it("runningDays: same-day clamps to 1", () => {
+  it("runningDays: prefers post_date over first_seen", () => {
+    const out = mapAdToCard({
+      post_date: "2025-01-03",
+      first_seen: "2025-01-01",
+      last_seen: "2025-01-05",
+    });
+    expect(out.runningDays).toBe(2);
+  });
+  it("runningDays: uses first_seen when post_date is a sentinel", () => {
+    const out = mapAdToCard({
+      post_date: "1970-01-01",
+      first_seen: "2025-01-01",
+      last_seen: "2025-01-05",
+    });
+    expect(out.runningDays).toBe(4);
+  });
+  it("runningDays: does not fall back when post_date is after last_seen", () => {
+    const out = mapAdToCard({
+      post_date: "2026-07-20",
+      first_seen: "2026-07-19",
+      last_seen: "2026-07-19",
+    });
+    expect(out.runningDays).toBeNull();
+  });
+  it("runningDays: same-day returns no running-days value", () => {
     const out = mapAdToCard({ first_seen: "2025-01-01T00:00:00", last_seen: "2025-01-01T00:00:00" });
-    expect(out.runningDays).toBe(1);
+    expect(out.runningDays).toBeNull();
   });
   it("runningDays: invalid dates → null", () => {
     expect(mapAdToCard({ first_seen: "bad", last_seen: "bad" }).runningDays).toBeNull();
   });
-  it("runningDays: days_running=0 falls through to date calc (line 330 else)", () => {
+  it("runningDays: ignores days_running and uses the dates", () => {
     const out = mapAdToCard({ days_running: 0, first_seen: "2025-01-01", last_seen: "2025-01-05" });
     expect(out.runningDays).toBe(4);
   });

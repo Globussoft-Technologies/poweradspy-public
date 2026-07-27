@@ -25,6 +25,14 @@ function normalizeCountryName(name) {
 }
 
 /**
+ * Elasticsearch can include this placeholder alongside real country names.
+ * It is not a country and must not be returned or looked up in country_data.
+ */
+function isUnavailableCountry(name) {
+  return typeof name === 'string' && name.trim().toLowerCase() === 'not available';
+}
+
+/**
  * Batch-fetch ISO codes for multiple country names in a single query.
  * Returns a Map: nicename → { country, iso }
  */
@@ -383,6 +391,7 @@ async function getFacebookAdCountry(req, db, logger) {
     if (!countryData) return { code: 401, message: 'Something Went Wrong' };
     if (!Array.isArray(countryData)) countryData = [countryData];
     if (countryData.length === 0) return { code: 401, message: 'Something Went Wrong' };
+    countryData = countryData.filter(name => !isUnavailableCountry(name));
 
     // Step 2: Map country names to ISO codes via DB
     const resArray = [];
@@ -851,7 +860,7 @@ async function aggregateCountryData(db, hits) {
     if (!countries) continue;
     if (!Array.isArray(countries)) countries = [countries];
     for (const country of countries) {
-      if (!country) continue;
+      if (!country || isUnavailableCountry(country)) continue;
       const normalizedKey = normalizeCountryName(country);
       if (!countryMap[normalizedKey]) countryMap[normalizedKey] = new Set();
       countryMap[normalizedKey].add(adId);
