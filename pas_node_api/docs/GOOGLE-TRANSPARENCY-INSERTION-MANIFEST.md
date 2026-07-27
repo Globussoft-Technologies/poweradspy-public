@@ -59,6 +59,8 @@ With the checked-in rules:
   `type=IMAGE`;
 - `thumbnail` is explicit null for non-video creatives and a required absolute
   HTTP(S) URL when `type=VIDEO`;
+- `subnetwork` is required and non-null for every creative type; only `MAPS`,
+  `PLAY`, `SHOPPING`, `SEARCH`, and `YOUTUBE` are accepted;
 - every country row contains `first_seen`, `last_seen`, and `times_shown`;
   each value may be explicit JSON `null`, otherwise the dates must be RFC 3339;
 - the constant tuple is `network=google`, `source=desktop`, `platform=18`,
@@ -161,59 +163,6 @@ For each valid item:
 SQL failure rolls back all SQL work for that item. NAS/ES failures do not erase
 the committed canonical ad; they are logged and media failure is returned as a
 non-fatal warning, matching the existing insertion architecture.
-
-### Temporary step-by-step debug trace
-
-Detailed platform-18 tracing is temporarily enabled in `config.json`:
-
-```json
-"transparencyDebug": true
-```
-
-Every line starts with `[GT18 TRACE NN]` and contains `ad_id`, request ID, batch
-index, elapsed milliseconds, event name, and event-specific values. The trace
-covers:
-
-1. request fields and contract validation;
-2. normalized SQL/date/country/media projections;
-3. translation API request and exact detected-language/translated result;
-4. transaction begin and canonical-ad lookup;
-5. owner/domain/language/country IDs;
-6. canonical, variant, translation, metadata, Transparency and country-table
-   writes;
-7. transaction commit or rollback/error;
-8. existing Elasticsearch state;
-9. NAS upload/reuse decisions and returned paths;
-10. final Elasticsearch document summary and index result;
-11. video queue decision and final API result.
-
-In development the records appear in the server console and in the normal
-combined log. Tail every platform-18 trace:
-
-```powershell
-$day = Get-Date -Format "yyyy-MM-dd"
-Get-Content ".\logs\combined-$day.log" -Wait |
-  Select-String "GT18 TRACE"
-```
-
-Filter one creative:
-
-```powershell
-Get-Content ".\logs\combined-2026-07-23.log" -Tail 2000 |
-  Select-String "GT18 TRACE.*CR90000000000000000002"
-```
-
-The logger removes credential-shaped keys (`secret`, `password`, `token`,
-`signature`, `authorization`) and truncates very large strings. Creative copy
-and media/destination URLs are intentionally visible for this temporary
-debugging phase.
-
-After rollout debugging, set the flag to `false` and restart the API. No code
-removal is required:
-
-```json
-"transparencyDebug": false
-```
 
 ### Live shared-schema compatibility
 

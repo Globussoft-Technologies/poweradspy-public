@@ -145,6 +145,32 @@ describe('Google Transparency contract validation', () => {
     })).toEqual({ code: 200 });
   });
 
+  it.each(['IMAGE', 'TEXT', 'VIDEO'])(
+    'requires a non-null supported subnetwork for %s ads',
+    (type) => {
+      const media = type === 'IMAGE'
+        ? { image_url_original: 'https://cdn.example/image.jpg' }
+        : type === 'VIDEO'
+          ? {
+              video_url_original: 'https://cdn.example/video.mp4',
+              thumbnail: 'https://cdn.example/video-poster.jpg',
+            }
+          : {};
+      for (const subnetwork of [null, '', 'DISPLAY']) {
+        const out = validateTransparencyPayload({
+          ...valid,
+          ...media,
+          type,
+          subnetwork,
+        });
+        expect(out.code).toBe(422);
+        expect(out.errors).toContainEqual(expect.objectContaining({
+          field: 'subnetwork',
+        }));
+      }
+    },
+  );
+
   it('rejects the superseded country first_shown/last_shown names', () => {
     const country_details = [{
       country: 'Germany',

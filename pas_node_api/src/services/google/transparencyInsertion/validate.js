@@ -35,7 +35,7 @@ const TRANSPARENCY_RULES = {
   impressions: 'present|nullable|impressions',
   post_date: 'optional|nullable|rfc3339',
   network: 'required|in:google',
-  subnetwork: 'present|nullable|in:MAPS,PLAY,SHOPPING,SEARCH,YOUTUBE',
+  subnetwork: 'required|in:MAPS,PLAY,SHOPPING,SEARCH,YOUTUBE',
   source: 'required|in:desktop',
   platform: 'required|integer|in:18',
   system_id: 'required|string',

@@ -216,12 +216,6 @@ const config = {
     allowPlatformBypass: fileConfig.insertion?.allowPlatformBypass !== undefined
       ? fileConfig.insertion.allowPlatformBypass
       : '12',
-    // Temporary step-by-step platform-18 insertion trace. Disable after rollout verification.
-    transparencyDebug: getVal(
-      fileConfig.insertion?.transparencyDebug,
-      'GOOGLE_TRANSPARENCY_DEBUG',
-      toBool
-    ) === true,
     // Secret token for the secure delete endpoint (PHP API_DELETE_TOKEN). config.json → env.
     deleteToken: getVal(fileConfig.insertion?.deleteToken, 'API_DELETE_TOKEN') || '',
     // ES field prefix carried over on UPDATE re-index (PHP TRANSLATION_FEILD).

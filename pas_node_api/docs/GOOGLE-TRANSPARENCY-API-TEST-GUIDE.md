@@ -116,47 +116,6 @@ The numeric ID is environment-specific; a clean database will allocate another
 ID. The important idempotency assertion is that insert and update return the
 same ID and SQL counts remain one.
 
-### Watch the full insertion process
-
-`insertion.transparencyDebug=true` is currently enabled. Before sending a test
-payload, open a second PowerShell window:
-
-```powershell
-$day = Get-Date -Format "yyyy-MM-dd"
-Get-Content ".\logs\combined-$day.log" -Wait |
-  Select-String "GT18 TRACE"
-```
-
-Or inspect only the IMAGE sample after insertion:
-
-```powershell
-Get-Content ".\logs\combined-2026-07-23.log" -Tail 2000 |
-  Select-String "GT18 TRACE.*CR90000000000000000002"
-```
-
-Important trace events include:
-
-```text
-TRANSLATION_API_SUCCEEDED
-TRANSLATION_API_EMPTY_RESULT
-SQL_DIMENSIONS_RESOLVED
-SQL_CANONICAL_INSERTED / SQL_CANONICAL_UPDATED
-SQL_TRANSLATION_UPSERTED
-SQL_TRANSPARENCY_PAYLOAD_UPSERTED
-SQL_COUNTRY_DELIVERY_MERGED
-SQL_TRANSACTION_COMMITTED
-NAS_UPLOAD_PLAN
-NAS_PRIMARY_IMAGE_RESULT
-NAS_OTHER_MULTIMEDIA_RESULT
-ELASTICSEARCH_INDEX_SUCCEEDED
-PROCESS_COMPLETED
-```
-
-For a successful repeat, primary media reports `reused_existing=true`.
-`NAS_OTHER_MULTIMEDIA_RESULT` reports `attempted=false` and `reused_count>0`
-once its source-to-NAS state exists in Elasticsearch. Live back-to-back update
-verification produced `attempted=false, reused_count=1`.
-
 Expected first-insert response:
 
 ```json

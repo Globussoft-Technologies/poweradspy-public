@@ -148,12 +148,7 @@ describe('Google Transparency pipeline', () => {
         ad_text: 'Übersetzter Text',
       }),
     }));
-    const traceOutput = log.info.mock.calls.map(([message]) => message).join('\n');
-    expect(traceOutput).toContain('TRANSLATION_API_SUCCEEDED');
-    expect(traceOutput).toContain('SQL_TRANSLATION_UPSERTED');
-    expect(traceOutput).toContain('SQL_TRANSACTION_COMMITTED');
-    expect(traceOutput).toContain('ELASTICSEARCH_INDEX_SUCCEEDED');
-    expect(traceOutput).toContain('PROCESS_COMPLETED');
+    expect(log.info).not.toHaveBeenCalled();
   });
 
   it('uses the update branch idempotently for an existing creative', async () => {
@@ -379,9 +374,7 @@ describe('Google Transparency pipeline', () => {
         first_seen: null,
       }),
     }));
-    const traceOutput = log.info.mock.calls.map(([message]) => message).join('\n');
-    expect(traceOutput).toContain('TRANSLATION_API_EMPTY_RESULT');
-    expect(traceOutput).toContain('"raw_detected_language":"en"');
+    expect(log.info).not.toHaveBeenCalled();
   });
 
   it('preserves an existing NAS video and does not queue another download', async () => {
@@ -517,6 +510,20 @@ describe('Google Transparency pipeline', () => {
     expect(repo.withTransaction).not.toHaveBeenCalled();
     expect(media.uploadImage).not.toHaveBeenCalled();
     expect(media.uploadThumbnail).not.toHaveBeenCalled();
+  });
+
+  it('rejects a null subnetwork before opening a transaction', async () => {
+    const out = await processTransparencyAd(payload({ subnetwork: null }), {
+      db: { sql: {}, elastic: null },
+      log,
+    });
+    expect(out).toMatchObject({
+      code: 422,
+      errors: expect.arrayContaining([
+        expect.objectContaining({ field: 'subnetwork' }),
+      ]),
+    });
+    expect(repo.withTransaction).not.toHaveBeenCalled();
   });
 
   it('returns 503 before SQL writes when required translation is unavailable', async () => {

@@ -6,7 +6,6 @@ const api = require('../../../insertion/helpers/apiClients');
 const { validateTransparencyPayload } = require('./validate');
 const { normalizeTransparencyPayload, mysqlDateTime, daysRunning } = require('./normalize');
 const { buildTransparencyDoc } = require('./esDocBuilder');
-const { createTransparencyTrace } = require('./trace');
 const { searchIdQuery, firstHitSource } = require('../insertion/esDocBuilder');
 const media = require('../../../insertion/helpers/mediaUpload');
 const { enqueueVideoDownload } = require('../../../insertion/helpers/nasDownloadQueue');
@@ -102,7 +101,9 @@ function deliveryRowsToContract(rows) {
 }
 
 async function processTransparencyAd(payload, ctx) {
-  const trace = createTransparencyTrace(ctx.log, payload, ctx);
+  // The temporary rollout trace has been retired. Keep this local no-op while
+  // the step markers remain useful as inline process documentation.
+  const trace = () => {};
   trace('REQUEST_RECEIVED', {
     platform: payload?.platform,
     type: payload?.type,
