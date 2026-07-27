@@ -8,6 +8,7 @@
     "impressions_operator": { "type": "keyword" },
     "ad_url": { "type": "keyword", "index": false, "doc_values": false },
     "video_url_original": { "type": "keyword", "index": false, "doc_values": false },
+    "thumbnail": { "type": "keyword", "index": false, "doc_values": false },
     "othermultimedia": { "type": "keyword", "index": false, "doc_values": false },
     "country_details": {
       "type": "nested",

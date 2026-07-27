@@ -250,6 +250,21 @@ describe("api > mapAdToCard", () => {
     expect(image.thumbnail).toContain("18.jpg");
   });
 
+  it("uses the stored Transparency thumbnail while the original video remains remote", () => {
+    const video = mapAdToCard({
+      platform: 18,
+      network: "google",
+      type: "VIDEO",
+      image_video_url: "https://cdn.example/original.mp4",
+      video_url_original: "https://cdn.example/original.mp4",
+      thumbnail: "/pas-dev/stream/gt/thumbnail/202607/18.jpg",
+    });
+
+    expect(video.renderType).toBe("video");
+    expect(video.videoUrl).toContain("original.mp4");
+    expect(video.thumbnail).toContain("/gt/thumbnail/202607/18.jpg");
+  });
+
   it("legacy Google TEXT cards are not promoted by platform-18 media rules", () => {
     const out = mapAdToCard({
       platform: 4,

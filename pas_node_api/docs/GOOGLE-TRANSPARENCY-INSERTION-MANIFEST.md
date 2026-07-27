@@ -49,12 +49,14 @@ because routing and idempotent canonical lookup depend on them.
 
 With the checked-in rules:
 
-- 25 top-level fields must be present; `post_date` is optional and nullable;
+- 26 top-level fields must be present; `post_date` is optional and nullable;
 - unknown top-level and nested fields are rejected;
 - nullable fields must be explicit JSON `null`;
 - `CR<digits>` and `AR<digits>` IDs must match `ad_url`;
 - URLs, RFC 3339 timestamps, alpha-2 codes, enum values, arrays, duplicates,
   country order, and impression bounds are checked;
+- `thumbnail` is explicit null for non-video creatives and a required absolute
+  HTTP(S) URL when `type=VIDEO`;
 - every country row contains `first_seen`, `last_seen`, and `times_shown`;
   each value may be explicit JSON `null`, otherwise the dates must be RFC 3339;
 - the constant tuple is `network=google`, `source=desktop`, `platform=18`,
@@ -71,7 +73,7 @@ Existing tables remain the source of truth for fields the product already has:
 |---|---|
 | `google_text_ad` | `ad_id`, type, first/last/post dates, source, `system_id`, status, running days, canonical FKs |
 | `google_text_ad_post_owners` | `post_owner` (nullable) |
-| `google_text_ad_variants` | title, text, original image and NAS image |
+| `google_text_ad_variants` | title, text, original image and NAS image; for VIDEO, `image_url` is the NAS thumbnail |
 | `google_text_ad_meta_data` | platform 18, contract `version`, destination URL, desktop seen dates |
 | `google_text_ad_domains` | destination domain |
 | `google_text_country_only`, `google_text_country` | country dimensions |
@@ -147,8 +149,9 @@ For each valid item:
 8. Merge the ad's country delivery: update an existing country row or append a
    new country, and maintain the existing country relationships.
 9. Commit.
-10. Store an IMAGE through the shared NAS helper only when no successful NAS
-   path already exists, then attach the real path to the existing variant.
+10. Store an IMAGE, or a VIDEO thumbnail, through the shared NAS helper only
+    when no successful NAS path already exists, then attach the real path to
+    the existing variant. Thumbnail storage is controlled by the image switch.
 11. Index one flat ES document using `_id = google_text_ad.id`.
 12. For VIDEO, enqueue the shared durable background downloader after the ES
     document exists; it later writes the real NAS path to `image_video_url`.
@@ -246,6 +249,7 @@ Existing Google media folders remain unchanged:
 ```text
 gt/adImage/<YYYYMM>/<id>.<detected-extension>
 gt/adVideo/<YYYYMM>/<id>.<detected-extension>
+gt/thumbnail/<YYYYMM>/<id>.<detected-extension>
 gt/otherMultiMedia/<YYYYMM>/<id>_<index>.<detected-extension>
 ```
 
@@ -270,6 +274,14 @@ place. The pipeline reads that legacy `_source` value once to avoid a duplicate
 upload, then replaces the document without that field. A future reindex removes
 the unused mapping metadata itself.
 
+For `type=VIDEO`, payload `thumbnail` is required but its source URL is not
+persisted. Only its NAS path is stored in canonical
+`google_text_ad_variants.image_url` and ES `thumbnail`.
+It is uploaded only when the stored path is missing/default, so repeat updates
+do not upload it again. `insertion.nas.store.video=false` skips only the video
+download/queue; the thumbnail still uploads when
+`insertion.nas.store.image=true`. Setting `image=false` skips thumbnails too.
+
 ### When the ad already exists
 
 The lookup key is public `ad_id`; the existing `google_text_ad.id` is reused.
@@ -292,14 +304,16 @@ The update does not create a second canonical ad:
   translation is optional and temporarily fails, existing translated values
   are preserved.
 - `google_text_ad_variants`: updates title, text and original image URL. The NAS
-  image path changes only after a successful first/missing-image upload.
+  `image_url` changes only after a successful first/missing-image upload; for a
+  VIDEO it contains the NAS thumbnail path and is reused on later updates.
 - `google_text_ad_post_owners.post_owner_image` is uploaded/updated only when
   the shared owner has no successful non-default image.
 - `google_text_ad_meta_data`: sets platform 18 and updates version, destination
   URL and desktop last-seen; the original desktop first-seen is retained.
 - `google_transparency_ad_payload`: updates `ad_url`, destination-independent
   Transparency fields, aggregate impressions, video source, `redirect_url`,
-  `othermultimedia`, and refreshes `received_at`. `destination_url` is updated
+  `othermultimedia`, and refreshes
+  `received_at`. `destination_url` is updated
   in the common metadata table.
 - `google_transparency_country_delivery`: same country updates its earliest
   first-seen, latest last-seen and current impression interval. A previously
@@ -319,7 +333,8 @@ owner, dates, country, destination, image/NAS paths, platform) and adds:
 ```text
 advertiser_id, ad_url, subnetwork, region_code,
 impressions_min, impressions_max, impressions_operator,
-video_url_original, othermultimedia, country_details,
+video_url_original, thumbnail,
+othermultimedia, country_details,
 language_id, lang_detect,
 ad_title, ad_text, news_feed_description
 ```
@@ -350,12 +365,24 @@ falls back to the legacy Google text-card behavior.
   returned as JSON `null`, not sentinel dates, `0`, empty strings, or English;
 - `platform` is returned as the integer `18`;
 - `image_video_url` is the only primary display URL for both IMAGE and VIDEO;
+- for VIDEO, `thumbnail` is the independently stored NAS poster; the incoming
+  source URL is not returned or persisted;
 - `othermultimedia` contains successful NAS paths and is omitted when empty;
 - `image_url_nas`, `nas_video_url`, `othermultimedia_original`,
   `carousel_media`, `language_id`, and `lang_detect` are internal and are not
   returned. NAS image/video writes are controlled only by
   `insertion.nas.store` in server `config.json` (or `NAS_STORE_IMAGE` /
   `NAS_STORE_VIDEO`). A payload-level `store` field is rejected.
+  `NAS_STORE_VIDEO=false` does not disable the thumbnail; thumbnails use
+  `NAS_STORE_IMAGE`.
+
+Before a `platform=18` Google API response is returned, the shared Google
+`cleanAdsData/withCdn` step prefixes every relative NAS path in
+`image_video_url`, `thumbnail`, `nas_video_url`/`video_url`, and each
+`othermultimedia[]` item with `config.cdn.baseUrl`. Already absolute HTTP(S)
+URLs are preserved and are never double-prefixed. These additional media-field
+rules are guarded by `platform === 18`; legacy Google ads retain their previous
+response behavior.
 
 The React `MasonryCard` applies these rules only when `platform === 18`:
 

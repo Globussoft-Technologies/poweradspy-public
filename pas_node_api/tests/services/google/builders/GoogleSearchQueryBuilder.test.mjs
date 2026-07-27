@@ -218,6 +218,7 @@ describe("Google builder > SEARCH_SOURCE_FIELDS", () => {
       "image_video_url",
       "new_nas_image_url",
       "video_url_original",
+      "thumbnail",
       "nas_video_url",
       "othermultimedia",
     ]));

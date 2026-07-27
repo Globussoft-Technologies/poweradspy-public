@@ -136,6 +136,59 @@ describe("services/google/helpers/paramParser > withCdn (via cleanAdsData)", () 
   it("image_video_url also CDN-prefixed", () => {
     expect(mod.cleanAdsData([{ id: 1, ad_id: 2, image_video_url: "raw/v.mp4" }])[0].image_video_url).toBe("https://cdn.test/raw/v.mp4");
   });
+  it("prefixes Transparency thumbnail, NAS video, and every other-multimedia path", () => {
+    const [out] = mod.cleanAdsData([{
+      id: 1,
+      ad_id: 2,
+      platform: 18,
+      thumbnail: "/pas-prod/stream/gt/thumbnail/202607/2.jpg",
+      nas_video_url: "/pas-prod/stream/gt/adVideo/202607/2.mp4",
+      video_url: "pas-prod/stream/gt/adVideo/202607/2.mp4",
+      othermultimedia: [
+        "/pas-prod/stream/gt/otherMultiMedia/202607/2_0.jpg",
+        "https://external.example/2_1.mp4",
+        null,
+      ],
+    }]);
+
+    expect(out.thumbnail).toBe("https://cdn.test/gt/thumbnail/202607/2.jpg");
+    expect(out.nas_video_url).toBe("https://cdn.test/gt/adVideo/202607/2.mp4");
+    expect(out.video_url).toBe("https://cdn.test/gt/adVideo/202607/2.mp4");
+    expect(out.othermultimedia).toEqual([
+      "https://cdn.test/gt/otherMultiMedia/202607/2_0.jpg",
+      "https://external.example/2_1.mp4",
+      null,
+    ]);
+  });
+  it("prefixes othermultimedia after JSON-array parsing", () => {
+    const [out] = mod.cleanAdsData([{
+      id: 1,
+      ad_id: 2,
+      platform: 18,
+      othermultimedia: '["/pas-dev/stream/gt/otherMultiMedia/202607/2_0.jpg"]',
+    }]);
+    expect(out.othermultimedia).toEqual([
+      "https://cdn.test/gt/otherMultiMedia/202607/2_0.jpg",
+    ]);
+  });
+  it("does not change the new media fields for legacy Google ads", () => {
+    const legacy = {
+      id: 1,
+      ad_id: 2,
+      platform: 4,
+      thumbnail: "legacy/thumbnail.jpg",
+      nas_video_url: "legacy/video.mp4",
+      video_url: "legacy/source.mp4",
+      othermultimedia: ["legacy/other.jpg"],
+    };
+    const [out] = mod.cleanAdsData([legacy]);
+    expect(out).toMatchObject({
+      thumbnail: "legacy/thumbnail.jpg",
+      nas_video_url: "legacy/video.mp4",
+      video_url: "legacy/source.mp4",
+      othermultimedia: ["legacy/other.jpg"],
+    });
+  });
   it("URL with '||' separator → first reachable URL after cleaning (lines 63-69)", () => {
     expect(mod.cleanAdsData([ad("PowerAdspy/n2/primary.png||PowerAdspy/n2/fallback.png")])[0].post_owner_image)
       .toBe("https://cdn.test/primary.png");

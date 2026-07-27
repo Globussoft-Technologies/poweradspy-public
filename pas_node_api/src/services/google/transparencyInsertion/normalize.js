@@ -55,6 +55,7 @@ function normalizeTransparencyPayload(payload) {
     ad_text: payload.ad_text ?? null,
     image_url_original: payload.image_url_original ?? null,
     video_url_original: payload.video_url_original ?? null,
+    thumbnail: payload.thumbnail ?? null,
     destination_url: payload.destination_url ?? null,
     redirect_url: payload.redirect_url ?? null,
     region_code: payload.region_code ?? null,

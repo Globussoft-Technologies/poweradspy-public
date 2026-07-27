@@ -27,6 +27,7 @@ describe('Google Transparency normalization', () => {
       last_seen: '2025-12-21T00:00:00Z',
       post_date: null,
       destination_url: 'https://www.example.com/path',
+      thumbnail: 'https://cdn.example/video-poster.jpg',
       country_details: [],
     });
     expect(result.post_owner).toBe('Owner');
@@ -36,6 +37,7 @@ describe('Google Transparency normalization', () => {
     expect(result.postDateEs).toBeNull();
     expect(result.adPosition).toBe('FEED');
     expect(result.hasPayloadLastSeen).toBe(true);
+    expect(result.thumbnail).toBe('https://cdn.example/video-poster.jpg');
   });
 
   it('preserves a nullable post owner', () => {

@@ -374,6 +374,7 @@ describe("services/google/controllers/adSearchController > regular searchAds", (
         image_video_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
         new_nas_image_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
         video_url_original: "https://cdn.example/original-video.mp4",
+        thumbnail: "/pas-dev/stream/gt/thumbnail/202607/18.jpg",
         nas_video_url: null,
         othermultimedia: [
           null,
@@ -407,6 +408,7 @@ describe("services/google/controllers/adSearchController > regular searchAds", (
       image_url_original: "https://cdn.example/original-image.jpg",
       image_video_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
       video_url_original: "https://cdn.example/original-video.mp4",
+      thumbnail: "/pas-dev/stream/gt/thumbnail/202607/18.jpg",
       othermultimedia: [
         "/pas-dev/stream/gt/otherMultiMedia/202607/18_1.mp4",
       ],

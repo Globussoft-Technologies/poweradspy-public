@@ -406,7 +406,7 @@ export const mapAdToCard = (raw) => {
           const t = isGoogleTransparency
             ? (!transparencyPrimaryIsVideo
               ? transparencyPrimaryUrl
-              : '')
+              : resolveNasUrl(raw.thumbnail || ''))
             : resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || '')));
           // The backend stores "/DefaultImage.jpg" as the variant image for ads with no
           // creative (e.g. TEXT ads). It's a dead path that 404s and renders as "preview

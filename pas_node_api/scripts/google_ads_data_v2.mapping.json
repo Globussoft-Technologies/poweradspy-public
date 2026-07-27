@@ -102,6 +102,7 @@
         "g_temp_url":      { "type": "keyword", "ignore_above": 2048 },
         "ad_url":          { "type": "keyword", "index": false, "doc_values": false },
         "video_url_original": { "type": "keyword", "index": false, "doc_values": false },
+        "thumbnail":       { "type": "keyword", "index": false, "doc_values": false },
         "othermultimedia":  { "type": "keyword", "index": false, "doc_values": false },
         "country_details": {
           "type": "nested",

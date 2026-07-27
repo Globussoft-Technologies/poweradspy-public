@@ -590,6 +590,7 @@ GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "impressions_operator",
   "image_url_original",
   "video_url_original",
+  "thumbnail",
   "nas_video_url",
   "othermultimedia",
   "language_id",

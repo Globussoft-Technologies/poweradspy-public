@@ -36,6 +36,13 @@ describe('Google Transparency ES mapping', () => {
     expect(fragment.properties).not.toHaveProperty('nas_othermultimedia');
   });
 
+  it('maps only the NAS thumbnail URL as a display-only field', () => {
+    expect(fragment.properties.thumbnail).toMatchObject({
+      type: 'keyword', index: false,
+    });
+    expect(fragment.properties).not.toHaveProperty('thumbnail_url_original');
+  });
+
   it('reads typed ES6 and typeless ES7 mapping responses', () => {
     expect(mappingProperties({
       idx: { mappings: { doc: { properties: { id: { type: 'long' } } } } },

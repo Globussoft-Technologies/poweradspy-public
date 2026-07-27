@@ -2,6 +2,7 @@
 
 function buildTransparencyDoc(data, internalId, nasImageUrl) {
   const impression = data.impressions || {};
+  const thumbnailNasUrl = data.type === 'VIDEO' ? nasImageUrl || null : null;
   const primaryNasUrl = data.type === 'VIDEO'
     ? data.nasVideoUrl || null
     : nasImageUrl || null;
@@ -27,7 +28,8 @@ function buildTransparencyDoc(data, internalId, nasImageUrl) {
     news_feed_description: data.translation?.newsfeed_description ?? null,
     image_url_original: data.image_url_original,
     video_url_original: data.video_url_original,
-    image_url: data.type === 'VIDEO' ? null : nasImageUrl,
+    thumbnail: thumbnailNasUrl,
+    image_url: data.type === 'VIDEO' ? thumbnailNasUrl : nasImageUrl,
     image_video_url: primaryNasUrl,
     new_nas_image_url: data.type === 'VIDEO' ? null : nasImageUrl,
     // SQL keeps the scraper/source URLs. Search consumers receive only the

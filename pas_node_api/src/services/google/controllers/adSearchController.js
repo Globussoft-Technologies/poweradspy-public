@@ -475,6 +475,7 @@ async function searchAds(req, db, logger) {
         normalized.city = null;
         normalized.image_url_original = src.image_url_original || null;
         normalized.video_url_original = src.video_url_original || null;
+        normalized.thumbnail = src.thumbnail || null;
         const primaryNasUrl = src.image_video_url
           || src.new_nas_image_url
           || src.nas_video_url

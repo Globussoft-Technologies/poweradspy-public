@@ -124,6 +124,16 @@ function cleanAdsData(ads = []) {
     if (cleaned.post_owner_image) cleaned.post_owner_image = withCdn(cleaned.post_owner_image);
     if (cleaned.image_video_url) cleaned.image_video_url = withCdn(cleaned.image_video_url);
     if (cleaned.image_url) cleaned.image_url = withCdn(cleaned.image_url);
+    if (Number(cleaned.platform) === 18) {
+      if (cleaned.thumbnail) cleaned.thumbnail = withCdn(cleaned.thumbnail);
+      if (cleaned.nas_video_url) cleaned.nas_video_url = withCdn(cleaned.nas_video_url);
+      if (cleaned.video_url) cleaned.video_url = withCdn(cleaned.video_url);
+      if (Array.isArray(cleaned.othermultimedia)) {
+        cleaned.othermultimedia = cleaned.othermultimedia.map((item) =>
+          typeof item === 'string' ? withCdn(item) : item
+        );
+      }
+    }
     return cleaned;
   });
 }

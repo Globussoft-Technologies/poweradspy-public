@@ -29,6 +29,9 @@ const repo = {
 };
 const media = {
   uploadImage: vi.fn(async () => ({ nas_path: '/pas-prod/stream/gt/image/42.webp' })),
+  uploadThumbnail: vi.fn(async () => ({
+    image_video_url: '/pas-prod/stream/gt/thumbnail/202607/42.webp',
+  })),
   uploadTransparencyTextImage: vi.fn(async (_url, id) => ({
     nas_path: `/pas-prod/stream/gt/adT/202607/${id}.webp`,
   })),
@@ -63,7 +66,8 @@ function payload(overrides = {}) {
     advertiser_id: 'AR05119626735096168449',
     ad_url: 'https://adstransparency.google.com/advertiser/AR05119626735096168449/creative/CR14607596898010267649',
     post_owner: 'VIVOLTA', post_owner_image: null, ad_title: null, ad_text: null,
-    image_url_original: null, video_url_original: null, othermultimedia: [],
+    image_url_original: null, video_url_original: null, thumbnail: null,
+    othermultimedia: [],
     destination_url: null, redirect_url: null, country: ['Germany'],
     country_details: [], region_code: 'IN', type: 'TEXT', first_seen: null,
     last_seen: '2025-12-21T00:00:00Z', impressions: null, post_date: null,
@@ -88,10 +92,14 @@ beforeEach(() => {
   repo.insertAd.mockResolvedValue(42);
   repo.upsertVariant.mockResolvedValue(15);
   media.uploadImage.mockClear();
+  media.uploadThumbnail.mockClear();
   media.uploadTransparencyTextImage.mockClear();
   media.uploadMultimedia.mockClear();
   media.uploadPostOwner.mockClear();
   media.uploadImage.mockResolvedValue({ nas_path: '/pas-prod/stream/gt/image/42.webp' });
+  media.uploadThumbnail.mockResolvedValue({
+    image_video_url: '/pas-prod/stream/gt/thumbnail/202607/42.webp',
+  });
   media.uploadPostOwner.mockResolvedValue({ post_owner_image: '/pas-prod/stream/gt/postowner/11.jpg' });
   enqueueVideoDownload.mockClear();
   api.translate.mockReset();
@@ -215,6 +223,7 @@ describe('Google Transparency pipeline', () => {
     const out = await processTransparencyAd(payload({
       type: 'VIDEO',
       video_url_original: 'https://cdn.example/video.mp4',
+      thumbnail: 'https://cdn.example/video-poster.jpg',
     }), { db: { sql: {}, elastic }, log });
     expect(out.code).toBe(200);
     expect(enqueueVideoDownload).toHaveBeenCalledWith(expect.objectContaining({
@@ -387,10 +396,59 @@ describe('Google Transparency pipeline', () => {
     await processTransparencyAd(payload({
       type: 'VIDEO',
       video_url_original: 'https://cdn.example/video.mp4',
+      thumbnail: 'https://cdn.example/video-poster.jpg',
     }), { db: { sql: {}, elastic }, log });
     expect(enqueueVideoDownload).not.toHaveBeenCalled();
     expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({ image_video_url: '/pas-prod/stream/gt/video/99.mp4' }),
+    }));
+  });
+
+  it('reuses a successfully stored VIDEO thumbnail without uploading it again', async () => {
+    repo.getAd.mockResolvedValue({
+      id: 99,
+      nas_image_url: '/pas-prod/stream/gt/thumbnail/202607/99.webp',
+    });
+    const elastic = {
+      indexName: 'google_ads_data_v2',
+      search: vi.fn(async () => ({ hits: { hits: [{ _source: {} }] } })),
+      index: vi.fn(async () => ({})),
+    };
+
+    await processTransparencyAd(payload({
+      type: 'VIDEO',
+      video_url_original: 'https://cdn.example/video.mp4',
+      thumbnail: 'https://cdn.example/video-poster.jpg',
+    }), { db: { sql: {}, elastic }, log });
+
+    expect(media.uploadThumbnail).not.toHaveBeenCalled();
+    expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        thumbnail: '/pas-prod/stream/gt/thumbnail/202607/99.webp',
+      }),
+    }));
+  });
+
+  it('does not persist a DefaultImage thumbnail and returns a media warning', async () => {
+    repo.getAd.mockResolvedValue(null);
+    media.uploadThumbnail.mockResolvedValueOnce({
+      image_video_url: '/DefaultImage.jpg',
+    });
+    const elastic = {
+      indexName: 'google_ads_data_v2',
+      index: vi.fn(async () => ({})),
+    };
+
+    const out = await processTransparencyAd(payload({
+      type: 'VIDEO',
+      video_url_original: 'https://cdn.example/video.mp4',
+      thumbnail: 'https://cdn.example/video-poster.jpg',
+    }), { db: { sql: {}, elastic }, log });
+
+    expect(repo.setVariantNasImage).not.toHaveBeenCalled();
+    expect(out.warning).toContain('thumbnail could not be stored');
+    expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({ thumbnail: null }),
     }));
   });
 
@@ -402,20 +460,22 @@ describe('Google Transparency pipeline', () => {
 
     await processTransparencyAd(payload({
       type: 'VIDEO',
-      image_url_original: 'https://cdn.example/poster.jpg',
       video_url_original: 'https://cdn.example/original.mp4',
+      thumbnail: 'https://cdn.example/poster.jpg',
     }), { db: { sql: {}, elastic }, log });
 
-    expect(media.uploadImage).toHaveBeenCalledWith(
+    expect(media.uploadThumbnail).toHaveBeenCalledWith(
       'https://cdn.example/poster.jpg',
       42,
       'google'
     );
+    expect(media.uploadImage).not.toHaveBeenCalled();
     expect(enqueueVideoDownload).not.toHaveBeenCalled();
     expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({
-        image_url_original: 'https://cdn.example/poster.jpg',
+        image_url_original: null,
         video_url_original: 'https://cdn.example/original.mp4',
+        thumbnail: '/pas-prod/stream/gt/thumbnail/202607/42.webp',
         image_video_url: null,
       }),
     }));

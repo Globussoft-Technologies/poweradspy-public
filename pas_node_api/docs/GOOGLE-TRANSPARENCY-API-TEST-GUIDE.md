@@ -424,6 +424,7 @@ are normalized before returning data to the frontend:
   "image_video_url": "/pas-dev/stream/gt/adImage/202607/12345.jpg",
   "image_url_original": "https://source.example/creative.jpg",
   "video_url_original": null,
+  "thumbnail": null,
   "othermultimedia": [
     "/pas-dev/stream/gt/otherMultiMedia/202607/12345_0.jpg"
   ]
@@ -442,6 +443,24 @@ the background queue completes. All platform-18 creatives, including
 `type=TEXT`, select `<img>` or `<video>` from that URL's extension. A TEXT
 creative falls back to the text card only when `image_video_url` is absent.
 
+Every insertion payload must include `"thumbnail": null` for TEXT/IMAGE.
+For `type=VIDEO`, `thumbnail` must be a non-empty absolute HTTP(S) image URL:
+
+```json
+{
+  "type": "VIDEO",
+  "video_url_original": "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+  "thumbnail": "https://interactive-examples.mdn.mozilla.net/media/cc0-images/painted-hand-298-332.jpg"
+}
+```
+
+The incoming thumbnail source URL is used only for the upload and is not
+persisted. The real NAS path is stored in
+`google_text_ad_variants.image_url`, ES/search `thumbnail`, and under
+`gt/thumbnail`. With `store.image=true, store.video=false`, the thumbnail
+still uploads and the video is not downloaded or queued. Repeat updates reuse
+a valid stored thumbnail.
+
 ### NAS verification
 
 Use the internal SQL ID returned by insertion. With a July 2026 upload and ID
@@ -451,6 +470,7 @@ Use the internal SQL ID returned by insertion. With a July 2026 upload and ID
 TEXT primary image: /<bucket>/stream/gt/adT/202607/12345.jpg
 IMAGE primary:      /<bucket>/stream/gt/adImage/202607/12345.jpg
 VIDEO primary:      /<bucket>/stream/gt/adVideo/202607/12345.mp4
+VIDEO thumbnail:    /<bucket>/stream/gt/thumbnail/202607/12345.jpg
 Other image:        /<bucket>/stream/gt/otherMultiMedia/202607/12345_0.jpg
 Other video:        /<bucket>/stream/gt/otherMultiMedia/202607/12345_1.mp4
 Post-owner image:   /<bucket>/stream/gt/postowner/202607/<owner-id>.jpg

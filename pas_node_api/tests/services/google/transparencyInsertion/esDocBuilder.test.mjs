@@ -8,7 +8,7 @@ describe('Google Transparency ES document', () => {
     const doc = buildTransparencyDoc({
       ad_id: 'CR1', advertiser_id: 'AR1', ad_url: 'https://example.test',
       post_owner: 'Owner', post_owner_image: null, ad_title: 'Title', ad_text: 'Text',
-      image_url_original: null, video_url_original: null,
+      image_url_original: null, video_url_original: null, thumbnail: null,
       othermultimediaNasPaths: [
         '/pas-dev/stream/gt/otherMultiMedia/202607/42_0.jpg',
       ],
@@ -47,5 +47,25 @@ describe('Google Transparency ES document', () => {
     expect(doc).not.toHaveProperty('system_id');
     expect(doc).not.toHaveProperty('contract_version');
     expect(doc).not.toHaveProperty('network');
+  });
+
+  it('stores a VIDEO thumbnail separately from the video URL', () => {
+    const doc = buildTransparencyDoc({
+      ad_id: 'CR2',
+      advertiser_id: 'AR2',
+      type: 'VIDEO',
+      thumbnail: 'https://cdn.example/poster.jpg',
+      video_url_original: 'https://cdn.example/video.mp4',
+      impressions: null,
+      countryDetailsSql: [],
+    }, 43, '/pas-dev/stream/gt/thumbnail/202607/43.jpg');
+
+    expect(doc).toMatchObject({
+      thumbnail: '/pas-dev/stream/gt/thumbnail/202607/43.jpg',
+      image_url: '/pas-dev/stream/gt/thumbnail/202607/43.jpg',
+      image_video_url: null,
+      video_url_original: 'https://cdn.example/video.mp4',
+    });
+    expect(doc).not.toHaveProperty('thumbnail_url_original');
   });
 });

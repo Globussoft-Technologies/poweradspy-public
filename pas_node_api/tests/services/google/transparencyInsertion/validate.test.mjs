@@ -16,6 +16,7 @@ const valid = {
   ad_text: null,
   image_url_original: null,
   video_url_original: null,
+  thumbnail: null,
   othermultimedia: [],
   destination_url: null,
   redirect_url: null,
@@ -93,6 +94,26 @@ describe('Google Transparency contract validation', () => {
       times_shown: null,
     }];
     expect(validateTransparencyPayload({ ...valid, country_details })).toEqual({ code: 200 });
+  });
+
+  it('requires an absolute thumbnail URL for VIDEO ads', () => {
+    const missing = validateTransparencyPayload({
+      ...valid,
+      type: 'VIDEO',
+      video_url_original: 'https://cdn.example/video.mp4',
+      thumbnail: null,
+    });
+    expect(missing.errors).toContainEqual(expect.objectContaining({
+      field: 'thumbnail',
+      message: expect.stringContaining('required'),
+    }));
+
+    expect(validateTransparencyPayload({
+      ...valid,
+      type: 'VIDEO',
+      video_url_original: 'https://cdn.example/video.mp4',
+      thumbnail: 'https://cdn.example/video-poster.jpg',
+    })).toEqual({ code: 200 });
   });
 
   it('rejects the superseded country first_shown/last_shown names', () => {

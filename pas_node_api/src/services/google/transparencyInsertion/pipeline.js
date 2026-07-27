@@ -16,6 +16,11 @@ function validStoredPath(value) {
   return typeof value === 'string' && value.trim() !== '' && !value.includes('DefaultImage');
 }
 
+function validStoredThumbnailPath(value) {
+  return validStoredPath(value) &&
+    /\/gt\/thumbnail\//i.test(String(value).replace(/\\/g, '/'));
+}
+
 function mediaCategoryFromUrl(value) {
   try {
     const pathname = new URL(value).pathname;
@@ -373,6 +378,7 @@ async function processTransparencyAd(payload, ctx) {
           found: Object.keys(existingEs).length > 0,
           preserved_fields: {
             nas_video_url: existingEs.nas_video_url || null,
+            thumbnail: existingEs.thumbnail || null,
             othermultimedia: existingEs.othermultimedia || [],
             lang_detect: existingEs.lang_detect || null,
             ad_title: existingEs.ad_title ?? null,
@@ -389,7 +395,15 @@ async function processTransparencyAd(payload, ctx) {
       }
     }
 
-    const shouldUploadImage = data.nasPolicy.image && data.image_url_original &&
+    const storedThumbnailPath = data.type === 'VIDEO' && validStoredThumbnailPath(saved.nasImageUrl)
+      ? saved.nasImageUrl
+      : data.type === 'VIDEO' && validStoredThumbnailPath(existingEs.thumbnail)
+        ? existingEs.thumbnail
+        : null;
+    const shouldUploadThumbnail = data.type === 'VIDEO' && data.nasPolicy.image &&
+      data.thumbnail && !validStoredPath(storedThumbnailPath);
+    const shouldUploadImage = data.type !== 'VIDEO' && data.nasPolicy.image &&
+      data.image_url_original &&
       !validStoredPath(saved.nasImageUrl);
     const shouldUploadOwner = data.nasPolicy.image &&
       data.post_owner_image && saved.postOwnerId &&
@@ -419,6 +433,13 @@ async function processTransparencyAd(payload, ctx) {
         upload_required: Boolean(shouldUploadImage),
         target_folder: data.type === 'TEXT' ? 'gt/adT' : 'gt/adImage',
       },
+      video_thumbnail: {
+        source_present: Boolean(data.thumbnail),
+        existing_path: storedThumbnailPath,
+        upload_required: Boolean(shouldUploadThumbnail),
+        target_folder: 'gt/thumbnail',
+        controlled_by: 'insertion.nas.store.image',
+      },
       post_owner_image: {
         source_url: data.post_owner_image,
         existing_path: saved.storedPostOwnerImage,
@@ -434,21 +455,37 @@ async function processTransparencyAd(payload, ctx) {
       },
       nas_config_policy: data.nasPolicy,
     });
-    const [imageUpload, ownerUpload] = await Promise.all([
+    const [imageUpload, thumbnailUpload, ownerUpload] = await Promise.all([
       shouldUploadImage
         ? (data.type === 'TEXT'
           ? media.uploadTransparencyTextImage(data.image_url_original, saved.googleTextAdId)
           : media.uploadImage(data.image_url_original, saved.googleTextAdId, 'google')
         ).catch(() => null)
         : null,
+      shouldUploadThumbnail
+        ? media.uploadThumbnail(data.thumbnail, saved.googleTextAdId, 'google').catch(() => null)
+        : null,
       shouldUploadOwner
         ? media.uploadPostOwner(data.post_owner_image, saved.postOwnerId, 'google').catch(() => null)
         : null,
     ]);
-    let nasImageUrl = validStoredPath(saved.nasImageUrl) ? saved.nasImageUrl : imageUpload?.nas_path || null;
+    let nasImageUrl = data.type === 'VIDEO'
+      ? storedThumbnailPath ||
+        (validStoredPath(thumbnailUpload?.image_video_url)
+          ? thumbnailUpload.image_video_url
+          : null)
+      : validStoredPath(saved.nasImageUrl) ? saved.nasImageUrl : imageUpload?.nas_path || null;
     let primaryImageSqlUpdated = false;
-    if (imageUpload?.nas_path && validStoredPath(imageUpload.nas_path)) {
-      nasImageUrl = imageUpload.nas_path;
+    const freshlyStoredImagePath = data.type === 'VIDEO'
+      ? thumbnailUpload?.image_video_url
+      : imageUpload?.nas_path;
+    const sqlNeedsExistingThumbnailRepair = data.type === 'VIDEO' &&
+      validStoredThumbnailPath(existingEs.thumbnail) &&
+      !validStoredThumbnailPath(saved.nasImageUrl);
+    if (validStoredPath(freshlyStoredImagePath) || sqlNeedsExistingThumbnailRepair) {
+      nasImageUrl = validStoredPath(freshlyStoredImagePath)
+        ? freshlyStoredImagePath
+        : existingEs.thumbnail;
       try {
         await repo.setVariantNasImage(ctx.db.sql, saved.googleTextAdId, nasImageUrl);
         primaryImageSqlUpdated = true;
@@ -462,8 +499,11 @@ async function processTransparencyAd(payload, ctx) {
       }
     }
     trace('NAS_PRIMARY_IMAGE_RESULT', {
-      attempted: Boolean(shouldUploadImage),
-      reused_existing: validStoredPath(saved.nasImageUrl),
+      attempted: Boolean(shouldUploadImage || shouldUploadThumbnail),
+      media_role: data.type === 'VIDEO' ? 'thumbnail' : 'primary_image',
+      reused_existing: validStoredPath(
+        data.type === 'VIDEO' ? storedThumbnailPath : saved.nasImageUrl
+      ),
       nas_path: nasImageUrl,
       sql_table: 'google_text_ad_variants',
       sql_image_url_updated: primaryImageSqlUpdated,
@@ -593,6 +633,7 @@ async function processTransparencyAd(payload, ctx) {
           country: document.country,
           country_details: document.country_details,
           new_nas_image_url: document.new_nas_image_url,
+          thumbnail: document.thumbnail,
           othermultimedia: document.othermultimedia,
           image_video_url: document.image_video_url,
         },
@@ -647,9 +688,11 @@ async function processTransparencyAd(payload, ctx) {
       });
     }
 
-    const extra = shouldUploadImage && !nasImageUrl
-      ? { warning: 'Ad data was saved, but the image could not be stored in NAS.' }
-      : {};
+    const extra = shouldUploadThumbnail && !nasImageUrl
+      ? { warning: 'Ad data was saved, but the video thumbnail could not be stored in NAS.' }
+      : shouldUploadImage && !nasImageUrl
+        ? { warning: 'Ad data was saved, but the image could not be stored in NAS.' }
+        : {};
     const result = saved.inserted
       ? ok(saved.googleTextAdId, 'Google Transparency ad inserted successfully.', extra)
       : updated(saved.googleTextAdId, extra.warning);
