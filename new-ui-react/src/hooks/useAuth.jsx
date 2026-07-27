@@ -333,10 +333,14 @@ export function AuthProvider({ children }) {
     [entitlements],
   );
   const canUseCapability = useCallback(
-    (capabilityId) => getCapabilityDecision(capabilityId)?.allowed === true,
-    [getCapabilityDecision],
+    (capabilityId) => (
+      entitlements?.enforcementMode === 'shadow' ||
+      getCapabilityDecision(capabilityId)?.allowed === true
+    ),
+    [entitlements?.enforcementMode, getCapabilityDecision],
   );
   const canUseCapabilityOnNetwork = useCallback((capabilityId, network) => {
+    if (entitlements?.enforcementMode === 'shadow') return true;
     const decision = getCapabilityDecision(capabilityId);
     if (!decision?.allowed) return false;
     if (!network) return true;
@@ -346,7 +350,7 @@ export function AuthProvider({ children }) {
     // saved policy still used `not_applicable`. New decisions include
     // networkMode, where an empty effective list is a real denial.
     return !decision.networkMode;
-  }, [getCapabilityDecision]);
+  }, [entitlements?.enforcementMode, getCapabilityDecision]);
   const getCapabilityLimit = useCallback(
     (capabilityId, limitName) => getCapabilityDecision(capabilityId)?.limits?.[limitName] ?? null,
     [getCapabilityDecision],

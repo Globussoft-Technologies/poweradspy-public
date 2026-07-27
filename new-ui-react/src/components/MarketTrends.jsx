@@ -342,8 +342,10 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     // means an older policy/API and must keep the default-allow compatibility
     // contract instead of locking the whole page.
     if (!getCapabilityDecision(capabilityId)) return true;
-    return canUseCapability(capabilityId) &&
-      selected.every((network) => canUseCapabilityOnNetwork(capabilityId, network));
+    return canUseCapability(capabilityId) && (
+      selected.length === 0 ||
+      selected.some((network) => canUseCapabilityOnNetwork(capabilityId, network))
+    );
   };
   const overviewAllowed = sectionAllowed('intelligence.market_trends.overview');
   const regionsAllowed = sectionAllowed('intelligence.market_trends.regions');
