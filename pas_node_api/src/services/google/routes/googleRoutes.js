@@ -39,7 +39,11 @@ const config = require('../../../config');
 const validator = require('../../../middleware/validator');
 const { getDomainRegistration } = require('../controllers/domainRegistrationController');
 const createGoogleAdversuiteRoutes = require('./adversuite_Api_routes');
-const { requireCapability } = require('../../planControl/registries/routeClassification');
+const {
+  requireCapability,
+  requireConditionalCapability,
+  getCapabilityDecision,
+} = require('../../planControl/registries/routeClassification');
 
 // Tier-1 competitive intelligence + Keywords Explorer are gated behind the
 // Intel entitlement (server-side mirror of the FE's canAccessIntel()) on top
@@ -47,6 +51,116 @@ const { requireCapability } = require('../../planControl/registries/routeClassif
 const intelGate = [authMiddleware, planAccessMiddleware, requireIntelAccess];
 const competitiveCapability = requireCapability('intelligence.competitive', { network: () => 'google' });
 const keywordExplorerCapability = requireCapability('intelligence.keyword_explorer', { network: () => 'google' });
+const googleNetwork = () => 'google';
+const keywordBrowseCapability = requireCapability('intelligence.keyword_explorer.browse', { network: googleNetwork });
+const keywordSearchCapability = requireCapability('intelligence.keyword_explorer.search', { network: googleNetwork });
+const keywordAnalyticsCapability = requireCapability('intelligence.keyword_explorer.analytics', { network: googleNetwork });
+const KEYWORD_FIELD_CAPABILITIES = {
+  metrics: 'intelligence.keyword_explorer.metrics',
+  keyword: 'intelligence.keyword_explorer.keyword',
+  competition: 'intelligence.keyword_explorer.competition',
+  ad_volume: 'intelligence.keyword_explorer.ad_volume',
+  growth: 'intelligence.keyword_explorer.growth',
+  parent_topic: 'intelligence.keyword_explorer.parent_topic',
+  first_seen: 'intelligence.keyword_explorer.first_seen',
+};
+const KEYWORD_ANALYTICS_CAPABILITIES = {
+  activity: 'intelligence.keyword_explorer.analytics.activity',
+  top_advertisers: 'intelligence.keyword_explorer.analytics.top_advertisers',
+  top_domains: 'intelligence.keyword_explorer.analytics.top_domains',
+  serp_mix: 'intelligence.keyword_explorer.analytics.serp_mix',
+  live_creatives: 'intelligence.keyword_explorer.analytics.live_creatives',
+};
+const KEYWORD_FILTER_FIELDS = [
+  'volume_min', 'volume_max', 'competition_min', 'competition_max',
+  'growth_min', 'growth_max', 'category', 'country', 'include', 'exclude',
+  'first_seen_after',
+];
+const keywordFiltersCapability = requireConditionalCapability({
+  capabilityId: 'intelligence.keyword_explorer.filters',
+  network: googleNetwork,
+  when: (req) => KEYWORD_FILTER_FIELDS.some((field) => {
+    const value = req.body?.[field] ?? req.query?.[field];
+    return value !== undefined && value !== null && value !== '';
+  }),
+});
+
+async function attachCapabilityAccess(req, definitions) {
+  const entries = await Promise.all(Object.entries(definitions).map(async ([key, capabilityId]) => {
+    const decision = await getCapabilityDecision(req, capabilityId, { network: googleNetwork });
+    return [key, decision ? decision.allowed === true : true];
+  }));
+  return Object.fromEntries(entries);
+}
+
+async function attachKeywordFieldAccess(req, _res, next) {
+  try {
+    req.keywordFieldAccess = await attachCapabilityAccess(req, KEYWORD_FIELD_CAPABILITIES);
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function attachKeywordAnalyticsAccess(req, _res, next) {
+  try {
+    req.keywordAnalyticsAccess = await attachCapabilityAccess(req, KEYWORD_ANALYTICS_CAPABILITIES);
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function redactKeywordRows(rows, access) {
+  return (rows || []).map((row) => {
+    const safe = { ...row };
+    if (!access.keyword) delete safe.keyword;
+    if (!access.competition) delete safe.competition_score;
+    if (!access.ad_volume) {
+      delete safe.ads_total;
+      delete safe.advertisers_total;
+      delete safe.domains_total;
+    }
+    if (!access.growth) delete safe.growth_pct;
+    if (!access.parent_topic) {
+      delete safe.category;
+      delete safe.sub_category;
+    }
+    if (!access.first_seen) {
+      delete safe.first_seen;
+      delete safe.last_seen;
+    }
+    return safe;
+  });
+}
+
+function redactKeywordExplorerResult(result, access = {}) {
+  if (!result?.data) return result;
+  if (Array.isArray(result.data.keywords)) result.data.keywords = redactKeywordRows(result.data.keywords, access);
+  if (Array.isArray(result.data.matched)) result.data.matched = redactKeywordRows(result.data.matched, access);
+  if (!access.metrics) {
+    delete result.data.stats;
+  } else if (result.data.stats) {
+    if (!access.competition) delete result.data.stats.avg_competition;
+    if (!access.ad_volume) delete result.data.stats.total_ad_volume;
+    if (!access.growth) {
+      delete result.data.stats.trending_up;
+      delete result.data.stats.trending_down;
+    }
+  }
+  return result;
+}
+
+function redactKeywordInsightResult(result, access = {}) {
+  if (!result?.data) return result;
+  if (!access.activity) delete result.data.trend;
+  if (!access.top_advertisers) delete result.data.top_advertisers;
+  if (!access.top_domains) delete result.data.top_domains;
+  if (!access.serp_mix) delete result.data.position_mix;
+  if (!access.live_creatives) delete result.data.creatives;
+  result.data.access = access;
+  return result;
+}
 // Keyword-import upload guard: accept ONLY .txt/.csv, cap the size, and turn any
 // multer error into a friendly JSON message (never a raw stack/error to the user).
 // An unwanted file type is skipped and flagged (req.invalidFileType) so the
@@ -282,9 +396,13 @@ function createGoogleRoutes(service) {
   // POST /api/v1/google/keywords/insight — Keyword Explorer competitive board
   router.post(
     '/keywords/insight',
-    ...intelGate,
+    keywordAnalyticsCapability,
+    attachKeywordAnalyticsAccess,
     asyncHandler(async (req, res) => {
-      const result = await getKeywordInsight(req, service.db, service.log);
+      const result = redactKeywordInsightResult(
+        await getKeywordInsight(req, service.db, service.log),
+        req.keywordAnalyticsAccess
+      );
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
@@ -309,8 +427,14 @@ function createGoogleRoutes(service) {
   // POST /api/v1/google/keywords/explorer — paginated/filterable/sortable keyword table
   router.post(
     '/keywords/explorer',
+    keywordBrowseCapability,
+    keywordFiltersCapability,
+    attachKeywordFieldAccess,
     asyncHandler(async (req, res) => {
-      const result = await getKeywordsExplorer(req, service.db, service.log);
+      const result = redactKeywordExplorerResult(
+        await getKeywordsExplorer(req, service.db, service.log),
+        req.keywordFieldAccess
+      );
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
@@ -318,6 +442,7 @@ function createGoogleRoutes(service) {
   // POST /api/v1/google/keywords/ideas — related/matching terms for seed keyword(s)
   router.post(
     '/keywords/ideas',
+    keywordSearchCapability,
     asyncHandler(async (req, res) => {
       const result = await getKeywordIdeas(req, service.db, service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);
@@ -386,9 +511,14 @@ function createGoogleRoutes(service) {
   // POST /api/v1/google/keywords/import — CSV/TXT upload of seed keywords
   router.post(
     '/keywords/import',
+    keywordSearchCapability,
+    attachKeywordFieldAccess,
     importUploadMw,
     asyncHandler(async (req, res) => {
-      const result = await importKeywordsFile(req, service.db, service.log);
+      const result = redactKeywordExplorerResult(
+        await importKeywordsFile(req, service.db, service.log),
+        req.keywordFieldAccess
+      );
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );

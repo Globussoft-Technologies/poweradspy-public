@@ -5,7 +5,7 @@ import {
 import { TrendingUp, Download, Globe2, Search, X, Plus, LayoutGrid, Calendar, ChevronDown, Info, MoreVertical, ChevronLeft, ChevronRight, Sparkles, Lock } from 'lucide-react';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
-import { getAuthToken } from '../hooks/useAuth';
+import { getAuthToken, useAuth } from '../hooks/useAuth';
 import fbIcon from '../assets/fb.png';
 import igIcon from '../assets/ig.png';
 import gIcon from '../assets/g.png';
@@ -18,6 +18,7 @@ import pinIcon from '../assets/pinterest.png';
 import gdnIcon from '../assets/gdn.png';
 import tiktokIcon from '../assets/tiktoklogo.jpg';
 import { SkeletonChartLine, SkeletonBarChart, SkeletonTableRows, FadeIn, ErrorRetry } from './shared/Skeleton';
+import PlanLockedSection from './shared/PlanLockedSection';
 
 /**
  * Market Trends — Google-Trends-style Explore/Compare for ad data (single file).
@@ -321,6 +322,7 @@ function DateRangePicker({ days, from, to, onPreset, onRange, onClear }) {
 }
 
 const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
+  const { canUseCapability, canUseCapabilityOnNetwork } = useAuth();
   // Networks this account's PLAN actually includes (admin-configured per plan, same
   // req.planAccess.allowedPlatforms every other gated feature reads) — Market Trends
   // previously ignored this entirely and always offered all 11 networks regardless
@@ -335,6 +337,16 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
   const [from, setFrom] = useState(''); // custom range (YYYY-MM-DD)
   const [to, setTo] = useState('');
   const [selected, setSelected] = useState(AVAILABLE_NETWORKS); // network filter (chips)
+  const sectionAllowed = (capabilityId) => (
+    canUseCapability(capabilityId) &&
+    selected.every((network) => canUseCapabilityOnNetwork(capabilityId, network))
+  );
+  const overviewAllowed = sectionAllowed('intelligence.market_trends.overview');
+  const regionsAllowed = sectionAllowed('intelligence.market_trends.regions');
+  const categoriesAllowed = sectionAllowed('intelligence.market_trends.categories');
+  const topMoversAllowed = sectionAllowed('intelligence.market_trends.top_movers');
+  const keywordsAllowed = sectionAllowed('intelligence.market_trends.keywords');
+  const compareAllowed = sectionAllowed('intelligence.market_trends.compare');
   // Re-sync once the plan's real allowedPlatforms arrives (it's fetched async in
   // App.jsx, so it's usually undefined on first render here).
   useEffect(() => { setSelected(AVAILABLE_NETWORKS); }, [AVAILABLE_NETWORKS]);
@@ -422,6 +434,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
 
   // Interest overview — no advertiser scope (the chart shows every term as its own line).
   useEffect(() => {
+    if (!overviewAllowed) { setOverview(null); setOverviewLoading(false); return; }
     let alive = true;
     setOverviewLoading(true);
     setOverviewError(false);
@@ -430,10 +443,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
       .then((ov) => { if (alive) { setOverview(ov?.data || null); setOverviewLoading(false); } })
       .catch(() => { if (alive) { setOverviewError(true); setOverviewLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, country, overviewRetry]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, country, overviewRetry, overviewAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ads by country (own scope).
   useEffect(() => {
+    if (!regionsAllowed) { setRegions(null); setRegionsLoading(false); return; }
     let alive = true;
     setRegionsLoading(true);
     setRegionsError(false);
@@ -449,10 +463,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
       })
       .catch(() => { if (alive) { setRegionsError(true); setRegionsLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, regionsScope, terms, regionsRetry]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, regionsScope, terms, regionsRetry, regionsAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ads per category (own scope).
   useEffect(() => {
+    if (!categoriesAllowed) { setCategories([]); setCategoriesLoading(false); return; }
     let alive = true;
     setCategoriesLoading(true);
     setCategoriesError(false);
@@ -461,10 +476,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
       .then((cat) => { if (!alive) return; setCategories(cat?.data?.items || []); setCatUnsupported(!!cat?.meta?.unsupported); setMetaNet(cat?.data?.network || 'All networks'); setCategoriesLoading(false); })
       .catch(() => { if (alive) { setCategoriesError(true); setCategoriesLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, catScope, terms, categoriesRetry]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, catScope, terms, categoriesRetry, categoriesAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Rising categories (own scope — separate fetch so it can differ from Ads per category).
   useEffect(() => {
+    if (!categoriesAllowed) { setRisingCats([]); setRisingLoading(false); return; }
     let alive = true;
     setRisingLoading(true);
     setRisingError(false);
@@ -473,10 +489,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
       .then((cat) => { if (!alive) return; setRisingCats(cat?.data?.items || []); setRisingUnsupported(!!cat?.meta?.unsupported); setRisingLoading(false); })
       .catch(() => { if (alive) { setRisingError(true); setRisingLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, risingScope, terms, risingRetry]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, risingScope, terms, risingRetry, categoriesAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Top movers (own scope).
   useEffect(() => {
+    if (!topMoversAllowed) { setTop([]); setTopLoading(false); return; }
     let alive = true;
     setTopLoading(true);
     setTopError(false);
@@ -485,10 +502,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
       .then((tp) => { if (!alive) return; setTop(tp?.data?.items || []); setTopUnsupported(!!tp?.meta?.unsupported); setTopLoading(false); })
       .catch(() => { if (alive) { setTopError(true); setTopLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, topType, topScope, terms, topRetry]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, topType, topScope, terms, topRetry, topMoversAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Top keywords (own scope).
   useEffect(() => {
+    if (!keywordsAllowed) { setKeywords([]); setKwLoading(false); return; }
     let alive = true;
     setKwLoading(true);
     setKwError(false);
@@ -497,17 +515,18 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
       .then((kw) => { if (!alive) return; setKeywords(kw?.data?.items || []); setKwUnsupported(!!kw?.meta?.unsupported); setKwLoading(false); })
       .catch(() => { if (alive) { setKwError(true); setKwLoading(false); } });
     return () => { alive = false; };
-  }, [days, from, to, netParam, country, kwScope, terms, kwRetry]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [days, from, to, netParam, country, kwScope, terms, kwRetry, keywordsAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drop any panel scope that's no longer among the compared terms.
   useEffect(() => {
+    if (!compareAllowed) { setTermData({}); setTermLoading(false); setTermError(false); return; }
     const fix = (s) => (s && !terms.includes(s) ? '' : s);
     setRegionsScope(fix); setCatScope(fix); setRisingScope(fix); setTopScope(fix); setKwScope(fix);
   }, [terms]);
 
   // Fetch each compared term's per-network trend.
   useEffect(() => {
-    if (!terms.length) { setTermData({}); setTermLoading(false); setTermError(false); return; }
+    if (!compareAllowed || !terms.length) { setTermData({}); setTermLoading(false); setTermError(false); return; }
     const dp = (days === 'custom' && from && to) ? { from, to } : { days };
     let alive = true;
     setTermLoading(true);
@@ -527,7 +546,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
         setTermLoading(false);
       });
     return () => { alive = false; };
-  }, [terms, days, from, to, netParam, country, termRetry]);
+  }, [terms, days, from, to, netParam, country, termRetry, compareAllowed]);
 
   const termMode = terms.length > 0;
   const allNets = overview?.networks || [];
@@ -727,6 +746,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
         </div>
 
         {/* Compared search terms (advertisers) */}
+        <PlanLockedSection allowed={compareAllowed} title="Advertiser comparison" onUpgrade={onNetworkRestricted} compact>
         <div className="flex items-center gap-2 flex-wrap">
           {terms.map((t, i) => (
             <span key={t} className="flex items-center gap-1.5 text-[11px] rounded-full pl-2.5 pr-1.5 py-1 text-white" style={{ backgroundColor: TERM_COLORS[i % TERM_COLORS.length] }}>
@@ -745,6 +765,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
           )}
           {termMode && <button onClick={() => setTerms([])} className="text-[11px] text-white/60 underline">clear compare</button>}
         </div>
+        </PlanLockedSection>
 
         {/* Network selector — "All" or a single network (icons from assets) */}
         <div className="flex flex-wrap items-center gap-2">
@@ -775,6 +796,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
         {(
           <div className="flex flex-col gap-5">
             {/* Interest over time */}
+            <PlanLockedSection allowed={overviewAllowed} title="Overview and activity" onUpgrade={onNetworkRestricted}>
             <Panel
               loading={overviewShimmer}
               error={overviewError || termError}
@@ -819,9 +841,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                 </>
               ) : <Empty msg={termMode ? 'No ads found for these advertisers in the selected networks/window.' : 'Pick at least one network above.'} />}
             </Panel>
+            </PlanLockedSection>
 
             <div className="grid gap-5 lg:grid-cols-2">
               {/* Ads by country — stacked by network */}
+              <PlanLockedSection allowed={regionsAllowed} title="Regional demand" onUpgrade={onNetworkRestricted}>
               <Panel
                 loading={regionsShimmer}
                 error={regionsError}
@@ -851,8 +875,10 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                   </>
                 ) : <Empty msg="No country data for this window." />}
               </Panel>
+              </PlanLockedSection>
 
               {/* Ads per category — horizontal stacked, compared across networks */}
+              <PlanLockedSection allowed={categoriesAllowed} title="Category analytics" onUpgrade={onNetworkRestricted}>
               <Panel
                 loading={categoriesShimmer}
                 error={categoriesError}
@@ -882,8 +908,10 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                   </>
                 ) : <Empty msg={`No category data ${termMode ? `for “${catScope || 'the compared advertisers'}” ` : ''}in this window — category is only tagged on Facebook, Instagram, Native, Pinterest & Google.`} />}
               </Panel>
+              </PlanLockedSection>
 
               {/* Top movers — Google-Trends-style ranked table */}
+              <PlanLockedSection allowed={topMoversAllowed} title="Top movers" onUpgrade={onNetworkRestricted}>
               <TrendTable
                 loading={topShimmer}
                 error={topError}
@@ -908,8 +936,10 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                     ))}
                   </div>
                 )} />
+              </PlanLockedSection>
 
               {/* Rising categories — Google-Trends-style ranked table */}
+              <PlanLockedSection allowed={categoriesAllowed} title="Rising categories" onUpgrade={onNetworkRestricted}>
               <TrendTable
                 loading={risingShimmer}
                 error={risingError}
@@ -926,8 +956,10 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                 onRowClick={(r) => drill('category', r.label)}
                 onExport={exportCsv}
                 scope={<AdvScope terms={terms} activeTerm={risingScope} onPick={setRisingScope} />} />
+              </PlanLockedSection>
 
               {/* Top keywords */}
+              <PlanLockedSection allowed={keywordsAllowed} title="Top search keywords" onUpgrade={onNetworkRestricted} className="lg:col-span-2">
               <Panel
                 loading={kwShimmer}
                 error={kwError}
@@ -951,6 +983,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                   </ResponsiveContainer>
                 ) : <Empty msg="No keyword data for this window." />}
               </Panel>
+              </PlanLockedSection>
             </div>
           </div>
         )}
@@ -967,7 +1000,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
             <h3 className="text-base font-semibold text-white mt-0.5 break-words">{drillItem.value}</h3>
             <p className="text-xs text-white/60 mt-2">Open this in the Ads Library to see every matching ad with full analytics.</p>
             <div className="flex gap-2 mt-4">
-              <button onClick={() => { const it = drillItem; setDrillItem(null); onDrill && onDrill(it.kind, it.value); }}
+              <button onClick={() => { const it = drillItem; setDrillItem(null); onDrill && onDrill(it.kind, it.value, selected); }}
                 className="flex-1 text-xs bg-[#335296] text-white rounded-lg px-3 py-2 font-medium">Open in Ads Library</button>
               {drillItem.kind === 'advertiser' && (
                 <button onClick={() => { const v = drillItem.value; setDrillItem(null); setTerms((p) => (p.includes(v) || p.length >= 5 ? p : [...p, v])); }}

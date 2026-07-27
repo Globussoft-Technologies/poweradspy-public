@@ -3112,10 +3112,40 @@ function pv2BuildVisualPreview(details, simulation, state) {
     }
   } else if (route === '/market-trends') {
     activeNav = 'Market Trends';
-    page = `<div class="pv2-shot-title">Market Trends</div><div class="pv2-shot-sub">Explore winning categories, regions and keywords</div><div class="pv2-shot-control">Network · Facebook</div><div class="pv2-shot-grid"><div class="pv2-shot-card pv2-target"><div class="pv2-shot-line short"></div><div class="pv2-shot-line"></div>${restricted ? '<span class="pv2-shot-lock">🔒 Trends locked</span>' : ''}</div><div class="pv2-shot-card"><div class="pv2-shot-line"></div></div><div class="pv2-shot-card"><div class="pv2-shot-line"></div></div></div>`;
+    const marketSuffix = details.id.replace('intelligence.market_trends.', '');
+    const marketTarget = (suffix) => marketSuffix === suffix ? ' pv2-target' : '';
+    page = `<div class="pv2-shot-title">Market Trends</div><div class="pv2-shot-sub">Explore winning categories, regions and keywords</div>
+      <div class="pv2-shot-control${marketTarget('compare')}"><b>Advertiser comparison</b><div class="pv2-shot-line" style="margin-top:6px"></div></div>
+      <div class="pv2-shot-control">Network · Facebook</div>
+      <div class="pv2-shot-grid">
+        <div class="pv2-shot-card${marketTarget('overview')}"><b style="font-size:7px">Overview & activity</b><div class="pv2-shot-line"></div></div>
+        <div class="pv2-shot-card${marketTarget('regions')}"><b style="font-size:7px">Regional demand</b><div class="pv2-shot-line"></div></div>
+        <div class="pv2-shot-card${marketTarget('categories')}"><b style="font-size:7px">Category analytics</b><div class="pv2-shot-line"></div></div>
+        <div class="pv2-shot-card${marketTarget('top_movers')}"><b style="font-size:7px">Top movers</b><div class="pv2-shot-line"></div></div>
+        <div class="pv2-shot-card${marketTarget('keywords')}"><b style="font-size:7px">Top keywords</b><div class="pv2-shot-line"></div></div>
+        <div class="pv2-shot-card${marketTarget('open_ads_library')}"><b style="font-size:7px">Open in Ads Library</b><div class="pv2-shot-line short"></div></div>
+      </div>${restricted ? '<span class="pv2-shot-lock">🔒 Highlighted section shows upgrade state</span>' : ''}`;
   } else if (route === '/keywords-explorer') {
     activeNav = 'Keyword Explorer';
-    page = `<div class="pv2-shot-title">Keyword Explorer</div><div class="pv2-shot-sub">Find keyword volume and competitive opportunities</div><div class="pv2-shot-control pv2-target"><b>Search keywords</b><div class="pv2-shot-line" style="margin-top:7px"></div>${restricted ? '<span class="pv2-shot-lock">🔒 Keyword Explorer locked</span>' : ''}</div><div class="pv2-shot-card" style="height:72px"><div class="pv2-shot-line"></div><div class="pv2-shot-line"></div><div class="pv2-shot-line short"></div></div>`;
+    const keywordSuffix = details.id.replace('intelligence.keyword_explorer.', '');
+    const keywordTarget = (...suffixes) => suffixes.includes(keywordSuffix) ? ' pv2-target' : '';
+    const analyticsFeature = keywordSuffix === 'analytics' || keywordSuffix.startsWith('analytics.');
+    const analyticsSuffix = keywordSuffix.replace('analytics.', '');
+    page = `<div class="pv2-shot-title">Keyword Explorer</div><div class="pv2-shot-sub">Find keyword volume and competitive opportunities</div>
+      <div class="pv2-shot-control${keywordTarget('search')}"><b>Search keyword</b><div class="pv2-shot-line" style="margin-top:7px"></div></div>
+      <div class="pv2-shot-grid">
+        <div class="pv2-shot-card${keywordTarget('metrics')}"><b style="font-size:7px">Summary metrics</b><div class="pv2-shot-line"></div></div>
+        <div class="pv2-shot-card${keywordTarget('filters')}"><b style="font-size:7px">Filters</b><div class="pv2-shot-line"></div></div>
+        <div class="pv2-shot-card${keywordTarget('browse')}"><b style="font-size:7px">Keyword table</b><div class="pv2-shot-line"></div></div>
+      </div>
+      <div class="pv2-shot-control" style="margin-top:7px"><b>Keyword table columns</b><div style="display:flex;gap:3px;margin-top:6px;flex-wrap:wrap">
+        ${[['keyword','Keyword'],['competition','Competition'],['ad_volume','Ad Volume'],['growth','Growth'],['parent_topic','Parent Topic'],['first_seen','First Seen']].map(([key,label]) => `<span class="${keywordTarget(key).trim()}" style="font-size:6px;border:1px solid #334155;border-radius:4px;padding:3px">${label}</span>`).join('')}
+      </div></div>
+      ${analyticsFeature ? `<div class="pv2-shot-control${keywordSuffix === 'analytics' ? ' pv2-target' : ''}" style="margin-top:7px"><b>Keyword analytics drawer</b><div class="pv2-shot-grid" style="margin-top:6px">
+        ${[['activity','Ad activity'],['top_advertisers','Top advertisers'],['top_domains','Top domains'],['serp_mix','SERP mix'],['live_creatives','Live creatives']].map(([key,label]) => `<div class="pv2-shot-card${analyticsSuffix === key ? ' pv2-target' : ''}"><b style="font-size:6px">${label}</b><div class="pv2-shot-line"></div></div>`).join('')}
+        <div class="pv2-shot-card${keywordSuffix === 'open_ads_library' ? ' pv2-target' : ''}"><b style="font-size:6px">Open Ads Library</b></div>
+      </div></div>` : `<div class="pv2-shot-control${keywordTarget('open_ads_library')}" style="margin-top:7px"><b>Open selected result in Ads Library</b></div>`}
+      ${restricted ? '<span class="pv2-shot-lock">🔒 Highlighted section shows upgrade state</span>' : ''}`;
   } else {
     activeNav = 'Ads Library';
     page = `<div class="pv2-shot-title">Ads Library</div><div class="pv2-shot-sub">Search ads and narrow results with filters</div><div style="display:grid;grid-template-columns:115px 1fr;gap:7px"><div><div class="pv2-shot-control">Network</div><div class="pv2-shot-control pv2-target"><b>${pv2Escape(controlLabel)}</b>${restricted ? '<span class="pv2-shot-lock">🔒 Upgrade</span>' : '<div style="font-size:7px;color:#86efac;margin-top:5px">Enabled</div>'}</div><div class="pv2-shot-control">Date range</div></div><div class="pv2-shot-grid" style="grid-template-columns:repeat(2,1fr)"><div class="pv2-shot-card" style="height:78px"><div class="pv2-shot-line"></div></div><div class="pv2-shot-card" style="height:78px"><div class="pv2-shot-line"></div></div></div></div>`;

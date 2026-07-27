@@ -12,6 +12,8 @@ import {
   SerpCreatives,
   fmtInt,
 } from "./google/GoogleIntelShared";
+import PlanLockedSection from "../shared/PlanLockedSection.jsx";
+import { useAuth } from "../../hooks/useAuth.jsx";
 
 /**
  * Keyword Explorer — the competitive board for a single bidding keyword.
@@ -21,7 +23,10 @@ import {
  *
  * Data is fetched live from /keywords/insight (ES) — not the keyword_stats rollup.
  */
-const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeyword }) => {
+const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeyword, onUpgrade }) => {
+  const { canUseCapabilityOnNetwork } = useAuth();
+  const analyticsAllowed = canUseCapabilityOnNetwork("intelligence.keyword_explorer.analytics", "google");
+  const sectionAllowed = (suffix) => canUseCapabilityOnNetwork(`intelligence.keyword_explorer.analytics.${suffix}`, "google");
   const [state, setState] = useState({ loading: true, data: null, error: null });
   const [shown, setShown] = useState(false);
 
@@ -33,6 +38,10 @@ const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeywo
 
   useEffect(() => {
     if (!keyword) return;
+    if (!analyticsAllowed) {
+      setState({ loading: false, data: null, error: null });
+      return;
+    }
     let alive = true;
     setState({ loading: true, data: null, error: null });
     getGoogleKeywordInsight({ keyword, top_n: 15, creatives: 12, interval: "month" })
@@ -45,7 +54,7 @@ const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeywo
     return () => {
       alive = false;
     };
-  }, [keyword]);
+  }, [keyword, analyticsAllowed]);
 
   const d = state.data;
 
@@ -89,7 +98,9 @@ const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeywo
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5">
-          {state.loading ? (
+          {!analyticsAllowed ? (
+            <PlanLockedSection allowed={false} title="Keyword analytics" onUpgrade={onUpgrade} />
+          ) : state.loading ? (
             <Loading label="Analyzing keyword…" />
           ) : !d ? (
             <EmptyState label={state.error || "No data found."} />
@@ -101,14 +112,17 @@ const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeywo
                 <StatTile label="Total ads" value={fmtInt(d.summary?.ads)} />
               </div>
 
+              <PlanLockedSection allowed={sectionAllowed("activity")} title="Ad activity over time" onUpgrade={onUpgrade}>
               <div>
                 <SectionTitle info="Number of distinct ads seen each month for this keyword. Rising activity means more advertisers/creatives competing; dips suggest paused campaigns.">
                   Ad activity over time
                 </SectionTitle>
                 <TrendChart points={d.trend} />
               </div>
+              </PlanLockedSection>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <PlanLockedSection allowed={sectionAllowed("top_advertisers")} title="Top advertisers" onUpgrade={onUpgrade}>
                 <div>
                   <SectionTitle info="Advertisers running the most distinct ads on this keyword, ranked by ad count — your direct competition for this term. Click one to see all of their ads in the Ads Library.">
                     Top advertisers
@@ -119,27 +133,34 @@ const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeywo
                     emptyLabel="No advertisers."
                   />
                 </div>
+                </PlanLockedSection>
+                <PlanLockedSection allowed={sectionAllowed("top_domains")} title="Top landing domains" onUpgrade={onUpgrade}>
                 <div>
                   <SectionTitle info="Destination domains these ads point to, ranked by ad count. Note: googleadservices.com appears when the click-tracking redirect hasn't been resolved to the real landing domain.">
                     Top landing domains
                   </SectionTitle>
                   <RankedBars items={d.top_domains} emptyLabel="No domains." />
                 </div>
+                </PlanLockedSection>
               </div>
 
+              <PlanLockedSection allowed={sectionAllowed("serp_mix")} title="SERP slot mix" onUpgrade={onUpgrade}>
               <div>
                 <SectionTitle info="Share of ads shown in the Top-of-page vs Bottom-of-page sponsored slots. Top slots sit above the organic results, cost more, and win the majority of clicks — a high Top % signals aggressive bidding on this keyword.">
                   SERP slot mix
                 </SectionTitle>
                 <PositionMix items={d.position_mix} />
               </div>
+              </PlanLockedSection>
 
+              <PlanLockedSection allowed={sectionAllowed("live_creatives")} title="Live creatives" onUpgrade={onUpgrade}>
               <div>
                 <SectionTitle info="A sample of the most recently seen live ads for this keyword, rendered as they appear on the search results page.">
                   Live creatives
                 </SectionTitle>
                 <SerpCreatives creatives={d.creatives} onKeywordClick={onOpenKeyword} />
               </div>
+              </PlanLockedSection>
             </div>
           )}
         </div>

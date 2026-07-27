@@ -61,7 +61,7 @@ function lastHandler(path) { const c = chain(path); return c[c.length - 1]; }
 // restrictNetworkToPlan, asyncHandler(realHandler)) — grab it directly rather
 // than the real ES-querying handler, which needs a full ES/DB mock to exercise
 // safely.
-function guardHandler(path) { const c = chain(path); return c[c.length - 3]; }
+function guardHandler(path) { const c = chain(path); return c[c.length - 4]; }
 
 beforeEach(() => {
   authMiddleware.mockClear();

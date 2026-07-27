@@ -107,6 +107,39 @@ async function accessGuard(req, res, next) {
   });
 }
 
+function marketSectionGate(suffix) {
+  const capabilityId = `intelligence.market_trends.${suffix}`;
+  return async function marketTrendsSectionAccessGuard(req, res, next) {
+    try {
+      const decision = await getCapabilityDecision(req, capabilityId, {
+        network: (request) => request.query?.network || request.body?.network || 'all',
+      });
+      if (decision) {
+        req.planControlSectionDecision = decision;
+        if (!decision.allowed && config.planControl?.enforcementMode === 'enforce') {
+          return res.status(403).json({
+            code: 403,
+            message: 'Upgrade your plan to unlock this Market Trends section.',
+            showSubscriptionModal: true,
+            data: [],
+            ...decision,
+          });
+        }
+      }
+    } catch (_error) {
+      if (config.planControl?.enforcementMode === 'enforce') {
+        return res.status(503).json({
+          code: 503,
+          message: 'Entitlement check unavailable.',
+          reasonCode: 'POLICY_UNAVAILABLE',
+        });
+      }
+    }
+
+    return next();
+  };
+}
+
 // ─── Which networks THIS plan sees in Market Trends specifically ────────────
 // Checks the market_trends doc's own network_overrides.<planId> FIRST (set via
 // the admin Plan Access tab's dedicated "Market Trends Networks" control) —
@@ -889,11 +922,11 @@ router.get('/access', authMiddleware, asyncHandler(async (req, res) => {
     },
   });
 }));
-router.get('/trends/overview', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getOverview));
-router.get('/trends/categories', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getCategories));
-router.get('/trends/top', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getTop));
-router.get('/trends/regions', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getRegions));
-router.get('/trends/keywords', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getKeywords));
-router.get('/trends/search', authMiddleware, accessGuard, restrictNetworkToPlan, asyncHandler(getSearch));
+router.get('/trends/overview', authMiddleware, accessGuard, marketSectionGate('overview'), restrictNetworkToPlan, asyncHandler(getOverview));
+router.get('/trends/categories', authMiddleware, accessGuard, marketSectionGate('categories'), restrictNetworkToPlan, asyncHandler(getCategories));
+router.get('/trends/top', authMiddleware, accessGuard, marketSectionGate('top_movers'), restrictNetworkToPlan, asyncHandler(getTop));
+router.get('/trends/regions', authMiddleware, accessGuard, marketSectionGate('regions'), restrictNetworkToPlan, asyncHandler(getRegions));
+router.get('/trends/keywords', authMiddleware, accessGuard, marketSectionGate('keywords'), restrictNetworkToPlan, asyncHandler(getKeywords));
+router.get('/trends/search', authMiddleware, accessGuard, marketSectionGate('compare'), restrictNetworkToPlan, asyncHandler(getSearch));
 
 module.exports = router;

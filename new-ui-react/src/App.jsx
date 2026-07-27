@@ -231,6 +231,7 @@ const App = () => {
     setPlanAccess,
     entitlements,
     canUseCapability,
+    canUseCapabilityOnNetwork,
   } = useAuth();
 
   // ── Guest Mode ────────────────────────────────────────────────────────
@@ -514,7 +515,7 @@ const App = () => {
   };
   const openKeywordExplorer = (keyword) => {
     if (!(KEYWORD_EXPLORER_ON && keywordExplorerAllowed)) return;
-    if (!keyword || !canAccessIntel()) return;
+    if (!keyword) return;
     setKeywordExplorer(String(keyword));
   };
   const openKeywordsExplorerPage = () => {
@@ -1575,6 +1576,13 @@ const App = () => {
   // since we're navigating away from them.
   const handleIntelAdvertiserClick = useCallback((advertiserName) => {
     if (guestGuard("Please login to search", {})) return;
+    if (
+      !canUseCapability("intelligence.keyword_explorer.open_ads_library") ||
+      !canUseCapabilityOnNetwork("ads.search", "google")
+    ) {
+      dispatch(openModal("isPricingModalOpen"));
+      return;
+    }
     setKeywordExplorer(null);
     setAdvertiserProfile(null);
     if (selectedAdForAnalytics) closeAnalyticsModal();
@@ -1585,7 +1593,7 @@ const App = () => {
     handleSearch(advertiserName, "advertiser");
     coalesceNextHistoryWrite();
     dispatch(setActivePage("ads"));
-  }, [guestGuard, dispatch, sdui, handleSearch, selectedAdForAnalytics]);
+  }, [guestGuard, dispatch, sdui, handleSearch, selectedAdForAnalytics, canUseCapability, canUseCapabilityOnNetwork]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1825,7 +1833,20 @@ const App = () => {
             <PageAccessError onRetry={() => setIntelAccessAttempt((n) => n + 1)} />
           ) : intelAccess.enabled ? (
             <MarketTrends
-              onDrill={(kind, value) => {
+              onDrill={(kind, value, targetNetworks = []) => {
+                const networks = (targetNetworks || []).map((network) => String(network).toLowerCase());
+                if (
+                  !canUseCapability("intelligence.market_trends.open_ads_library") ||
+                  networks.some((network) => !canUseCapabilityOnNetwork("intelligence.market_trends.open_ads_library", network)) ||
+                  networks.some((network) => !canUseCapabilityOnNetwork("ads.search", network))
+                ) {
+                  dispatch(openModal("isPricingModalOpen"));
+                  return;
+                }
+                if (networks.length) {
+                  sdui.setActivePlatforms(networks);
+                  dispatch(setSpecificPlatforms(networks));
+                }
                 navigate('/');
                 dispatch(setActivePage('ads'));
                 dispatch(setShowSavedAdsPage(false));
@@ -1847,7 +1868,10 @@ const App = () => {
           ) : keywordExplorerAccessError ? (
             <PageAccessError onRetry={() => setKeywordExplorerAccessAttempt((n) => n + 1)} />
           ) : keywordExplorerAllowed ? (
-            <KeywordsExplorerPage onOpenKeyword={openKeywordExplorer} />
+            <KeywordsExplorerPage
+              onOpenKeyword={openKeywordExplorer}
+              onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+            />
           ) : (
             <LockedFeaturePreview
               title="Keyword Explorer isn't enabled for your account yet"
@@ -1996,6 +2020,7 @@ const App = () => {
           onClose={() => setKeywordExplorer(null)}
           onAdvertiserClick={handleIntelAdvertiserClick}
           onOpenKeyword={openKeywordExplorer}
+          onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
         />
       )}
 

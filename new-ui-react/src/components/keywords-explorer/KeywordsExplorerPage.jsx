@@ -5,6 +5,8 @@ import KeywordFilterBar from "./KeywordFilterBar.jsx";
 import KeywordExplorerTable from "./KeywordExplorerTable.jsx";
 import KeywordListsPanel from "./KeywordListsPanel.jsx";
 import { Skeleton, SkeletonStatCard, FadeIn, ErrorRetry } from "../shared/Skeleton.jsx";
+import PlanLockedSection from "../shared/PlanLockedSection.jsx";
+import { useAuth } from "../../hooks/useAuth.jsx";
 
 const PAGE_SIZE = 50;
 
@@ -86,7 +88,7 @@ const StatCardsSkeleton = () => (
 
 /** Summary stat cards above the table — driven by the aggregate `stats` the
  *  /keywords/explorer API returns over the whole filtered set. */
-const StatCards = ({ stats, loading }) => {
+const StatCards = ({ stats, loading, access = {}, onUpgrade }) => {
   if (loading) return <StatCardsSkeleton />;
   if (!stats) return null;
   return (
@@ -94,16 +96,21 @@ const StatCards = ({ stats, loading }) => {
       <StatCard icon={<Search size={12} className="text-[#6b99ff]" />} label="Keywords">
         <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.keywords)}</div>
       </StatCard>
+      <PlanLockedSection allowed={access.competition !== false} title="Avg Competition" onUpgrade={onUpgrade} compact>
       <StatCard icon={<Swords size={12} className="text-[#6b99ff]" />} label="Avg Competition">
         <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{stats.avg_competition ?? "–"}</div>
         <div className="mt-2 h-1.5 rounded-full bg-theme-text/[0.06] overflow-hidden">
           <div className={`h-full rounded-full ${compBarColor(stats.avg_competition)}`} style={{ width: `${Math.max(0, Math.min(100, stats.avg_competition ?? 0))}%` }} />
         </div>
       </StatCard>
+      </PlanLockedSection>
+      <PlanLockedSection allowed={access.adVolume !== false} title="Total Ad Volume" onUpgrade={onUpgrade} compact>
       <StatCard icon={<BarChart3 size={12} className="text-[#6b99ff]" />} label="Total Ad Volume">
         <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.total_ad_volume)}</div>
         <div className="mt-0.5 text-[11px] text-theme-text-muted">ads across matches</div>
       </StatCard>
+      </PlanLockedSection>
+      <PlanLockedSection allowed={access.growth !== false} title="Trending" onUpgrade={onUpgrade} compact>
       <StatCard icon={<TrendingUp size={12} className="text-[#6b99ff]" />} label="Trending">
         <div className="mt-1.5 flex items-center gap-3">
           <span className="inline-flex items-center gap-1 text-xl font-extrabold text-emerald-500"><TrendingUp size={16} />{fmtNum(stats.trending_up)}</span>
@@ -111,6 +118,7 @@ const StatCards = ({ stats, loading }) => {
         </div>
         <div className="mt-0.5 text-[11px] text-theme-text-muted">up vs down</div>
       </StatCard>
+      </PlanLockedSection>
     </FadeIn>
   );
 };
@@ -138,7 +146,22 @@ const computeStats = (list = []) => {
  * `onOpenKeyword` (passed down from App.jsx's openKeywordExplorer) — this page
  * only owns the browse/filter/list layer, not the drill-down.
  */
-const KeywordsExplorerPage = ({ onOpenKeyword }) => {
+const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
+  const { canUseCapabilityOnNetwork } = useAuth();
+  const allowed = (capabilityId) => canUseCapabilityOnNetwork(capabilityId, "google");
+  const access = {
+    browse: allowed("intelligence.keyword_explorer.browse"),
+    search: allowed("intelligence.keyword_explorer.search"),
+    metrics: allowed("intelligence.keyword_explorer.metrics"),
+    filters: allowed("intelligence.keyword_explorer.filters"),
+    keyword: allowed("intelligence.keyword_explorer.keyword"),
+    competition: allowed("intelligence.keyword_explorer.competition"),
+    adVolume: allowed("intelligence.keyword_explorer.ad_volume"),
+    growth: allowed("intelligence.keyword_explorer.growth"),
+    parentTopic: allowed("intelligence.keyword_explorer.parent_topic"),
+    firstSeen: allowed("intelligence.keyword_explorer.first_seen"),
+    analytics: allowed("intelligence.keyword_explorer.analytics"),
+  };
   const [pasteText, setPasteText] = useState("");
   const [filters, setFilters] = useState({});
   const [sort, setSort] = useState({ sort_by: "ads_total", sort_dir: "desc" });
@@ -157,6 +180,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
   const [mode, setMode] = useState("browse");
 
   const fetchRows = useCallback(async () => {
+    if (!access.browse) return;
     setLoading(true);
     setError(null);
     try {
@@ -175,7 +199,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
     } finally {
       setLoading(false);
     }
-  }, [page, sort, filters]);
+  }, [page, sort, filters, access.browse]);
 
   // Only the browse mode hits the server. In search mode the matched rows are
   // already loaded, so a sort/page/filter change must NOT re-run fetchRows (which
@@ -230,6 +254,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
   };
 
   const handleSearchPasted = async () => {
+    if (!access.search) return onUpgrade?.();
     // An empty box means "go back to browsing everything" rather than a no-op —
     // otherwise clearing the text leaves the previous search's stale results on
     // screen with no obvious way back (the Search button used to just disable).
@@ -250,6 +275,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
 
   const handleFileUpload = async (file) => {
     if (!file) return;
+    if (!access.search) return onUpgrade?.();
     setMode("search");
     setPage(1); // reset stale browse page so it doesn't show e.g. "Page 4 of 1"
     setImporting(true);
@@ -297,7 +323,8 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
         </div>
 
         {/* ── Search toolbar ───────────────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-2 mb-2">
+        <PlanLockedSection allowed={access.search} title="Keyword search" onUpgrade={onUpgrade} compact className="mb-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Unified search pill — input + embedded submit share one rounded bar */}
           <div className="flex items-center flex-1 min-w-[240px] max-w-md rounded-full border border-theme-border bg-theme-card pl-4 pr-1.5 shadow-sm transition-all focus-within:border-[#6b99ff] focus-within:ring-2 focus-within:ring-[#6b99ff]/15 focus-within:shadow-md">
             <textarea
@@ -361,6 +388,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
             </span>
           </button>
         </div>
+        </PlanLockedSection>
         {notFound.length > 0 ? (
           <p className="mb-2 break-words rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs font-medium text-amber-500">
             No ads found yet for {notFound.length} keyword{notFound.length > 1 ? "s" : ""}: {notFound.slice(0, 10).join(", ")}
@@ -369,7 +397,11 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
         ) : null}
 
         {/* ── Summary stat cards ───────────────────────────────── */}
-        {activeTab === "explorer" ? <StatCards stats={stats} loading={busyShimmer} /> : null}
+        {activeTab === "explorer" ? (
+          <PlanLockedSection allowed={access.metrics} title="Keyword summary metrics" onUpgrade={onUpgrade} className="mt-4">
+            <StatCards stats={stats} loading={busyShimmer} access={access} onUpgrade={onUpgrade} />
+          </PlanLockedSection>
+        ) : null}
 
         {/* ── Segmented tabs (hidden when only one tab is available) ── */}
         {TABS.length > 1 ? (
@@ -395,6 +427,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
 
         {activeTab === "explorer" ? (
           <>
+            <PlanLockedSection allowed={access.filters} title="Keyword filters" onUpgrade={onUpgrade} compact>
             <div className="sticky top-0 z-10 -mx-1 px-1 py-1">
               {/* Filters always operate on the full DB (not the loaded search/import
                   result), so any filter change switches back to browse mode + refetches.
@@ -403,6 +436,8 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
                   removing a Category left the list empty instead of restoring it. */}
               <KeywordFilterBar filters={filters} onChange={(f) => { setFilters(f); setPage(1); setMode("browse"); }} />
             </div>
+            </PlanLockedSection>
+            <PlanLockedSection allowed={access.browse} title="Keyword table" onUpgrade={onUpgrade} className="mt-4">
             {busyShimmer ? (
               <KeywordTableSkeleton />
             ) : error ? (
@@ -421,9 +456,12 @@ const KeywordsExplorerPage = ({ onOpenKeyword }) => {
                   onSortChange={(s) => { setSort(s); setPage(1); }}
                   onPageChange={setPage}
                   onKeywordClick={onOpenKeyword}
+                  access={access}
+                  onUpgrade={onUpgrade}
                 />
               </FadeIn>
             )}
+            </PlanLockedSection>
           </>
         ) : (
           <KeywordListsPanel onOpenKeyword={onOpenKeyword} />

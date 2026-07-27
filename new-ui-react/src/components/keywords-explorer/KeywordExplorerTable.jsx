@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChevronUp, ChevronDown, ChevronsUpDown, TrendingUp, TrendingDown, SearchX } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronsUpDown, TrendingUp, TrendingDown, SearchX, Lock } from "lucide-react";
 import { fmtInt } from "../modals/google/GoogleIntelShared.jsx";
 import AddToListMenu from "./AddToListMenu.jsx";
 
@@ -9,12 +9,23 @@ import AddToListMenu from "./AddToListMenu.jsx";
 const SHOW_ADD_TO_LIST = false;
 
 const COLUMNS = [
-  { key: "competition_score", label: "Competition", sortable: true, align: "left", tip: "How crowded the keyword is (0–100) — ranked by how many advertisers use it." },
-  { key: "ads_total", label: "Ad Volume", sortable: true, align: "left", tip: "Number of unique ads using this keyword across the crawled corpus." },
-  { key: "growth_pct", label: "Growth", sortable: true, align: "left", tip: "Change in ad activity: last 30 days vs the previous 30 days." },
-  { key: "category", label: "Parent Topic", sortable: false, align: "left", tip: "The dominant category across this keyword's ads." },
-  { key: "first_seen", label: "First seen", sortable: true, align: "left", tip: "The earliest date any ad for this keyword was crawled." },
+  { key: "competition_score", accessKey: "competition", label: "Competition", sortable: true, align: "left", tip: "How crowded the keyword is (0–100) — ranked by how many advertisers use it." },
+  { key: "ads_total", accessKey: "adVolume", label: "Ad Volume", sortable: true, align: "left", tip: "Number of unique ads using this keyword across the crawled corpus." },
+  { key: "growth_pct", accessKey: "growth", label: "Growth", sortable: true, align: "left", tip: "Change in ad activity: last 30 days vs the previous 30 days." },
+  { key: "category", accessKey: "parentTopic", label: "Parent Topic", sortable: false, align: "left", tip: "The dominant category across this keyword's ads." },
+  { key: "first_seen", accessKey: "firstSeen", label: "First seen", sortable: true, align: "left", tip: "The earliest date any ad for this keyword was crawled." },
 ];
+
+const LockedValue = ({ label, onUpgrade }) => (
+  <button
+    type="button"
+    onClick={onUpgrade}
+    title={`Upgrade to unlock ${label}`}
+    className="inline-flex items-center gap-1 rounded-md border border-[#6b99ff]/20 bg-[#6b99ff]/10 px-2 py-1 text-[10px] font-bold text-[#6b99ff]"
+  >
+    <Lock size={10} /> Upgrade
+  </button>
+);
 
 const competitionColor = (score) => {
   if (score == null) return "bg-gray-400/15 text-gray-400";
@@ -41,7 +52,7 @@ const fmtDate = (raw) => {
 /** Sortable/paginated keyword table backed by /keywords/explorer (keyword_stats).
  *  Row click opens the existing single-keyword KeywordExplorerModal (via onKeywordClick);
  *  checkbox selection feeds the bulk "Add to list" action. */
-const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange, onPageChange, onKeywordClick }) => {
+const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange, onPageChange, onKeywordClick, access = {}, onUpgrade }) => {
   const [selected, setSelected] = useState(new Set());
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const selectedKeywords = rows.filter((r) => selected.has(r.keyword_id)).map((r) => r.keyword);
@@ -82,7 +93,7 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
     const active = sort.sort_by === col.key;
     return (
       <th className={`relative px-4 py-3 font-bold ${col.align === "right" ? "text-right" : "text-left"}`}>
-        {col.sortable ? (
+        {access[col.accessKey] !== false && col.sortable ? (
           <button
             type="button"
             title={col.tip || undefined}
@@ -97,8 +108,8 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
             )}
           </button>
         ) : (
-          <span title={col.tip || undefined} className={`inline-flex items-center ${col.tip ? "cursor-help" : ""}`}>
-            {col.label}
+          <span title={access[col.accessKey] === false ? `Upgrade to unlock ${col.label}` : col.tip || undefined} className={`inline-flex items-center gap-1 ${col.tip ? "cursor-help" : ""}`}>
+            {access[col.accessKey] === false ? <Lock size={10} /> : null}{col.label}
           </span>
         )}
       </th>
@@ -129,7 +140,11 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
                   />
                 </th>
               ) : null}
-              <th className="px-4 py-3 font-bold">Keyword</th>
+              <th className="px-4 py-3 font-bold">
+                <span className="inline-flex items-center gap-1">
+                  {access.keyword === false ? <Lock size={10} /> : null}Keyword
+                </span>
+              </th>
               {COLUMNS.map((col) => <SortHeader key={col.key} col={col} />)}
             </tr>
           </thead>
@@ -149,23 +164,27 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
                     </td>
                   ) : null}
                   <td className="px-4 py-2.5">
-                    <button
-                      type="button"
-                      title={row.keyword}
-                      onClick={() => onKeywordClick?.(row.keyword)}
-                      className="block max-w-[320px] truncate font-semibold text-[#6b99ff] text-left transition-colors hover:brightness-110 hover:underline"
-                    >
-                      {row.keyword}
-                    </button>
+                    {access.keyword === false ? <LockedValue label="Keyword" onUpgrade={onUpgrade} /> : (
+                      <button
+                        type="button"
+                        title={row.keyword}
+                        onClick={() => onKeywordClick?.(row.keyword)}
+                        className="block max-w-[320px] truncate font-semibold text-[#6b99ff] text-left transition-colors hover:brightness-110 hover:underline"
+                      >
+                        {row.keyword}
+                      </button>
+                    )}
                   </td>
+                   <td className="px-4 py-2.5">
+                    {access.competition === false ? <LockedValue label="Competition" onUpgrade={onUpgrade} /> : (
+                     <span className={`inline-flex min-w-[2.1rem] items-center justify-center rounded-md px-2 py-1 text-xs font-extrabold ${competitionColor(row.competition_score)}`}>
+                       {row.competition_score ?? "–"}
+                     </span>
+                    )}
+                   </td>
+                  <td className="px-4 py-2.5 font-semibold text-theme-text">{access.adVolume === false ? <LockedValue label="Ad Volume" onUpgrade={onUpgrade} /> : fmtInt(row.ads_total)}</td>
                   <td className="px-4 py-2.5">
-                    <span className={`inline-flex min-w-[2.1rem] items-center justify-center rounded-md px-2 py-1 text-xs font-extrabold ${competitionColor(row.competition_score)}`}>
-                      {row.competition_score ?? "–"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 font-semibold text-theme-text">{fmtInt(row.ads_total)}</td>
-                  <td className="px-4 py-2.5">
-                    {g == null ? (
+                    {access.growth === false ? <LockedValue label="Growth" onUpgrade={onUpgrade} /> : g == null ? (
                       <span className="text-theme-text-muted">–</span>
                     ) : (
                       <span className={`inline-flex items-center gap-1 font-semibold ${g >= 0 ? "text-emerald-500" : "text-red-500"}`}>
@@ -174,8 +193,8 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-theme-text truncate max-w-[180px]">{row.category || "–"}</td>
-                  <td className="px-4 py-2.5 text-theme-text-secondary whitespace-nowrap">{fmtDate(row.first_seen)}</td>
+                  <td className="px-4 py-2.5 text-theme-text truncate max-w-[180px]">{access.parentTopic === false ? <LockedValue label="Parent Topic" onUpgrade={onUpgrade} /> : row.category || "–"}</td>
+                  <td className="px-4 py-2.5 text-theme-text-secondary whitespace-nowrap">{access.firstSeen === false ? <LockedValue label="First Seen" onUpgrade={onUpgrade} /> : fmtDate(row.first_seen)}</td>
                 </tr>
               );
             })}
