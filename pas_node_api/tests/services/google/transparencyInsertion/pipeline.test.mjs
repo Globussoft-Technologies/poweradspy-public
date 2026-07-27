@@ -490,6 +490,35 @@ describe('Google Transparency pipeline', () => {
     expect(repo.withTransaction).not.toHaveBeenCalled();
   });
 
+  it('rejects missing type-specific media before SQL or NAS work', async () => {
+    const video = await processTransparencyAd(payload({
+      type: 'VIDEO',
+      video_url_original: 'https://cdn.example/video.mp4',
+      thumbnail: null,
+    }), { db: { sql: {}, elastic: null }, log });
+    expect(video).toMatchObject({
+      code: 422,
+      errors: expect.arrayContaining([
+        expect.objectContaining({ field: 'thumbnail' }),
+      ]),
+    });
+
+    const image = await processTransparencyAd(payload({
+      type: 'IMAGE',
+      image_url_original: null,
+    }), { db: { sql: {}, elastic: null }, log });
+    expect(image).toMatchObject({
+      code: 422,
+      errors: expect.arrayContaining([
+        expect.objectContaining({ field: 'image_url_original' }),
+      ]),
+    });
+
+    expect(repo.withTransaction).not.toHaveBeenCalled();
+    expect(media.uploadImage).not.toHaveBeenCalled();
+    expect(media.uploadThumbnail).not.toHaveBeenCalled();
+  });
+
   it('returns 503 before SQL writes when required translation is unavailable', async () => {
     api.translate.mockResolvedValue({ ok: false, error: 'translation service down' });
     const out = await processTransparencyAd(payload(), { db: { sql: {}, elastic: null }, log });

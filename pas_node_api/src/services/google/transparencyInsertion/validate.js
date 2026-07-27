@@ -168,15 +168,25 @@ function validateTransparencyPayload(data, rules = TRANSPARENCY_RULES) {
     issue(errors, 'post_owner', 'must be null or a non-empty string');
   }
   for (const field of ['post_owner_image', 'image_url_original', 'video_url_original', 'thumbnail', 'destination_url', 'redirect_url']) {
-    if (checkable(data, rules, field) && (typeof data[field] !== 'string' || !isHttpUrl(data[field]))) issue(errors, field, 'must be null or an absolute HTTP(S) URL');
+    if (!checkable(data, rules, field)) continue;
+    const isRequiredTypeMedia =
+      (field === 'thumbnail' && data.type === 'VIDEO') ||
+      (field === 'image_url_original' && data.type === 'IMAGE');
+    if (!isRequiredTypeMedia && (typeof data[field] !== 'string' || !isHttpUrl(data[field]))) {
+      issue(errors, field, 'must be null or an absolute HTTP(S) URL');
+    }
   }
   for (const field of ['ad_title', 'ad_text']) {
     if (checkable(data, rules, field) && typeof data[field] !== 'string') issue(errors, field, 'must be null or a string');
   }
   if (checkable(data, rules, 'type') && !TYPES.has(data.type)) issue(errors, 'type', 'must be IMAGE, TEXT, or VIDEO');
   if (!disabled(rules, 'thumbnail') && data.type === 'VIDEO' &&
-      (typeof data.thumbnail !== 'string' || data.thumbnail.trim() === '')) {
+      (typeof data.thumbnail !== 'string' || !isHttpUrl(data.thumbnail))) {
     issue(errors, 'thumbnail', 'is required and must be a non-empty absolute HTTP(S) URL when type is VIDEO');
+  }
+  if (!disabled(rules, 'image_url_original') && data.type === 'IMAGE' &&
+      (typeof data.image_url_original !== 'string' || !isHttpUrl(data.image_url_original))) {
+    issue(errors, 'image_url_original', 'is required and must be a non-empty absolute HTTP(S) URL when type is IMAGE');
   }
   if (checkable(data, rules, 'subnetwork') && !SUBNETWORKS.has(data.subnetwork)) issue(errors, 'subnetwork', 'contains an unsupported value');
   if (checkable(data, rules, 'network') && data.network !== 'google') issue(errors, 'network', 'must equal google');

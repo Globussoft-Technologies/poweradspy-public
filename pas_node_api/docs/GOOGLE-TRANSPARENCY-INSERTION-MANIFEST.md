@@ -55,6 +55,8 @@ With the checked-in rules:
 - `CR<digits>` and `AR<digits>` IDs must match `ad_url`;
 - URLs, RFC 3339 timestamps, alpha-2 codes, enum values, arrays, duplicates,
   country order, and impression bounds are checked;
+- `image_url_original` is a required non-empty absolute HTTP(S) URL when
+  `type=IMAGE`;
 - `thumbnail` is explicit null for non-video creatives and a required absolute
   HTTP(S) URL when `type=VIDEO`;
 - every country row contains `first_seen`, `last_seen`, and `times_shown`;

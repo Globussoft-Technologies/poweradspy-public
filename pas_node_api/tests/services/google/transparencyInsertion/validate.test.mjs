@@ -116,6 +116,35 @@ describe('Google Transparency contract validation', () => {
     })).toEqual({ code: 200 });
   });
 
+  it('requires an absolute original image URL for IMAGE ads', () => {
+    for (const image_url_original of [null, '', 'not-a-url']) {
+      const out = validateTransparencyPayload({
+        ...valid,
+        type: 'IMAGE',
+        image_url_original,
+      });
+      expect(out.code).toBe(422);
+      expect(out.errors).toContainEqual(expect.objectContaining({
+        field: 'image_url_original',
+        message: expect.stringContaining('when type is IMAGE'),
+      }));
+    }
+
+    expect(validateTransparencyPayload({
+      ...valid,
+      type: 'IMAGE',
+      image_url_original: 'https://cdn.example/image-creative.jpg',
+    })).toEqual({ code: 200 });
+  });
+
+  it('keeps image_url_original optional for TEXT ads', () => {
+    expect(validateTransparencyPayload({
+      ...valid,
+      type: 'TEXT',
+      image_url_original: null,
+    })).toEqual({ code: 200 });
+  });
+
   it('rejects the superseded country first_shown/last_shown names', () => {
     const country_details = [{
       country: 'Germany',
