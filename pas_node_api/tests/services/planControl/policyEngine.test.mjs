@@ -108,6 +108,24 @@ describe('plan-control policy engine', () => {
     });
   });
 
+  it('inherits family networks when an older policy stored not_applicable for a capability that is now network-aware', () => {
+    const policy = snapshot();
+    policy.policies['growth-2027'].capabilities['intelligence.market_trends.overview'] = {
+      effect: 'allow',
+      networks: { mode: 'not_applicable' },
+    };
+    const identity = resolvePlanIdentity(101, policy);
+    expect(evaluateEntitlement({
+      user: {},
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends.overview',
+      policySnapshot: policy,
+    })).toMatchObject({
+      allowed: true,
+      allowedNetworks: ['facebook', 'instagram'],
+    });
+  });
+
   it('applies a yearly-only override without changing monthly access', () => {
     const policy = snapshot();
     const monthly = resolvePlanIdentity(101, policy);

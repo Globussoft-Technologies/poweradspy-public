@@ -232,12 +232,16 @@ function evaluateEntitlement(input) {
     // Determine which networks are allowed for this capability
     let allowedNetworks;
 
-    const networkMode = capabilityPolicy?.networks?.mode || 'inherit_general';
+    const storedNetworkMode = capabilityPolicy?.networks?.mode || 'inherit_general';
+    // Backward compatibility for capabilities that became network-aware after
+    // an older policy was published. Their saved rule can still say
+    // `not_applicable`; for a currently network-aware capability that legacy
+    // value must behave exactly like the admin UI's "All enabled networks".
+    const networkMode = storedNetworkMode === 'not_applicable'
+      ? 'inherit_general'
+      : storedNetworkMode;
 
-    if (networkMode === 'not_applicable') {
-      // Network doesn't apply to this capability
-      allowedNetworks = requestedNetworks;
-    } else if (networkMode === 'custom') {
+    if (networkMode === 'custom') {
       // Per-capability network override
       allowedNetworks = capabilityPolicy?.networks?.allowed || [];
     } else {
