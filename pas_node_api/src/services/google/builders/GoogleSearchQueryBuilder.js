@@ -61,6 +61,10 @@ const IMAGE_MUST_NOT = {
         },
       },
     ],
+    // Transparency ads may intentionally use the original image/thumbnail
+    // when NAS media is absent. Preserve the legacy NAS requirement for all
+    // other Google platforms.
+    must_not: [{ term: { platform: 18 } }],
   },
 };
 
@@ -571,6 +575,8 @@ GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "affiliate_data",
   "built_with_analytics_tracking",
   "first_seen",
+  "last_seen",
+  "ad_url",
   "destination_url",
   "url_destination",
   "url_redirects",
@@ -595,6 +601,8 @@ GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "othermultimedia",
   "language_id",
   "lang_detect",
+  "source",
+  "version",
   "domain",
   "category",
   "subCategory",

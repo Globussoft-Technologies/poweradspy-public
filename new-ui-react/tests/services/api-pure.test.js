@@ -190,6 +190,14 @@ describe("api > mapAdToCard", () => {
       first_seen: "2025-12-12T00:00:00Z",
       last_seen: "2025-12-21T00:00:00Z",
       post_date: null,
+      advertiser_id: "AR123",
+      region_code: "DE",
+      source: "desktop",
+      version: "3.2.0",
+      country: ["Germany"],
+      language: "German",
+      destination_url: null,
+      redirect_url: "https://example.com/redirect",
     });
 
     expect(out).toMatchObject({
@@ -203,6 +211,14 @@ describe("api > mapAdToCard", () => {
       firstSeenRaw: "2025-12-12T00:00:00Z",
       lastSeenRaw: "2025-12-21T00:00:00Z",
       postDateRaw: null,
+      advertiserId: "AR123",
+      regionCode: "DE",
+      source: "desktop",
+      version: "3.2.0",
+      countries: ["Germany"],
+      language: "German",
+      destinationUrl: null,
+      redirectUrl: "https://example.com/redirect",
     });
     expect(out.countryDetails).toEqual([
       expect.objectContaining({ country: "Germany", country_code: "DE" }),
@@ -246,7 +262,7 @@ describe("api > mapAdToCard", () => {
       image_video_url: "/pas-dev/stream/gt/adImage/202607/18.jpg",
     });
     expect(image.adType).toBe("video");
-    expect(image.renderType).toBe("image");
+    expect(image.renderType).toBe("video");
     expect(image.thumbnail).toContain("18.jpg");
   });
 
@@ -263,6 +279,23 @@ describe("api > mapAdToCard", () => {
     expect(video.renderType).toBe("video");
     expect(video.videoUrl).toContain("original.mp4");
     expect(video.thumbnail).toContain("/gt/thumbnail/202607/18.jpg");
+  });
+
+  it("uses a Transparency YouTube thumbnail instead of treating the watch URL as an image", () => {
+    const video = mapAdToCard({
+      platform: 18,
+      network: "google",
+      type: "VIDEO",
+      image_video_url: "https://www.youtube.com/watch?v=xconjdiGFLs",
+      video_url_original: "https://www.youtube.com/watch?v=xconjdiGFLs",
+      thumbnail: "/pas-dev/stream/gt/thumbnail/202607/179134.jpeg",
+    });
+
+    expect(video.adType).toBe("video");
+    expect(video.renderType).toBe("video");
+    expect(video.thumbnail).toContain("/gt/thumbnail/202607/179134.jpeg");
+    expect(video.videoUrl).toBe("");
+    expect(video.videoOriginalUrl).toBe("https://www.youtube.com/watch?v=xconjdiGFLs");
   });
 
   it("legacy Google TEXT cards are not promoted by platform-18 media rules", () => {

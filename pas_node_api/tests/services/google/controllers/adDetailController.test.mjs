@@ -182,4 +182,108 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
     await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
     expect(getLanguageMap).not.toHaveBeenCalled();
   });
+
+  it("hydrates the complete platform-18 detail contract", async () => {
+    const sql = { query: vi.fn(async (statement) => {
+      if (statement.includes("FROM google_transparency_ad_payload")) {
+        return [{
+          advertiser_id: "AR1",
+          ad_url: "https://adstransparency.google.com/creative/CR1",
+          subnetwork: "SEARCH",
+          region_code: "IN",
+          impressions_min: 1000,
+          impressions_max: null,
+          impressions_operator: "over",
+          video_url_original: "https://www.youtube.com/watch?v=xconjdiGFLs",
+          redirect_url: null,
+        }];
+      }
+      if (statement.includes("FROM google_transparency_country_delivery")) {
+        return [{
+          country: "India",
+          country_code: "IN",
+          first_seen: null,
+          last_seen: "2025-08-17 00:00:00",
+          impressions_min: 1000,
+          impressions_max: null,
+          impressions_operator: "over",
+        }];
+      }
+      return [{
+        id: 179134,
+        ad_id: "CR1",
+        platform: 18,
+        type: "VIDEO",
+        source: "desktop",
+        last_seen: "2025-08-17 00:00:00",
+        image_url: "/pas-dev/stream/gt/thumbnail/202607/179134.jpeg",
+        image_url_original: "https://i.ytimg.com/vi/xconjdiGFLs/hqdefault.jpg",
+        lastSeenOnDesktop: "2025-08-17 00:00:00",
+      }];
+    }) };
+    const db = {
+      sql,
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
+        id: 179134,
+        platform: 18,
+        type: "VIDEO",
+        subnetwork: "SEARCH",
+        last_seen: "2025-08-17 00:00:00",
+        first_seen: null,
+        post_date: null,
+        thumbnail: "/pas-dev/stream/gt/thumbnail/202607/179134.jpeg",
+        image_video_url: null,
+        video_url_original: "https://www.youtube.com/watch?v=xconjdiGFLs",
+        image_url_original: "https://i.ytimg.com/vi/xconjdiGFLs/hqdefault.jpg",
+        country: ["India"],
+        country_details: [{
+          country: "India",
+          country_code: "IN",
+          first_seen: null,
+          last_seen: "2025-08-17T00:00:00Z",
+          times_shown: { min: 1000, max: null, operator: "over" },
+        }],
+        impressions_min: 1000,
+        impressions_max: null,
+        impressions_operator: "over",
+        lang_detect: null,
+      } }] } })) },
+    };
+
+    const out = await getAdDetails(
+      { body: { ad_id: "179134", language: "en" }, query: {} },
+      db,
+      fakeLogger
+    );
+
+    expect(out.code).toBe(200);
+    expect(out.data[0]).toMatchObject({
+      platform: 18,
+      subnetwork: "SEARCH",
+      last_seen: "2025-08-17",
+      first_seen: null,
+      post_date: null,
+      thumbnail: "/pas-dev/stream/gt/thumbnail/202607/179134.jpeg",
+      video_url_original: "https://www.youtube.com/watch?v=xconjdiGFLs",
+      image_url_original: "https://i.ytimg.com/vi/xconjdiGFLs/hqdefault.jpg",
+      country: ["India"],
+      impressions: { min: 1000, max: null, operator: "over" },
+      language: null,
+    });
+    expect(out.data[0].country_details).toHaveLength(1);
+    expect(out.data[0].image_url).toBe("/pas-dev/stream/gt/thumbnail/202607/179134.jpeg");
+  });
+
+  it("does not discard the ES overlay when last_seen is absent", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [adRow()]) },
+      elastic: { search: vi.fn(async () => ({
+        hits: { hits: [{ _source: { source: "still-overlaid" } }] },
+      })) },
+    };
+
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+
+    expect(out.data[0].source).toBe("still-overlaid");
+  });
 });

@@ -86,9 +86,10 @@ function requireCapability(capabilityId, options = {}) {
       const { config, log } = runtime();
       const decision = await getCapabilityDecision(req, capabilityId, options);
       if (!decision) {
-        if (config.planControl?.enforcementMode === 'enforce') {
-          return res.status(503).json({ code: 503, message: 'Entitlement policy unavailable.', reasonCode: 'POLICY_UNAVAILABLE' });
-        }
+        // A clean "no published policy" result is a supported migration state,
+        // not an infrastructure outage. The feature's legacy gate (when one
+        // exists) remains authoritative until the first policy is published.
+        // Storage/check failures still throw and are handled fail-closed below.
         return next();
       }
       const planId = req.user?.userSubscriptionType || req.user?.plan_id;
@@ -150,9 +151,9 @@ function requireSearchCapabilities(options = {}) {
       const { config, log, getLatestPolicy, resolvePlanIdentity, evaluateEntitlement } = runtime();
       const policy = await getLatestPolicy();
       if (!policy) {
-        if (config.planControl?.enforcementMode === 'enforce') {
-          return res.status(503).json({ code: 503, message: 'Entitlement policy unavailable.', reasonCode: 'POLICY_UNAVAILABLE' });
-        }
+        // /ads/search already passed planAccessMiddleware before this dynamic
+        // capability layer. With no published v2 policy, preserve that legacy
+        // decision instead of converting a valid request into a false 503.
         return next();
       }
       const planId = req.user?.userSubscriptionType || req.user?.plan_id;

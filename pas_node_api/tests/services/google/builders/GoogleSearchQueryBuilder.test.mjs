@@ -214,6 +214,9 @@ describe("Google builder > SEARCH_SOURCE_FIELDS", () => {
   it("keeps Google Transparency discriminator and media fields in search hits", () => {
     expect(Builder.SEARCH_SOURCE_FIELDS).toEqual(expect.arrayContaining([
       "platform",
+      "last_seen",
+      "ad_url",
+      "subnetwork",
       "image_url_original",
       "image_video_url",
       "new_nas_image_url",
@@ -222,5 +225,19 @@ describe("Google builder > SEARCH_SOURCE_FIELDS", () => {
       "nas_video_url",
       "othermultimedia",
     ]));
+  });
+});
+
+describe("Google builder > Transparency media fallback", () => {
+  it("exempts platform 18 from the legacy IMAGE-without-NAS exclusion", () => {
+    const query = new Builder().setPlatform([18]).build().body.query;
+    const legacyImageExclusion = (query.bool.must_not || []).find((clause) =>
+      JSON.stringify(clause).includes("new_nas_image_url")
+    );
+
+    expect(legacyImageExclusion).toBeTruthy();
+    expect(legacyImageExclusion.bool.must_not).toEqual([
+      { term: { platform: 18 } },
+    ]);
   });
 });

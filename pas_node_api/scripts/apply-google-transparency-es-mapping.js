@@ -29,7 +29,7 @@ function mappingForExisting(properties) {
 
 async function main() {
   const elasticCfg = networks.google?.database?.elastic;
-  const indexName = elasticCfg?.index || 'google_ads_data';
+  const indexName = elasticCfg?.index || 'google_ads_data_v2';
   console.log(`Google Transparency ES mapping target: ${elasticCfg?.node}/${indexName}`);
   console.log(`Fields: ${Object.keys(fragment.properties).join(', ')}`);
   console.log(apply ? 'Mode: APPLY' : 'Mode: DRY RUN (pass --apply to execute)');

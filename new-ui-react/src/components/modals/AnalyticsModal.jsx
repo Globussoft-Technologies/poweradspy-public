@@ -798,7 +798,7 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   // YouTube and Facebook ads ship their playable URL in `ad_url` (mapped to
   // ad.adUrl) — not in ad.videoUrl — so for those we embed via iframe rather
   // than <video> (which can't decode either platform's watch page).
-  const embedUrl = getVideoEmbedUrl(ad?.adUrl);
+  const embedUrl = getVideoEmbedUrl(ad?.videoOriginalUrl || ad?.adUrl);
 
   const aspectStyle = {
     ...getAspectStyle(ctx.platform, ctx.position, ad?.aspect_ratio),

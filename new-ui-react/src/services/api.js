@@ -382,6 +382,7 @@ export const mapAdToCard = (raw) => {
   const transparencyPrimaryUrl = isGoogleTransparency
     ? resolveNasUrl(raw.image_video_url || '')
     : '';
+  const transparencyIsVideoType = isGoogleTransparency && mappedAdType === 'video';
   const transparencyPrimaryIsVideo = isGoogleTransparency
     && /\.(?:mp4|webm|mov|m4v|ogv|ogg)(?:$|[?#])/i.test(transparencyPrimaryUrl);
   const gtOriginalImageUrl = resolveNasUrl(raw.image_url_original || '');
@@ -404,9 +405,13 @@ export const mapAdToCard = (raw) => {
       ? ''
       : (() => {
           const t = isGoogleTransparency
-            ? (!transparencyPrimaryIsVideo
-              ? transparencyPrimaryUrl
-              : resolveNasUrl(raw.thumbnail || ''))
+            ? (transparencyIsVideoType
+              ? (resolveNasUrl(raw.thumbnail || '') ||
+                gtOriginalImageUrl ||
+                (!transparencyPrimaryIsVideo ? transparencyPrimaryUrl : ''))
+              : (!transparencyPrimaryIsVideo
+                ? transparencyPrimaryUrl
+                : resolveNasUrl(raw.thumbnail || '')))
             : resolveNasUrl(raw.video_cover || (raw.image_video_url ? `${raw.image_video_url}` : (raw.image_url_original || raw.image_url || '')));
           // The backend stores "/DefaultImage.jpg" as the variant image for ads with no
           // creative (e.g. TEXT ads). It's a dead path that 404s and renders as "preview
@@ -506,7 +511,7 @@ export const mapAdToCard = (raw) => {
     // Preserve the payload type for the visible badge. Transparency creatives
     // can use a different renderer when image_video_url contains media.
     renderType: isGoogleTransparency
-      ? (transparencyPrimaryIsVideo
+      ? (transparencyIsVideoType || transparencyPrimaryIsVideo
         ? 'video'
         : transparencyPrimaryUrl ? 'image' : mappedAdType)
       : null,
@@ -515,13 +520,29 @@ export const mapAdToCard = (raw) => {
     tiktokLibraryUrl: isTikTok ? (raw.library_url || '') : '',
     metaAdUrl: raw.meta_ad_url || '',
     adPosition: raw.ad_position || '',
-    destinationUrl: raw.destination_url || '',
+    destinationUrl: isGoogleTransparency ? raw.destination_url || null : raw.destination_url || '',
+    redirectUrl: raw.redirect_url || null,
     network: resolvedNetwork,
     platform: Number(raw.platform) || null,
     subnetwork: isGoogleTransparency
       ? (raw.subnetwork ? String(raw.subnetwork).toUpperCase() : null)
       : null,
     isGoogleTransparency,
+    // Preserve the complete public platform-18 contract for the detail and
+    // analytics views. These stay nullable; the frontend must not manufacture
+    // scraper values when Google did not provide them.
+    advertiserId: isGoogleTransparency ? raw.advertiser_id || null : null,
+    regionCode: isGoogleTransparency ? raw.region_code || null : null,
+    source: isGoogleTransparency ? raw.source || null : null,
+    version: isGoogleTransparency ? raw.version || null : null,
+    countries: isGoogleTransparency
+      ? (Array.isArray(raw.country)
+        ? raw.country
+        : typeof raw.country === 'string'
+          ? raw.country.split(',').map((value) => value.trim()).filter(Boolean)
+          : [])
+      : [],
+    language: isGoogleTransparency ? raw.language || null : null,
     imageOriginalUrl: isGoogleTransparency ? gtOriginalImageUrl || null : null,
     videoOriginalUrl: isGoogleTransparency ? liveVideoUrl || null : null,
     // YouTube DISPLAY ads are surfaced under GDN. Show the GDN badge while

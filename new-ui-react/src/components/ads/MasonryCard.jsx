@@ -392,8 +392,8 @@ const MasonryCard = ({
   // ad.adUrl) — not in ad.videoUrl — so for those we embed via iframe rather
   // than <video> (which can't decode either platform's watch page).
   const embedUrl = useMemo(
-    () => getVideoEmbedUrl(ad.adUrl),
-    [ad.adUrl],
+    () => getVideoEmbedUrl(ad.videoOriginalUrl || ad.adUrl),
+    [ad.videoOriginalUrl, ad.adUrl],
   );
 
   const clearVideoStallTimer = useCallback(() => {

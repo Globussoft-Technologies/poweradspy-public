@@ -460,19 +460,44 @@ async function searchAds(req, db, logger) {
         }
         normalized.platform = 18;
         normalized.subnetwork = src.subnetwork || normalized.subnetwork || null;
+        normalized.advertiser_id = src.advertiser_id || null;
+        normalized.ad_url = src.ad_url || null;
+        normalized.region_code = src.region_code || null;
+        normalized.source = src.source || normalized.source || null;
+        normalized.version = src.version || null;
+        normalized.country = Array.isArray(src.country)
+          ? src.country
+          : normalized.country == null
+            ? []
+            : Array.isArray(normalized.country)
+              ? normalized.country
+              : String(normalized.country).split(',').map((value) => value.trim()).filter(Boolean);
         normalized.country_details = Array.isArray(src.country_details)
           ? src.country_details
           : null;
-        normalized.impressions = {
+        const impressions = {
           min: src.impressions_min ?? null,
           max: src.impressions_max ?? null,
           operator: src.impressions_operator ?? null,
         };
-        normalized.first_seen = src.first_seen || normalized.first_seen || null;
-        normalized.last_seen = src.last_seen || normalized.last_seen || null;
+        normalized.impressions = impressions.min != null
+          || impressions.max != null
+          || impressions.operator != null
+          ? impressions
+          : null;
+        normalized.first_seen = Object.prototype.hasOwnProperty.call(src, 'first_seen')
+          ? src.first_seen
+          : normalized.first_seen || null;
+        normalized.last_seen = Object.prototype.hasOwnProperty.call(src, 'last_seen')
+          ? src.last_seen
+          : normalized.last_seen || null;
         // Transparency has no city targeting field. Never expose a legacy SQL
         // placeholder as real targeting data.
         normalized.city = null;
+        if (typeof normalized.post_owner_image === 'string'
+            && normalized.post_owner_image.includes('DefaultImage')) {
+          normalized.post_owner_image = null;
+        }
         normalized.image_url_original = src.image_url_original || null;
         normalized.video_url_original = src.video_url_original || null;
         normalized.thumbnail = src.thumbnail || null;

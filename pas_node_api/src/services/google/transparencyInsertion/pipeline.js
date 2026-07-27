@@ -356,7 +356,7 @@ async function processTransparencyAd(payload, ctx) {
       country_details: saved.countryDetails,
     });
 
-    const esIndex = ctx.db.elastic?.indexName || 'google_ads_data';
+    const esIndex = ctx.db.elastic?.indexName || 'google_ads_data_v2';
     let existingEs = {};
     if (!saved.inserted && ctx.db.elastic) {
       try {

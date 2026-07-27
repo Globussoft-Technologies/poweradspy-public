@@ -327,6 +327,11 @@ The update does not create a second canonical ad:
 
 ## Elasticsearch
 
+The canonical Google read/write index is `google_ads_data_v2`. The Google
+`config.json` index, Transparency insertion fallback, mapping script, search,
+and detail/insights reads must all resolve to that same index; do not split
+platform-18 documents between `google_ads_data` and `google_ads_data_v2`.
+
 The document keeps the existing flat Google fields (`id`, `ad_id`, title/text,
 owner, dates, country, destination, image/NAS paths, platform) and adds:
 
@@ -383,6 +388,29 @@ Before a `platform=18` Google API response is returned, the shared Google
 URLs are preserved and are never double-prefixed. These additional media-field
 rules are guarded by `platform === 18`; legacy Google ads retain their previous
 response behavior.
+
+`POST /api/v1/common/ads/getAdInsights` uses the same platform-18 contract.
+The Google detail controller first reads the unchanged legacy Google row, then
+adds an isolated Transparency overlay:
+
+- canonical `last_seen`, `days_running`, and original/NAS image columns come
+  from the existing Google tables;
+- `advertiser_id`, `ad_url`, `subnetwork`, `region_code`, the overall
+  impression range, original video URL, and redirect URL come from
+  `google_transparency_ad_payload`;
+- per-country dates and `times_shown` ranges come from
+  `google_transparency_country_delivery`;
+- searchable/media fields are overlaid from the configured Google
+  Elasticsearch index when its document exists.
+
+The SQL child-table reads are deliberately conditional on `platform=18`; a
+legacy Google detail request does not query or depend on the Transparency
+tables. Missing or invalid Elasticsearch dates cannot abort the rest of the
+detail overlay. For VIDEO ads, the response exposes the NAS poster as
+`thumbnail`; when `video_url_original` is a YouTube watch URL, cards and both
+detail modals display that poster and use the watch URL through a YouTube
+iframe only after Play, rather than attempting to load the watch page in an
+`<img>` or `<video>` element.
 
 The React `MasonryCard` applies these rules only when `platform === 18`:
 
@@ -607,3 +635,39 @@ not send that value, so generated metadata is not presented as scraper data.
 The Transparency panel and its country visualization render only for
 `platform = 18`. Legacy Google analytics, keywords, lander behavior, and every
 other network retain their existing flow.
+
+## Full read-path audit and v2 recovery
+
+The canonical Google Elasticsearch index is `google_ads_data_v2`. Use the
+read-only batch audit after a deployment, migration, or suspected response
+regression:
+
+```powershell
+node scripts/audit-google-transparency-read-paths.js
+```
+
+It checks every current platform-18 SQL ad against its v2 Elasticsearch
+document, paginates through the search controller, and calls the analytics
+detail controller for every internal ID. A healthy result has equal
+`sql_platform_18_ads`, `elastic_platform_18_docs`, `search_api_ads_seen`, and
+`analytics_details_checked`, with `mismatch_count: 0`.
+
+If old deployments wrote platform-18 documents into `google_ads_data`, recover
+only SQL-backed documents missing from v2:
+
+```powershell
+# Read-only preview
+node scripts/repair-google-transparency-v2-missing.js
+
+# Copy only verified missing documents from google_ads_data to google_ads_data_v2
+node scripts/repair-google-transparency-v2-missing.js --apply
+```
+
+The repair refuses to run when the configured target is not
+`google_ads_data_v2`; it never overwrites documents already present there.
+
+Legacy Google IMAGE ads still require NAS media to appear in search.
+Platform-18 IMAGE ads are exempt because their cards can use
+`image_url_original` or a video `thumbnail` when the NAS upload is unavailable.
+This exception is scoped by `platform = 18` and does not alter older Google
+search behavior.
