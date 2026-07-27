@@ -147,11 +147,8 @@ const computeStats = (list = []) => {
  * only owns the browse/filter/list layer, not the drill-down.
  */
 const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
-  const { getCapabilityDecision, canUseCapabilityOnNetwork } = useAuth();
-  const allowed = (capabilityId) => {
-    if (!getCapabilityDecision(capabilityId)) return true;
-    return canUseCapabilityOnNetwork(capabilityId, "google");
-  };
+  const { canUseCapabilityOnNetwork } = useAuth();
+  const allowed = (capabilityId) => canUseCapabilityOnNetwork(capabilityId, "google");
   const access = {
     browse: allowed("intelligence.keyword_explorer.browse"),
     search: allowed("intelligence.keyword_explorer.search"),

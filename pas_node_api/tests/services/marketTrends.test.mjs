@@ -62,6 +62,7 @@ function lastHandler(path) { const c = chain(path); return c[c.length - 1]; }
 // than the real ES-querying handler, which needs a full ES/DB mock to exercise
 // safely.
 function guardHandler(path) { const c = chain(path); return c[c.length - 4]; }
+function sectionGateHandler(path) { const c = chain(path); return c[c.length - 3]; }
 
 beforeEach(() => {
   authMiddleware.mockClear();
@@ -131,6 +132,41 @@ describe("marketTrends router > active Plan Control policy", () => {
     await lastHandler("/access")({ user: { id: 999, plan_id: 69 }, query: {}, body: {} }, res);
     expect(res.body.data.enabled).toBe(false);
     expect(res.body.data.reasonCode).toBe("VARIANT_DENY");
+  });
+
+  it("returns 403 with upgrade metadata when an enabled parent has a disabled child in enforce mode", async () => {
+    configExports.planControl = { enforcementMode: "enforce" };
+    getCapabilityDecision
+      .mockResolvedValueOnce({
+        allowed: true,
+        reasonCode: "ALLOWED",
+        allowedNetworks: ["facebook", "instagram"],
+        policyVersion: "policy-live",
+      })
+      .mockResolvedValueOnce({
+        allowed: false,
+        capabilityId: "intelligence.market_trends.keywords",
+        reasonCode: "VARIANT_DENY",
+        allowedNetworks: ["facebook", "instagram"],
+        policyVersion: "policy-live",
+      });
+    freshSut();
+    const req = { user: { id: 72702, plan_id: 72 }, query: { network: "all" }, body: {} };
+    const res = mkRes();
+    const next = vi.fn();
+
+    await guardHandler("/trends/keywords")(req, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+    next.mockClear();
+    await sectionGateHandler("/trends/keywords")(req, res, next);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toMatchObject({
+      showSubscriptionModal: true,
+      capabilityId: "intelligence.market_trends.keywords",
+      reasonCode: "VARIANT_DENY",
+    });
+    expect(next).not.toHaveBeenCalled();
   });
 });
 

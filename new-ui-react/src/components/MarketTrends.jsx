@@ -322,7 +322,7 @@ function DateRangePicker({ days, from, to, onPreset, onRange, onClear }) {
 }
 
 const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
-  const { getCapabilityDecision, canUseCapability, canUseCapabilityOnNetwork } = useAuth();
+  const { canUseCapability, canUseCapabilityOnNetwork } = useAuth();
   // Networks this account's PLAN actually includes (admin-configured per plan, same
   // req.planAccess.allowedPlatforms every other gated feature reads) — Market Trends
   // previously ignored this entirely and always offered all 11 networks regardless
@@ -338,10 +338,6 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
   const [to, setTo] = useState('');
   const [selected, setSelected] = useState(AVAILABLE_NETWORKS); // network filter (chips)
   const sectionAllowed = (capabilityId) => {
-    // Parent /access has already allowed this page. A missing child decision
-    // means an older policy/API and must keep the default-allow compatibility
-    // contract instead of locking the whole page.
-    if (!getCapabilityDecision(capabilityId)) return true;
     return canUseCapability(capabilityId) && (
       selected.length === 0 ||
       selected.some((network) => canUseCapabilityOnNetwork(capabilityId, network))

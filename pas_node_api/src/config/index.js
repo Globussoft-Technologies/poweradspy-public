@@ -76,7 +76,7 @@ const config = {
   },
 
   planControl: {
-    enforcementMode: getVal(fileConfig.planControl?.enforcementMode, 'PLAN_CONTROL_ENFORCEMENT_MODE') || 'shadow',
+    enforcementMode: getVal(fileConfig.planControl?.enforcementMode, 'PLAN_CONTROL_ENFORCEMENT_MODE') || 'enforce',
     shadowMode: getVal(fileConfig.planControl?.shadowMode, 'PLAN_CONTROL_SHADOW_MODE', toBool) ?? true,
     policyCacheMs: getVal(fileConfig.planControl?.policyCacheMs, 'PLAN_CONTROL_POLICY_CACHE_MS', toInt) || 5000,
   },

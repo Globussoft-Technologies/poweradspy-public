@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { useDispatch } from 'react-redux';
 import { fetchPlanAccess, fetchEntitlements, fetchOnboardingStatus, trackEvent } from '../services/api';
 import { openModal } from '../store/uiSlice';
+import { isCapabilityAllowed, isCapabilityAllowedOnNetwork } from '../utils/planEntitlement';
 
 const AuthContext = createContext(null);
 const ONBOARDING_DISMISS_KEY_PREFIX = 'pas_onboarding_dismissed_';
@@ -333,24 +334,12 @@ export function AuthProvider({ children }) {
     [entitlements],
   );
   const canUseCapability = useCallback(
-    (capabilityId) => (
-      entitlements?.enforcementMode === 'shadow' ||
-      getCapabilityDecision(capabilityId)?.allowed === true
-    ),
-    [entitlements?.enforcementMode, getCapabilityDecision],
+    (capabilityId) => isCapabilityAllowed(entitlements, capabilityId),
+    [entitlements],
   );
   const canUseCapabilityOnNetwork = useCallback((capabilityId, network) => {
-    if (entitlements?.enforcementMode === 'shadow') return true;
-    const decision = getCapabilityDecision(capabilityId);
-    if (!decision?.allowed) return false;
-    if (!network) return true;
-    const allowedNetworks = decision.allowedNetworks || [];
-    if (allowedNetworks.length) return allowedNetworks.includes(String(network).toLowerCase());
-    // Older API versions returned [] for allowed network-aware children whose
-    // saved policy still used `not_applicable`. New decisions include
-    // networkMode, where an empty effective list is a real denial.
-    return !decision.networkMode;
-  }, [entitlements?.enforcementMode, getCapabilityDecision]);
+    return isCapabilityAllowedOnNetwork(entitlements, capabilityId, network);
+  }, [entitlements]);
   const getCapabilityLimit = useCallback(
     (capabilityId, limitName) => getCapabilityDecision(capabilityId)?.limits?.[limitName] ?? null,
     [getCapabilityDecision],

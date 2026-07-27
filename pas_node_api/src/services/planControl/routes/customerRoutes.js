@@ -59,7 +59,7 @@ router.get('/entitlements', authMiddleware, async (req, res) => {
         planLabel: planIdentity?.label || 'Unknown',
         billingCycle: planIdentity?.billingCycle || null,
         policyVersion: policySnapshot?.versionId || null,
-        enforcementMode: config.planControl?.enforcementMode || 'shadow',
+        enforcementMode: config.planControl?.enforcementMode || 'enforce',
         // Since generalNetworks are on the family policy, we extract them from the snapshot
         generalNetworks: policySnapshot?.snapshot?.policies?.[planIdentity?.familyId]?.generalNetworks || [],
         capabilities: evaluations,
