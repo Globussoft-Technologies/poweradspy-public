@@ -50,7 +50,21 @@ function StepDots({ step }) {
   );
 }
 
-function SearchableMultiSelect({ icon: Icon, label, placeholder, values, onChange, max, options, onSearch, loading: externalLoading, resetKey, helperText, minQueryLength = 0 }) {
+function SearchableMultiSelect({
+  icon: Icon,
+  label,
+  placeholder,
+  values,
+  onChange,
+  max,
+  options,
+  onSearch,
+  loading: externalLoading,
+  resetKey,
+  helperText,
+  minQueryLength = 0,
+  emptyStateMessage = "Nothing available right now.",
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loadedOptions, setLoadedOptions] = useState(options || []);
@@ -180,7 +194,7 @@ function SearchableMultiSelect({ icon: Icon, label, placeholder, values, onChang
           ) : onSearch && query.trim().length < minQueryLength ? (
             <p className="text-xs text-theme-text-muted px-3 py-3">Type at least {minQueryLength} letters.</p>
           ) : list.length === 0 ? (
-            <p className="text-xs text-theme-text-muted px-3 py-3">Nothing available right now.</p>
+            <p className="text-xs text-theme-text-muted px-3 py-3">{emptyStateMessage}</p>
           ) : (
             list.map((o) => {
               const selected = values.includes(o);
@@ -411,7 +425,11 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
       setPreview(results);
       setStep("results");
     } catch (err) {
-      setError(err.message || "Something went wrong. Please try again.");
+      const rawMessage = String(err?.message || '');
+      const friendlyMessage = /failed to fetch|networkerror|load failed/i.test(rawMessage)
+        ? "We couldn't load the onboarding data right now. Please check your connection and try again."
+        : (err.message || "Something went wrong. Please try again.");
+      setError(friendlyMessage);
       setStep("form");
     } finally {
       setSubmitting(false);
@@ -496,6 +514,9 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
                   max={MAX_COMPETITORS}
                   minQueryLength={selectedCategory ? 0 : 2}
                   helperText={selectedCategory ? `Suggestions are tailored to ${selectedCategory.major_category}.` : "Pick a niche first, then type a competitor name."}
+                  emptyStateMessage={selectedCategory
+                    ? `No relevant competitors found for ${selectedCategory.major_category}. Try a broader search or a different brand.`
+                    : "Pick a niche first, then type a competitor name."}
                 />
               </div>
 
