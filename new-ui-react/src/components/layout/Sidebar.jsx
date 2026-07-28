@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark } from "lucide-react";
 import NavItem from "../shared/NavItem";
@@ -37,12 +37,20 @@ const Sidebar = ({
   onOpenKeywordsExplorer,
   searchIn = "keyword",
 }) => {
-  const [aiSignalsOpen, setAiSignalsOpen] = useState(false);
+  const AI_SIGNALS_OPEN_KEY = "sdui.aiSignals.open";
+  const [aiSignalsOpen, setAiSignalsOpen] = useState(() => {
+    try {
+      return sessionStorage.getItem(AI_SIGNALS_OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const {
     config,
     loading,
     filterValues,
     setFilter,
+    setAllFilters,
     clearAll,
     totalActiveFilters,
     shouldShowFilter,
@@ -66,6 +74,13 @@ const Sidebar = ({
     () => sidebarDocs.find((doc) => doc._id === "ai_meta") || null,
     [sidebarDocs],
   );
+
+  useEffect(() => {
+    try {
+      if (aiSignalsOpen) sessionStorage.setItem(AI_SIGNALS_OPEN_KEY, "1");
+      else sessionStorage.removeItem(AI_SIGNALS_OPEN_KEY);
+    } catch {}
+  }, [aiSignalsOpen]);
 
   return (
     <>
@@ -241,7 +256,6 @@ const Sidebar = ({
         document={aiSignalsDoc}
         filterValues={filterValues}
         onClose={() => setAiSignalsOpen(false)}
-        onFilterChange={guestSetFilter}
         shouldShowFilter={shouldShowFilter}
         shouldShowOption={shouldShowOption}
         isDependencySatisfied={isDependencySatisfied}
@@ -249,6 +263,7 @@ const Sidebar = ({
         isFilterRestricted={isFilterRestricted}
         filterHasPlanEntry={filterHasPlanEntry}
         onRestricted={onRestricted}
+        onApply={setAllFilters}
       />
     </>
   );

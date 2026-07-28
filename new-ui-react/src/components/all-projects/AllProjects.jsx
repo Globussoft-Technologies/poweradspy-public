@@ -375,6 +375,10 @@ const RESTORE_COMPARE_COMPETITOR_KEY = "pas_dashboard_compare_competitor_name";
 // Persist the in-progress Add New Advertiser flow so a refresh returns the user
 // to the same setup wizard instead of dumping them back to My Projects.
 const RESTORE_ADD_ADVERTISER_KEY = "pas_dashboard_add_advertiser_draft";
+// Tagged same-URL history entries for the My Projects list/detail/comparison
+// flow. This keeps the browser Back button on the project pages instead of
+// skipping straight back to Ads Library.
+const PROJECT_HISTORY_TAG = "__pasProjectsView";
 
 const readJsonSessionItem = (key) => {
   try {
@@ -571,6 +575,37 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const [showRenameBrandModal, setShowRenameBrandModal] = useState(false);
   const [renameBrandValue, setRenameBrandValue] = useState("");
   const [isRenamingBrand, setIsRenamingBrand] = useState(false);
+  // Keeps same-URL browser history in sync with the internal My Projects
+  // screen state so Back returns list -> detail -> previous page in order.
+  const projectHistoryInitRef = useRef(true);
+  const projectHistoryLastSerializedRef = useRef("");
+
+  const seedProjectHistoryState = (snapshot) => {
+    const serialized = JSON.stringify(snapshot);
+    const taggedSnapshot = { ...snapshot, [PROJECT_HISTORY_TAG]: true };
+    projectHistoryInitRef.current = false;
+    window.history.replaceState(taggedSnapshot, "", window.location.href);
+    projectHistoryLastSerializedRef.current = serialized;
+  };
+
+  const writeProjectHistoryState = (nextSnapshot, { immediate = false } = {}) => {
+    const serialized = JSON.stringify(nextSnapshot);
+    if (serialized === projectHistoryLastSerializedRef.current) return;
+    const taggedSnapshot = { ...nextSnapshot, [PROJECT_HISTORY_TAG]: true };
+
+    if (immediate) {
+      window.history.pushState(taggedSnapshot, "", window.location.href);
+      projectHistoryLastSerializedRef.current = serialized;
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      window.history.pushState(taggedSnapshot, "", window.location.href);
+      projectHistoryLastSerializedRef.current = serialized;
+    }, 180);
+
+    return () => clearTimeout(timer);
+  };
 
   // Auto-initialize connection to Node DB
   useEffect(() => {
@@ -843,6 +878,53 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       localStorage.removeItem("pas_dashboard_selected_proj_id");
     }
   }, [selectedProjectId]);
+
+  // Same-URL browser history for the My Projects surface.
+  // We only track the list/detail/comparison states here; the setup wizard and
+  // modal flows keep using their existing local state / refresh persistence.
+  useEffect(() => {
+    if (![0, 4, 5].includes(viewState)) return;
+
+    const snapshot = {
+      viewState,
+      selectedProjectId: viewState === 0 ? null : selectedProjectId,
+      compareCompetitorName:
+        viewState === 5 ? compareCompetitor?.name || null : null,
+    };
+    if (projectHistoryInitRef.current) {
+      seedProjectHistoryState(snapshot);
+      return;
+    }
+    return writeProjectHistoryState(snapshot);
+  }, [viewState, selectedProjectId, compareCompetitor?.name]);
+
+  useEffect(() => {
+    const onPopState = (event) => {
+      const state = event.state;
+      if (!state || !state[PROJECT_HISTORY_TAG]) return;
+
+      const nextViewState = Number(state.viewState);
+      projectHistoryLastSerializedRef.current = JSON.stringify({
+        viewState: Number.isFinite(nextViewState) ? nextViewState : 0,
+        selectedProjectId: state.selectedProjectId ?? null,
+        compareCompetitorName: state.compareCompetitorName ?? null,
+      });
+
+      if (nextViewState === 5 && state.compareCompetitorName) {
+        setSelectedProjectId(state.selectedProjectId ?? null);
+        setCompareCompetitor({ name: state.compareCompetitorName });
+        setViewState(5);
+        return;
+      }
+
+      setCompareCompetitor(null);
+      setSelectedProjectId(state.selectedProjectId ?? null);
+      setViewState(nextViewState === 4 ? 4 : 0);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   // Auto-fetch competitors if we restored a selected project but it has no data.
   // `projects` is in the deps so this re-runs once the list finishes loading
@@ -1481,6 +1563,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const openProject = async (id, advertiserName, { switchView = true } = {}) => {
     // Switching to another project ends any in-progress generate buffer.
     setIsPreparingCompetitors(false);
+    if (projectHistoryInitRef.current) {
+      seedProjectHistoryState({
+        viewState: 0,
+        selectedProjectId: null,
+        compareCompetitorName: null,
+      });
+    }
     setSelectedProjectId(id);
     setOpenDropdownId(null);
     setOpenGeoId(null);
@@ -1490,7 +1579,17 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     // silently downgrade a restored viewState 5 (Competitive Analysis) back
     // to 4 the moment it fetches data for a project with no competitors
     // loaded yet.
-    if (switchView) setViewState(4);
+    if (switchView) {
+      writeProjectHistoryState(
+        {
+          viewState: 4,
+          selectedProjectId: id,
+          compareCompetitorName: null,
+        },
+        { immediate: true },
+      );
+      setViewState(4);
+    }
 
     // Check if we've already loaded this project's competitors
     const targetProj = projects.find((p) => p.id === id);
@@ -1743,8 +1842,18 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   };
 
   const goBackToAllProjects = () => {
+    // If we are on a tagged project-history entry, use the real browser stack
+    // so Back/Forward stays aligned with the visible project screens.
+    if (
+      (viewState === 4 || viewState === 5) &&
+      window.history.state?.[PROJECT_HISTORY_TAG]
+    ) {
+      window.history.back();
+      return;
+    }
     setSelectedProjectId(null);
     setAddAdvertiserReturnProjectId(null);
+    setCompareCompetitor(null);
     setViewState(0);
   };
 
@@ -3241,6 +3350,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                     disabled={compareDisabled}
                                     onClick={() => {
                                       if (!compareDisabled) {
+                                        writeProjectHistoryState(
+                                          {
+                                            viewState: 5,
+                                            selectedProjectId: activeProject.id,
+                                            compareCompetitorName: comp.name,
+                                          },
+                                          { immediate: true },
+                                        );
                                         setCompareCompetitor(comp);
                                         setViewState(5);
                                       }
