@@ -174,6 +174,16 @@ const AdGrid = ({
     return `${dd}/${mm}/${yyyy}`;
   };
 
+  // Keep chip labels user-facing. We only strip the AI prefix for the range
+  // chip that represents the offer-value filter, so the backend key stays
+  // unchanged while the visible chip reads naturally.
+  const normalizeChipCategoryLabel = (key, label) => {
+    if (/offer[_ ]?value/i.test(String(key))) {
+      return String(label).replace(/^ai\s+/i, "").replace(/^meta\s+/i, "");
+    }
+    return String(label);
+  };
+
   // Build maps from SDUI config:
   //   filterOptionLabels: { filterId -> { value -> displayLabel } }
   //   filterCategoryLabels: { filterId -> filter.label }  — used to prefix chips (e.g. "Age: 18-24")
@@ -384,14 +394,17 @@ const AdGrid = ({
         const hiStr = formatRangeValue(hi);
         if (loStr !== null || hiStr !== null) {
           const displayLabel =
-            rangeLabel || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+            normalizeChipCategoryLabel(
+              key,
+              rangeLabel || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+            );
           const label = `${displayLabel}: ${loStr ?? "0"} - ${hiStr ?? "∞"}`;
           otherChips.push({ type: "chip", filterId: key, value: "__range__", label });
         }
         continue;
       }
       if (Array.isArray(value) && value.length > 0) {
-        const categoryLabel = filterCategoryLabels[key];
+        const categoryLabel = normalizeChipCategoryLabel(key, filterCategoryLabels[key] ?? "");
         value.forEach((v) => {
           const displayLabel = filterOptionLabels[key]?.[String(v)] ?? v;
           const label = categoryLabel ? `${categoryLabel}: ${displayLabel}` : displayLabel;
@@ -410,7 +423,7 @@ const AdGrid = ({
           });
           continue;
         }
-        const categoryLabel = filterCategoryLabels[key];
+        const categoryLabel = normalizeChipCategoryLabel(key, filterCategoryLabels[key] ?? "");
         const displayLabel = filterOptionLabels[key]?.[value] ?? value;
         const label = categoryLabel ? `${categoryLabel}: ${displayLabel}` : displayLabel;
         otherChips.push({ type: "chip", filterId: key, value: "__single__", label });

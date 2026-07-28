@@ -485,6 +485,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       ? localStorage.getItem("pas_dashboard_selected_proj_id") || null
       : null,
   );
+  const [addAdvertiserReturnProjectId, setAddAdvertiserReturnProjectId] = useState(
+    () => restoredAddAdvertiserDraft?.returnProjectId || null,
+  );
   const [contentRefId, setContentRefId] = useState(null);
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [openGeoId, setOpenGeoId] = useState(null);
@@ -803,6 +806,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         selectedCountries,
         countrySearch,
         isCountryAccordionOpen,
+        returnProjectId: addAdvertiserReturnProjectId,
       });
     } else {
       clearSessionItem(RESTORE_ADD_ADVERTISER_KEY);
@@ -818,6 +822,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     selectedCountries,
     countrySearch,
     isCountryAccordionOpen,
+    addAdvertiserReturnProjectId,
   ]);
 
   // Keep the persisted compare-competitor name in sync with viewState 5, the
@@ -1730,12 +1735,26 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     setCountrySearch("");
     setIsCountryAccordionOpen(false);
     setMaxCompetitors("15");
+    setAddAdvertiserReturnProjectId(
+      addAdvertiserReturnProjectId ||
+        (viewState === 4 && selectedProjectId ? selectedProjectId : null),
+    );
     setViewState(1);
   };
 
   const goBackToAllProjects = () => {
     setSelectedProjectId(null);
+    setAddAdvertiserReturnProjectId(null);
     setViewState(0);
+  };
+
+  const exitAddAdvertiserFlow = () => {
+    if (addAdvertiserReturnProjectId) {
+      setSelectedProjectId(addAdvertiserReturnProjectId);
+      setViewState(4);
+      return;
+    }
+    goBackToAllProjects();
   };
 
   const toggleMonitoring = (projId, compId) => {
@@ -2207,7 +2226,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         <div className="max-w-4xl mx-auto mt-12 animate-in fade-in duration-300">
           {hasProjects && (
             <button
-              onClick={goBackToAllProjects}
+              onClick={exitAddAdvertiserFlow}
               className="mb-8 text-theme-text-muted hover:text-white flex items-center gap-2 text-sm font-semibold transition-colors"
             >
               <X size={16} /> Cancel Setup

@@ -1,12 +1,15 @@
 import { useState, useRef } from "react";
 import { ChevronDown } from "lucide-react";
 import SDUIIcon from "./SDUIIcon";
+import { useTheme } from "../../hooks/useTheme";
 
 /**
  * Renders a single SDUIDocument as a collapsible section.
  * Shows title bar with icon + chevron, collapse/expand based on collapsed_by_default.
  */
 const DocumentSection = ({ document: doc, children, clickOnly = false, onHeaderClick }) => {
+  const { theme } = useTheme();
+  const isLightTheme = theme === "light";
   const [isCollapsed, setIsCollapsed] = useState(true);
   const contentRef = useRef(null);
 
@@ -49,15 +52,15 @@ const DocumentSection = ({ document: doc, children, clickOnly = false, onHeaderC
             <SDUIIcon
               icon={doc.icon}
               size={11}
-              className={`transition-colors ${isAiSignalsSection ? "text-[#f5c86a] group-hover:text-[#ffd77f]" : "text-theme-text-muted group-hover:text-[#6b99ff]"}`}
+              className={`transition-colors ${isAiSignalsSection ? (isLightTheme ? "text-[#335296] group-hover:text-[#6b99ff]" : "text-[#f5c86a] group-hover:text-[#ffd77f]") : "text-theme-text-muted group-hover:text-[#6b99ff]"}`}
             />
           )}
-          <span className={`text-[14px] tracking-wider transition-colors capitalize ${isAiSignalsSection ? "text-theme-text group-hover:text-[#ffd77f]" : "text-theme-text-secondary group-hover:text-theme-text"}`}>
+          <span className={`text-[14px] tracking-wider transition-colors capitalize ${isAiSignalsSection ? "text-theme-text group-hover:text-[#6b99ff]" : "text-theme-text-secondary group-hover:text-theme-text"}`}>
             {displayTitle}
           </span>
           {isAiSignalsSection && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-[#f5c86a]/40 bg-[#f5c86a]/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-[#f5c86a] shadow-[0_0_0_1px_rgba(245,200,106,0.06)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#f5c86a] shadow-[0_0_8px_rgba(245,200,106,0.55)]" />
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] shadow-[0_0_0_1px_rgba(55,89,163,0.06)] ${isLightTheme ? "border-[#3759a3]/30 bg-[#3762c1]/10 text-[#335296]" : "border-[#f5c86a]/40 bg-[#f5c86a]/10 text-[#f5c86a]"}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${isLightTheme ? "bg-[#335296] shadow-[0_0_8px_rgba(51,82,150,0.45)]" : "bg-[#f5c86a] shadow-[0_0_8px_rgba(245,200,106,0.55)]"}`} />
               New
             </span>
           )}

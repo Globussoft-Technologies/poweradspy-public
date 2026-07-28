@@ -1,4 +1,5 @@
 import React, { useState, useRef, useId, useEffect } from "react";
+import { useTheme } from "../../hooks/useTheme";
 
 /**
  * SliderFilter — Configurable range slider driven by SDUI.
@@ -10,6 +11,7 @@ import React, { useState, useRef, useId, useEffect } from "react";
  *   min, max, step, unit                        — range config
  */
 const SliderFilter = ({
+  filterId,
   label,
   min = 0,
   max = 1000000,
@@ -22,6 +24,8 @@ const SliderFilter = ({
   onChange,
   accented = false,
 }) => {
+  const { theme } = useTheme();
+  const isLightTheme = theme === "light";
   const uid = useId();
   const safeMin = min ?? 0;
   const safeMax = max || 1000000;
@@ -86,6 +90,8 @@ const SliderFilter = ({
   const lowValue = pctToValue(lowPct);
   const highValue = pctToValue(highPct);
   const hasSelection = Array.isArray(value) && value.length > 0;
+  // Only the AI Offer Value control should surface the selection badge/reset.
+  const showSelectionActions = filterId === "ai_offer_value";
 
   // ── Loose-end detection ─────────────────────────────────────────────
   const isAtLooseLeft = lowPct === 0 && looseLeft;
@@ -112,6 +118,13 @@ const SliderFilter = ({
 
   const displayLow = isAtLooseLeft ? "Any" : fmt(isDouble ? lowValue : safeMin);
   const displayHigh = isAtLooseRight ? `${fmt(safeMax)}+` : fmt(highValue);
+  const resetSelection = () => {
+    setLowPct(0);
+    setHighPct(100);
+    setEditingLow(null);
+    setEditingHigh(null);
+    onChangeRef.current?.(false);
+  };
 
   // ── Emit changes ────────────────────────────────────────────────────
   const emit = (newLowPct, newHighPct) => {
@@ -210,7 +223,10 @@ const SliderFilter = ({
   // ── Track fill gradient ─────────────────────────────────────────────
   const trackLeft = isDouble ? lowPct : 0;
   const trackRight = highPct;
-  const trackGradient = `linear-gradient(to right, #333 ${trackLeft}%, #335296 ${trackLeft}%, #335296 ${trackRight}%, #333 ${trackRight}%)`;
+  const useGoldAccent = !isLightTheme && accented && filterId === "ai_offer_value";
+  const trackFillColor = isLightTheme ? "#335296" : useGoldAccent ? "#f5c86a" : "#335296";
+  const trackBaseColor = isLightTheme ? "#cbd5e1" : "#333";
+  const trackGradient = `linear-gradient(to right, ${trackBaseColor} ${trackLeft}%, ${trackFillColor} ${trackLeft}%, ${trackFillColor} ${trackRight}%, ${trackBaseColor} ${trackRight}%)`;
 
   const stepAttr = step ? String((step / safeMax) * 100) : "any";
 
@@ -221,22 +237,77 @@ const SliderFilter = ({
   const stuckAtLeft = isDouble && highPct < 1;
   const lowThumbZ = stuckAtLeft ? 1 : 3;
   const highThumbZ = stuckAtLeft ? 4 : 2;
+  // Light theme stays blue everywhere.
+  const lightPalette = {
+    section: "mb-2.5 border-[#3762c1]/15 bg-[#3762c1]/5",
+    label: "text-[#335296]",
+    badge: "border-[#3759a3]/25 bg-[#3762c1]/8 text-[#335296]",
+    input: "bg-[#f8fafc] border-[#cbd5e1] hover:border-[#94a3b8] hover:bg-[#eef2ff] focus:border-[#5a82d6] focus:bg-[#dbe4ff]/30 focus:text-[#0f172a]",
+    trackFill: "#335296",
+    trackBase: "#cbd5e1",
+    thumb: "#335296",
+    thumbBorder: "var(--color-border)",
+    loose: "bg-[#3762c1]/10 text-[#335296]",
+    destructiveBtn: "border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100 hover:text-red-800",
+  };
+  // Dark theme has two looks:
+  // - regular filters keep the familiar blue
+  // - the AI Offer Value slider uses gold as a section accent
+  const darkBluePalette = {
+    section: "mb-2.5 border-[#3759a3]/15 bg-[#3759a3]/5",
+    label: "text-[#6b99ff]",
+    badge: "border-[#3759a3]/25 bg-[#3762c1]/8 text-[#6b99ff]/90",
+    input: "bg-[#2a2f3d] border-[#525a70] hover:border-[#7a8499] hover:bg-[#323848] focus:border-[#5a82d6] focus:bg-[#3759a3]/20 focus:text-white",
+    trackFill: "#335296",
+    trackBase: "#333",
+    thumb: "#335296",
+    thumbBorder: "var(--color-border)",
+    loose: "bg-[#3762c1]/10 text-[#6b99ff]",
+    destructiveBtn: "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15 hover:text-red-200",
+  };
+  const darkGoldPalette = {
+    section: "mb-2.5 border-[#f5c86a]/15 bg-[#f5c86a]/5",
+    label: "text-[#f5d88d]",
+    badge: "border-[#f5c86a]/20 bg-[#f5c86a]/8 text-[#f5d88d]/90",
+    input: "bg-[#2a2f3d] border-[#525a70] hover:border-[#7a8499] hover:bg-[#323848] focus:border-[#5a82d6] focus:bg-[#3759a3]/20 focus:text-white",
+    trackFill: "#f5c86a",
+    trackBase: "#333",
+    thumb: "#f5c86a",
+    thumbBorder: "var(--color-border)",
+    loose: "bg-[#f5c86a]/10 text-[#f5c86a]",
+    destructiveBtn: "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15 hover:text-red-200",
+  };
+  // Only the AI Offer Value slider gets the gold treatment in dark mode.
+  const accentPalette = isLightTheme
+    ? lightPalette
+    : useGoldAccent
+      ? darkGoldPalette
+      : darkBluePalette;
 
   return (
-    <div className={`px-3 py-2 rounded-xl border ${accented ? "mb-2.5 border-[#f5c86a]/15 bg-[#f5c86a]/5" : "border-transparent"}`}>
+    <div className={`px-3 py-2 rounded-xl border ${accented ? accentPalette.section : "border-transparent"}`}>
       {label && (
         <div className="flex items-center justify-between gap-2 mb-1.5">
-          <div className={`text-[10px] font-bold uppercase tracking-widest ${accented ? "text-[#f5d88d]" : "text-theme-text-secondary"}`}>
+          <div className={`text-[10px] font-bold uppercase tracking-widest ${accented ? accentPalette.label : "text-theme-text-secondary"}`}>
             {label}
           </div>
-          {hasSelection && (
-            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? "border-[#f5c86a]/30 bg-[#f5c86a]/10 text-[#f5d88d]" : "border-[#3759a3]/30 bg-[#3762c1]/10 text-[#6b99ff]"}`}>
-              selected
-            </span>
+          {showSelectionActions && hasSelection && (
+            <div className="flex items-center gap-1.5">
+              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? accentPalette.badge : "border-[#3759a3]/25 bg-[#3762c1]/8 text-[#6b99ff]/90"}`}>
+                selected
+              </span>
+              <button
+                type="button"
+                onClick={resetSelection}
+                className={`rounded-md border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] transition-colors ${accented ? accentPalette.destructiveBtn : "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15 hover:text-red-200"}`}
+              >
+                Reset
+              </button>
+            </div>
           )}
         </div>
       )}
-      <div className="flex items-center justify-end gap-1 text-[9px] text-theme-text-muted mb-2">
+      <div className="flex items-center justify-start gap-1 text-[9px] text-theme-text-muted mb-2 flex-wrap">
         {isDouble ? (
             <input
               type="text"
@@ -252,9 +323,9 @@ const SliderFilter = ({
               onBlur={(e) => commitLow(e.target.value)}
               onKeyDown={onInputKeyDown(commitLow)}
               style={{
-                width: `${Math.max(3, (editingLow ?? displayLow).length) + 3.5}ch`,
+                width: `${Math.max(4.5, (editingLow ?? displayLow).length + 4.5)}ch`,
               }}
-              className="slider-header-input bg-[#2a2f3d] border border-[#525a70] rounded pl-1.5 pr-2 py-[2px] text-right tabular-nums text-theme-text outline-none transition-colors hover:border-[#7a8499] hover:bg-[#323848] focus:border-[#5a82d6] focus:bg-[#3759a3]/20 focus:text-white"
+              className={`slider-header-input rounded border pl-2 pr-2.5 py-[3px] text-right tabular-nums text-theme-text outline-none transition-colors ${accentPalette.input}`}
             />
           ) : (
             <span>{displayLow}</span>
@@ -273,9 +344,9 @@ const SliderFilter = ({
             onBlur={(e) => commitHigh(e.target.value)}
             onKeyDown={onInputKeyDown(commitHigh)}
             style={{
-              width: `${Math.max(3, (editingHigh ?? displayHigh).length) + 3.5}ch`,
+              width: `${Math.max(4.5, (editingHigh ?? displayHigh).length + 4.5)}ch`,
             }}
-            className="slider-header-input bg-[#2a2f3d] border border-[#525a70] rounded pl-1.5 pr-2 py-[2px] text-right tabular-nums text-theme-text outline-none transition-colors hover:border-[#7a8499] hover:bg-[#323848] focus:border-[#5a82d6] focus:bg-[#3759a3]/20 focus:text-white"
+            className={`slider-header-input rounded border pl-2 pr-2.5 py-[3px] text-right tabular-nums text-theme-text outline-none transition-colors ${accentPalette.input}`}
           />
       </div>
 
@@ -290,27 +361,27 @@ const SliderFilter = ({
         {isDouble ? (
           <>
             {/* Low thumb */}
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step={stepAttr}
-              value={lowPct}
-              onChange={handleLowChange}
-              className={`slider-thumb slider-thumb--low ${uid}`}
-              style={{ "--thumb-z": lowThumbZ }}
-            />
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step={stepAttr}
+            value={lowPct}
+            onChange={handleLowChange}
+            className={`slider-thumb slider-thumb--low ${uid}`}
+            style={{ "--thumb-z": lowThumbZ, "--thumb-color": accentPalette.thumb, "--thumb-border": accentPalette.thumbBorder }}
+          />
             {/* High thumb */}
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step={stepAttr}
-              value={highPct}
-              onChange={handleHighChange}
-              className={`slider-thumb slider-thumb--high ${uid}`}
-              style={{ "--thumb-z": highThumbZ }}
-            />
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step={stepAttr}
+            value={highPct}
+            onChange={handleHighChange}
+            className={`slider-thumb slider-thumb--high ${uid}`}
+            style={{ "--thumb-z": highThumbZ, "--thumb-color": accentPalette.thumb, "--thumb-border": accentPalette.thumbBorder }}
+          />
           </>
         ) : (
           <input
@@ -321,6 +392,7 @@ const SliderFilter = ({
             value={highPct}
             onChange={handleSingleChange}
             className={`slider-thumb slider-thumb--single ${uid}`}
+            style={{ "--thumb-color": accentPalette.thumb, "--thumb-border": accentPalette.thumbBorder }}
           />
         )}
       </div>
@@ -328,11 +400,6 @@ const SliderFilter = ({
       {/* Scale labels */}
       <div className="flex justify-between text-[8px] text-theme-text-muted mt-1">
         <span>{looseLeft ? "Any" : fmt(safeMin)}</span>
-        {isLinear && (
-          <span className="text-[7px] text-theme-text-muted uppercase tracking-widest">
-            linear
-          </span>
-        )}
         <span>{looseRight ? `${fmt(safeMax)}+` : fmt(safeMax)}</span>
       </div>
 
@@ -340,12 +407,12 @@ const SliderFilter = ({
       {(isAtLooseLeft || isAtLooseRight) && (
         <div className="mt-1 flex gap-1">
           {isAtLooseLeft && (
-            <span className="text-[8px] px-1.5 py-0.5 bg-[#3762c1]/10 text-[#6b99ff] rounded font-medium">
+            <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${accentPalette.loose}`}>
               No minimum
             </span>
           )}
           {isAtLooseRight && (
-            <span className="text-[8px] px-1.5 py-0.5 bg-[#3762c1]/10 text-[#6b99ff] rounded font-medium">
+            <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${accentPalette.loose}`}>
               No maximum
             </span>
           )}
@@ -386,9 +453,9 @@ const SliderFilter = ({
                     height: 12px;
                     width: 12px;
                     border-radius: 50%;
-                    background: #335296;
+                    background: var(--thumb-color);
                     cursor: pointer;
-                    border: 2px solid var(--color-border);
+                    border: 2px solid var(--thumb-border);
                     pointer-events: all;
                     position: relative;
                     z-index: var(--thumb-z, 2);
@@ -398,9 +465,9 @@ const SliderFilter = ({
                     height: 14px;
                     width: 14px;
                     border-radius: 50%;
-                    background: #335296;
+                    background: var(--thumb-color);
                     cursor: pointer;
-                    border: 2px solid var(--color-border);
+                    border: 2px solid var(--thumb-border);
                     pointer-events: all;
                     position: relative;
                     z-index: var(--thumb-z, 2);

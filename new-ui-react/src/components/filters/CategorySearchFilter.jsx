@@ -80,6 +80,11 @@ const CategorySearchFilter = ({ label, options, selected, onChange }) => {
   return (
     <div className="px-3 py-2">
       <div className="flex flex-col gap-2">
+        {label && (
+          <div className="text-[10px] font-bold uppercase tracking-widest text-theme-text-secondary">
+            {label}
+          </div>
+        )}
         {/* Search Bar */}
         <div className="relative">
           <Search

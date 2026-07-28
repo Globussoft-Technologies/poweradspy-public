@@ -1,9 +1,10 @@
 import React, { useEffect } from "react";
 import { X, Sparkles } from "lucide-react";
 import SchemaRenderer from "./SchemaRenderer";
+import { useTheme } from "../../hooks/useTheme";
 
 /**
- * Dedicated modal for the AI Signals sidebar section.
+ * Dedicated modal for the AI Filters sidebar section.
  *
  * The sidebar shows a compact launcher while the actual filters are edited in
  * this popup so the dense nested controls do not cram the sidebar column.
@@ -22,6 +23,9 @@ const AiSignalsModal = ({
   filterHasPlanEntry,
   onRestricted,
 }) => {
+  const { theme } = useTheme();
+  const isLightTheme = theme === "light";
+
   useEffect(() => {
     if (!isOpen) return undefined;
 
@@ -36,7 +40,7 @@ const AiSignalsModal = ({
   if (!isOpen || !doc) return null;
 
   const filterCount = Array.isArray(doc.filters) ? doc.filters.length : 0;
-  const displayTitle = "AI Signals";
+  const displayTitle = "AI Filters";
 
   return (
     <div
@@ -50,7 +54,13 @@ const AiSignalsModal = ({
         <div className="flex items-start justify-between gap-4 border-b border-theme-border px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full border border-[#f5c86a]/40 bg-[#f5c86a]/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-[#f5c86a]">
+              <span
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] ${
+                  isLightTheme
+                    ? "border-[#3762c1]/20 bg-[#3762c1]/10 text-[#335296]"
+                    : "border-[#f5c86a]/40 bg-[#f5c86a]/10 text-[#f5c86a]"
+                }`}
+              >
                 <Sparkles size={10} />
                 New
               </span>
@@ -65,7 +75,7 @@ const AiSignalsModal = ({
             type="button"
             onClick={onClose}
             className="shrink-0 rounded-lg border border-theme-border bg-theme-bg p-2 text-theme-text-muted transition-colors hover:text-theme-text hover:border-theme-text/30"
-            aria-label="Close AI Signals popup"
+            aria-label="Close AI Filters popup"
           >
             <X size={18} />
           </button>

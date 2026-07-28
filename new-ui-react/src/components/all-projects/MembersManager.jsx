@@ -17,12 +17,41 @@ import { CompetitorAPI, trackProjectEvent } from "../../services/api";
 // receives a brand-isolated digest as the primary `to:` (no CC). An
 // unassigned member receives nothing — explicit assignment is required.
 const SHOW_PER_BRAND_CC = true;
+// Persist the modal state in sessionStorage so a same-tab refresh does not
+// close the popup and discard the in-progress add-member draft.
+const MEMBERS_MANAGER_DRAFT_KEY = "pas_dashboard_members_manager_draft";
+
+const readJsonSessionItem = (key) => {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeJsonSessionItem = (key, value) => {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* sessionStorage unavailable - refresh restore simply won't work */
+  }
+};
+
+const clearSessionItem = (key) => {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    /* sessionStorage unavailable - nothing to clear */
+  }
+};
 
 export default function MembersManager({ userId, projects = [] }) {
-  const [open, setOpen] = useState(false);
+  const restoredDraft = readJsonSessionItem(MEMBERS_MANAGER_DRAFT_KEY);
+  const [open, setOpen] = useState(Boolean(restoredDraft?.open));
   const [members, setMembers] = useState([]);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [name, setName] = useState(restoredDraft?.name || "");
+  const [email, setEmail] = useState(restoredDraft?.email || "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [brandCc, setBrandCc] = useState({}); // project_id -> Set(memberId)
@@ -52,6 +81,20 @@ export default function MembersManager({ userId, projects = [] }) {
   }, [userId, ccProjects.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    // Keep the modal and its draft inputs alive across refreshes while the
+    // user is actively managing members.
+    if (open) {
+      writeJsonSessionItem(MEMBERS_MANAGER_DRAFT_KEY, {
+        open: true,
+        name,
+        email,
+      });
+    } else {
+      clearSessionItem(MEMBERS_MANAGER_DRAFT_KEY);
+    }
+  }, [open, name, email]);
+
+  useEffect(() => {
     if (!open) return;
     loadMembers();
     if (SHOW_PER_BRAND_CC) loadBrandCc();
@@ -67,7 +110,8 @@ export default function MembersManager({ userId, projects = [] }) {
     try {
       const r = await CompetitorAPI.addMember(userId, name.trim(), email.trim());
       if (r?.body?.status === "success") {
-        setName(""); setEmail("");
+        setName("");
+        setEmail("");
         await loadMembers();
         trackProjectEvent("add_member", {
           member_name: name.trim(),
