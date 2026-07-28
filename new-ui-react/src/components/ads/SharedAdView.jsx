@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { ctaHref, destinationUrls, parseAdCtas } from "../../utils/cta";
 import {
   Play,
   ThumbsUp,
@@ -126,6 +127,10 @@ const SharedAdView = ({ shareToken }) => {
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState(null);
   const [videoUnavailable, setVideoUnavailable] = useState(false);
   const videoFallbackAttempted = useRef(false);
+
+  // Ads can carry several CTAs packed into one `||,`-joined string.
+  const sharedCtas = parseAdCtas(ad);
+  const sharedDestinations = destinationUrls(ad?.destinationUrl);
 
   // Reset video fallback state whenever the underlying ad changes.
   useEffect(() => {
@@ -473,16 +478,27 @@ const SharedAdView = ({ shareToken }) => {
               )}
             </div>
 
-            {/* CTA & destination */}
-            {ad.cta && (
-              <div className="px-5 pb-3 flex items-center gap-2">
-                <span className="px-3 py-1.5 text-[11px] font-bold rounded-lg border flex items-center gap-1" style={{ backgroundColor: 'rgba(51,82,150,0.15)', color: BRAND_COLOR, borderColor: 'rgba(51,82,150,0.2)' }}>
-                  <MousePointerClick size={11} />
-                  {ad.cta}
-                </span>
-                {ad.destinationUrl && (
+            {/* CTA & destination — one pill per CTA, each linking to its own URL */}
+            {sharedCtas.length > 0 && (
+              <div className="px-5 pb-3 flex flex-wrap items-center gap-2">
+                {sharedCtas.map(({ label, url }, i) => {
+                  const pill = (
+                    <span className="px-3 py-1.5 text-[11px] font-bold rounded-lg border flex items-center gap-1 capitalize" style={{ backgroundColor: 'rgba(51,82,150,0.15)', color: BRAND_COLOR, borderColor: 'rgba(51,82,150,0.2)' }}>
+                      <MousePointerClick size={11} />
+                      {label}
+                    </span>
+                  );
+                  return url ? (
+                    <a key={`${label}-${i}`} href={ctaHref(url)} target="_blank" rel="noopener noreferrer">
+                      {pill}
+                    </a>
+                  ) : (
+                    <React.Fragment key={`${label}-${i}`}>{pill}</React.Fragment>
+                  );
+                })}
+                {sharedDestinations.length === 1 && (
                   <a
-                    href={ad.destinationUrl}
+                    href={ctaHref(sharedDestinations[0])}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-[11px] text-gray-500 hover:opacity-80 transition-colors truncate max-w-[300px]"
@@ -490,7 +506,7 @@ const SharedAdView = ({ shareToken }) => {
                     onMouseEnter={(e) => e.target.style.color = BRAND_COLOR}
                     onMouseLeave={(e) => e.target.style.color = ''}
                   >
-                    {ad.destinationUrl}
+                    {sharedDestinations[0]}
                   </a>
                 )}
               </div>

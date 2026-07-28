@@ -38,6 +38,7 @@ import PlatformBadgesRow from "../shared/PlatformBadgesRow";
 import { createShareLink, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent, getAdCountry } from "../../services/api";
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
+import { ctaHref, parseAdCtas } from "../../utils/cta";
 
 import fbIcon from "../../assets/fb.png";
 import igIcon from "../../assets/ig.png";
@@ -305,6 +306,10 @@ const AdDetailModal = ({
   const [showHideMenu, setShowHideMenu] = useState(false);
   const [hideMenuPos, setHideMenuPos] = useState({ top: 0, left: 0 });
   const hideButtonRef = React.useRef(null);
+
+  // Multi-CTA ads arrive with their labels (and, when each has its own landing
+  // page, their destination URLs) packed into one `||,`-joined string.
+  const ctaButtons = useMemo(() => parseAdCtas(ad), [ad?.cta, ad?.destinationUrl]);
 
   // const displayLanguage = (() => {
   //   const raw = (ad?.adLanguage || "").trim();
@@ -1100,54 +1105,53 @@ const AdDetailModal = ({
                             </span>
                         </div>
                     )} */}
-            {ad.cta && (
-              <div className="flex items-center gap-1.5">
-                <div className="relative inline-flex group">
-                  {/* CTA Button */}
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-
-                      const hasUrl = !!ad?.destinationUrl?.trim();
-                      if (hasUrl) {
-                        const url = ad.destinationUrl.startsWith("http")
-                          ? ad.destinationUrl
-                          : `https://${ad.destinationUrl}`;
-                        window.open(url, "_blank", "noopener,noreferrer");
-                      }
-                    }}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition
+            {/* One button per CTA. Ads can carry several (LinkedIn commonly ships
+                "sign up" + "visit website" joined by `||,`); each opens only its
+                own destination URL. */}
+            {ctaButtons.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {ctaButtons.map(({ label, url }, i) => (
+                  <div key={`${label}-${i}`} className="relative inline-flex group">
+                    {/* CTA Button */}
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const href = ctaHref(url);
+                        if (href) window.open(href, "_blank", "noopener,noreferrer");
+                      }}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold capitalize transition
                                 ${
-                                  ad?.destinationUrl?.trim()
+                                  url
                                     ? "bg-[#3762c1]/10 border border-[#3759a3]/20 text-[#6b99ff] cursor-pointer hover:bg-[#3762c1]/20"
                                     : "bg-gray-500/10 border border-gray-500/20 text-gray-400 cursor-not-allowed"
                                 }`}
-                  >
-                    <MousePointerClick size={10} />
-                    {ad.cta}
-                  </span>
-
-                  {/* Tooltip */}
-                  {!ad?.destinationUrl?.trim() && (
-                    <div
-                      className="absolute left-full top-1/2 -translate-y-1/2 ml-2 mb-2 
-                                            hidden group-hover:flex z-50"
                     >
+                      <MousePointerClick size={10} />
+                      {label}
+                    </span>
+
+                    {/* Tooltip */}
+                    {!url && (
                       <div
-                        className="relative px-3 py-1.5 text-[10px] text-white 
-                                                bg-black/90 rounded-md shadow-lg text-center whitespace-nowrap"
+                        className="absolute left-full top-1/2 -translate-y-1/2 ml-2 mb-2
+                                            hidden group-hover:flex z-50"
                       >
-                        Button disabled as it lacks a <br />
-                        Destination URL
-                        {/* Arrow */}
                         <div
-                          className="absolute left-1/2 -translate-x-1/2 top-full 
+                          className="relative px-3 py-1.5 text-[10px] text-white
+                                                bg-black/90 rounded-md shadow-lg text-center whitespace-nowrap"
+                        >
+                          Button disabled as it lacks a <br />
+                          Destination URL
+                          {/* Arrow */}
+                          <div
+                            className="absolute left-1/2 -translate-x-1/2 top-full
                                                 w-2 h-2 bg-black/90 rotate-45"
-                        />
+                          />
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 

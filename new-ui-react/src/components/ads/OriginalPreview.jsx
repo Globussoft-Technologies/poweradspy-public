@@ -22,6 +22,9 @@ import gIcon from "../../assets/g.png";
 import linkedinIcon from "../../assets/linkedin.png";
 import rdIcon from "../../assets/rd.png";
 import pinterestIcon from "../../assets/pinterest.png";
+// These are native-look replicas, which render a single CTA button — an ad with
+// several CTAs shows its first one here; the detail pane lists them all.
+import { primaryCtaLabel } from "../../utils/cta";
 
 /**
  * OriginalPreview — Renders an ad as it would appear natively on its platform.
@@ -225,7 +228,7 @@ const FacebookPreview = ({ ad, position, adType, fill, hideEngagement }) => {
             </p>
             {ad.cta && (
               <button className="ml-2 px-4 py-1.5 bg-gray-200 text-[12px] font-semibold text-gray-800 rounded hover:bg-gray-300 flex-shrink-0">
-                {ad.cta}
+                {primaryCtaLabel(ad.cta)}
               </button>
             )}
           </div>
@@ -299,7 +302,7 @@ const InstagramPreview = ({ ad, position, adType, fill, hideEngagement }) => {
         {ad.cta && (
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/70 to-transparent">
             <button className="w-full py-2 rounded-full bg-white text-black text-[13px] font-semibold">
-              {ad.cta}
+              {primaryCtaLabel(ad.cta)}
             </button>
           </div>
         )}
@@ -375,7 +378,7 @@ const InstagramPreview = ({ ad, position, adType, fill, hideEngagement }) => {
           </p>
           {ad.cta && (
             <button className="mt-2 text-[13px] font-semibold text-blue-500">
-              {ad.cta}
+              {primaryCtaLabel(ad.cta)}
             </button>
           )}
         </div>
@@ -408,7 +411,7 @@ const YouTubePreview = ({ ad, position, adType, fill }) => {
         {ad.cta && (
           <div className="p-3 flex-shrink-0 mt-auto">
             <button className="w-full py-2 bg-blue-600 text-white text-[13px] font-semibold rounded hover:bg-blue-700">
-              {ad.cta}
+              {primaryCtaLabel(ad.cta)}
             </button>
           </div>
         )}
@@ -437,7 +440,7 @@ const YouTubePreview = ({ ad, position, adType, fill }) => {
         {ad.cta && (
           <div className="absolute bottom-2 right-2">
             <button className="px-3 py-1 bg-blue-600 text-white text-[11px] font-semibold rounded-sm hover:bg-blue-700">
-              {ad.cta}
+              {primaryCtaLabel(ad.cta)}
             </button>
           </div>
         )}
@@ -501,7 +504,7 @@ const GooglePreview = ({ platform, ad, position, adType, fill }) => {
           </div>
           {ad.cta && (
             <button className="ml-2 px-3 py-1.5 bg-blue-600 text-white text-[11px] font-semibold rounded hover:bg-blue-700 flex-shrink-0">
-              {ad.cta}
+              {primaryCtaLabel(ad.cta)}
             </button>
           )}
         </div>
@@ -683,7 +686,7 @@ const LinkedInPreview = ({ ad, position, adType, fill }) => {
         {ad.cta && (
           <div className="px-3 py-2">
             <button className="w-full py-1.5 border-2 border-blue-600 text-blue-600 text-[13px] font-semibold rounded-full hover:bg-blue-50">
-              {ad.cta}
+              {primaryCtaLabel(ad.cta)}
             </button>
           </div>
         )}
@@ -813,7 +816,7 @@ const PinterestPreview = ({ ad, fill }) => {
         </div>
         {ad.cta && (
           <button className="w-full mt-2.5 py-2 bg-red-600 text-white text-[12px] font-semibold rounded-full hover:bg-red-700">
-            {ad.cta}
+            {primaryCtaLabel(ad.cta)}
           </button>
         )}
       </div>
@@ -903,7 +906,7 @@ const TikTokPreview = ({ ad, fill }) => {
         </p>
         {ad.cta && (
           <button className="w-full mt-2 py-2 bg-red-500 text-white text-[13px] font-semibold rounded">
-            {ad.cta}
+            {primaryCtaLabel(ad.cta)}
           </button>
         )}
         <div className="flex items-center gap-1.5 mt-2">

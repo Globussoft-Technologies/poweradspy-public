@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import he from "he";
 import { fetchImageAsDataUrl } from "./api";
+import { ctaLabelText } from "../utils/cta";
 
 // ─── Stat trio (mirrors the per-platform trio shown on the card) ───────────
 const STAT_TRIOS = {
@@ -400,7 +401,7 @@ export const downloadAdAsPdf = async (ad) => {
         ? ad.builtWithFunnel.join(", ")
         : ad.builtWithFunnel,
     ],
-    ["Call to Action", ad.cta],
+    ["Call to Action", ctaLabelText(ad.cta)],
     [
       "Keywords",
       Array.isArray(ad.keywords) ? ad.keywords.join(", ") : ad.keywords,

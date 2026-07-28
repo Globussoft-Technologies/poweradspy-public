@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback } from "react";
 import { fetchFreshTikTokVideoUrl } from "../../services/api";
+import { ctaLabelText } from "../../utils/cta";
 import {
   Play,
   ThumbsUp,
@@ -394,7 +395,7 @@ const AdCard = ({
               style={{ color: "var(--color-text-secondary)" }}
             >
               <MousePointerClick size={9} className="text-[#6b99ff]" />
-              {ad.cta}
+              {ctaLabelText(ad.cta)}
             </span>
           </div>
         )}
