@@ -626,7 +626,9 @@ instants. It extracts `YYYY-MM-DD` before display, so a SQL-shaped
 All three support multiple countries and use the readable `21 Dec 2025` date
 form. The UI resolves alpha-2 codes such as `US`, `IN`, and `DE` to full
 country names for cards, activity summaries, and map tooltips; the ISO code is
-kept only as the internal choropleth key.
+kept only as the internal choropleth key. The shared Country Reach view also
+recognizes an ISO-only `country` value (for example `JP` with no separate
+`country_code`) and displays its canonical name (`Japan`) in the list and map.
 
 Platform-18 analytics is data-driven: a missing value does not produce a
 `--`/dash row or an empty chart. Unavailable summary cards, Ad Details rows,

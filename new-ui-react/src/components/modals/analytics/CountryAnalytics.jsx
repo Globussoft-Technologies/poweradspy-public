@@ -22,6 +22,19 @@ const REGION_ISO_MAP = {
   LATAM: ['BR', 'MX', 'AR', 'CL', 'CO', 'PE', 'VE', 'EC', 'BO', 'PY', 'UY'],
 };
 
+export const normalizeCountryIdentity = (country, suppliedIso) => {
+  const rawName = String(country || '').trim();
+  const nameUpper = rawName.toUpperCase();
+  const explicitIso = String(suppliedIso || '').trim().toUpperCase();
+  const countryAsIso = /^[A-Z]{2}$/.test(nameUpper) ? nameUpper : '';
+  const iso = explicitIso || countryAsIso || NAME_TO_ISO[nameUpper] || '';
+
+  return {
+    iso: iso || null,
+    name: (iso && COUNTRY_NAMES[iso]) || rawName || iso,
+  };
+};
+
 /**
  * Transform ad-level country data: [{ country, iso }]
  * For ad-level we show ad_count = number of times country appears (or 1 each).
@@ -33,8 +46,7 @@ function transformAdCountry(raw) {
   let hasAll = false;
   for (const item of raw) {
     const nameUpper = (item.country || '').toUpperCase();
-    let iso = (item.iso || NAME_TO_ISO[nameUpper] || '').toUpperCase();
-    const name = item.country || '';
+    const { iso, name } = normalizeCountryIdentity(item.country, item.iso);
 
     if (!iso && nameUpper === 'ALL') {
       if (!hasAll) {
@@ -47,7 +59,7 @@ function transformAdCountry(raw) {
     // If we found an ISO code, use it as the id (deduplicates SG vs Singapore, etc)
     if (iso) {
       if (!map[iso]) {
-        map[iso] = { id: iso, name: COUNTRY_NAMES[iso] || name || iso, count: 0 };
+        map[iso] = { id: iso, name, count: 0 };
         results.push(map[iso]);
       }
       map[iso].count += 1;
@@ -73,14 +85,14 @@ function transformAdvertiserCountry(raw, adData) {
 
   for (const item of raw) {
     const countryUpper = (item.country || '').toUpperCase();
-    const iso = (item.iso || NAME_TO_ISO[countryUpper] || '').toUpperCase() || null;
+    const { iso, name } = normalizeCountryIdentity(item.country, item.iso);
 
     const count = item.ad_count || (item.ad_ids ? item.ad_ids.length : 0);
 
     if (!iso && countryUpper === 'ALL') {
       results.push({ id: 'ALL', name: 'Worldwide', count });
     } else if (iso) {
-      results.push({ id: iso, name: item.country || COUNTRY_NAMES[iso] || iso, count });
+      results.push({ id: iso, name, count });
     } else {
       // Unknown region with no ISO (e.g. DACH) — use name as id, won't highlight on map but shows in list
       results.push({ id: countryUpper, name: item.country, count });
