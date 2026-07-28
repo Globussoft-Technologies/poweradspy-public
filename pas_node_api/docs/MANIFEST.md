@@ -137,11 +137,28 @@ docs/  → MANIFEST.md (this) + PHP-SPEC-gdn.md
 ```
 Every empty field falls back to its env var. Parsed in `src/config/index.js`.
 
-### Per-network — `config.json → networks.<net>.insertion.enabled`
+### Per-network — `config.json → networks.<net>.insertion`
 ```jsonc
-"gdn": { "enabled": true, "insertion": { "enabled": true }, "elastic": { "index": "gdn_search_mix" }, "sql": { "database": "pasdev_gdn" } }
+"gdn": {
+  "enabled": true,
+  "insertion": {
+    "enabled": true,
+    "rejectedPostOwnerNames": ["Acme", "Example Advertiser"]
+  },
+  "elastic": { "index": "gdn_search_mix" },
+  "sql": { "database": "pasdev_gdn" }
+}
 ```
 `false` → that network's insertion endpoints return **403** (read/search unaffected). Env override `<PREFIX>_INSERTION_ENABLED`.
+
+`rejectedPostOwnerNames` is a per-network exact-name deny-list applied before
+validation and every write/API/media step. Matching normalizes Unicode, trims
+outer whitespace, collapses repeated whitespace, and ignores letter case.
+Thus `ACME`, `acme`, and ` Acme ` match; `Acme Store` does not match `Acme`.
+A blocked item returns `422 rejected` with `field=post_owner`, while other batch
+items continue. An empty array disables the rule for that network. The rule
+does not affect other networks or delete endpoints. Restart Node workers after
+directly editing `config.json`.
 
 ### Multi-core — `config.json → cluster.enabled = true` (production).
 

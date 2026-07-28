@@ -34,6 +34,21 @@ function toBool(v) {
   return v === true || v === 'true';
 }
 
+function toStringArray(v) {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((item) => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function insertionConfig(networkJson, envPrefix) {
+  return {
+    enabled: toBool(netVal(networkJson?.insertion, 'enabled', `${envPrefix}_INSERTION_ENABLED`, true)),
+    rejectedPostOwnerNames: toStringArray(networkJson?.insertion?.rejectedPostOwnerNames),
+  };
+}
+
 // Get network configs from config.json
 const netCfg = config.getRawFileConfig()?.networks || {};
 
@@ -65,7 +80,7 @@ module.exports = {
     name: 'Facebook',
     slug: 'facebook',
     enabled: toBool(netVal(netCfg.facebook, 'enabled', 'FB_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.facebook?.insertion, 'enabled', 'FB_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.facebook, 'FB'),
     database: {
       sql: {
         // enabled/poolSize — non-connection params, always read from network config
@@ -103,7 +118,7 @@ module.exports = {
     name: 'YouTube',
     slug: 'youtube',
     enabled: toBool(netVal(netCfg.youtube, 'enabled', 'YT_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.youtube?.insertion, 'enabled', 'YT_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.youtube, 'YT'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.youtube?.sql, 'enabled',  'YT_SQL_ENABLED',   false)),
@@ -135,7 +150,7 @@ module.exports = {
     name: 'GDN',
     slug: 'gdn',
     enabled: toBool(netVal(netCfg.gdn, 'enabled', 'GDN_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.gdn?.insertion, 'enabled', 'GDN_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.gdn, 'GDN'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.gdn?.sql, 'enabled',  'GDN_SQL_ENABLED',   false)),
@@ -167,7 +182,7 @@ module.exports = {
     name: 'Instagram',
     slug: 'instagram',
     enabled: toBool(netVal(netCfg.instagram, 'enabled', 'IG_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.instagram?.insertion, 'enabled', 'IG_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.instagram, 'IG'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.instagram?.sql, 'enabled',  'IG_SQL_ENABLED',   false)),
@@ -199,7 +214,7 @@ module.exports = {
     name: 'Pinterest',
     slug: 'pinterest',
     enabled: toBool(netVal(netCfg.pinterest, 'enabled', 'PIN_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.pinterest?.insertion, 'enabled', 'PIN_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.pinterest, 'PIN'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.pinterest?.sql, 'enabled',  'PIN_SQL_ENABLED',   false)),
@@ -231,7 +246,7 @@ module.exports = {
     name: 'Google',
     slug: 'google',
     enabled: toBool(netVal(netCfg.google, 'enabled', 'GOOG_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.google?.insertion, 'enabled', 'GOOG_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.google, 'GOOG'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.google?.sql, 'enabled',  'GOOG_SQL_ENABLED',   false)),
@@ -263,7 +278,7 @@ module.exports = {
     name: 'Native',
     slug: 'native',
     enabled: toBool(netVal(netCfg.native, 'enabled', 'NAT_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.native?.insertion, 'enabled', 'NAT_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.native, 'NAT'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.native?.sql, 'enabled',  'NAT_SQL_ENABLED',   false)),
@@ -295,7 +310,7 @@ module.exports = {
     name: 'LinkedIn',
     slug: 'linkedin',
     enabled: toBool(netVal(netCfg.linkedin, 'enabled', 'LI_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.linkedin?.insertion, 'enabled', 'LI_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.linkedin, 'LI'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.linkedin?.sql, 'enabled',  'LI_SQL_ENABLED',   false)),
@@ -327,7 +342,7 @@ module.exports = {
     name: 'Reddit',
     slug: 'reddit',
     enabled: toBool(netVal(netCfg.reddit, 'enabled', 'RED_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.reddit?.insertion, 'enabled', 'RED_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.reddit, 'RED'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.reddit?.sql, 'enabled',  'RED_SQL_ENABLED',   false)),
@@ -359,7 +374,7 @@ module.exports = {
     name: 'Quora',
     slug: 'quora',
     enabled: toBool(netVal(netCfg.quora, 'enabled', 'QR_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.quora?.insertion, 'enabled', 'QR_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.quora, 'QR'),
     database: {
       sql: {
         enabled:  toBool(netVal(netCfg.quora?.sql, 'enabled',  'QR_SQL_ENABLED',   false)),
@@ -391,7 +406,7 @@ module.exports = {
     name: 'TikTok',
     slug: 'tiktok',
     enabled: toBool(netVal(netCfg.tiktok, 'enabled', 'TT_ENABLED', true)),
-    insertion: { enabled: toBool(netVal(netCfg.tiktok?.insertion, 'enabled', 'TT_INSERTION_ENABLED', true)) },
+    insertion: insertionConfig(netCfg.tiktok, 'TT'),
     database: {
       sql: {
         enabled: toBool(netVal(netCfg.tiktok?.sql, 'enabled', 'TT_SQL_ENABLED', false)),

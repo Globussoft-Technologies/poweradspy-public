@@ -30,6 +30,27 @@ other platform  -> existing google/insertion/metaAdsPipeline.js
 Requests containing no platform-18 item fall through to the untouched legacy
 router. No second platform-18 insertion API is exposed.
 
+## Post-owner rejection
+
+Google legacy and platform-18 items share the per-network insertion setting:
+
+```json
+"google": {
+  "insertion": {
+    "enabled": true,
+    "rejectedPostOwnerNames": ["Acme", "Example Advertiser"]
+  }
+}
+```
+
+Before contract validation or any SQL, NAS, translation, or Elasticsearch work,
+the shared insertion engine compares `post_owner` with this list. The comparison
+is exact but case-insensitive and whitespace-normalized, so the configured name
+may be written in capital, small, or normal case. A match returns `422 rejected`
+with `field=post_owner`; it does not abort other items in a mixed batch. An empty
+array disables rejection. Restart Node workers after directly editing
+`config.json`.
+
 ## Contract validation
 
 `transparencyInsertion/validate.js` enforces the supplied v3.2.0 contract before

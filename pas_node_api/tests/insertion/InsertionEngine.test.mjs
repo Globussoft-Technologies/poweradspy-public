@@ -4,6 +4,7 @@ const require = createRequire(import.meta.url);
 
 const engine = require("../../src/insertion/InsertionEngine");
 const logger = require("../../src/logger");
+const networks = require("../../src/config/networks");
 
 describe("insertion/InsertionEngine > run", () => {
   it("returns batch:false and index 0 for a single ad", async () => {
@@ -44,6 +45,55 @@ describe("insertion/InsertionEngine > run", () => {
       message: "The ad could not be processed due to an unexpected server error.",
     });
     expect(out.summary).toEqual({ total: 2, ok: 1, failed: 1 });
+  });
+
+  it("rejects a configured post owner case-insensitively before the pipeline runs", async () => {
+    const original = networks.google.insertion.rejectedPostOwnerNames;
+    networks.google.insertion.rejectedPostOwnerNames = ["  Acme   CORP  "];
+    const processOne = vi.fn(async () => ({ code: 200, status: "ok" }));
+
+    try {
+      const out = await engine.run(
+        { ad_id: "blocked", post_owner: "acme corp" },
+        processOne,
+        { network: "google" }
+      );
+
+      expect(processOne).not.toHaveBeenCalled();
+      expect(out.result).toMatchObject({
+        code: 422,
+        status: "rejected",
+        field: "post_owner",
+        index: 0,
+      });
+    } finally {
+      networks.google.insertion.rejectedPostOwnerNames = original;
+    }
+  });
+
+  it("keeps reject lists isolated per network and uses exact-name matching", async () => {
+    const original = networks.facebook.insertion.rejectedPostOwnerNames;
+    networks.facebook.insertion.rejectedPostOwnerNames = ["Acme"];
+    const processOne = vi.fn(async () => ({ code: 200, status: "ok" }));
+
+    try {
+      const otherNetwork = await engine.run(
+        { ad_id: "allowed-1", post_owner: "ACME" },
+        processOne,
+        { network: "instagram" }
+      );
+      const partialName = await engine.run(
+        { ad_id: "allowed-2", post_owner: "Acme Store" },
+        processOne,
+        { network: "facebook" }
+      );
+
+      expect(otherNetwork.result.code).toBe(200);
+      expect(partialName.result.code).toBe(200);
+      expect(processOne).toHaveBeenCalledTimes(2);
+    } finally {
+      networks.facebook.insertion.rejectedPostOwnerNames = original;
+    }
   });
 });
 
