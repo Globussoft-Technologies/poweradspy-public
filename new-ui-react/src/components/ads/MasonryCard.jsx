@@ -474,13 +474,20 @@ const MasonryCard = ({
   // (ad_image_video). Without prepending the cover here, it would be missing
   // from the card view even though the PDF export includes it — keeps card,
   // detail, analytics, and PDF surfaces showing the same set of slides.
+  const transparencyVideoPrimary = isGoogleTransparency && isVideo
+    ? (
+        ad.thumbnail && !ad.thumbnail.includes("DefaultImage")
+          ? ad.thumbnail
+          : effectiveVideoUrl || ad.videoOriginalUrl || ad.adUrl || ""
+      )
+    : "";
   const carouselImages = useMemo(() => {
     const media = ad.carouselMedia || [];
     // `carouselMedia` is already DefaultImage-filtered in mapAdToCard; also skip
     // the cover when it's the placeholder so a broken first slide doesn't render.
     const coverOk = ad.thumbnail && !ad.thumbnail.includes("DefaultImage");
     if (isGoogleTransparency) {
-      const primary = isVideo ? effectiveVideoUrl : (coverOk ? ad.thumbnail : "");
+      const primary = isVideo ? transparencyVideoPrimary : (coverOk ? ad.thumbnail : "");
       return [...new Set([primary, ...media].filter(Boolean))];
     }
     // The cover/slide split only applies to IMAGE carousels. A VIDEO ad keeps its
@@ -492,7 +499,7 @@ const MasonryCard = ({
       return [ad.thumbnail, ...media];
     }
     return media;
-  }, [ad.thumbnail, ad.carouselMedia, isVideo, isGoogleTransparency, effectiveVideoUrl]);
+  }, [ad.thumbnail, ad.carouselMedia, isVideo, isGoogleTransparency, transparencyVideoPrimary]);
 
   const hasCarousel = carouselImages.length > 1;
   const currentImg = isGoogleTransparency
@@ -502,12 +509,18 @@ const MasonryCard = ({
     : ad.thumbnail || "";
   const currentMediaIsVideo =
     isGoogleTransparency &&
-    ((isVideo && currentImg === effectiveVideoUrl) || isVideoMediaUrl(currentImg));
+    (
+      (isVideo && transparencyVideoPrimary && currentImg === transparencyVideoPrimary) ||
+      isVideoMediaUrl(currentImg)
+    );
+  const currentPreviewIsDirectVideo = isVideoMediaUrl(currentImg);
   const cardShowsVideo =
     isGoogleTransparency && carouselImages.length > 0
       ? currentMediaIsVideo
       : isVideo;
-  const currentVideoUrl = currentMediaIsVideo ? currentImg : effectiveVideoUrl;
+  const currentVideoUrl = currentMediaIsVideo
+    ? (currentPreviewIsDirectVideo ? currentImg : effectiveVideoUrl)
+    : effectiveVideoUrl;
   const rawTitleStr =
     (ad.carouselTitles?.length > activeIndex
       ? ad.carouselTitles[activeIndex]
@@ -768,7 +781,7 @@ const MasonryCard = ({
               ) : (
                 <>
                   {!imgError && !ad.previewUnavailable && (
-                    currentMediaIsVideo ? (
+                    currentPreviewIsDirectVideo ? (
                       <video
                         key={`${currentImg}_${imgRetryCount}`}
                         src={currentImg}
@@ -831,6 +844,7 @@ const MasonryCard = ({
               {cardShowsVideo && !isPlaying && !videoUnavailable && (
                 <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
                   <button
+                    aria-label="Play video"
                     className="w-14 h-14 bg-black/55 backdrop-blur-md rounded-full flex items-center justify-center border border-white/25 shadow-[0_0_20px_rgba(0,0,0,0.5)] transform transition-all group-hover:scale-110 group-hover:bg-black/70 pointer-events-auto"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1018,6 +1032,7 @@ const MasonryCard = ({
           {hasCarousel && (
             <>
               <button
+                aria-label="Previous media"
                 onClick={(e) => {
                   e.stopPropagation();
                   setActiveIndex((prev) =>
@@ -1029,6 +1044,7 @@ const MasonryCard = ({
                 <ChevronLeft size={16} />
               </button>
               <button
+                aria-label="Next media"
                 onClick={(e) => {
                   e.stopPropagation();
                   setActiveIndex((prev) =>

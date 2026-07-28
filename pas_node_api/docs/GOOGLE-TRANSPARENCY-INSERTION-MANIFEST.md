@@ -638,6 +638,12 @@ otherwise only the available URL row is shown. Remaining cards reflow across
 the available width. This conditional rendering is isolated to Transparency ads;
 legacy Google and other-network analytics keep their existing display rules.
 
+For a platform-18 VIDEO card, the thumbnail remains the primary carousel frame
+and retains the Play affordance even when `othermultimedia` adds image/video
+slides. This also applies when NAS video storage is disabled: clicking the
+poster plays `video_url_original` (including a YouTube embed), while media-file
+slides play their own direct URL.
+
 The pre-existing **Country Reach** Map/Globe, date range, and AD
 LEVEL/ADVERTISER LEVEL analytics remain a separate component and are not
 changed or replaced by Transparency Delivery.
