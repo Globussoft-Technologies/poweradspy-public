@@ -19,19 +19,20 @@ const ID_FIELD = 'quora_ad.id';
  * and are excluded; everything else ("/DefaultImage.jpg" or any other value) is
  * returned for processing. <bucket> is resolved dynamically (pas-dev in dev,
  * pas-prod in production) via the same resolveBucket() that storeInNas uses.
+ * Only ads whose video URL ends in ".mp4" are returned; others are skipped.
  *
  * Query params:
- *   - limit: number of ads to return (default 1)
+ *   - limit: number of ads to return (default 1, max 100)
  *
  * Inspired by TikTok's get-ad-url endpoint, adapted for Quora's ES index.
  */
 async function getLatestVideoAdUrls(req, db, logger) {
   if (!db.elastic) return { code: 503, message: 'Elasticsearch connection not available' };
 
-  // Parse & clamp limit → default 1, min 1, capped to avoid oversized scans.
+  // Parse & clamp limit → default 1, min 1, max 100.
   let limit = parseInt(req.query.limit, 10);
   if (!Number.isFinite(limit) || limit < 1) limit = 1;
-  if (limit > 500) limit = 500;
+  if (limit > 100) limit = 100;
 
   // A correct thumbnail lives at "/<bucket>/stream/quora/thumbnail/...". Resolve the
   // bucket the same way storeInNas does (pas-dev in dev, pas-prod in production) so the
@@ -49,14 +50,15 @@ async function getLatestVideoAdUrls(req, db, logger) {
         bool: {
           filter: [
             { term: { 'quora_ad.type.keyword': 'VIDEO' } },
-            // Only ads that actually have a video URL — otherwise `video_url` comes back
-            // null. video_url resolves from quora_ad_variants.image_url_original, falling
-            // back to top-level image_url_original, so require at least one to exist.
+            // Only ads whose video URL ends in ".mp4". video_url resolves from
+            // quora_ad_variants.image_url_original, falling back to top-level
+            // image_url_original, so require at least one of them to end in .mp4.
+            // Non-.mp4 ads are skipped (a null/other-format URL never matches).
             {
               bool: {
                 should: [
-                  { exists: { field: VIDEO_URL_FIELD } },
-                  { exists: { field: 'image_url_original' } },
+                  { wildcard: { [`${VIDEO_URL_FIELD}.keyword`]: '*.mp4' } },
+                  { wildcard: { 'image_url_original.keyword': '*.mp4' } },
                 ],
                 minimum_should_match: 1,
               },
@@ -80,13 +82,16 @@ async function getLatestVideoAdUrls(req, db, logger) {
     const total = typeof hits.total === 'object' ? hits.total.value : hits.total;
     const esHits = hits.hits || [];
 
-    const data = esHits.map((hit) => {
+    // video_url must end in ".mp4" — pick the first candidate that does; skip the ad if
+    // neither field is an .mp4 URL (guards the edge case where the ES filter matched via
+    // one field but the other, higher-priority one isn't .mp4).
+    const data = esHits.reduce((acc, hit) => {
       const src = hit._source || {};
-      return {
-        ad_id: src[ID_FIELD] ?? hit._id,
-        video_url: src[VIDEO_URL_FIELD] || src.image_url_original || null,
-      };
-    });
+      const mp4Url = [src[VIDEO_URL_FIELD], src.image_url_original]
+        .find((u) => typeof u === 'string' && u.toLowerCase().endsWith('.mp4'));
+      if (mp4Url) acc.push({ ad_id: src[ID_FIELD] ?? hit._id, video_url: mp4Url });
+      return acc;
+    }, []);
 
     return { code: 200, data, total, message: 'Latest video ads fetched successfully' };
   } catch (err) {
