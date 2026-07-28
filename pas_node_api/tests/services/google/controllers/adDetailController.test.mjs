@@ -196,6 +196,8 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
           impressions_operator: "over",
           video_url_original: "https://www.youtube.com/watch?v=xconjdiGFLs",
           redirect_url: null,
+          canonical_first_seen: null,
+          canonical_last_seen: "2025-08-17",
         }];
       }
       if (statement.includes("FROM google_transparency_country_delivery")) {
@@ -272,6 +274,56 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
     });
     expect(out.data[0].country_details).toHaveLength(1);
     expect(out.data[0].image_url).toBe("/pas-dev/stream/gt/thumbnail/202607/179134.jpeg");
+  });
+
+  it("uses SQL-formatted Transparency dates without a server-timezone day shift", async () => {
+    const sql = { query: vi.fn(async (statement) => {
+      if (statement.includes("FROM google_transparency_ad_payload")) {
+        return [{
+          subnetwork: "YOUTUBE",
+          canonical_first_seen: null,
+          canonical_last_seen: "2026-07-27",
+        }];
+      }
+      if (statement.includes("FROM google_transparency_country_delivery")) {
+        return [{
+          country: "United States",
+          country_code: "US",
+          first_seen: null,
+          last_seen: "2026-07-27T00:00:00Z",
+          impressions_min: null,
+          impressions_max: null,
+          impressions_operator: null,
+        }];
+      }
+      return [{
+        id: 179596,
+        ad_id: "CR00418181251711631361",
+        platform: 18,
+        type: "VIDEO",
+        first_seen: null,
+        last_seen: new Date("2026-07-26T18:30:00.000Z"),
+      }];
+    }) };
+    const db = {
+      sql,
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
+        id: 179596,
+        platform: 18,
+        subnetwork: "YOUTUBE",
+        first_seen: null,
+      } }] } })) },
+    };
+
+    const out = await getAdDetails(
+      { body: { ad_id: "179596", language: "en" }, query: {} },
+      db,
+      fakeLogger,
+    );
+
+    expect(out.data[0].last_seen).toBe("2026-07-27");
+    expect(out.data[0].country_details[0].last_seen)
+      .toBe("2026-07-27T00:00:00Z");
   });
 
   it("does not discard the ES overlay when last_seen is absent", async () => {

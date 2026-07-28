@@ -57,16 +57,21 @@ const AD_DETAIL_SQL = `
 `;
 
 const TRANSPARENCY_PAYLOAD_SQL = `
-  SELECT advertiser_id, ad_url, subnetwork, region_code,
-         impressions_min, impressions_max, impressions_operator,
-         video_url_original, redirect_url
-    FROM google_transparency_ad_payload
-   WHERE google_text_ad_id = ?
+  SELECT p.advertiser_id, p.ad_url, p.subnetwork, p.region_code,
+         p.impressions_min, p.impressions_max, p.impressions_operator,
+         p.video_url_original, p.redirect_url,
+         DATE_FORMAT(a.first_seen, '%Y-%m-%d') AS canonical_first_seen,
+         DATE_FORMAT(a.last_seen, '%Y-%m-%d') AS canonical_last_seen
+    FROM google_transparency_ad_payload p
+    JOIN google_text_ad a ON a.id = p.google_text_ad_id
+   WHERE p.google_text_ad_id = ?
    LIMIT 1
 `;
 
 const TRANSPARENCY_COUNTRY_SQL = `
-  SELECT co.country, d.country_code, d.first_seen, d.last_seen,
+  SELECT co.country, d.country_code,
+         DATE_FORMAT(d.first_seen, '%Y-%m-%dT%H:%i:%sZ') AS first_seen,
+         DATE_FORMAT(d.last_seen, '%Y-%m-%dT%H:%i:%sZ') AS last_seen,
          d.impressions_min, d.impressions_max, d.impressions_operator
     FROM google_transparency_country_delivery d
     JOIN google_text_country_only co ON co.id = d.country_only_id
@@ -104,8 +109,8 @@ function countryDelivery(rows) {
   return (Array.isArray(rows) ? rows : []).map((row) => ({
     country: row.country || null,
     country_code: row.country_code || null,
-    first_seen: row.first_seen || null,
-    last_seen: row.last_seen || null,
+    first_seen: row.first_seen ? String(row.first_seen) : null,
+    last_seen: row.last_seen ? String(row.last_seen) : null,
     times_shown: row.impressions_operator ? {
       min: row.impressions_min ?? null,
       max: row.impressions_max ?? null,
@@ -235,10 +240,10 @@ async function getAdDetails(req, db, logger) {
       // dates, so only use SQL when the ES document truly lacks the field.
       adData.first_seen = hasOwn(esSource, 'first_seen')
         ? esSource.first_seen
-        : adData.first_seen ?? null;
+        : payload.canonical_first_seen ?? dateOnly(adData.first_seen);
       adData.last_seen = hasOwn(esSource, 'last_seen')
         ? dateOnly(esSource.last_seen)
-        : dateOnly(adData.last_seen);
+        : payload.canonical_last_seen ?? dateOnly(adData.last_seen);
       if (hasOwn(esSource, 'post_date')) adData.post_date = esSource.post_date;
       const normalizedPostDate = dateOnly(adData.post_date);
       if (!normalizedPostDate || normalizedPostDate.startsWith('1000-')) {

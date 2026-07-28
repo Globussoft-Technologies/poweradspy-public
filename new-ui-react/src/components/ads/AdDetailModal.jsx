@@ -54,6 +54,10 @@ import tiktokIcon from "../../assets/tiktoklogo.jpg";
 import metaIcon from "../../assets/meta.svg";
 import he from "he";
 
+const isVideoMediaUrl = (url) =>
+  typeof url === "string" &&
+  /\.(?:mp4|webm|mov|m4v|ogv|ogg)(?:$|[?#])/i.test(url);
+
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
 import mpConversionx from "../../assets/marketingPlatform/conversionx.co.png";
@@ -458,6 +462,8 @@ const AdDetailModal = ({
   useEffect(() => {
     setImgLoaded(false);
     setImgError(false);
+    setIsPlaying(false);
+    setVideoUnavailable(false);
   }, [ad, activeIndex]);
 
   // Backend splits carousel ads across two fields: the cover image lands in
@@ -477,11 +483,30 @@ const AdDetailModal = ({
     // carousel. Skip the prepend for videos; genuine carousels (≥2 real slides in
     // `carouselMedia`, image or video) are unaffected.
     const isVideoAd = (ad?.renderType || ad?.adType || "").toLowerCase() === "video";
+    const isTransparency =
+      ad?.isGoogleTransparency === true ||
+      ((ad?.network || "").toLowerCase() === "google" && Number(ad?.platform) === 18);
+    if (isTransparency) {
+      const primary = isVideoAd
+        ? (ad?.videoUrl || ad?.videoOriginalUrl || "")
+        : (coverOk ? ad.thumbnail : "");
+      return [...new Set([primary, ...media].filter(Boolean))];
+    }
     if (!isVideoAd && coverOk && media.length > 0 && !media.includes(ad.thumbnail)) {
       return [ad.thumbnail, ...media];
     }
     return media;
-  }, [ad?.thumbnail, ad?.carouselMedia, ad?.adType, ad?.renderType]);
+  }, [
+    ad?.thumbnail,
+    ad?.carouselMedia,
+    ad?.adType,
+    ad?.renderType,
+    ad?.videoUrl,
+    ad?.videoOriginalUrl,
+    ad?.isGoogleTransparency,
+    ad?.network,
+    ad?.platform,
+  ]);
 
   // YouTube and Facebook ads ship their playable URL in `ad_url` (mapped to
   // ad.adUrl) — not in ad.videoUrl — so for those we embed via iframe rather
@@ -575,6 +600,9 @@ const AdDetailModal = ({
   const TypeIcon = AD_TYPE_ICONS[adTypeLower] || Image;
   const renderTypeLower = (ad.renderType || adTypeLower).toLowerCase();
   const isVideo = renderTypeLower === "video";
+  const isGoogleTransparency =
+    ad.isGoogleTransparency === true ||
+    (platform === "google" && Number(ad.platform) === 18);
   const isActive = (ad.status || "").toLowerCase() === "active";
 
   const starRating = ad.popularity ? getStarRating(ad.popularity) : 0;
@@ -583,6 +611,17 @@ const AdDetailModal = ({
   const currentImg = hasCarousel
     ? carouselImages[activeIndex]
     : ad.thumbnail || "";
+  const currentIsPrimary = activeIndex === 0;
+  const currentMediaIsVideo = isGoogleTransparency
+    ? ((currentIsPrimary && isVideo) || isVideoMediaUrl(currentImg))
+    : isVideo;
+  const currentVideoUrl = currentMediaIsVideo && isVideoMediaUrl(currentImg)
+    ? currentImg
+    : (currentIsPrimary ? (resolvedVideoUrl || ad.videoUrl) : null);
+  const currentEmbedUrl = currentIsPrimary ? embedUrl : null;
+  const currentPoster = currentMediaIsVideo && currentIsPrimary
+    ? (ad.thumbnail || ad.imageOriginalUrl || "")
+    : "";
   const rawTitleStr =
     (ad.carouselTitles?.length > activeIndex
       ? ad.carouselTitles[activeIndex]
@@ -707,12 +746,12 @@ const AdDetailModal = ({
                   }}
                 />
 
-                {isPlaying && isVideo && (resolvedVideoUrl || ad.videoUrl || embedUrl) ? (
+                {isPlaying && currentMediaIsVideo && (currentVideoUrl || currentEmbedUrl) ? (
                   <>
-                    {(resolvedVideoUrl || ad.videoUrl) ? (
+                    {currentVideoUrl ? (
                       <video
-                        key={resolvedVideoUrl || ad.videoUrl}
-                        src={resolvedVideoUrl || ad.videoUrl}
+                        key={currentVideoUrl}
+                        src={currentVideoUrl}
                         className="w-full h-auto max-h-[90vh] object-contain relative z-[1]"
                         autoPlay
                         controls
@@ -723,8 +762,8 @@ const AdDetailModal = ({
                       />
                     ) : (
                       <iframe
-                        key={embedUrl}
-                        src={embedUrl}
+                        key={currentEmbedUrl}
+                        src={currentEmbedUrl}
                         title={currentTitle || "Video ad"}
                         className="w-full h-[60vh] max-h-[90vh] relative z-[1] border-0 bg-black"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -785,19 +824,32 @@ const AdDetailModal = ({
                   </div>
                 ) : (
                   <div className="relative flex items-center justify-center w-full group/carousel">
-                    <img
-                      key={currentImg}
-                      ref={handleImgRef}
-                      src={currentImg}
-                      alt={currentTitle}
-                      decoding="async"
-                      className={`w-full h-auto max-h-[90vh] object-contain relative z-[1] transition-opacity duration-300 ${imgLoaded ? "opacity-100" : "opacity-0"}`}
-                      onLoad={() => setImgLoaded(true)}
-                      onError={(e) => {
-                        e.target.style.display = "none";
-                        setImgError(true);
-                      }}
-                    />
+                    {currentMediaIsVideo && !currentPoster ? (
+                      <video
+                        key={currentImg}
+                        src={currentImg}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="w-full h-auto max-h-[90vh] object-contain relative z-[1]"
+                        onLoadedData={() => setImgLoaded(true)}
+                        onError={() => setImgError(true)}
+                      />
+                    ) : (
+                      <img
+                        key={currentPoster || currentImg}
+                        ref={handleImgRef}
+                        src={currentPoster || currentImg}
+                        alt={currentTitle}
+                        decoding="async"
+                        className={`w-full h-auto max-h-[90vh] object-contain relative z-[1] transition-opacity duration-300 ${imgLoaded ? "opacity-100" : "opacity-0"}`}
+                        onLoad={() => setImgLoaded(true)}
+                        onError={(e) => {
+                          e.target.style.display = "none";
+                          setImgError(true);
+                        }}
+                      />
+                    )}
                     {/* Spinner while bytes are still arriving — replaces the
                         browser's progressive top-to-bottom render with a clean
                         load state. Sits over the blurred backdrop. */}
@@ -817,19 +869,28 @@ const AdDetailModal = ({
                         </span>
                       </div>
                     )}
-                    {isVideo && !videoUnavailable && (
+                    {currentMediaIsVideo && !videoUnavailable && (
                       <div
+                        role="button"
+                        aria-label="Play video"
+                        tabIndex={0}
                         className="absolute inset-0 flex items-center justify-center cursor-pointer bg-black/20 hover:bg-black/30 transition-colors z-[2]"
                         onClick={() => {
                           // Nothing playable — no direct media URL and no
                           // YouTube/Facebook watch URL in ad_url. Hide the
                           // play affordance and let the thumbnail stand on
                           // its own.
-                          if (!(resolvedVideoUrl || ad.videoUrl) && !embedUrl) {
+                          if (!currentVideoUrl && !currentEmbedUrl) {
                             setVideoUnavailable(true);
                             return;
                           }
                           setIsPlaying(true);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            if (currentVideoUrl || currentEmbedUrl) setIsPlaying(true);
+                          }
                         }}
                       >
                         <div className="w-14 h-14 bg-white/10 backdrop-blur-sm rounded-full flex items-center justify-center border border-white/20">
@@ -842,6 +903,7 @@ const AdDetailModal = ({
                     {hasCarousel && (
                       <>
                         <button
+                          aria-label="Previous media"
                           onClick={(e) => {
                             e.stopPropagation();
                             setActiveIndex((p) =>
@@ -854,6 +916,7 @@ const AdDetailModal = ({
                         </button>
 
                         <button
+                          aria-label="Next media"
                           onClick={(e) => {
                             e.stopPropagation();
                             setActiveIndex((p) =>
@@ -934,7 +997,9 @@ const AdDetailModal = ({
               }`}
             >
               <Smartphone size={12} />
-              {showOriginal ? "Show Image" : "Original Preview"}
+              {showOriginal
+                ? (isGoogleTransparency ? "Show Saved Preview" : "Show Image")
+                : "Original Preview"}
             </button>
           </div>
 

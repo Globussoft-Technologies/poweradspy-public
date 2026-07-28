@@ -71,8 +71,9 @@ describe("BasicInfo > platform-specific rows", () => {
     expect(queryByText("Ad Url")).toBeNull();
   });
   it("quora urlOnly", () => {
-    const { getByText } = render(<BasicInfo platform="quora" />);
-    expect(getByText("INITIAL URL")).toBeInTheDocument();
+    const { getByText, queryByText } = render(<BasicInfo platform="quora" />);
+    expect(queryByText("INITIAL URL")).toBeNull();
+    expect(getByText("REDIRECT URL")).toBeInTheDocument();
   });
   it("pinterest urlOnly", () => {
     const { getByText } = render(<BasicInfo platform="pinterest" />);
@@ -89,6 +90,26 @@ describe("BasicInfo > platform-specific rows", () => {
     expect(getByText("INITIAL URL")).toBeInTheDocument();
     expect(getByText("REDIRECT URL")).toBeInTheDocument();
     expect(queryByText("Ad Url")).toBeNull();
+  });
+  it("Transparency hides Basic Info when both URLs are unavailable", () => {
+    const { queryByText } = render(
+      <BasicInfo platform="google" isTransparency />,
+    );
+    expect(queryByText("Basic Info")).toBeNull();
+    expect(queryByText("INITIAL URL")).toBeNull();
+    expect(queryByText("REDIRECT URL")).toBeNull();
+  });
+  it("Transparency renders only the available URL row", () => {
+    const { getByText, queryByText } = render(
+      <BasicInfo
+        platform="google"
+        isTransparency
+        adDetails={{ redirect_url: "https://example.com/final" }}
+      />,
+    );
+    expect(getByText("Basic Info")).toBeInTheDocument();
+    expect(getByText("REDIRECT URL")).toBeInTheDocument();
+    expect(queryByText("INITIAL URL")).toBeNull();
   });
 });
 

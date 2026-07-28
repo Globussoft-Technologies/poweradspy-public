@@ -401,6 +401,17 @@ The React `MasonryCard` applies these rules only when `platform === 18`:
 - Show Original for an image creative displays `image_url_original` directly
   with natural aspect (`height:auto`, `object-contain`) and no simulated Google
   Search layout, crop, overlay, or NAS substitution;
+- Show Original preserves the contract creative type. A VIDEO uses
+  `video_url_original` (YouTube URLs use the browser player iframe and direct
+  media URLs use `<video>` with the original image as its poster), an IMAGE
+  uses `image_url_original`, and a text-only TEXT stays plain text. A
+  Transparency VIDEO must never fall through to the legacy Google Search/Text
+  preview;
+- Transparency videos are poster-first: the thumbnail is shown initially and
+  the YouTube iframe or `<video>` element is created only after the user clicks
+  Play. Video entries inside `othermultimedia` follow the same click-to-play
+  rule; their first frame is used as the preview when no separate thumbnail is
+  available;
 - a visible `Transparency` badge differentiates the card. Normal Google cards
   do not enter this branch.
 
@@ -587,6 +598,23 @@ The analytics modal renders these fields in the isolated **Transparency
 Delivery** panel. Impression estimates use plain-language cards instead of a
 technical axis: `range` is shown as **From / To**, `over` as **At least** with
 no reported upper limit, and `under` as **Up to**.
+
+The activity window never treats a `last_seen` observation as a missing
+`first_seen` value. Its start is the earliest available first-seen value and
+its end is the latest available last-seen value. If the producer supplied no
+first-seen value, the UI shows only `Until <last seen>` instead of inventing or
+reversing a date range. Direct `/{network}/{id}` analytics links hydrate these
+nullable values from `getAdInsights`; the small URL placeholder must not
+overwrite the fetched values with missing properties.
+
+Transparency detail SQL formats canonical and country delivery dates inside
+MySQL before returning them. This preserves the stored calendar date across
+Node hosts with different time zones and prevents a stored `27 Jul` value from
+appearing as `26 Jul` in the API.
+
+The frontend also treats these values as calendar dates rather than local-time
+instants. It extracts `YYYY-MM-DD` before display, so a SQL-shaped
+`2026-07-27 00:00:00` remains **27 Jul 2026** in every browser time zone.
 `country_details` drives three separate analytics views:
 
 - readable overall and per-country impression range cards;
@@ -596,7 +624,17 @@ no reported upper limit, and `under` as **Up to**.
   the minimum/baseline `times_shown` value.
 
 All three support multiple countries and use the readable `21 Dec 2025` date
-form. Missing values are shown as `--`.
+form. The UI resolves alpha-2 codes such as `US`, `IN`, and `DE` to full
+country names for cards, activity summaries, and map tooltips; the ISO code is
+kept only as the internal choropleth key.
+
+Platform-18 analytics is data-driven: a missing value does not produce a
+`--`/dash row or an empty chart. Unavailable summary cards, Ad Details rows,
+delivery panels, and empty Basic Info URL rows are omitted. If both destination
+and redirect URLs are unavailable, the complete Basic Info section is hidden;
+otherwise only the available URL row is shown. Remaining cards reflow across
+the available width. This conditional rendering is isolated to Transparency ads;
+legacy Google and other-network analytics keep their existing display rules.
 
 The pre-existing **Country Reach** Map/Globe, date range, and AD
 LEVEL/ADVERTISER LEVEL analytics remain a separate component and are not

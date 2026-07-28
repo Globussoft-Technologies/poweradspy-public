@@ -13,6 +13,7 @@ import * as am5 from "@amcharts/amcharts5";
 import * as am5map from "@amcharts/amcharts5/map";
 import am5geodata_worldLow from "@amcharts/amcharts5-geodata/worldLow";
 import am5themes_Dark from "@amcharts/amcharts5/themes/Dark";
+import { COUNTRY_NAMES } from "../../../utils/countries";
 
 const EMPTY = "--";
 
@@ -86,6 +87,22 @@ const normalizeCountries = (value) => {
   }
 };
 
+export const resolveTransparencyCountryName = (country, countryCode) => {
+  const rawCountry = String(country || "").trim();
+  const normalizedCode = String(countryCode || "").trim().toUpperCase();
+  const countryAsCode = /^[A-Z]{2}$/i.test(rawCountry)
+    ? rawCountry.toUpperCase()
+    : "";
+
+  if (rawCountry && !countryAsCode) return rawCountry;
+  return COUNTRY_NAMES[normalizedCode || countryAsCode] || rawCountry || normalizedCode || EMPTY;
+};
+
+const hasRangeValue = (range) =>
+  range &&
+  typeof range === "object" &&
+  (finiteNumber(range.min) != null || finiteNumber(range.max) != null);
+
 const InfoTip = ({ text, isLight, align = "right" }) => (
   <span className="group/info relative inline-flex shrink-0">
     <button
@@ -101,7 +118,7 @@ const InfoTip = ({ text, isLight, align = "right" }) => (
     </button>
     <span
       role="tooltip"
-      className={`pointer-events-none absolute top-full z-50 mt-2 w-72 rounded-lg border px-3 py-2 text-left text-[11px] font-medium normal-case leading-relaxed tracking-normal opacity-0 shadow-xl transition-opacity group-hover/info:opacity-100 group-focus-within/info:opacity-100 ${
+      className={`pointer-events-none absolute top-full z-[100] mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border px-3 py-2 text-left text-[11px] font-medium normal-case leading-relaxed tracking-normal opacity-0 shadow-xl transition-opacity group-hover/info:opacity-100 group-focus-within/info:opacity-100 ${
         align === "left" ? "left-0" : "right-0"
       } ${
         isLight
@@ -114,7 +131,16 @@ const InfoTip = ({ text, isLight, align = "right" }) => (
   </span>
 );
 
-const SummaryCard = ({ icon: Icon, label, value, isLight, accent, caption, help }) => (
+const SummaryCard = ({
+  icon: Icon,
+  label,
+  value,
+  isLight,
+  accent,
+  caption,
+  help,
+  helpAlign = "left",
+}) => (
   <div className={`rounded-xl border p-4 ${
     isLight ? "border-slate-200 bg-white" : "border-white/10 bg-white/[0.035]"
   }`}>
@@ -125,7 +151,7 @@ const SummaryCard = ({ icon: Icon, label, value, isLight, accent, caption, help 
         }`}>
           {label}
         </span>
-        <InfoTip text={help} isLight={isLight} align="left" />
+        <InfoTip text={help} isLight={isLight} align={helpAlign} />
       </span>
       <span className={`grid h-8 w-8 place-items-center rounded-lg ${accent}`}>
         <Icon size={15} />
@@ -214,11 +240,11 @@ const PlainRangeValue = ({ range, isLight }) => {
 };
 
 const SimpleRangeSummary = ({ rows, isLight }) => {
-  const overall = rows[0];
-  const countries = rows.slice(1);
+  const overall = rows.find((row) => row.isOverall);
+  const countries = rows.filter((row) => !row.isOverall);
   return (
     <div className="p-5">
-      <div className={`mb-4 rounded-xl border p-5 ${
+      {overall ? <div className={`mb-4 rounded-xl border p-5 ${
         isLight
           ? "border-violet-200 bg-gradient-to-r from-violet-50 to-blue-50"
           : "border-violet-400/20 bg-gradient-to-r from-violet-500/10 to-blue-500/10"
@@ -237,7 +263,7 @@ const SimpleRangeSummary = ({ rows, isLight }) => {
           </div>
         </div>
         <PlainRangeValue range={overall?.range} isLight={isLight} />
-      </div>
+      </div> : null}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {countries.length ? countries.map((row, index) => (
@@ -252,15 +278,10 @@ const SimpleRangeSummary = ({ rows, isLight }) => {
                 <span className={`text-sm font-bold ${isLight ? "text-slate-900" : "text-white"}`}>
                   {row.label}
                 </span>
-                {row.code ? (
-                  <span className={`ml-2 text-[9px] font-bold ${isLight ? "text-slate-400" : "text-white/30"}`}>
-                    {row.code}
-                  </span>
-                ) : null}
               </div>
               <InfoTip
                 isLight={isLight}
-                text={`Source: country_details[].times_shown for ${row.label}. Google reported ${formatTransparencyRange(row.range)} (${getOperatorMeaning(row.range).toLowerCase()}).`}
+                text={`Google estimates that this ad appeared ${formatTransparencyRange(row.range)} times in ${row.label}.`}
               />
             </div>
             <PlainRangeValue range={row.range} isLight={isLight} />
@@ -386,17 +407,10 @@ const CountryActivitySummary = ({ countries, isLight }) => {
                 <span className={`text-sm font-bold ${isLight ? "text-slate-900" : "text-white"}`}>
                   {item.country || EMPTY}
                 </span>
-                {item.country_code ? (
-                  <span className={`ml-2 text-[9px] font-bold ${
-                    isLight ? "text-slate-400" : "text-white/30"
-                  }`}>
-                    {item.country_code}
-                  </span>
-                ) : null}
               </div>
               <InfoTip
                 isLight={isLight}
-                text={`Source: country_details first_seen and last_seen for ${item.country}. Active duration includes both reported dates.`}
+                text={`The first and last dates Google reported this ad in ${item.country}.`}
               />
             </div>
 
@@ -456,7 +470,7 @@ const TransparencyChoropleth = ({ countries, isLight }) => {
       const max = finiteNumber(item.times_shown?.max);
       return {
         id: String(item.country_code).toUpperCase(),
-        name: item.country || item.country_code,
+        name: item.countryName,
         intensity: Math.max(1, min ?? max ?? 1),
         rangeLabel: formatTransparencyRange(item.times_shown),
       };
@@ -538,21 +552,33 @@ const TransparencyDelivery = ({
   lastSeen,
 }) => {
   const countries = useMemo(
-    () => normalizeCountries(countryDetails).map((item, index) => ({
-      ...item,
-      key: `${item?.country_code || item?.country || "country"}-${index}`,
-      firstTimestamp: toTimestamp(item?.first_seen),
-      lastTimestamp: toTimestamp(item?.last_seen),
-    })),
+    () => normalizeCountries(countryDetails).map((item, index) => {
+      const countryName = resolveTransparencyCountryName(item?.country, item?.country_code);
+      return {
+        ...item,
+        country: countryName,
+        countryName,
+        key: `${item?.country_code || countryName || "country"}-${index}`,
+        firstTimestamp: toTimestamp(item?.first_seen),
+        lastTimestamp: toTimestamp(item?.last_seen),
+      };
+    }).filter((item) => item.countryName !== EMPTY),
     [countryDetails],
   );
-  const datedPoints = countries
-    .flatMap((item) => [item.firstTimestamp, item.lastTimestamp])
-    .filter((value) => value != null);
-  const timelineStart = datedPoints.length ? Math.min(...datedPoints) : null;
-  const timelineEnd = datedPoints.length ? Math.max(...datedPoints) : null;
-  const effectiveStart = toTimestamp(firstSeen) ?? timelineStart;
-  const effectiveEnd = toTimestamp(lastSeen) ?? timelineEnd;
+  // A last-seen observation must never be reused as a first-seen date. The
+  // previous mixed list did exactly that when first_seen was null, producing
+  // impossible windows such as "27 Jul – 26 Jul". Use only first-seen values
+  // for the start and only last-seen values for the end.
+  const firstSeenPoints = [
+    toTimestamp(firstSeen),
+    ...countries.map((item) => item.firstTimestamp),
+  ].filter((value) => value != null);
+  const lastSeenPoints = [
+    toTimestamp(lastSeen),
+    ...countries.map((item) => item.lastTimestamp),
+  ].filter((value) => value != null);
+  const effectiveStart = firstSeenPoints.length ? Math.min(...firstSeenPoints) : null;
+  const effectiveEnd = lastSeenPoints.length ? Math.max(...lastSeenPoints) : null;
   const activityWindow = effectiveStart != null && effectiveEnd != null
     ? `${formatDate(effectiveStart)} – ${formatDate(effectiveEnd)}`
     : effectiveStart != null
@@ -561,13 +587,72 @@ const TransparencyDelivery = ({
         ? `Until ${formatDate(effectiveEnd)}`
         : EMPTY;
   const rangeRows = [
-    { label: "Overall", code: "", range: impressions },
+    ...(hasRangeValue(impressions) ? [{
+      label: "Overall",
+      code: "",
+      range: impressions,
+      isOverall: true,
+    }] : []),
     ...countries.map((item) => ({
       label: item.country || EMPTY,
       code: item.country_code ? String(item.country_code).toUpperCase() : "",
       range: item.times_shown,
-    })),
+    })).filter((item) => hasRangeValue(item.range)),
   ];
+  const activityCountries = countries.filter((item) =>
+    item.firstTimestamp != null &&
+    item.lastTimestamp != null &&
+    item.lastTimestamp >= item.firstTimestamp
+  );
+  const intensityCountries = countries.filter((item) =>
+    /^[A-Z]{2}$/i.test(String(item.country_code || "")) &&
+    hasRangeValue(item.times_shown)
+  );
+  const platformValue = subnetwork ? String(subnetwork).toUpperCase() : null;
+  const impressionValue = hasRangeValue(impressions)
+    ? formatTransparencyRange(impressions)
+    : null;
+  const summaryCards = [
+    ...(platformValue ? [{
+      icon: Monitor,
+      label: "Platform",
+      value: platformValue,
+      accent: "bg-blue-500/10 text-blue-500",
+      help: "Where this ad appeared on Google, such as Search or YouTube.",
+    }] : []),
+    ...(impressionValue ? [{
+      icon: Activity,
+      label: "Impressions",
+      value: impressionValue,
+      caption: getOperatorMeaning(impressions),
+      accent: "bg-violet-500/10 text-violet-500",
+      help: "Google reports an estimated range, not an exact number.",
+    }] : []),
+    ...(countries.length ? [{
+      icon: Globe2,
+      label: "Countries",
+      value: String(countries.length),
+      caption: "With delivery details",
+      accent: "bg-emerald-500/10 text-emerald-500",
+      help: "Countries where Google reported this ad.",
+    }] : []),
+    ...(activityWindow !== EMPTY ? [{
+      icon: CalendarDays,
+      label: "Activity Window",
+      value: activityWindow,
+      caption: "Reported first and last seen dates",
+      accent: "bg-amber-500/10 text-amber-500",
+      help: "The earliest available first-seen date and latest available last-seen date.",
+      helpAlign: "right",
+    }] : []),
+  ];
+  const summaryColumns = summaryCards.length >= 4
+    ? "lg:grid-cols-4"
+    : summaryCards.length === 3
+      ? "lg:grid-cols-3"
+      : summaryCards.length === 2
+        ? "lg:grid-cols-2"
+        : "lg:grid-cols-1";
 
   return (
     <section className={`rounded-2xl border ${
@@ -586,7 +671,7 @@ const TransparencyDelivery = ({
               <InfoTip
                 isLight={isLight}
                 align="left"
-                text="These charts use the platform-18 impressions and country_details fields supplied by Google Ads Transparency. Ranges remain estimates and are never converted into exact counts."
+                text="Shows where, when, and approximately how often this ad appeared."
               />
             </div>
             <p className={`mt-0.5 text-xs ${isLight ? "text-slate-500" : "text-white/45"}`}>
@@ -596,71 +681,41 @@ const TransparencyDelivery = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 px-6 py-5 lg:grid-cols-4">
-        <SummaryCard
-          icon={Monitor}
-          label="Platform"
-          value={subnetwork ? String(subnetwork).toUpperCase() : EMPTY}
-          isLight={isLight}
-          accent="bg-blue-500/10 text-blue-500"
-          help="Source: subnetwork. It identifies where Google reported the creative, such as SEARCH or SHOPPING."
-        />
-        <SummaryCard
-          icon={Activity}
-          label="Impressions"
-          value={formatTransparencyRange(impressions)}
-          caption={getOperatorMeaning(impressions)}
-          isLight={isLight}
-          accent="bg-violet-500/10 text-violet-500"
-          help="Source: impressions. range is bounded, over is open above its minimum, and under is capped by its maximum."
-        />
-        <SummaryCard
-          icon={Globe2}
-          label="Countries"
-          value={countries.length ? String(countries.length) : EMPTY}
-          caption="With delivery details"
-          isLight={isLight}
-          accent="bg-emerald-500/10 text-emerald-500"
-          help="Number of country_details entries supplied for this ad."
-        />
-        <SummaryCard
-          icon={CalendarDays}
-          label="Activity Window"
-          value={activityWindow}
-          caption="Ad dates, then country-date fallback"
-          isLight={isLight}
-          accent="bg-amber-500/10 text-amber-500"
-          help="Top-level first_seen/last_seen are preferred. Missing endpoints fall back to the earliest/latest country observation dates."
-        />
-      </div>
+      {summaryCards.length ? (
+        <div className={`grid grid-cols-1 gap-3 px-6 py-5 sm:grid-cols-2 ${summaryColumns}`}>
+          {summaryCards.map((card) => (
+            <SummaryCard key={card.label} {...card} isLight={isLight} />
+          ))}
+        </div>
+      ) : null}
 
       <div className="space-y-4 px-6 pb-6">
-        <ChartPanel
+        {rangeRows.length ? <ChartPanel
           isLight={isLight}
           title="Estimated impressions"
           description="Plain-language ranges for the overall ad and each country."
-          help="From/To means Google supplied a bounded range. At least means operator=over and Google did not report an upper limit. Up to means operator=under."
+          help="From–To is a range. At least has no reported upper limit. Up to is the reported maximum."
         >
           <SimpleRangeSummary rows={rangeRows} isLight={isLight} />
-        </ChartPanel>
+        </ChartPanel> : null}
 
-        <ChartPanel
+        {activityCountries.length ? <ChartPanel
           isLight={isLight}
           title="Country activity"
           description="First seen, last seen, and active duration for every country."
-          help="Dates come from country_details.first_seen and country_details.last_seen. Active duration counts both the first and last reported day."
+          help="Shows when the ad was first and last reported in each country."
         >
-          <CountryActivitySummary countries={countries} isLight={isLight} />
-        </ChartPanel>
+          <CountryActivitySummary countries={activityCountries} isLight={isLight} />
+        </ChartPanel> : null}
 
-        <ChartPanel
+        {intensityCountries.length ? <ChartPanel
           isLight={isLight}
           title="Geographic delivery intensity"
-          description="Choropleth shaded by the logarithm of each country's minimum reported times shown."
-          help="country_code places the value on the map. Darker violet means a higher minimum/baseline. Hover a highlighted country for its exact reported range."
+          description="Countries with more reported views appear darker."
+          help="Darker countries have a higher reported minimum. Hover a country to see its range."
         >
-          <TransparencyChoropleth countries={countries} isLight={isLight} />
-        </ChartPanel>
+          <TransparencyChoropleth countries={intensityCountries} isLight={isLight} />
+        </ChartPanel> : null}
       </div>
     </section>
   );

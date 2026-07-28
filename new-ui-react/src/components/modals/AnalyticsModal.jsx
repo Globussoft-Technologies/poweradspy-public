@@ -367,6 +367,72 @@ export const normalizePlatformSlug = (platform) => {
   return String(platform ?? "").trim().toLowerCase();
 };
 
+export const mergeTransparencyDateContract = (mappedAd, sourceAd) => {
+  const merged = { ...mappedAd };
+  for (const field of ["firstSeenRaw", "lastSeenRaw", "postDateRaw"]) {
+    if (Object.prototype.hasOwnProperty.call(sourceAd || {}, field)) {
+      merged[field] = sourceAd[field] ?? null;
+    }
+  }
+  return merged;
+};
+
+export const formatTransparencyCalendarDate = (value) => {
+  if (value == null || value === "") return "--";
+  const text = String(value).trim();
+  let calendarDate = text.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || null;
+
+  if (!calendarDate && /^\d{9,13}$/.test(text)) {
+    const number = Number(text);
+    const timestamp = text.length === 10 ? number * 1000 : number;
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) {
+      calendarDate = parsed.toISOString().slice(0, 10);
+    }
+  }
+
+  if (!calendarDate) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      calendarDate = parsed.toISOString().slice(0, 10);
+    }
+  }
+
+  if (
+    !calendarDate ||
+    calendarDate.startsWith("1970-01-01") ||
+    calendarDate.startsWith("1000-01-01") ||
+    calendarDate.startsWith("0001-01-01") ||
+    calendarDate.startsWith("0000-00-00")
+  ) return "--";
+
+  // The Transparency value is a reported calendar date, not a local-time
+  // instant. Pin the extracted YYYY-MM-DD to UTC midnight so a SQL string such
+  // as "2026-07-27 00:00:00" cannot become 26 Jul after an India→UTC shift.
+  const date = new Date(`${calendarDate}T00:00:00Z`);
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+};
+
+export const hasTransparencyDetailValue = (value) => {
+  if (value == null) return false;
+  if (Array.isArray(value)) return value.some(hasTransparencyDetailValue);
+  const normalized = String(value).trim().toLowerCase();
+  return Boolean(normalized) && ![
+    "--",
+    "—",
+    "-",
+    "na",
+    "n/a",
+    "null",
+    "undefined",
+  ].includes(normalized);
+};
+
 export function getAspectStyle(platform, position, adAspectRatio) {
   if (adAspectRatio && adAspectRatio !== "auto") {
     return { aspectRatio: adAspectRatio.replace(":", "/") };
@@ -1260,7 +1326,7 @@ const AnalyticsModal = ({
       ? { ...ad, ...(tiktokAnalytics || {}), ...(adDetailsData || {}) }
       : { ...ad, ...(adDetailsData || {}) };
     if (adDetailsData || tiktokAnalytics) {
-      const merged = mapAdToCard(rawSource);
+      let merged = mapAdToCard(rawSource);
       if (!merged.videoUrl && ad.videoUrl) merged.videoUrl = ad.videoUrl;
       // Always prefer the original `ad.thumbnail` (the URL already cached by
       // MasonryCard / AdDetailModal) over whatever `mapAdToCard` derived from
@@ -1284,9 +1350,11 @@ const AnalyticsModal = ({
         // The common search contract distinguishes producer values from SQL
         // operational fallbacks. Keep those nullable card values authoritative
         // even if the legacy insights endpoint returns a generated SQL date.
-        merged.firstSeenRaw = ad.firstSeenRaw ?? null;
-        merged.lastSeenRaw = ad.lastSeenRaw ?? null;
-        merged.postDateRaw = ad.postDateRaw ?? null;
+        // Search-card values are authoritative because they preserve producer
+        // nulls. A direct /google/:id visit has only a small URL placeholder,
+        // though, so it must keep the values hydrated by getAdInsights instead
+        // of overwriting them with missing properties.
+        merged = mergeTransparencyDateContract(merged, ad);
         merged.subnetwork = merged.subnetwork || ad.subnetwork || null;
       }
       if (!merged.tiktokLibraryUrl && ad.tiktokLibraryUrl) merged.tiktokLibraryUrl = ad.tiktokLibraryUrl;
@@ -1484,23 +1552,7 @@ const AnalyticsModal = ({
     return s;
   };
   const transparencyDate = (val) => {
-    const formatted = fmtDate(val);
-    if (
-      !val ||
-      formatted === '\u2014' ||
-      formatted.startsWith('1970-01-01') ||
-      formatted.startsWith('1000-01-01') ||
-      formatted.startsWith('0001-01-01') ||
-      formatted.startsWith('0000-00-00')
-    ) return "--";
-    const date = new Date(val);
-    if (Number.isNaN(date.getTime())) return "--";
-    return new Intl.DateTimeFormat("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      timeZone: "UTC",
-    }).format(date);
+    return formatTransparencyCalendarDate(val);
   };
   // Domain Reg Date only: WHOIS often has no data → date defaults to the Unix epoch
   // ("1970-01-01", or "1969-12-31" after a tz shift) / a zero-date. No real domain
@@ -1593,7 +1645,7 @@ const AnalyticsModal = ({
           color: "text-cyan-400",
         },
       ];
-    return [
+    const rows = [
       {
         label: "FIRST SEEN",
         value: isTransparency
@@ -1833,6 +1885,9 @@ const AnalyticsModal = ({
         color: "text-amber-400",
       },
     ];
+    return isTransparency
+      ? rows.filter((item) => hasTransparencyDetailValue(item.value))
+      : rows;
   })();
 
   return (
@@ -2172,6 +2227,7 @@ const AnalyticsModal = ({
               platform={ctx.platform}
               tiktokAnalytics={tiktokAnalytics}
               ad={ad}
+              isTransparency={isTransparency}
             />
 
             {aiMetaVariableRows.length > 0 && (

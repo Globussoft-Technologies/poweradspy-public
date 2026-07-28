@@ -4,6 +4,7 @@ import { render } from "@testing-library/react";
 import TransparencyDelivery, {
   formatTransparencyRange,
   getOperatorMeaning,
+  resolveTransparencyCountryName,
 } from "../../../../src/components/modals/analytics/TransparencyDelivery.jsx";
 
 describe("TransparencyDelivery", () => {
@@ -56,14 +57,61 @@ describe("TransparencyDelivery", () => {
     expect(queryByText("Platform 18")).toBeNull();
     expect(getAllByLabelText("Explain this metric").length).toBeGreaterThanOrEqual(8);
     expect(getAllByRole("tooltip").some((tip) =>
-      tip.textContent.includes("country_details[].times_shown")
+      tip.textContent.includes("Google estimates that this ad appeared")
     )).toBe(true);
   });
 
-  it("uses -- for unavailable summary values", () => {
-    const { getAllByText } = render(
+  it("does not turn a last-seen-only observation into a reversed range", () => {
+    const { getByText, queryByText } = render(
+      <TransparencyDelivery
+        isLight
+        lastSeen="2026-07-26T00:00:00Z"
+        countryDetails={[{
+          country: "United States",
+          country_code: "US",
+          first_seen: null,
+          last_seen: "2026-07-27T00:00:00Z",
+          times_shown: null,
+        }]}
+      />,
+    );
+
+    expect(getByText("Until 27 Jul 2026")).toBeInTheDocument();
+    expect(queryByText(/27 Jul 2026.*26 Jul 2026/)).toBeNull();
+  });
+
+  it("hides unavailable metrics and lets the remaining layout reflow", () => {
+    const { container, queryByText } = render(
       <TransparencyDelivery isLight countryDetails={[]} />,
     );
-    expect(getAllByText("--").length).toBeGreaterThanOrEqual(4);
+    expect(container).not.toHaveTextContent("--");
+    expect(queryByText("Platform")).toBeNull();
+    expect(queryByText("Impressions")).toBeNull();
+    expect(queryByText("Countries")).toBeNull();
+    expect(queryByText("Activity Window")).toBeNull();
+    expect(queryByText("Estimated impressions")).toBeNull();
+    expect(queryByText("Country activity")).toBeNull();
+    expect(queryByText("Geographic delivery intensity")).toBeNull();
+  });
+
+  it("shows full country names when the payload contains only an ISO code", () => {
+    const { getAllByText, queryByText } = render(
+      <TransparencyDelivery
+        isLight
+        countryDetails={[{
+          country: "US",
+          country_code: "US",
+          first_seen: "2026-03-27T00:00:00Z",
+          last_seen: "2026-07-22T00:00:00Z",
+          times_shown: { min: 1000000, max: null, operator: "over" },
+        }]}
+      />,
+    );
+
+    expect(resolveTransparencyCountryName("US", "US")).toBe("United States");
+    expect(resolveTransparencyCountryName(null, "DE")).toBe("Germany");
+    expect(getAllByText("United States").length).toBeGreaterThanOrEqual(2);
+    expect(queryByText(/^US$/)).toBeNull();
+    expect(queryByText("Geographic delivery intensity")).toBeInTheDocument();
   });
 });

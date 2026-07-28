@@ -22,6 +22,7 @@ const BasicInfo = ({
   platform,
   tiktokAnalytics,
   ad,
+  isTransparency = false,
 }) => {
   const { theme } = useTheme();
   const isLight = theme === "light";
@@ -332,13 +333,18 @@ const BasicInfo = ({
 
   const hasOutgoingData = sourceUrl || stepRedirect || targetUrl;
   const showOutgoingLinks = !hideOutgoingLinks.includes(p) && hasOutgoingData;
+  const visibleBasicRows = isTransparency
+    ? basicRows.filter((row) => Boolean(String(row.value || "").trim()))
+    : basicRows;
+
+  if (!visibleBasicRows.length && !showOutgoingLinks) return null;
 
   return (
     <div
       className={`grid grid-cols-1 ${showOutgoingLinks ? "lg:grid-cols-2" : ""} gap-4 px-6`}
     >
       {/* Basic URLs */}
-      <div>
+      {visibleBasicRows.length ? <div>
         <h3
           className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
         >
@@ -348,7 +354,7 @@ const BasicInfo = ({
         <div
           className={`rounded-xl overflow-hidden border border-l-2 border-l-[#3759a3]/40 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
         >
-          {basicRows.map((url, i, arr) => {
+          {visibleBasicRows.map((url, i, arr) => {
             const urlList = splitUrls(url.value);
             const isMultiUrl = urlList.length > 1;
 
@@ -440,7 +446,7 @@ const BasicInfo = ({
             );
           })}
         </div>
-      </div>
+      </div> : null}
 
       {/* Out Going Links Flow — platform-conditional */}
       {showOutgoingLinks && (

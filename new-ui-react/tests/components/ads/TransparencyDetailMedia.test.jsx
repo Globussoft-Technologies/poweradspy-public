@@ -34,6 +34,19 @@ const transparencyTextAd = {
   carouselMedia: [],
 };
 
+const transparencyVideoAd = {
+  ...transparencyTextAd,
+  id: 19,
+  adId: "CR19",
+  adType: "video",
+  renderType: "video",
+  title: "",
+  adText: "",
+  thumbnail: "https://nas.example/thumbnail.jpg",
+  imageOriginalUrl: "https://i.ytimg.com/vi/qNa-n4e6Uik/hqdefault.jpg",
+  videoOriginalUrl: "https://www.youtube.com/watch?v=qNa-n4e6Uik",
+};
+
 describe("Google Transparency detail media", () => {
   it("renders a TEXT creative's image in the ad detail modal", () => {
     const { container } = render(
@@ -77,6 +90,107 @@ describe("Google Transparency detail media", () => {
     fireEvent.click(screen.getByRole("button", { name: "Original Preview" }));
     expect(container.querySelector(
       'img[src="https://source.example/original.png"]',
+    )).not.toBeNull();
+  });
+
+  it("shows the thumbnail before loading the original YouTube video", () => {
+    const { container } = render(
+      <OriginalPreview ad={transparencyVideoAd} fillWidth />,
+    );
+
+    expect(container.querySelector(
+      'img[src="https://i.ytimg.com/vi/qNa-n4e6Uik/hqdefault.jpg"]',
+    )).not.toBeNull();
+    expect(container.querySelector(
+      'iframe[src*="youtube.com/embed/qNa-n4e6Uik"]',
+    )).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Play original video" }));
+    expect(container.querySelector(
+      'iframe[src*="youtube.com/embed/qNa-n4e6Uik"]',
+    )).not.toBeNull();
+    expect(screen.getByTestId("transparency-original-video")).toBeInTheDocument();
+    expect(screen.queryByText("Sponsored")).toBeNull();
+  });
+
+  it("shows the original video after clicking Original Preview in the modal", () => {
+    const { container } = render(
+      <AdDetailModal
+        ad={transparencyVideoAd}
+        onClose={vi.fn()}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Original Preview" }));
+    expect(container.querySelector(
+      'img[src="https://i.ytimg.com/vi/qNa-n4e6Uik/hqdefault.jpg"]',
+    )).not.toBeNull();
+    expect(container.querySelector(
+      'iframe[src*="youtube.com/embed/qNa-n4e6Uik"]',
+    )).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Play original video" }));
+    expect(container.querySelector(
+      'iframe[src*="youtube.com/embed/qNa-n4e6Uik"]',
+    )).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Show Saved Preview" }))
+      .toBeInTheDocument();
+  });
+
+  it("loads a direct original video only after its thumbnail is clicked", () => {
+    const directVideo = {
+      ...transparencyVideoAd,
+      videoOriginalUrl: "https://cdn.example/original.mp4",
+    };
+    const { container } = render(
+      <OriginalPreview ad={directVideo} />,
+    );
+
+    expect(container.querySelector(
+      'img[src="https://i.ytimg.com/vi/qNa-n4e6Uik/hqdefault.jpg"]',
+    )).not.toBeNull();
+    expect(container.querySelector(
+      'video[src="https://cdn.example/original.mp4"]',
+    )).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Play original video" }));
+    const video = container.querySelector(
+      'video[src="https://cdn.example/original.mp4"]',
+    );
+    expect(video).not.toBeNull();
+    expect(video).toHaveAttribute(
+      "poster",
+      "https://i.ytimg.com/vi/qNa-n4e6Uik/hqdefault.jpg",
+    );
+  });
+
+  it("shows an othermultimedia video frame and plays it only after click", () => {
+    const multimediaAd = {
+      ...transparencyTextAd,
+      adType: "image",
+      renderType: "image",
+      carouselMedia: [
+        "https://nas.example/other.jpg",
+        "https://nas.example/other.mp4",
+      ],
+    };
+    const { container } = render(
+      <AdDetailModal
+        ad={multimediaAd}
+        onClose={vi.fn()}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Next media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next media" }));
+
+    const preview = container.querySelector(
+      'video[src="https://nas.example/other.mp4"]',
+    );
+    expect(preview).not.toBeNull();
+    expect(preview).not.toHaveAttribute("autoplay");
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    expect(container.querySelector(
+      'video[src="https://nas.example/other.mp4"][controls]',
     )).not.toBeNull();
   });
 });

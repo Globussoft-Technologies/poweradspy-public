@@ -22,6 +22,7 @@ import gIcon from "../../assets/g.png";
 import linkedinIcon from "../../assets/linkedin.png";
 import rdIcon from "../../assets/rd.png";
 import pinterestIcon from "../../assets/pinterest.png";
+import { getVideoEmbedUrl } from "../../services/api";
 // These are native-look replicas, which render a single CTA button — an ad with
 // several CTAs shows its first one here; the detail pane lists them all.
 import { primaryCtaLabel } from "../../utils/cta";
@@ -31,6 +32,92 @@ import { primaryCtaLabel } from "../../utils/cta";
  * Uses flexbox column layout: header → content (flex-grow) → footer (mt-auto).
  * When fillWidth=true, cards stretch to fill their masonry cell with no max-width.
  */
+const TransparencyOriginalVideo = ({
+  videoUrl,
+  poster,
+  title,
+  fillWidth,
+}) => {
+  const [playing, setPlaying] = useState(false);
+  const embedUrl = getVideoEmbedUrl(videoUrl);
+
+  useEffect(() => {
+    setPlaying(false);
+  }, [videoUrl]);
+
+  if (playing) {
+    return (
+      <div
+        data-testid="transparency-original-video"
+        className={`flex items-center justify-center bg-black ${fillWidth ? "h-full w-full" : "w-full"}`}
+      >
+        {embedUrl ? (
+          <iframe
+            src={embedUrl}
+            title={title || "Original video creative"}
+            className="aspect-video w-full border-0 bg-black"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        ) : (
+          <video
+            src={videoUrl}
+            poster={poster || undefined}
+            className="block max-h-full max-w-full object-contain"
+            controls
+            autoPlay
+            playsInline
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-testid="transparency-original-video-poster"
+      className={`relative flex min-h-52 items-center justify-center overflow-hidden bg-black ${
+        fillWidth ? "h-full w-full" : "w-full"
+      }`}
+    >
+      {poster ? (
+        <img
+          src={poster}
+          alt={title || "Video thumbnail"}
+          className="block max-h-full max-w-full object-contain"
+        />
+      ) : videoUrl && !embedUrl ? (
+        <video
+          src={videoUrl}
+          className="block max-h-full max-w-full object-contain"
+          muted
+          playsInline
+          preload="metadata"
+        />
+      ) : (
+        <div className="min-h-52 w-full bg-black" />
+      )}
+      {videoUrl ? (
+        <button
+          type="button"
+          aria-label="Play original video"
+          onClick={() => setPlaying(true)}
+          className="absolute inset-0 flex items-center justify-center bg-black/15 transition-colors hover:bg-black/30"
+        >
+          <span className="grid h-14 w-14 place-items-center rounded-full border border-white/30 bg-black/60 text-white shadow-xl backdrop-blur-sm">
+            <Play size={24} fill="white" />
+          </span>
+        </button>
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-white/65">
+          Original video is unavailable
+        </div>
+      )}
+    </div>
+  );
+};
+
 const OriginalPreview = ({ ad, fillWidth = false }) => {
   const platform = (ad.network || "").toLowerCase();
   const hideMetaEngagement =
@@ -43,12 +130,34 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
     ad.isGoogleTransparency === true ||
     (platform === "google" && Number(ad.platform) === 18);
 
-  // Transparency's "Show Original" means the source creative itself, without
-  // a simulated Google Search layout, cropping, overlays, or aspect changes.
-  if (isGoogleTransparency && renderType === "image") {
-    const originalImage = ad.imageOriginalUrl || ad.thumbnail || "";
+  // Transparency's "Show Original" means the source creative itself. Its
+  // contract type is authoritative: a VIDEO must never fall through to the
+  // simulated Google Search/Text preview simply because its playable URL has
+  // no file extension (for example, a YouTube watch URL).
+  if (isGoogleTransparency && adType === "video") {
+    const originalVideo = ad.videoOriginalUrl || "";
+    const originalPoster = ad.imageOriginalUrl || ad.thumbnail || "";
+
+    return (
+      <TransparencyOriginalVideo
+        videoUrl={originalVideo}
+        poster={originalPoster}
+        title={ad.title}
+        fillWidth={fillWidth}
+      />
+    );
+  }
+
+  // IMAGE creatives and TEXT creatives that genuinely contain a source image
+  // stay as the unmodified source image: no Google shell, crop, or overlay.
+  if (
+    isGoogleTransparency &&
+    (adType === "image" || (adType === "text" && renderType === "image"))
+  ) {
+    const originalImage = ad.imageOriginalUrl || "";
     return (
       <div
+        data-testid="transparency-original-image"
         className={`flex items-center justify-center bg-transparent ${fillWidth ? "w-full h-full" : "w-full"}`}
       >
         {originalImage && (
@@ -59,6 +168,26 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
             onError={(e) => (e.currentTarget.style.display = "none")}
           />
         )}
+      </div>
+    );
+  }
+
+  // A genuinely text-only Transparency creative remains plain text, without
+  // being converted into the simulated legacy Google Search card.
+  if (isGoogleTransparency && adType === "text") {
+    return (
+      <div
+        data-testid="transparency-original-text"
+        className={`flex flex-col justify-center bg-white p-5 text-slate-900 ${
+          fillWidth ? "h-full w-full" : "w-full max-w-[400px]"
+        }`}
+      >
+        {ad.title ? <h3 className="text-base font-semibold">{ad.title}</h3> : null}
+        {ad.adText || ad.subtitle ? (
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+            {ad.adText || ad.subtitle}
+          </p>
+        ) : null}
       </div>
     );
   }
