@@ -11,9 +11,11 @@ const NestedMultiselectFilter = ({
   onChange,
   onChildChange,
   maxItems,
+  accented = false,
 }) => {
   const [expandedParents, setExpandedParents] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const selectedCount = new Set(Array.isArray(selected) ? selected : []).size;
 
   // Sort parents alphabetically by label — the SDUI options come back in
   // backend-defined order (rank / insertion), which isn't useful for the
@@ -146,7 +148,7 @@ const NestedMultiselectFilter = ({
     return (
       <div key={optId}>
         <div
-          className={`w-full flex items-center gap-2.5 py-1 text-[12px] group ${level > 0 ? "ml-4" : ""}`}
+          className={`w-full flex items-center gap-2.5 py-1 text-[12px] group rounded-md px-1 transition-colors ${accented ? "hover:bg-[#f5c86a]/5" : ""} ${level > 0 ? "ml-4" : ""}`}
         >
           <button
             onClick={() =>
@@ -157,12 +159,12 @@ const NestedMultiselectFilter = ({
             {hasChildren && (
               <ChevronRight
                 size={10}
-                className={`text-theme-text-muted group-hover:text-white transition-transform shrink-0 ${isExpanded ? "rotate-90" : ""}`}
+                className={`transition-transform shrink-0 ${accented ? "text-[#f5c86a]/70 group-hover:text-[#ffd77f]" : "text-theme-text-muted group-hover:text-white"} ${isExpanded ? "rotate-90" : ""}`}
               />
             )}
             {!hasChildren && (
               <div
-                className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${isSelected ? "bg-[#335296] border-[#335296]" : "border-white/30 group-hover:border-theme-text"}`}
+                className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${isSelected ? (accented ? "bg-[#7f641f] border-[#f5c86a]/70" : "bg-[#335296] border-[#335296]") : (accented ? "border-[#f5c86a]/20 group-hover:border-[#f5c86a]/50" : "border-white/30 group-hover:border-theme-text")}`}
               >
                 {isSelected && (
                   <Check size={8} strokeWidth={3} className="text-white" />
@@ -170,7 +172,7 @@ const NestedMultiselectFilter = ({
               </div>
             )}
             <span
-              className={`transition-colors flex-1 pr-1 truncate ${isSelected ? "text-[#7899e0] font-medium" : "text-theme-text-muted group-hover:text-theme-text"}`}
+              className={`transition-colors flex-1 pr-1 truncate ${isSelected ? (accented ? "text-[#f5d88d] font-medium" : "text-[#7899e0] font-medium") : "text-theme-text-muted group-hover:text-theme-text"}`}
             >
               {option.label}
             </span>
@@ -196,8 +198,12 @@ const NestedMultiselectFilter = ({
               <div
                 className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
                   allLeavesSelected || someLeavesSelected
-                    ? "bg-[#335296] border-[#335296]"
-                    : "border-white/30 hover:border-theme-text"
+                    ? accented
+                      ? "bg-[#7f641f] border-[#f5c86a]/70"
+                      : "bg-[#335296] border-[#335296]"
+                    : accented
+                      ? "border-[#f5c86a]/20 hover:border-[#f5c86a]/50"
+                      : "border-white/30 hover:border-theme-text"
                 }`}
               >
                 {allLeavesSelected && (
@@ -222,8 +228,15 @@ const NestedMultiselectFilter = ({
   };
 
   return (
-    <div className="px-3 py-2">
+    <div className={`px-3 py-2 rounded-xl border ${accented ? "mb-2.5 border-[#f5c86a]/15 bg-[#f5c86a]/5" : "border-transparent"}`}>
       {/* Search input */}
+      {selectedCount > 0 && (
+        <div className="mb-2 flex justify-end">
+          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? "border-[#f5c86a]/30 bg-[#f5c86a]/10 text-[#f5d88d]" : "border-[#3759a3]/30 bg-[#3762c1]/10 text-[#6b99ff]"}`}>
+            {selectedCount} selected
+          </span>
+        </div>
+      )}
       <div className="relative mb-2">
         <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-theme-text-muted" />
         <input
@@ -231,7 +244,7 @@ const NestedMultiselectFilter = ({
           placeholder="Search categories..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full bg-theme-card border border-theme-border rounded-md pl-7 pr-3 py-1.5 text-[11px] text-theme-text placeholder:text-theme-text-muted focus:outline-none focus:border-[#3759a3]/50 focus:bg-theme-surface transition-colors"
+          className={`w-full bg-theme-card border rounded-md pl-7 pr-3 py-1.5 text-[11px] text-theme-text placeholder:text-theme-text-muted focus:outline-none transition-colors ${accented ? "border-[#f5c86a]/20 focus:border-[#f5c86a]/55 focus:bg-[#f5c86a]/5" : "border-theme-border focus:border-[#3759a3]/50 focus:bg-theme-surface"}`}
         />
       </div>
       <div>
@@ -245,7 +258,7 @@ const NestedMultiselectFilter = ({
               )}
         </div>
         {maxItems && selected.length >= maxItems && (
-          <div className="text-[10px] text-orange-400 mt-1">
+          <div className={`text-[10px] mt-1 ${accented ? "text-[#f5c86a]" : "text-orange-400"}`}>
             Maximum {maxItems} items selected
           </div>
         )}

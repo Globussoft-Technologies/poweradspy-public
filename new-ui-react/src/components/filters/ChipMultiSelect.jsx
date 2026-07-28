@@ -13,9 +13,11 @@ const ChipMultiSelect = ({
   showSearch = true,
   showLabel = false,
   previewLimit = 12,
+  accented = false,
 }) => {
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const selectedCount = Array.isArray(selected) ? new Set(selected).size : 0;
 
   const toggle = (value) => {
     const newSelected = selected.includes(value)
@@ -41,13 +43,22 @@ const ChipMultiSelect = ({
   const hiddenCount = Math.max(0, optionsToUse.length - safePreviewLimit);
 
   return (
-    <div className="px-3 py-2">
+    <div className={`px-3 py-2 rounded-xl border ${accented ? "mb-2.5 border-[#f5c86a]/15 bg-[#f5c86a]/5" : "border-transparent"}`}>
       <div>
-        {showLabel && label && (
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-theme-text-secondary">
-            {label}
-          </div>
-        )}
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          {showLabel && label ? (
+            <div className={`text-[10px] font-semibold uppercase tracking-[0.08em] ${accented ? "text-[#f5d88d]" : "text-theme-text-secondary"}`}>
+              {label}
+            </div>
+          ) : (
+            <span />
+          )}
+          {selectedCount > 0 && (
+            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? "border-[#f5c86a]/30 bg-[#f5c86a]/10 text-[#f5d88d]" : "border-[#3759a3]/30 bg-[#3762c1]/10 text-[#6b99ff]"}`}>
+              {selectedCount} selected
+            </span>
+          )}
+        </div>
         {/* Search bar - only show if showSearch is true */}
         {showSearch && (
           <div className="relative mb-2">
@@ -60,7 +71,7 @@ const ChipMultiSelect = ({
               placeholder={label ? `Search ${label}...` : 'Search...'}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-theme-card border border-theme-border rounded-md pl-7 pr-3 py-1.5 text-[11px] text-theme-text placeholder:text-theme-text-muted focus:outline-none focus:border-[#3759a3]/50 transition-colors"
+              className={`w-full bg-theme-card border rounded-md pl-7 pr-3 py-1.5 text-[11px] text-theme-text placeholder:text-theme-text-muted focus:outline-none transition-colors ${accented ? "border-[#f5c86a]/20 focus:border-[#f5c86a]/55 focus:bg-[#f5c86a]/5" : "border-theme-border focus:border-[#3759a3]/50"}`}
             />
           </div>
         )}
@@ -76,7 +87,9 @@ const ChipMultiSelect = ({
                 onClick={() => toggle(value)}
                 className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all border ${
                   isActive
-                    ? "bg-[#335296]/20 border-[#3759a3]/40 text-[#7899e0]"
+                    ? accented
+                      ? "bg-[#7f641f]/20 border-[#f5c86a]/45 text-[#f5d88d]"
+                      : "bg-[#335296]/20 border-[#3759a3]/40 text-[#7899e0]"
                     : "bg-theme-card border-theme-border text-theme-text-muted hover:text-theme-text hover:border-[#444]"
                 }`}
               >

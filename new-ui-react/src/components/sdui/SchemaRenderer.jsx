@@ -15,6 +15,7 @@ const SchemaRenderer = ({
   document: doc,
   filterValues = {},
   onFilterChange,
+  onDocumentClick,
   shouldShowFilter,
   shouldShowOption,
   isDependencySatisfied,
@@ -29,6 +30,7 @@ const SchemaRenderer = ({
   onFilterChangeRef.current = onFilterChange;
 
   if (!doc || doc.visible === false) return null;
+  const isAiMetaDocument = doc._id === "ai_meta";
   if (
     doc._id === "google_transparency" &&
     !activePlatforms.some(
@@ -218,6 +220,7 @@ const SchemaRenderer = ({
         // Platform matrix (for PlatformToggle)
         platformFilterMatrix: filter.platform_filter_matrix,
         activePlatforms,
+        accented: isAiMetaDocument,
 
         // For geo filters, store the display label (e.g. "United States") not the ISO value
         valueKey: ["country_filter", "state_filter", "city_filter"].includes(
@@ -251,7 +254,13 @@ const SchemaRenderer = ({
 
   return (
     <div className="px-2.5">
-      <DocumentSection document={doc}>{renderFilters()}</DocumentSection>
+      <DocumentSection
+        document={doc}
+        clickOnly={doc._id === "ai_meta" && Boolean(onDocumentClick)}
+        onHeaderClick={onDocumentClick}
+      >
+        {renderFilters()}
+      </DocumentSection>
     </div>
   );
 };

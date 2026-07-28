@@ -11,6 +11,7 @@ const FilterRadioList = ({
   value,
   selected = [],
   onChange,
+  accented = false,
 }) => {
   const [expandedCount, setExpandedCount] = useState(false);
 
@@ -19,6 +20,7 @@ const FilterRadioList = ({
 
   // Support both `value` (string) and `selected` ([string]) patterns
   const currentValue = value ?? selected[0] ?? "";
+  const selectedCount = currentValue ? 1 : 0;
 
   const displayOptions = expandedCount ? options : options.slice(0, 5);
   const hiddenCount = options.length - 5;
@@ -29,8 +31,15 @@ const FilterRadioList = ({
   };
 
   return (
-    <div className="px-3 py-2">
+    <div className={`px-3 py-2 rounded-xl border ${accented ? "mb-2.5 border-[#f5c86a]/15 bg-[#f5c86a]/5" : "border-transparent"}`}>
       <div>
+        {selectedCount > 0 && (
+          <div className="mb-2 flex justify-end">
+            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? "border-[#f5c86a]/30 bg-[#f5c86a]/10 text-[#f5d88d]" : "border-[#3759a3]/30 bg-[#3762c1]/10 text-[#6b99ff]"}`}>
+              selected
+            </span>
+          </div>
+        )}
         <div className="space-y-1">
           {displayOptions.map((opt) => {
             const optValue = getOptValue(opt);
@@ -40,17 +49,17 @@ const FilterRadioList = ({
               <button
                 key={optValue}
                 onClick={() => handleSelect(optValue)}
-                className="w-full flex items-center gap-2.5 py-1 text-[11px] group"
+                className={`w-full flex items-center gap-2.5 py-1 text-[11px] group rounded-md px-1 transition-colors ${accented ? "hover:bg-[#f5c86a]/5" : ""}`}
               >
                 <div
-                  className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${on ? "border-[#335296]" : "border-theme-text-secondary group-hover:border-theme-text"}`}
+                  className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${on ? (accented ? "border-[#f5c86a]/70" : "border-[#335296]") : (accented ? "border-[#f5c86a]/25 group-hover:border-[#f5c86a]/55" : "border-theme-text-secondary group-hover:border-theme-text")}`}
                 >
                   {on && (
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#335296]" />
+                    <div className={`w-1.5 h-1.5 rounded-full ${accented ? "bg-[#f5c86a]" : "bg-[#335296]"}`} />
                   )}
                 </div>
                 <span
-                  className={`transition-colors text-left ${on ? "text-[#7899e0] font-medium" : "text-theme-text-muted group-hover:text-theme-text"}`}
+                  className={`transition-colors text-left ${on ? (accented ? "text-[#f5d88d] font-medium" : "text-[#7899e0] font-medium") : "text-theme-text-muted group-hover:text-theme-text"}`}
                 >
                   {optLabel}
                 </span>

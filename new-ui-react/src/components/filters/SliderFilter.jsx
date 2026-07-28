@@ -20,6 +20,7 @@ const SliderFilter = ({
   pinMode = "single",
   value,
   onChange,
+  accented = false,
 }) => {
   const uid = useId();
   const safeMin = min ?? 0;
@@ -84,6 +85,7 @@ const SliderFilter = ({
 
   const lowValue = pctToValue(lowPct);
   const highValue = pctToValue(highPct);
+  const hasSelection = Array.isArray(value) && value.length > 0;
 
   // ── Loose-end detection ─────────────────────────────────────────────
   const isAtLooseLeft = lowPct === 0 && looseLeft;
@@ -221,10 +223,17 @@ const SliderFilter = ({
   const highThumbZ = stuckAtLeft ? 4 : 2;
 
   return (
-    <div className="px-3 py-2">
+    <div className={`px-3 py-2 rounded-xl border ${accented ? "mb-2.5 border-[#f5c86a]/15 bg-[#f5c86a]/5" : "border-transparent"}`}>
       {label && (
-        <div className="text-[10px] font-bold text-theme-text-secondary uppercase tracking-widest mb-1.5">
-          {label}
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <div className={`text-[10px] font-bold uppercase tracking-widest ${accented ? "text-[#f5d88d]" : "text-theme-text-secondary"}`}>
+            {label}
+          </div>
+          {hasSelection && (
+            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? "border-[#f5c86a]/30 bg-[#f5c86a]/10 text-[#f5d88d]" : "border-[#3759a3]/30 bg-[#3762c1]/10 text-[#6b99ff]"}`}>
+              selected
+            </span>
+          )}
         </div>
       )}
       <div className="flex items-center justify-end gap-1 text-[9px] text-theme-text-muted mb-2">

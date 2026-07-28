@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark } from "lucide-react";
 import NavItem from "../shared/NavItem";
 import SectionLabel from "../shared/SectionLabel";
 import SidebarDivider from "../shared/SidebarDivider";
 import SchemaRenderer from "../sdui/SchemaRenderer";
+import AiSignalsModal from "../sdui/AiSignalsModal";
 
 /**
  * Sidebar — Fully SDUI-driven.
@@ -36,6 +37,7 @@ const Sidebar = ({
   onOpenKeywordsExplorer,
   searchIn = "keyword",
 }) => {
+  const [aiSignalsOpen, setAiSignalsOpen] = useState(false);
   const {
     config,
     loading,
@@ -60,6 +62,10 @@ const Sidebar = ({
 
   const { t } = useTranslation();
   const sidebarDocs = config?.sidebar || [];
+  const aiSignalsDoc = useMemo(
+    () => sidebarDocs.find((doc) => doc._id === "ai_meta") || null,
+    [sidebarDocs],
+  );
 
   return (
     <>
@@ -186,23 +192,28 @@ const Sidebar = ({
                       // }
                       return true;
                     })
-                    .map((doc, idx, visible) => (
-                      <React.Fragment key={doc._id}>
-                        <SchemaRenderer
-                          document={doc}
-                          filterValues={filterValues}
-                          onFilterChange={guestSetFilter}
-                          shouldShowFilter={shouldShowFilter}
-                          shouldShowOption={shouldShowOption}
-                          isDependencySatisfied={isDependencySatisfied}
-                          activePlatforms={activePlatforms}
-                          isFilterRestricted={isFilterRestricted}
-                          filterHasPlanEntry={filterHasPlanEntry}
-                          onRestricted={onRestricted}
-                        />
-                        {idx < visible.length - 1 && <SidebarDivider />}
-                      </React.Fragment>
-                    ))
+                    .map((doc, idx, visible) => {
+                      return (
+                        <React.Fragment key={doc._id}>
+                          <SchemaRenderer
+                            document={doc}
+                            filterValues={filterValues}
+                            onFilterChange={guestSetFilter}
+                            onDocumentClick={
+                              doc._id === "ai_meta" ? () => setAiSignalsOpen(true) : undefined
+                            }
+                            shouldShowFilter={shouldShowFilter}
+                            shouldShowOption={shouldShowOption}
+                            isDependencySatisfied={isDependencySatisfied}
+                            activePlatforms={activePlatforms}
+                            isFilterRestricted={isFilterRestricted}
+                            filterHasPlanEntry={filterHasPlanEntry}
+                            onRestricted={onRestricted}
+                          />
+                          {idx < visible.length - 1 && <SidebarDivider />}
+                        </React.Fragment>
+                      );
+                    })
                 ) : (
                   <div className="px-3 py-4 text-[10px] text-theme-text-muted">
                     {t("no_filters_configured")}
@@ -225,6 +236,20 @@ const Sidebar = ({
           )}
         </div>
       </aside>
+      <AiSignalsModal
+        isOpen={aiSignalsOpen}
+        document={aiSignalsDoc}
+        filterValues={filterValues}
+        onClose={() => setAiSignalsOpen(false)}
+        onFilterChange={guestSetFilter}
+        shouldShowFilter={shouldShowFilter}
+        shouldShowOption={shouldShowOption}
+        isDependencySatisfied={isDependencySatisfied}
+        activePlatforms={activePlatforms}
+        isFilterRestricted={isFilterRestricted}
+        filterHasPlanEntry={filterHasPlanEntry}
+        onRestricted={onRestricted}
+      />
     </>
   );
 };
