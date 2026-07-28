@@ -162,6 +162,8 @@ Expected update behavior:
   country `last_seen`, and current `times_shown`;
 - India appends once;
 - top-level null `last_seen` becomes server current time;
+- top-level `last_shown` is overwritten on every update with the exact
+  producer value, including explicit `null`; no date is generated for it;
 - valid stored top-level `first_seen` and `post_date` are not overwritten by
   incoming nulls;
 - aggregate impressions, destination/redirect, creative fields and
@@ -177,9 +179,11 @@ For a new payload with `"post_date": null`, SQL intentionally contains the
 unknown-date sentinel while Elasticsearch keeps the public value null:
 
 ```sql
-SELECT post_date, ad_position, country_id, country_only_id, post_owner_id
-FROM google_text_ad
-WHERE ad_id = 'CR90000000000000000002';
+SELECT a.post_date, a.ad_position, a.country_id, a.country_only_id,
+       a.post_owner_id, p.last_shown
+FROM google_text_ad a
+LEFT JOIN google_transparency_ad_payload p ON p.google_text_ad_id = a.id
+WHERE a.ad_id = 'CR90000000000000000002';
 ```
 
 For the IMAGE sample, expect `post_date = '1000-01-01 00:00:00'` and

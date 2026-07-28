@@ -28,6 +28,28 @@ describe('Google Transparency schema scripts', () => {
     expect(sql.query).toHaveBeenCalledTimes(1);
   });
 
+  it('adds the nullable payload last_shown column when missing', async () => {
+    const sql = {
+      query: vi.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+    };
+
+    await applyScript.ensurePayloadLastShownColumn(sql);
+
+    expect(sql.query).toHaveBeenLastCalledWith(
+      'ALTER TABLE google_transparency_ad_payload ADD COLUMN last_shown DATETIME NULL AFTER region_code'
+    );
+  });
+
+  it('keeps an existing payload last_shown column unchanged', async () => {
+    const sql = { query: vi.fn(async () => [{ COLUMN_NAME: 'last_shown' }]) };
+
+    await applyScript.ensurePayloadLastShownColumn(sql);
+
+    expect(sql.query).toHaveBeenCalledTimes(1);
+  });
+
   it('reads rollback counts from the project DatabaseManager result shape', async () => {
     const sql = { query: vi.fn(async () => [{ count: 12 }]) };
 

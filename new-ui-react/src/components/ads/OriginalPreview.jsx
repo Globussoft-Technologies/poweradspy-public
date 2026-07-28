@@ -172,24 +172,20 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
     );
   }
 
-  // A genuinely text-only Transparency creative remains plain text, without
-  // being converted into the simulated legacy Google Search card.
+  // A media-less Transparency TEXT creative uses the same familiar Google
+  // text-ad presentation as a normal Google ad, while preserving its real copy.
   if (isGoogleTransparency && adType === "text") {
-    return (
-      <div
-        data-testid="transparency-original-text"
-        className={`flex flex-col justify-center bg-white p-5 text-slate-900 ${
-          fillWidth ? "h-full w-full" : "w-full max-w-[400px]"
-        }`}
-      >
-        {ad.title ? <h3 className="text-base font-semibold">{ad.title}</h3> : null}
-        {ad.adText || ad.subtitle ? (
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-            {ad.adText || ad.subtitle}
-          </p>
-        ) : null}
-      </div>
-    );
+    const originalTitle = ad.title || ad.ad_title || "";
+    const originalText = ad.adText || ad.ad_text || ad.text || ad.subtitle || "";
+    return <GoogleSearchAd
+      ad={{
+        ...ad,
+        title: originalTitle,
+        subtitle: originalText || "Original text is unavailable.",
+      }}
+      fill={fillWidth}
+      testId="transparency-original-text"
+    />;
   }
 
   if (platform === "facebook")
@@ -654,7 +650,7 @@ const GooglePreview = ({ platform, ad, position, adType, fill }) => {
  * short (bounded description length), so the full text fits within the card's
  * existing height; no need to grow the masonry cell or defer to the modal.
  */
-const GoogleSearchAd = ({ ad, fill }) => {
+const GoogleSearchAd = ({ ad, fill, testId }) => {
   const [expanded, setExpanded] = useState(false);
   const [isClamped, setIsClamped] = useState(false);
   const textRef = useRef(null);
@@ -667,6 +663,7 @@ const GoogleSearchAd = ({ ad, fill }) => {
     if (!el || expanded) return;
     const measure = () => setIsClamped(el.scrollHeight > el.clientHeight + 1);
     measure();
+    if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
@@ -674,6 +671,7 @@ const GoogleSearchAd = ({ ad, fill }) => {
 
   return (
     <div
+      data-testid={testId}
       // `w-full` is required in the non-fill (modal) case: without a definite
       // width the card is content-sized, so a long unbreakable destination URL
       // (truncate ⇒ white-space:nowrap) inflates its min-content width. The

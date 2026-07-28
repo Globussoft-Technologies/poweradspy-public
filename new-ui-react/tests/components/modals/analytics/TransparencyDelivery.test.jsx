@@ -27,6 +27,10 @@ describe("TransparencyDelivery", () => {
         impressions={{ min: 0, max: 1000, operator: "range" }}
         firstSeen="2025-12-12T00:00:00Z"
         lastSeen="2025-12-21T00:00:00Z"
+        lastShown="2025-12-22T00:00:00Z"
+        adType="IMAGE"
+        source="desktop"
+        destinationUrl="https://example.com/landing"
         countryDetails={[{
           country: "Germany",
           country_code: "DE",
@@ -37,7 +41,7 @@ describe("TransparencyDelivery", () => {
       />,
     );
 
-    expect(getByText("Transparency Delivery")).toBeInTheDocument();
+    expect(getByText("Transparency Ad Details")).toBeInTheDocument();
     expect(getByText("SEARCH")).toBeInTheDocument();
     expect(getByText("1")).toBeInTheDocument();
     expect(getByText("Estimated impressions")).toBeInTheDocument();
@@ -45,8 +49,11 @@ describe("TransparencyDelivery", () => {
     expect(getAllByText("From").length).toBeGreaterThanOrEqual(2);
     expect(getAllByText("To").length).toBeGreaterThanOrEqual(2);
     expect(getByText("Country activity")).toBeInTheDocument();
-    expect(getByText("First seen")).toBeInTheDocument();
-    expect(getByText("Last seen")).toBeInTheDocument();
+    expect(getByText("First shown")).toBeInTheDocument();
+    expect(getAllByText("Last shown").length).toBeGreaterThanOrEqual(1);
+    expect(getByText("IMAGE")).toBeInTheDocument();
+    expect(getByText("desktop")).toBeInTheDocument();
+    expect(getByText("https://example.com/landing")).toBeInTheDocument();
     expect(getByText("Active for")).toBeInTheDocument();
     expect(getByText("10 days")).toBeInTheDocument();
     expect(getByText("Geographic delivery intensity")).toBeInTheDocument();
@@ -61,7 +68,7 @@ describe("TransparencyDelivery", () => {
     )).toBe(true);
   });
 
-  it("does not turn a last-seen-only observation into a reversed range", () => {
+  it("does not turn a last-seen-only observation into a reversed range or Last Shown", () => {
     const { getByText, queryByText } = render(
       <TransparencyDelivery
         isLight
@@ -78,6 +85,45 @@ describe("TransparencyDelivery", () => {
 
     expect(getByText("Until 27 Jul 2026")).toBeInTheDocument();
     expect(queryByText(/27 Jul 2026.*26 Jul 2026/)).toBeNull();
+    expect(queryByText("Last Shown")).toBeNull();
+  });
+
+  it("separates PowerAdSpy last seen from Google last shown and aggregates every country", () => {
+    const { getByText, getAllByRole, queryByText } = render(
+      <TransparencyDelivery
+        isLight
+        firstSeen="2026-07-04T00:00:00Z"
+        lastSeen="2026-07-21T00:00:00Z"
+        lastShown="2026-07-20T00:00:00Z"
+        countryDetails={[
+          {
+            country: "France",
+            country_code: "FR",
+            first_seen: "2026-07-05T00:00:00Z",
+            last_seen: "2026-07-18T00:00:00Z",
+            times_shown: null,
+          },
+          {
+            country: "Germany",
+            country_code: "DE",
+            first_seen: "2026-07-10T00:00:00Z",
+            last_seen: "2026-07-20T00:00:00Z",
+            times_shown: null,
+          },
+        ]}
+      />,
+    );
+
+    expect(queryByText("First Shown")).toBeNull();
+    expect(getByText("Last Seen")).toBeInTheDocument();
+    expect(getByText("Last Shown")).toBeInTheDocument();
+    expect(getByText(/05 Jul 2026.*20 Jul 2026/)).toBeInTheDocument();
+    expect(queryByText(/04 Jul 2026.*20 Jul 2026/)).toBeNull();
+    const tooltipText = getAllByRole("tooltip").map((tip) => tip.textContent);
+    expect(tooltipText).toContain("The most recent date PowerAdSpy found this ad.");
+    expect(tooltipText).toContain(
+      "The most recent date Google Ads Transparency reports this ad was shown.",
+    );
   });
 
   it("hides unavailable metrics and lets the remaining layout reflow", () => {

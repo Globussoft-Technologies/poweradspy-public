@@ -6,6 +6,7 @@
     "impressions_min": { "type": "long" },
     "impressions_max": { "type": "long" },
     "impressions_operator": { "type": "keyword" },
+    "last_shown": { "type": "date", "format": "strict_date_optional_time||yyyy-MM-dd HH:mm:ss" },
     "ad_url": { "type": "keyword", "index": false, "doc_values": false },
     "video_url_original": { "type": "keyword", "index": false, "doc_values": false },
     "thumbnail": { "type": "keyword", "index": false, "doc_values": false },

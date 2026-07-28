@@ -196,6 +196,7 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
           impressions_operator: "over",
           video_url_original: "https://www.youtube.com/watch?v=xconjdiGFLs",
           redirect_url: null,
+          last_shown: "2025-08-18T00:00:00Z",
           canonical_first_seen: null,
           canonical_last_seen: "2025-08-17",
         }];
@@ -218,6 +219,7 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
         type: "VIDEO",
         source: "desktop",
         last_seen: "2025-08-17 00:00:00",
+        last_shown: "2025-08-18T00:00:00Z",
         image_url: "/pas-dev/stream/gt/thumbnail/202607/179134.jpeg",
         image_url_original: "https://i.ytimg.com/vi/xconjdiGFLs/hqdefault.jpg",
         lastSeenOnDesktop: "2025-08-17 00:00:00",
@@ -263,6 +265,7 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
       platform: 18,
       subnetwork: "SEARCH",
       last_seen: "2025-08-17",
+      last_shown: "2025-08-18T00:00:00Z",
       first_seen: null,
       post_date: null,
       thumbnail: "/pas-dev/stream/gt/thumbnail/202607/179134.jpeg",

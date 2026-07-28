@@ -5,6 +5,7 @@ import {
   hasTransparencyDetailValue,
   mergeTransparencyDateContract,
   normalizePlatformSlug,
+  resolveTransparencyContractValue,
 } from "../../../src/components/modals/AnalyticsModal.jsx";
 
 describe("AnalyticsModal platform normalization", () => {
@@ -23,6 +24,7 @@ describe("AnalyticsModal platform normalization", () => {
     const hydrated = {
       firstSeenRaw: null,
       lastSeenRaw: "2026-07-27",
+      lastShownRaw: "2026-07-28",
       postDateRaw: null,
     };
 
@@ -34,11 +36,16 @@ describe("AnalyticsModal platform normalization", () => {
 
   it("keeps explicit search-card nulls authoritative", () => {
     expect(mergeTransparencyDateContract(
-      { firstSeenRaw: "2026-07-26", lastSeenRaw: "2026-07-27" },
-      { firstSeenRaw: null, lastSeenRaw: "2026-07-27" },
+      {
+        firstSeenRaw: "2026-07-26",
+        lastSeenRaw: "2026-07-27",
+        lastShownRaw: "2026-07-28",
+      },
+      { firstSeenRaw: null, lastSeenRaw: "2026-07-27", lastShownRaw: null },
     )).toMatchObject({
       firstSeenRaw: null,
       lastSeenRaw: "2026-07-27",
+      lastShownRaw: null,
     });
   });
 
@@ -48,6 +55,19 @@ describe("AnalyticsModal platform normalization", () => {
     expect(formatTransparencyCalendarDate("2026-07-27T00:00:00Z"))
       .toBe("27 Jul 2026");
     expect(formatTransparencyCalendarDate(null)).toBe("--");
+  });
+
+  it("keeps an explicit null contract date instead of using a generated fallback", () => {
+    expect(resolveTransparencyContractValue(
+      { last_seen: "2026-07-27", last_shown: null },
+      "last_shown",
+      "2026-07-27",
+    )).toBeNull();
+    expect(resolveTransparencyContractValue(
+      { last_seen: "2026-07-27" },
+      "last_shown",
+      "2026-07-28",
+    )).toBe("2026-07-28");
   });
 
   it("omits missing Transparency detail rows while preserving real values", () => {

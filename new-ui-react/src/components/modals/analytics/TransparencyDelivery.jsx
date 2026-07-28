@@ -6,6 +6,8 @@ import {
   CalendarDays,
   Globe2,
   HelpCircle,
+  ExternalLink,
+  Link2,
   Monitor,
   TrendingUp,
 } from "lucide-react";
@@ -141,10 +143,10 @@ const SummaryCard = ({
   help,
   helpAlign = "left",
 }) => (
-  <div className={`rounded-xl border p-4 ${
+  <div className={`rounded-xl border p-3 ${
     isLight ? "border-slate-200 bg-white" : "border-white/10 bg-white/[0.035]"
   }`}>
-    <div className="mb-3 flex items-center justify-between">
+    <div className="mb-2 flex items-center justify-between">
       <span className="flex items-center gap-1.5">
         <span className={`text-[10px] font-bold uppercase tracking-[0.14em] ${
           isLight ? "text-slate-500" : "text-white/45"
@@ -153,11 +155,11 @@ const SummaryCard = ({
         </span>
         <InfoTip text={help} isLight={isLight} align={helpAlign} />
       </span>
-      <span className={`grid h-8 w-8 place-items-center rounded-lg ${accent}`}>
-        <Icon size={15} />
+      <span className={`grid h-7 w-7 place-items-center rounded-lg ${accent}`}>
+        <Icon size={14} />
       </span>
     </div>
-    <div className={`text-lg font-bold ${isLight ? "text-slate-900" : "text-white"}`}>
+    <div className={`text-base font-bold ${isLight ? "text-slate-900" : "text-white"}`}>
       {value || EMPTY}
     </div>
     {caption ? (
@@ -327,7 +329,7 @@ const GanttTimeline = ({ countries, isLight }) => {
         viewBox={`0 0 ${width} ${height}`}
         className="min-w-[720px] w-full"
         role="img"
-        aria-label="Country first seen and last seen Gantt chart"
+        aria-label="Country first shown and last shown timeline"
       >
         <defs>
           <linearGradient id="gt-time" x1="0" x2="1">
@@ -367,10 +369,10 @@ const GanttTimeline = ({ countries, isLight }) => {
           );
         })}
         <text x={left} y={height - 1} textAnchor="start" fill={text} opacity=".65" fontSize="9">
-          ● First seen
+          ● First shown
         </text>
         <text x={left + 82} y={height - 1} textAnchor="start" fill={text} opacity=".65" fontSize="9">
-          ● Last seen
+          ● Last shown
         </text>
       </svg>
     </div>
@@ -419,7 +421,7 @@ const CountryActivitySummary = ({ countries, isLight }) => {
                 <div className={`text-[9px] font-bold uppercase tracking-wider ${
                   isLight ? "text-slate-400" : "text-white/35"
                 }`}>
-                  First seen
+                  First shown
                 </div>
                 <div className={`mt-1 text-sm font-bold ${isLight ? "text-slate-900" : "text-white"}`}>
                   {formatDate(item.firstTimestamp)}
@@ -432,7 +434,7 @@ const CountryActivitySummary = ({ countries, isLight }) => {
                 <div className={`text-[9px] font-bold uppercase tracking-wider ${
                   isLight ? "text-slate-400" : "text-white/35"
                 }`}>
-                  Last seen
+                  Last shown
                 </div>
                 <div className={`mt-1 text-sm font-bold ${isLight ? "text-slate-900" : "text-white"}`}>
                   {formatDate(item.lastTimestamp)}
@@ -550,6 +552,13 @@ const TransparencyDelivery = ({
   countryDetails,
   firstSeen,
   lastSeen,
+  lastShown,
+  adType,
+  source,
+  language,
+  adUrl,
+  destinationUrl,
+  redirectUrl,
 }) => {
   const countries = useMemo(
     () => normalizeCountries(countryDetails).map((item, index) => {
@@ -565,20 +574,20 @@ const TransparencyDelivery = ({
     }).filter((item) => item.countryName !== EMPTY),
     [countryDetails],
   );
-  // A last-seen observation must never be reused as a first-seen date. The
-  // previous mixed list did exactly that when first_seen was null, producing
-  // impossible windows such as "27 Jul – 26 Jul". Use only first-seen values
-  // for the start and only last-seen values for the end.
-  const firstSeenPoints = [
-    toTimestamp(firstSeen),
-    ...countries.map((item) => item.firstTimestamp),
-  ].filter((value) => value != null);
-  const lastSeenPoints = [
-    toTimestamp(lastSeen),
-    ...countries.map((item) => item.lastTimestamp),
-  ].filter((value) => value != null);
-  const effectiveStart = firstSeenPoints.length ? Math.min(...firstSeenPoints) : null;
-  const effectiveEnd = lastSeenPoints.length ? Math.max(...lastSeenPoints) : null;
+  const countryFirstShownPoints = countries
+    .map((item) => item.firstTimestamp)
+    .filter((value) => value != null);
+  const countryLastShownPoints = countries
+    .map((item) => item.lastTimestamp)
+    .filter((value) => value != null);
+  // Country delivery rows are Google's authoritative shown window. Aggregate
+  // every country instead of mixing them with PowerAdSpy's top-level seen date.
+  const effectiveStart = countryFirstShownPoints.length
+    ? Math.min(...countryFirstShownPoints)
+    : toTimestamp(firstSeen);
+  const effectiveEnd = countryLastShownPoints.length
+    ? Math.max(...countryLastShownPoints)
+    : toTimestamp(lastShown) ?? toTimestamp(lastSeen);
   const activityWindow = effectiveStart != null && effectiveEnd != null
     ? `${formatDate(effectiveStart)} – ${formatDate(effectiveEnd)}`
     : effectiveStart != null
@@ -612,6 +621,13 @@ const TransparencyDelivery = ({
   const impressionValue = hasRangeValue(impressions)
     ? formatTransparencyRange(impressions)
     : null;
+  const lastSeenValue = toTimestamp(lastSeen) != null ? formatDate(lastSeen) : null;
+  // `last_shown` is its own producer field. A country row's last_seen describes
+  // country activity and must not be relabelled as Last Shown.
+  const lastShownTimestamp = toTimestamp(lastShown);
+  const lastShownValue = lastShownTimestamp != null ? formatDate(lastShownTimestamp) : null;
+  const adTypeValue = adType ? String(adType).toUpperCase() : null;
+  const sourceValue = source ? String(source) : null;
   const summaryCards = [
     ...(platformValue ? [{
       icon: Monitor,
@@ -619,6 +635,34 @@ const TransparencyDelivery = ({
       value: platformValue,
       accent: "bg-blue-500/10 text-blue-500",
       help: "Where this ad appeared on Google, such as Search or YouTube.",
+    }] : []),
+    ...(adTypeValue ? [{
+      icon: BarChart3,
+      label: "Ad Type",
+      value: adTypeValue,
+      accent: "bg-pink-500/10 text-pink-500",
+      help: "The creative format reported by Google.",
+    }] : []),
+    ...(sourceValue ? [{
+      icon: ExternalLink,
+      label: "Source",
+      value: sourceValue,
+      accent: "bg-cyan-500/10 text-cyan-500",
+      help: "Where this ad record was collected.",
+    }] : []),
+    ...(lastSeenValue ? [{
+      icon: Activity,
+      label: "Last Seen",
+      value: lastSeenValue,
+      accent: "bg-emerald-500/10 text-emerald-500",
+      help: "The most recent date PowerAdSpy found this ad.",
+    }] : []),
+    ...(lastShownValue ? [{
+      icon: CalendarDays,
+      label: "Last Shown",
+      value: lastShownValue,
+      accent: "bg-orange-500/10 text-orange-500",
+      help: "The most recent date Google Ads Transparency reports this ad was shown.",
     }] : []),
     ...(impressionValue ? [{
       icon: Activity,
@@ -636,23 +680,27 @@ const TransparencyDelivery = ({
       accent: "bg-emerald-500/10 text-emerald-500",
       help: "Countries where Google reported this ad.",
     }] : []),
+    ...(language ? [{
+      icon: Globe2,
+      label: "Language",
+      value: String(language),
+      accent: "bg-indigo-500/10 text-indigo-500",
+      help: "Detected language, when translation detection returned a value.",
+    }] : []),
     ...(activityWindow !== EMPTY ? [{
       icon: CalendarDays,
       label: "Activity Window",
       value: activityWindow,
-      caption: "Reported first and last seen dates",
+      caption: "Across all reported countries",
       accent: "bg-amber-500/10 text-amber-500",
-      help: "The earliest available first-seen date and latest available last-seen date.",
-      helpAlign: "right",
+      help: "Uses the earliest first shown and latest last shown across every reported country.",
     }] : []),
   ];
-  const summaryColumns = summaryCards.length >= 4
-    ? "lg:grid-cols-4"
-    : summaryCards.length === 3
-      ? "lg:grid-cols-3"
-      : summaryCards.length === 2
-        ? "lg:grid-cols-2"
-        : "lg:grid-cols-1";
+  const availableLinks = [
+    { label: "Ad URL", value: adUrl },
+    { label: "Destination URL", value: destinationUrl },
+    { label: "Redirect URL", value: redirectUrl },
+  ].filter((item) => typeof item.value === "string" && item.value.trim());
 
   return (
     <section className={`rounded-2xl border ${
@@ -666,7 +714,7 @@ const TransparencyDelivery = ({
           <div>
             <div className="flex items-center gap-1.5">
               <h3 className={`text-sm font-bold ${isLight ? "text-slate-900" : "text-white"}`}>
-                Transparency Delivery
+                Transparency Ad Details
               </h3>
               <InfoTip
                 isLight={isLight}
@@ -682,7 +730,7 @@ const TransparencyDelivery = ({
       </div>
 
       {summaryCards.length ? (
-        <div className={`grid grid-cols-1 gap-3 px-6 py-5 sm:grid-cols-2 ${summaryColumns}`}>
+        <div className="grid grid-cols-2 gap-2.5 px-6 py-5 md:grid-cols-3 xl:grid-cols-5">
           {summaryCards.map((card) => (
             <SummaryCard key={card.label} {...card} isLight={isLight} />
           ))}
@@ -690,6 +738,40 @@ const TransparencyDelivery = ({
       ) : null}
 
       <div className="space-y-4 px-6 pb-6">
+        {availableLinks.length ? (
+          <div className={`rounded-xl border ${
+            isLight ? "border-slate-200 bg-white" : "border-white/10 bg-white/[0.035]"
+          }`}>
+            {availableLinks.map((item, index) => (
+              <div
+                key={item.label}
+                className={`flex items-center gap-3 px-4 py-3 ${
+                  index < availableLinks.length - 1
+                    ? isLight ? "border-b border-slate-100" : "border-b border-white/10"
+                    : ""
+                }`}
+              >
+                <Link2 size={14} className="shrink-0 text-violet-500" />
+                <span className={`w-32 shrink-0 text-[10px] font-bold uppercase tracking-wider ${
+                  isLight ? "text-slate-500" : "text-white/45"
+                }`}>
+                  {item.label}
+                </span>
+                <a
+                  href={item.value}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`min-w-0 flex-1 truncate text-sm font-semibold ${
+                    isLight ? "text-slate-800 hover:text-violet-600" : "text-white/80 hover:text-violet-300"
+                  }`}
+                >
+                  {item.value}
+                </a>
+                <ExternalLink size={14} className="shrink-0 text-slate-400" />
+              </div>
+            ))}
+          </div>
+        ) : null}
         {rangeRows.length ? <ChartPanel
           isLight={isLight}
           title="Estimated impressions"
@@ -702,8 +784,8 @@ const TransparencyDelivery = ({
         {activityCountries.length ? <ChartPanel
           isLight={isLight}
           title="Country activity"
-          description="First seen, last seen, and active duration for every country."
-          help="Shows when the ad was first and last reported in each country."
+          description="First shown, last shown, and active duration for every country."
+          help="Shows when the ad was first and last reported as shown in each country."
         >
           <CountryActivitySummary countries={activityCountries} isLight={isLight} />
         </ChartPanel> : null}

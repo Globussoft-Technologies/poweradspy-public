@@ -24,6 +24,7 @@ describe('Google Transparency ES document', () => {
       translation: { title: 'Titel', text: 'Text übersetzt', newsfeed_description: '' },
       firstSeenSql: '2026-01-01 00:00:00', firstSeenForSearch: '2026-01-01 00:00:00',
       lastSeenSql: '2026-01-02 00:00:00', lastSeenForSearch: '2026-01-02 00:00:00',
+      lastShownSql: '2026-01-03 00:00:00', lastShownForSearch: '2026-01-03 00:00:00',
       postDateSql: null, daysRunning: 2, impressions: { min: 0, max: 1000, operator: 'range' },
       network: 'google', source: 'desktop', platform: 18, system_id: 'worker', version: '3.2.0',
     }, 42, null);
@@ -33,6 +34,7 @@ describe('Google Transparency ES document', () => {
       language_id: 7, lang_detect: 'de',
       impressions_max: 1000, country: ['India'],
       last_seen: '2026-01-02 00:00:00',
+      last_shown: '2026-01-03 00:00:00',
     });
     expect(doc.country_details[0]).toEqual({
       country: 'India', country_code: 'IN',

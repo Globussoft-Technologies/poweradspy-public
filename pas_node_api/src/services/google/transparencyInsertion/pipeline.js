@@ -248,6 +248,8 @@ async function processTransparencyAd(payload, ctx) {
       const effectiveLastSeen = existing
         ? laterSql(existing.last_seen, data.lastSeenSql)
         : data.lastSeenSql;
+      // Producer-owned: every request overwrites the prior value, including null.
+      const effectiveLastShown = data.lastShownSql;
       const existingPostDateSql = mysqlDateTime(existing?.post_date);
       const existingHasRealPostDate = existingPostDateSql &&
         existingPostDateSql > '1000-01-01 00:00:00';
@@ -258,6 +260,7 @@ async function processTransparencyAd(payload, ctx) {
         ...data, ...countryIds, postOwnerId, domainId, languageId, languageShouldUpdate,
         firstSeenSql: effectiveFirstSeen,
         lastSeenSql: effectiveLastSeen,
+        lastShownSql: effectiveLastShown,
         daysRunning: daysRunning(effectiveFirstSeen, effectiveLastSeen),
       };
       const googleTextAdId = existing ? existing.id : await repo.insertAd(tx, common);
@@ -272,6 +275,7 @@ async function processTransparencyAd(payload, ctx) {
           post_date: data.postDateSql,
           first_seen: effectiveFirstSeen,
           last_seen: effectiveLastSeen,
+          last_shown: effectiveLastShown,
           language_id: languageId,
           country_id: countryIds.countryId,
           country_only_id: countryIds.countryOnlyId,
@@ -305,7 +309,7 @@ async function processTransparencyAd(payload, ctx) {
         version: data.version,
         destination_url: data.destination_url,
       });
-      await repo.upsertTransparency(tx, googleTextAdId, data);
+      await repo.upsertTransparency(tx, googleTextAdId, common);
       trace('SQL_TRANSPARENCY_PAYLOAD_UPSERTED', {
         table: 'google_transparency_ad_payload',
         internal_id: googleTextAdId,
@@ -313,6 +317,7 @@ async function processTransparencyAd(payload, ctx) {
         ad_url: data.ad_url,
         subnetwork: data.subnetwork,
         region_code: data.region_code,
+        last_shown: effectiveLastShown,
         impressions: data.impressions,
         video_url_original: data.video_url_original,
         redirect_url: data.redirect_url,
@@ -340,6 +345,7 @@ async function processTransparencyAd(payload, ctx) {
           : null,
         firstSeenSql: effectiveFirstSeen,
         lastSeenSql: effectiveLastSeen,
+        lastShownSql: effectiveLastShown,
         daysRunning: common.daysRunning,
         languageId,
         languageShouldUpdate,
@@ -593,6 +599,8 @@ async function processTransparencyAd(payload, ctx) {
     const lastSeenForSearch = data.hasPayloadLastSeen
       ? saved.lastSeenSql
       : null;
+    // Keep Elasticsearch identical to the producer-owned SQL value.
+    const lastShownForSearch = saved.lastShownSql;
     if (ctx.db.elastic) {
       const document = buildTransparencyDoc(
         {
@@ -601,6 +609,7 @@ async function processTransparencyAd(payload, ctx) {
           postDateEs: saved.postDateEs,
           firstSeenSql: saved.firstSeenSql,
           lastSeenSql: saved.lastSeenSql,
+          lastShownSql: saved.lastShownSql,
           daysRunning: saved.daysRunning,
           country: countries,
           countryDetailsSql: saved.countryDetails,
@@ -608,6 +617,7 @@ async function processTransparencyAd(payload, ctx) {
           othermultimediaNasPaths,
           firstSeenForSearch,
           lastSeenForSearch,
+          lastShownForSearch,
           languageId: saved.languageId,
           detectedLanguage: effectiveDetectedLanguage,
           translation: effectiveTranslation,
@@ -627,6 +637,7 @@ async function processTransparencyAd(payload, ctx) {
           post_date: document.post_date,
           first_seen: document.first_seen,
           last_seen: document.last_seen,
+          last_shown: document.last_shown,
           language_id: document.language_id,
           lang_detect: document.lang_detect,
           ad_title: document.ad_title,

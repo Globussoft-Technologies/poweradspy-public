@@ -32,6 +32,7 @@ const valid = {
   type: 'TEXT',
   first_seen: null,
   last_seen: '2025-12-21T00:00:00Z',
+  last_shown: '2025-12-22T00:00:00Z',
   impressions: { min: 0, max: 1000, operator: 'range' },
   post_date: null,
   network: 'google',
@@ -114,6 +115,15 @@ describe('Google Transparency contract validation', () => {
       video_url_original: 'https://cdn.example/video.mp4',
       thumbnail: 'https://cdn.example/video-poster.jpg',
     })).toEqual({ code: 200 });
+  });
+
+  it('accepts nullable last_shown and identifies an invalid timestamp exactly', () => {
+    expect(validateTransparencyPayload({ ...valid, last_shown: null })).toEqual({ code: 200 });
+    const out = validateTransparencyPayload({ ...valid, last_shown: 'not-a-date' });
+    expect(out.errors).toContainEqual({
+      field: 'last_shown',
+      message: 'must be null or an RFC 3339 timestamp',
+    });
   });
 
   it('requires an absolute original image URL for IMAGE ads', () => {

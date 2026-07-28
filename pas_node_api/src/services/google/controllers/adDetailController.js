@@ -60,6 +60,7 @@ const TRANSPARENCY_PAYLOAD_SQL = `
   SELECT p.advertiser_id, p.ad_url, p.subnetwork, p.region_code,
          p.impressions_min, p.impressions_max, p.impressions_operator,
          p.video_url_original, p.redirect_url,
+         DATE_FORMAT(p.last_shown, '%Y-%m-%dT%H:%i:%sZ') AS last_shown,
          DATE_FORMAT(a.first_seen, '%Y-%m-%d') AS canonical_first_seen,
          DATE_FORMAT(a.last_seen, '%Y-%m-%d') AS canonical_last_seen
     FROM google_transparency_ad_payload p
@@ -244,6 +245,9 @@ async function getAdDetails(req, db, logger) {
       adData.last_seen = hasOwn(esSource, 'last_seen')
         ? dateOnly(esSource.last_seen)
         : payload.canonical_last_seen ?? dateOnly(adData.last_seen);
+      adData.last_shown = hasOwn(esSource, 'last_shown')
+        ? esSource.last_shown
+        : payload.last_shown ?? null;
       if (hasOwn(esSource, 'post_date')) adData.post_date = esSource.post_date;
       const normalizedPostDate = dateOnly(adData.post_date);
       if (!normalizedPostDate || normalizedPostDate.startsWith('1000-')) {

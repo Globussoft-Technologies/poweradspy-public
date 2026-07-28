@@ -73,9 +73,12 @@ function normalizeTransparencyPayload(payload) {
     othermultimedia,
     hasPayloadFirstSeen: payload.first_seen != null,
     hasPayloadLastSeen: payload.last_seen != null,
+    hasPayloadLastShown: payload.last_shown != null,
     hasPayloadPostDate: payload.post_date != null,
     firstSeenSql: mysqlDateTime(firstSeen),
     lastSeenSql: mysqlDateTime(lastSeen),
+    // Producer-owned metadata: preserve null so an update can clear it.
+    lastShownSql: mysqlDateTime(payload.last_shown),
     postDateSql: suppliedPostDateSql || UNKNOWN_POST_DATE_SQL,
     postDateEs: suppliedPostDateSql,
     daysRunning: daysRunning(firstSeen, lastSeen),

@@ -70,7 +70,8 @@ function payload(overrides = {}) {
     othermultimedia: [],
     destination_url: null, redirect_url: null, country: ['Germany'],
     country_details: [], region_code: 'IN', type: 'TEXT', first_seen: null,
-    last_seen: '2025-12-21T00:00:00Z', impressions: null, post_date: null,
+    last_seen: '2025-12-21T00:00:00Z', last_shown: '2025-12-22T00:00:00Z',
+    impressions: null, post_date: null,
     network: 'google', subnetwork: 'SEARCH', source: 'desktop', platform: 18,
     system_id: 'worker-1', version: '3.2.0', ...overrides,
   };
@@ -146,17 +147,43 @@ describe('Google Transparency pipeline', () => {
         language_id: 7,
         lang_detect: 'de',
         ad_text: 'Übersetzter Text',
+        last_shown: '2025-12-22 00:00:00',
       }),
     }));
     expect(log.info).not.toHaveBeenCalled();
   });
 
   it('uses the update branch idempotently for an existing creative', async () => {
-    repo.getAd.mockResolvedValue({ id: 99 });
+    repo.getAd.mockResolvedValue({ id: 99, last_shown: '2025-12-23 00:00:00' });
     const out = await processTransparencyAd(payload(), { db: { sql: {}, elastic: null }, log });
     expect(out).toMatchObject({ code: 200, data: { id: 99 } });
     expect(repo.insertAd).not.toHaveBeenCalled();
     expect(repo.updateAd).toHaveBeenCalledWith(expect.anything(), 99, expect.anything());
+    expect(repo.upsertTransparency).toHaveBeenCalledWith(
+      expect.anything(),
+      99,
+      expect.objectContaining({ lastShownSql: '2025-12-22 00:00:00' })
+    );
+  });
+
+  it('always overwrites SQL and search last_shown with an explicit null', async () => {
+    repo.getAd.mockResolvedValue({ id: 99, last_shown: '2025-12-23 00:00:00' });
+    const elastic = { indexName: 'google_ads_data_v2', index: vi.fn(async () => {}) };
+
+    const out = await processTransparencyAd(payload({ last_shown: null }), {
+      db: { sql: {}, elastic },
+      log,
+    });
+
+    expect(out.code).toBe(200);
+    expect(repo.upsertTransparency).toHaveBeenCalledWith(
+      expect.anything(),
+      99,
+      expect.objectContaining({ lastShownSql: null })
+    );
+    expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({ last_shown: null }),
+    }));
   });
 
   it('uses live-schema-safe owner, country, position, and post-date fallbacks', async () => {

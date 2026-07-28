@@ -25,6 +25,7 @@ describe('Google Transparency normalization', () => {
       system_id: ' worker ',
       first_seen: null,
       last_seen: '2025-12-21T00:00:00Z',
+      last_shown: '2025-12-22T00:00:00Z',
       post_date: null,
       destination_url: 'https://www.example.com/path',
       thumbnail: 'https://cdn.example/video-poster.jpg',
@@ -33,20 +34,24 @@ describe('Google Transparency normalization', () => {
     expect(result.post_owner).toBe('Owner');
     expect(result.domain).toBe('example.com');
     expect(result.lastSeenSql).toBe('2025-12-21 00:00:00');
+    expect(result.lastShownSql).toBe('2025-12-22 00:00:00');
     expect(result.postDateSql).toBe(UNKNOWN_POST_DATE_SQL);
     expect(result.postDateEs).toBeNull();
     expect(result.adPosition).toBe('FEED');
     expect(result.hasPayloadLastSeen).toBe(true);
+    expect(result.hasPayloadLastShown).toBe(true);
     expect(result.thumbnail).toBe('https://cdn.example/video-poster.jpg');
   });
 
   it('preserves a nullable post owner', () => {
     const result = normalizeTransparencyPayload({
       post_owner: null, system_id: 'worker', first_seen: null, last_seen: null,
-      post_date: null, destination_url: null, country_details: [],
+      last_shown: null, post_date: null, destination_url: null, country_details: [],
     });
     expect(result.post_owner).toBeNull();
     expect(result.hasPayloadLastSeen).toBe(false);
+    expect(result.hasPayloadLastShown).toBe(false);
+    expect(result.lastShownSql).toBeNull();
   });
 
   it('projects nullable country-level first_seen and last_seen timestamps', () => {

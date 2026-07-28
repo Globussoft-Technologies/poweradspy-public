@@ -468,6 +468,7 @@ export const mapAdToCard = (raw) => {
       : [],
     firstSeenRaw: raw.first_seen ?? null,
     lastSeenRaw: raw.last_seen ?? null,
+    lastShownRaw: raw.last_shown ?? null,
     postDateRaw: raw.post_date ?? null,
     title: raw.ad_title || '',
     carouselMedia: (() => {

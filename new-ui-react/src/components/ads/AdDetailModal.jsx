@@ -781,7 +781,7 @@ const AdDetailModal = ({
                 ) : renderTypeLower === "text" ? (
                   <div className="relative flex items-center justify-center w-full min-h-[320px] h-full z-[1] p-8 bg-gradient-to-br from-indigo-950/40 to-slate-900/40">
                     <p className="2xl:text-base text-sm font-medium leading-relaxed text-zinc-300 text-center line-clamp-6">
-                      {currentTitle ? `"${currentTitle}"` : 'Text Ad'}
+                      {currentTitle || ad.adText || ad.ad_text || ad.subtitle || "Original text is unavailable."}
                     </p>
                   </div>
                 ) : renderTypeLower === "banner" && !currentImg ? (

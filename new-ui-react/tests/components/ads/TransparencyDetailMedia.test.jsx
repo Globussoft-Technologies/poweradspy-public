@@ -193,4 +193,27 @@ describe("Google Transparency detail media", () => {
       'video[src="https://nas.example/other.mp4"][controls]',
     )).not.toBeNull();
   });
+
+  it("shows the original copy for a media-less Transparency text ad", () => {
+    render(
+      <OriginalPreview
+        ad={{
+          ...transparencyTextAd,
+          id: 179630,
+          title: "",
+          adText: "Quels que soient vos besoins, obtenez de superbes résultats.",
+          thumbnail: "",
+          imageOriginalUrl: "",
+          renderType: "text",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("transparency-original-text")).toBeInTheDocument();
+    expect(screen.getByText(
+      "Quels que soient vos besoins, obtenez de superbes résultats.",
+    )).toBeInTheDocument();
+    expect(screen.queryByText("Text Ad")).toBeNull();
+    expect(screen.getByText("Sponsored")).toBeInTheDocument();
+  });
 });

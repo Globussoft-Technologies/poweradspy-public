@@ -23,9 +23,10 @@ const first = (rows) => Array.isArray(rows) && rows.length ? rows[0] : null;
 async function getAd(exec, adId) {
   return first(await exec.query(
     `SELECT a.id, a.language_id, a.post_owner_id, a.post_date, a.first_seen, a.last_seen, a.days_running,
-            v.image_url AS nas_image_url
+            v.image_url AS nas_image_url, p.last_shown
        FROM google_text_ad a
        LEFT JOIN google_text_ad_variants v ON v.google_text_ad_id = a.id
+       LEFT JOIN google_transparency_ad_payload p ON p.google_text_ad_id = a.id
       WHERE a.ad_id = ? LIMIT 1`,
     [adId]
   ));
@@ -292,19 +293,20 @@ async function upsertTransparency(exec, adId, data) {
   await exec.query(
     `INSERT INTO google_transparency_ad_payload
       (google_text_ad_id, advertiser_id, ad_url, subnetwork, region_code,
-       impressions_min, impressions_max, impressions_operator, video_url_original,
+       impressions_min, impressions_max, impressions_operator, last_shown, video_url_original,
        redirect_url, othermultimedia)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE advertiser_id=VALUES(advertiser_id), ad_url=VALUES(ad_url),
        subnetwork=VALUES(subnetwork), region_code=VALUES(region_code),
        impressions_min=VALUES(impressions_min), impressions_max=VALUES(impressions_max),
        impressions_operator=VALUES(impressions_operator),
+       last_shown=VALUES(last_shown),
        video_url_original=VALUES(video_url_original), redirect_url=VALUES(redirect_url),
        othermultimedia=VALUES(othermultimedia), received_at=CURRENT_TIMESTAMP(3)`,
     [
       adId, data.advertiser_id, data.ad_url, data.subnetwork, data.region_code,
       impression.min ?? null, impression.max ?? null, impression.operator ?? null,
-      data.video_url_original, data.redirect_url, JSON.stringify(data.othermultimedia),
+      data.lastShownSql, data.video_url_original, data.redirect_url, JSON.stringify(data.othermultimedia),
     ]
   );
 }

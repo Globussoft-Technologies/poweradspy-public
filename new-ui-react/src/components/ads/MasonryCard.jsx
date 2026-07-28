@@ -675,14 +675,22 @@ const MasonryCard = ({
                 {/* Plain text, not a link: the Google text-ad title must not
                     read as a clickable link (no blue link color or hover
                     underline). The card itself remains clickable to open detail. */}
-                <h3 className="text-[17px] font-medium leading-snug text-gray-900 line-clamp-2">
-                  {currentTitle || ad.ad_title || ad.title || "Text Ad"}
-                </h3>
-                {ad.ad_text && (
+                {(currentTitle || ad.ad_title || ad.title) && (
+                  <h3 className="text-[17px] font-medium leading-snug text-gray-900 line-clamp-2">
+                    {currentTitle || ad.ad_title || ad.title}
+                  </h3>
+                )}
+                {(ad.adText || ad.ad_text || ad.subtitle) && (
                   <p className="text-[13px] leading-relaxed text-gray-600 line-clamp-3">
-                    {ad.ad_text}
+                    {ad.adText || ad.ad_text || ad.subtitle}
                   </p>
                 )}
+                {!currentTitle && !ad.ad_title && !ad.title &&
+                  !ad.adText && !ad.ad_text && !ad.subtitle && (
+                    <p className="text-[13px] leading-relaxed text-gray-500">
+                      Original text is unavailable.
+                    </p>
+                  )}
                 {ad.target_keyword && (
                   <div className="mt-1 flex flex-wrap gap-1.5">
                     {String(ad.target_keyword)

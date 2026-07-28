@@ -70,7 +70,9 @@ because routing and idempotent canonical lookup depend on them.
 
 With the checked-in rules:
 
-- 26 top-level fields must be present; `post_date` is optional and nullable;
+- 27 top-level fields must be present; `post_date` is optional and nullable;
+- top-level `last_shown` must be present and is either an RFC 3339 timestamp
+  or explicit JSON `null`;
 - unknown top-level and nested fields are rejected;
 - nullable fields must be explicit JSON `null`;
 - `CR<digits>` and `AR<digits>` IDs must match `ad_url`;
@@ -118,8 +120,9 @@ google_text_ad (canonical row)
 ```
 
 `google_transparency_ad_payload` stores advertiser ID, Transparency URL,
-subnetwork, request region, aggregate impression bounds, original video URL,
-redirect URL, and other-media JSON. `system_id` and `version` are not duplicated
+subnetwork, request region, top-level nullable `last_shown`, aggregate
+impression bounds, original video URL, redirect URL, and other-media JSON.
+`system_id` and `version` are not duplicated
 here; they use the existing common SQL columns described above. Its
 primary key is also the FK to `google_text_ad.id`, making the write idempotent
 per creative without duplicating common ad columns.
@@ -154,6 +157,9 @@ It also safely renames an earlier draft schema's `first_shown`/`last_shown`
 columns to `first_seen`/`last_seen` and upgrades them to `DATETIME`. If the draft
 new table already contains duplicate system/version columns, they are made
 nullable for compatibility and no new writes use them.
+The same idempotent runner also adds
+`google_transparency_ad_payload.last_shown DATETIME NULL` to an already-created
+Transparency schema.
 Run `--apply` separately in each environment with that environment's config.
 
 ## Insert/update transaction
@@ -204,6 +210,7 @@ The insertion adapter uses these deliberate compatibility values:
 | null translated title/text/description | empty strings in live `google_ad_translation` `NOT NULL` columns | null when translation did not provide a value |
 | successful translation response with no translated copy | `language_id=0` and blank translation columns because the live columns are `NOT NULL` | `language_id=0`, `lang_detect=null`, translated copy fields `null` |
 | `first_seen` null/omitted | a SQL-only effective date is required for legacy running-date calculations | `first_seen=null` until the scraper supplies a real value |
+| `last_shown` timestamp/null | exact incoming value; null clears the old payload-table value | exact incoming value; null clears the old document value |
 
 The metadata insert also supplies explicit zeroes for all live `NOT NULL`
 status/counter columns instead of depending on non-strict MySQL implicit
@@ -286,9 +293,11 @@ The update does not create a second canonical ad:
   URL and desktop last-seen; the original desktop first-seen is retained.
 - `google_transparency_ad_payload`: updates `ad_url`, destination-independent
   Transparency fields, aggregate impressions, video source, `redirect_url`,
-  `othermultimedia`, and refreshes
+  `othermultimedia`, and `last_shown`, and refreshes
   `received_at`. `destination_url` is updated
   in the common metadata table.
+  `last_shown` is producer-owned and is overwritten on every request, including
+  an explicit `null`; the server does not invent a shown date.
 - `google_transparency_country_delivery`: same country updates its earliest
   first-seen, latest last-seen and current impression interval. A previously
   unseen country is appended at the next ordinal. The composite primary key
@@ -311,6 +320,7 @@ owner, dates, country, destination, image/NAS paths, platform) and adds:
 
 ```text
 advertiser_id, ad_url, subnetwork, region_code,
+last_shown,
 impressions_min, impressions_max, impressions_operator,
 video_url_original, thumbnail,
 othermultimedia, country_details,
@@ -370,7 +380,7 @@ adds an isolated Transparency overlay:
 - canonical `last_seen`, `days_running`, and original/NAS image columns come
   from the existing Google tables;
 - `advertiser_id`, `ad_url`, `subnetwork`, `region_code`, the overall
-  impression range, original video URL, and redirect URL come from
+  impression range, `last_shown`, original video URL, and redirect URL come from
   `google_transparency_ad_payload`;
 - per-country dates and `times_shown` ranges come from
   `google_transparency_country_delivery`;
@@ -414,6 +424,14 @@ The React `MasonryCard` applies these rules only when `platform === 18`:
   available;
 - a visible `Transparency` badge differentiates the card. Normal Google cards
   do not enter this branch.
+
+For platform 18, Analytics hides the legacy standalone **Ad Details** and
+**Basic Info** blocks. The compact **Transparency Ad Details** panel shows only
+available values: platform/subnetwork, ad type, source, first shown, last seen,
+last shown, impressions, country count, language, and activity window. Ad,
+destination, and redirect URLs appear beneath those cards only when populated.
+Country activity uses the user-facing labels **First Shown** and **Last
+Shown**; the persisted country fields remain `first_seen` and `last_seen`.
 
 The existing Google search APIs accept these platform-18 filters:
 
@@ -481,7 +499,7 @@ After a real insert, verify the links:
 
 ```sql
 SELECT a.id, a.ad_id, a.type, m.platform, t.advertiser_id,
-       t.subnetwork, t.region_code, a.system_id, m.version
+       t.subnetwork, t.region_code, t.last_shown, a.system_id, m.version
 FROM google_text_ad a
 JOIN google_text_ad_meta_data m ON m.google_text_ad_id = a.id
 JOIN google_transparency_ad_payload t ON t.google_text_ad_id = a.id
@@ -592,10 +610,16 @@ structured for the card and analytics modal:
   converted to a fake exact count.
 - `country_details[]`, including each country's first/last seen dates and
   `times_shown` estimate.
-- `first_seen`, `last_seen`, `post_date`, and `city` remain nullable.
+- `first_seen`, `last_seen`, `last_shown`, `post_date`, and `city` remain
+  nullable.
 
 The analytics modal renders these fields in the isolated **Transparency
-Delivery** panel. Impression estimates use plain-language cards instead of a
+Ad Details** panel. Its compact, data-driven summary includes Platform
+(`subnetwork`), Ad Type, Source, First Shown, Last Seen, Last Shown,
+impressions, countries, language, and activity window only when each value is
+available. Ad, destination, and redirect URLs are shown inside the same panel
+only when supplied. The old standalone Ad Details and empty Basic Info panels
+are hidden only for platform 18. Impression estimates use plain-language cards instead of a
 technical axis: `range` is shown as **From / To**, `over` as **At least** with
 no reported upper limit, and `under` as **Up to**.
 
@@ -618,8 +642,8 @@ instants. It extracts `YYYY-MM-DD` before display, so a SQL-shaped
 `country_details` drives three separate analytics views:
 
 - readable overall and per-country impression range cards;
-- readable country activity cards showing `first_seen`, `last_seen`, and the
-  inclusive active-day count;
+- readable country activity cards labelling the country delivery dates as
+  **First Shown** and **Last Shown**, plus the inclusive active-day count;
 - a platform-18 choropleth keyed by `country_code`, shaded logarithmically by
   the minimum/baseline `times_shown` value.
 
@@ -646,11 +670,13 @@ slides play their own direct URL.
 
 The pre-existing **Country Reach** Map/Globe, date range, and AD
 LEVEL/ADVERTISER LEVEL analytics remain a separate component and are not
-changed or replaced by Transparency Delivery.
+changed or replaced by Transparency Ad Details.
 
 SQL may keep an operational current-time fallback for a missing `last_seen`,
 but the Elasticsearch/search document receives `null` when the producer did
 not send that value, so generated metadata is not presented as scraper data.
+`last_shown` has no generated fallback: SQL and Elasticsearch both receive the
+producer value on every update, including explicit `null`.
 
 The Transparency panel and its country visualization render only for
 `platform = 18`. Legacy Google analytics, keywords, lander behavior, and every

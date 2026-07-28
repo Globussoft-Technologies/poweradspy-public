@@ -491,6 +491,9 @@ async function searchAds(req, db, logger) {
         normalized.last_seen = Object.prototype.hasOwnProperty.call(src, 'last_seen')
           ? src.last_seen
           : normalized.last_seen || null;
+        normalized.last_shown = Object.prototype.hasOwnProperty.call(src, 'last_shown')
+          ? src.last_shown
+          : null;
         // Transparency has no city targeting field. Never expose a legacy SQL
         // placeholder as real targeting data.
         normalized.city = null;

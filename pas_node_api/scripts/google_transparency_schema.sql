@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS google_transparency_ad_payload (
   ad_url                 VARCHAR(2048) NOT NULL,
   subnetwork             VARCHAR(16) NULL,
   region_code            CHAR(2) NOT NULL,
+  last_shown             DATETIME NULL,
   impressions_min        BIGINT UNSIGNED NULL,
   impressions_max        BIGINT UNSIGNED NULL,
   impressions_operator   ENUM('range','over','under') NULL,

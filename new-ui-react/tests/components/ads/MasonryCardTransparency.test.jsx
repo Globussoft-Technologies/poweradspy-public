@@ -95,4 +95,23 @@ describe("MasonryCard Google Transparency media", () => {
     expect(container.querySelector('video[src="https://media.example/other.mp4"]'))
       .not.toBeNull();
   });
+
+  it("renders a text-only Transparency ad's real copy instead of a generic label", () => {
+    renderCard({
+      id: 179630,
+      network: "google",
+      platform: 18,
+      isGoogleTransparency: true,
+      adType: "text",
+      renderType: "text",
+      advertiser: "Canon Europa N.V.",
+      title: "",
+      adText: "Quels que soient vos besoins, obtenez de superbes résultats.",
+    });
+
+    expect(screen.getByText(
+      "Quels que soient vos besoins, obtenez de superbes résultats.",
+    )).toBeInTheDocument();
+    expect(screen.queryByText("Text Ad")).toBeNull();
+  });
 });

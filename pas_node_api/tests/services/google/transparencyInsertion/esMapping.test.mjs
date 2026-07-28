@@ -20,6 +20,7 @@ describe('Google Transparency ES mapping', () => {
     expect(details.properties.last_seen).toMatchObject({ type: 'date', format: 'strict_date_optional_time' });
     expect(details.properties.times_shown.properties.min.type).toBe('long');
     expect(details.properties.times_shown.properties.max.type).toBe('long');
+    expect(fragment.properties.last_shown).toMatchObject({ type: 'date' });
   });
 
   it('does not add system/version duplicates to the Transparency mapping', () => {

@@ -67,6 +67,21 @@ async function relaxDraftDuplicateColumns(sql) {
   }
 }
 
+async function ensurePayloadLastShownColumn(sql) {
+  const rows = selectRows(await sql.query(
+    `SELECT COLUMN_NAME
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'google_transparency_ad_payload'
+        AND COLUMN_NAME = 'last_shown'`
+  ));
+  if (!rows.length) {
+    await sql.query(
+      'ALTER TABLE google_transparency_ad_payload ADD COLUMN last_shown DATETIME NULL AFTER region_code'
+    );
+  }
+}
+
 async function main() {
   const cfg = { google: networks.google };
   const target = cfg.google?.database?.sql;
@@ -77,6 +92,7 @@ async function main() {
     for (const statement of ddl) console.log(`- ${statement.match(/CREATE TABLE IF NOT EXISTS\s+(\w+)/i)?.[1] || 'statement'}`);
     console.log('- compatibility migration: first_shown/last_shown -> first_seen/last_seen DATETIME');
     console.log('- compatibility migration: obsolete draft system/version duplicates made nullable');
+    console.log('- additive migration: google_transparency_ad_payload.last_shown DATETIME NULL');
     return;
   }
   await databaseManager.connectAll(cfg);
@@ -85,6 +101,7 @@ async function main() {
   for (const statement of ddl) await sql.query(statement);
   await migrateCountryDateColumns(sql);
   await relaxDraftDuplicateColumns(sql);
+  await ensurePayloadLastShownColumn(sql);
   console.log(`Applied ${ddl.length} idempotent statement(s) and country-date compatibility migration.`);
 }
 
@@ -99,5 +116,6 @@ module.exports = {
   statements,
   migrateCountryDateColumns,
   relaxDraftDuplicateColumns,
+  ensurePayloadLastShownColumn,
   main,
 };

@@ -37,6 +37,7 @@
         "post_date":  { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
         "first_seen": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
         "last_seen":  { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "last_shown": { "type": "date", "format": "strict_date_optional_time||yyyy-MM-dd HH:mm:ss" },
         "firstSeenOnDesktop": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
         "firstSeenOnAndroid": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
         "firstSeenOnIos":     { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },

@@ -369,12 +369,19 @@ export const normalizePlatformSlug = (platform) => {
 
 export const mergeTransparencyDateContract = (mappedAd, sourceAd) => {
   const merged = { ...mappedAd };
-  for (const field of ["firstSeenRaw", "lastSeenRaw", "postDateRaw"]) {
+  for (const field of ["firstSeenRaw", "lastSeenRaw", "lastShownRaw", "postDateRaw"]) {
     if (Object.prototype.hasOwnProperty.call(sourceAd || {}, field)) {
       merged[field] = sourceAd[field] ?? null;
     }
   }
   return merged;
+};
+
+export const resolveTransparencyContractValue = (details, field, ...fallbacks) => {
+  if (Object.prototype.hasOwnProperty.call(details || {}, field)) {
+    return details[field] ?? null;
+  }
+  return fallbacks.find((value) => value != null && value !== "") ?? null;
 };
 
 export const formatTransparencyCalendarDate = (value) => {
@@ -1024,6 +1031,7 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
       );
     }
     const textTitle = ad?.title || ad?.ad_title || d?.ad_title || '';
+    const textBody = ad?.adText || ad?.ad_text || d?.ad_text || ad?.subtitle || d?.text || '';
     const isBanner = ctx.adType === 'banner';
     const isTextImage = ctx.adType === 'text-image';
     return (
@@ -1054,9 +1062,23 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
             )}
           </div>
         ) : (
-          <p className={`text-[16px] font-medium leading-relaxed text-center line-clamp-6 ${isLight ? 'text-gray-700' : 'text-zinc-300'}`}>
-            {textTitle ? `"${textTitle}"` : 'Text Ad'}
-          </p>
+          <div className="flex max-w-xl flex-col items-center gap-2 text-center">
+            {textTitle && (
+              <h3 className={`text-[17px] font-semibold leading-snug line-clamp-3 ${isLight ? 'text-gray-900' : 'text-zinc-100'}`}>
+                {textTitle}
+              </h3>
+            )}
+            {textBody && (
+              <p className={`text-[14px] leading-relaxed whitespace-pre-wrap line-clamp-6 ${isLight ? 'text-gray-700' : 'text-zinc-300'}`}>
+                {textBody}
+              </p>
+            )}
+            {!textTitle && !textBody && (
+              <p className={`text-[14px] ${isLight ? 'text-gray-500' : 'text-zinc-400'}`}>
+                Original text is unavailable.
+              </p>
+            )}
+          </div>
         )}
       </div>
     );
@@ -2143,7 +2165,7 @@ const AnalyticsModal = ({
             </div>
 
             {/* Ad Details table */}
-            <div className="pt-4 mt-4">
+            {!isTransparency && <div className="pt-4 mt-4">
               <h2
                 className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
               >
@@ -2215,20 +2237,20 @@ const AnalyticsModal = ({
                   })}
                 </div>
               </div>
-            </div>
+            </div>}
           </div>
 
           {/* ── Sections below hero ────────────────────────────── */}
           <div className="space-y-6 pt-6">
             <CreativeScore adDetails={adDetailsData} />
-            <BasicInfo
+            {!isTransparency && <BasicInfo
               adDetails={adDetailsData}
               outgoingLinks={insights.outgoingLinks}
               platform={ctx.platform}
               tiktokAnalytics={tiktokAnalytics}
               ad={ad}
               isTransparency={isTransparency}
-            />
+            />}
 
             {aiMetaVariableRows.length > 0 && (
               <section className="px-6">
@@ -2280,7 +2302,34 @@ const AnalyticsModal = ({
                   []
                 }
                 firstSeen={processedAd?.firstSeenRaw ?? ad?.firstSeenRaw}
-                lastSeen={processedAd?.lastSeenRaw ?? ad?.lastSeenRaw}
+                lastSeen={resolveTransparencyContractValue(
+                  d,
+                  "last_seen",
+                  processedAd?.lastSeenRaw,
+                  ad?.lastSeenRaw,
+                )}
+                lastShown={resolveTransparencyContractValue(
+                  d,
+                  "last_shown",
+                  processedAd?.lastShownRaw,
+                  ad?.lastShownRaw,
+                )}
+                adType={d.type || processedAd?.adType || ad?.adType}
+                source={d.source || processedAd?.source || ad?.source}
+                language={d.language || processedAd?.language || ad?.language}
+                adUrl={d.ad_url || processedAd?.adUrl || ad?.adUrl}
+                destinationUrl={
+                  d.destination_url ??
+                  processedAd?.destinationUrl ??
+                  ad?.destinationUrl ??
+                  null
+                }
+                redirectUrl={
+                  d.redirect_url ??
+                  processedAd?.redirectUrl ??
+                  ad?.redirectUrl ??
+                  null
+                }
               />
             )}
 

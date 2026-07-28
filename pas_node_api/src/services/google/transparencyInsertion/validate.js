@@ -32,6 +32,7 @@ const TRANSPARENCY_RULES = {
   type: 'required|in:IMAGE,TEXT,VIDEO',
   first_seen: 'present|nullable|rfc3339',
   last_seen: 'present|nullable|rfc3339',
+  last_shown: 'present|nullable|rfc3339',
   impressions: 'present|nullable|impressions',
   post_date: 'optional|nullable|rfc3339',
   network: 'required|in:google',
@@ -210,7 +211,7 @@ function validateTransparencyPayload(data, rules = TRANSPARENCY_RULES) {
   if (checkable(data, rules, 'version') && data.version !== '3.2.0') issue(errors, 'version', 'must equal contract version 3.2.0');
   if (checkable(data, rules, 'region_code') && (typeof data.region_code !== 'string' || !CODE_RE.test(data.region_code))) issue(errors, 'region_code', 'must be an uppercase alpha-2 code');
 
-  for (const field of ['first_seen', 'last_seen', 'post_date']) {
+  for (const field of ['first_seen', 'last_seen', 'last_shown', 'post_date']) {
     if (!checkable(data, rules, field)) continue;
     const value = data[field];
     if (typeof value !== 'string' || !RFC3339_RE.test(value) || Number.isNaN(Date.parse(value))) {

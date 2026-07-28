@@ -50,6 +50,7 @@ function buildTransparencyDoc(data, internalId, nasImageUrl) {
     // SQL still receives the operational `now` fallback, but search/UI must
     // not present that generated timestamp as crawler-provided ad metadata.
     last_seen: data.lastSeenForSearch ?? null,
+    last_shown: data.lastShownForSearch ?? null,
     post_date: data.postDateEs ?? null,
     days_running: data.daysRunning,
     impressions_min: impression.min ?? null,
