@@ -112,6 +112,7 @@ import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.
 import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
 import afRefersion from "../../assets/afiliate_network/Refersion.webp";
 import afVertoz from "../../assets/afiliate_network/vertoz.jpg";
+import afEbayPartnerNetwork from "../../assets/afiliate_network/ebay_affiliate_network.png";
 
 const AFFILIATE_IMGS = {
   'awin': afAwin,
@@ -131,6 +132,7 @@ const AFFILIATE_IMGS = {
   'skimlinks': afSkimlinks,
   'refersion': afRefersion,
   'vertoz': afVertoz,
+  'ebaypartnernetwork': afEbayPartnerNetwork,
 };
 
 import {
@@ -1703,8 +1705,10 @@ const AnalyticsModal = ({
           const aff = d.affiliate_data;
           if (!aff) return "—";
           const raw = Array.isArray(aff) ? aff.join(", ") : String(aff);
-          // Normalize legacy/lowercase ClickBank spelling for display.
-          return raw.replace(/\bclickbank\b/gi, "ClickBank");
+          // Normalize API identifiers and legacy spellings for display.
+          return raw
+            .replace(/\beBay_Partner_Network\b/gi, "eBay Partner Network")
+            .replace(/\bclickbank\b/gi, "ClickBank");
         })(),
         icon: DollarSign,
         color: "text-green-400",

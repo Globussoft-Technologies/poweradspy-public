@@ -108,6 +108,7 @@ import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.
 import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
 import afRefersion from "../../assets/afiliate_network/Refersion.webp";
 import afVertoz from "../../assets/afiliate_network/vertoz.jpg";
+import afEbayPartnerNetwork from "../../assets/afiliate_network/ebay_affiliate_network.png";
 
 const MC_MP_IMGS = {
   "agkn.com": mpAgkn,
@@ -183,6 +184,7 @@ const MC_AF_IMGS = {
   skimlinks: afSkimlinks,
   refersion: afRefersion,
   vertoz: afVertoz,
+  ebaypartnernetwork: afEbayPartnerNetwork,
 };
 
 const PLATFORM_ICONS = {

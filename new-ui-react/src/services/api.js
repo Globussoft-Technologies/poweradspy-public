@@ -1205,9 +1205,12 @@ export const buildSearchPayload = (filters = {}) => {
     })(),
     funnel: Array.isArray(funnel) && funnel.length > 0 ? funnel : v(funnel),
     affiliate: Array.isArray(affiliate) && affiliate.length > 0 ? affiliate : 'NA',
-    nativeNetwork: ps(resolvedNetworks, 'native_network_filter') || ps(resolvedNetworks, 'native_network')
-      ? (Array.isArray(nativeNetwork) && nativeNetwork.length > 0 ? nativeNetwork : 'NA')
-      : 'NA',
+    // Preserve an explicit Native Network selection in the request. The filter
+    // can remain active while another platform tab is selected, and gating it
+    // by resolvedNetworks here silently replaced the user's value with "NA".
+    nativeNetwork: nativeNetwork === undefined || nativeNetwork === null || nativeNetwork === ''
+      ? 'NA'
+      : (Array.isArray(nativeNetwork) ? (nativeNetwork.length > 0 ? nativeNetwork : 'NA') : [nativeNetwork]),
     order_column,
     order_by: 'desc',
     take: '9',

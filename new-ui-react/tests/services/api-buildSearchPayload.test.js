@@ -700,17 +700,24 @@ describe("buildSearchPayload > platform-support gating (false + secondary-operan
     expect(p.ad_sub_position).toBe("NA");
   });
 
-  it("nativeNetwork: both unsupported → NA (876/878 false)", () => {
+  it("nativeNetwork: preserves an explicit selection even when the active platform is unsupported", () => {
     const p = buildSearchPayload({
       native_network: ["taboola"], activePlatforms: fb,
       filterPlatformSupport: { native_network_filter: ["nope"], native_network: ["nope"] },
     });
-    expect(p.nativeNetwork).toBe("NA");
+    expect(p.nativeNetwork).toEqual(["taboola"]);
   });
   it("nativeNetwork: secondary supported with values (876 second operand)", () => {
     const p = buildSearchPayload({
       native_network: ["taboola"], activePlatforms: fb,
       filterPlatformSupport: { native_network_filter: ["nope"], native_network: ["facebook"] },
+    });
+    expect(p.nativeNetwork).toEqual(["taboola"]);
+  });
+
+  it("nativeNetwork: normalizes a scalar selection to an array", () => {
+    const p = buildSearchPayload({
+      native_network_filter: "taboola", activePlatforms: fb,
     });
     expect(p.nativeNetwork).toEqual(["taboola"]);
   });
