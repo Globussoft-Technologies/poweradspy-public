@@ -1389,27 +1389,54 @@ const AnalyticsModal = ({
       .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part)
       .join(" ");
   };
+  const formatAiMetaValue = (value) => {
+    if (value === null || value === undefined) return "";
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => formatAiMetaValue(item))
+        .filter(Boolean)
+        .join(", ");
+    }
+    const text = String(value).trim();
+    return text && text !== "null" && text !== "undefined" ? text : "";
+  };
   const aiMetaVariableRows = (() => {
     if (!aiMeta || typeof aiMeta !== "object") return [];
     const roa = aiMeta.roa && typeof aiMeta.roa === "object" ? aiMeta.roa : {};
-    const offers = Array.isArray(aiMeta.offers)
-      ? aiMeta.offers
-          .map(({ type, value }) => {
-            const label = formatAiMetaToken(type);
-            if (!label) return "";
-            return value == null ? label : `${label}: ${value}`;
-          })
-          .filter(Boolean)
-          .join(", ")
-      : "";
+    const offers = Array.isArray(aiMeta.offers) ? aiMeta.offers : [];
+    const offerTypes = offers
+      .map((offer) => formatAiMetaToken(offer?.type))
+      .filter(Boolean)
+      .join(", ");
+    const offerValues = offers
+      .map((offer) => formatAiMetaValue(offer?.value))
+      .filter(Boolean)
+      .join(", ");
+    const colors = formatAiMetaValue(aiMeta.colors);
+    const rows = [];
+    const pushRow = (label, value) => {
+      const text = formatAiMetaValue(value);
+      if (text) rows.push([label, text]);
+    };
+
+    // Keep the filterable AI fields together so the Analytics page mirrors the
+    // controls exposed in the AI Filters popup.
+    pushRow("AD TYPE", formatAiMetaToken(aiMeta.ad_type));
+    pushRow("INTENT", aiMeta.intent);
+    pushRow("HOOK", aiMeta.hook);
+    pushRow("OFFERING TYPE", formatAiMetaToken(aiMeta.offering_type));
+    pushRow("OFFER TYPE", offerTypes);
+    pushRow("OFFER VALUE", offerValues);
+    pushRow("COLORS", colors);
+
     return [
       ["OFFERING", aiMeta.offering],
       ["CAPTION", aiMeta.caption],
-      ["OFFER", offers],
       ["ROA INTENT", roa.intent],
       ["ROA HOOK", roa.hook],
       ["ROA OFFERING TYPE", roa.offering_type],
       ["ROA OFFERING", roa.offering],
+      ...rows,
     ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
   })();
   const firstAvailable = (...values) =>
