@@ -520,6 +520,13 @@ const App = () => {
     if (!keyword || !canAccessIntel()) return;
     setKeywordExplorer(String(keyword));
   };
+  // A keyword clicked inside Advertiser Profile must close the parent modal
+  // before opening the explorer drawer; otherwise the drawer remains mounted
+  // behind the profile and is revealed unexpectedly when the profile closes.
+  const handleProfileKeyword = (keyword) => {
+    setAdvertiserProfile(null);
+    openKeywordExplorer(keyword);
+  };
   const openKeywordsExplorerPage = () => {
     // Always navigate when the feature is globally live — same "not a hard removal"
     // pattern as Market Trends (onPageChange('intelligence') above): the page body
@@ -2034,7 +2041,7 @@ const App = () => {
           postOwnerId={advertiserProfile.postOwnerId}
           advertiserName={advertiserProfile.advertiserName}
           onClose={() => setAdvertiserProfile(null)}
-          onOpenKeyword={openKeywordExplorer}
+          onOpenKeyword={handleProfileKeyword}
         />
       )}
 

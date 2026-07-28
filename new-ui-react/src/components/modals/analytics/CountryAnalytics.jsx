@@ -78,7 +78,7 @@ function transformAdCountry(raw) {
 /**
  * Transform advertiser-level country data: [{ country, iso, ad_ids, ad_count }]
  */
-function transformAdvertiserCountry(raw, adData) {
+function transformAdvertiserCountry(raw) {
   if (!raw || !Array.isArray(raw) || raw.length === 0) return null;
 
   const results = [];
@@ -87,7 +87,18 @@ function transformAdvertiserCountry(raw, adData) {
     const countryUpper = (item.country || '').toUpperCase();
     const { iso, name } = normalizeCountryIdentity(item.country, item.iso);
 
-    const count = item.ad_count || (item.ad_ids ? item.ad_ids.length : 0);
+    const count = (() => {
+      const candidates = [
+        item.ad_count,
+        item.count,
+        Array.isArray(item.ad_ids) ? item.ad_ids.length : null,
+      ];
+      for (const candidate of candidates) {
+        const num = Number(candidate);
+        if (Number.isFinite(num) && num > 0) return num;
+      }
+      return 1;
+    })();
 
     if (!iso && countryUpper === 'ALL') {
       results.push({ id: 'ALL', name: 'Worldwide', count });
@@ -147,7 +158,8 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
   }, [isTikTok, tiktokAnalytics]);
 
   const adData = useMemo(() => isTikTok ? tiktokCountryData : transformAdCountry(adCountry), [adCountry, isTikTok, tiktokCountryData]);
-  const advertiserData = useMemo(() => transformAdvertiserCountry(filteredCountryData || advertiserCountry, adData), [advertiserCountry, filteredCountryData, adData]);
+  const advertiserSource = filteredCountryData || advertiserCountry || adData;
+  const advertiserData = useMemo(() => transformAdvertiserCountry(advertiserSource), [advertiserSource]);
 
   const countryData = useMemo(() => (level === 'ad' ? adData : advertiserData) || [], [level, adData, advertiserData]);
 

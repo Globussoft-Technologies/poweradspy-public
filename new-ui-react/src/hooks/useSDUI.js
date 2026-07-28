@@ -279,9 +279,11 @@ export function useSDUI() {
     }, [config]);
 
     const totalActiveFilters = useMemo(() => {
-        // Preserve the legacy category contract: `adcategory` is only a
-        // parent marker, while its `subcategory` key represents the filter.
-        const EXCLUDED_KEYS = new Set(['adcategory', '_autoSortField']);
+        // Keep internal helper keys out of the counter, but let nested parent
+        // filters such as `adcategory` count when they are the only selected
+        // key (for example, onboarding applies a top-level category without a
+        // subcategory).
+        const EXCLUDED_KEYS = new Set(['_autoSortField']);
         const countedNestedGroups = new Set();
         return Object.entries(filterValues).reduce((total, [key, v]) => {
             if (EXCLUDED_KEYS.has(key)) return total;

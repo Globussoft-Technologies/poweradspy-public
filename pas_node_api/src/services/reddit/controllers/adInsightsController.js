@@ -50,6 +50,34 @@ function fixCountryIso(country, iso) {
   return iso;
 }
 
+// Reddit has two country relations in the index. Older/partial records can
+// have the country on `reddit_country` while the newer country-only relation
+// is absent. Read both shapes and both ES response formats (nested _source or
+// flattened doc-value keys) so one missing relation does not hide valid data.
+function readRedditCountries(hit) {
+  const source = hit?._source;
+  const fields = hit?.fields;
+  const hasSource = source && Object.keys(source).length > 0;
+  const candidates = hasSource
+    ? [
+        source['reddit_country_only.country'],
+        source.reddit_country_only?.country,
+        source['reddit_country.country'],
+        source.reddit_country?.country,
+      ]
+    : [
+        fields?.['reddit_country_only.country.keyword'],
+        fields?.['reddit_country_only.country'],
+        fields?.['reddit_country.country.keyword'],
+        fields?.['reddit_country.country'],
+      ];
+
+  return candidates.find((value) => {
+    if (Array.isArray(value)) return value.some(Boolean);
+    return value != null && value !== '';
+  }) || null;
+}
+
 async function getRedditAdCountry(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
@@ -64,7 +92,7 @@ async function getRedditAdCountry(req, db, logger) {
       index: 'reddit_search_mix',
       body: {
         size: 1,
-        _source: ['reddit_country_only.country'],
+        _source: ['reddit_country_only.country', 'reddit_country.country'],
         query: {
           bool: { filter: { term: { 'reddit_ad.id': parseInt(p.reddit_ad_id, 10) } } },
         },
@@ -74,7 +102,7 @@ async function getRedditAdCountry(req, db, logger) {
     const hits = (esResult.hits || esResult.body?.hits)?.hits;
     if (!hits || hits.length === 0) return { code: 400, message: 'No data found.' };
 
-    let countries = hits[0]._source?.['reddit_country_only.country'];
+    let countries = readRedditCountries(hits[0]);
   
     if (!countries) return { code: 400, message: 'No country data found.' };
     if (!Array.isArray(countries)) countries = [countries];
@@ -295,12 +323,12 @@ async function aggregateCountryData(db, hits) {
     //     back as arrays even for single values, so we unwrap on read.
     const src = hit._source;
     const f = hit.fields;
-    const adId = src ? src['reddit_ad.id'] : f?.['reddit_ad.id']?.[0];
+    const adId = src
+      ? (src['reddit_ad.id'] ?? src.reddit_ad?.id)
+      : f?.['reddit_ad.id']?.[0];
     if (!adId) continue;
 
-    let countries = src
-      ? src['reddit_country_only.country']
-      : (f?.['reddit_country_only.country.keyword'] || f?.['reddit_country_only.country']);
+    let countries = readRedditCountries(hit);
     if (!countries) continue;
     if (!Array.isArray(countries)) countries = [countries];
 
@@ -452,7 +480,11 @@ async function getAdvertiserCountryData(req, db, logger) {
         size: 10000,
         track_total_hits: false,
         _source: false,
-        docvalue_fields: ['reddit_ad.id', 'reddit_country_only.country.keyword'],
+        docvalue_fields: [
+          'reddit_ad.id',
+          'reddit_country_only.country.keyword',
+          'reddit_country.country.keyword',
+        ],
         query: {
           bool: {
             filter: [
@@ -520,7 +552,11 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
       index,
       body: {
         size: 10000,
-        _source: ['reddit_ad.id', 'reddit_country_only.country'],
+        _source: [
+          'reddit_ad.id',
+          'reddit_country_only.country',
+          'reddit_country.country',
+        ],
         query: {
           bool: {
             filter: [
