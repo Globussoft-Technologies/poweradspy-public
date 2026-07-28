@@ -901,7 +901,19 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   useEffect(() => {
     const onPopState = (event) => {
       const state = event.state;
-      if (!state || !state[PROJECT_HISTORY_TAG]) return;
+      const isProjectsRoute = window.location.pathname === "/projects";
+      if (!state || !state[PROJECT_HISTORY_TAG]) {
+        // Fallback for plain /projects history entries that were created or
+        // rewritten by another layer (for example the app shell's own
+        // history-sync effect). If the browser landed on /projects, the My
+        // Projects list should always be the visible state.
+        if (isProjectsRoute) {
+          setCompareCompetitor(null);
+          setSelectedProjectId(null);
+          setViewState(0);
+        }
+        return;
+      }
 
       const nextViewState = Number(state.viewState);
       projectHistoryLastSerializedRef.current = JSON.stringify({

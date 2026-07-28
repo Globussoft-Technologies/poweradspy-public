@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X, Sparkles } from "lucide-react";
 import SchemaRenderer from "./SchemaRenderer";
 import { useTheme } from "../../hooks/useTheme";
 
 const AI_SIGNALS_DRAFT_KEY = "sdui.aiSignals.draft";
+const AI_SIGNALS_OPEN_KEY = "sdui.aiSignals.open";
 
-const readDraft = (fallback = {}) => {
+const readDraft = (fallback = null) => {
   try {
     const raw = sessionStorage.getItem(AI_SIGNALS_DRAFT_KEY);
     if (!raw) return fallback;
@@ -22,6 +23,44 @@ const isEmptyFilterValue = (value) =>
   value === false ||
   value === "" ||
   (Array.isArray(value) && value.length === 0);
+
+const normalizeComparableValue = (value) => {
+  if (isEmptyFilterValue(value)) return null;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeComparableValue(item))
+      .filter((item) => item !== null)
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  }
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        const normalized = normalizeComparableValue(value[key]);
+        if (normalized !== null) acc[key] = normalized;
+        return acc;
+      }, {});
+  }
+  return value;
+};
+
+const serializeAiSubset = (values, keys) =>
+  JSON.stringify(
+    keys
+      .map((key) => [key, normalizeComparableValue(values?.[key])])
+      .filter(([, value]) => value !== null)
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
+const buildDraftFromValues = (values, keys) => {
+  const next = {};
+  for (const key of keys) {
+    if (!isEmptyFilterValue(values?.[key])) {
+      next[key] = values[key];
+    }
+  }
+  return next;
+};
 
 class PopupErrorBoundary extends React.Component {
   constructor(props) {
@@ -42,9 +81,7 @@ class PopupErrorBoundary extends React.Component {
   }
 
   render() {
-    if (this.state.hasError) {
-      return this.props.fallback;
-    }
+    if (this.state.hasError) return this.props.fallback;
     return this.props.children;
   }
 }
@@ -75,10 +112,20 @@ const AiSignalsModal = ({
     () => (Array.isArray(doc?.filters) ? doc.filters.map((filter) => filter?._id).filter(Boolean) : []),
     [doc],
   );
-  const [draftValues, setDraftValues] = useState(() => readDraft(filterValues || {}));
-  const hasDraftSelection = filterKeys.some(
-    (key) => !isEmptyFilterValue(draftValues[key]),
+  const [draftValues, setDraftValues] = useState(() =>
+    buildDraftFromValues(readDraft(filterValues || {}), filterKeys),
   );
+  const wasOpenRef = useRef(false);
+
+  const draftSnapshot = useMemo(
+    () => serializeAiSubset(draftValues, filterKeys),
+    [draftValues, filterKeys],
+  );
+  const liveSnapshot = useMemo(
+    () => serializeAiSubset(filterValues || {}, filterKeys),
+    [filterValues, filterKeys],
+  );
+  const hasPendingChanges = draftSnapshot !== liveSnapshot;
 
   const handleDraftChange = (filterId, value) => {
     setDraftValues((prev) => {
@@ -89,38 +136,64 @@ const AiSignalsModal = ({
     });
   };
 
-  const handleClear = () => {
-    setDraftValues({});
+  const closeAndForgetDraft = () => {
     try {
-      sessionStorage.setItem(AI_SIGNALS_DRAFT_KEY, JSON.stringify({}));
+      sessionStorage.removeItem(AI_SIGNALS_DRAFT_KEY);
+      sessionStorage.removeItem(AI_SIGNALS_OPEN_KEY);
     } catch {}
+    wasOpenRef.current = false;
+    onClose?.();
   };
 
-  const handleApply = () => {
-    if (!hasDraftSelection) return;
+  const commitDraft = (nextDraft) => {
     if (typeof onApply === "function") {
       const next = { ...(filterValues || {}) };
       for (const key of filterKeys) {
-        if (Object.prototype.hasOwnProperty.call(draftValues, key) && !isEmptyFilterValue(draftValues[key])) {
-          next[key] = draftValues[key];
+        if (Object.prototype.hasOwnProperty.call(nextDraft, key) && !isEmptyFilterValue(nextDraft[key])) {
+          next[key] = nextDraft[key];
         } else {
           delete next[key];
         }
       }
       onApply(next);
     }
-    try {
-      sessionStorage.removeItem(AI_SIGNALS_DRAFT_KEY);
-    } catch {}
-    onClose?.();
+    closeAndForgetDraft();
+  };
+
+  const handleClear = () => {
+    // Keep Clear as an in-popup draft reset so users can review the empty state
+    // before committing it with Apply.
+    setDraftValues({});
+  };
+
+  const handleApply = () => {
+    if (!hasPendingChanges) return;
+    commitDraft(draftValues);
   };
 
   useEffect(() => {
-    // Keep the current in-progress draft around across same-tab refreshes.
     try {
       sessionStorage.setItem(AI_SIGNALS_DRAFT_KEY, JSON.stringify(draftValues || {}));
     } catch {}
   }, [draftValues]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      return;
+    }
+
+    let hasStoredDraft = false;
+    try {
+      hasStoredDraft = sessionStorage.getItem(AI_SIGNALS_DRAFT_KEY) != null;
+      sessionStorage.setItem(AI_SIGNALS_OPEN_KEY, "1");
+    } catch {}
+
+    if (!wasOpenRef.current && !hasStoredDraft) {
+      setDraftValues(buildDraftFromValues(filterValues || {}, filterKeys));
+    }
+    wasOpenRef.current = true;
+  }, [isOpen, filterValues, filterKeys]);
 
   if (!isOpen || !doc) return null;
 
@@ -128,9 +201,7 @@ const AiSignalsModal = ({
   const displayTitle = "AI Filters";
 
   return (
-    <div
-      className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4"
-    >
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4">
       <div
         className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-2xl border border-theme-border bg-theme-surface shadow-2xl flex flex-col"
         onClick={(event) => event.stopPropagation()}
@@ -157,7 +228,7 @@ const AiSignalsModal = ({
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeAndForgetDraft}
             className="shrink-0 rounded-lg border border-theme-border bg-theme-bg p-2 text-theme-text-muted transition-colors hover:text-theme-text hover:border-theme-text/30"
             aria-label="Close AI Filters popup"
           >
@@ -176,9 +247,9 @@ const AiSignalsModal = ({
           <button
             type="button"
             onClick={handleApply}
-            disabled={!hasDraftSelection}
+            disabled={!hasPendingChanges}
             className={`rounded-md border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors ${
-              hasDraftSelection
+              hasPendingChanges
                 ? "border-[#3759a3]/30 bg-[#3762c1] text-white hover:bg-[#335296]"
                 : "cursor-not-allowed border-[#3759a3]/15 bg-[#3762c1]/35 text-white/50"
             }`}
@@ -190,11 +261,11 @@ const AiSignalsModal = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
           <div className="rounded-xl border border-theme-border bg-theme-bg/40 p-3 sm:p-4">
             <PopupErrorBoundary
-              fallback={(
+              fallback={
                 <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-200">
                   AI Filters could not be rendered. Please refresh once; if it keeps happening, the console will show the failing filter.
                 </div>
-              )}
+              }
             >
               <SchemaRenderer
                 document={doc}
