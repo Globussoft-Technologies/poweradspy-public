@@ -1076,21 +1076,12 @@ const MasonryCard = ({
                   <span
                     onClick={(e) => {
                       e.stopPropagation();
-                      // Google cards open the full Advertiser Profile (competitive
-                      // intelligence); other networks keep the search-by-advertiser
-                      // behaviour. Falls back to search if the handler isn't wired.
-                      if (platform === "google" && typeof onOpenAdvertiserProfile === "function") {
-                        onOpenAdvertiserProfile({ postOwnerId: ad.postOwnerId, advertiserName: ad.advertiser });
-                      } else {
-                        onSearch?.(ad.advertiser, "advertiser");
-                      }
+                      // Keep the legacy card click behavior consistent: clicking the
+                      // advertiser name performs a normal advertiser search.
+                      onSearch?.(ad.advertiser, "advertiser");
                     }}
                     className="text-[14px] font-bold truncate text-zinc-100 hover:text-[#6b99ff] cursor-pointer transition-colors"
-                    title={
-                      platform === "google"
-                        ? `View advertiser profile — ${ad.advertiser}`
-                        : `See all ads from ${ad.advertiser}`
-                    }
+                    title={`See all ads from ${ad.advertiser}`}
                   >
                     {ad.advertiser}
                   </span>

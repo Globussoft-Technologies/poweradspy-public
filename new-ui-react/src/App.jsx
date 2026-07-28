@@ -57,11 +57,13 @@ import LockedFeaturePreview from "./components/shared/LockedFeaturePreview";
 // allow-list (config.intelligence.allowedUserIds), probed via /access.
 const INTEL_ENV_ON = import.meta.env.VITE_ENABLE_INTELLIGENCE_FEATURE === "true";
 
-// Keywords Explorer is gated by a build-time env flag (same pattern as Market
-// Trends above). When off, the nav item, page, and single-keyword modal are all
-// hidden and the open handlers no-op — the backend routes are separately gated
-// by KEYWORD_EXPLORER_ENABLED so the APIs are inert too. Default OFF (opt-in).
+// Keywords Explorer and the Google competitive-intel entry points are controlled
+// by the same build-time env gate. Turning this off hides the nav item, page,
+// analytics buttons, and modal entry points related to keyword explorer.
+// The backend routes are separately gated by KEYWORD_EXPLORER_ENABLED so the
+// APIs stay inert too. Default OFF (opt-in).
 const KEYWORD_EXPLORER_ON = import.meta.env.VITE_ENABLE_KEYWORD_EXPLORER === "true";
+const GOOGLE_INTEL_ON = KEYWORD_EXPLORER_ON;
 import ChatbotWidget from "./components/shared/ChatbotWidget";
 import NotificationPermissionPrompt from "./components/layout/NotificationPermissionPrompt";
 import UnsubscribePage from "./components/UnsubscribePage";
@@ -334,7 +336,7 @@ const App = () => {
     if (location.pathname === '/projects') {
       dispatch(setActivePage('projects'));
       dispatch(setShowSavedAdsPage(false));
-    } else if (location.pathname === '/keywords-explorer' && KEYWORD_EXPLORER_ON) {
+    } else if (location.pathname === '/keywords-explorer' && GOOGLE_INTEL_ON) {
       dispatch(setActivePage('keywords-explorer'));
       dispatch(setShowSavedAdsPage(false));
     } else if (location.pathname === '/saved') {
@@ -382,7 +384,7 @@ const App = () => {
     if (_isSpecialRoute) return;
     if (ui.activePage === 'projects' && location.pathname !== '/projects') {
       navigate('/projects');
-    } else if (ui.activePage === 'keywords-explorer' && KEYWORD_EXPLORER_ON && location.pathname !== '/keywords-explorer') {
+    } else if (ui.activePage === 'keywords-explorer' && GOOGLE_INTEL_ON && location.pathname !== '/keywords-explorer') {
       navigate('/keywords-explorer');
     } else if (ui.showSavedAdsPage && location.pathname !== '/saved') {
       navigate('/saved');
@@ -514,19 +516,22 @@ const App = () => {
     return true;
   };
   const openKeywordExplorer = (keyword) => {
-    if (!(KEYWORD_EXPLORER_ON && keywordExplorerAllowed)) return;
-    if (!keyword) return;
+    if (!(GOOGLE_INTEL_ON && keywordExplorerAllowed)) return;
+    if (!keyword || !canAccessIntel()) return;
     setKeywordExplorer(String(keyword));
   };
   const openKeywordsExplorerPage = () => {
     // Always navigate when the feature is globally live — same "not a hard removal"
     // pattern as Market Trends (onPageChange('intelligence') above): the page body
     // decides real content vs. locked preview based on keywordExplorerAllowed.
-    if (!KEYWORD_EXPLORER_ON) return;
+    if (!GOOGLE_INTEL_ON) return;
+    setKeywordExplorer(null);
+    setAdvertiserProfile(null);
+    if (selectedAdForAnalytics) closeAnalyticsModal();
     dispatch(setActivePage('keywords-explorer'));
   };
   const openAdvertiserProfile = (arg) => {
-    if (!(KEYWORD_EXPLORER_ON && keywordExplorerAllowed)) return;
+    if (!(GOOGLE_INTEL_ON && keywordExplorerAllowed)) return;
     const next = typeof arg === "string" ? { advertiserName: arg } : arg;
     if (!next || !(next.postOwnerId || next.advertiserName)) return;
     if (!canAccessIntel()) return;
@@ -634,7 +639,7 @@ const App = () => {
   const [keywordExplorerAccessError, setKeywordExplorerAccessError] = useState(false);
   const [keywordExplorerAccessAttempt, setKeywordExplorerAccessAttempt] = useState(0);
   useEffect(() => {
-    if (!KEYWORD_EXPLORER_ON || !token) { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); setKeywordExplorerAccessError(false); return; }
+    if (!GOOGLE_INTEL_ON || !token) { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); setKeywordExplorerAccessError(false); return; }
     setKeywordExplorerResolved(false);
     setKeywordExplorerAccessError(false);
     fetchKeywordExplorerAccess()
@@ -1812,7 +1817,7 @@ const App = () => {
           canAccessProjects={canAccessProjects}
           intelligenceEnabled={INTEL_ENV_ON}
           intelligenceStage={intelAccess.stage}
-          keywordExplorerEnabled={KEYWORD_EXPLORER_ON}
+          keywordExplorerEnabled={GOOGLE_INTEL_ON}
           guest={guest}
           isLoggedIn={!guest?.isRestricted}
           allowedPlatforms={planAccess?.allowedPlatforms}
@@ -1862,7 +1867,7 @@ const App = () => {
               onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
             />
           )
-        ) : ui.activePage === "keywords-explorer" && KEYWORD_EXPLORER_ON ? (
+        ) : ui.activePage === "keywords-explorer" && GOOGLE_INTEL_ON ? (
           !keywordExplorerResolved ? (
             <PageAccessLoading />
           ) : keywordExplorerAccessError ? (
@@ -2008,13 +2013,13 @@ const App = () => {
           visibleAds.findIndex((a) => a.id === selectedAdForAnalytics?.id) <
           visibleAds.length - 1
         }
-        competitiveIntelEnabled={KEYWORD_EXPLORER_ON && keywordExplorerAllowed}
+        competitiveIntelEnabled={GOOGLE_INTEL_ON && keywordExplorerAllowed}
         onOpenKeywordExplorer={openKeywordExplorer}
         onOpenAdvertiserProfile={openAdvertiserProfile}
         onOpenKeywordsExplorer={openKeywordsExplorerPage}
       />
 
-      {KEYWORD_EXPLORER_ON && keywordExplorerAllowed && keywordExplorer && (
+      {GOOGLE_INTEL_ON && keywordExplorerAllowed && keywordExplorer && (
         <KeywordExplorerModal
           keyword={keywordExplorer}
           onClose={() => setKeywordExplorer(null)}
@@ -2024,7 +2029,7 @@ const App = () => {
         />
       )}
 
-      {advertiserProfile && (
+      {GOOGLE_INTEL_ON && advertiserProfile && (
         <AdvertiserProfileModal
           postOwnerId={advertiserProfile.postOwnerId}
           advertiserName={advertiserProfile.advertiserName}

@@ -56,12 +56,19 @@
  * --commit to write. Refuses to write into a non-empty table unless --truncate
  * is given (same contract as backfillKeywordAggregates.js).
  *
+ * Heavy second pass: competition_score is intentionally optional for scheduled
+ * runs. The daily cron usually only needs the sweep/upsert to keep the rollup
+ * current; the percentile backfill can be much slower on large production
+ * tables, so cron callers may set `recomputeScores: false` and run that pass
+ * only when needed (or off-peak).
+ *
  * Usage:
  *   node src/services/google/jobs/refreshKeywordStats.js                  # dry run, trailing 18mo
  *   node src/services/google/jobs/refreshKeywordStats.js --commit --truncate
  *   node ... --full                     # no lookback filter, sweep entire history
  *   node ... --batch=1000 --limit=5000  # composite page size / cap keywords (testing)
  *   node ... --precision=5000           # raise cardinality precision (slower — see Scale note above)
+ *   node ... --prod-safe                # force lower batch/precision tuning for production
  */
 
 require('dotenv').config();
@@ -110,12 +117,21 @@ function maybeAbortForHeap(opts, label) {
   }
 }
 
+function pickNetworkConfig(slugs, sourceConfig) {
+  const selected = {};
+  for (const slug of slugs) {
+    if (sourceConfig[slug]) selected[slug] = sourceConfig[slug];
+  }
+  return selected;
+}
+
 function parseArgs(argv) {
-  const args = { commit: false, truncate: false, full: false, batch: DEFAULT_BATCH, limit: 0, precision: DEFAULT_BULK_PRECISION, heapGuardMb: 0 };
+  const args = { commit: false, truncate: false, full: false, batch: DEFAULT_BATCH, limit: 0, precision: DEFAULT_BULK_PRECISION, heapGuardMb: 0, prodSafe: false };
   for (const a of argv.slice(2)) {
     if (a === '--commit') args.commit = true;
     else if (a === '--truncate') args.truncate = true;
     else if (a === '--full') args.full = true;
+    else if (a === '--prod-safe') args.prodSafe = true;
     else if (a.startsWith('--batch=')) args.batch = parseInt(a.split('=')[1], 10) || DEFAULT_BATCH;
     else if (a.startsWith('--limit=')) args.limit = parseInt(a.split('=')[1], 10) || 0;
     else if (a.startsWith('--precision=')) args.precision = parseInt(a.split('=')[1], 10) || DEFAULT_BULK_PRECISION;
@@ -305,28 +321,66 @@ async function sweep(elastic, index, query, pageSize, limit, precision, sql, onB
 }
 
 // Second pass: 0-100 percentile rank of advertisers_total across the whole
-// table. Done in JS (not a SQL window function) so this doesn't assume a
-// MySQL version with PERCENT_RANK() support; grouped by rounded score so this
-// is at most 101 UPDATE statements regardless of table size.
-async function computeCompetitionScores(sql, commit, opts = {}) {
+// table. We try a single SQL window-function update first (fastest when the
+// DB can handle it), and fall back to the older chunked JS updater if the DB
+// does not support the SQL path or if the optimized SQL path fails.
+async function computeCompetitionScoresSql(sql, commit) {
   const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');
   if (!totalRows) return 0;
   if (!commit) return totalRows;
 
-  let offset = 0;
-  while (offset < totalRows) {
-    maybeAbortForHeap(opts, `competition score batch offset ${offset}`);
+  await sql.query(`
+    UPDATE keyword_stats ks
+    JOIN (
+      SELECT keyword_id,
+             CASE
+               WHEN total_rows = 1 THEN 100
+               ELSE ROUND(((row_num - 1) / (total_rows - 1)) * 100)
+             END AS score
+      FROM (
+        SELECT keyword_id,
+               ROW_NUMBER() OVER (ORDER BY advertisers_total ASC, keyword_id ASC) AS row_num,
+               COUNT(*) OVER () AS total_rows
+        FROM keyword_stats
+      ) ranked
+    ) scores ON scores.keyword_id = ks.keyword_id
+    SET ks.competition_score = scores.score
+  `);
+
+  return totalRows;
+}
+
+async function computeCompetitionScoresJs(sql, commit, opts = {}) {
+  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');
+  if (!totalRows) return 0;
+  if (!commit) return totalRows;
+
+  // Cursor pagination keeps the second pass stable on large tables; OFFSET
+  // gets progressively more expensive as the table grows.
+  let processed = 0;
+  let lastAdvertisersTotal = null;
+  let lastKeywordId = null;
+  while (processed < totalRows) {
+    maybeAbortForHeap(opts, `competition score batch offset ${processed}`);
     const rows = await sql.query(
-      `SELECT keyword_id, advertisers_total
-       FROM keyword_stats
-       ORDER BY advertisers_total ASC, keyword_id ASC
-       LIMIT ${COMPETITION_SCORE_BATCH} OFFSET ${offset}`
+      lastAdvertisersTotal === null
+        ? `SELECT keyword_id, advertisers_total
+           FROM keyword_stats
+           ORDER BY advertisers_total ASC, keyword_id ASC
+           LIMIT ${COMPETITION_SCORE_BATCH}`
+        : `SELECT keyword_id, advertisers_total
+           FROM keyword_stats
+           WHERE (advertisers_total > ?)
+              OR (advertisers_total = ? AND keyword_id > ?)
+           ORDER BY advertisers_total ASC, keyword_id ASC
+           LIMIT ${COMPETITION_SCORE_BATCH}`,
+      lastAdvertisersTotal === null ? [] : [lastAdvertisersTotal, lastAdvertisersTotal, lastKeywordId]
     );
     if (!rows.length) break;
 
     const byScore = new Map();
     rows.forEach((r, idx) => {
-      const absoluteIndex = offset + idx;
+      const absoluteIndex = processed + idx;
       const rank = totalRows === 1 ? 100 : Math.round((absoluteIndex / (totalRows - 1)) * 100);
       if (!byScore.has(rank)) byScore.set(rank, []);
       byScore.get(rank).push(r.keyword_id);
@@ -337,12 +391,44 @@ async function computeCompetitionScores(sql, commit, opts = {}) {
       await sql.query(`UPDATE keyword_stats SET competition_score = ? WHERE keyword_id IN (${placeholders})`, [score, ...ids]);
     }
 
-    offset += rows.length;
-    if (offset % (COMPETITION_SCORE_BATCH * 5) === 0 || offset >= totalRows) {
-      log(`  …competition_score ${offset}/${totalRows} rows processed heap=${currentHeapMb()}MB`);
+    processed += rows.length;
+    const lastRow = rows[rows.length - 1];
+    lastAdvertisersTotal = lastRow.advertisers_total;
+    lastKeywordId = lastRow.keyword_id;
+    if (processed % (COMPETITION_SCORE_BATCH * 5) === 0 || processed >= totalRows) {
+      log(`  …competition_score ${processed}/${totalRows} rows processed heap=${currentHeapMb()}MB`);
     }
   }
   return totalRows;
+}
+
+async function computeCompetitionScores(sql, commit, opts = {}) {
+  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');
+  if (!totalRows) return 0;
+  if (!commit) return totalRows;
+
+  if (opts.prodSafe) {
+    log(`competition_score prod-safe mode: using chunked fallback for ${totalRows} rows`);
+    return computeCompetitionScoresJs(sql, commit, opts);
+  }
+
+  const indexRows = await sql.query(`
+    SHOW INDEX FROM keyword_stats
+    WHERE Key_name = 'idx_keyword_stats_competition_order'
+  `);
+
+  if (indexRows.length) {
+    try {
+      log(`competition_score backfill trying optimized SQL path (${totalRows} rows, index present)`);
+      return await computeCompetitionScoresSql(sql, commit);
+    } catch (err) {
+      log(`optimized competition_score SQL path failed (${err.message}); falling back to chunked batches`);
+    }
+  } else {
+    log('competition_score optimized SQL path skipped (missing idx_keyword_stats_competition_order); using chunked fallback');
+  }
+
+  return computeCompetitionScoresJs(sql, commit, opts);
 }
 
 /**
@@ -350,7 +436,8 @@ async function computeCompetitionScores(sql, commit, opts = {}) {
  * DB connection lifecycle) and by the cron registry (which runs inside the
  * already-connected server process; see src/jobs/cronManager.js).
  *
- * `args` = { commit, truncate, full, batch, limit, precision } (defaults applied — see parseArgs).
+ * `args` = { commit, truncate, full, batch, limit, precision, recomputeScores }
+ * (defaults applied — see parseArgs).
  */
 async function runKeywordStatsRefresh(args = {}) {
   const opts = {
@@ -360,10 +447,15 @@ async function runKeywordStatsRefresh(args = {}) {
     batch: DEFAULT_BATCH,
     limit: 0,
     precision: DEFAULT_BULK_PRECISION,
+    recomputeScores: true,
+    prodSafe: false,
     heapGuardMb: parseInt(process.env.KEYWORD_STATS_HEAP_GUARD_MB || '0', 10) || 0,
     ...args,
   };
-  log(`mode=${opts.commit ? 'COMMIT' : 'DRY-RUN'} scope=${opts.full ? 'FULL' : `trailing ${LOOKBACK_MONTHS}mo`} batch=${opts.batch} precision=${opts.precision}${opts.limit ? ` limit=${opts.limit}` : ''}${opts.truncate ? ' truncate' : ''}${opts.heapGuardMb ? ` heap-guard=${opts.heapGuardMb}MB` : ''}`);
+  const prodSafe = opts.prodSafe || process.env.KEYWORD_STATS_PROD_SAFE === 'true' || process.env.NODE_ENV === 'production';
+  const effectiveBatch = prodSafe ? Math.min(opts.batch, parseInt(process.env.KEYWORD_STATS_PROD_BATCH || '200', 10) || 200) : opts.batch;
+  const effectivePrecision = prodSafe ? Math.min(opts.precision, parseInt(process.env.KEYWORD_STATS_PROD_PRECISION || '500', 10) || 500) : opts.precision;
+  log(`mode=${opts.commit ? 'COMMIT' : 'DRY-RUN'} scope=${opts.full ? 'FULL' : `trailing ${LOOKBACK_MONTHS}mo`} batch=${effectiveBatch} precision=${effectivePrecision}${opts.limit ? ` limit=${opts.limit}` : ''}${opts.truncate ? ' truncate' : ''}${opts.heapGuardMb ? ` heap-guard=${opts.heapGuardMb}MB` : ''}${prodSafe ? ' prod-safe' : ''}`);
 
   const sql = databaseManager.getSQL(NETWORK);
   const elastic = databaseManager.getElastic(NETWORK);
@@ -386,7 +478,7 @@ async function runKeywordStatsRefresh(args = {}) {
   const sampleRows = [];
   const writer = makeStatsWriter(sql, opts.commit);
 
-  await sweep(elastic, index, query, opts.batch, opts.limit, opts.precision, sql, async (row) => {
+  await sweep(elastic, index, query, effectiveBatch, opts.limit, effectivePrecision, sql, async (row) => {
     stats.keywords++;
     if (!row.kwIds) { stats.unmapped++; return; }
     for (const keyword_id of row.kwIds) {
@@ -404,9 +496,14 @@ async function runKeywordStatsRefresh(args = {}) {
   log(`${opts.commit ? 'UPSERTED' : 'WOULD UPSERT'} ${written} rows into keyword_stats`);
   log('sample:', JSON.stringify(sampleRows.slice(0, 5)));
 
-  maybeAbortForHeap(opts, 'before competition score pass');
-  const scored = await computeCompetitionScores(sql, opts.commit, opts);
-  log(`${opts.commit ? 'COMPUTED' : 'WOULD COMPUTE'} competition_score percentile rank over ${scored} rows`);
+  let scored = 0;
+  if (opts.recomputeScores) {
+    maybeAbortForHeap(opts, 'before competition score pass');
+    scored = await computeCompetitionScores(sql, opts.commit, opts);
+    log(`${opts.commit ? 'COMPUTED' : 'WOULD COMPUTE'} competition_score percentile rank over ${scored} rows`);
+  } else {
+    log('competition_score percentile backfill skipped for this run (recomputeScores=false)');
+  }
 
   return { ...stats, written, scored };
 }
@@ -414,7 +511,8 @@ async function runKeywordStatsRefresh(args = {}) {
 // CLI entrypoint — owns the connect/disconnect lifecycle; not used by the cron.
 if (require.main === module) {
   const args = parseArgs(process.argv);
-  databaseManager.connectAll(networksConfig)
+  const cliNetworksConfig = pickNetworkConfig([NETWORK], networksConfig);
+  databaseManager.connectAll(cliNetworksConfig)
     .then(() => runKeywordStatsRefresh(args))
     .then(() => databaseManager.disconnectAll())
     .then(() => log('done.'))

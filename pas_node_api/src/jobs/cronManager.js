@@ -31,6 +31,9 @@ const REGISTRY = {
       full: !!jobCfg.full,
       batch: jobCfg.batch || 1000,
       precision: jobCfg.precision || 1000, // see refreshKeywordStats.js's "Scale" doc comment before raising this
+      // Keep the competition score available for the UI by default.
+      // If an operator explicitly turns it off, they can set false in config.
+      recomputeScores: jobCfg.recomputeScores !== false,
     }),
 };
 
