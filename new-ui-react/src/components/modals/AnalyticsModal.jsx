@@ -806,7 +806,16 @@ const AdDetailsActivity = ({ targetSiteData, isLight }) => {
 };
 
 // ─── Creative Preview: thumbnail + video playback ─────────────────────
-const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActiveIndex }) => {
+const CreativePreview = ({
+  d,
+  ad,
+  ctx,
+  isTikTok,
+  isLight,
+  activeIndex,
+  setActiveIndex,
+  contained = false,
+}) => {
   // Backend splits carousel ads across two fields: the cover image lands in
   // `thumbnail` (image_video_url) and the remaining slides in `carouselMedia`
   // (ad_image_video). A 2-image ad therefore arrives with a single entry in
@@ -875,10 +884,12 @@ const CreativePreview = ({ d, ad, ctx, isTikTok, isLight, activeIndex, setActive
   // than <video> (which can't decode either platform's watch page).
   const embedUrl = getVideoEmbedUrl(ad?.videoOriginalUrl || ad?.adUrl);
 
-  const aspectStyle = {
-    ...getAspectStyle(ctx.platform, ctx.position, ad?.aspect_ratio),
-    maxHeight: "40vh",
-  };
+  const aspectStyle = contained && Number(ad?.platform) === 18
+    ? { width: "100%", height: "100%", maxHeight: "100%" }
+    : {
+        ...getAspectStyle(ctx.platform, ctx.position, ad?.aspect_ratio),
+        maxHeight: "40vh",
+      };
 
   const [playing, setPlaying] = useState(false);
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState(null);
@@ -1949,7 +1960,7 @@ const AnalyticsModal = ({
           platform={ad?.badgeNetwork || ctx.platform}
           onClose={onClose}
         />
-        {!creativeClosed && (
+        {!creativeClosed && !isTransparency && (
           <div
             className="hidden lg:block absolute right-6 top-16 z-30 transition-all duration-300 ease-in-out overflow-hidden"
             style={{
@@ -1990,8 +2001,14 @@ const AnalyticsModal = ({
         >
           {/* ── Hero Section ────────────────────────────────────── */}
           <div
-            className="px-6 pb-6"
-            style={{ marginRight: `${creativeInitialWidth + 3}%` }}
+            className={`px-6 pb-6 ${
+              isTransparency
+                ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start"
+                : ""
+            }`}
+            style={isTransparency
+              ? undefined
+              : { marginRight: `${creativeInitialWidth + 3}%` }}
           >
             <div className="space-y-4">
               {/* Advertiser */}
@@ -2163,6 +2180,29 @@ const AnalyticsModal = ({
                 <span className="text-[12px] italic text-[#9f9f9f]"> </span>
               )}
             </div>
+
+            {isTransparency && !creativeClosed && (
+              <div
+                data-testid="transparency-contained-preview"
+                className={`mt-5 h-[clamp(220px,32vh,320px)] w-full overflow-hidden rounded-2xl border shadow-lg lg:mt-0 ${
+                  isLight
+                    ? "border-slate-200 bg-slate-50 shadow-slate-900/10"
+                    : "border-white/10 bg-[#131313] shadow-black/40"
+                }`}
+              >
+                <CreativePreview
+                  key={processedAd.id}
+                  d={d}
+                  ad={processedAd}
+                  ctx={ctx}
+                  isTikTok={isTikTok}
+                  isLight={isLight}
+                  activeIndex={activeIndex}
+                  setActiveIndex={setActiveIndex}
+                  contained
+                />
+              </div>
+            )}
 
             {/* Ad Details table */}
             {!isTransparency && <div className="pt-4 mt-4">

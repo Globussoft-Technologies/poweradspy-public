@@ -576,6 +576,7 @@ GoogleSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   "built_with_analytics_tracking",
   "first_seen",
   "last_seen",
+  "last_shown",
   "ad_url",
   "destination_url",
   "url_destination",

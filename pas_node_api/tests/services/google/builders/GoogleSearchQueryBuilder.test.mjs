@@ -215,6 +215,7 @@ describe("Google builder > SEARCH_SOURCE_FIELDS", () => {
     expect(Builder.SEARCH_SOURCE_FIELDS).toEqual(expect.arrayContaining([
       "platform",
       "last_seen",
+      "last_shown",
       "ad_url",
       "subnetwork",
       "image_url_original",

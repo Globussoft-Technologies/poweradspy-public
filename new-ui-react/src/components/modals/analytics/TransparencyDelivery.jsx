@@ -57,6 +57,24 @@ export const getOperatorMeaning = (range) => {
 
 const toTimestamp = (value) => {
   if (!value) return null;
+  // Transparency dates represent reported calendar days. Parsing a SQL value
+  // such as "2026-07-28 00:00:00" as a local-time instant and then formatting
+  // it in UTC changes the visible day to 27 Jul in positive time zones. Pin
+  // the YYYY-MM-DD portion to UTC midnight instead.
+  const calendarMatch = String(value).trim().match(
+    /^(\d{4})-(\d{2})-(\d{2})/,
+  );
+  if (calendarMatch) {
+    const [, year, month, day] = calendarMatch;
+    const calendarTimestamp = Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+    );
+    return Number.isFinite(calendarTimestamp) && calendarTimestamp > 0
+      ? calendarTimestamp
+      : null;
+  }
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
 };
@@ -577,17 +595,13 @@ const TransparencyDelivery = ({
   const countryFirstShownPoints = countries
     .map((item) => item.firstTimestamp)
     .filter((value) => value != null);
-  const countryLastShownPoints = countries
-    .map((item) => item.lastTimestamp)
-    .filter((value) => value != null);
-  // Country delivery rows are Google's authoritative shown window. Aggregate
-  // every country instead of mixing them with PowerAdSpy's top-level seen date.
+  // Country delivery rows provide the first reported activity. The window end
+  // is strictly top-level last_shown from Google Transparency; PowerAdSpy's
+  // last_seen and country last_seen are different fields and cannot replace it.
   const effectiveStart = countryFirstShownPoints.length
     ? Math.min(...countryFirstShownPoints)
     : toTimestamp(firstSeen);
-  const effectiveEnd = countryLastShownPoints.length
-    ? Math.max(...countryLastShownPoints)
-    : toTimestamp(lastShown) ?? toTimestamp(lastSeen);
+  const effectiveEnd = toTimestamp(lastShown);
   const activityWindow = effectiveStart != null && effectiveEnd != null
     ? `${formatDate(effectiveStart)} – ${formatDate(effectiveEnd)}`
     : effectiveStart != null
@@ -663,6 +677,7 @@ const TransparencyDelivery = ({
       value: lastShownValue,
       accent: "bg-orange-500/10 text-orange-500",
       help: "The most recent date Google Ads Transparency reports this ad was shown.",
+      helpAlign: "right",
     }] : []),
     ...(impressionValue ? [{
       icon: Activity,
@@ -691,9 +706,9 @@ const TransparencyDelivery = ({
       icon: CalendarDays,
       label: "Activity Window",
       value: activityWindow,
-      caption: "Across all reported countries",
+      caption: "First reported activity to Google Last Shown",
       accent: "bg-amber-500/10 text-amber-500",
-      help: "Uses the earliest first shown and latest last shown across every reported country.",
+      help: "Starts at the earliest reported country date and ends at the top-level Last Shown date supplied by Google Ads Transparency.",
     }] : []),
   ];
   const availableLinks = [

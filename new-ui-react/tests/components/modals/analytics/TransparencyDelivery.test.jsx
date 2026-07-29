@@ -68,8 +68,8 @@ describe("TransparencyDelivery", () => {
     )).toBe(true);
   });
 
-  it("does not turn a last-seen-only observation into a reversed range or Last Shown", () => {
-    const { getByText, queryByText } = render(
+  it("does not use a last-seen-only observation as Activity Window or Last Shown", () => {
+    const { queryByText } = render(
       <TransparencyDelivery
         isLight
         lastSeen="2026-07-26T00:00:00Z"
@@ -83,8 +83,8 @@ describe("TransparencyDelivery", () => {
       />,
     );
 
-    expect(getByText("Until 27 Jul 2026")).toBeInTheDocument();
     expect(queryByText(/27 Jul 2026.*26 Jul 2026/)).toBeNull();
+    expect(queryByText("Activity Window")).toBeNull();
     expect(queryByText("Last Shown")).toBeNull();
   });
 
@@ -107,7 +107,7 @@ describe("TransparencyDelivery", () => {
             country: "Germany",
             country_code: "DE",
             first_seen: "2026-07-10T00:00:00Z",
-            last_seen: "2026-07-20T00:00:00Z",
+            last_seen: "2026-07-21T00:00:00Z",
             times_shown: null,
           },
         ]}
@@ -118,12 +118,34 @@ describe("TransparencyDelivery", () => {
     expect(getByText("Last Seen")).toBeInTheDocument();
     expect(getByText("Last Shown")).toBeInTheDocument();
     expect(getByText(/05 Jul 2026.*20 Jul 2026/)).toBeInTheDocument();
+    expect(queryByText(/05 Jul 2026.*21 Jul 2026/)).toBeNull();
     expect(queryByText(/04 Jul 2026.*20 Jul 2026/)).toBeNull();
     const tooltipText = getAllByRole("tooltip").map((tip) => tip.textContent);
     expect(tooltipText).toContain("The most recent date PowerAdSpy found this ad.");
     expect(tooltipText).toContain(
       "The most recent date Google Ads Transparency reports this ad was shown.",
     );
+  });
+
+  it("keeps a SQL last_shown calendar date on the same visible day", () => {
+    const { getAllByText, queryByText } = render(
+      <TransparencyDelivery
+        isLight
+        lastSeen="2026-07-28 14:27:07"
+        lastShown="2026-07-28 00:00:00"
+        countryDetails={[{
+          country: "France",
+          country_code: "FR",
+          first_seen: "2026-06-23T00:00:00Z",
+          last_seen: "2026-07-28T00:00:00Z",
+          times_shown: null,
+        }]}
+      />,
+    );
+
+    expect(getAllByText("28 Jul 2026").length).toBeGreaterThanOrEqual(2);
+    expect(getAllByText(/23 Jun 2026.*28 Jul 2026/).length).toBeGreaterThanOrEqual(1);
+    expect(queryByText("27 Jul 2026")).toBeNull();
   });
 
   it("hides unavailable metrics and lets the remaining layout reflow", () => {
