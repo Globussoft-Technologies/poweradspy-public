@@ -577,6 +577,7 @@ const TransparencyDelivery = ({
   adUrl,
   destinationUrl,
   redirectUrl,
+  previewSpace = "0%",
 }) => {
   const countries = useMemo(
     () => normalizeCountries(countryDetails).map((item, index) => {
@@ -718,10 +719,17 @@ const TransparencyDelivery = ({
   ].filter((item) => typeof item.value === "string" && item.value.trim());
 
   return (
-    <section className={`rounded-2xl border ${
+    <section
+      className={`rounded-2xl border ${
       isLight ? "border-slate-200 bg-slate-50/70" : "border-white/10 bg-[#151b2b]"
-    }`}>
-      <div className={`border-b px-6 py-5 ${isLight ? "border-slate-200" : "border-white/10"}`}>
+      }`}
+      style={{ "--transparency-preview-space": previewSpace }}
+    >
+      <div
+        className={`border-b px-6 py-5 transition-[margin] duration-300 lg:mr-[var(--transparency-preview-space)] ${
+          isLight ? "border-slate-200" : "border-white/10"
+        }`}
+      >
         <div className="flex items-center gap-2">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-500/15 text-violet-500">
             <BarChart3 size={18} />
@@ -745,7 +753,7 @@ const TransparencyDelivery = ({
       </div>
 
       {summaryCards.length ? (
-        <div className="grid grid-cols-2 gap-2.5 px-6 py-5 md:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2.5 px-6 py-5 transition-[margin] duration-300 md:grid-cols-3 lg:mr-[var(--transparency-preview-space)] xl:grid-cols-5">
           {summaryCards.map((card) => (
             <SummaryCard key={card.label} {...card} isLight={isLight} />
           ))}
@@ -754,7 +762,7 @@ const TransparencyDelivery = ({
 
       <div className="space-y-4 px-6 pb-6">
         {availableLinks.length ? (
-          <div className={`rounded-xl border ${
+          <div className={`rounded-xl border transition-[margin] duration-300 lg:mr-[var(--transparency-preview-space)] ${
             isLight ? "border-slate-200 bg-white" : "border-white/10 bg-white/[0.035]"
           }`}>
             {availableLinks.map((item, index) => (

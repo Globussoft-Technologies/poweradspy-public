@@ -1350,6 +1350,14 @@ const AnalyticsModal = ({
     if (ratio >= 1) return 22;
     return 18;
   }, [ad]);
+  const floatingCreativeWidth = Math.max(
+    10,
+    creativeInitialWidth -
+      Math.min(scrollProgress / 8, creativeInitialWidth - 10),
+  );
+  const transparencyPreviewSpace = creativeClosed
+    ? "0%"
+    : `${floatingCreativeWidth + 3}%`;
 
   const processedAd = useMemo(() => {
     if (!ad) return null;
@@ -1960,11 +1968,11 @@ const AnalyticsModal = ({
           platform={ad?.badgeNetwork || ctx.platform}
           onClose={onClose}
         />
-        {!creativeClosed && !isTransparency && (
+        {!creativeClosed && (
           <div
             className="hidden lg:block absolute right-6 top-16 z-30 transition-all duration-300 ease-in-out overflow-hidden"
             style={{
-              width: `${Math.max(10, creativeInitialWidth - Math.min(scrollProgress / 8, creativeInitialWidth - 10))}%`,
+              width: `${floatingCreativeWidth}%`,
               maxWidth: 'calc(100% - 1.5rem)',
             }}
           >
@@ -2001,14 +2009,8 @@ const AnalyticsModal = ({
         >
           {/* ── Hero Section ────────────────────────────────────── */}
           <div
-            className={`px-6 pb-6 ${
-              isTransparency
-                ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start"
-                : ""
-            }`}
-            style={isTransparency
-              ? undefined
-              : { marginRight: `${creativeInitialWidth + 3}%` }}
+            className="px-6 pb-6"
+            style={{ marginRight: `${creativeInitialWidth + 3}%` }}
           >
             <div className="space-y-4">
               {/* Advertiser */}
@@ -2181,29 +2183,6 @@ const AnalyticsModal = ({
               )}
             </div>
 
-            {isTransparency && !creativeClosed && (
-              <div
-                data-testid="transparency-contained-preview"
-                className={`mt-5 h-[clamp(220px,32vh,320px)] w-full overflow-hidden rounded-2xl border shadow-lg lg:mt-0 ${
-                  isLight
-                    ? "border-slate-200 bg-slate-50 shadow-slate-900/10"
-                    : "border-white/10 bg-[#131313] shadow-black/40"
-                }`}
-              >
-                <CreativePreview
-                  key={processedAd.id}
-                  d={d}
-                  ad={processedAd}
-                  ctx={ctx}
-                  isTikTok={isTikTok}
-                  isLight={isLight}
-                  activeIndex={activeIndex}
-                  setActiveIndex={setActiveIndex}
-                  contained
-                />
-              </div>
-            )}
-
             {/* Ad Details table */}
             {!isTransparency && <div className="pt-4 mt-4">
               <h2
@@ -2330,6 +2309,7 @@ const AnalyticsModal = ({
 
             {isTransparency && (
               <TransparencyDelivery
+                previewSpace={transparencyPreviewSpace}
                 isLight={isLight}
                 subnetwork={d.subnetwork || processedAd?.subnetwork || ad?.subnetwork}
                 impressions={d.impressions || processedAd?.impressionRange || ad?.impressionRange}

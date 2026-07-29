@@ -491,7 +491,11 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
   return (
     <div className="px-6">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="flex items-center gap-2 text-[18px] font-bold tracking-wider text-white/90">
+        <h3
+          className={`flex items-center gap-2 text-[18px] font-bold tracking-wider ${
+            isLight ? "text-slate-800" : "text-white/90"
+          }`}
+        >
           <Globe size={16} className="opacity-60" />
           Country Reach
         </h3>
