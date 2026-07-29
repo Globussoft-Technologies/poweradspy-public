@@ -216,7 +216,7 @@ function isset(v){ return v !== null && v !== undefined && String(v).trim() !== 
 // ── constants ─────────────────────────────────────────────────────────────────
 var FILTER_TYPES = [
   'icon_toggle','checkbox','radio','segmented_control',
-  'dropdown_single','dropdown_multi','chip_multi_select','nested_select',
+  'dropdown_single','dropdown_multi','chip_multi_select','nested_select','nested_multiselect',
   'range_slider','date_preset','date_range_custom',
   'toggle_switch','text_input','autocomplete','combobox','number_stepper'
 ];
@@ -224,7 +224,8 @@ var DISPLAY_MODES = ['input','tab_toggle','icon_pill','dropdown','accordion','in
 var ICON_TYPES    = ['svg','url','none'];
 var CONFIG_TYPES  = ['searchbar','navbar','sidebar'];
 var PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok'];
-var TYPES_WITH_OPTS = ['icon_toggle','checkbox','radio','segmented_control','dropdown_single','dropdown_multi','chip_multi_select','nested_select','date_preset','combobox'];
+// Preserve nested category editing in the admin UI when sibling AI filters are removed.
+var TYPES_WITH_OPTS = ['icon_toggle','checkbox','radio','segmented_control','dropdown_single','dropdown_multi','chip_multi_select','nested_select','nested_multiselect','date_preset','combobox'];
 var RANGE_TYPES   = ['range_slider'];
 var INPUT_TYPES   = ['text_input','autocomplete'];
 var DATE_RANGE_T  = ['date_range_custom'];
@@ -543,7 +544,8 @@ function renderFilterAccordion(f, fi){
     date_preset:'bg-amber-50 text-amber-600', date_range_custom:'bg-orange-50 text-orange-600',
     checkbox:'bg-indigo-50 text-indigo-600', radio:'bg-pink-50 text-pink-600',
     icon_toggle:'bg-teal-50 text-teal-600', chip_multi_select:'bg-violet-50 text-violet-600',
-    nested_select:'bg-rose-50 text-rose-600'
+    nested_select:'bg-rose-50 text-rose-600',
+    nested_multiselect:'bg-rose-50 text-rose-600'
   }[f.type] || 'bg-slate-100 text-slate-600';
 
   return '<div class="rounded-xl overflow-hidden border border-slate-200" id="facc-'+fi+'">' +

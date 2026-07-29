@@ -51,11 +51,13 @@ const NET_SQL = {
 };
 
 // Fields stored as MySQL JSON columns — bound as a JSON string (or SQL NULL when absent).
+// `offers` remains here only for compatibility with older payloads.
 const JSON_FIELDS = ['intent', 'hook', 'colors', 'offers', 'roa'];
-// Plain scalar (VARCHAR/TEXT) columns. category_id/subcategory_id are the v1.6 4/8-char
-// taxonomy codes — kept here so the row is a faithful copy of the ai_meta object (the
-// SQL→category linkage still goes through the category NAME, not these codes).
-const SCALAR_FIELDS = ['ad_type', 'offering_type', 'offering', 'caption', 'category', 'category_id', 'sub_category', 'subcategory_id'];
+// Plain scalar (VARCHAR/TEXT) columns. `offer_type` is the new fixed scalar field.
+// category_id/subcategory_id are the v1.6 4/8-char taxonomy codes — kept here so the
+// row is a faithful copy of the ai_meta object (the SQL→category linkage still goes
+// through the category NAME, not these codes).
+const SCALAR_FIELDS = ['ad_type', 'offering_type', 'offer_type', 'offering', 'caption', 'category', 'category_id', 'sub_category', 'subcategory_id'];
 const ALL_FIELDS = [...SCALAR_FIELDS, ...JSON_FIELDS];
 
 /** Bind a value for a JSON column: a JSON string, or SQL NULL when the field is absent. */

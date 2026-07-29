@@ -10,6 +10,7 @@ const FULL = {
   intent: ["conversion", "awareness", "lead_generation"],
   hook: ["urgency", "social_proof", "scarcity"],
   offering_type: "product",
+  offer_type: "flat_discount",
   offering: "printer parts",
   caption: "A hand holding printer parts against a white background.",
   roa: {
@@ -32,14 +33,15 @@ describe("aiMetaValidator v1.5 > happy path", () => {
     const r = validateAiMeta(FULL);
     expect(r.errors).toEqual([]);
     expect(r.storedFields).toEqual(expect.arrayContaining([
-      "ad_type", "offering_type", "intent", "hook", "colors", "offering", "caption", "roa",
+      "ad_type", "offering_type", "offer_type", "intent", "hook", "colors", "offering", "caption", "roa",
     ]));
     // Removed fields never appear (v1.5 dropped brand + celebrity too)
     expect(r.storedFields).not.toEqual(expect.arrayContaining(["status", "product_type", "language", "ocr", "object", "brand_logos", "brand", "celebrity"]));
   });
-  it("offers omitted is fine (most ads)", () => {
-    expect(validateAiMeta(FULL).errors).toEqual([]);
-    expect("offers" in validateAiMeta(FULL).normalized).toBe(false);
+  it("offer_type is part of the stable shape and accepts explicit null", () => {
+    const r = validateAiMeta({ ...FULL, offer_type: null });
+    expect(r.errors).toEqual([]);
+    expect(r.normalized.offer_type).toBeNull();
   });
   it("removed fields (brand/celebrity) are ignored, not errored", () => {
     const r = validateAiMeta({ ...FULL, brand: "Nike", celebrity: ["Someone"] });
@@ -97,35 +99,38 @@ describe("aiMetaValidator v1.4 > colors (hex palette)", () => {
   });
 });
 
-describe("aiMetaValidator v1.4 > offers", () => {
-  it("percentage_discount value must be 0-100", () => {
-    expect(errFields(validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount", value: 125 }] }))).toContain("ai_meta.offers[0].value");
+describe("aiMetaValidator v1.4 > offer_type", () => {
+  it("accepts the allowed scalar offer_type values", () => {
+    for (const v of ["percentage_discount", "flat_discount", "free_trial", "other"]) {
+      expect(validateAiMeta({ ...FULL, offer_type: v }).errors).toEqual([]);
+    }
   });
-  it("percentage_discount requires a numeric value", () => {
-    expect(errFields(validateAiMeta({ ...FULL, offers: [{ type: "percentage_discount" }] }))).toContain("ai_meta.offers[0].value");
-  });
-  it("non-discount type forces value to null", () => {
-    const r = validateAiMeta({ ...FULL, offers: [{ type: "free_trial", value: 5 }] });
+  it("preserves explicit null for offer_type", () => {
+    const r = validateAiMeta({ ...FULL, offer_type: null });
     expect(r.errors).toEqual([]);
-    expect(r.normalized.offers[0]).toEqual({ type: "free_trial", value: null });
+    expect(r.normalized.offer_type).toBeNull();
   });
-  it("bad offer type rejected; empty offers array rejected", () => {
-    expect(errFields(validateAiMeta({ ...FULL, offers: [{ type: "half_off" }] }))).toContain("ai_meta.offers[0].type");
-    expect(errFields(validateAiMeta({ ...FULL, offers: [] }))).toContain("ai_meta.offers");
+  it("rejects an invalid offer_type value", () => {
+    expect(errFields(validateAiMeta({ ...FULL, offer_type: "half_off" }))).toContain("ai_meta.offer_type");
+  });
+  it("legacy offers arrays still normalize to the first offer type", () => {
+    const r = validateAiMeta({ ...FULL, offer_type: undefined, offers: [{ type: "free_trial", value: null }] });
+    expect(r.errors).toEqual([]);
+    expect(r.normalized.offer_type).toBe("free_trial");
   });
 });
 
 describe("aiMetaValidator v1.5 > caption + roa", () => {
   it("caption stored; empty caption omitted; >200 rejected", () => {
     expect(validateAiMeta({ ...FULL, caption: "A blue banner." }).normalized.caption).toBe("A blue banner.");
-    expect("caption" in validateAiMeta({ ...FULL, caption: "   " }).normalized).toBe(false);
+    expect(validateAiMeta({ ...FULL, caption: "   " }).normalized.caption).toBeNull();
     expect(errFields(validateAiMeta({ ...FULL, caption: "x".repeat(201) }))).toContain("ai_meta.caption");
   });
-  it("roa keeps only known non-empty sub-fields; all-empty → omitted", () => {
+  it("roa keeps only known non-empty sub-fields; all-empty → null", () => {
     const r = validateAiMeta({ ...FULL, roa: { intent: "why", bogus: "ignored", hook: "" } });
     expect(r.errors).toEqual([]);
     expect(r.normalized.roa).toEqual({ intent: "why" });
-    expect("roa" in validateAiMeta({ ...FULL, roa: { intent: "", hook: "" } }).normalized).toBe(false);
+    expect(validateAiMeta({ ...FULL, roa: { intent: "", hook: "" } }).normalized.roa).toBeNull();
   });
   it("roa sub-field over 200 chars rejected", () => {
     expect(errFields(validateAiMeta({ ...FULL, roa: { intent: "x".repeat(201) } }))).toContain("ai_meta.roa.intent");
@@ -145,16 +150,26 @@ describe("aiMetaValidator v1.6 > category classification group (ids inside ai_me
     const { category, category_id, sub_category, subcategory_id, ...noCat } = FULL;
     const r = validateAiMeta(noCat);
     expect(r.errors).toEqual([]);
-    expect("category" in r.normalized).toBe(false);
-    expect("category_id" in r.normalized).toBe(false);
+    expect(r.normalized.category).toBeNull();
+    expect(r.normalized.category_id).toBeNull();
+    expect(r.normalized.sub_category).toBeNull();
+    expect(r.normalized.subcategory_id).toBeNull();
   });
   it("category without category_id is rejected (and vice versa), and drops the half-pair", () => {
     const { category_id, ...noId } = FULL;
     const r = validateAiMeta(noId);
     expect(errFields(r)).toContain("ai_meta.category_id");
-    expect("category" in r.normalized).toBe(false);   // half-pair not persisted
+    expect(r.normalized.category).toBeNull();   // half-pair not persisted
     const { category, ...noName } = FULL;
     expect(errFields(validateAiMeta(noName))).toContain("ai_meta.category");
+  });
+  it("offer_type and legacy offers cannot be sent together", () => {
+    const r = validateAiMeta({
+      ...FULL,
+      offer_type: "flat_discount",
+      offers: [{ type: "flat_discount", value: 25 }],
+    });
+    expect(errFields(r)).toContain("ai_meta.offers");
   });
   it("category shorter than 5 / category_id not exactly 4 chars rejected", () => {
     expect(errFields(validateAiMeta({ ...FULL, category: "Ab", category_id: "12" }))).toEqual(

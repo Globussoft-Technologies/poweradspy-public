@@ -7,6 +7,8 @@
  * SAFETY (does NOT touch existing data):
  *   - Every statement is `CREATE TABLE IF NOT EXISTS` — it never drops, alters,
  *     or truncates an existing table.
+ *   - If the table already exists, this script is a no-op by design. Use
+ *     `migrate-offer-type.js` for additive column changes on live tables.
  *   - No writes hit existing business tables; the new table only references the
  *     parent ad table with an FK.
  *   - DRY-RUN by default: prints what it would do. Pass --commit to execute.
@@ -65,6 +67,7 @@ function buildDDL(net, cfgNet) {
   \`${cfgNet.fkCol}\` ${cfgNet.fkType} NOT NULL,
   ad_type        VARCHAR(32)  NULL,
   offering_type  VARCHAR(16)  NULL,
+  offer_type     VARCHAR(32)  NULL,
   offering       VARCHAR(255) NULL,
   caption        TEXT         NULL,
   category       VARCHAR(255) NULL,
@@ -144,7 +147,12 @@ async function main() {
       }
 
       await sql.query(ddl);
-      console.log(`[${net}] ${exists ? 'NO-OP' : 'CREATED'} — ${label}`);
+      if (exists) {
+        console.log(`[${net}] NO-OP — ${label} already exists; no columns were altered`);
+        console.log(`      use scripts/ai-meta/migrate-offer-type.js for additive changes like offer_type`);
+      } else {
+        console.log(`[${net}] CREATED — ${label}`);
+      }
       summary.push({ net, status: exists ? 'existed' : 'created' });
     } catch (err) {
       console.log(`[${net}] ERROR — ${label} — ${err.message}`);

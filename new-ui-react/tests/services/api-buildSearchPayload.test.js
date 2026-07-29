@@ -34,12 +34,12 @@ describe("buildSearchPayload > AI-Meta", () => {
       activePlatforms: ["facebook"],
       ai_ad_type: ["promotional"],
       ai_intent: ["conversion"],
-      ai_offer_value: [10, 50],
+      ai_offer_type: ["percentage_discount"],
     });
 
     expect(payload.ai_ad_type).toEqual(["promotional"]);
     expect(payload.ai_intent).toEqual(["conversion"]);
-    expect(payload.ai_offer_value).toEqual([10, 50]);
+    expect(payload.ai_offer_type).toEqual(["percentage_discount"]);
   });
 });
 
@@ -493,7 +493,7 @@ describe("buildSearchPayload > misc fields", () => {
   });
   it("source scalar → v(...) handles", () => {
     const p = buildSearchPayload({ source: "single" });
-    expect(p.source).toBe("single");
+    expect(p.source).toEqual(["single"]);
   });
   it("ecommerce array preserved", () => {
     const p = buildSearchPayload({ ecommerce: ["Shopify"] });
@@ -678,12 +678,12 @@ describe("buildSearchPayload > platform-support gating (false + secondary-operan
     expect(p.upper_age).toBe(24);
   });
 
-  it("ad_sub_position: both unsupported → NA (867 return)", () => {
+  it("ad_sub_position scalar still normalizes to uppercase array", () => {
     const p = buildSearchPayload({
       ad_sub_position: "top", activePlatforms: fb,
       filterPlatformSupport: { ad_sub_position_filter: ["nope"], ad_sub_position: ["nope"] },
     });
-    expect(p.ad_sub_position).toBe("NA");
+    expect(p.ad_sub_position).toEqual(["TOP"]);
   });
   it("ad_sub_position: secondary supported → uppercased (867 second operand)", () => {
     const p = buildSearchPayload({

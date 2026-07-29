@@ -17,8 +17,8 @@ node scripts/ai-meta/apply-sql-tables.js --only=facebook,native --commit
 ```
 `CREATE TABLE IF NOT EXISTS` per network — never drops/alters, safe to re-run. FK →
 `<net>_ad(id)` `ON DELETE CASCADE` (FK column type matches the parent: `INT UNSIGNED`
-for all, signed `INT` for tiktok). 17 columns incl. `category_id`/`subcategory_id` and
-`caption TEXT`.
+for all, signed `INT` for tiktok). The fresh DDL now includes the nullable scalar
+`offer_type` column alongside the legacy compatibility `offers` JSON field.
 
 ## 2. `apply-es-mapping.js` — add the AI-Meta mapping to each live index
 ```
@@ -30,7 +30,16 @@ Additive `PUT <index>/_mapping` only — never creates an index, never reindexes
 deletes. Detects ES major (6 typed `/doc` vs 7+/8 typeless) and resolves the per-network
 index + cluster the same way the app does. Dev and normal environments map the `ai`
 field; production Facebook maps `ai_meta` so the poisoned legacy `ai` mapping can be
-ignored in place.
+ignored in place. The mapping now also includes the scalar `offer_type` keyword field.
+
+## 2b. `migrate-offer-type.js` — add `offer_type` to existing SQL tables
+```
+node scripts/ai-meta/migrate-offer-type.js                 # dry-run
+node scripts/ai-meta/migrate-offer-type.js --commit        # apply to all 11
+node scripts/ai-meta/migrate-offer-type.js --only=facebook,native --commit
+```
+Use this after the initial table-creation script has already run. It only adds or
+normalizes the nullable `offer_type` column on existing `<net>_ad_ai_meta` tables.
 
 ## 3. `reindex-ai-mapping.js` — legacy repair for stale `ai` mappings
 Only needed if you still choose to repair an old `ai` mapping in place. With the current

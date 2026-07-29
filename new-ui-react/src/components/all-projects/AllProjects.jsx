@@ -171,7 +171,15 @@ export const getCountryInfo = (code) => {
 // there's at least one real country, Global reach adds no information the
 // real countries don't already convey.
 export const getDisplayCountries = (countries) => {
-  const list = (Array.isArray(countries) ? countries : []).filter(Boolean);
+  const list = (Array.isArray(countries) ? countries : [])
+    .flatMap((country) =>
+      Array.isArray(country) ? country : country != null && typeof country === "object"
+        ? ["country", "countries", "name", "label", "value", "code"]
+            .map((key) => country[key])
+            .filter((entry) => entry != null && String(entry).trim() !== "")
+        : [country],
+    )
+    .filter(Boolean);
   const seen = new Set();
   const deduped = [];
   for (const c of list) {
@@ -185,7 +193,13 @@ export const getDisplayCountries = (countries) => {
     const key = info.isGlobal
       ? "__global__"
       : info.f === "un"
-        ? `unmapped:${c.toString().trim().toLowerCase()}`
+        ? `unmapped:${c
+            .toString()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .trim()
+            .toLowerCase()
+            .replace(/[.\s_-]+/g, " ")}`
         : info.f;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -1809,8 +1823,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         setProjects((prev) =>
           prev.map((p) => {
             if (p.id !== project.id) return p;
+            const monitoredDelta = newStatus === "0" ? 1 : -1;
             return {
               ...p,
+              initialMonitoredCount: Math.max(
+                0,
+                (p.initialMonitoredCount || 0) + monitoredDelta,
+              ),
               competitors: p.competitors.map((c) =>
                 c.id === competitor.id
                   ? { ...c, isMonitored: !c.isMonitored }
@@ -2278,6 +2297,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
           ) : hasProjects ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {projects.map((proj) => {
+                const liveMonitoredCount = Array.isArray(proj.competitors)
+                  ? proj.competitors.filter((c) => c.isMonitored).length
+                  : null;
+                const monitoredCount =
+                  liveMonitoredCount != null
+                    ? liveMonitoredCount
+                    : proj.initialMonitoredCount || 0;
                 return (
                   <div
                     key={proj.id}
@@ -2330,7 +2356,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                             size={14}
                             className="text-theme-text-secondary opacity-70"
                           />{" "}
-                          Monitoring {proj.initialMonitoredCount} /{" "}
+                          Monitoring {monitoredCount} /{" "}
                           {proj.initialCompetitorCount || 0}
                         </>
                       )}

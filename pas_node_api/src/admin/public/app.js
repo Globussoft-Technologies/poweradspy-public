@@ -1055,14 +1055,15 @@ function showToast(message, type = 'info') {
 // ─── Constants ────────────────────────────────────────────
 const SDUI_FILTER_TYPES = [
   'icon_toggle','checkbox','radio','segmented_control',
-  'dropdown_single','dropdown_multi','chip_multi_select','nested_select',
+  'dropdown_single','dropdown_multi','chip_multi_select','nested_select','nested_multiselect',
   'range_slider','date_preset','date_range_custom',
   'toggle_switch','text_input','autocomplete','combobox','number_stepper',
 ];
 const SDUI_DISPLAY_MODES = ['input','tab_toggle','icon_pill','dropdown','accordion','inline'];
 const SDUI_ICON_TYPES    = ['svg','url','none'];
 const SDUI_PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok'];
-const SDUI_TYPES_WITH_OPTS = ['icon_toggle','checkbox','radio','segmented_control','dropdown_single','dropdown_multi','chip_multi_select','nested_select','date_preset','combobox'];
+// Keep the AI category editor stable: nested_multiselect must survive edit/re-render cycles.
+const SDUI_TYPES_WITH_OPTS = ['icon_toggle','checkbox','radio','segmented_control','dropdown_single','dropdown_multi','chip_multi_select','nested_select','nested_multiselect','date_preset','combobox'];
 const SDUI_INPUT_TYPES   = ['text_input','autocomplete'];
 const SDUI_MODE_COLORS   = {
   accordion: 'background:rgba(100,116,139,.2);color:#94a3b8',
@@ -1464,6 +1465,7 @@ function sduiRenderFilterAcc(f, fi) {
     checkbox:'background:rgba(99,102,241,.2);color:#a5b4fc',      radio:'background:rgba(236,72,153,.15);color:#f9a8d4',
     icon_toggle:'background:rgba(20,184,166,.15);color:#5eead4',  chip_multi_select:'background:rgba(167,139,250,.15);color:#c4b5fd',
     nested_select:'background:rgba(244,63,94,.15);color:#fda4af',
+    nested_multiselect:'background:rgba(244,63,94,.15);color:#fda4af',
   };
   const tc = tColors[f.type] || 'background:rgba(100,116,139,.2);color:#94a3b8';
   const dotColor = f.visible ? '#4ade80' : '#475569';

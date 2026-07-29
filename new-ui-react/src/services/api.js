@@ -826,7 +826,6 @@ const AI_META_FILTER_KEYS = [
   'ai_hook',
   'ai_offering_type',
   'ai_offer_type',
-  'ai_offer_value',
   'ai_colors',
   'ai_category_id',
   'ai_subcategory_id',

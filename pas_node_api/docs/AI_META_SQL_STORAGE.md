@@ -34,6 +34,7 @@ touch any child/variant/meta tables.
 |---|---|---|---|
 | `ad_type` | `ad_type` | `VARCHAR(32)` | single enum value |
 | `offering_type` | `offering_type` | `VARCHAR(16)` | `product`/`service`/`both` |
+| `offer_type` | `offer_type` | `VARCHAR(32)` | scalar offer enum; nullable and the new primary contract |
 | `offering` | `offering` | `VARCHAR(255)` | ≤200 in spec; 255 headroom |
 | `caption` | `caption` | `TEXT` | free-text visual description; never indexed, so `TEXT` (survives a loosened cap without `ALTER`) |
 | `category` | `category` | `VARCHAR(255)` | major category name; **also** dual-written to `<net>_ad.category_id` (see note) |
@@ -43,15 +44,17 @@ touch any child/variant/meta tables.
 | `intent` | `intent` | `JSON` | array of enum strings |
 | `hook` | `hook` | `JSON` | array of enum strings |
 | `colors` | `colors` | `JSON` | array of hex strings |
-| `offers` | `offers` | `JSON` | array of `{type,value}` objects |
+| `offers` | `offers` | `JSON` | legacy-only compatibility array during migration; no longer written for the new scalar contract |
 | `roa` | `roa` | `JSON` | `{intent,hook,offering_type,offering}` |
 
 **Why JSON for the multi-valued fields:** `intent`/`hook`/`colors`/`offers`/`roa` are arrays/nested.
 MySQL 8 has a native `JSON` type, so we store them as-is (round-trips cleanly, no `||`-delimited
-string-parsing like the legacy tables). If you prefer the legacy delimited-string convention instead,
-use `TEXT` with a `||` separator for the scalar-array fields — but `offers`/`roa` are structured, so
-JSON is strongly recommended there regardless. Scalars are plain columns so they filter/sort without
-JSON functions and can be indexed directly (indexes on `ad_type`, `offering_type`, `category` included).
+string-parsing like the legacy tables). `offer_type` is the new nullable scalar column and is stored as a
+plain `VARCHAR`, so it can be indexed and filtered directly. If you prefer the legacy delimited-string
+convention instead, use `TEXT` with a `||` separator for the scalar-array fields — but `offers`/`roa` are
+structured, so JSON is strongly recommended there regardless. Scalars are plain columns so they
+filter/sort without JSON functions and can be indexed directly (indexes on `ad_type`, `offering_type`,
+`offer_type`, `category` included).
 
 **`category` — dual-write (write to BOTH stores).** The AI-Meta table keeps its own `category` column,
 **and** every write must also update the pre-existing category flow so the feed/legacy readers stay
@@ -113,6 +116,7 @@ CREATE TABLE IF NOT EXISTS facebook_ad_ai_meta (
   facebook_ad_id      INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -140,6 +144,7 @@ CREATE TABLE IF NOT EXISTS instagram_ad_ai_meta (
   instagram_ad_id     INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -167,6 +172,7 @@ CREATE TABLE IF NOT EXISTS gdn_ad_ai_meta (
   gdn_ad_id           INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -194,6 +200,7 @@ CREATE TABLE IF NOT EXISTS youtube_ad_ai_meta (
   youtube_ad_id       INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -221,6 +228,7 @@ CREATE TABLE IF NOT EXISTS google_text_ad_ai_meta (
   google_text_ad_id   INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -248,6 +256,7 @@ CREATE TABLE IF NOT EXISTS native_ad_ai_meta (
   native_ad_id        INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -275,6 +284,7 @@ CREATE TABLE IF NOT EXISTS linkedin_ad_ai_meta (
   linkedin_ad_id      INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -302,6 +312,7 @@ CREATE TABLE IF NOT EXISTS reddit_ad_ai_meta (
   reddit_ad_id        INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -329,6 +340,7 @@ CREATE TABLE IF NOT EXISTS quora_ad_ai_meta (
   quora_ad_id         INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -356,6 +368,7 @@ CREATE TABLE IF NOT EXISTS pinterest_ad_ai_meta (
   pinterest_ad_id     INT UNSIGNED NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -383,6 +396,7 @@ CREATE TABLE IF NOT EXISTS tiktok_ads_ai_meta (
   ad_id               INT NOT NULL,
   ad_type       VARCHAR(32)  NULL,
   offering_type VARCHAR(16)  NULL,
+  offer_type    VARCHAR(32)  NULL,
   offering      VARCHAR(255) NULL,
   caption       TEXT         NULL,
   category      VARCHAR(255) NULL,
@@ -434,15 +448,15 @@ Per call, `persistAiMeta({ sql, network, adId, normalized, logger })`:
 
 ```sql
 INSERT INTO facebook_ad_ai_meta
-  (facebook_ad_id, ad_type, offering_type, offering, caption, category, category_id, sub_category, subcategory_id,
-   intent, hook, colors, offers, roa)
-VALUES (?,?,?,?,?,?,?,?,?, ?, ?, ?, ?, ?)
+  (facebook_ad_id, ad_type, offering_type, offer_type, offering, caption, category, category_id, sub_category, subcategory_id,
+   intent, hook, colors, roa)
+VALUES (?,?,?,?,?,?,?,?,?,?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
-  ad_type=VALUES(ad_type), offering_type=VALUES(offering_type), offering=VALUES(offering),
+  ad_type=VALUES(ad_type), offering_type=VALUES(offering_type), offer_type=VALUES(offer_type), offering=VALUES(offering),
   caption=VALUES(caption), category=VALUES(category), category_id=VALUES(category_id),
   sub_category=VALUES(sub_category), subcategory_id=VALUES(subcategory_id),
   intent=VALUES(intent), hook=VALUES(hook), colors=VALUES(colors),
-  offers=VALUES(offers), roa=VALUES(roa);
+  roa=VALUES(roa);
 ```
 
 The JSON columns are bound with `JSON.stringify(value)` and assigned straight into the `JSON` column (MySQL

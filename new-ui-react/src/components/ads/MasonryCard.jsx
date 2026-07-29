@@ -483,9 +483,10 @@ const MasonryCard = ({
     isGoogleTransparency && carouselImages.length > 0
       ? currentMediaIsVideo
       : isVideo;
-  const currentVideoUrl = currentMediaIsVideo
-    ? (currentPreviewIsDirectVideo ? currentImg : effectiveVideoUrl)
-    : effectiveVideoUrl;
+  const currentVideoUrl = currentMediaIsVideo ? currentImg : effectiveVideoUrl;
+  // Quora video whose thumbnail 404'd: show a frame from the actual video instead of a
+  // dead "Preview unavailable". Needs a direct (playable) video URL to grab a frame from.
+  const quoraPlayableVideo = isQuora && cardShowsVideo && !!currentVideoUrl;
   const rawTitleStr =
     (ad.carouselTitles?.length > activeIndex
       ? ad.carouselTitles[activeIndex]
@@ -784,18 +785,35 @@ const MasonryCard = ({
                   {isImageLoading && !imgError && !ad.previewUnavailable && (
                     <div className="absolute inset-0 z-20 media-shimmer pointer-events-none" />
                   )}
-                  {(imgError || ad.previewUnavailable) && (
-                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-900/70 to-zinc-800/40 pointer-events-none">
-                      <ImageIcon
-                        size={28}
-                        className="text-zinc-500"
-                        strokeWidth={1.5}
+                  {(imgError || ad.previewUnavailable) &&
+                    (quoraPlayableVideo && !videoUnavailable ? (
+                      // Quora video whose thumbnail 404'd — render a real frame from the
+                      // video itself (muted, metadata only; the "#t=0.1" fragment forces the
+                      // browser to paint the frame at 0.1s) instead of a dead "Preview
+                      // unavailable". The play button sits on top; if the video URL is also
+                      // dead, onError → handleVideoError sets videoUnavailable and this
+                      // falls through to the "Preview unavailable" branch below.
+                      <video
+                        key={`${currentVideoUrl}_poster`}
+                        src={`${currentVideoUrl}#t=0.1`}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        onError={handleVideoError}
+                        className="absolute inset-0 w-full h-full object-cover block bg-zinc-900"
                       />
-                      <span className="text-[10px] font-medium text-zinc-400 tracking-wide">
-                        Preview unavailable
-                      </span>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-900/70 to-zinc-800/40 pointer-events-none">
+                        <ImageIcon
+                          size={28}
+                          className="text-zinc-500"
+                          strokeWidth={1.5}
+                        />
+                        <span className="text-[10px] font-medium text-zinc-400 tracking-wide">
+                          Preview unavailable
+                        </span>
+                      </div>
+                    ))}
                 </>
               )}
 

@@ -89,9 +89,6 @@ const SliderFilter = ({
 
   const lowValue = pctToValue(lowPct);
   const highValue = pctToValue(highPct);
-  const hasSelection = Array.isArray(value) && value.length > 0;
-  // Only the AI Offer Value control should surface the selection badge/reset.
-  const showSelectionActions = filterId === "ai_offer_value";
 
   // ── Loose-end detection ─────────────────────────────────────────────
   const isAtLooseLeft = lowPct === 0 && looseLeft;
@@ -118,13 +115,6 @@ const SliderFilter = ({
 
   const displayLow = isAtLooseLeft ? "Any" : fmt(isDouble ? lowValue : safeMin);
   const displayHigh = isAtLooseRight ? `${fmt(safeMax)}+` : fmt(highValue);
-  const resetSelection = () => {
-    setLowPct(0);
-    setHighPct(100);
-    setEditingLow(null);
-    setEditingHigh(null);
-    onChangeRef.current?.(false);
-  };
 
   // ── Emit changes ────────────────────────────────────────────────────
   const emit = (newLowPct, newHighPct) => {
@@ -223,8 +213,7 @@ const SliderFilter = ({
   // ── Track fill gradient ─────────────────────────────────────────────
   const trackLeft = isDouble ? lowPct : 0;
   const trackRight = highPct;
-  const useGoldAccent = !isLightTheme && accented && filterId === "ai_offer_value";
-  const trackFillColor = isLightTheme ? "#335296" : useGoldAccent ? "#f5c86a" : "#335296";
+  const trackFillColor = "#335296";
   const trackBaseColor = isLightTheme ? "#cbd5e1" : "#333";
   const trackGradient = `linear-gradient(to right, ${trackBaseColor} ${trackLeft}%, ${trackFillColor} ${trackLeft}%, ${trackFillColor} ${trackRight}%, ${trackBaseColor} ${trackRight}%)`;
 
@@ -250,9 +239,6 @@ const SliderFilter = ({
     loose: "bg-[#3762c1]/10 text-[#335296]",
     destructiveBtn: "border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100 hover:text-red-800",
   };
-  // Dark theme has two looks:
-  // - regular filters keep the familiar blue
-  // - the AI Offer Value slider uses gold as a section accent
   const darkBluePalette = {
     section: "mb-2.5 border-[#3759a3]/15 bg-[#3759a3]/5",
     label: "text-[#6b99ff]",
@@ -265,24 +251,9 @@ const SliderFilter = ({
     loose: "bg-[#3762c1]/10 text-[#6b99ff]",
     destructiveBtn: "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15 hover:text-red-200",
   };
-  const darkGoldPalette = {
-    section: "mb-2.5 border-[#f5c86a]/15 bg-[#f5c86a]/5",
-    label: "text-[#f5d88d]",
-    badge: "border-[#f5c86a]/20 bg-[#f5c86a]/8 text-[#f5d88d]/90",
-    input: "bg-[#2a2f3d] border-[#525a70] hover:border-[#7a8499] hover:bg-[#323848] focus:border-[#5a82d6] focus:bg-[#3759a3]/20 focus:text-white",
-    trackFill: "#f5c86a",
-    trackBase: "#333",
-    thumb: "#f5c86a",
-    thumbBorder: "var(--color-border)",
-    loose: "bg-[#f5c86a]/10 text-[#f5c86a]",
-    destructiveBtn: "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15 hover:text-red-200",
-  };
-  // Only the AI Offer Value slider gets the gold treatment in dark mode.
   const accentPalette = isLightTheme
     ? lightPalette
-    : useGoldAccent
-      ? darkGoldPalette
-      : darkBluePalette;
+    : darkBluePalette;
 
   return (
     <div className={`px-3 py-2 rounded-xl border ${accented ? accentPalette.section : "border-transparent"}`}>
@@ -291,20 +262,6 @@ const SliderFilter = ({
           <div className={`text-[10px] font-bold uppercase tracking-widest ${accented ? accentPalette.label : "text-theme-text-secondary"}`}>
             {label}
           </div>
-          {showSelectionActions && hasSelection && (
-            <div className="flex items-center gap-1.5">
-              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? accentPalette.badge : "border-[#3759a3]/25 bg-[#3762c1]/8 text-[#6b99ff]/90"}`}>
-                selected
-              </span>
-              <button
-                type="button"
-                onClick={resetSelection}
-                className={`rounded-md border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] transition-colors ${accented ? accentPalette.destructiveBtn : "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15 hover:text-red-200"}`}
-              >
-                Reset
-              </button>
-            </div>
-          )}
         </div>
       )}
       <div className="flex items-center justify-start gap-1 text-[9px] text-theme-text-muted mb-2 flex-wrap">

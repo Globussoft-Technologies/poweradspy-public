@@ -107,7 +107,7 @@ Responses: `200` (found), `400` (bad/missing platform or ad_id), `404` (ad not f
 Implements `AI_META_API_PAYLOAD_SPEC.md` **v1.6** (2026-07-13). Data is stored on the ad's ES doc
 under a single AI-Meta object (spec §7 mapping): normally the ES field is `ai`, but the
 production Facebook index uses `ai_meta` to bypass the poisoned legacy mapping. Field set = 8 core (`ad_type`, `intent`, `hook`,
-`offering_type`, `offers`, `offering`, `caption`, `roa`) + `colors` + the category classification group
+`offering_type`, `offer_type`, `offering`, `caption`, `roa`) + `colors` + the category classification group
 (`category`/`category_id`/`sub_category`/`subcategory_id`).
 
 > **Lineage vs the original v1.1 build:** `product_type`→**`offering_type`** (enum shrank to
@@ -127,11 +127,12 @@ Pure/synchronous, fully unit-tested. Enforces the entire §3 contract:
 - **Required core (always):** `ad_type`, `intent`, `hook`, `offering_type`. (No `status` field → no
   partial/failed relaxation; every payload must carry these.)
 - **Enums:** `ad_type` (16), `intent` (11), `hook` (16), `offering_type` (`product`/`service`/`both`),
-  `offer.type` (13), and the **16-value HEX `colors` palette** — named-word colors and off-palette hex
+  `offer_type` (13), and the **16-value HEX `colors` palette** — named-word colors and off-palette hex
   are both rejected (compared case-insensitively, normalised to the palette's uppercase form).
-- **Cardinality:** `intent`/`hook` 1–5, `colors` 0–3, `offers` ≤3; no duplicates.
-- **Offers:** `value` required and `0–100` for `percentage_discount`, required and `≥0` for
-  `flat_discount`, and forced to `null` for every other type.
+- **Cardinality:** `intent`/`hook` 1–5, `colors` 0–3; no duplicates.
+- **Offers compatibility:** legacy `offers` arrays are accepted only when `offer_type` is absent.
+- **Offer type:** `offer_type` is a scalar string-or-null field; it is validated against the 13-value enum
+  and stored as `null` when no offer is identified.
 - **Text:** `offering`/`caption` ≤200 (no newlines/control chars, empty → omitted); `roa` sub-fields
   (`intent`/`hook`/`offering_type`/`offering`) each ≤200, empties dropped, whole object omitted if all empty.
 - **Category group (v1.6):** `category` (≥5) ↔ `category_id` (exactly 4) travel together; `sub_category`
@@ -223,8 +224,11 @@ normalized, logger })` runs alongside every ES `writeAiMeta` (both options), in 
 schema/design in `docs/AI_META_SQL_STORAGE.md`. In short:
 
 - **Upsert** the validated `ai_meta` object into `<net>_ad_ai_meta` (1:1 with `<net>_ad`, keyed on the
-  public `ad_id` → internal PK). JSON fields (`intent`/`hook`/`colors`/`offers`/`roa`) are `JSON.stringify`'d
-  into `JSON` columns; absent fields bind SQL `NULL` (whole-object replace via `ON DUPLICATE KEY`).
+  public `ad_id` → internal PK). JSON fields (`intent`/`hook`/`colors`/`roa`) are `JSON.stringify`'d
+  into `JSON` columns; `offer_type` is stored as a scalar column, and legacy `offers` only remains for
+  migration compatibility; absent fields bind SQL `NULL` (whole-object replace via `ON DUPLICATE KEY`).
+- **Offer contract:** `offer_type` is the scalar field for the new contract. Legacy `offers` remains
+  compatibility-only during migration and is not emitted when `offer_type` is present.
 - **Category dual-write:** category/sub_category (+ the v1.6 `category_id`/`subcategory_id`) come from the
   **`ai_meta` object** (the top-level `newCatInsertion` category is retired). When a category is present and
   the network has a SQL category store, the name is resolved to its `<net>_category.id` (SELECT-then-INSERT)
@@ -253,7 +257,7 @@ schema/design in `docs/AI_META_SQL_STORAGE.md`. In short:
 ## 4. Tests
 
 - `tests/services/common/helpers/aiMetaValidator.test.mjs` — validator (offering_type rename, hex
-  colors, offers rules, `caption`/`roa`, cardinality, no-status, removed brand/celebrity ignored, and the
+  colors, offer_type scalar + legacy offers compatibility, `caption`/`roa`, cardinality, no-status, removed brand/celebrity ignored, and the
   v1.6 category group: name↔id pairing, 4/8-char formats, subcategory_id prefix, half-pair drop).
 - `tests/services/common/controllers/addCategoryController.test.mjs` — feed read-back, native
   fallback, `ad_status` transitions, `getAdCategory`, `insertAiMeta` (200/400/404/503), Option-A
@@ -274,7 +278,7 @@ All `tests/services/common` suites green (615 tests).
 
 1. **ES mapping (spec §7):** apply the explicit AI-Meta mapping to each network's index **before** first
    write. The code writes the data regardless, but without the mapping ES 6.8 dynamic-maps sub-fields
-   (e.g. `ai_meta.colors` as text+keyword, `ai_meta.offers.value` as `long`) — and a later type change would
+   (e.g. `ai_meta.colors` as text+keyword, `ai_meta.offer_type` as `keyword`) — and a later type change would
    require a reindex. **Step-by-step runbook (per-network index list, ES 6.8 vs TikTok 8.x PUT forms,
    curl/Kibana/Node-script methods, verification, reindex fallback): [`AI_META_ES_MAPPING_RUNBOOK.md`](./AI_META_ES_MAPPING_RUNBOOK.md).**
 2. **CDN base:** `getDescriptionDetails` image resolution needs `config.cdn.baseUrl` (or

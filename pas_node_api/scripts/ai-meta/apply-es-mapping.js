@@ -37,6 +37,7 @@ const AI_PROPS = {
   intent:        { type: 'keyword' },
   hook:          { type: 'keyword' },
   offering_type: { type: 'keyword' },
+  offer_type:    { type: 'keyword' },
   offers:        { properties: { type: { type: 'keyword' }, value: { type: 'float' } } },
   colors:        { type: 'keyword' },
   offering:      { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 }, suggest: { type: 'completion', max_input_length: 200 } } },

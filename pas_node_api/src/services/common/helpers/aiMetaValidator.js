@@ -9,8 +9,8 @@
  * ES field (`ai` normally, `ai_meta` only for production facebook).
  * `storedFields` lists the ai_meta keys that survived validation (for the response).
  *
- * v1.6 field set (8 core + colors + category classification group):
- *   ad_type, intent, hook, offering_type, offers, offering, caption, roa, colors,
+ * v1.6+ fixed field set (core + fixed offer_type + category classification group):
+ *   ad_type, intent, hook, offering_type, offer_type, offering, caption, roa, colors,
  *   category, category_id, sub_category, subcategory_id.
  *
  * Lineage vs the old v1.1 shape this file used to enforce:
@@ -25,6 +25,9 @@
  *     newCatInsertion category/category_id is retired). These ids let the
  *     /ai-meta path drive the flat ES ad-doc codes and maintain the master
  *     `category` taxonomy index without the separate classification POST.
+ *   - v1.6+ fixed offer contract uses scalar `offer_type`; the legacy `offers`
+ *     array is accepted only as a compatibility fallback and is no longer
+ *     merged into the new shape when `offer_type` is present.
  * With `status` gone there is no more partial/failed relaxation — every payload is a
  * completed enrichment, so the core fields (ad_type, intent, hook, offering_type) are
  * ALWAYS required. `roa` self-explaining fallback strings are ordinary values (no special rule).
@@ -176,6 +179,21 @@ function validateSingleEnum(errors, base, key, val, allowed, required) {
 }
 
 /**
+ * Validate an optional enum that may be explicitly null.
+ * Preserves null so the new scalar offer contract can stay shape-stable.
+ */
+function validateNullableSingleEnum(errors, base, key, val, allowed) {
+  if (val === undefined) return undefined;
+  if (val === null) return null;
+  if (val === '') return undefined;
+  if (!allowed.includes(val)) {
+    errors.push({ field: `${base}.${key}`, message: `'${val}' is not in the allowed ${key} enum` });
+    return undefined;
+  }
+  return val;
+}
+
+/**
  * Validate a free-text field. Empty/whitespace is treated as "omit" (returns undefined
  * with no error) because the pipeline omits empty free-text rather than sending "".
  */
@@ -268,10 +286,19 @@ function validateCategoryGroup(errors, base, aiMeta, normalized) {
   if (hasSubId && !hasSub) errors.push({ field: `${base}.sub_category`, message: 'sub_category is required when subcategory_id is present' });
   if (hasSub && !hasCat)   errors.push({ field: `${base}.category`, message: 'category is required when sub_category is present' });
 
-  // If a paired id failed validation, drop its partner from normalized so we never
-  // persist a half-pair (e.g. category name with no valid id).
-  if (normalized.category !== undefined && normalized.category_id === undefined) delete normalized.category;
-  if (normalized.sub_category !== undefined && normalized.subcategory_id === undefined) delete normalized.sub_category;
+  // Keep the pair atomic: either both values survive or both stay null.
+  const catValid = hasCat && hasCatId && isPlainString(category) && category.length >= 5 && String(catId).length === 4;
+  const subValid = hasSub && hasSubId && isPlainString(sub) && sub.length >= 2 && String(subId).length === 8
+    && (!hasCatId || String(subId).startsWith(String(catId))) && hasCat;
+
+  if (!catValid) {
+    normalized.category = null;
+    normalized.category_id = null;
+  }
+  if (!subValid) {
+    normalized.sub_category = null;
+    normalized.subcategory_id = null;
+  }
 }
 
 /**
@@ -281,7 +308,17 @@ function validateCategoryGroup(errors, base, aiMeta, normalized) {
  */
 function validateAiMeta(aiMeta, base = 'ai_meta') {
   const errors = [];
-  const normalized = {};
+  const normalized = {
+    offer_type: null,
+    offering: null,
+    caption: null,
+    colors: null,
+    roa: null,
+    category: null,
+    category_id: null,
+    sub_category: null,
+    subcategory_id: null,
+  };
 
   if (!aiMeta || typeof aiMeta !== 'object' || Array.isArray(aiMeta)) {
     errors.push({ field: base, message: 'ai_meta must be an object' });
@@ -302,10 +339,23 @@ function validateAiMeta(aiMeta, base = 'ai_meta') {
   if (hook !== undefined) normalized.hook = hook;
 
   // ── Optional fields (validated only if present) ─────────────────────
-  if (aiMeta.offers !== undefined) {
-    const offers = validateOffers(errors, base, aiMeta.offers);
-    if (offers !== undefined) normalized.offers = offers;
+  const hasOfferType = aiMeta.offer_type !== undefined;
+  const hasOffers = aiMeta.offers !== undefined;
+  if (hasOfferType && hasOffers) {
+    errors.push({ field: `${base}.offers`, message: 'offers must not be sent together with offer_type' });
   }
+
+  const offerType = validateNullableSingleEnum(errors, base, 'offer_type', aiMeta.offer_type, ENUMS.offer_type);
+  if (offerType !== undefined) normalized.offer_type = offerType;
+
+  if (hasOffers && !hasOfferType) {
+    const offers = validateOffers(errors, base, aiMeta.offers);
+    if (offers !== undefined) {
+      normalized.offers = offers;
+      normalized.offer_type = offers.length ? offers[0].type : null;
+    }
+  }
+
   if (aiMeta.colors !== undefined) {
     const colors = validateColors(errors, base, aiMeta.colors);
     if (colors !== undefined) normalized.colors = colors;

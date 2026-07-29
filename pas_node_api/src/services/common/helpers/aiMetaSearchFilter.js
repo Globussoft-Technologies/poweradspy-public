@@ -37,6 +37,20 @@ function values(value) {
   return String(value).split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+function buildOfferTypeClause(field, selected) {
+  // Keep the new scalar contract and older nested JSON payloads both searchable
+  // while the index catches up with the offer_type shape change.
+  return {
+    bool: {
+      should: [
+        { terms: { [`${field}.offer_type`]: selected } },
+        { terms: { [`${field}.offers.type`]: selected } },
+      ],
+      minimum_should_match: 1,
+    },
+  };
+}
+
 /**
  * Fixed-value AI-Meta filters from the live-dashboard contract. Values within
  * a field are OR'd; each returned clause is added alongside other filters, so
@@ -53,7 +67,7 @@ function getAiMetaFilterClauses(network, params = {}) {
     ai_intent: 'intent',
     ai_hook: 'hook',
     ai_offering_type: 'offering_type',
-    ai_offer_type: 'offers.type',
+    ai_offer_type: 'offer_type',
     ai_colors: 'colors',
     ai_category_id: 'category_id',
     ai_subcategory_id: 'subcategory_id',
@@ -61,15 +75,10 @@ function getAiMetaFilterClauses(network, params = {}) {
 
   for (const [param, suffix] of Object.entries(exactFields)) {
     const selected = values(params[param]);
-    if (selected.length) clauses.push({ terms: { [`${field}.${suffix}`]: selected } });
-  }
-
-  // The current AI-Meta mapping stores offers as ordinary objects, not ES
-  // `nested` objects. A value range works on its own, but must not promise
-  // same-offer pairing when it is combined with `ai_offer_type`.
-  const offerValue = values(params.ai_offer_value).map(Number).filter(Number.isFinite);
-  if (offerValue.length === 2) {
-    clauses.push({ range: { [`${field}.offers.value`]: { gte: Math.min(...offerValue), lte: Math.max(...offerValue) } } });
+    if (!selected.length) continue;
+    clauses.push(suffix === 'offer_type'
+      ? buildOfferTypeClause(field, selected)
+      : { terms: { [`${field}.${suffix}`]: selected } });
   }
 
   return clauses;

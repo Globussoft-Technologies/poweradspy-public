@@ -40,7 +40,7 @@ guesses the types, and the guesses are wrong for our use:
 | Field | We want | Dynamic guess | Consequence if left wrong |
 |---|---|---|---|
 | `ai.colors` / `ai_meta.colors` (`"#FFFFFF"`) | `keyword` | `text` + `.keyword` sub-field | can't do a clean exact-term/agg on the base field |
-| `ai.offers.value` / `ai_meta.offers.value` (`25`) | `float` | `long` | later a `12.5` value **fails to index** (type conflict) |
+| `ai.offer_type` / `ai_meta.offer_type` (`flat_discount`) | `keyword` | `text` + `.keyword` sub-field | exact filters/aggs want the keyword field, not the analyzed base field |
 | `ai.offering_type` / `ai_meta.offering_type` etc. | `keyword` | `text`+`keyword` | aggregations slower / on the wrong field |
 
 Once a field is dynamically mapped, you **cannot** change its type in place — you'd have to reindex
@@ -63,12 +63,7 @@ differs per ES version — see §3.
         "intent":        { "type": "keyword" },
         "hook":          { "type": "keyword" },
         "offering_type": { "type": "keyword" },
-        "offers": {
-          "properties": {
-            "type":  { "type": "keyword" },
-            "value": { "type": "float" }
-          }
-        },
+        "offer_type": { "type": "keyword" },
         "colors":        { "type": "keyword" },
         "offering": {
           "type": "text",
@@ -116,9 +111,8 @@ Design notes / why each type:
 - **`caption` → `text`** + `.keyword` — full-text/fuzzy search + exact; no autocomplete (it's a whole
   sentence, not a term you type-ahead).
 - **`roa.*` → `text`** only — free-form justification, searched not faceted.
-- **`offers` → plain object** (not `nested`) — we never match "an offer whose type=X AND value=Y"
-  atomically, so `object` is cheaper. `value` is **`float`** (a dynamic guess would be `long` and then
-  reject a `12.5`).
+- **`offer_type` → `keyword`** — exact filter/aggregation field for the new contract. Legacy `offers`
+  is only kept as a migration bridge; do not use it as the target shape for new writes.
 
 > **v1.5 dropped `brand` and `celebrity`.** Earlier drafts of this runbook gave `brand` a completion
 > sub-field for brand autocomplete — that field no longer exists, so autocomplete is on **`offering`
@@ -276,7 +270,7 @@ const serviceRegistry = require('../src/services/ServiceRegistry');
 
 const AI_PROPS = {
   ad_type:{type:'keyword'}, intent:{type:'keyword'}, hook:{type:'keyword'}, offering_type:{type:'keyword'},
-  offers:{properties:{type:{type:'keyword'}, value:{type:'float'}}},
+  offer_type:{type:'keyword'},
   colors:{type:'keyword'},
   offering:{type:'text', fields:{keyword:{type:'keyword', ignore_above:256}, suggest:{type:'completion', max_input_length:200}}},
   caption:{type:'text', fields:{keyword:{type:'keyword', ignore_above:256}}},
@@ -330,7 +324,7 @@ GET search_mix/_mapping/field/ai.*        # ES 6.8 (Kibana)  — or curl GET <ho
 ```
 - **No `ai.*` fields returned** → nothing was written; just do §4. ✅
 - **`ai.*` present but already matches §2** → someone applied it; you're done. ✅
-- **`ai.*` present with WRONG types** (e.g. `ai.offers.value` as `long`, `ai.colors` as `text`) → you
+- **`ai.*` present with WRONG types** (e.g. `ai.offer_type` as `long`, `ai.colors` as `text`) → you
   cannot change them in place. Reindex:
   1. Create `<index>_v2` with the correct full mapping (existing mapping **+** the §2 `ai` block).
   2. `POST _reindex { "source": {"index":"<index>"}, "dest": {"index":"<index>_v2"} }`.
@@ -344,7 +338,7 @@ GET search_mix/_mapping/field/ai.*        # ES 6.8 (Kibana)  — or curl GET <ho
 
 **a) Mapping is present and correctly typed:**
 ```
-GET gdn_search_mix_v2/_mapping/field/ai.offers.value      # → "type":"float"
+GET gdn_search_mix_v2/_mapping/field/ai.offer_type         # → "type":"keyword"
 GET gdn_search_mix_v2/_mapping/field/ai.colors            # → "type":"keyword"
 GET gdn_search_mix_v2/_mapping/field/ai.category_id       # → "type":"keyword"  (v1.6)
 ```

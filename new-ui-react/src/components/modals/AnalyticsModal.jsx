@@ -1487,14 +1487,9 @@ const AnalyticsModal = ({
     if (!aiMeta || typeof aiMeta !== "object") return [];
     const roa = aiMeta.roa && typeof aiMeta.roa === "object" ? aiMeta.roa : {};
     const offers = Array.isArray(aiMeta.offers) ? aiMeta.offers : [];
-    const offerTypes = offers
-      .map((offer) => formatAiMetaToken(offer?.type))
-      .filter(Boolean)
-      .join(", ");
-    const offerValues = offers
-      .map((offer) => formatAiMetaValue(offer?.value))
-      .filter(Boolean)
-      .join(", ");
+    const offerType = formatAiMetaToken(
+      aiMeta.offer_type ?? offers.find((offer) => offer?.type != null)?.type,
+    );
     const colors = formatAiMetaValue(aiMeta.colors);
     const rows = [];
     const pushRow = (label, value) => {
@@ -1508,8 +1503,7 @@ const AnalyticsModal = ({
     pushRow("INTENT", aiMeta.intent);
     pushRow("HOOK", aiMeta.hook);
     pushRow("OFFERING TYPE", formatAiMetaToken(aiMeta.offering_type));
-    pushRow("OFFER TYPE", offerTypes);
-    pushRow("OFFER VALUE", offerValues);
+    pushRow("OFFER TYPE", offerType);
     pushRow("COLORS", colors);
 
     return [

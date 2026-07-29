@@ -44,21 +44,22 @@ describe('aiMetaSearchFilter', () => {
     expect(esParams.body.query).toEqual({ match_all: {} });
   });
 
-  it('maps fixed contract fields and an offer range to the resolved ES object', () => {
+  it('maps fixed contract fields and offer_type to the resolved ES object', () => {
     const clauses = getAiMetaFilterClauses('google', {
       ai_ad_type: ['promotional', 'demonstration'],
       ai_intent: 'conversion,lead_generation',
       ai_offer_type: ['percentage_discount'],
-      ai_offer_value: [50, 10],
       ai_category_id: '1038',
     });
 
     expect(clauses).toEqual(expect.arrayContaining([
       { terms: { 'ai.ad_type': ['promotional', 'demonstration'] } },
       { terms: { 'ai.intent': ['conversion', 'lead_generation'] } },
-      { terms: { 'ai.offers.type': ['percentage_discount'] } },
+      { bool: { should: [
+        { terms: { 'ai.offer_type': ['percentage_discount'] } },
+        { terms: { 'ai.offers.type': ['percentage_discount'] } },
+      ], minimum_should_match: 1 } },
       { terms: { 'ai.category_id': ['1038'] } },
-      { range: { 'ai.offers.value': { gte: 10, lte: 50 } } },
     ]));
   });
 });

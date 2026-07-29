@@ -60,7 +60,7 @@ Unknown top-level keys are ignored.
 | `offering_type` | string (enum) | ✅ | `product` \| `service` \| `both` |
 | `offering` | string | — | ≤200 chars; omit if empty |
 | `caption` | string | — | ≤200 chars; plain description of the image; omit if empty |
-| `offers` | object[] | — | 1–3 items; see §3.4; omit entirely if no offer |
+| `offer_type` | string \| null | — | 13-value enum or `null`; use the scalar field in new payloads |
 | `roa` | object | — | per-field reasoning; see §3.5; omit if all empty |
 | `colors` | string[] (hex) | — | 0–3 items from the §4.5 palette, most-dominant first |
 | `category` | string | — | category **name**, ≥5 chars — see §3.6 |
@@ -90,11 +90,11 @@ A single value from §4.1. Use `other` if none fit.
   (This has caught real image/text mismatches — e.g. text said "Grammarly" but the image was a Walmart
   banner.) Omit (don't send `""`) when empty.
 
-### 3.4 `offers` (optional array, 1–3)
-Each item: `{ "type": <enum §4.4>, "value": <number|null> }`.
-- `value` is a number **only** for `percentage_discount` (0–100) and `flat_discount` (≥0).
-- For **every other** offer type, `value` **must be `null`**.
-- Omit the whole `offers` key when there is no offer (don't send `[]`).
+### 3.4 `offer_type` (optional scalar)
+Use a single scalar offer label from §4.4, or `null` when the ad has no offer.
+- New payloads should send `offer_type` only.
+- Legacy `offers` arrays are accepted for migration compatibility when `offer_type` is absent, but they are not the new contract.
+- If the model cannot identify any offer, send `offer_type: null` instead of inventing an empty array.
 
 ### 3.5 `roa` (optional object — reasoning-of-action)
 Per-field justification, keys: `intent`, `hook`, `offering_type`, `offering` — each a string ≤200. Empty
@@ -142,10 +142,10 @@ fine (e.g. `"No clear hook; defaulted to 'other'."`).
 `scarcity`, `urgency`, `social_proof`, `authority`, `fear`, `curiosity`, `discount`, `pain_point`,
 `aspiration`, `transformation`, `convenience`, `novelty`, `fomo`, `comparison`, `emotion`, `other`
 
-### 4.4 `offers[].type` (13)
+### 4.4 `offer_type` (13)
 `percentage_discount`, `flat_discount`, `free_trial`, `free_shipping`, `buy_one_get_one`, `bundle_offer`,
 `coupon`, `cashback`, `financing`, `consultation`, `demo`, `limited_time_offer`, `other`
-(only `percentage_discount` and `flat_discount` carry a numeric `value`; all others → `value: null`.)
+(scalar contract; do not wrap it in an `offers[]` array for new requests.)
 
 ### 4.5 `colors` — fixed 16-value HEX palette
 Snap each dominant image color to the nearest of these; send 0–3, most-dominant first. Matched
@@ -189,7 +189,7 @@ You don't need to send anything differently per network — the same payload wor
   "success": true,
   "ad_id": "531218",
   "message": "AI-Meta labels stored successfully",
-  "stored_fields": ["ad_type","intent","hook","offering_type","offering","caption","roa","colors","category","category_id","sub_category","subcategory_id"],
+  "stored_fields": ["ad_type","intent","hook","offering_type","offer_type","offering","caption","roa","colors","category","category_id","sub_category","subcategory_id"],
   "category_sync": { "taxonomy": "New category and subcategory inserted successfully", "mirrored": true },
   "sql": { "sql_status": "stored", "sql_ad_row_id": 42, "category_synced": true }
 }
@@ -240,7 +240,7 @@ The ad id isn't in that network's index. Check `network`/`ad_id`.
     "offering_type": "product",
     "offering": "printer parts",
     "caption": "A hand holding printer parts against a white background.",
-    "offers": [{ "type": "percentage_discount", "value": 20 }],
+    "offer_type": "percentage_discount",
     "roa": {
       "intent": "The 'Shop now' button is a conversion CTA.",
       "hook": "'Only today' signals urgency.",
@@ -266,7 +266,7 @@ An uncategorized ad simply omits the four category fields; everything else is un
 - [ ] All 4 core fields present (`ad_type`, `intent`, `hook`, `offering_type`).
 - [ ] `intent`/`hook`: 1–5 enum values, no dupes.
 - [ ] `colors`: 0–3 from the hex palette (not names).
-- [ ] `offers[].value`: number only for %/flat discount, else `null`; no empty `offers: []`.
+- [ ] `offer_type`: scalar enum value or `null`; do not send a new `offers: []` payload.
 - [ ] Empty free-text (`offering`/`caption`/`roa.*`) omitted, not `""`.
 - [ ] **Category: send the name AND its id** — `category`+`category_id` (4), and if sub-categorizing,
       `sub_category`+`subcategory_id` (8, starting with `category_id`). Or omit all four.
