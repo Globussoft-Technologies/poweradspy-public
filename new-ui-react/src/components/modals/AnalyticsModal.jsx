@@ -4,6 +4,7 @@ import {
   calculateRunningDays,
   normalizeEcommercePlatformKey,
 } from "../../utils/helper";
+import { getAffiliateNetworkLogo } from "../../utils/affiliateLogos";
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
 import mpConversionx from "../../assets/marketingPlatform/conversionx.co.png";
@@ -96,43 +97,6 @@ const FUNNEL_IMGS = {
   'flexi': fnFlexi,
   'webflow': fnWebflow,
   'facebookpixel': fnFacebookPixel,
-};
-
-import afAwin from "../../assets/afiliate_network/awin.png";
-import afCj from "../../assets/afiliate_network/cj.png";
-import afClickbank from "../../assets/afiliate_network/ClickBank.png";
-import afClicksco from "../../assets/afiliate_network/clicksco.png";
-import afDigistore24 from "../../assets/afiliate_network/digistore24.png";
-import afImpact from "../../assets/afiliate_network/impact.png";
-import afMaxbounty from "../../assets/afiliate_network/maxbounty.png";
-import afPartnerstack from "../../assets/afiliate_network/partnerstack.png";
-import afRakuten from "../../assets/afiliate_network/rakuten.png";
-import afShareasale from "../../assets/afiliate_network/shareasale.png";
-import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
-import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
-import afRefersion from "../../assets/afiliate_network/Refersion.webp";
-import afVertoz from "../../assets/afiliate_network/vertoz.jpg";
-import afEbayPartnerNetwork from "../../assets/afiliate_network/ebay_affiliate_network.png";
-
-const AFFILIATE_IMGS = {
-  'awin': afAwin,
-  'clickbank': afClickbank,
-  'clicksco': afClicksco,
-  'commissionjunction': afCj,
-  'cj': afCj,
-  'cjaffiliate': afCj,
-  'digistore24': afDigistore24,
-  'impact': afImpact,
-  'maxbounty': afMaxbounty,
-  'partnerstack': afPartnerstack,
-  'rakuten': afRakuten,
-  'shareasale': afShareasale,
-  'amazonassociates': afAmazonAssociates,
-  'amazon': afAmazonAssociates,
-  'skimlinks': afSkimlinks,
-  'refersion': afRefersion,
-  'vertoz': afVertoz,
-  'ebaypartnernetwork': afEbayPartnerNetwork,
 };
 
 import {
@@ -365,6 +329,16 @@ const ASPECT_RATIOS = {
 export const normalizePlatformSlug = (platform) => {
   if (Number(platform) === 18) return "google";
   return String(platform ?? "").trim().toLowerCase();
+};
+
+export const formatDomainValue = (...values) => {
+  const domain = values.find((value) => {
+    if (value == null) return false;
+    const normalized = String(value).trim().toLowerCase();
+    return normalized !== "" && normalized !== "null" && normalized !== "(none)";
+  });
+
+  return domain == null ? "\u2014" : String(domain).trim();
 };
 
 export const mergeTransparencyDateContract = (mappedAd, sourceAd) => {
@@ -1777,7 +1751,7 @@ const AnalyticsModal = ({
       },
       {
         label: "DOMAIN",
-        value: (d.domain && d.domain !== "null" ? d.domain : null) || (ad?.domain && ad.domain !== "null" ? ad.domain : null) || "—",
+        value: formatDomainValue(d.domain, ad?.domain),
         icon: Globe,
         color: "text-cyan-400",
       },
@@ -2085,7 +2059,7 @@ const AnalyticsModal = ({
                 const afRaw = d.affiliate_data || ad?.affiliateData;
                 const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
                 const afLogos = afList.map(name => {
-                  const src = AFFILIATE_IMGS[name.toLowerCase().replace(/[\s_]+/g, '')];
+                  const src = getAffiliateNetworkLogo(name);
                   return src ? { key: `af_${name}`, src, title: name } : null;
                 }).filter(Boolean);
 

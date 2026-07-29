@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { normalizeEcommercePlatformKey } from "../../utils/helper";
+import { getAffiliateNetworkLogo } from "../../utils/affiliateLogos";
 import {
   X,
   Play,
@@ -93,21 +94,6 @@ import fnFgFunnel from "../../assets/funnels/fgfunnel.webp";
 import fnFlexi from "../../assets/funnels/flexi.png";
 import fnWebflow from "../../assets/funnels/webflow.png";
 import fnFacebookPixel from "../../assets/funnels/facebook_pixel.png";
-import afAwin from "../../assets/afiliate_network/awin.png";
-import afCj from "../../assets/afiliate_network/cj.png";
-import afClickbank from "../../assets/afiliate_network/ClickBank.png";
-import afClicksco from "../../assets/afiliate_network/clicksco.png";
-import afDigistore24 from "../../assets/afiliate_network/digistore24.png";
-import afImpact from "../../assets/afiliate_network/impact.png";
-import afMaxbounty from "../../assets/afiliate_network/maxbounty.png";
-import afPartnerstack from "../../assets/afiliate_network/partnerstack.png";
-import afRakuten from "../../assets/afiliate_network/rakuten.png";
-import afShareasale from "../../assets/afiliate_network/shareasale.png";
-import afAmazonAssociates from "../../assets/afiliate_network/Amazon_Associates.png";
-import afSkimlinks from "../../assets/afiliate_network/SKIMLINKS.jpg";
-import afRefersion from "../../assets/afiliate_network/Refersion.webp";
-import afVertoz from "../../assets/afiliate_network/vertoz.jpg";
-import afEbayPartnerNetwork from "../../assets/afiliate_network/ebay_affiliate_network.png";
 
 const DM_MP_IMGS = {
   'agkn.com': mpAgkn, 'branch': mpBranch, 'conversionx.co': mpConversionx,
@@ -138,27 +124,6 @@ const DM_FN_IMGS = {
   'fgfunnel': fnFgFunnel, 'flexi': fnFlexi, 'webflow': fnWebflow,
   'facebookpixel': fnFacebookPixel,
 };
-const DM_AF_IMGS = {
-  'awin': afAwin,
-  'clickbank': afClickbank,
-  'clicksco': afClicksco,
-  'commissionjunction': afCj,
-  'cj': afCj,
-  'cjaffiliate': afCj,
-  'digistore24': afDigistore24,
-  'impact': afImpact,
-  'maxbounty': afMaxbounty,
-  'partnerstack': afPartnerstack,
-  'rakuten': afRakuten,
-  'shareasale': afShareasale,
-  'amazonassociates': afAmazonAssociates,
-  'amazon': afAmazonAssociates,
-  'skimlinks': afSkimlinks,
-  'refersion': afRefersion,
-  'vertoz': afVertoz,
-  'ebaypartnernetwork': afEbayPartnerNetwork,
-};
-
 const PLATFORM_ICONS = {
   facebook: fbIcon,
   instagram: igIcon,
@@ -1880,7 +1845,7 @@ const AdDetailModal = ({
               const afRaw = ad.affiliateData;
               const afList = Array.isArray(afRaw) ? afRaw : afRaw ? [afRaw] : [];
               const afLogos = afList.map(name => {
-                const src = DM_AF_IMGS[name.toLowerCase().replace(/[\s_]+/g, '')];
+                const src = getAffiliateNetworkLogo(name);
                 return src ? { key: `af_${name}`, src, title: name } : null;
               }).filter(Boolean);
               const allLogos = [...mpLogos, ...ecLogos, ...fnLogos, ...afLogos];

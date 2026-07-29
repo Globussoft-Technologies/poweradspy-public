@@ -6029,10 +6029,10 @@ paths:
   /api/v1/youtube/ads/getLikeCommentShareDetails:
     post:
       tags: [YouTube]
-      summary: Get like/dislike/comment/view analytics timeline
+      summary: Get the current like/comment/view analytics snapshot
       description: |
-        Returns daily likes, dislikes, comments, and views from `youtube_ad_analytics`.
-        YouTube-specific: includes `dislike` and `view` fields instead of `share`.
+        Returns the current likes, comments, and views from the YouTube
+        Elasticsearch document (`reactions.likes`, `comments`, and `views`).
       requestBody:
         required: true
         content:
@@ -6049,7 +6049,7 @@ paths:
                   example: 281
       responses:
         '200':
-          description: Analytics timeline
+          description: Current analytics snapshot
           content:
             application/json:
               schema:
@@ -6068,8 +6068,6 @@ paths:
                         youtube_ad_id:
                           type: integer
                         likes:
-                          type: integer
-                        dislike:
                           type: integer
                         comment:
                           type: integer
@@ -6162,7 +6160,8 @@ paths:
       tags: [YouTube]
       summary: Get advertiser-level monthly LCS data
       description: |
-        Fetches monthly likes, dislikes, comments, and views aggregated by advertiser for a specific year.
+        Fetches and aggregates monthly likes, dislikes, comments, and views from
+        YouTube Elasticsearch documents for a specific advertiser and year.
         Default year is the year of the provided ad.
         YouTube-specific: includes `dislikes` and `views` instead of `shares`.
       requestBody:

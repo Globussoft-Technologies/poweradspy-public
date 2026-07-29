@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDomainValue,
   formatTransparencyCalendarDate,
   getAspectStyle,
   hasTransparencyDetailValue,
@@ -9,6 +10,12 @@ import {
 } from "../../../src/components/modals/AnalyticsModal.jsx";
 
 describe("AnalyticsModal platform normalization", () => {
+  it("shows a dash instead of the domain sentinel value", () => {
+    expect(formatDomainValue("(none)")).toBe("\u2014");
+    expect(formatDomainValue(" (NONE) ")).toBe("\u2014");
+    expect(formatDomainValue("(none)", "poweradspy.com")).toBe("poweradspy.com");
+  });
+
   it("accepts numeric platform 18 without calling string methods on it", () => {
     expect(normalizePlatformSlug(18)).toBe("google");
     expect(() => getAspectStyle(18, "FEED")).not.toThrow();

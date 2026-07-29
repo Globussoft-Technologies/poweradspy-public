@@ -29,40 +29,67 @@ describe("services/youtube/controllers/adInsightsController > getLikeCommentShar
     expect(await getLikeCommentShareDetails({ body: { user_id: "u" }, query: {} }, {}, fakeLogger))
       .toEqual({ code: 401, message: "Missing parameters: youtube_ad_id and user_id are required" });
   });
-  it("503 when db.sql missing", async () => {
+  it("503 when Elasticsearch is missing", async () => {
     expect(await getLikeCommentShareDetails(
-      { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, { sql: null }, fakeLogger
-    )).toEqual({ code: 503, message: "SQL connection not available" });
+      { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, { elastic: null }, fakeLogger
+    )).toEqual({ code: 503, message: "Elasticsearch connection not available" });
   });
-  it("400 when no rows", async () => {
-    const db = { sql: { query: vi.fn(async () => []) } };
+  it("400 when ES has no hits", async () => {
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [] } })) } };
     expect(await getLikeCommentShareDetails(
       { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     )).toEqual({ code: 400, message: "No data found.", data: null });
   });
-  it("400 when rows null", async () => {
-    const db = { sql: { query: vi.fn(async () => null) } };
-    expect((await getLikeCommentShareDetails(
-      { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
-    )).code).toBe(400);
-  });
-  it("200 with date coerced to Number", async () => {
-    const db = { sql: { query: vi.fn(async () => [{ id: 1, youtube_ad_id: 1, likes: 5, dislike: 1, comment: 2, view: 100, date: "1706745600" }]) } };
+  it("reads likes, comments, and views from the ES source", async () => {
+    const search = vi.fn(async () => ({
+      body: {
+        hits: {
+          hits: [{
+            _source: {
+              ad_id: 1,
+              reactions: { likes: "5" },
+              comments: "2",
+              views: "100",
+              last_seen: "1706745600",
+            },
+          }],
+        },
+      },
+    }));
+    const db = { elastic: { indexName: "youtube_ads_data_test", search } };
     const out = await getLikeCommentShareDetails(
       { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     );
     expect(out.code).toBe(200);
-    expect(out.data[0].date).toBe(1706745600);
+    expect(out.data).toEqual([{
+      youtube_ad_id: 1,
+      likes: 5,
+      comment: 2,
+      view: 100,
+      date: 1706745600,
+    }]);
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({
+      index: "youtube_ads_data_test",
+      body: expect.objectContaining({
+        _source: ["ad_id", "reactions.likes", "comments", "views", "last_seen"],
+      }),
+    }));
   });
-  it("null date stays null", async () => {
-    const db = { sql: { query: vi.fn(async () => [{ id: 1, youtube_ad_id: 1, likes: 5, dislike: 1, comment: 2, view: 100, date: null }]) } };
+  it("defaults missing engagement values to zero and keeps a missing date null", async () => {
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {} }] } })) } };
     const out = await getLikeCommentShareDetails(
       { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     );
-    expect(out.data[0].date).toBeNull();
+    expect(out.data[0]).toEqual({
+      youtube_ad_id: 1,
+      likes: 0,
+      comment: 0,
+      view: 0,
+      date: null,
+    });
   });
-  it("500 on SQL throw", async () => {
-    const db = { sql: { query: vi.fn(async () => { throw new Error("e"); }) } };
+  it("500 on ES throw", async () => {
+    const db = { elastic: { search: vi.fn(async () => { throw new Error("e"); }) } };
     expect((await getLikeCommentShareDetails(
       { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     )).code).toBe(500);
@@ -221,17 +248,18 @@ describe("services/youtube/controllers/adInsightsController > getYoutubeOutgoing
 });
 
 describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSData", () => {
-  function mkDb({ metaRow = null, esHits = [], analyticsRows = [], availableYearBuckets = [] } = {}) {
-    let sqlCall = 0;
+  function mkDb({ metaRow = null, esHits = [], availableYearBuckets = [] } = {}) {
     return {
-      sql: { query: vi.fn(async () => {
-        sqlCall++;
-        if (sqlCall === 1) return metaRow ? [metaRow] : [];
-        return analyticsRows;
-      })},
       elastic: { search: vi.fn(async (params) => {
         if (params.body.aggs?.years) {
           return { aggregations: { years: { buckets: availableYearBuckets } } };
+        }
+        if (params.body._source?.includes("post_owner")) {
+          return { hits: { hits: metaRow ? [{ _source: {
+            post_owner: metaRow.post_owner_name,
+            post_owner_id: metaRow.post_owner_id,
+            last_seen: metaRow.last_seen,
+          } }] : [] } };
         }
         return { hits: { hits: esHits } };
       })},
@@ -246,10 +274,7 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
     )).code).toBe(400);
   });
   it("400 when elastic missing", async () => {
-    const db = {
-      sql: { query: vi.fn(async () => [{ post_owner_name: "B", post_owner_id: 5 }]) },
-      elastic: null,
-    };
+    const db = { elastic: null };
     expect((await getAdvertiserLCSData(
       { body: { youtube_ad_id: "1" }, query: {} }, db, fakeLogger
     )).code).toBe(400);
@@ -293,17 +318,13 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
     );
     expect(out.available_years).toEqual([2024, 2022, 2021]);
   });
-  it("200 with monthly aggregation + analytics map", async () => {
+  it("200 with monthly engagement aggregated directly from ES", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" },
       esHits: [
-        { _source: { ad_id: 1, last_seen: "2024-02-01" } },
-        { _source: { ad_id: 2, last_seen: 1706832000 } }, // unix s
-        { _source: { ad_id: 3, last_seen: "2024-03-15T00:00:00Z" } },
-      ],
-      analyticsRows: [
-        { youtube_ad_id: 1, total_likes: 10, total_dislikes: 2, total_comments: 3, total_views: 100 },
-        { youtube_ad_id: 3, total_likes: 5, total_dislikes: 0, total_comments: 1, total_views: 50 },
+        { _source: { ad_id: 1, last_seen: "2024-02-01", reactions: { likes: 10 }, dislikes: 2, comments: 3, views: 100 } },
+        { _source: { ad_id: 2, last_seen: 1706832000, reactions: { likes: 4 }, comments: 2, views: 25 } }, // unix s
+        { _source: { ad_id: 3, last_seen: "2024-03-15T00:00:00Z", "reactions.likes": 5, comments: 1, views: 50 } },
       ],
     });
     const out = await getAdvertiserLCSData(
@@ -311,16 +332,21 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
     );
     expect(out.code).toBe(200);
     expect(out.data.feb_2024.ad_ids).toEqual([1, 2]);
-    expect(out.data.feb_2024.likes).toBe(10);
-    expect(out.data.feb_2024.views).toBe(100);
+    expect(out.data.feb_2024.likes).toBe(14);
+    expect(out.data.feb_2024.comments).toBe(5);
+    expect(out.data.feb_2024.views).toBe(125);
     expect(out.data.mar_2024.likes).toBe(5);
     expect(out.data.mar_2024.dislikes).toBe(0);
+    expect(db.elastic.search).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        _source: ["ad_id", "last_seen", "reactions.likes", "dislikes", "comments", "views"],
+      }),
+    }));
   });
   it("ms timestamp branch in parseESDate", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" },
       esHits: [{ _source: { ad_id: 1, last_seen: 1706745600000 } }],
-      analyticsRows: [],
     });
     const out = await getAdvertiserLCSData(
       { body: { youtube_ad_id: "1" }, query: {} }, db, fakeLogger
@@ -337,28 +363,29 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
     );
     expect(out.year).toBe(new Date().getFullYear());
   });
-  it("body.hits fallback + analyticsRows null", async () => {
-    let sqlCall = 0;
+  it("supports the Elasticsearch client body.hits response shape", async () => {
     const db = {
-      sql: { query: vi.fn(async () => {
-        sqlCall++;
-        if (sqlCall === 1) return [{ post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" }];
-        return null;
+      elastic: { search: vi.fn(async (params) => {
+        if (params.body.aggs?.years) return { body: { aggregations: { years: { buckets: [] } } } };
+        if (params.body._source?.includes("post_owner")) {
+          return { body: { hits: { hits: [{ _source: { post_owner: "B", post_owner_id: 5, last_seen: "2024-01-01" } }] } } };
+        }
+        return { body: { hits: { hits: [
+          { _source: { ad_id: 1, last_seen: "2024-03-01", reactions: { likes: 7 }, comments: 2, views: 30 } }
+        ] } } };
       })},
-      elastic: { search: vi.fn(async () => ({ body: { hits: { hits: [
-        { _source: { ad_id: 1, last_seen: "2024-03-01" } }
-      ]}}}))},
     };
     const out = await getAdvertiserLCSData(
       { body: { youtube_ad_id: "1" }, query: {} }, db, fakeLogger
     );
-    expect(out.data.mar_2024.likes).toBe(0);
+    expect(out.data.mar_2024.likes).toBe(7);
+    expect(out.data.mar_2024.comments).toBe(2);
+    expect(out.data.mar_2024.views).toBe(30);
   });
-  it("falsy analytics totals coerced to 0", async () => {
+  it("falsy ES engagement totals are coerced to 0", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" },
-      esHits: [{ _source: { ad_id: 1, last_seen: "2024-01-01" } }],
-      analyticsRows: [{ youtube_ad_id: 1, total_likes: null, total_dislikes: null, total_comments: null, total_views: null }],
+      esHits: [{ _source: { ad_id: 1, last_seen: "2024-01-01", reactions: { likes: null }, dislikes: null, comments: null, views: null } }],
     });
     const out = await getAdvertiserLCSData(
       { body: { youtube_ad_id: "1" }, query: {} }, db, fakeLogger
@@ -367,9 +394,15 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
     expect(out.data.jan_2024.views).toBe(0);
   });
   it("ES rejection → empty hits → 'No data found'", async () => {
+    let searchCall = 0;
     const db = {
-      sql: { query: vi.fn(async () => [{ post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" }]) },
-      elastic: { search: vi.fn(async () => { throw new Error("es-down"); }) },
+      elastic: { search: vi.fn(async () => {
+        searchCall++;
+        if (searchCall === 1) {
+          return { hits: { hits: [{ _source: { post_owner: "B", post_owner_id: 5, last_seen: "2024-01-01" } }] } };
+        }
+        throw new Error("es-down");
+      }) },
     };
     expect((await getAdvertiserLCSData(
       { body: { youtube_ad_id: "1" }, query: {} }, db, fakeLogger
@@ -663,15 +696,10 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserInsig
     )).code).toBe(400);
   });
   it("lcs type: 200 with monthly buckets", async () => {
-    let sqlCall = 0;
     const db = {
-      sql: { query: vi.fn(async () => {
-        sqlCall++;
-        if (sqlCall === 1) return [{ post_owner_name: "B" }];
-        return [{ youtube_ad_id: 1, total_likes: 5, total_dislikes: 0, total_comments: 1, total_views: 10 }];
-      })},
+      sql: { query: vi.fn(async () => [{ post_owner_name: "B" }]) },
       elastic: { search: vi.fn(async () => ({ hits: { hits: [
-        { _source: { ad_id: 1, last_seen: "2024-05-01" } }
+        { _source: { ad_id: 1, last_seen: "2024-05-01", reactions: { likes: 5 }, comments: 1, views: 10 } }
       ]}}))},
     };
     const out = await getAdvertiserInsightsByDateRange(
@@ -682,15 +710,10 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserInsig
     expect(out.data.may_2024.views).toBe(10);
   });
   it("lcs: body.hits fallback", async () => {
-    let sqlCall = 0;
     const db = {
-      sql: { query: vi.fn(async () => {
-        sqlCall++;
-        if (sqlCall === 1) return [{ post_owner_name: "B" }];
-        return [];
-      })},
+      sql: { query: vi.fn(async () => [{ post_owner_name: "B" }]) },
       elastic: { search: vi.fn(async () => ({ body: { hits: { hits: [
-        { _source: { ad_id: 1, last_seen: "2024-06-01" } }
+        { _source: { ad_id: 1, last_seen: "2024-06-01", reactions: { likes: 2 }, comments: 1, views: 20 } }
       ]}}}))},
     };
     expect((await getAdvertiserInsightsByDateRange(

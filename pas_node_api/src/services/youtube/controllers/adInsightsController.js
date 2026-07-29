@@ -4,20 +4,6 @@ const { normalizeParams } = require('../helpers/paramParser');
 
 // ─── 1. getLikeCommentShareDetails ────────────────────────
 
-const LCS_SQL = `
-  SELECT
-    youtube_ad_analytics.id,
-    youtube_ad_analytics.youtube_ad_id,
-    youtube_ad_analytics.likes,
-    youtube_ad_analytics.dislike,
-    youtube_ad_analytics.comments AS comment,
-    youtube_ad_analytics.views AS view,
-    UNIX_TIMESTAMP(youtube_ad_analytics.date) AS date
-  FROM youtube_ad_analytics
-  WHERE youtube_ad_analytics.youtube_ad_id = ?
-  ORDER BY youtube_ad_analytics.date ASC
-`;
-
 async function getLikeCommentShareDetails(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
@@ -25,22 +11,38 @@ async function getLikeCommentShareDetails(req, db, logger) {
   if (!p.youtube_ad_id || !p.user_id) {
     return { code: 401, message: 'Missing parameters: youtube_ad_id and user_id are required' };
   }
-  if (!db.sql) return { code: 503, message: 'SQL connection not available' };
+  if (!db.elastic) return { code: 503, message: 'Elasticsearch connection not available' };
 
   try {
     const adId = parseInt(p.youtube_ad_id, 10);
-    const rows = await db.sql.query(LCS_SQL, [adId]);
+    const esResult = await db.elastic.search({
+      index: db.elastic.indexName || 'youtube_ads_data',
+      body: {
+        size: 1,
+        _source: ['ad_id', 'reactions.likes', 'comments', 'views', 'last_seen'],
+        query: {
+          bool: {
+            filter: { terms: { ad_id: [adId] } },
+          },
+        },
+      },
+    });
 
-    if (!rows || rows.length === 0) {
+    const hits = (esResult.hits || esResult.body?.hits)?.hits;
+    if (!hits?.length) {
       return { code: 400, message: 'No data found.', data: null };
     }
 
-    // Convert date from BigInt to Number (UNIX_TIMESTAMP returns BigInt in mysql2)
-    for (const r of rows) {
-      if (r.date != null) r.date = Number(r.date);
-    }
+    const source = hits[0]._source || {};
+    const data = [{
+      youtube_ad_id: adId,
+      likes: Number(source.reactions?.likes) || 0,
+      comment: Number(source.comments) || 0,
+      view: Number(source.views) || 0,
+      date: source.last_seen == null ? null : Number(source.last_seen),
+    }];
 
-    return { code: 200, message: 'Youtube analytics details.', data: rows };
+    return { code: 200, message: 'Youtube analytics details.', data };
   } catch (err) {
     logger.error('Error in getLikeCommentShareDetails (youtube)', { error: err.message });
     return { code: 500, message: 'Error fetching LCS details', error: err.message };
@@ -234,79 +236,49 @@ async function fetchAvailableYears(elastic, index, filter) {
   }
 }
 
-async function aggregateLCSData(db, hits) {
+function aggregateLCSData(hits) {
   if (!hits || hits.length === 0) return null;
 
-  const monthlyIds = {};
+  const monthlyData = {};
   for (const hit of hits) {
-    const src = hit._source;
+    const src = hit._source || {};
     const adId = src['ad_id'];
     const rawPostDate = src['last_seen'];
     if (!adId || !rawPostDate) continue;
 
     const dt = parseESDate(rawPostDate);
     const key = `${MONTH_NAMES[dt.getMonth()]}_${dt.getFullYear()}`;
-    if (!monthlyIds[key]) monthlyIds[key] = [];
-    monthlyIds[key].push(adId);
-  }
-
-  if (Object.keys(monthlyIds).length === 0) return null;
-
-  const uniqueIds = [...new Set(Object.values(monthlyIds).flat())];
-  const placeholders = uniqueIds.map(() => '?').join(',');
-  const analyticsRows = await db.sql.query(
-    `SELECT a.youtube_ad_id, SUM(a.likes) AS total_likes, SUM(a.dislike) AS total_dislikes, SUM(a.comments) AS total_comments, SUM(a.views) AS total_views
-     FROM youtube_ad_analytics a
-     INNER JOIN (
-       SELECT youtube_ad_id, MAX(date) AS max_date
-       FROM youtube_ad_analytics
-       WHERE youtube_ad_id IN (${placeholders})
-       GROUP BY youtube_ad_id
-     ) latest ON a.youtube_ad_id = latest.youtube_ad_id AND a.date = latest.max_date
-     WHERE a.youtube_ad_id IN (${placeholders})
-     GROUP BY a.youtube_ad_id`,
-    [...uniqueIds, ...uniqueIds]
-  );
-
-  const analyticsMap = {};
-  if (analyticsRows) {
-    for (const row of analyticsRows) {
-      analyticsMap[row.youtube_ad_id] = {
-        likes: Number(row.total_likes) || 0,
-        dislikes: Number(row.total_dislikes) || 0,
-        comments: Number(row.total_comments) || 0,
-        views: Number(row.total_views) || 0,
+    if (!monthlyData[key]) {
+      monthlyData[key] = {
+        ad_ids: [],
+        total_ads: 0,
+        likes: 0,
+        dislikes: 0,
+        comments: 0,
+        views: 0,
       };
     }
+
+    const month = monthlyData[key];
+    month.ad_ids.push(adId);
+    month.total_ads += 1;
+    month.likes += Number(src.reactions?.likes ?? src['reactions.likes']) || 0;
+    month.dislikes += Number(src.dislikes) || 0;
+    month.comments += Number(src.comments) || 0;
+    month.views += Number(src.views) || 0;
   }
 
+  if (Object.keys(monthlyData).length === 0) return null;
+
   const result = {};
-  const sortedKeys = Object.keys(monthlyIds).sort((a, b) => {
+  const sortedKeys = Object.keys(monthlyData).sort((a, b) => {
     const [mA, yA] = a.split('_');
     const [mB, yB] = b.split('_');
     return (Number(yA) - Number(yB)) || (MONTH_NAMES.indexOf(mA) - MONTH_NAMES.indexOf(mB));
   });
 
   for (const key of sortedKeys) {
-    const ids = monthlyIds[key];
-    let totalLikes = 0, totalDislikes = 0, totalComments = 0, totalViews = 0;
-    for (const id of ids) {
-      const stats = analyticsMap[id];
-      if (stats) {
-        totalLikes += stats.likes;
-        totalDislikes += stats.dislikes;
-        totalComments += stats.comments;
-        totalViews += stats.views;
-      }
-    }
-    result[key] = {
-      ad_ids: ids,
-      total_ads: ids.length,
-      likes: totalLikes,
-      dislikes: totalDislikes,
-      comments: totalComments,
-      views: totalViews,
-    };
+    result[key] = monthlyData[key];
   }
   return result;
 }
@@ -386,23 +358,36 @@ async function getAdvertiserLCSData(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
   if (!p.youtube_ad_id) return { code: 401, message: 'Missing youtube_ad_id', data: null };
+  if (!db.elastic) return { code: 400, message: 'Advertiser not found', data: null };
 
-  const metaRows = await db.sql.query(AD_META_SQL, [p.youtube_ad_id]);
-  const postOwnerName = metaRows?.[0]?.post_owner_name || null;
-  const postOwnerId = metaRows?.[0]?.post_owner_id || null;
-  const adLastSeen = metaRows?.[0]?.last_seen || null;
+  const index = db.elastic.indexName || 'youtube_ads_data';
+  const metaResult = await db.elastic.search({
+    index,
+    body: {
+      size: 1,
+      _source: ['post_owner', 'post_owner_id', 'last_seen'],
+      query: {
+        bool: {
+          filter: { terms: { ad_id: [parseInt(p.youtube_ad_id, 10)] } },
+        },
+      },
+    },
+  });
+  const metaSource = (metaResult.hits || metaResult.body?.hits)?.hits?.[0]?._source;
+  const postOwnerName = metaSource?.post_owner || null;
+  const postOwnerId = metaSource?.post_owner_id || null;
+  const adLastSeen = metaSource?.last_seen || null;
 
-  if (!postOwnerName || !db.elastic) return { code: 400, message: 'Advertiser not found', data: null };
+  if (!postOwnerName) return { code: 400, message: 'Advertiser not found', data: null };
 
   const adYear = p.year || (adLastSeen ? parseESDate(adLastSeen).getFullYear() : new Date().getFullYear());
   const dateRange = getYearRange(adYear);
-  const index = db.elastic.indexName;
 
   const lcsQuery = {
     index,
     body: {
       size: 10000,
-      _source: ['ad_id', 'last_seen'],
+      _source: ['ad_id', 'last_seen', 'reactions.likes', 'dislikes', 'comments', 'views'],
       query: {
         bool: {
           filter: [
@@ -437,7 +422,7 @@ async function getAdvertiserLCSData(req, db, logger) {
     };
   }
 
-  const data = await aggregateLCSData(db, hits);
+  const data = aggregateLCSData(hits);
 
   return {
     code: 200,
@@ -587,7 +572,7 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
         index,
         body: {
           size: 10000,
-          _source: ['ad_id', 'last_seen'],
+          _source: ['ad_id', 'last_seen', 'reactions.likes', 'dislikes', 'comments', 'views'],
           query: {
             bool: {
               filter: [
@@ -605,7 +590,7 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
       // console.log('[getAdvertiserInsightsByDateRange:lcs] hits:', hits?.length ?? 0);
       if (!hits || hits.length === 0) return { code: 400, message: 'No data found.', ...base, data: {} };
 
-      const data = await aggregateLCSData(db, hits);
+      const data = aggregateLCSData(hits);
       return { code: 200, message: 'Advertiser LCS data fetched.', ...base, data: data || {} };
     }
 
