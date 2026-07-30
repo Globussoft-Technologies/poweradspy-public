@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isCapabilityAllowed,
   isCapabilityAllowedOnNetwork,
+  isAdAnalyticsAllowed,
   isPlanNetworkAllowed,
   normalizePlanNetwork,
 } from "../../src/utils/planEntitlement.js";
@@ -61,5 +62,29 @@ describe("plan entitlement decisions", () => {
         },
       },
     }, "intelligence.market_trends.keywords", "facebook")).toBe(false);
+  });
+
+  it("allows Ad Analytics when its migrated Advanced Ad Analytics capability is enabled", () => {
+    const entitlements = {
+      capabilities: {
+        "legacy.advanced_ad_analytics": { allowed: true },
+        "intelligence.competitive": { allowed: false },
+      },
+    };
+    expect(isAdAnalyticsAllowed(entitlements, null)).toBe(true);
+  });
+
+  it("keeps legacy Ad Analytics compatibility when no published policy exists", () => {
+    expect(isAdAnalyticsAllowed(null, {
+      filters: { ad_analytics: { enabled: true } },
+      competitorLimits: { brandLimit: 0 },
+    })).toBe(true);
+    expect(isAdAnalyticsAllowed(null, {
+      filters: {
+        ad_analytics: { enabled: false },
+        advanced_ad_analytics: { enabled: false },
+      },
+      competitorLimits: { brandLimit: 0 },
+    })).toBe(false);
   });
 });

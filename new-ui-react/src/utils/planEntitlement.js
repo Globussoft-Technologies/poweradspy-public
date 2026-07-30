@@ -2,6 +2,26 @@ export function isCapabilityAllowed(entitlements, capabilityId) {
   return entitlements?.capabilities?.[capabilityId]?.allowed === true;
 }
 
+/**
+ * Ad Analytics existed under two legacy names during the plan-control
+ * migration. The customer modal must honour either migrated capability, while
+ * installations without a published policy continue to use plan-access data.
+ */
+export function isAdAnalyticsAllowed(entitlements, planAccess) {
+  if (entitlements) {
+    return (
+      isCapabilityAllowed(entitlements, 'legacy.advanced_ad_analytics') ||
+      isCapabilityAllowed(entitlements, 'intelligence.competitive')
+    );
+  }
+
+  return !!planAccess && (
+    planAccess.filters?.advanced_ad_analytics?.enabled === true ||
+    planAccess.filters?.ad_analytics?.enabled === true ||
+    (planAccess.competitorLimits?.brandLimit ?? 0) > 0
+  );
+}
+
 export function normalizePlanNetwork(network) {
   return String(network ?? '').trim().toLowerCase();
 }

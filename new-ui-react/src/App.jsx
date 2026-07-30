@@ -4,7 +4,11 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { useSDUI } from "./hooks/useSDUI";
 import { findCategoryOptions } from "./utils/categoryTaxonomy";
 import { findCountryOptions, labelsToCountryCodes } from "./utils/countryFilter";
-import { isPlanNetworkAllowed, normalizePlanNetwork } from "./utils/planEntitlement";
+import {
+  isAdAnalyticsAllowed,
+  isPlanNetworkAllowed,
+  normalizePlanNetwork,
+} from "./utils/planEntitlement";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import {
@@ -499,22 +503,21 @@ const App = () => {
   // other. State is just the lookup key; the modal fetches its own data.
   const [keywordExplorer, setKeywordExplorer] = useState(null); // keyword string
   const [advertiserProfile, setAdvertiserProfile] = useState(null); // { postOwnerId?, advertiserName? }
-  // Gate the competitive-intelligence surfaces behind the same plan check as the
-  // analytics modal (onAnalyticsAd): guests and plans without analytics access
-  // get the pricing modal instead. Returns true when access is allowed.
-  const hasAdAnalyticsAccess = entitlements
+  // Ad Analytics and Google Competitive Intelligence are separate controls.
+  // Keep their gates independent so enabling the analytics modal in Plan
+  // Control does not accidentally unlock Google intelligence APIs (or vice
+  // versa).
+  const hasAdAnalyticsAccess = isAdAnalyticsAllowed(entitlements, planAccess);
+  const hasCompetitiveIntelligenceAccess = entitlements
     ? canUseCapability('intelligence.competitive')
-    : !!planAccess && (
-        planAccess.filters?.ad_analytics?.enabled === true ||
-        (planAccess.competitorLimits?.brandLimit ?? 0) > 0
-      );
+    : hasAdAnalyticsAccess;
   const canAccessIntel = () => {
     if (guest?.isRestricted) {
       dispatch(openModal('isPricingModalOpen'));
       return false;
     }
     if (!entitlements && !planAccess) return false;
-    if (!hasAdAnalyticsAccess) {
+    if (!hasCompetitiveIntelligenceAccess) {
       dispatch(openModal('isPricingModalOpen'));
       return false;
     }
