@@ -22,6 +22,20 @@ export function isAdAnalyticsAllowed(entitlements, planAccess) {
   );
 }
 
+/**
+ * Legacy plan access exposes two independent facts:
+ * - planAllowed: whether the subscription purchased the filter
+ * - enabled: whether it is usable on the currently selected network
+ *
+ * Only the first one should open the upgrade dialog. Platform applicability is
+ * handled by SDUI visibility and must not be presented as a subscription deny.
+ */
+export function isLegacyFilterPlanRestricted(status) {
+  if (!status) return false;
+  if (typeof status.planAllowed === 'boolean') return status.planAllowed === false;
+  return status.enabled === false;
+}
+
 export function normalizePlanNetwork(network) {
   return String(network ?? '').trim().toLowerCase();
 }

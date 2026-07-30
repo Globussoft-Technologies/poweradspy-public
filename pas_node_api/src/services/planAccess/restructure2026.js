@@ -38,7 +38,7 @@ const TIER_LABEL = { basic: 'Basic', standard: 'Standard', platinum: 'Platinum',
 // Filter docs gated to Standard+ (all tiers except basic).
 const STANDARD_PLUS_FILTERS = ['gender', 'age', 'ad_type', 'ad_position', 'ad_sub_position', 'ad_tracker'];
 // Filter docs gated to Platinum+ (platinum, palladium only).
-const PLATINUM_PLUS_FILTERS = ['affiliate_network', 'marketing_platform', 'traffic_source', 'ecommerce_platform', 'funnel', 'ad_budget_sort', 'native_network'];
+const PLATINUM_PLUS_FILTERS = ['affiliate_network', 'marketing_platform', 'traffic_source', 'ecommerce_platform', 'funnel', 'ad_budget_sort', 'image_size', 'native_network'];
 // Filter docs open to all 4 tiers (core search/sort filters).
 // project_access is here too — every 2026 tier has a real, nonzero brandLimit/
 // competitorLimit (TIER_COMPETITOR_LIMITS above), so every tier should be able to

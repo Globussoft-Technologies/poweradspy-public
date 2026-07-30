@@ -2,7 +2,11 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { useDispatch } from 'react-redux';
 import { fetchPlanAccess, fetchEntitlements, fetchOnboardingStatus, trackEvent } from '../services/api';
 import { openModal } from '../store/uiSlice';
-import { isCapabilityAllowed, isCapabilityAllowedOnNetwork } from '../utils/planEntitlement';
+import {
+  isCapabilityAllowed,
+  isCapabilityAllowedOnNetwork,
+  isLegacyFilterPlanRestricted,
+} from '../utils/planEntitlement';
 
 const AuthContext = createContext(null);
 const ONBOARDING_DISMISS_KEY_PREFIX = 'pas_onboarding_dismissed_';
@@ -141,6 +145,10 @@ const SDUI_TO_PLAN_ACCESS = {
   budget:                   'ad_budget_sort',
   avg_ad_budget:            'ad_budget_sort',
   budget_filter:            'ad_budget_sort',
+  image_size_filter:        'image_size',
+  imageSize:                'image_size',
+  native_network_filter:    'native_network',
+  nativeNetwork:            'native_network',
   // Sort by dropdown options
   newest_sort:              'newest_sort',
   ad_running_days_sort:     'ad_running_days_sort',
@@ -318,7 +326,7 @@ export function AuthProvider({ children }) {
     if (!planAccess?.filters) return false;
     const planAccessId = SDUI_TO_PLAN_ACCESS[sduiFilterId] || sduiFilterId;
     const status = planAccess.filters[planAccessId];
-    return status ? !status.enabled : false;
+    return isLegacyFilterPlanRestricted(status);
   }, [planAccess, entitlements]);
 
   // Returns true when a filter has an explicit plan-access entry (enabled OR disabled).

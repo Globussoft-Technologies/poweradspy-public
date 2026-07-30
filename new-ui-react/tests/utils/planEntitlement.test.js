@@ -3,6 +3,7 @@ import {
   isCapabilityAllowed,
   isCapabilityAllowedOnNetwork,
   isAdAnalyticsAllowed,
+  isLegacyFilterPlanRestricted,
   isPlanNetworkAllowed,
   normalizePlanNetwork,
 } from "../../src/utils/planEntitlement.js";
@@ -86,5 +87,21 @@ describe("plan entitlement decisions", () => {
       },
       competitorLimits: { brandLimit: 0 },
     })).toBe(false);
+  });
+
+  it("does not show an upgrade dialog for a plan-allowed filter on an inapplicable network", () => {
+    expect(isLegacyFilterPlanRestricted({
+      enabled: false,
+      planAllowed: true,
+    })).toBe(false);
+    expect(isLegacyFilterPlanRestricted({
+      enabled: false,
+      planAllowed: false,
+    })).toBe(true);
+  });
+
+  it("keeps compatibility with old filter responses that lack planAllowed", () => {
+    expect(isLegacyFilterPlanRestricted({ enabled: false })).toBe(true);
+    expect(isLegacyFilterPlanRestricted({ enabled: true })).toBe(false);
   });
 });
