@@ -4,6 +4,7 @@ const { ClientCtor, configGetSpy, loggerInfoSpy, loggerErrorSpy, lastClients } =
   const lastClients = [];
   function ClientCtor(opts) {
     this.opts = opts;
+    this.search = vi.fn();
     this.ping = vi.fn();
     this.close = vi.fn();
     lastClients.push(this);
@@ -30,7 +31,7 @@ beforeEach(async () => {
   loggerInfoSpy.mockReset();
   loggerErrorSpy.mockReset();
   lastClients.length = 0;
-  // Provide config values for all four servers + their auth credentials
+  // Provide config values for all four servers + their auth credentials.
   configGetSpy.mockImplementation((key) => `value:${key}`);
   vi.resetModules();
   modulePromise = import("../../utils/Elasticsearch.js");
@@ -52,11 +53,22 @@ describe("utils/Elasticsearch", () => {
     expect(loggerInfoSpy).toHaveBeenCalled();
   });
 
+  it("resolves a legacy Google name to the shared API configured index", async () => {
+    const { esClient, esServers } = await modulePromise;
+    const { FALLBACK_NETWORK_INDEXES, NETWORK_INDEXES } = await import("../../utils/networkIndexes.js");
+
+    await esClient.server3.search({ index: FALLBACK_NETWORK_INDEXES.google, body: { query: { match_all: {} } } });
+
+    expect(esServers.server3.indexes).toContain(FALLBACK_NETWORK_INDEXES.google);
+    expect(esServers.server3.indexes).toContain(NETWORK_INDEXES.google);
+    expect(lastClients[2].search).toHaveBeenCalledWith(expect.objectContaining({ index: NETWORK_INDEXES.google }));
+  });
+
   it("checkElasticsearchHealth: pings every client and logs 'is up' on success", async () => {
     const { checkElasticsearchHealth } = await modulePromise;
-    lastClients.forEach((c) => c.ping.mockResolvedValueOnce(undefined));
+    lastClients.forEach((client) => client.ping.mockResolvedValueOnce(undefined));
     await checkElasticsearchHealth();
-    for (const c of lastClients) expect(c.ping).toHaveBeenCalled();
+    for (const client of lastClients) expect(client.ping).toHaveBeenCalled();
     expect(loggerInfoSpy).toHaveBeenCalledWith(expect.stringContaining("is up"));
   });
 
@@ -66,26 +78,26 @@ describe("utils/Elasticsearch", () => {
     await expect(checkElasticsearchHealth()).rejects.toThrow("down");
     expect(loggerErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining("is down"),
-      expect.any(Error)
+      expect.any(Error),
     );
   });
 
   it("closeClients: closes every client and logs", async () => {
     const { closeClients } = await modulePromise;
-    lastClients.forEach((c) => c.close.mockResolvedValueOnce(undefined));
+    lastClients.forEach((client) => client.close.mockResolvedValueOnce(undefined));
     await closeClients();
-    for (const c of lastClients) expect(c.close).toHaveBeenCalled();
+    for (const client of lastClients) expect(client.close).toHaveBeenCalled();
     expect(loggerInfoSpy).toHaveBeenCalledWith(expect.stringContaining("Closed"));
   });
 
   it("closeClients: catches per-client close failure (does NOT throw)", async () => {
     const { closeClients } = await modulePromise;
     lastClients[0].close.mockRejectedValueOnce(new Error("close-fail"));
-    lastClients.slice(1).forEach((c) => c.close.mockResolvedValueOnce(undefined));
+    lastClients.slice(1).forEach((client) => client.close.mockResolvedValueOnce(undefined));
     await closeClients();
     expect(loggerErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining("Error closing"),
-      expect.any(Error)
+      expect.any(Error),
     );
   });
 });

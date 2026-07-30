@@ -24,6 +24,20 @@ const SHOW_TOTAL_ADS_COUNT =
     .trim()
     .toLowerCase() !== "false";
 
+const COUNTRY_FILTER_KEYS = new Set(["country", "countries", "country_filter", "geo"]);
+
+const formatCountryChipLabel = (filterId, label) => {
+  if (!COUNTRY_FILTER_KEYS.has(filterId)) return label;
+  const normalized = String(label ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[`'\u2019]/g, "")
+    .replace(/[_\s-]+/g, " ")
+    .trim();
+  return normalized === "reunion" ? "R\u00e9union (France)" : label;
+};
+
 /**
  * AdGrid — SDUI-driven ad display with platform tabs, sort tabs, and active filter chips.
  *
@@ -406,7 +420,7 @@ const AdGrid = ({
       if (Array.isArray(value) && value.length > 0) {
         const categoryLabel = normalizeChipCategoryLabel(key, filterCategoryLabels[key] ?? "");
         value.forEach((v) => {
-          const displayLabel = filterOptionLabels[key]?.[String(v)] ?? v;
+          const displayLabel = formatCountryChipLabel(key, filterOptionLabels[key]?.[String(v)] ?? v);
           const label = categoryLabel ? `${categoryLabel}: ${displayLabel}` : displayLabel;
           otherChips.push({ type: "chip", filterId: key, value: v, label });
         });
@@ -424,7 +438,7 @@ const AdGrid = ({
           continue;
         }
         const categoryLabel = normalizeChipCategoryLabel(key, filterCategoryLabels[key] ?? "");
-        const displayLabel = filterOptionLabels[key]?.[value] ?? value;
+        const displayLabel = formatCountryChipLabel(key, filterOptionLabels[key]?.[value] ?? value);
         const label = categoryLabel ? `${categoryLabel}: ${displayLabel}` : displayLabel;
         otherChips.push({ type: "chip", filterId: key, value: "__single__", label });
         continue;

@@ -31,6 +31,78 @@ export function findCountryOptions(config) {
   return [];
 }
 
+export function normalizeCountrySearchValue(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[`'\u2019]/g, '')
+    .replace(/[_\s-]+/g, ' ')
+    .trim();
+}
+
+const REUNION_COUNTRY_LABEL = 'R\u00e9union';
+const FRANCE_REUNION_COUNTRY_GROUP = ['France', REUNION_COUNTRY_LABEL];
+const FRANCE_REUNION_ALIASES = new Set([
+  'france',
+  'reunion',
+  normalizeCountrySearchValue(REUNION_COUNTRY_LABEL),
+  normalizeCountrySearchValue("re'union"),
+  normalizeCountrySearchValue('re`union'),
+]);
+
+export function isFranceReunionCountryValue(value) {
+  return FRANCE_REUNION_ALIASES.has(normalizeCountrySearchValue(value));
+}
+
+export function matchesCountryOptionSearch(optionLabel, query) {
+  const normalizedQuery = normalizeCountrySearchValue(query);
+  if (!normalizedQuery) return true;
+
+  const normalizedLabel = normalizeCountrySearchValue(optionLabel);
+  if (normalizedLabel.includes(normalizedQuery)) return true;
+
+  if (normalizedLabel === 'france') {
+    return Array.from(FRANCE_REUNION_ALIASES).some((alias) =>
+      alias.includes(normalizedQuery) || normalizedQuery.includes(alias)
+    );
+  }
+
+  return false;
+}
+
+export function expandCountryFilterValues(values) {
+  const list = Array.isArray(values)
+    ? values
+    : values == null || values === ''
+      ? []
+      : [values];
+
+  if (!list.length) return [];
+
+  const shouldExpandFranceReunion = list.some(isFranceReunionCountryValue);
+
+  const out = [];
+  const seen = new Set();
+  const add = (value) => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return;
+    const key = normalizeCountrySearchValue(raw);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(raw);
+  };
+
+  if (shouldExpandFranceReunion) {
+    FRANCE_REUNION_COUNTRY_GROUP.forEach(add);
+    list.filter((value) => !isFranceReunionCountryValue(value)).forEach(add);
+  } else {
+    list.forEach(add);
+  }
+
+  return out;
+}
+
 /**
  * Map the Country filter's selected value(s) → ISO 2-letter code(s).
  * `selected` are the combobox labels (e.g. ["Saudi Arabia"]); `options` come from

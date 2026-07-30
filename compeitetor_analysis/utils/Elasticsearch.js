@@ -1,6 +1,31 @@
 import elasticsearch from "elasticsearch";
 import config from "config";
 import logger from "../resources/logs/logger.log.js";
+import {
+  getNetworkIndexAliases,
+  resolveNetworkIndex,
+} from "./networkIndexes.js";
+
+function withResolvedIndex(client) {
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") return value;
+
+      return (...args) => {
+        const [params, ...rest] = args;
+
+        // Services retain legacy names for field-selection branches, while
+        // Elasticsearch always receives the configured physical index name.
+        if (params && typeof params === "object" && params.index) {
+          return value.call(target, { ...params, index: resolveNetworkIndex(params.index) }, ...rest);
+        }
+
+        return value.call(target, ...args);
+      };
+    },
+  });
+}
 
 const createElasticClient = (serverData) => {
   logger.info(`Creating Elasticsearch client for ${serverData.host}`);
@@ -8,7 +33,7 @@ const createElasticClient = (serverData) => {
     host: serverData.host,
     httpAuth: serverData.username ? `${serverData.username}:${serverData.password}` : undefined,
   });
-  return client;
+  return withResolvedIndex(client);
 };
 
 const esServers = {
@@ -16,19 +41,22 @@ const esServers = {
     host: config.get("SEARCH_HOSTS"),
     username: config.get("TEST_ELASTICSEARCH_USER"),
     password: config.get("TEST_ELASTICSEARCH_PASS"),
-    indexes: ["search_mix", "youtube_ads_data"],
+    indexes: [
+      ...getNetworkIndexAliases("facebook"),
+      ...getNetworkIndexAliases("youtube"),
+    ],
   },
   server2: {
     host: config.get("TEST_SEARCH_HOSTS"),
     username: config.get("TEST_ELASTICSEARCH_USER1"),
     password: config.get("TEST_ELASTICSEARCH_PASS1"),
-    indexes: ["instagram_search_mix"],
+    indexes: getNetworkIndexAliases("instagram"),
   },
   server3: {
     host: config.get("TEST_SEARCH_HOSTS1"),
     username: config.get("TEST_ELASTICSEARCH_USER2"),
     password: config.get("TEST_ELASTICSEARCH_PASS2"),
-    indexes: ["google_ads_data_v2"],
+    indexes: getNetworkIndexAliases("google"),
   },
   server4: {
     host: config.get("TEST_SEARCH_HOSTS2"),

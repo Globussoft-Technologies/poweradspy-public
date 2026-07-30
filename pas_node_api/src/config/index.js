@@ -1,12 +1,20 @@
 'use strict';
 
-require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
 // ─── Load config.json ───────────────────────────────────────
 let fileConfig = {};
-const configPath = path.resolve(process.cwd(), 'config.json');
+// Resolve from the API project, not the caller's working directory. This keeps
+// configuration correct for maintenance scripts and sibling services that use
+// the API's resolved network configuration.
+const configPath = process.env.PAS_NODE_API_CONFIG_PATH
+  ? path.resolve(process.env.PAS_NODE_API_CONFIG_PATH)
+  : path.resolve(__dirname, '../../config.json');
+
+// Load the API's environment file from the same root as config.json. This is
+// important when a sibling service imports the resolved network configuration.
+require('dotenv').config({ path: path.resolve(path.dirname(configPath), '.env') });
 
 try {
   if (fs.existsSync(configPath)) {
@@ -655,7 +663,7 @@ config.writeConfigFile = (newConfig) => {
   try {
     // Backup existing file before overwrite
     if (fs.existsSync(configPath)) {
-      const backupDir = path.resolve(process.cwd(), 'data', 'config_backups');
+      const backupDir = path.resolve(path.dirname(configPath), 'data', 'config_backups');
       if (!fs.existsSync(backupDir)) {
         fs.mkdirSync(backupDir, { recursive: true });
       }

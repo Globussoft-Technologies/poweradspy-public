@@ -3488,10 +3488,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         <CompetitorComparison
           brandName={activeProject.advertiser}
           competitorName={compareCompetitor.name}
-          onBack={() => {
-            setCompareCompetitor(null);
-            setViewState(4);
-          }}
+          // Use the same history-aware back path as the project detail view so
+          // the UI button mirrors browser Back instead of creating a new
+          // same-URL history entry that bounces the user back into analysis.
+          onBack={goBackToAllProjects}
         />
       )}
 

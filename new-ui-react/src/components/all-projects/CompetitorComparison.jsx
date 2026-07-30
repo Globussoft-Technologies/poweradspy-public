@@ -396,9 +396,10 @@ const buildMonthlyChartData = (brandData, competitorData, platformKey) => {
   }));
 };
 
-/** Sum across platforms for each month (exclude Google — matches Laravel) */
+/** Sum the platforms supported by the monthly ad-count endpoint for each month. */
 const buildAdsOverTimeData = (brandAdCount, competitorAdCount) => {
-  const platforms = ["facebook", "instagram", "youtube"];
+  // Google has monthly ad-count data, unlike budget, engagement, and CTA data.
+  const platforms = ["facebook", "instagram", "youtube", "google"];
   return MONTHS.map((month, i) => {
     let brandTotal = 0,
       compTotal = 0;
@@ -823,6 +824,11 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
     adCountData.competitor,
     "instagram",
   );
+  const googleData = buildMonthlyChartData(
+    adCountData.brand,
+    adCountData.competitor,
+    "google",
+  );
   const adsOverTime = buildAdsOverTimeData(
     adCountData.brand,
     adCountData.competitor,
@@ -935,7 +941,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
             </h2>
             <InfoTooltip text="This section compares your brand with its competitors, highlighting the months in which ads were active across Facebook, Instagram, and Google platforms." />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {/* Facebook */}
             <SectionCard
               title={
@@ -1053,6 +1059,56 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
                 </ResponsiveContainer>
               )}
             </SectionCard>
+
+            {/* Google is backed by get-ad-count, so it can be compared safely. */}
+            <SectionCard
+              title={
+                <>
+                  <span className="w-4 h-4 rounded-full bg-white text-[#4285F4] flex items-center justify-center text-[11px] font-black leading-none">
+                    G
+                  </span>{" "}
+                  Google
+                </>
+              }
+              rightContent={
+                <ChartLegend
+                  items={[
+                    { label: brandName, color: COLORS.brand },
+                    { label: competitorName, color: COLORS.competitor },
+                  ]}
+                />
+              }
+            >
+              {sectionLoading.adCount ? (
+                <ChartSkeleton />
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={googleData}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="month" {...axisProps} />
+                    <YAxis {...axisProps} />
+                    <Tooltip
+                      content={<CustomTooltip />}
+                      cursor={{ fill: cursorFill }}
+                    />
+                    <Bar
+                      dataKey="brand"
+                      name={brandName}
+                      stackId="a"
+                      fill={COLORS.brand}
+                      radius={[0, 0, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="competitor"
+                      name={competitorName}
+                      stackId="a"
+                      fill={COLORS.competitor}
+                      radius={[3, 3, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </SectionCard>
           </div>
         </div>
 
@@ -1061,7 +1117,7 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
           title={
             <>
               <TrendingUp size={15} className="text-[#6b99ff]" /> Ads Over Time{" "}
-              <InfoTooltip text="This section compares your brand with its competitors, highlighting the months during which ads were active." />
+              <InfoTooltip text="This section compares your brand with its competitors, highlighting active-ad months across Facebook, Instagram, YouTube, and Google." />
             </>
           }
           rightContent={

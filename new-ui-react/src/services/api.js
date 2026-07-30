@@ -3,6 +3,7 @@
 const GEMINI_API_KEY = "";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 import { calculateRunningDays } from '../utils/helper';
+import { expandCountryFilterValues } from '../utils/countryFilter';
 
 // ─── PAS API Configuration ────────────────────────────────────────────────────
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || "";
@@ -1052,7 +1053,8 @@ export const buildSearchPayload = (filters = {}) => {
     if (Array.isArray(selCountries) && selCountries.length > 0) return selCountries;
     return [];
   })();
-  const resolvedCountry = rawCountry.length ? rawCountry : 'NA';
+  const expandedCountry = expandCountryFilterValues(rawCountry);
+  const resolvedCountry = expandedCountry.length ? expandedCountry : 'NA';
 
   // lang: add 'un' when 'en' is present (mirrors PHP logic)
   const resolvedLang = v(lang) !== 'NA' ? v(lang) : v(languageFilter);

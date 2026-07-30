@@ -422,7 +422,11 @@ async function searchAllNetworks(req, res) {
         if (s.status !== 'fulfilled') continue;
         const r = s.value;
         if (r.code !== 200) continue;
-        const count = r.total ?? r.data?.length ?? 0;
+        // Suggest another network only when the discovery request returns an
+        // actual displayable row. Raw ES totals can include records that are
+        // filtered out/hydration-empty in the UI, which caused false banners
+        // like "We have ads in Facebook" followed by "No Ads Found".
+        const count = Array.isArray(r.data) ? r.data.length : 0;
         if (count > 0) {
           totals[r.network] = count;
           if (!networksWithData.includes(r.network)) networksWithData.push(r.network);

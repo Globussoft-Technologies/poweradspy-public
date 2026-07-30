@@ -3,6 +3,7 @@ import config from "config";
 import elasticsearch from "elasticsearch";
 import { esClient, esServers } from "../../utils/Elasticsearch.js";
 import logger from "../../resources/logs/logger.log.js";
+import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 
 /**
  * Data-report stats (NEW — independent of the competitor pulse flow).
@@ -20,17 +21,17 @@ import logger from "../../resources/logs/logger.log.js";
  */
 
 const NETWORKS = [
-  { key: "facebook",  label: "Facebook",  index: "search_mix",           dateField: "facebook_ad.last_seen"  },
-  { key: "instagram", label: "Instagram", index: "instagram_search_mix", dateField: "instagram_ad.last_seen" },
-  { key: "google",    label: "Google",    index: "google_ads_data_v2",   dateField: "last_seen"              },
-  { key: "youtube",   label: "YouTube",   index: "youtube_ads_data",     dateField: "last_seen"              },
-  { key: "gdn",       label: "GDN",       index: "gdn_search_mix_v2",    dateField: "gdn_ad.last_seen"       },
-  { key: "native",    label: "Native",    index: "native_search_mix_v2", dateField: "native_ad.last_seen"    },
-  { key: "linkedin",  label: "LinkedIn",  index: "linkedin_ads_data",    dateField: "last_seen"              },
-  { key: "quora",     label: "Quora",     index: "quora_search_mix",     dateField: "quora_ad.last_seen"     },
-  { key: "reddit",    label: "Reddit",    index: "reddit_search_mix",    dateField: "reddit_ad.last_seen"    },
-  { key: "pinterest", label: "Pinterest", index: "pinterest_search_mix", dateField: "pinterest_ad.last_seen" },
-  { key: "tiktok",    label: "TikTok",    index: "tiktok_ads",           dateField: "last_seen"              },
+  { key: "facebook",  label: "Facebook",  index: NETWORK_INDEXES.facebook,  dateField: "facebook_ad.last_seen"  },
+  { key: "instagram", label: "Instagram", index: NETWORK_INDEXES.instagram, dateField: "instagram_ad.last_seen" },
+  { key: "google",    label: "Google",    index: NETWORK_INDEXES.google,    dateField: "last_seen"              },
+  { key: "youtube",   label: "YouTube",   index: NETWORK_INDEXES.youtube,   dateField: "last_seen"              },
+  { key: "gdn",       label: "GDN",       index: NETWORK_INDEXES.gdn,       dateField: "gdn_ad.last_seen"       },
+  { key: "native",    label: "Native",    index: NETWORK_INDEXES.native,    dateField: "native_ad.last_seen"    },
+  { key: "linkedin",  label: "LinkedIn",  index: NETWORK_INDEXES.linkedin,  dateField: "last_seen"              },
+  { key: "quora",     label: "Quora",     index: NETWORK_INDEXES.quora,     dateField: "quora_ad.last_seen"     },
+  { key: "reddit",    label: "Reddit",    index: NETWORK_INDEXES.reddit,    dateField: "reddit_ad.last_seen"    },
+  { key: "pinterest", label: "Pinterest", index: NETWORK_INDEXES.pinterest, dateField: "pinterest_ad.last_seen" },
+  { key: "tiktok",    label: "TikTok",    index: NETWORK_INDEXES.tiktok,    dateField: "last_seen"              },
 ];
 
 // Media gates — copied 1:1 from each network's search builder so the counts

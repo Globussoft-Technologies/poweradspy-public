@@ -1018,14 +1018,11 @@ const App = () => {
   useEffect(() => {
     setPage(0);
     setAds([]);
-    // NB: do NOT wipe adsMeta here. The count label is already hidden while
-    // loading (adsCount requires ads.length > 0), so clearing ads is enough to
-    // avoid a stale-count flash. Wiping adsMeta too opened a race: on a switch
-    // this effect can fire twice (immediate platformKey change + the 500ms
-    // debounced filterKey / sdui.loading settle), and if the response that
-    // ultimately populates `ads` is superseded/aborted or arrives on a non-page-0
-    // path, nothing restores adsMeta — so the grid shows ads with no "Total Ads"
-    // count. Letting the next response overwrite adsMeta keeps them in sync.
+    // Clear the old count when the search/filter context changes. Without this,
+    // a project redirect can briefly show the previous/meta total (for example
+    // 25) before the real France+Réunion request settles (24). Page > 0 responses
+    // below can still fill the count if a page-0 total is missing.
+    setAdsMeta({});
     setHasMore(true);
   }, [debouncedFilterKey, platformKey, ui.searchQuery, ui.searchIn, ui.exactSearch, searchTrigger, landingAd?.id]);
 
@@ -1223,20 +1220,30 @@ const App = () => {
         });
         if (networks) setAvailableNetworks(networks);
         if (msg) setNoDataMessage(msg);
-        // Set on EVERY non-aborted response that carries a total, not just
-        // page 0. meta.total is the ES match total (stable across pages), so
-        // re-setting it on appends is a harmless no-op — but it guarantees the
-        // count stays in sync with whatever response populated `ads`, closing
-        // the race where a lost/aborted page-0 meta-set left the count blank.
         if (meta?.total != null) {
-          if (typeof meta.total === 'number') {
-            // Determine the primary platform for a numeric total
-            const _onlyTiktok = tiktokPermitted.length > 0 && genericPermitted.length === 0;
-            const _primaryPlatform = _onlyTiktok ? 'tiktok' : (genericPermitted[0] || 'facebook');
-            setAdsMeta({ [_primaryPlatform]: meta.total });
-          } else {
-            setAdsMeta(meta.total);
-          }
+          const normalizeMetaTotal = () => {
+            if (typeof meta.total === 'number') {
+              // Determine the primary platform for a numeric total
+              const _onlyTiktok = tiktokPermitted.length > 0 && genericPermitted.length === 0;
+              const _primaryPlatform = _onlyTiktok ? 'tiktok' : (genericPermitted[0] || 'facebook');
+              return { [_primaryPlatform]: meta.total };
+            }
+            return meta.total;
+          };
+          const nextAdsMeta = normalizeMetaTotal();
+
+          // Keep the page-0 total as the authoritative count for the current
+          // filter/search. Infinite-scroll responses can occasionally carry a
+          // slightly different total shape after hydration/dedup/discovery, and
+          // overwriting the first total makes "Total Ads" flicker/drop while
+          // scrolling (e.g. 25 → 24). Page > 0 only fills the count if it was
+          // missing, never replaces an existing first-page count.
+          setAdsMeta((prev) => {
+            const prevTotal = prev && typeof prev === 'object'
+              ? Object.values(prev).reduce((sum, value) => sum + (Number(value) || 0), 0)
+              : 0;
+            return page === 0 || !prevTotal ? nextAdsMeta : prev;
+          });
         }
         if (meta?.planAccess) setPlanAccess(meta.planAccess);
         if (meta?.clientIp) {

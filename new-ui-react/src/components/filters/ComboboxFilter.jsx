@@ -1,11 +1,13 @@
 import { useState, useMemo } from "react";
 import { Search, Check } from "lucide-react";
+import { matchesCountryOptionSearch } from "../../utils/countryFilter";
 
 /**
  * ComboboxFilter — Searchable dropdown for language, country, etc.
  * Supports single and multi-select.
  */
 const ComboboxFilter = ({
+  filterId,
   label,
   options = [],
   selected = [],
@@ -20,10 +22,16 @@ const ComboboxFilter = ({
     if (!search.trim()) return options;
     const q = search.toLowerCase();
     return options.filter((opt) => {
-      const optLabel = (opt.label ?? opt).toString().toLowerCase();
-      return optLabel.includes(q);
+      const optLabel = (opt.label ?? opt).toString();
+      if (
+        filterId === "country_filter" ||
+        (valueKey === "label" && label?.toLowerCase() === "country")
+      ) {
+        return matchesCountryOptionSearch(optLabel, q);
+      }
+      return optLabel.toLowerCase().includes(q);
     });
-  }, [options, search]);
+  }, [options, search, valueKey, label, filterId]);
 
   const getStoredValue = (opt) =>
     valueKey === "label" ? (opt.label ?? opt) : (opt.value ?? opt.label ?? opt);
