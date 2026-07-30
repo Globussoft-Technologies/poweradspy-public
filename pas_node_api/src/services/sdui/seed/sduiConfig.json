@@ -6058,29 +6058,20 @@
             "platform_applicability": "all"
           },
           {
-            "_id": "ep_magento",
+            "_id": "ep_wix",
             "filter_id": "ecommerce_platform_filter",
-            "label": "Magento",
-            "value": "magento",
+            "label": "Wix",
+            "value": "wix",
             "rank": 3,
             "selected_by_default": false,
             "platform_applicability": "all"
           },
           {
-            "_id": "ep_bigcommerce",
+            "_id": "ep_magento",
             "filter_id": "ecommerce_platform_filter",
-            "label": "BigCommerce",
-            "value": "bigcommerce",
+            "label": "Magento",
+            "value": "magento",
             "rank": 4,
-            "selected_by_default": false,
-            "platform_applicability": "all"
-          },
-          {
-            "_id": "ep_wix",
-            "filter_id": "ecommerce_platform_filter",
-            "label": "Wix",
-            "value": "wix",
-            "rank": 5,
             "selected_by_default": false,
             "platform_applicability": "all"
           },
@@ -6089,7 +6080,43 @@
             "filter_id": "ecommerce_platform_filter",
             "label": "Squarespace",
             "value": "squarespace",
+            "rank": 5,
+            "selected_by_default": false,
+            "platform_applicability": "all"
+          },
+          {
+            "_id": "ep_demandware",
+            "filter_id": "ecommerce_platform_filter",
+            "label": "Demandware",
+            "value": "demandware",
             "rank": 6,
+            "selected_by_default": false,
+            "platform_applicability": "all"
+          },
+          {
+            "_id": "ep_bigcommerce",
+            "filter_id": "ecommerce_platform_filter",
+            "label": "BigCommerce",
+            "value": "bigcommerce",
+            "rank": 7,
+            "selected_by_default": false,
+            "platform_applicability": "all"
+          },
+          {
+            "_id": "ep_volusion",
+            "filter_id": "ecommerce_platform_filter",
+            "label": "Volusion",
+            "value": "volusion",
+            "rank": 8,
+            "selected_by_default": false,
+            "platform_applicability": "all"
+          },
+          {
+            "_id": "ep_3dcart",
+            "filter_id": "ecommerce_platform_filter",
+            "label": "3dCart",
+            "value": "_3dcart",
+            "rank": 9,
             "selected_by_default": false,
             "platform_applicability": "all"
           },
@@ -6098,33 +6125,6 @@
             "filter_id": "ecommerce_platform_filter",
             "label": "PrestaShop",
             "value": "prestashop",
-            "rank": 7,
-            "selected_by_default": false,
-            "platform_applicability": "all"
-          },
-          {
-            "_id": "ep_opencart",
-            "filter_id": "ecommerce_platform_filter",
-            "label": "OpenCart",
-            "value": "opencart",
-            "rank": 8,
-            "selected_by_default": false,
-            "platform_applicability": "all"
-          },
-          {
-            "_id": "ep_salesforce",
-            "filter_id": "ecommerce_platform_filter",
-            "label": "Salesforce Commerce",
-            "value": "salesforce_commerce",
-            "rank": 9,
-            "selected_by_default": false,
-            "platform_applicability": "all"
-          },
-          {
-            "_id": "ep_custom",
-            "filter_id": "ecommerce_platform_filter",
-            "label": "Custom",
-            "value": "custom",
             "rank": 10,
             "selected_by_default": false,
             "platform_applicability": "all"
