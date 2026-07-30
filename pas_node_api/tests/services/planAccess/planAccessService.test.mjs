@@ -285,6 +285,16 @@ describe("planAccessService > stripRestrictedFilters", () => {
     const out = svc.stripRestrictedFilters(body, { keyword_search: { enabled: false, planAllowed: false } });
     expect(out.planRestricted).toEqual([]);
   });
+  it("skips false boolean toggles because the feature was not selected", () => {
+    const body = { custom_toggle: false };
+    const out = freshSut().stripRestrictedFilters(
+      body,
+      { custom_feature: { enabled: false, planAllowed: false } },
+      { custom_toggle: "custom_feature" },
+    );
+    expect(out.planRestricted).toEqual([]);
+    expect(body.custom_toggle).toBe(false);
+  });
   it("skips empty arrays", () => {
     const out = freshSut().stripRestrictedFilters({ country: [] }, { country: { enabled: false, planAllowed: false } });
     expect(out.planRestricted).toEqual([]);

@@ -49,6 +49,20 @@ describe("store/store > URL-strip behavior at import time", () => {
 });
 
 describe("store/store > one-time activeTab cleanup at import time", () => {
+  it("strips stale subscription modal state written by older builds", async () => {
+    await loadStoreWithLocation(
+      "",
+      JSON.stringify({
+        activePage: '"ads"',
+        isPricingModalOpen: "true",
+        isSubscriptionModalOpen: "true",
+        isOnboardingModalOpen: "true",
+      }),
+    );
+    const after = JSON.parse(localStorage.getItem("persist:root"));
+    expect(after).toEqual({ activePage: '"ads"' });
+  });
+
   it("strips stale activeTab from persist:root (lines 28-30)", async () => {
     await loadStoreWithLocation(
       "",

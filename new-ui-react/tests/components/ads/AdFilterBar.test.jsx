@@ -549,19 +549,47 @@ describe("AdFilterBar > sort dropdown", () => {
     expect(onSortRestricted).toHaveBeenCalled();
     expect(setSortBy).not.toHaveBeenCalled();
   });
-  it("plan-access mapping case insensitive, no entry → no restriction check", () => {
+  it("popularity resolves to its Plan Control feature and is blocked when disabled", () => {
     const setSortBy = vi.fn();
+    const onSortRestricted = vi.fn();
     const isFilterRestricted = vi.fn(() => true);
     const { getByTestId, getByText } = render(
       <AdFilterBar {...baseProps}
         sortTabs={[{ label: "popularity", value: "popularity" }]}
         DROPDOWN_SORT_LABELS={["popularity"]}
         sdui={{ ...baseSdui, setSortBy }}
-        isFilterRestricted={isFilterRestricted} />,
+        isFilterRestricted={isFilterRestricted}
+        onSortRestricted={onSortRestricted} />,
     );
     fireEvent.click(getByTestId("sliders-ic").closest("button"));
     fireEvent.click(getByText("popularity"));
-    expect(setSortBy).toHaveBeenCalledWith("popularity");
+    expect(isFilterRestricted).toHaveBeenCalledWith("popularity_sort");
+    expect(onSortRestricted).toHaveBeenCalled();
+    expect(setSortBy).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["Like Sort", "likes", "likes_sort"],
+    ["Comment Sort", "comment", "comments_sort"],
+    ["Share Sort", "shares", "shares_sort"],
+    ["Impressions", "impression", "impression_sort"],
+    ["Ad Running Days", "running_longest", "ad_running_days_sort"],
+  ])("maps %s/%s to %s", (label, value, expectedId) => {
+    const isFilterRestricted = vi.fn(() => true);
+    const onSortRestricted = vi.fn();
+    const setSortBy = vi.fn();
+    const { getByTestId, getByText } = render(
+      <AdFilterBar {...baseProps}
+        sortTabs={[{ label, value }]}
+        DROPDOWN_SORT_LABELS={[label.toLowerCase()]}
+        sdui={{ ...baseSdui, setSortBy }}
+        isFilterRestricted={isFilterRestricted}
+        onSortRestricted={onSortRestricted} />,
+    );
+    fireEvent.click(getByTestId("sliders-ic").closest("button"));
+    fireEvent.click(getByText(label));
+    expect(isFilterRestricted).toHaveBeenCalledWith(expectedId);
+    expect(onSortRestricted).toHaveBeenCalled();
+    expect(setSortBy).not.toHaveBeenCalled();
   });
   it("emergency fallback shows all tabs when filter matches nothing", () => {
     const sortTabs2 = [{ label: "Custom", value: "custom" }];

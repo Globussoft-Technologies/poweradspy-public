@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { useSDUI } from "./hooks/useSDUI";
 import { findCategoryOptions } from "./utils/categoryTaxonomy";
 import { findCountryOptions, labelsToCountryCodes } from "./utils/countryFilter";
+import { isPlanNetworkAllowed, normalizePlanNetwork } from "./utils/planEntitlement";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import {
@@ -501,15 +502,19 @@ const App = () => {
   // Gate the competitive-intelligence surfaces behind the same plan check as the
   // analytics modal (onAnalyticsAd): guests and plans without analytics access
   // get the pricing modal instead. Returns true when access is allowed.
+  const hasAdAnalyticsAccess = entitlements
+    ? canUseCapability('intelligence.competitive')
+    : !!planAccess && (
+        planAccess.filters?.ad_analytics?.enabled === true ||
+        (planAccess.competitorLimits?.brandLimit ?? 0) > 0
+      );
   const canAccessIntel = () => {
     if (guest?.isRestricted) {
       dispatch(openModal('isPricingModalOpen'));
       return false;
     }
-    if (!planAccess) return false;
-    const allowed = planAccess.filters?.ad_analytics?.enabled === true ||
-      (planAccess.competitorLimits?.brandLimit ?? 0) > 0;
-    if (!allowed) {
+    if (!entitlements && !planAccess) return false;
+    if (!hasAdAnalyticsAccess) {
       dispatch(openModal('isPricingModalOpen'));
       return false;
     }
@@ -745,25 +750,29 @@ const App = () => {
 
   const handlePlatformClick = (platformValue) => {
     if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", { platform: platformValue })) return;
+    const normalizedPlatform = normalizePlanNetwork(platformValue);
     if (
       planAccess?.allowedPlatforms &&
       planAccess.allowedPlatforms.length > 0 &&
-      !planAccess.allowedPlatforms.includes(platformValue)
+      !isPlanNetworkAllowed(planAccess.allowedPlatforms, normalizedPlatform)
     ) {
       dispatch(openModal('isPricingModalOpen'));
       return;
     }
 
     let newSpecific;
-    newSpecific = ui.specificPlatforms.includes(platformValue)
-      ? ui.specificPlatforms.filter((p) => p !== platformValue)
-      : [...ui.specificPlatforms, platformValue];
+    newSpecific = ui.specificPlatforms.some((p) => normalizePlanNetwork(p) === normalizedPlatform)
+      ? ui.specificPlatforms.filter((p) => normalizePlanNetwork(p) !== normalizedPlatform)
+      : [...ui.specificPlatforms, normalizedPlatform];
 
     if (newSpecific.length === 0) {
       dispatch(setSpecificPlatforms([]));
       sdui.setActivePlatforms(allPlatformValues);
       if (!guest?.isPublicLanding) fetchPlanAccess('all').then(data => { if (data) setPlanAccess(data); }).catch(() => {});
     } else {
+      // Clear a persisted filter that is not valid for the destination network
+      // before it can silently trigger a plan-upgrade response.
+      sdui.clearFiltersUnsupportedBy(newSpecific);
       dispatch(setSpecificPlatforms(newSpecific));
       sdui.setActivePlatforms(newSpecific);
       if (!guest?.isPublicLanding) fetchPlanAccess(newSpecific.length === 1 ? newSpecific[0] : newSpecific).then(data => { if (data) setPlanAccess(data); }).catch(() => {});
@@ -1054,15 +1063,12 @@ const App = () => {
   useEffect(() => {
     if (!selectedAdForAnalytics) return;
     if (!entitlements && !planAccess) return;
-    const canAccessAnalytics = entitlements
-      ? canUseCapability('intelligence.competitive')
-      : planAccess.filters?.ad_analytics?.enabled === true;
-    if (!canAccessAnalytics) {
+    if (!hasAdAnalyticsAccess) {
       setSelectedAdForAnalytics(null);
       window.history.replaceState(null, '', '/');
       dispatch(openModal('isPricingModalOpen'));
     }
-  }, [selectedAdForAnalytics, entitlements, planAccess, canUseCapability, dispatch]);
+  }, [selectedAdForAnalytics, entitlements, planAccess, hasAdAnalyticsAccess, dispatch]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1266,7 +1272,7 @@ const App = () => {
         // Aborted by a newer effect run (user switched tab/filter) — silently bail.
         if (controller.signal.aborted || err.name === 'AbortError') return;
         if (_isPublicRoute) console.error('[GUEST-DEBUG] loadAds ERROR', err.message, err);
-        if (err.showSubscriptionModal || err.code === 403) {
+        if (err.showSubscriptionModal === true) {
           dispatch(openModal('isPricingModalOpen'));
           // Clear restricted filter values from SDUI state so the filter UI resets
           if (err.restrictedFilters?.length > 0) {
@@ -1275,6 +1281,11 @@ const App = () => {
               sduiIds.forEach((id) => sdui.setFilter(id, null));
             });
           }
+          return;
+        }
+        // Network/platform restrictions are not plan-upgrade decisions.
+        if (err.code === 403) {
+          if (page === 0) setError(err.message || "This option is not available for the selected network.");
           return;
         }
         if (page === 0) {
@@ -1853,11 +1864,19 @@ const App = () => {
           ) : intelAccess.enabled ? (
             <MarketTrends
               onDrill={(kind, value, targetNetworks = []) => {
-                const networks = (targetNetworks || []).map((network) => String(network).toLowerCase());
+                const requestedNetworks = (targetNetworks || []).map((network) => String(network).toLowerCase());
+                const candidateNetworks = requestedNetworks.length
+                  ? requestedNetworks
+                  : (planAccess?.allowedPlatforms || []);
+                const networks = candidateNetworks.filter(
+                  (network) =>
+                    canUseCapabilityOnNetwork("intelligence.market_trends.open_ads_library", network) &&
+                    canUseCapabilityOnNetwork("ads.search", network)
+                );
                 if (
                   !canUseCapability("intelligence.market_trends.open_ads_library") ||
-                  networks.some((network) => !canUseCapabilityOnNetwork("intelligence.market_trends.open_ads_library", network)) ||
-                  networks.some((network) => !canUseCapabilityOnNetwork("ads.search", network))
+                  !canUseCapability("ads.search") ||
+                  networks.length === 0
                 ) {
                   dispatch(openModal("isPricingModalOpen"));
                   return;
@@ -1910,6 +1929,15 @@ const App = () => {
         ) : ui.showSavedAdsPage ? (
           <SavedAdsPage
             sdui={sdui}
+            allowedPlatforms={(planAccess?.allowedPlatforms || []).filter(
+              (network) =>
+                !entitlements ||
+                (
+                  canUseCapabilityOnNetwork('ads.search', network) &&
+                  canUseCapabilityOnNetwork('legacy.bookmark', network)
+                ),
+            )}
+            onPlatformRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             favouriteAdIds={favouriteAdIds}
             hiddenAdIds={hiddenAdIds}
             hiddenAdvertiserIds={hiddenAdvertiserIds}
@@ -1922,10 +1950,8 @@ const App = () => {
               dispatch(setShowSavedAdsPage(false));
             }}
             onAnalyticsAd={(ad) => {
-              if (!planAccess) return;
-              const canAccessAnalytics = planAccess.filters?.ad_analytics?.enabled === true ||
-                (planAccess.competitorLimits?.brandLimit ?? 0) > 0;
-              if (!canAccessAnalytics) { dispatch(openModal('isPricingModalOpen')); return; }
+              if (!entitlements && !planAccess) return;
+              if (!hasAdAnalyticsAccess) { dispatch(openModal('isPricingModalOpen')); return; }
               openAnalyticsModal(ad);
             }}
             closeDetailSignal={closeDetailSignal}
@@ -1942,10 +1968,8 @@ const App = () => {
                 dispatch(openModal('isPricingModalOpen'));
                 return;
               }
-              if (!planAccess) return;
-              const canAccessAnalytics = planAccess.filters?.ad_analytics?.enabled === true ||
-                (planAccess.competitorLimits?.brandLimit ?? 0) > 0;
-              if (!canAccessAnalytics) {
+              if (!entitlements && !planAccess) return;
+              if (!hasAdAnalyticsAccess) {
                 dispatch(openModal('isPricingModalOpen'));
                 return;
               }

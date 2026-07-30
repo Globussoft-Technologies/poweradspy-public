@@ -105,8 +105,8 @@ const router = Router();
 router.post(
   '/ads/search',
   authMiddleware,
-  planAccessMiddleware,
   requireSearchCapabilities(),
+  planAccessMiddleware,
   validator(searchSchema),
   asyncHandler(searchAllNetworks)
 );

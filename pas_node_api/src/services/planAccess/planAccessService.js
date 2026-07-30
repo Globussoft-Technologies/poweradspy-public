@@ -443,7 +443,7 @@ function stripRestrictedFilters(body, filterStatus, sduiQueryParamMap = {}) {
   for (const [bodyKey, filterId] of Object.entries(combinedMap)) {
     const val = body[bodyKey];
     // 'NA' is the frontend's "not selected" sentinel — skip it
-    if (val === undefined || val === null || val === '' || val === 'NA') continue;
+    if (val === undefined || val === null || val === '' || val === 'NA' || val === false) continue;
     if (Array.isArray(val) && val.length === 0) continue;
     // Skip empty range objects like {min:"",max:""} — treat same as 'NA' (no filter selected)
     if (typeof val === 'object' && !Array.isArray(val)) {

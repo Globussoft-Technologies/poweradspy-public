@@ -63,6 +63,14 @@ async function getSduiQueryParamMap() {
  */
 async function planAccessMiddleware(req, res, next) {
   try {
+    // requireSearchCapabilities runs first on /ads/search. When it found a
+    // published policy, its decisions are authoritative; this legacy layer
+    // continues to populate response metadata but must not deny the same
+    // request from stale plan_access_config rows.
+    const hasPlanControlDecision =
+      config.planControl?.enforcementMode === 'enforce' &&
+      Array.isArray(req.planControlDecisions);
+
     // Get subscription type from JWT (aMember or SQL user)
     // Check userSubscriptionType first (aMember users), fallback to plan_id (SQL users)
     const planId = req.user?.userSubscriptionType || req.user?.plan_id;
@@ -121,13 +129,16 @@ async function planAccessMiddleware(req, res, next) {
         allowedPlatforms = ALL_PLATFORMS.filter(p => jwtAllowed.has(p) && configAllowed.has(p));
       }
 
-      // Build dynamic SDUI query param map (same as SQL user path)
-      const aMemberSduiMap = await getSduiQueryParamMap();
-      await overlayAiMetaLegacyDecision(req, aMemberNetwork, filterStatus);
-
-      // Strip restricted filters from request body — enforces plan-level filter access for aMember users
-      const { planRestricted: aMemberPlanRestricted, platformRestricted: aMemberPlatformRestricted } =
-        planAccessService.stripRestrictedFilters(req.body, filterStatus, aMemberSduiMap);
+      let aMemberPlanRestricted = [];
+      let aMemberPlatformRestricted = [];
+      if (!hasPlanControlDecision) {
+        const aMemberSduiMap = await getSduiQueryParamMap();
+        await overlayAiMetaLegacyDecision(req, aMemberNetwork, filterStatus);
+        ({
+          planRestricted: aMemberPlanRestricted,
+          platformRestricted: aMemberPlatformRestricted,
+        } = planAccessService.stripRestrictedFilters(req.body, filterStatus, aMemberSduiMap));
+      }
 
       // ad_position and other defaults are silently stripped (see module-level SILENT_STRIP_FILTERS).
 
@@ -161,8 +172,8 @@ async function planAccessMiddleware(req, res, next) {
         });
         return res.status(403).json({
           code: 403,
-          message: 'Your current plan does not support the selected filters. Please upgrade your plan.',
-          showSubscriptionModal: true,
+          message: 'The selected filter is not available for the selected network.',
+          showSubscriptionModal: false,
           restrictedFilters: aMemberHardPlatformRestricted,
           allowedPlatforms,
           filters: filterStatus,
@@ -200,15 +211,19 @@ async function planAccessMiddleware(req, res, next) {
 
     // Compute filter status for the requested platform(s)
     const filterStatus = planAccessService.getFilterStatus(planId, network, planConfig);
-    await overlayAiMetaLegacyDecision(req, network, filterStatus);
+    let planRestricted = [];
+    let platformRestricted = [];
+    if (!hasPlanControlDecision) {
+      await overlayAiMetaLegacyDecision(req, network, filterStatus);
 
-    // Build dynamic query param map from SDUI config (cached, 5 min TTL).
-    // Covers new SDUI filters added via admin dashboard without code changes.
-    const sduiQueryParamMap = await getSduiQueryParamMap();
-
-    // Check for restricted filters — block request if user is trying to use them
-    const { planRestricted, platformRestricted } =
-      planAccessService.stripRestrictedFilters(req.body, filterStatus, sduiQueryParamMap);
+      // Build dynamic query param map from SDUI config (cached, 5 min TTL).
+      // Covers new SDUI filters added via admin dashboard without code changes.
+      const sduiQueryParamMap = await getSduiQueryParamMap();
+      ({
+        planRestricted,
+        platformRestricted,
+      } = planAccessService.stripRestrictedFilters(req.body, filterStatus, sduiQueryParamMap));
+    }
 
     // // Filters that the frontend always sends as defaults (not user-selected).
     // // These are silently stripped for restricted plans instead of triggering the upgrade modal.
@@ -245,8 +260,8 @@ async function planAccessMiddleware(req, res, next) {
       });
       return res.status(403).json({
         code: 403,
-        message: 'Your current plan does not support the selected filters. Please upgrade your plan.',
-        showSubscriptionModal: true,
+        message: 'The selected filter is not available for the selected network.',
+        showSubscriptionModal: false,
         restrictedFilters: hardPlatformRestricted,
         allowedPlatforms,
         filters: filterStatus,

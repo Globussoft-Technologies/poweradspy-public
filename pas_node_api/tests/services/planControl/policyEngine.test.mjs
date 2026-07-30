@@ -5,11 +5,13 @@ import identityModule from '../../../src/services/planControl/engine/planIdentit
 import evaluatorModule from '../../../src/services/planControl/engine/evaluator.js';
 import validationModule from '../../../src/services/planControl/engine/policyValidation.js';
 import capabilityModule from '../../../src/services/planControl/registries/capabilityRegistry.js';
+import routeClassificationModule from '../../../src/services/planControl/registries/routeClassification.js';
 
 const { resolvePlanIdentity } = identityModule;
 const { evaluateEntitlement } = evaluatorModule;
 const { checksumSnapshot, diffSnapshots, validateSnapshot } = validationModule;
 const { getCapabilities } = capabilityModule;
+const { hasSelectedValue } = routeClassificationModule;
 
 function snapshot() {
   return {
@@ -62,6 +64,12 @@ function snapshot() {
 }
 
 describe('plan-control policy engine', () => {
+  it('does not enforce a capability for a false boolean toggle', () => {
+    expect(hasSelectedValue(false)).toBe(false);
+    expect(hasSelectedValue({ enabled: false })).toBe(false);
+    expect(hasSelectedValue(true)).toBe(true);
+  });
+
   it('resolves monthly and yearly billing IDs into one family while preserving variants', () => {
     const policy = snapshot();
     expect(resolvePlanIdentity(101, policy)).toMatchObject({

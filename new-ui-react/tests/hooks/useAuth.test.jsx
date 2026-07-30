@@ -2,8 +2,9 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, render } from "@testing-library/react";
 
-const { fetchPlanAccessSpy, fetchOnboardingStatusSpy, trackEventSpy, dispatchSpy } = vi.hoisted(() => ({
+const { fetchPlanAccessSpy, fetchEntitlementsSpy, fetchOnboardingStatusSpy, trackEventSpy, dispatchSpy } = vi.hoisted(() => ({
   fetchPlanAccessSpy: vi.fn(),
+  fetchEntitlementsSpy: vi.fn(),
   fetchOnboardingStatusSpy: vi.fn(),
   trackEventSpy: vi.fn(),
   dispatchSpy: vi.fn(),
@@ -11,6 +12,7 @@ const { fetchPlanAccessSpy, fetchOnboardingStatusSpy, trackEventSpy, dispatchSpy
 
 vi.mock("../../src/services/api", () => ({
   fetchPlanAccess: fetchPlanAccessSpy,
+  fetchEntitlements: fetchEntitlementsSpy,
   fetchOnboardingStatus: fetchOnboardingStatusSpy,
   trackEvent: trackEventSpy,
 }));
@@ -52,8 +54,10 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   fetchPlanAccessSpy.mockReset().mockResolvedValue(null);
+  fetchEntitlementsSpy.mockReset().mockResolvedValue(null);
   fetchOnboardingStatusSpy.mockReset().mockResolvedValue(null);
   dispatchSpy.mockReset();
+  vi.stubEnv("VITE_PAS_API_TOKEN", "");
   setUrl("");
   vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
 });
@@ -178,6 +182,23 @@ describe("useAuth > AuthProvider + useAuth", () => {
 });
 
 describe("useAuth > isFilterRestricted", () => {
+  it("maps verified_filter to the enabled verified plan rule", async () => {
+    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    fetchPlanAccessSpy.mockResolvedValueOnce({
+      filters: {
+        verified: { enabled: true },
+        engagement: { enabled: false },
+      },
+    });
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.filterHasPlanEntry("verified_filter")).toBe(true);
+    expect(result.current.isFilterRestricted("verified_filter")).toBe(false);
+  });
+
   it("no planAccess → not restricted", async () => {
     const mod = await loadSut();
     const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
@@ -414,6 +435,7 @@ describe("useAuth > onboarding dismiss behavior", () => {
   it("needsOnboarding true opens onboarding modal", async () => {
     const token = makeJwt({ id: 1, user_id: 1, needsOnboarding: true, exp: Math.floor(Date.now() / 1000) + 3600 });
     localStorage.setItem("authToken", token);
+    fetchOnboardingStatusSpy.mockResolvedValueOnce({ needsOnboarding: true });
     const mod = await loadSut();
     const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
     renderHook(() => mod.useAuth(), { wrapper });

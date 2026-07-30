@@ -98,6 +98,7 @@ const SDUI_TO_PLAN_ACCESS = {
   affiliate_network:    'affiliate_network',
   ad_type:              'ad_type',
   language:             'language',
+  lang:                 'language',
   // Sidebar filter _id → plan access _id (with _filter suffix)
   cta_filter:           'call_to_action',
   gender_filter:        'gender',
@@ -113,6 +114,10 @@ const SDUI_TO_PLAN_ACCESS = {
   ad_type_filter:       'ad_type',
   language_filter:      'language',
   ad_position_filter:   'ad_position',
+  // SDUI uses verified_filter while both legacy Plan Access and Plan Control
+  // store this feature under `verified`.
+  verified_filter:      'verified',
+  is_verified:          'verified',
   // Navbar / searchbar
   ad_position:          'ad_position',
   keyword_search:       'keyword_search',

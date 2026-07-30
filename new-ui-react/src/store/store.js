@@ -17,16 +17,30 @@ if (new URLSearchParams(window.location.search).get('advertiser')) {
   } catch {}
 }
 
-// One-time cleanup: older builds persisted `activeTab` (default "Newest"), which
-// rehydrates a highlighted quick-sort pill on load even though no sort is applied.
-// redux-persist's blacklist only blocks writes, not reads, so strip any stale value
-// here so existing users start with no pill selected.
+// redux-persist's blacklist blocks future writes but does not remove values
+// written by older builds. Clear every transient value before rehydration so a
+// stale pricing/subscription modal cannot reopen on a paid user's next login.
 try {
   const raw = localStorage.getItem('persist:root');
   if (raw) {
     const parsed = JSON.parse(raw);
-    if ('activeTab' in parsed) {
-      delete parsed.activeTab;
+    const transientKeys = [
+      'activeTab',
+      'isAIAnalysisModalOpen',
+      'isCampaignModalOpen',
+      'isPricingModalOpen',
+      'isAnalyticsModalOpen',
+      'isSubscriptionModalOpen',
+      'isOnboardingModalOpen',
+    ];
+    let changed = false;
+    transientKeys.forEach((key) => {
+      if (key in parsed) {
+        delete parsed[key];
+        changed = true;
+      }
+    });
+    if (changed) {
       localStorage.setItem('persist:root', JSON.stringify(parsed));
     }
   }
@@ -37,7 +51,12 @@ const persistConfig = {
   storage,
   // Modal states must not be persisted — they should always start closed on fresh load
   blacklist: [
+    'isAIAnalysisModalOpen',
+    'isCampaignModalOpen',
     'isPricingModalOpen',
+    'isAnalyticsModalOpen',
+    'isSubscriptionModalOpen',
+    'isOnboardingModalOpen',
     // activeTab (quick sort) must not be persisted — the actual sort value (sortBy)
     // is non-persisted React state, so persisting activeTab left a pill highlighted
     // on reload while no sort was applied. Always start unselected.

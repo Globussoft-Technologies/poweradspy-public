@@ -12,7 +12,7 @@ import Masonry from "./Masonry";
 import MasonryCard from "./MasonryCard";
 import OriginalPreview from "./OriginalPreview";
 import AdDetailModal from "./AdDetailModal";
-import AdFilterBar from "./AdFilterBar";
+import AdFilterBar, { resolveSortPlanAccessId } from "./AdFilterBar";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
 import { getAiColorLabel } from "../../utils/aiColorPalette";
@@ -1063,6 +1063,11 @@ const AdGrid = ({
                     disabled={activeTab === tabLabel}
                     onClick={() => {
                       if (guest?.showGuestWarning("Please login to change sorting")) return;
+                      const planAccessId = resolveSortPlanAccessId(tabLabel, tabValue);
+                      if (planAccessId && isFilterRestricted?.(planAccessId)) {
+                        onSortRestricted?.();
+                        return;
+                      }
                       setActiveTab(tabLabel);
                       setSortBy(tabValue);
                     }}

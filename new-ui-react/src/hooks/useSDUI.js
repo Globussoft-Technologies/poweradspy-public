@@ -232,7 +232,9 @@ export function useSDUI() {
             const next = { ...prev };
             for (const [filterId, value] of Object.entries(prev)) {
                 const isActive = Array.isArray(value) ? value.length > 0
-                    : value !== null && value !== undefined && value !== '';
+                    : typeof value === 'boolean'
+                        ? value
+                        : value !== null && value !== undefined && value !== '';
                 if (!isActive) continue;
                 const filter = allFilters.find(f =>
                     f._id === filterId || (f.query_param && f.query_param === filterId)
@@ -324,7 +326,9 @@ export function useSDUI() {
         for (const [filterId, value] of Object.entries(filterValues)) {
             // Skip inactive filter values
             const isActive = Array.isArray(value) ? value.length > 0
-                : value !== null && value !== undefined && value !== '';
+                : typeof value === 'boolean'
+                    ? value
+                    : value !== null && value !== undefined && value !== '';
             if (!isActive) continue;
 
             // Match filter by _id OR by query_param, with aliases for known mismatched keys

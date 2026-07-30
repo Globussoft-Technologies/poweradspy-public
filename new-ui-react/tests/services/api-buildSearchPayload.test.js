@@ -460,9 +460,9 @@ describe("buildSearchPayload > verified + metaAdsLib + platform", () => {
     const p = buildSearchPayload({ verified: false, activePlatforms: ["facebook"] });
     expect(p.verified).toBe("NA");
   });
-  it("verified gate bypassed because 'verified_filter' is not in FILTER_PLATFORM_SUPPORT (short-circuits via ||)", () => {
+  it("verified is not sent to a network that does not support it", () => {
     const p = buildSearchPayload({ verified: true, activePlatforms: ["reddit"] });
-    expect(p.verified).toBe(1);
+    expect(p.verified).toBe("NA");
   });
   it("metaAdsLib=true with FB/IG → platform=15", () => {
     const p = buildSearchPayload({ meta_ads_lib: true, activePlatforms: ["facebook"] });

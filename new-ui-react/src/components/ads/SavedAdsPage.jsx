@@ -44,6 +44,12 @@ const TABS = [
 
 const PAGE_SIZE = 9;
 
+export const getPermittedSavedPlatforms = (availablePlatforms = [], allowedPlatforms) => {
+  if (!Array.isArray(allowedPlatforms)) return availablePlatforms;
+  const allowed = new Set(allowedPlatforms.map((value) => String(value).toLowerCase()));
+  return availablePlatforms.filter((value) => allowed.has(String(value).toLowerCase()));
+};
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 const SavedAdsPage = ({
   sdui,
@@ -55,6 +61,8 @@ const SavedAdsPage = ({
   onAnalyticsAd,
   onSearch,
   closeDetailSignal,
+  allowedPlatforms,
+  onPlatformRestricted,
 }) => {
   const dispatch = useDispatch();
   const reduxPlatforms = useSelector((s) => s.ui.specificPlatforms);
@@ -89,12 +97,15 @@ const SavedAdsPage = ({
   const specificPlatformsRef = useRef([]);
   const sduiRef = useRef(sdui);
   const allPlatformValuesRef = useRef([]);
+  const permittedPlatformValuesRef = useRef([]);
+  const onPlatformRestrictedRef = useRef(onPlatformRestricted);
   hasMoreRef.current = hasMore;
   loadingMoreRef.current = loadingMore;
   pageRef.current = page;
   activeTabRef.current = activeTab;
   specificPlatformsRef.current = specificPlatforms;
   sduiRef.current = sdui;
+  onPlatformRestrictedRef.current = onPlatformRestricted;
 
   const [measuredHeights, setMeasuredHeights] = useState({});
   const pendingMeasures = useRef({});
@@ -131,6 +142,14 @@ const SavedAdsPage = ({
     return PLATFORMS.map((p) => p.id.toLowerCase());
   }, [platformOptions]);
   allPlatformValuesRef.current = allPlatformValues;
+  const permittedPlatformValues = useMemo(
+    () => getPermittedSavedPlatforms(allPlatformValues, allowedPlatforms),
+    [allPlatformValues, allowedPlatforms],
+  );
+  permittedPlatformValuesRef.current = permittedPlatformValues;
+  const permittedPlatformKey = permittedPlatformValues
+    .map((value) => String(value).toLowerCase())
+    .join("|");
 
   const isAllActive = specificPlatforms.length === 0;
 
@@ -142,17 +161,24 @@ const SavedAdsPage = ({
   const handleAllClick = () => {
     setSpecificPlatforms([]);
     dispatch(setReduxPlatforms([]));
-    sdui.setActivePlatforms?.(allPlatformValues);
+    sdui.setActivePlatforms?.(permittedPlatformValues);
   };
   // Single-select in Fav Ads: picking a platform REPLACES the current selection
   // (so switching GDN → Google auto-closes GDN instead of stacking both). Clicking
   // the already-active platform clears back to "All". Ad Lib keeps its own
   // multi-select handler in App.jsx — this only changes the Fav Ads tabs.
   const handlePlatformClick = (val) => {
+    const isAllowed = permittedPlatformValues.some(
+      (platform) => String(platform).toLowerCase() === String(val).toLowerCase(),
+    );
+    if (!isAllowed) {
+      onPlatformRestrictedRef.current?.();
+      return;
+    }
     setSpecificPlatforms((prev) => {
       const next = prev.length === 1 && prev[0] === val ? [] : [val];
       dispatch(setReduxPlatforms(next));
-      sdui.setActivePlatforms?.(next.length > 0 ? next : allPlatformValues);
+      sdui.setActivePlatforms?.(next.length > 0 ? next : permittedPlatformValues);
       return next;
     });
   };
@@ -172,8 +198,13 @@ const SavedAdsPage = ({
     setRemovingIds(new Set());
     try {
       const sdui = sduiRef.current;
-      const allPlatforms = allPlatformValuesRef.current;
-      const activePlatforms = platforms.length > 0 ? platforms : allPlatforms;
+      const permittedPlatforms = permittedPlatformValuesRef.current;
+      const selectedPlatforms = getPermittedSavedPlatforms(platforms, permittedPlatforms);
+      const activePlatforms = selectedPlatforms.length > 0 ? selectedPlatforms : permittedPlatforms;
+      if (activePlatforms.length === 0) {
+        setHasMore(false);
+        return;
+      }
       // Don't spread sdui.filterValues here — sidebar filters (language, gender, etc.)
       // are restricted per-plan and would trigger a 403 on the saved ads endpoint.
       // Saved ads only need platform, sort, and pagination context.
@@ -200,8 +231,12 @@ const SavedAdsPage = ({
       setAds(unique);
       setPage(1);
       setHasMore(fetched.length >= PAGE_SIZE);
-    } catch {
-      setError("Failed to load ads. Please try again.");
+    } catch (err) {
+      if (err?.showSubscriptionModal === true) {
+        onPlatformRestrictedRef.current?.();
+      } else {
+        setError(err?.message || "Failed to load ads. Please try again.");
+      }
     } finally {
       setLoading(false);
       isFetchingRef.current = false;
@@ -215,7 +250,13 @@ const SavedAdsPage = ({
     setLoadingMore(true);
     try {
       const platforms = specificPlatformsRef.current;
-      const activePlatforms = platforms.length > 0 ? platforms : allPlatformValuesRef.current;
+      const permittedPlatforms = permittedPlatformValuesRef.current;
+      const selectedPlatforms = getPermittedSavedPlatforms(platforms, permittedPlatforms);
+      const activePlatforms = selectedPlatforms.length > 0 ? selectedPlatforms : permittedPlatforms;
+      if (activePlatforms.length === 0) {
+        setHasMore(false);
+        return;
+      }
       const tab = activeTabRef.current;
       // Same as loadFresh: omit sdui.filterValues to avoid restricted-filter 403s
       const payload = {
@@ -253,7 +294,7 @@ const SavedAdsPage = ({
     if (allPlatformValuesRef.current.length > 0) {
       loadFresh(activeTab, specificPlatforms);
     }
-  }, [activeTab, specificPlatforms, allPlatformValues.length, loadFresh]);
+  }, [activeTab, specificPlatforms, permittedPlatformKey, loadFresh]);
 
   // Scroll listener — set up once, reads live values via refs
   useEffect(() => {

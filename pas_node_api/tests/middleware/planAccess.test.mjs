@@ -175,6 +175,29 @@ describe("middleware/planAccess > planAccessMiddleware (SQL user path)", () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it("published Plan Control decision prevents stale SQL legacy rows from re-denying search", async () => {
+    configExports.planControl = { enforcementMode: "enforce" };
+    planSvc.getConfig.mockResolvedValue([{}]);
+    planSvc.stripRestrictedFilters.mockReturnValue({
+      planRestricted: ["language", "likes_sort"],
+      platformRestricted: [],
+    });
+    const { planAccessMiddleware } = freshSut();
+    const req = {
+      user: { plan_id: 72 },
+      body: { language: ["en"], likes_sort: "likes_sort" },
+      query: {},
+      planControlDecisions: [
+        { capabilityId: "filter.language", allowed: true },
+        { capabilityId: "legacy.likes_sort", allowed: true },
+      ],
+    };
+    const next = vi.fn();
+    await planAccessMiddleware(req, mkRes(), next);
+    expect(next).toHaveBeenCalled();
+    expect(planSvc.stripRestrictedFilters).not.toHaveBeenCalled();
+  });
+
   it("403 when platformRestricted (non-silent) present", async () => {
     planSvc.getConfig.mockResolvedValue([{}]);
     planSvc.stripRestrictedFilters.mockReturnValue({ planRestricted: [], platformRestricted: ["country"] });
@@ -183,6 +206,7 @@ describe("middleware/planAccess > planAccessMiddleware (SQL user path)", () => {
     await planAccessMiddleware({ user: { plan_id: 1 }, body: {}, query: {} }, res, vi.fn());
     expect(res.statusCode).toBe(403);
     expect(res.body.restrictedFilters).toEqual(["country"]);
+    expect(res.body.showSubscriptionModal).toBe(false);
   });
 
   it("500 on unexpected throw", async () => {
@@ -250,6 +274,7 @@ describe("middleware/planAccess > planAccessMiddleware (aMember user path)", () 
       { user: { userSubscriptionType: 69, platformAccess: {} }, body: {}, query: {} }, res, vi.fn()
     );
     expect(res.statusCode).toBe(403);
+    expect(res.body.showSubscriptionModal).toBe(true);
     expect(res.body.restrictedFilters).toEqual(["keyword"]);
   });
 
@@ -273,6 +298,29 @@ describe("middleware/planAccess > planAccessMiddleware (aMember user path)", () 
       { user: { userSubscriptionType: 69, platformAccess: {} }, body: {}, query: {} }, mkRes(), next
     );
     expect(next).toHaveBeenCalled();
+  });
+
+  it("published Plan Control decision prevents stale aMember legacy rows from re-denying search", async () => {
+    configExports.planControl = { enforcementMode: "enforce" };
+    planSvc.getConfig.mockResolvedValue([{}]);
+    planSvc.stripRestrictedFilters.mockReturnValue({
+      planRestricted: ["comments_sort", "ad_running_days_sort"],
+      platformRestricted: [],
+    });
+    const { planAccessMiddleware } = freshSut();
+    const req = {
+      user: { userSubscriptionType: 69, platformAccess: {} },
+      body: { comments_sort: "comments_sort", running_longest_sort: "running_longest_sort" },
+      query: {},
+      planControlDecisions: [
+        { capabilityId: "legacy.comments_sort", allowed: true },
+        { capabilityId: "legacy.ad_running_days_sort", allowed: true },
+      ],
+    };
+    const next = vi.fn();
+    await planAccessMiddleware(req, mkRes(), next);
+    expect(next).toHaveBeenCalled();
+    expect(planSvc.stripRestrictedFilters).not.toHaveBeenCalled();
   });
 
   it("aMember network from body wins", async () => {

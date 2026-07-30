@@ -6,11 +6,43 @@ import AdDateDropdown from "./AdDateDropdown";
 import { PLATFORMS } from "../../constants";
 import { trackEvent } from "../../services/api";
 
-// Maps sort option label (lowercase) → plan_access_config _id
-const SORT_LABEL_TO_PLAN_ACCESS_ID = {
-  'newest':                   'newest_sort',
-  'ad running days':          'ad_running_days_sort',
+// Maps SDUI sort labels/values to the stable Plan Control/legacy access ID.
+const SORT_TO_PLAN_ACCESS_ID = {
+  newest: 'newest_sort',
+  newest_sort: 'newest_sort',
+  likes: 'likes_sort',
+  like: 'likes_sort',
+  like_sort: 'likes_sort',
+  likes_sort: 'likes_sort',
+  comments: 'comments_sort',
+  comment: 'comments_sort',
+  comment_sort: 'comments_sort',
+  comments_sort: 'comments_sort',
+  shares: 'shares_sort',
+  share: 'shares_sort',
+  share_sort: 'shares_sort',
+  shares_sort: 'shares_sort',
+  impressions: 'impression_sort',
+  impression: 'impression_sort',
+  impression_sort: 'impression_sort',
+  popularity: 'popularity_sort',
+  popularity_sort: 'popularity_sort',
+  'ad running days': 'ad_running_days_sort',
+  ad_running_days: 'ad_running_days_sort',
+  ad_running_days_sort: 'ad_running_days_sort',
+  running_longest: 'ad_running_days_sort',
   'domain registration date': 'domain_reg_sort',
+  domain_reg: 'domain_reg_sort',
+  domain_reg_sort: 'domain_reg_sort',
+};
+
+export const resolveSortPlanAccessId = (label, value) => {
+  const normalize = (input) => String(input ?? '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+  const rawLabel = String(label ?? '').toLowerCase().trim();
+  return SORT_TO_PLAN_ACCESS_ID[normalize(value)] ||
+    SORT_TO_PLAN_ACCESS_ID[normalize(label)] ||
+    SORT_TO_PLAN_ACCESS_ID[rawLabel] ||
+    null;
 };
 
 /**
@@ -400,7 +432,7 @@ const AdFilterBar = ({
                         key={tabValue}
                         onClick={() => {
                           if (guest?.showGuestWarning("Please login to change sorting")) return;
-                          const planAccessId = SORT_LABEL_TO_PLAN_ACCESS_ID[(tabLabel || '').toLowerCase().trim()];
+                          const planAccessId = resolveSortPlanAccessId(tabLabel, tabValue);
                           if (planAccessId && isFilterRestricted?.(planAccessId)) { onSortRestricted?.(); return; }
                           setActiveTab(tabLabel);
                           sdui.setSortBy(tabValue);

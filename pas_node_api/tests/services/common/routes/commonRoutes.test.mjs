@@ -132,6 +132,13 @@ beforeEach(() => {
 });
 
 describe("commonRoutes > registration", () => {
+  it("evaluates published Ads Search capabilities before the legacy metadata middleware", () => {
+    const stack = routes.post["/ads/search"];
+    const { planAccessMiddleware } = require(planAccessPath);
+    expect(stack[1]?.name).toBe("planSearchCapabilityMiddleware");
+    expect(stack[2]).toBe(planAccessMiddleware);
+  });
+
   it("registers all expected paths", () => {
     for (const p of [
       "/ads/search", "/catsearch", "/ads/getAdsByAdvertiser", "/ads/getAdInsights",

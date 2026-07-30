@@ -810,6 +810,7 @@ export const FILTER_PLATFORM_SUPPORT = {
   gender:         ['facebook', 'instagram'],
   age:            ['facebook', 'instagram'],
   verified:       ['facebook', 'instagram', 'youtube', 'linkedin'],
+  verified_filter:['facebook', 'instagram', 'youtube', 'linkedin'],
   meta_ads_lib:   ['facebook', 'instagram'],
   ad_position:    ['facebook', 'youtube'],
   ad_sub_position:['google'],

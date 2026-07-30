@@ -123,7 +123,7 @@ function requireCapability(capabilityId, options = {}) {
 }
 
 function hasSelectedValue(value) {
-  if (value === undefined || value === null || value === '' || value === 'NA') return false;
+  if (value === undefined || value === null || value === '' || value === 'NA' || value === false) return false;
   if (Array.isArray(value)) return value.length > 0;
   if (typeof value !== 'object') return true;
   return Object.values(value).some(hasSelectedValue);
@@ -236,6 +236,7 @@ module.exports = {
   fromBody,
   fromQuery,
   normalizeNetworks,
+  hasSelectedValue,
   getCapabilityBindings,
   classifyRoute,
 };

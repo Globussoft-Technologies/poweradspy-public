@@ -2,9 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   isCapabilityAllowed,
   isCapabilityAllowedOnNetwork,
+  isPlanNetworkAllowed,
+  normalizePlanNetwork,
 } from "../../src/utils/planEntitlement.js";
 
 describe("plan entitlement decisions", () => {
+  it("normalizes SDUI network values before comparing plan access", () => {
+    expect(normalizePlanNetwork(" YouTube ")).toBe("youtube");
+    expect(isPlanNetworkAllowed(["youtube", "GOOGLE", "Native"], "YOUTUBE")).toBe(true);
+    expect(isPlanNetworkAllowed(["youtube", "google", "native"], "linkedin")).toBe(false);
+  });
+
   const disabledSerp = {
     enforcementMode: "shadow",
     capabilities: {
