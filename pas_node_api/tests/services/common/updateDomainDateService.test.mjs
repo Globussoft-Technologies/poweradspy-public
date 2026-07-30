@@ -47,15 +47,15 @@ afterEach(() => {
 });
 
 describe("updateDomainDateService > config & date validation", () => {
-  it("covers all 10 networks; only facebook & linkedin lack updated_date", () => {
+  it("covers all 10 networks; every network now has updated_date", () => {
     expect(Object.keys(NETWORK_CONFIG).sort()).toEqual([
       "facebook", "gdn", "google", "instagram", "linkedin",
       "native", "pinterest", "quora", "reddit", "youtube",
     ].sort());
-    expect(NETWORK_CONFIG.facebook.hasUpdatedDate).toBe(false);
-    expect(NETWORK_CONFIG.linkedin.hasUpdatedDate).toBe(false);
+    expect(NETWORK_CONFIG.facebook.hasUpdatedDate).toBe(true);
+    expect(NETWORK_CONFIG.linkedin.hasUpdatedDate).toBe(true);
     for (const [net, cfg] of Object.entries(NETWORK_CONFIG)) {
-      if (net !== "facebook" && net !== "linkedin") expect(cfg.hasUpdatedDate).toBe(true);
+      expect(cfg.hasUpdatedDate).toBe(true);
       expect(cfg.esDateField).toBeTruthy();
       expect(cfg.adTable).toBeTruthy();
     }
@@ -129,7 +129,7 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     expect(out.data.status).toBe(1);
     expect(out.data.summary).toMatchObject({ updated: 2, not_found: 8, errors: 0, es_updated: 4, es_errors: 0 });
     expect(out.data.results.google).toMatchObject({ status: "updated", matched_rows: 2, new_status: 1, es_matched_ads: 3, es_updated: 3, es_index: "google_idx" });
-    expect(out.data.results.facebook).toMatchObject({ status: "updated", es_updated: 1 });
+    expect(out.data.results.facebook).toMatchObject({ status: "updated", es_updated: 1, updated_date_touched: true });
 
     // ad lookup used the ad table + the domain row ids, selecting BOTH id and ad_id
     const adLookup = gCalls.sql.find((c) => /^SELECT id, ad_id FROM google_text_ad WHERE domain_id IN/i.test(c.q));

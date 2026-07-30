@@ -17,8 +17,8 @@
  * A `status: 1` without a date is rejected (can't be "resolved" with no date).
  *
  * For each network: if the domain row(s) exist, apply the change to EVERY matching row and
- * bump `updated_date = NOW()` (except facebook & linkedin). Networks where the domain is absent
- * are `not_found` and untouched (update-only — no rows are inserted).
+ * bump `updated_date = NOW()`. Networks where the domain is absent are `not_found` and untouched
+ * (update-only — no rows are inserted).
  *
  * ES propagation (date path only): the ad docs don't store the domain string, so the ads are
  * resolved from SQL (`<adTable>.domain_id` → the domain row ids) and their `ad_id`s drive an

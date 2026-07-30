@@ -32,8 +32,8 @@ marks a domain unresolvable) and the [`get-domain-registration`](GET_DOMAIN_REGI
 
 | Network | Domains table | Sort column (DESC) |
 |---------|---------------|--------------------|
-| facebook | `facebook_ad_domains` | `last_seen` * |
-| linkedin | `linkedin_ad_domains` | `last_seen` * |
+| facebook | `facebook_ad_domains` | `updated_date` |
+| linkedin | `linkedin_ad_domains` | `updated_date` |
 | instagram | `instagram_ad_domain` | `updated_date` |
 | google | `google_text_ad_domains` | `updated_date` |
 | youtube | `youtube_ad_domains` | `updated_date` |
@@ -43,9 +43,7 @@ marks a domain unresolvable) and the [`get-domain-registration`](GET_DOMAIN_REGI
 | quora | `quora_ad_domain` | `updated_date` |
 | gdn | `gdn_ad_domains` | `updated_date` |
 
-\* `facebook_ad_domains` and `linkedin_ad_domains` have **no `updated_date`** column (they carry
-`created` + `last_seen`), so they fall back to `last_seen` — the closest "most recently updated"
-signal. TikTok is intentionally excluded (no SQL domains table).
+TikTok is intentionally excluded (no SQL domains table).
 
 ---
 
@@ -80,9 +78,8 @@ GET /api/v1/common/get-domains-without-registration-date?network=google&limit=2
 ```
 
 Each row is a **distinct** domain (deduped across duplicate rows) with only the sort column
-(`domain_registered_date` is always `NULL` here, so it's omitted). For `network=facebook` /
-`network=linkedin` the sort column is `last_seen` instead of `updated_date`, and
-`meta.sort_column` reflects that.
+(`domain_registered_date` is always `NULL` here, so it's omitted). `meta.sort_column` reflects the
+resolved sort column for the selected network.
 
 ---
 
@@ -94,7 +91,7 @@ BASE=http://localhost:4000   # or https://stagingtest-api.poweradspy.com
 # google — up to 50 (default)
 curl -s -w "\n[HTTP %{http_code}]\n" "$BASE/api/v1/common/get-domains-without-registration-date?network=google"
 
-# facebook — 10 rows (sorted by last_seen)
+# facebook — 10 rows (sorted by updated_date)
 curl -s -w "\n[HTTP %{http_code}]\n" "$BASE/api/v1/common/get-domains-without-registration-date?network=facebook&limit=10"
 
 # missing network → 400

@@ -544,8 +544,8 @@ router.get('/get-domains-without-registration-date', asyncHandler(domainsWithout
 
 // PUT /api/v1/common/insert-update-domain-date  { domain_name, domain_date: 'YYYY-MM-DD' }
 // Updates a domain's WHOIS registration date across ALL networks' domains tables and bumps
-// `updated_date` where present (not on facebook/linkedin). Update-only; never inserts. Node
-// port of the PHP SupportScrapper@putDomainDate, fanned out to every network.
+// `updated_date` on every network. Update-only; never inserts. Node port of the PHP
+// SupportScrapper@putDomainDate, fanned out to every network.
 router.put('/insert-update-domain-date', asyncHandler(putDomainDate));
 
 // GET /api/v1/common/get-domain-registration?domain=<domain>&network=<net|csv|all>

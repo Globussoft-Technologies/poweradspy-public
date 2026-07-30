@@ -27,14 +27,12 @@ describe("common/services/domainsWithoutRegistrationService > network config", (
     ].sort());
   });
 
-  it("facebook & linkedin sort by last_seen; the rest by updated_date", () => {
-    expect(NETWORK_CONFIG.facebook.sortColumn).toBe("last_seen");
-    expect(NETWORK_CONFIG.linkedin.sortColumn).toBe("last_seen");
+  it("all networks sort by updated_date", () => {
+    expect(NETWORK_CONFIG.facebook.sortColumn).toBe("updated_date");
+    expect(NETWORK_CONFIG.linkedin.sortColumn).toBe("updated_date");
     for (const [net, cfg] of Object.entries(NETWORK_CONFIG)) {
       expect(cfg.table).toBeTruthy();
-      if (net !== "facebook" && net !== "linkedin") {
-        expect(cfg.sortColumn).toBe("updated_date");
-      }
+      expect(cfg.sortColumn).toBe("updated_date");
     }
   });
 });
@@ -80,7 +78,7 @@ describe("common/services/domainsWithoutRegistrationService > query + limit", ()
     expect(sql).toContain(`LIMIT ${DEFAULT_LIMIT}`);
   });
 
-  it("uses last_seen for facebook and clamps limit to the max", async () => {
+  it("uses updated_date for facebook and clamps limit to the max", async () => {
     const calls = mockNetwork("facebook");
     const out = await getDomainsWithoutRegistration({ network: "facebook", limit: "500" }, null);
 
@@ -88,7 +86,7 @@ describe("common/services/domainsWithoutRegistrationService > query + limit", ()
     expect(out.meta.limit).toBe(MAX_LIMIT);
     const sql = calls[0].sql.replace(/\s+/g, " ");
     expect(sql).toContain("FROM facebook_ad_domains");
-    expect(sql).toContain("ORDER BY MAX(last_seen) DESC");
+    expect(sql).toContain("ORDER BY MAX(updated_date) DESC");
     expect(sql).toContain(`LIMIT ${MAX_LIMIT}`);
   });
 

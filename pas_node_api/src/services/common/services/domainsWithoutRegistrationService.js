@@ -15,9 +15,7 @@
  *
  * Schema note (verified against the PHP models + insertion repos):
  *   - Every network's domains table has `domain_registered_date`.
- *   - 8 of them ALSO have an `updated_date` column → sort by that.
- *   - facebook_ad_domains & linkedin_ad_domains have NO `updated_date`
- *     (they carry `created` + `last_seen`) → fall back to `last_seen`.
+ *   - Every network's domains table now also has an `updated_date` column → sort by that.
  *
  * `table` and `sortColumn` are constants from the whitelist below (NEVER user
  * input), so they are safe to interpolate into the SQL. `limit` is coerced to a
@@ -31,8 +29,7 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 50;
 
 // network → { table, sortColumn }. sortColumn is the "most recently updated"
-// signal for that table: `updated_date` where it exists, else `last_seen`
-// (facebook & linkedin). Derived from the shared domainTables config.
+// signal for that table. Derived from the shared domainTables config.
 const NETWORK_CONFIG = Object.fromEntries(
   Object.entries(DOMAIN_TABLES).map(([net, c]) => [net, { table: c.table, sortColumn: c.updatedDate || c.recency }])
 );

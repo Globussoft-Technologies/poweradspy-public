@@ -11,9 +11,7 @@
  *   table       - the domains table name
  *   adTable      - the ads table (its `domain_id` FK links ads → this domain; its `ad_id` matches
  *                  the ES `ad_id` field used to locate each ad's doc — same key updateAdMediaService uses)
- *   updatedDate  - the "row last updated" column, or null if the table has none.
- *                  facebook_ad_domains & linkedin_ad_domains have NO `updated_date`
- *                  column (they carry `created` + `last_seen`).
+ *   updatedDate  - the "row last updated" column.
  *   recency      - best "most recently touched" column to sort by when `updatedDate` is null.
  *   esDateField  - the ES field (in the network's primary search index) holding the registration
  *                  date. NOTE the naming/format split, confirmed against live mappings:
@@ -32,8 +30,8 @@
  * store the domain string, so ES updates are located via ad ids resolved from SQL (adTable.domain_id).
  */
 const DOMAIN_TABLES = {
-  facebook:  { table: 'facebook_ad_domains',    adTable: 'facebook_ad',    updatedDate: null,           recency: 'last_seen',    esDateField: 'facebook_ad_domains.domain_registered_date',  esDateFormat: 'ymd',   esMatchField: 'facebook_ad.id',    esMatchId: 'internal' },
-  linkedin:  { table: 'linkedin_ad_domains',    adTable: 'linkedin_ad',    updatedDate: null,           recency: 'last_seen',    esDateField: 'domain_registration_date',                    esDateFormat: 'epoch', esMatchField: 'ad_id',             esMatchId: 'internal' },
+  facebook:  { table: 'facebook_ad_domains',    adTable: 'facebook_ad',    updatedDate: 'updated_date',  recency: 'updated_date', esDateField: 'facebook_ad_domains.domain_registered_date',  esDateFormat: 'ymd',   esMatchField: 'facebook_ad.id',    esMatchId: 'internal' },
+  linkedin:  { table: 'linkedin_ad_domains',    adTable: 'linkedin_ad',    updatedDate: 'updated_date',  recency: 'updated_date', esDateField: 'domain_registration_date',                    esDateFormat: 'epoch', esMatchField: 'ad_id',             esMatchId: 'internal' },
   instagram: { table: 'instagram_ad_domain',    adTable: 'instagram_ad',   updatedDate: 'updated_date', recency: 'updated_date', esDateField: 'instagram_ad_domain.domain_registered_date',  esDateFormat: 'ymd',   esMatchField: 'instagram_ad.id',   esMatchId: 'internal' },
   google:    { table: 'google_text_ad_domains', adTable: 'google_text_ad', updatedDate: 'updated_date', recency: 'updated_date', esDateField: 'domain_registered_date',                      esDateFormat: 'ymd',   esMatchField: 'ad_id',             esMatchId: 'public' },
   youtube:   { table: 'youtube_ad_domains',     adTable: 'youtube_ad',     updatedDate: 'updated_date', recency: 'updated_date', esDateField: 'domain_registration_date',                    esDateFormat: 'epoch', esMatchField: 'ad_id',             esMatchId: 'internal' },

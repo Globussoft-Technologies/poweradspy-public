@@ -2,7 +2,7 @@
 
 Sets a domain's **WHOIS registration date** (`domain_registered_date`) — or marks the domain as
 **unresolvable** — across **all 10 networks'** domains tables, and bumps `updated_date = NOW()`
-wherever that column exists. Node port of the PHP `SupportScrapper@putDomainDate`
+on every network. Node port of the PHP `SupportScrapper@putDomainDate`
 (`PUT https://api.poweradspy.com/insert-update-domain-date`), generalised from facebook-only to
 every network.
 
@@ -69,9 +69,7 @@ Companion to [`get-domains-without-registration-date`](GET_DOMAINS_WITHOUT_REGIS
 | `status` | one of date/status | `2` = mark UNRESOLVABLE (no date). `0` = reset to PENDING. `1` is invalid without a `domain_date`. |
 
 Provide **either** `domain_date` **or** `status`. A `domain_date` with a conflicting `status`
-(anything but 1) → 400. `updated_date` is bumped to `NOW()` for every network **except facebook &
-linkedin**, whose `*_ad_domains` tables have no `updated_date` column (they carry `created` +
-`last_seen`).
+(anything but 1) → 400. `updated_date` is bumped to `NOW()` for every network.
 
 ---
 
@@ -108,7 +106,7 @@ Content-Type: application/json
     "domain_date": "2026-07-09",
     "status": 1,
     "results": {
-      "facebook":  { "status": "updated", "matched_rows": 1, "ids": [22], "new_status": 1, "updated_date_touched": false, "es_index": "search_mix", "es_mode": "sync", "es_matched_ads": 3, "es_updated": 3 },
+      "facebook":  { "status": "updated", "matched_rows": 1, "ids": [22], "new_status": 1, "updated_date_touched": true, "es_index": "search_mix", "es_mode": "sync", "es_matched_ads": 3, "es_updated": 3 },
       "google":    { "status": "updated", "matched_rows": 2, "ids": [11, 12], "new_status": 1, "updated_date_touched": true, "es_index": "google_ads_data", "es_mode": "async", "es_matched_ads": 5200, "es_tasks": ["nodeId:41713760", "nodeId:41713763"] },
       "reddit":    { "status": "not_found" },
       "quora":     { "status": "error", "message": "..." }
@@ -162,5 +160,5 @@ curl -s -X PUT -w "\n[HTTP %{http_code}]\n" \
 - Controller: `src/services/common/controllers/updateDomainDateController.js`
 - Route: `src/services/common/routes/commonRoutes.js` (`PUT /insert-update-domain-date`)
 - Tests: `tests/services/common/updateDomainDateService.test.mjs`
-- Migration (adds the `status` column to all 10 domains tables): `scripts/migrate-add-domain-status.js` (dry-run by default; `--apply` to run; env-driven for dev/prod)
+- Migration (adds `updated_date` to facebook/linkedin domains tables and backfills resolved rows): `scripts/domain-migrations/add-facebook-linkedin-updated-date.js` (dry-run by default; `--commit` to run; env-driven for dev/prod)
 - PHP original: `poweradspy/api/app/Modules/User/Controllers/SupportScrapper.php` → `putDomainDate`
