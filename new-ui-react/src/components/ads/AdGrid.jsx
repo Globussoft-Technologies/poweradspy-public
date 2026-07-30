@@ -13,6 +13,7 @@ import MasonryCard from "./MasonryCard";
 import OriginalPreview from "./OriginalPreview";
 import AdDetailModal from "./AdDetailModal";
 import AdFilterBar, { resolveSortPlanAccessId } from "./AdFilterBar";
+import AiQuickFilters from "./AiQuickFilters";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
 import { getAiColorLabel } from "../../utils/aiColorPalette";
@@ -88,6 +89,7 @@ const AdGrid = ({
   isFilterRestricted,
   onDateRestricted,
   onSortRestricted,
+  onAiFilterRestricted,
   PRIMARY_SORT_LABELS,
   guest,
   DROPDOWN_SORT_LABELS,
@@ -102,9 +104,17 @@ const AdGrid = ({
     setActivePlatforms,
     filterValues,
     setFilter,
+    setAllFilters,
     setSortBy,
     config,
   } = sdui;
+  const aiFiltersDoc = useMemo(
+    () =>
+      config?.sidebar?.find(
+        (doc) => doc._id === "ai_meta" && doc.visible !== false,
+      ) || null,
+    [config],
+  );
 
   // "Total Ads" = the ES match total from the backend (`adsMeta` is per-network
   // `meta.total`, captured once at page 0 in App.jsx, stable across pages). The
@@ -914,7 +924,7 @@ const AdGrid = ({
           className={`transition-all duration-300 ease-in-out ${
             isHeaderScrolled
               ? "max-h-0 opacity-0 invisible overflow-hidden pointer-events-none mb-0"
-              : "max-h-[200px] opacity-100 visible mb-3"
+              : "max-h-[320px] opacity-100 visible mb-3"
           }`}
         >
           <AdFilterBar
@@ -936,6 +946,15 @@ const AdGrid = ({
             onSortRestricted={onSortRestricted}
             guest={guest}
             DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}
+          />
+          <AiQuickFilters
+            document={aiFiltersDoc}
+            filterValues={filterValues}
+            onApply={setAllFilters}
+            isRestricted={
+              !!guest?.isRestricted || !!isFilterRestricted?.("ai_meta")
+            }
+            onRestricted={onAiFilterRestricted}
           />
         </div>
 

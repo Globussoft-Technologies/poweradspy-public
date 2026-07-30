@@ -278,6 +278,7 @@ describe("useSDUI > totalActiveFilters", () => {
     });
     expect(result.current.totalActiveFilters).toBe(2);
   });
+
 });
 
 describe("useSDUI > buildQueryParams", () => {

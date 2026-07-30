@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import {
+  AI_COLOR_GROUPS,
   getAiColorLabel,
   normalizeAiColorHex,
 } from "../../utils/aiColorPalette";
@@ -37,6 +38,16 @@ const ColorSwatchMultiSelect = ({
   const selectedValues = Array.isArray(selected) ? selected : [];
   const selectedHex = new Set(selectedValues.map(normalizeAiColorHex));
   const selectedCount = selectedHex.size;
+  const optionByHex = new Map(
+    options.map((option) => {
+      const value = option?.value ?? option?.label ?? option;
+      return [normalizeAiColorHex(value), value];
+    }),
+  );
+  const availableGroups = AI_COLOR_GROUPS.map((group) => ({
+    ...group,
+    values: group.values.filter((value) => optionByHex.has(value)),
+  })).filter((group) => group.values.length > 0);
 
   const palette = isLightTheme
     ? {
@@ -92,15 +103,37 @@ const ColorSwatchMultiSelect = ({
     onChange(next);
   };
 
+  const toggleGroup = (groupValues) => {
+    const allSelected = groupValues.every((value) => selectedHex.has(value));
+    if (allSelected) {
+      const groupSet = new Set(groupValues);
+      onChange(
+        selectedValues.filter(
+          (value) => !groupSet.has(normalizeAiColorHex(value)),
+        ),
+      );
+      return;
+    }
+
+    const next = [...selectedValues];
+    const seen = new Set(selectedHex);
+    for (const normalized of groupValues) {
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      next.push(optionByHex.get(normalized));
+    }
+    onChange(next);
+  };
+
   return (
     <div
-      className={`h-full rounded-xl border px-3 py-3 ${
+      className={`rounded-xl border px-3 py-3 ${
         accented ? palette.section : "border-transparent"
       }`}
     >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <div
-          className={`text-[10px] font-semibold uppercase tracking-[0.08em] ${
+          className={`text-[12px] font-bold uppercase tracking-[0.09em] ${
             accented ? palette.label : "text-theme-text-secondary"
           }`}
         >
@@ -128,51 +161,95 @@ const ColorSwatchMultiSelect = ({
               onClick={() => onChange([])}
               className={`rounded-md border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] transition-colors ${palette.destructive}`}
             >
-              Deselect all
+              Reset
             </button>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8">
-        {options.map((option) => {
-          const value = option?.value ?? option?.label ?? option;
-          const normalized = normalizeAiColorHex(value);
-          const displayLabel = getAiColorLabel(value, option?.label);
-          const isSelected = selectedHex.has(normalized);
-          const useDarkCheck = relativeLuminance(normalized) > 0.58;
-
-          return (
-            <button
-              type="button"
-              key={normalized || displayLabel}
-              onClick={() => toggle(value)}
-              aria-pressed={isSelected}
-              aria-label={`${displayLabel}${isSelected ? ", selected" : ""}`}
-              className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-lg border px-1.5 py-2 transition-all ${
-                isSelected
-                  ? `${palette.active} ring-2`
-                  : palette.idle
-              }`}
-            >
-              <span
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/15 shadow-sm transition-transform group-hover:scale-105"
-                style={{ backgroundColor: normalized }}
+      <div className="mb-3">
+        <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-theme-text-muted">
+          Curated palettes
+        </div>
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+          {availableGroups.map((group) => {
+            const isSelected = group.values.every((value) =>
+              selectedHex.has(value),
+            );
+            return (
+              <button
+                type="button"
+                key={group.id}
+                onClick={() => toggleGroup(group.values)}
+                aria-pressed={isSelected}
+                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  isSelected
+                    ? palette.active
+                    : palette.idle
+                }`}
               >
-                {isSelected && (
-                  <Check
-                    size={14}
-                    strokeWidth={3}
-                    className={useDarkCheck ? "text-slate-900" : "text-white"}
-                  />
-                )}
-              </span>
-              <span className="w-full truncate text-center text-[10px] font-medium text-theme-text-secondary">
-                {displayLabel}
-              </span>
-            </button>
-          );
-        })}
+                <span className="truncate text-[11px] font-semibold text-theme-text-secondary">
+                  {group.label}
+                </span>
+                <span className="flex shrink-0 -space-x-1">
+                  {group.values.map((value) => (
+                    <span
+                      key={value}
+                      className="h-4 w-4 rounded-full border-2 border-theme-card shadow-sm"
+                      style={{ backgroundColor: value }}
+                    />
+                  ))}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-theme-text-muted">
+        Individual colors
+      </div>
+      <div className="-mx-0.5 overflow-x-auto px-0.5 pb-1">
+        <div className="flex min-w-max items-center gap-1.5">
+          {options.map((option) => {
+            const value = option?.value ?? option?.label ?? option;
+            const normalized = normalizeAiColorHex(value);
+            const displayLabel = getAiColorLabel(value, option?.label);
+            const isSelected = selectedHex.has(normalized);
+            const useDarkCheck = relativeLuminance(normalized) > 0.58;
+
+            return (
+              <button
+                type="button"
+                key={normalized || displayLabel}
+                onClick={() => toggle(value)}
+                aria-pressed={isSelected}
+                aria-label={`${displayLabel}${isSelected ? ", selected" : ""}`}
+                title={displayLabel}
+                className="group flex shrink-0 items-center justify-center bg-transparent py-0.5"
+              >
+                <span
+                  className={`flex h-6 w-6 items-center justify-center rounded-md border shadow-sm transition-all group-hover:scale-105 ${
+                    isSelected
+                      ? isLightTheme
+                        ? "border-[#3762c1] ring-2 ring-[#3762c1]/25"
+                        : "border-[#f5c86a] ring-2 ring-[#f5c86a]/20"
+                      : "border-black/15"
+                  }`}
+                  style={{ backgroundColor: normalized }}
+                >
+                  {isSelected && (
+                    <Check
+                      size={13}
+                      strokeWidth={3}
+                      className={useDarkCheck ? "text-slate-900" : "text-white"}
+                    />
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

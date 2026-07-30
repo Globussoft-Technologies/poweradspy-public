@@ -2062,6 +2062,7 @@ const App = () => {
             isFilterRestricted={isFilterRestricted}
             onDateRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onSortRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+            onAiFilterRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onGuestLimit={() => dispatch(openModal('isPricingModalOpen'))}
             PRIMARY_SORT_LABELS={PRIMARY_SORT_LABELS}
             DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}

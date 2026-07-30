@@ -27,6 +27,7 @@ import {
 } from "recharts";
 import { CompetitorAPI, trackProjectEvent } from "../../services/api";
 import { useTheme } from "../../hooks/useTheme";
+import gIcon from "../../assets/g.png";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -1064,9 +1065,11 @@ const CompetitorComparison = ({ brandName, competitorName, onBack }) => {
             <SectionCard
               title={
                 <>
-                  <span className="w-4 h-4 rounded-full bg-white text-[#4285F4] flex items-center justify-center text-[11px] font-black leading-none">
-                    G
-                  </span>{" "}
+                  <img
+                    src={gIcon}
+                    alt="Google"
+                    className="w-4 h-4 object-contain"
+                  />{" "}
                   Google
                 </>
               }

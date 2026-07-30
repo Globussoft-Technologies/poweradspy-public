@@ -14,6 +14,7 @@ const NestedMultiselectFilter = ({
   onChildChange,
   maxItems,
   accented = false,
+  focused = false,
 }) => {
   const { theme = "dark" } = useTheme() || {};
   const isLightTheme = theme === "light";
@@ -283,14 +284,22 @@ const NestedMultiselectFilter = ({
   };
 
   return (
-    <div className={`px-3 py-2 rounded-xl border ${accented ? accentPalette.section : "border-transparent"}`}>
+    <div
+      className={
+        focused
+          ? ""
+          : `px-3 py-2 rounded-xl border ${
+              accented ? accentPalette.section : "border-transparent"
+            }`
+      }
+    >
       {label && (
-        <div className={`mb-1.5 text-[10px] font-bold uppercase tracking-widest ${accented ? accentPalette.label : "text-theme-text-secondary"}`}>
+        <div className={`mb-2 text-[12px] font-bold uppercase tracking-[0.09em] ${accented ? accentPalette.label : "text-theme-text-secondary"}`}>
           {label}
         </div>
       )}
       {/* Search input */}
-      {accented && selectedGroupCount > 0 && (
+      {accented && !focused && selectedGroupCount > 0 && (
         <div className="mb-2 flex w-full items-center">
           <div className="ml-auto flex items-center gap-1.5 flex-wrap">
             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accentPalette.badge}`}>
@@ -317,7 +326,13 @@ const NestedMultiselectFilter = ({
         />
       </div>
       <div>
-        <div className="space-y-1 max-h-[220px] overflow-y-auto scrollbar-hide pr-1">
+        <div
+          className={`space-y-1 pr-1 ${
+            focused
+              ? ""
+              : "max-h-[220px] overflow-y-auto scrollbar-hide"
+          }`}
+        >
           {filteredOptions.length > 0
             ? filteredOptions.map((option) => renderOption(option))
             : searchTerm.trim() && (

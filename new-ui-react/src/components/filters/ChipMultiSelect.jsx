@@ -91,7 +91,7 @@ const ChipMultiSelect = ({
       <div>
         <div className="mb-1.5 flex items-center justify-between gap-2">
           {showLabel && label ? (
-            <div className={`text-[10px] font-semibold uppercase tracking-[0.08em] ${accented ? accentPalette.label : "text-theme-text-secondary"}`}>
+            <div className={`text-[12px] font-bold uppercase tracking-[0.09em] ${accented ? accentPalette.label : "text-theme-text-secondary"}`}>
               {label}
             </div>
           ) : (

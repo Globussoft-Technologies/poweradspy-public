@@ -203,6 +203,42 @@ describe("SchemaRenderer > section wrapping", () => {
     );
     expect(queryByTestId("doc-section")).toBeNull();
   });
+
+  it("uses the compact AI offer, colors, and offering workspace order", () => {
+    const { container, getByTestId } = render(
+      <SchemaRenderer
+        noSection
+        layoutVariant="ai-workspace"
+        document={{
+          _id: "ai_meta",
+          title: "AI Filters",
+          filters: [
+            {
+              _id: "ai_offering_type",
+              type: "checkbox",
+              label: "Offering Type",
+            },
+            { _id: "ai_offer_type", type: "checkbox", label: "Offer Type" },
+            {
+              _id: "ai_colors",
+              type: "checkbox",
+              label: "Colors",
+              options: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const workspaceItems = container.firstElementChild.children;
+    expect(workspaceItems[0]).toContainElement(
+      getByTestId("stub-ai_offer_type"),
+    );
+    expect(workspaceItems[1]).toHaveTextContent("Colors");
+    expect(workspaceItems[2]).toContainElement(
+      getByTestId("stub-ai_offering_type"),
+    );
+  });
 });
 
 describe("SchemaRenderer > filter-level visibility", () => {

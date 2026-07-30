@@ -33,6 +33,8 @@ const SchemaRenderer = ({
 
   if (!doc || doc.visible === false) return null;
   const isAiMetaDocument = doc._id === "ai_meta";
+  const isAiFocused =
+    isAiMetaDocument && layoutVariant === "ai-focus";
   const isAiWorkspace =
     isAiMetaDocument && layoutVariant === "ai-workspace";
   if (
@@ -47,7 +49,33 @@ const SchemaRenderer = ({
   const renderFilters = () => {
     if (!doc.filters || doc.filters.length === 0) return null;
 
-    return doc.filters.map((filter) => {
+    const filtersToRender = [...doc.filters];
+    if (isAiWorkspace) {
+      const swapFilters = (firstId, secondId) => {
+        const firstIndex = filtersToRender.findIndex(
+          (filter) => filter._id === firstId,
+        );
+        const secondIndex = filtersToRender.findIndex(
+          (filter) => filter._id === secondId,
+        );
+        if (firstIndex < 0 || secondIndex < 0) return;
+
+        [
+          filtersToRender[firstIndex],
+          filtersToRender[secondIndex],
+        ] = [
+          filtersToRender[secondIndex],
+          filtersToRender[firstIndex],
+        ];
+      };
+
+      // These are visual-only swaps; SDUI rank and query behavior stay intact.
+      // The resulting compact sequence is Offer Type, Colors, Offering Type.
+      swapFilters("ai_offer_type", "ai_colors");
+      swapFilters("ai_offer_type", "ai_offering_type");
+    }
+
+    return filtersToRender.map((filter) => {
       if (filter.visible === false) return null;
       if (shouldShowFilter && !shouldShowFilter(filter)) return null;
       if (isDependencySatisfied && !isDependencySatisfied(filter)) return null;
@@ -182,7 +210,7 @@ const SchemaRenderer = ({
 
       const componentProps = {
         filterId: filter._id,
-        label: skipLabel ? null : filter.label,
+        label: skipLabel || isAiFocused ? null : filter.label,
         options,
         value,
         selected:
@@ -195,7 +223,7 @@ const SchemaRenderer = ({
         placeholder: filter.placeholder || (skipLabel && filter.label ? `Search ${filter.label}...` : undefined),
         // Dense SDUI groups can expose their parent label and a short preview
         // without changing the behavior of existing chip filters.
-        showLabel: filter.show_label === true,
+        showLabel: !isAiFocused && filter.show_label === true,
         previewLimit: filter.preview_limit,
 
         // Show search bar for FilterCheckboxList (disable for budget, traffic source, age, and ad_sub_position)
@@ -230,6 +258,7 @@ const SchemaRenderer = ({
         platformFilterMatrix: filter.platform_filter_matrix,
         activePlatforms,
         accented: isAiMetaDocument,
+        focused: isAiFocused,
 
         // For geo filters, store the display label (e.g. "United States") not the ISO value
         valueKey: ["country_filter", "state_filter", "city_filter"].includes(
@@ -244,11 +273,9 @@ const SchemaRenderer = ({
 
       const renderedFilter = <Component {...componentProps} />;
       if (isAiWorkspace) {
-        const spansBothColumns = [
-          "ai_hook",
-          "ai_colors",
-          "ai_category_id",
-        ].includes(filter._id);
+        // The compact workspace pairs categorical filters side by side. Only
+        // the nested category tree needs the full modal width.
+        const spansBothColumns = filter._id === "ai_category_id";
         return (
           <div
             key={filter._id}

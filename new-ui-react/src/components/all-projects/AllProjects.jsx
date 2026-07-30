@@ -733,9 +733,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
           }
           setProjects((prev) => {
             return mappedProjects.map((newProj) => {
-              const existing = prev.find(
-                (p) => p.advertiser === newProj.advertiser,
-              );
+              // Preserve the already-loaded competitor list only when we are
+              // rehydrating the same Mongo project id. Matching by advertiser
+              // name is unsafe here because two different analyses can overlap
+              // in time and a later refresh must never inherit a different
+              // project's competitor rows just because the labels match.
+              const existing = prev.find((p) => p.id === newProj.id);
               if (
                 existing &&
                 existing.competitors &&
@@ -1000,15 +1003,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   // --- SOCKET IO INTEGRATION ---
   // Refs to hold mutable values so socket handlers always see current state
   const selectedProjectIdRef = useRef(selectedProjectId);
-  const websiteLinkRef = useRef(websiteLink);
   const contentRefIdRef = useRef(contentRefId);
 
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId;
   }, [selectedProjectId]);
-  useEffect(() => {
-    websiteLinkRef.current = websiteLink;
-  }, [websiteLink]);
   useEffect(() => {
     contentRefIdRef.current = contentRefId;
   }, [contentRefId]);
@@ -1087,19 +1086,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         // REPLACE competitors — matches Laravel's `aiAllRows = rows`
         // Backend sends the FULL list each time (getCompetitorTableRows queries all from DB)
         setProjects((prevProjects) => {
-          return prevProjects.map((p) => {
-            const pName = p.advertiser?.toLowerCase();
-            const normalizedWebsite = (websiteLinkRef.current || "")
-              .replace(/^https?:\/\//i, "")
-              .replace(/^www\./i, "")
-              .split("/")[0]
-              .toLowerCase();
+          const matchesProject = (p) =>
+            content_ref_id
+              ? p.contentRefId === content_ref_id
+              : p.id === selectedProjectIdRef.current;
 
-            if (
-              (content_ref_id && p.contentRefId === content_ref_id) ||
-              p.id === selectedProjectIdRef.current ||
-              (normalizedWebsite && pName === normalizedWebsite)
-            ) {
+          return prevProjects.map((p) => {
+            if (matchesProject(p)) {
               return {
                 ...p,
                 competitors: enrichedRows,
@@ -1178,7 +1171,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         prev.map((p) =>
           (data?.content_ref_id && p.contentRefId === data.content_ref_id) ||
           (!data?.content_ref_id && p.id === selectedProjectIdRef.current)
-            ? { ...p, isGenerating: false, initialCompetitorCount: data?.generated ?? p.initialCompetitorCount }
+            ? {
+                ...p,
+                isGenerating: false,
+                initialCompetitorCount:
+                  data?.generated ?? p.initialCompetitorCount,
+              }
             : p,
         ),
       );
@@ -1398,6 +1396,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     try {
       const newRefId = fetchedContentRefId || Date.now().toString();
       setContentRefId(newRefId);
+      // This ref only exists to bridge the keyword-generation step into a
+      // single submit flow. Clear it immediately so the next project cannot
+      // accidentally reuse the same socket room/content_ref_id.
+      setFetchedContentRefId("");
       const userId = competitorUserId || authUser?.user_id;
 
       // 🚀 JOIN THE ROOM (Matches Laravel/Node standard: just the string ID)
@@ -1443,7 +1445,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         },
       };
 
-      setProjects([newProject, ...projects]);
+      setProjects((prev) => [newProject, ...prev.filter((p) => p.id !== projectId)]);
       setSelectedProjectId(projectId);
       setWebsiteLink("");
       setSelectedKeywords([]);

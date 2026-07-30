@@ -10,13 +10,17 @@ import ColorSwatchMultiSelect from "../../../src/components/filters/ColorSwatchM
 
 const OPTIONS = [
   { label: "#E03131", value: "#E03131" },
+  { label: "#F76707", value: "#F76707" },
+  { label: "#F2CC0C", value: "#F2CC0C" },
+  { label: "#E64980", value: "#E64980" },
+  { label: "#C9A227", value: "#C9A227" },
   { label: "#1971C2", value: "#1971C2" },
 ];
 
 describe("ColorSwatchMultiSelect", () => {
-  it("shows color names while emitting the original hex value", () => {
+  it("keeps color names accessible without rendering visible swatch labels", () => {
     const onChange = vi.fn();
-    const { getByRole } = render(
+    const { getByRole, queryByText } = render(
       <ColorSwatchMultiSelect
         label="Colors"
         options={OPTIONS}
@@ -26,7 +30,10 @@ describe("ColorSwatchMultiSelect", () => {
       />,
     );
 
-    fireEvent.click(getByRole("button", { name: "Red" }));
+    const redSwatch = getByRole("button", { name: "Red" });
+    expect(redSwatch).toHaveAttribute("title", "Red");
+    expect(queryByText("Red")).not.toBeInTheDocument();
+    fireEvent.click(redSwatch);
     expect(onChange).toHaveBeenCalledWith(["#E03131"]);
   });
 
@@ -46,5 +53,26 @@ describe("ColorSwatchMultiSelect", () => {
     fireEvent.click(getByRole("button", { name: "Blue, selected" }));
     expect(onChange).toHaveBeenCalledWith([]);
   });
-});
 
+  it("selects the backend hex values represented by a curated palette", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(
+      <ColorSwatchMultiSelect
+        label="Colors"
+        options={OPTIONS}
+        selected={[]}
+        onChange={onChange}
+        accented
+      />,
+    );
+
+    fireEvent.click(getByRole("button", { name: "Warm Glow" }));
+    expect(onChange).toHaveBeenCalledWith([
+      "#E03131",
+      "#F76707",
+      "#F2CC0C",
+      "#E64980",
+      "#C9A227",
+    ]);
+  });
+});

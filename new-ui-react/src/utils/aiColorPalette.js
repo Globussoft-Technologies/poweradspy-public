@@ -19,6 +19,31 @@ export const AI_COLOR_NAMES = Object.freeze({
   "#E8D8B0": "Beige",
 });
 
+// Curated shortcuts use only values from the fixed backend palette. Groups may
+// overlap intentionally where a color naturally belongs to multiple palettes.
+export const AI_COLOR_GROUPS = Object.freeze([
+  {
+    id: "warm_glow",
+    label: "Warm Glow",
+    values: ["#E03131", "#F76707", "#F2CC0C", "#E64980", "#C9A227"],
+  },
+  {
+    id: "cool_contrast",
+    label: "Cool Contrast",
+    values: ["#2F9E44", "#0CA678", "#1971C2", "#1E3A5F", "#7048E8"],
+  },
+  {
+    id: "monochrome",
+    label: "Monochrome",
+    values: ["#000000", "#FFFFFF", "#808080", "#C0C0C0"],
+  },
+  {
+    id: "earth_tones",
+    label: "Earth Tones",
+    values: ["#8B5E34", "#E8D8B0", "#C9A227", "#2F9E44"],
+  },
+]);
+
 const HEX_COLOR_PATTERN = /^#[0-9A-F]{6}$/i;
 
 export const normalizeAiColorHex = (value) => {
@@ -35,4 +60,3 @@ export const getAiColorLabel = (value, configuredLabel) => {
   if (label && !HEX_COLOR_PATTERN.test(label)) return label;
   return AI_COLOR_NAMES[normalizedValue] || label || normalizedValue;
 };
-
