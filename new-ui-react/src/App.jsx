@@ -9,6 +9,7 @@ import {
   isPlanNetworkAllowed,
   normalizePlanNetwork,
 } from "./utils/planEntitlement";
+import { getDashboardAdNavigation } from "./utils/dashboardAdNavigation";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import {
@@ -470,12 +471,13 @@ const App = () => {
     }
     return null;
   });
+  const [analyticsNavigationContext, setAnalyticsNavigationContext] = useState(null);
 
   // Bumped to tell AdGrid to dismiss its (locally-owned) AdDetailModal when a
   // parent-level navigation jumps to the Ads Library out from under it.
   const [closeDetailSignal, setCloseDetailSignal] = useState(0);
 
-  const openAnalyticsModal = (ad) => {
+  const openAnalyticsModal = (ad, navigationContext = null) => {
     if (ad) {
       const network = ad.network || ad.platform || "instagram";
       // YouTube DISPLAY ads surfaced under GDN show /youtube/<id> in the URL
@@ -490,12 +492,14 @@ const App = () => {
       );
       trackEvent('showAnalytics', { ad_id: id, network });
     }
+    setAnalyticsNavigationContext(navigationContext);
     setSelectedAdForAnalytics(ad);
   };
 
   const closeAnalyticsModal = () => {
     window.history.pushState(null, "", "/");
     setSelectedAdForAnalytics(null);
+    setAnalyticsNavigationContext(null);
   };
 
   // ─── Google competitive-intelligence modals (Keyword Explorer / Advertiser
@@ -1744,6 +1748,44 @@ const App = () => {
     }
   };
 
+  const analyticsNavigation = useMemo(() => {
+    if (analyticsNavigationContext?.items?.length) {
+      return getDashboardAdNavigation(
+        analyticsNavigationContext.items,
+        selectedAdForAnalytics,
+        analyticsNavigationContext.visualOrder || [],
+      );
+    }
+
+    // Saved-ad and direct-URL analytics can open without an AdGrid context.
+    // Preserve their previous sequential behavior while still avoiding an
+    // ambiguous strict-id find on every arrow click.
+    const indexedAds = visibleAds.map((ad, index) => ({
+      ...ad,
+      _dashboardIndex: index,
+    }));
+    const selectedId =
+      selectedAdForAnalytics?.adId ?? selectedAdForAnalytics?.id;
+    const selectedNetwork = String(
+      selectedAdForAnalytics?.network || "",
+    ).toLowerCase();
+    const fallbackIndex = indexedAds.findIndex((ad) => {
+      const sameId = String(ad.adId ?? ad.id) === String(selectedId);
+      const adNetwork = String(ad.network || "").toLowerCase();
+      return sameId && (!selectedNetwork || adNetwork === selectedNetwork);
+    });
+    const indexedSelected =
+      fallbackIndex >= 0
+        ? indexedAds[fallbackIndex]
+        : selectedAdForAnalytics;
+
+    return getDashboardAdNavigation(indexedAds, indexedSelected);
+  }, [
+    analyticsNavigationContext,
+    selectedAdForAnalytics,
+    visibleAds,
+  ]);
+
   if (authLoading && !_isPublicRoute) return null;
   if (!isAuthenticated && !_isPublicRoute) {
     const _params = new URLSearchParams(window.location.search);
@@ -1952,10 +1994,10 @@ const App = () => {
               handleSearch(query, type);
               dispatch(setShowSavedAdsPage(false));
             }}
-            onAnalyticsAd={(ad) => {
+            onAnalyticsAd={(ad,navigationContext) => {
               if (!entitlements && !planAccess) return;
               if (!hasAdAnalyticsAccess) { dispatch(openModal('isPricingModalOpen')); return; }
-              openAnalyticsModal(ad);
+              openAnalyticsModal(ad,navigationContext);
             }}
             closeDetailSignal={closeDetailSignal}
           />
@@ -1966,7 +2008,7 @@ const App = () => {
             activeTab={ui.activeTab}
             setActiveTab={(val) => dispatch(setActiveTab(val))}
             onAnalyzeAd={handleAnalyzeAd}
-            onAnalyticsAd={(ad) => {
+            onAnalyticsAd={(ad, navigationContext) => {
               if (guest?.isRestricted) {
                 dispatch(openModal('isPricingModalOpen'));
                 return;
@@ -1976,7 +2018,7 @@ const App = () => {
                 dispatch(openModal('isPricingModalOpen'));
                 return;
               }
-              openAnalyticsModal(ad);
+              openAnalyticsModal(ad, navigationContext);
             }}
             onSearch={handleSearch}
             onOpenAdvertiserProfile={openAdvertiserProfile}
@@ -2035,25 +2077,23 @@ const App = () => {
         categoryOptions={categoryOptions}
         onClose={closeAnalyticsModal}
         onPrev={() => {
-          const idx = visibleAds.findIndex(
-            (a) => a.id === selectedAdForAnalytics?.id,
-          );
-          if (idx > 0) openAnalyticsModal(visibleAds[idx - 1]);
+          if (analyticsNavigation.previous) {
+            openAnalyticsModal(
+              analyticsNavigation.previous,
+              analyticsNavigationContext,
+            );
+          }
         }}
         onNext={() => {
-          const idx = visibleAds.findIndex(
-            (a) => a.id === selectedAdForAnalytics?.id,
-          );
-          if (idx < visibleAds.length - 1)
-            openAnalyticsModal(visibleAds[idx + 1]);
+          if (analyticsNavigation.next) {
+            openAnalyticsModal(
+              analyticsNavigation.next,
+              analyticsNavigationContext,
+            );
+          }
         }}
-        hasPrev={
-          visibleAds.findIndex((a) => a.id === selectedAdForAnalytics?.id) > 0
-        }
-        hasNext={
-          visibleAds.findIndex((a) => a.id === selectedAdForAnalytics?.id) <
-          visibleAds.length - 1
-        }
+        hasPrev={Boolean(analyticsNavigation.previous)}
+        hasNext={Boolean(analyticsNavigation.next)}
         competitiveIntelEnabled={GOOGLE_INTEL_ON && keywordExplorerAllowed}
         onOpenKeywordExplorer={openKeywordExplorer}
         onOpenAdvertiserProfile={openAdvertiserProfile}

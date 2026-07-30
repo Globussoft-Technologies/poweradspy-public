@@ -86,6 +86,7 @@ const Masonry = ({
     autoHeight = false,
     measuredHeights = {},
     onItemMeasure,
+    onVisualOrderChange,
     loading = false,
 }) => {
     const defaultColumns = useMedia(
@@ -162,6 +163,37 @@ const Masonry = ({
         if (grid.length === 0) return 0;
         return Math.max(...grid.map(item => item.y + item.h));
     }, [grid]);
+
+    // Translate the Pinterest column layout into the order a user sees:
+    // first card in each column from left to right, then the second card in
+    // each column, and so on. The API item order differs once cards are placed
+    // into shortest columns, so modal arrows must use this visual row order.
+    const visualOrder = useMemo(() => {
+      const byColumn = new Map();
+      for (const item of grid) {
+        const columnKey = item.x;
+        if (!byColumn.has(columnKey)) byColumn.set(columnKey, []);
+        byColumn.get(columnKey).push(item);
+      }
+      const orderedColumns = [...byColumn.entries()]
+        .sort(([xA], [xB]) => xA - xB)
+        .map(([, columnItems]) => columnItems.sort((a, b) => a.y - b.y));
+      const maxRows = Math.max(0, ...orderedColumns.map((column) => column.length));
+      const order = [];
+      for (let row = 0; row < maxRows; row += 1) {
+        for (const column of orderedColumns) {
+          const item = column[row];
+          if (Number.isInteger(item?._dashboardIndex)) {
+            order.push(item._dashboardIndex);
+          }
+        }
+      }
+      return order;
+    }, [grid]);
+
+    useEffect(() => {
+      onVisualOrderChange?.(visualOrder);
+    }, [onVisualOrderChange, visualOrder]);
 
     // Real painted bottom of the tallest column — measured from the DOM after each
     // layout pass. We rely on this (not just the estimated `containerHeight`) so the

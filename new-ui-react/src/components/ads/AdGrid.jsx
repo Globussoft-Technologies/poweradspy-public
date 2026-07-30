@@ -16,6 +16,7 @@ import AdFilterBar, { resolveSortPlanAccessId } from "./AdFilterBar";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
 import { getAiColorLabel } from "../../utils/aiColorPalette";
+import { getDashboardAdNavigation } from "../../utils/dashboardAdNavigation";
 
 // Env kill-switch for the "Total Ads: X" count shown next to the filter chips
 // on every search. Set VITE_SHOW_TOTAL_ADS_COUNT=false to hide it; any other
@@ -706,7 +707,7 @@ const AdGrid = ({
   };
 
   const masonryItems = useMemo(() => {
-    return ads.map((ad) => {
+    return ads.map((ad, dashboardIndex) => {
       const idNum = parseInt(ad.id, 10) || 0;
       const platform = (ad.network || "").toLowerCase();
       const position = (ad.adPosition || "").toLowerCase();
@@ -745,7 +746,7 @@ const AdGrid = ({
         else if (platform === "reddit") height = 560;
         else height = 640;
 
-        return { ...ad, height };
+        return { ...ad, _dashboardIndex: dashboardIndex, height };
       }
 
       // Placeholder height used for initial column placement before image loads
@@ -759,9 +760,28 @@ const AdGrid = ({
       const baseHeight =
         ratioHeights[ad.aspectRatio] || [300, 340, 280, 360, 320][idNum % 5];
       const contentHeight = 90 + (ad.cta ? 15 : 0) + (ad.runningDays ? 12 : 0);
-      return { ...ad, height: baseHeight + contentHeight };
+      return { ...ad, _dashboardIndex: dashboardIndex, height: baseHeight + contentHeight };
     });
   }, [ads, previewMode]);
+
+  const dashboardVisualOrderRef = useRef([]);
+  const handleVisualOrderChange = useCallback((order) => {
+    dashboardVisualOrderRef.current = order;
+  }, []);
+
+  // Every rendered card carries its exact position in the dashboard result
+  // list. Do not recover this with findIndex(id): APIs can return creative
+  // variants that share an id, which made modal arrows jump from the first
+  // duplicate instead of the card the user actually opened.
+  const selectedAdNavigation = useMemo(
+    () =>
+      getDashboardAdNavigation(
+        masonryItems,
+        selectedAd,
+        dashboardVisualOrderRef.current,
+      ),
+    [masonryItems, selectedAd],
+  );
 
   const scrollRef = useRef(null);
   const lastScrollTopRef = useRef(0);
@@ -1285,6 +1305,7 @@ const AdGrid = ({
             autoHeight={!previewMode}
             measuredHeights={measuredHeights}
             onItemMeasure={handleItemMeasure}
+            onVisualOrderChange={handleVisualOrderChange}
             loading={loadingMore && ads.length > 0}
             renderItem={(item) =>
               previewMode ? (
@@ -1363,23 +1384,28 @@ const AdGrid = ({
               : false
           }
           onToggleFavourite={onToggleFavourite}
-          onAnalytics={onAnalyticsAd}
+          onAnalytics={(ad) =>
+            onAnalyticsAd?.(ad, {
+              items: masonryItems,
+              visualOrder: [...dashboardVisualOrderRef.current],
+            })
+          }
           onSearch={onSearch}
           onHideAd={onHideAd}
           onHideAdvertiser={onHideAdvertiser}
           guest={guest}
           onPrev={() => {
-            const idx = ads.findIndex((a) => a.id === selectedAd?.id);
-            if (idx > 0) setSelectedAd(ads[idx - 1]);
+            if (selectedAdNavigation.previous) {
+              setSelectedAd(selectedAdNavigation.previous);
+            }
           }}
           onNext={() => {
-            const idx = ads.findIndex((a) => a.id === selectedAd?.id);
-            if (idx < ads.length - 1) setSelectedAd(ads[idx + 1]);
+            if (selectedAdNavigation.next) {
+              setSelectedAd(selectedAdNavigation.next);
+            }
           }}
-          hasPrev={ads.findIndex((a) => a.id === selectedAd?.id) > 0}
-          hasNext={
-            ads.findIndex((a) => a.id === selectedAd?.id) < ads.length - 1
-          }
+          hasPrev={Boolean(selectedAdNavigation.previous)}
+          hasNext={Boolean(selectedAdNavigation.next)}
         />
 
         {/* Scroll to Top Arrow */}

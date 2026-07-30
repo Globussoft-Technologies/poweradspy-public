@@ -15,9 +15,8 @@ const ONBOARDING_DISMISS_KEY_PREFIX = 'pas_onboarding_dismissed_';
 const LOGOUT_URL = (import.meta.env.VITE_PAS_API_BASE_URL || '') + '/logout';
 
 // User-specific session state keys. Keeps `pas-theme` (user preference) and
-// `clientIP` (non-identifying). Split into two groups on logout:
-//  - FILTER_STATE_KEYS (below) are retained for FILTER_RETENTION_MS, then wiped.
-//  - everything else here is wiped immediately.
+// `clientIP` (non-identifying). These must not leak between different users
+// sharing the same browser.
 const SESSION_STATE_KEYS = [
   'sdui.filterValues',
   'sdui.activePlatforms',
@@ -36,6 +35,7 @@ const SESSION_STATE_KEYS = [
 const FILTER_STATE_KEYS = ['sdui.filterValues', 'sdui.activePlatforms', 'persist:root'];
 const FILTER_RETENTION_MS = 24 * 60 * 60 * 1000; // 24h
 const FILTER_LOGOUT_TS_KEY = 'pas_filters_logout_at';
+const SESSION_STORAGE_KEYS = ['guestToDashboard', 'pendingSearch', 'pendingRedirect'];
 
 export function getOnboardingDismissKey(userId) {
   if (!userId) return '';
@@ -64,13 +64,17 @@ function shouldResetOnboardingDismiss(userLike) {
   return userLike?.needsOnboarding !== false;
 }
 
-// Called on logout: leaves filter/UI selections in place but starts a 24h
-// retention clock, and immediately wipes everything else session-specific.
-// (Requirement: filters persist up to 24h after logout, then reset to default.)
+// Called on logout / forced auth expiry. Clear user-specific UI state immediately
+// so a different user on the same browser never inherits platform/search/filter
+// state from the previous user.
 export function markFiltersForExpiry() {
-  SESSION_STATE_KEYS.filter(k => !FILTER_STATE_KEYS.includes(k)).forEach(k => localStorage.removeItem(k));
-  localStorage.setItem(FILTER_LOGOUT_TS_KEY, String(Date.now()));
-  try { sessionStorage.removeItem('guestToDashboard'); } catch {}
+  try {
+    SESSION_STATE_KEYS.forEach(k => localStorage.removeItem(k));
+    localStorage.removeItem(FILTER_LOGOUT_TS_KEY);
+  } catch {}
+  try {
+    SESSION_STORAGE_KEYS.forEach(k => sessionStorage.removeItem(k));
+  } catch {}
 }
 
 // Called only when a session is (re)established (see bootstrapAuth's success path):

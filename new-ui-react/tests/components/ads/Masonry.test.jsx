@@ -105,6 +105,32 @@ describe("Masonry > basic rendering", () => {
 });
 
 describe("Masonry > columns + useMedia", () => {
+  it("reports the visible row-by-row order after shortest-column placement", () => {
+    setMq("(min-width:1280px)", true);
+    const onVisualOrderChange = vi.fn();
+    const items = [
+      { id: "a", _dashboardIndex: 0, height: 100 },
+      { id: "b", _dashboardIndex: 1, height: 300 },
+      { id: "c", _dashboardIndex: 2, height: 50 },
+      { id: "d", _dashboardIndex: 3, height: 50 },
+      { id: "e", _dashboardIndex: 4, height: 50 },
+    ];
+    render(
+      <Masonry
+        items={items}
+        renderItem={(item) => <div>{item.id}</div>}
+        columnConfig={{ values: [3, 3, 3, 3], default: 3 }}
+        onVisualOrderChange={onVisualOrderChange}
+      />,
+    );
+
+    act(() => {
+      roInstances[0].trigger([{ contentRect: { width: 900, height: 600 } }]);
+    });
+
+    expect(onVisualOrderChange).toHaveBeenLastCalledWith([0, 1, 2, 4, 3]);
+  });
+
   it("matches min-width:1280px → 4 columns (default config)", () => {
     setMq("(min-width:1280px)", true);
     const { container } = render(
