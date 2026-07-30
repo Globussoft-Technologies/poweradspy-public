@@ -16,7 +16,7 @@ const ChipMultiSelect = ({
   previewLimit = 12,
   accented = false,
 }) => {
-  const { theme } = useTheme();
+  const { theme = "dark" } = useTheme() || {};
   const isLightTheme = theme === "light";
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");

@@ -12,6 +12,7 @@ import CompetitorSnapshot from '../../models/competitorSnapshot.js';
 import { getAllCountries } from '../../models/countries.js';
 // import {client} from '../../utils/Elasticsearch.js';
 import { esClient,esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
+import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 import elasticsearch from "elasticsearch";
 import DashboardValidation from "./dashboardValidation.js";
 import moment from "moment";
@@ -97,9 +98,9 @@ const GOOGLE_NAS_MUST_NOT = {
 };
 
 const NAS_FILTER_BY_INDEX = {
-  search_mix:           { filter: FB_NAS_FILTER, must_not: [] },
-  instagram_search_mix: { filter: IG_NAS_FILTER, must_not: [] },
-  google_ads_data_v2:   {
+  [NETWORK_INDEXES.facebook]:           { filter: FB_NAS_FILTER, must_not: [] },
+  [NETWORK_INDEXES.instagram]: { filter: IG_NAS_FILTER, must_not: [] },
+  [NETWORK_INDEXES.google]:   {
     filter: null,
     must_not: [
       GOOGLE_NAS_MUST_NOT,
@@ -111,7 +112,7 @@ const NAS_FILTER_BY_INDEX = {
 // Match the search builder's _getPostOwnerNameEnv exactly: phrase across
 // multilingual variants OR prefix match on the base field.
 const OWNER_FIELDS_BY_INDEX = {
-  search_mix: {
+  [NETWORK_INDEXES.facebook]: {
     fields: [
       'facebook_ad_post_owners.post_owner_name',
       'facebook_ad_post_owners.post_owner_name_ru',
@@ -122,7 +123,7 @@ const OWNER_FIELDS_BY_INDEX = {
     ],
     prefixField: 'facebook_ad_post_owners.post_owner_name',
   },
-  instagram_search_mix: {
+  [NETWORK_INDEXES.instagram]: {
     fields: [
       'instagram_ad_post_owners.post_owner_name',
       'instagram_ad_post_owners.post_owner_name_ru',
@@ -133,7 +134,7 @@ const OWNER_FIELDS_BY_INDEX = {
     ],
     prefixField: 'instagram_ad_post_owners.post_owner_name',
   },
-  google_ads_data_v2: {
+  [NETWORK_INDEXES.google]: {
     fields: ['post_owner_name'],
     prefixField: 'post_owner_name',
   },
@@ -142,9 +143,9 @@ const OWNER_FIELDS_BY_INDEX = {
 // Ad ID field per index for cardinality dedup — mirrors the `collapse`
 // applied by each search builder.
 const AD_ID_FIELD_BY_INDEX = {
-  search_mix:           'facebook_ad.id',
-  instagram_search_mix: 'instagram_ad.id',
-  google_ads_data_v2:   'id',
+  [NETWORK_INDEXES.facebook]:           'facebook_ad.id',
+  [NETWORK_INDEXES.instagram]: 'instagram_ad.id',
+  [NETWORK_INDEXES.google]:   'id',
 };
 
 function buildOwnerClause(index, competitor) {
@@ -339,8 +340,8 @@ class DashboardService {
 const getAdvertiserAdCount = async (advertiser) => {
   let totalAdsCount = 0;
   const advertiserIndexConfigs = [
-    { index: "search_mix", field:"facebook_ad_post_owners.post_owner_name"},
-    {index: "instagram_search_mix", field:"instagram_ad_post_owners.post_owner_name" }
+    { index: NETWORK_INDEXES.facebook, field:"facebook_ad_post_owners.post_owner_name"},
+    {index: NETWORK_INDEXES.instagram, field:"instagram_ad_post_owners.post_owner_name" }
   ];
 
   for (const [serverName, serverData] of Object.entries(this.esServers)) {
@@ -504,8 +505,8 @@ const getAdvertiserAdCount = async (advertiser) => {
           let totalAdsCount = 0;
 
           const advertiserIndexConfigs = [
-            { index: "search_mix", field: "facebook_ad_post_owners.post_owner_name" },
-            { index: "instagram_search_mix", field: "instagram_ad_post_owners.post_owner_name" }
+            { index: NETWORK_INDEXES.facebook, field: "facebook_ad_post_owners.post_owner_name" },
+            { index: NETWORK_INDEXES.instagram, field: "instagram_ad_post_owners.post_owner_name" }
           ];
 
           for (const [serverName, serverData] of Object.entries(this.esServers)) {
@@ -691,11 +692,11 @@ const getAdvertiserAdCount = async (advertiser) => {
 
         const advertiserIndexConfigs = [
           {
-            index: "search_mix",
+            index: NETWORK_INDEXES.facebook,
             field: "facebook_ad_post_owners.post_owner_name"
           },
           {
-            index: "instagram_search_mix",
+            index: NETWORK_INDEXES.instagram,
             field: "instagram_ad_post_owners.post_owner_name"
           }
         ];
@@ -818,15 +819,15 @@ const getAdvertiserAdCount = async (advertiser) => {
     
         competitor = Array.isArray(competitor) ? competitor[0] : competitor;
         const advertiserIndexConfigs = [
-          { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name' },
-          { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name' },
-          { index: 'google_ads_data_v2', field: 'post_owner_name' }
+          { index: NETWORK_INDEXES.facebook, field: 'facebook_ad_post_owners.post_owner_name' },
+          { index: NETWORK_INDEXES.instagram, field: 'instagram_ad_post_owners.post_owner_name' },
+          { index: NETWORK_INDEXES.google, field: 'post_owner_name' }
         ];
     
         const countryIndexConfigs = [
-          { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name', countryField: 'country_only.country' },
-          { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' },
-          { index: 'google_ads_data_v2', field: 'post_owner_name', countryField: 'country' }
+          { index: NETWORK_INDEXES.facebook, field: 'facebook_ad_post_owners.post_owner_name', countryField: 'country_only.country' },
+          { index: NETWORK_INDEXES.instagram, field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' },
+          { index: NETWORK_INDEXES.google, field: 'post_owner_name', countryField: 'country' }
         ];
     
         // Match the search builders: ads in a date bucket are those *last seen*
@@ -834,9 +835,9 @@ const getAdvertiserAdCount = async (advertiser) => {
         // undercounts long-running ads that are still active "today".
         // See facebook/instagram/google SearchMixQueryBuilder._getLastSeenEnv.
         const dateFieldMap = {
-          search_mix: ['facebook_ad.last_seen'],
-          instagram_search_mix: ['instagram_ad.last_seen'],
-          google_ads_data_v2: ['last_seen']
+          [NETWORK_INDEXES.facebook]: ['facebook_ad.last_seen'],
+          [NETWORK_INDEXES.instagram]: ['instagram_ad.last_seen'],
+          [NETWORK_INDEXES.google]: ['last_seen']
         };
     
         const getRange = (duration) => {
@@ -895,9 +896,9 @@ const getAdvertiserAdCount = async (advertiser) => {
           const relevantCntry = countryIndexConfigs.filter(c => serverData.indexes.includes(c.index));
     
           const index_to_platform = {
-            'search_mix': 'facebook',
-            'instagram_search_mix': 'instagram',
-            'google_ads_data_v2': 'google'
+            [NETWORK_INDEXES.facebook]: 'facebook',
+            [NETWORK_INDEXES.instagram]: 'instagram',
+            [NETWORK_INDEXES.google]: 'google'
           };
 
           const countPromises = relevantAdv.map(({index}) => {
@@ -930,7 +931,7 @@ const getAdvertiserAdCount = async (advertiser) => {
             // sub-field, so it needs the suffix. Append `.keyword` only when the
             // field isn't already keyword-aggregatable.
             const finalField =
-              index === 'google_ads_data_v2' || countryField.endsWith('.keyword')
+              index === NETWORK_INDEXES.google || countryField.endsWith('.keyword')
                 ? countryField
                 : `${countryField}.keyword`;
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
@@ -1036,9 +1037,9 @@ const getAdvertiserAdCount = async (advertiser) => {
     //   entry is { averageImpression, averagePopularity, averageBudget, totalBudget }.
     async getCompetitorBudgetStats(name) {
       const platformConfigs = [
-        { index: 'search_mix', impField: 'facebook_ad.impression', popField: 'facebook_ad.popularity', budField: 'facebook.averagebudget' },
-        { index: 'instagram_search_mix', impField: 'instagram_ad.impression', popField: 'instagram_ad.popularity', budField: 'instagram.averagebudget' },
-        { index: 'google_ads_data_v2', impField: 'impression', popField: 'popularity', budField: 'averagebudget' },
+        { index: NETWORK_INDEXES.facebook, impField: 'facebook_ad.impression', popField: 'facebook_ad.popularity', budField: 'facebook.averagebudget' },
+        { index: NETWORK_INDEXES.instagram, impField: 'instagram_ad.impression', popField: 'instagram_ad.popularity', budField: 'instagram.averagebudget' },
+        { index: NETWORK_INDEXES.google, impField: 'impression', popField: 'popularity', budField: 'averagebudget' },
       ];
 
       const fetchOne = async (client, { index, impField, popField, budField }) => {
@@ -1114,9 +1115,9 @@ const getAdvertiserAdCount = async (advertiser) => {
           for (const cfg of platformConfigs) {
             if (!serverData.indexes.includes(cfg.index)) continue;
             const stats = await fetchOne(client, cfg);
-            if (cfg.index === 'search_mix') facebookStats = stats;
-            else if (cfg.index === 'instagram_search_mix') instagramStats = stats;
-            else if (cfg.index === 'google_ads_data_v2') googleStats = stats;
+            if (cfg.index === NETWORK_INDEXES.facebook) facebookStats = stats;
+            else if (cfg.index === NETWORK_INDEXES.instagram) instagramStats = stats;
+            else if (cfg.index === NETWORK_INDEXES.google) googleStats = stats;
           }
         } catch (serverErr) {
           // One ES cluster (network) is down/slow → skip it and keep the data
@@ -1163,14 +1164,14 @@ const getAdvertiserAdCount = async (advertiser) => {
       // Mirror getCompetitorsCount: count facebook + instagram + google so the
       // all-time `ads` total here equals that API's `competitorsCount`.
       const indexPlatform = {
-        search_mix: 'facebook',
-        instagram_search_mix: 'instagram',
-        google_ads_data_v2: 'google',
+        [NETWORK_INDEXES.facebook]: 'facebook',
+        [NETWORK_INDEXES.instagram]: 'instagram',
+        [NETWORK_INDEXES.google]: 'google',
       };
       const dateField = {
-        search_mix: 'facebook_ad.last_seen',
-        instagram_search_mix: 'instagram_ad.last_seen',
-        google_ads_data_v2: 'last_seen',
+        [NETWORK_INDEXES.facebook]: 'facebook_ad.last_seen',
+        [NETWORK_INDEXES.instagram]: 'instagram_ad.last_seen',
+        [NETWORK_INDEXES.google]: 'last_seen',
       };
       const FMT = "YYYY-MM-DD HH:mm:ss";
       const ranges = {
@@ -1243,8 +1244,8 @@ const getAdvertiserAdCount = async (advertiser) => {
     async getCompetitorAdCountForRange(name, gte, lte) {
       // Mirror getCompetitorsCount: include google so the chart's ad counts
       // match (facebook + instagram + google).
-      const indexPlatform = { search_mix: 'facebook', instagram_search_mix: 'instagram', google_ads_data_v2: 'google' };
-      const dateField = { search_mix: 'facebook_ad.last_seen', instagram_search_mix: 'instagram_ad.last_seen', google_ads_data_v2: 'last_seen' };
+      const indexPlatform = { [NETWORK_INDEXES.facebook]: 'facebook', [NETWORK_INDEXES.instagram]: 'instagram', [NETWORK_INDEXES.google]: 'google' };
+      const dateField = { [NETWORK_INDEXES.facebook]: 'facebook_ad.last_seen', [NETWORK_INDEXES.instagram]: 'instagram_ad.last_seen', [NETWORK_INDEXES.google]: 'last_seen' };
       const hasRange = Boolean(gte && lte);
 
       const jobs = []; // { platform, promise }
@@ -1979,8 +1980,8 @@ async insertpaidSearch(req,res){
         const competitorDetails = [];
     
         const advertiserIndexConfigs = [
-          { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name', fieldPrefix: 'facebook' },
-          { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name', fieldPrefix: 'instagram' },
+          { index: NETWORK_INDEXES.facebook, field: 'facebook_ad_post_owners.post_owner_name', fieldPrefix: 'facebook' },
+          { index: NETWORK_INDEXES.instagram, field: 'instagram_ad_post_owners.post_owner_name', fieldPrefix: 'instagram' },
         ];
     
         for (const name of competitorNames) {
@@ -2137,24 +2138,24 @@ async insertpaidSearch(req,res){
       // Run each competitor through the same logic as getCompetitorsCount (individual match_phrase queries)
       const fetchSingleCompetitor = async (competitor) => {
         const advertiserIndexConfigs = [
-          { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name' },
-          { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name' }
+          { index: NETWORK_INDEXES.facebook, field: 'facebook_ad_post_owners.post_owner_name' },
+          { index: NETWORK_INDEXES.instagram, field: 'instagram_ad_post_owners.post_owner_name' }
         ];
         const countryIndexConfigs = [
-          { index: 'search_mix', field: 'facebook_ad_post_owners.post_owner_name', countryField: 'country_only.country' },
-          { index: 'instagram_search_mix', field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' },
+          { index: NETWORK_INDEXES.facebook, field: 'facebook_ad_post_owners.post_owner_name', countryField: 'country_only.country' },
+          { index: NETWORK_INDEXES.instagram, field: 'instagram_ad_post_owners.post_owner_name', countryField: 'instagram_country_only.country' },
           // Google contributes to the competitor's country distribution too — the
           // "Top Country" column must reflect FB+IG+Google combined. google_ads_data_v2
           // .country is keyword-typed directly (no `.keyword` sub-field).
-          { index: 'google_ads_data_v2', field: 'post_owner_name', countryField: 'country' }
+          { index: NETWORK_INDEXES.google, field: 'post_owner_name', countryField: 'country' }
         ];
         // Match the search builders: ads in a date bucket are those *last seen*
         // in that window — not just those first seen. Using firstSeenOn*
         // undercounts long-running ads that are still active "today".
         // See facebook/instagram SearchMixQueryBuilder._getLastSeenEnv.
         const dateFieldMap = {
-          search_mix: ['facebook_ad.last_seen'],
-          instagram_search_mix: ['instagram_ad.last_seen']
+          [NETWORK_INDEXES.facebook]: ['facebook_ad.last_seen'],
+          [NETWORK_INDEXES.instagram]: ['instagram_ad.last_seen']
         };
 
         const totals = {
@@ -2235,7 +2236,7 @@ async insertpaidSearch(req,res){
 
         for (const [serverName, serverData] of Object.entries(this.esServers)) {
           const client = this.esClient[serverName];
-          const index_to_platform = { 'search_mix': 'facebook', 'instagram_search_mix': 'instagram' };
+          const index_to_platform = { [NETWORK_INDEXES.facebook]: 'facebook', [NETWORK_INDEXES.instagram]: 'instagram' };
 
           // Counts — deduped by ad id, with NAS filter + multilingual owner match
           for (const { index } of advertiserIndexConfigs.filter(c => serverData.indexes.includes(c.index))) {
@@ -2261,7 +2262,7 @@ async insertpaidSearch(req,res){
             // sub-field); FB/IG `*_country_only.country` is text WITH a `.keyword`
             // sub-field. Append `.keyword` only when not already keyword-aggregatable.
             const finalField =
-              index === 'google_ads_data_v2' || countryField.endsWith('.keyword')
+              index === NETWORK_INDEXES.google || countryField.endsWith('.keyword')
                 ? countryField
                 : `${countryField}.keyword`;
             const r = await client.search({
@@ -2312,11 +2313,11 @@ async insertpaidSearch(req,res){
           }
 
           // Stats
-          if (serverData.indexes.includes('search_mix')) {
-            facebookStats = await fetchGlobalStats(client, 'search_mix', 'facebook_ad_post_owners.post_owner_name', 'facebook_ad.impression', 'facebook_ad.popularity', 'facebook.averagebudget');
+          if (serverData.indexes.includes(NETWORK_INDEXES.facebook)) {
+            facebookStats = await fetchGlobalStats(client, NETWORK_INDEXES.facebook, 'facebook_ad_post_owners.post_owner_name', 'facebook_ad.impression', 'facebook_ad.popularity', 'facebook.averagebudget');
           }
-          if (serverData.indexes.includes('instagram_search_mix')) {
-            instagramStats = await fetchGlobalStats(client, 'instagram_search_mix', 'instagram_ad_post_owners.post_owner_name', 'instagram_ad.impression', 'instagram_ad.popularity', 'instagram.averagebudget');
+          if (serverData.indexes.includes(NETWORK_INDEXES.instagram)) {
+            instagramStats = await fetchGlobalStats(client, NETWORK_INDEXES.instagram, 'instagram_ad_post_owners.post_owner_name', 'instagram_ad.impression', 'instagram_ad.popularity', 'instagram.averagebudget');
           }
         }
 

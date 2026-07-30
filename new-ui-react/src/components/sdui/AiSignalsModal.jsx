@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { X, Sparkles } from "lucide-react";
+import { X, Sparkles, SlidersHorizontal } from "lucide-react";
 import SchemaRenderer from "./SchemaRenderer";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -62,6 +62,17 @@ const buildDraftFromValues = (values, keys) => {
   return next;
 };
 
+export const getDocumentFilterKeys = (doc) => {
+  const keys = new Set();
+  for (const filter of Array.isArray(doc?.filters) ? doc.filters : []) {
+    if (filter?._id) keys.add(filter._id);
+    // Nested filters persist parent and child selections under separate keys.
+    if (filter?.parent_filter_id) keys.add(filter.parent_filter_id);
+    if (filter?.child_filter_id) keys.add(filter.child_filter_id);
+  }
+  return [...keys];
+};
+
 class PopupErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -109,7 +120,7 @@ const AiSignalsModal = ({
   const { theme } = useTheme();
   const isLightTheme = theme === "light";
   const filterKeys = useMemo(
-    () => (Array.isArray(doc?.filters) ? doc.filters.map((filter) => filter?._id).filter(Boolean) : []),
+    () => getDocumentFilterKeys(doc),
     [doc],
   );
   const [draftValues, setDraftValues] = useState(() =>
@@ -198,17 +209,37 @@ const AiSignalsModal = ({
   if (!isOpen || !doc) return null;
 
   const filterCount = Array.isArray(doc.filters) ? doc.filters.length : 0;
+  const activeFilterCount = (doc.filters || []).reduce((count, filter) => {
+    const keys = [
+      filter?._id,
+      filter?.parent_filter_id,
+      filter?.child_filter_id,
+    ].filter(Boolean);
+    return (
+      count +
+      (keys.some((key) => !isEmptyFilterValue(draftValues?.[key])) ? 1 : 0)
+    );
+  }, 0);
   const displayTitle = "AI Filters";
 
   return (
     <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4">
       <div
-        className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-2xl border border-theme-border bg-theme-surface shadow-2xl flex flex-col"
+        className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-theme-border bg-theme-surface shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-theme-border px-5 py-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-4 border-b border-theme-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div
+              className={`mt-0.5 hidden rounded-xl border p-2.5 sm:flex ${
+                isLightTheme
+                  ? "border-[#3762c1]/15 bg-[#3762c1]/8 text-[#335296]"
+                  : "border-[#f5c86a]/20 bg-[#f5c86a]/8 text-[#f5d88d]"
+              }`}
+            >
+              <SlidersHorizontal size={19} />
+            </div>
+            <div className="min-w-0">
               <span
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] ${
                   isLightTheme
@@ -219,69 +250,83 @@ const AiSignalsModal = ({
                 <Sparkles size={10} />
                 New
               </span>
+              <h2 className="mt-1 text-2xl font-bold text-theme-text">
+                {displayTitle}
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm text-theme-text-secondary">
+                Refine ads using AI-derived creative, intent, offer, color, and
+                category signals.
+              </p>
+              <p className="mt-1.5 text-[11px] font-medium text-theme-text-muted">
+                {activeFilterCount > 0
+                  ? `${activeFilterCount} of ${filterCount} filter groups selected`
+                  : `${filterCount} filter groups available`}
+              </p>
             </div>
-            <h2 className="mt-1 text-2xl font-bold text-theme-text">{displayTitle}</h2>
-            <p className="mt-1 text-sm text-theme-text-secondary">
-              {filterCount ? `${filterCount} filters available.` : "No filters found."}
-            </p>
           </div>
 
-          <button
-            type="button"
-            onClick={closeAndForgetDraft}
-            className="shrink-0 rounded-lg border border-theme-border bg-theme-bg p-2 text-theme-text-muted transition-colors hover:text-theme-text hover:border-theme-text/30"
-            aria-label="Close AI Filters popup"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 px-5 py-3">
-          <button
-            type="button"
-            onClick={handleClear}
-            className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-red-300 transition-colors hover:border-red-400/40 hover:bg-red-500/15 hover:text-red-200"
-          >
-            Clear
-          </button>
-          <button
-            type="button"
-            onClick={handleApply}
-            disabled={!hasPendingChanges}
-            className={`rounded-md border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors ${
-              hasPendingChanges
-                ? "border-[#3759a3]/30 bg-[#3762c1] text-white hover:bg-[#335296]"
-                : "cursor-not-allowed border-[#3759a3]/15 bg-[#3762c1]/35 text-white/50"
-            }`}
-          >
-            Apply
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-          <div className="rounded-xl border border-theme-border bg-theme-bg/40 p-3 sm:p-4">
-            <PopupErrorBoundary
-              fallback={
-                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-200">
-                  AI Filters could not be rendered. Please refresh once; if it keeps happening, the console will show the failing filter.
-                </div>
-              }
+          <div className="flex shrink-0 items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleClear}
+              disabled={activeFilterCount === 0}
+              className={`rounded-lg border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors ${
+                activeFilterCount > 0
+                  ? isLightTheme
+                    ? "border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100"
+                    : "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15"
+                  : "cursor-not-allowed border-theme-border bg-theme-bg text-theme-text-muted opacity-50"
+              }`}
             >
-              <SchemaRenderer
-                document={doc}
-                filterValues={draftValues}
-                onFilterChange={handleDraftChange}
-                shouldShowFilter={shouldShowFilter}
-                shouldShowOption={shouldShowOption}
-                isDependencySatisfied={isDependencySatisfied}
-                activePlatforms={activePlatforms}
-                noSection
-                isFilterRestricted={isFilterRestricted}
-                filterHasPlanEntry={filterHasPlanEntry}
-                onRestricted={onRestricted}
-              />
-            </PopupErrorBoundary>
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={handleApply}
+              disabled={!hasPendingChanges}
+              className={`rounded-lg border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors ${
+                hasPendingChanges
+                  ? "border-[#3759a3]/30 bg-[#3762c1] text-white hover:bg-[#335296]"
+                  : "cursor-not-allowed border-[#3759a3]/15 bg-[#3762c1]/35 text-white/50"
+              }`}
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              onClick={closeAndForgetDraft}
+              className="ml-1 shrink-0 rounded-lg border border-theme-border bg-theme-bg p-2 text-theme-text-muted transition-colors hover:border-theme-text/30 hover:text-theme-text"
+              aria-label="Close AI Filters popup"
+            >
+              <X size={18} />
+            </button>
           </div>
+        </div>
+
+        <div className="modal-scroll flex-1 overflow-y-auto bg-theme-bg/35 p-4 sm:p-5">
+          <PopupErrorBoundary
+            fallback={
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+                AI Filters could not be rendered. Please refresh once; if it
+                keeps happening, the console will show the failing filter.
+              </div>
+            }
+          >
+            <SchemaRenderer
+              document={doc}
+              filterValues={draftValues}
+              onFilterChange={handleDraftChange}
+              shouldShowFilter={shouldShowFilter}
+              shouldShowOption={shouldShowOption}
+              isDependencySatisfied={isDependencySatisfied}
+              activePlatforms={activePlatforms}
+              noSection
+              layoutVariant="ai-workspace"
+              isFilterRestricted={isFilterRestricted}
+              filterHasPlanEntry={filterHasPlanEntry}
+              onRestricted={onRestricted}
+            />
+          </PopupErrorBoundary>
         </div>
       </div>
     </div>

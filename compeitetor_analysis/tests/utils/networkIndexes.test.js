@@ -1,28 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
-  API_ROOT,
   FALLBACK_NETWORK_INDEXES,
   NETWORK_INDEXES,
   getNetworkIndexAliases,
+  loadCompetitorConfig,
   loadNetworkIndexes,
   resolveNetworkIndex,
 } from "../../utils/networkIndexes.js";
 
 describe("networkIndexes", () => {
-  it("loads every API-resolved network index", async () => {
-    const { createRequire } = await import("module");
-    const apiRequire = createRequire(`${API_ROOT}/package.json`);
-    const apiNetworks = apiRequire("./src/config/networks");
+  it("loads every competitor-configured network index", () => {
+    const competitorConfig = loadCompetitorConfig();
+    const configuredIndexes = competitorConfig.ES_INDEXES || competitorConfig.esIndexes || {};
 
     Object.keys(FALLBACK_NETWORK_INDEXES).forEach((network) => {
-      const networkConfig = apiNetworks[network];
-      const database = networkConfig?.database || {};
-      const index = database.elastic?.index || database.elastic_tiktok?.index;
-      if (index) {
-        expect(NETWORK_INDEXES[network]).toBe(index);
+      if (configuredIndexes[network]) {
+        expect(NETWORK_INDEXES[network]).toBe(configuredIndexes[network]);
       }
     });
-    expect(API_ROOT).toMatch(/pas_node_api$/);
+    expect(Object.keys(configuredIndexes).length).toBeGreaterThan(0);
   });
 
   it("falls back to the existing index names when a network is unavailable", () => {

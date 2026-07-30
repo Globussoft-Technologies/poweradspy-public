@@ -53,7 +53,7 @@ describe("utils/Elasticsearch", () => {
     expect(loggerInfoSpy).toHaveBeenCalled();
   });
 
-  it("resolves a legacy Google name to the shared API configured index", async () => {
+  it("resolves a legacy Google name to the configured competitor index", async () => {
     const { esClient, esServers } = await modulePromise;
     const { FALLBACK_NETWORK_INDEXES, NETWORK_INDEXES } = await import("../../utils/networkIndexes.js");
 

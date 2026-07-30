@@ -2,6 +2,7 @@ import config from "config";
 
 import logger from "../../resources/logs/logger.log.js";
 import { esClient, esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
+import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 // import {client} from "../../utils/Elasticsearch.js";
 import Response from "../../utils/response.js";
 
@@ -51,7 +52,7 @@ class AdvertiserService {
   
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           advertiserField: "facebook_ad_post_owners.post_owner_name",
           likeField: "facebook_ad.likes",
           commentField: "facebook_ad.comments",
@@ -66,7 +67,7 @@ class AdvertiserService {
           platform: "facebook"
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           advertiserField: "instagram_ad_post_owners.post_owner_name",
           likeField: "instagram_ad.likes",
           commentField: "instagram_ad.comments",
@@ -253,41 +254,41 @@ class AdvertiserService {
 
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
         },
-        { index: "youtube_ads_data", field: "post_owner" },
+        { index: NETWORK_INDEXES.youtube, field: "post_owner" },
       ];
 
       const impressionConfigs = [
-        { index: "search_mix", field: "facebook_ad.impression" },
-        { index: "instagram_search_mix", field: "instagram_ad.impression" },
+        { index: NETWORK_INDEXES.facebook, field: "facebook_ad.impression" },
+        { index: NETWORK_INDEXES.instagram, field: "instagram_ad.impression" },
       ];
       const popularityConfigs = [
-        { index: "search_mix", field: "facebook_ad.popularity.current" },
+        { index: NETWORK_INDEXES.facebook, field: "facebook_ad.popularity.current" },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad.popularity.current",
         },
       ];
 
       const engagementConfigs = [
-        { index: "search_mix", field: "engagement_rate" },
-        { index: "instagram_search_mix", field: "engagement_rate" },
+        { index: NETWORK_INDEXES.facebook, field: "engagement_rate" },
+        { index: NETWORK_INDEXES.instagram, field: "engagement_rate" },
       ];
 
       const verifiedConfigs = [
-        { index: "search_mix", field: "facebook_ad_post_owners.verified" },
+        { index: NETWORK_INDEXES.facebook, field: "facebook_ad_post_owners.verified" },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.verified",
         },
         {
-          index: "youtube_ads_data",
+          index: NETWORK_INDEXES.youtube,
           field: "verified",
         },
       ];
@@ -338,12 +339,12 @@ class AdvertiserService {
             });
 
             /* v8 ignore start -- impressionConfigs only contains search_mix + instagram_search_mix; the non-matching dispatch branches are unreachable */
-            if (index === "search_mix") {
+            if (index === NETWORK_INDEXES.facebook) {
               totals.facebook.highestImpression =
                 result.aggregations.max_impression.value ?? null;
               totals.facebook.lowestImpression =
                 result.aggregations.min_impression.value ?? null;
-            } else if (index === "instagram_search_mix") {
+            } else if (index === NETWORK_INDEXES.instagram) {
               totals.instagram.highestImpression =
                 result.aggregations.max_impression.value ?? null;
               totals.instagram.lowestImpression =
@@ -374,12 +375,12 @@ class AdvertiserService {
             });
 
             /* v8 ignore start -- popularityConfigs only contains search_mix + instagram_search_mix; the non-matching dispatch branches are unreachable */
-            if (index === "search_mix") {
+            if (index === NETWORK_INDEXES.facebook) {
               totals.facebook.highestPopularity =
                 result.aggregations.max_popularity.value ?? null;
               totals.facebook.lowestPopularity =
                 result.aggregations.min_popularity.value ?? null;
-            } else if (index === "instagram_search_mix") {
+            } else if (index === NETWORK_INDEXES.instagram) {
               totals.instagram.highestPopularity =
                 result.aggregations.max_popularity.value ?? null;
               totals.instagram.lowestPopularity =
@@ -410,12 +411,12 @@ class AdvertiserService {
             });
 
             /* v8 ignore start -- engagementConfigs only contains search_mix + instagram_search_mix; the non-matching dispatch branches are unreachable */
-            if (index === "search_mix") {
+            if (index === NETWORK_INDEXES.facebook) {
               totals.facebook.highestEngagement =
                 result.aggregations.max_engagement.value ?? null;
               totals.facebook.lowestEngagement =
                 result.aggregations.min_engagement.value ?? null;
-            } else if (index === "instagram_search_mix") {
+            } else if (index === NETWORK_INDEXES.instagram) {
               totals.instagram.highestEngagement =
                 result.aggregations.max_engagement.value ?? null;
               totals.instagram.lowestEngagement =
@@ -451,11 +452,11 @@ class AdvertiserService {
             const count = result.hits.total;
 
             /* v8 ignore start -- verifiedConfigs' indexes are exhaustively dispatched here; the non-matching dispatch branch is unreachable */
-            if (index === "search_mix") {
+            if (index === NETWORK_INDEXES.facebook) {
               totals.facebook.nonVerifiedCount = count;
-            } else if (index === "instagram_search_mix") {
+            } else if (index === NETWORK_INDEXES.instagram) {
               totals.instagram.nonVerifiedCount = count;
-            } else if (index === "youtube_ads_data") {
+            } else if (index === NETWORK_INDEXES.youtube) {
               totals.youtube.nonVerifiedCount = count;
             }
             /* v8 ignore stop */
@@ -488,11 +489,11 @@ class AdvertiserService {
             const count = result.hits.total;
 
             /* v8 ignore start -- verifiedConfigs' indexes are exhaustively dispatched here; the non-matching dispatch branch is unreachable */
-            if (index === "search_mix") {
+            if (index === NETWORK_INDEXES.facebook) {
               totals.facebook.verifiedCount = count;
-            } else if (index === "instagram_search_mix") {
+            } else if (index === NETWORK_INDEXES.instagram) {
               totals.instagram.verifiedCount = count;
-            } else if (index === "youtube_ads_data") {
+            } else if (index === NETWORK_INDEXES.youtube) {
               totals.youtube.verifiedCount = count;
             }
             /* v8 ignore stop */
@@ -532,7 +533,7 @@ class AdvertiserService {
   
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: ["facebook_ad_post_owners.post_owner_name"],
           dateFields: [
@@ -544,7 +545,7 @@ class AdvertiserService {
           platform: "facebook",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: ["instagram_ad_post_owners.post_owner_name"],
           dateFields: [
@@ -556,7 +557,7 @@ class AdvertiserService {
           platform: "instagram",
         },
         {
-          index: "youtube_ads_data",
+          index: NETWORK_INDEXES.youtube,
           field: "post_owner",
           searchFields: ["post_owner"],
           dateFields: ["first_seen"], // adjust if multiple exist
@@ -566,15 +567,15 @@ class AdvertiserService {
       ];
   
       const countryConfigs = [
-        { index: "search_mix", field: "country_only.country" },
-        { index: "instagram_search_mix", field: "instagram_country_only.country" },
-        { index: "youtube_ads_data", field: "countries" },
+        { index: NETWORK_INDEXES.facebook, field: "country_only.country" },
+        { index: NETWORK_INDEXES.instagram, field: "instagram_country_only.country" },
+        { index: NETWORK_INDEXES.youtube, field: "countries" },
       ];
   
       const adPositionConfigs = [
-        { index: "search_mix", field: "facebook_ad.ad_position" },
-        { index: "instagram_search_mix", field: "instagram_ad.ad_position" },
-        { index: "youtube_ads_data", field: "ad_position" },
+        { index: NETWORK_INDEXES.facebook, field: "facebook_ad.ad_position" },
+        { index: NETWORK_INDEXES.instagram, field: "instagram_ad.ad_position" },
+        { index: NETWORK_INDEXES.youtube, field: "ad_position" },
       ];
   
       let totals = {
@@ -637,9 +638,9 @@ class AdvertiserService {
               })) || [];
   
             /* v8 ignore start -- relevantCountryIndexes is exhaustively dispatched here; the non-matching branch is unreachable */
-            if (index === "search_mix") totals.facebook.topCountries = countriesList;
-            else if (index === "instagram_search_mix") totals.instagram.topCountries = countriesList;
-            else if (index === "youtube_ads_data") totals.youtube.topCountries = countriesList;
+            if (index === NETWORK_INDEXES.facebook) totals.facebook.topCountries = countriesList;
+            else if (index === NETWORK_INDEXES.instagram) totals.instagram.topCountries = countriesList;
+            else if (index === NETWORK_INDEXES.youtube) totals.youtube.topCountries = countriesList;
             /* v8 ignore stop */
           }
         );
@@ -676,9 +677,9 @@ class AdvertiserService {
               })) || [];
   
             /* v8 ignore start -- relevantPositionIndexes is exhaustively dispatched here; the non-matching branch is unreachable */
-            if (index === "search_mix") totals.facebook.topAdPosition = positionList;
-            else if (index === "instagram_search_mix") totals.instagram.topAdPosition = positionList;
-            else if (index === "youtube_ads_data") totals.youtube.topAdPosition = positionList;
+            if (index === NETWORK_INDEXES.facebook) totals.facebook.topAdPosition = positionList;
+            else if (index === NETWORK_INDEXES.instagram) totals.instagram.topAdPosition = positionList;
+            else if (index === NETWORK_INDEXES.youtube) totals.youtube.topAdPosition = positionList;
             /* v8 ignore stop */
           }
         );
@@ -819,7 +820,7 @@ class AdvertiserService {
 
       const budgetConfigs = [
         {
-          index: 'search_mix',
+          index: NETWORK_INDEXES.facebook,
           platform: 'facebook',
           advertiserField: 'facebook_ad_post_owners.post_owner_name',
           budgetField: 'facebook.averagebudget',
@@ -831,7 +832,7 @@ class AdvertiserService {
           ],
         },
         {
-          index: 'instagram_search_mix',
+          index: NETWORK_INDEXES.instagram,
           platform: 'instagram',
           advertiserField: 'instagram_ad_post_owners.post_owner_name',
           budgetField: 'instagram.averagebudget',
@@ -1324,7 +1325,7 @@ class AdvertiserService {
 
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: [
             "facebook_ad_post_owners.post_owner_name",
@@ -1337,7 +1338,7 @@ class AdvertiserService {
           sortField: "facebook_ad.days_running",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: [
             "instagram_ad_post_owners.post_owner_name",
@@ -1350,13 +1351,13 @@ class AdvertiserService {
           sortField: "instagram_ad.days_running",
         },
         {
-          index: "youtube_ads_data",
+          index: NETWORK_INDEXES.youtube,
           field: "post_owner",
           searchFields: ["post_owner"],
           sortField: "duration",
         },
         {
-          index: "google_ads_data_v2",
+          index: NETWORK_INDEXES.google,
           field: "post_owner_name",
           searchFields: ["post_owner_name"],
           sortField: "days_running",
@@ -1418,13 +1419,13 @@ class AdvertiserService {
                 }) || [];
 
               /* v8 ignore start -- the per-server index list is exhaustively dispatched here; the non-matching branch is unreachable */
-              if (index === "search_mix") {
+              if (index === NETWORK_INDEXES.facebook) {
                 totals.facebook.longestRunningAds = longestAds;
-              } else if (index === "instagram_search_mix") {
+              } else if (index === NETWORK_INDEXES.instagram) {
                 totals.instagram.longestRunningAds = longestAds;
-              } else if (index === "youtube_ads_data") {
+              } else if (index === NETWORK_INDEXES.youtube) {
                 totals.youtube.longestRunningAds = longestAds;
-              } else if (index === "google_ads_data_v2") {
+              } else if (index === NETWORK_INDEXES.google) {
                 totals.google.longestRunningAds = longestAds;
               }
               /* v8 ignore stop */
@@ -1461,7 +1462,7 @@ class AdvertiserService {
 
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: [
             "facebook_ad_post_owners.post_owner_name",
@@ -1474,7 +1475,7 @@ class AdvertiserService {
           sortField: "facebook_ad.likes",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: [
             "instagram_ad_post_owners.post_owner_name",
@@ -1537,9 +1538,9 @@ class AdvertiserService {
                 })) || [];
 
               /* v8 ignore start -- relevant index list is exhaustively dispatched here; the non-matching branch is unreachable */
-              if (index === "search_mix") {
+              if (index === NETWORK_INDEXES.facebook) {
                 totals.facebook.topLikes = longestAds;
-              } else if (index === "instagram_search_mix") {
+              } else if (index === NETWORK_INDEXES.instagram) {
                 totals.instagram.topLikes = longestAds;
               }
               /* v8 ignore stop */
@@ -1579,7 +1580,7 @@ class AdvertiserService {
 
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: [
             "facebook_ad_post_owners.post_owner_name",
@@ -1592,7 +1593,7 @@ class AdvertiserService {
           sortField: "facebook_ad.comments",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: [
             "instagram_ad_post_owners.post_owner_name",
@@ -1655,9 +1656,9 @@ class AdvertiserService {
                 })) || [];
 
               /* v8 ignore start -- relevant index list is exhaustively dispatched here; the non-matching branch is unreachable */
-              if (index === "search_mix") {
+              if (index === NETWORK_INDEXES.facebook) {
                 totals.facebook.topComments = longestAds;
-              } else if (index === "instagram_search_mix") {
+              } else if (index === NETWORK_INDEXES.instagram) {
                 totals.instagram.topComments = longestAds;
               }
               /* v8 ignore stop */
@@ -1697,7 +1698,7 @@ class AdvertiserService {
 
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: [
             "facebook_ad_post_owners.post_owner_name",
@@ -1710,7 +1711,7 @@ class AdvertiserService {
           sortField: "facebook_ad.impression",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: [
             "instagram_ad_post_owners.post_owner_name",
@@ -1773,9 +1774,9 @@ class AdvertiserService {
                 })) || [];
 
               /* v8 ignore start -- relevant index list is exhaustively dispatched here; the non-matching branch is unreachable */
-              if (index === "search_mix") {
+              if (index === NETWORK_INDEXES.facebook) {
                 totals.facebook.topImpressions = longestAds;
-              } else if (index === "instagram_search_mix") {
+              } else if (index === NETWORK_INDEXES.instagram) {
                 totals.instagram.topImpressions = longestAds;
               }
               /* v8 ignore stop */
@@ -1815,7 +1816,7 @@ class AdvertiserService {
 
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: [
             "facebook_ad_post_owners.post_owner_name",
@@ -1828,7 +1829,7 @@ class AdvertiserService {
           sortField: "facebook_ad.popularity.current",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: [
             "instagram_ad_post_owners.post_owner_name",
@@ -1891,9 +1892,9 @@ class AdvertiserService {
                 })) || [];
 
               /* v8 ignore start -- relevant index list is exhaustively dispatched here; the non-matching branch is unreachable */
-              if (index === "search_mix") {
+              if (index === NETWORK_INDEXES.facebook) {
                 totals.facebook.topPopularity = longestAds;
-              } else if (index === "instagram_search_mix") {
+              } else if (index === NETWORK_INDEXES.instagram) {
                 totals.instagram.topPopularity = longestAds;
               }
               /* v8 ignore stop */
@@ -1934,7 +1935,7 @@ class AdvertiserService {
       // Elasticsearch index configurations
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: [
             "facebook_ad_post_owners.post_owner_name",
@@ -1953,7 +1954,7 @@ class AdvertiserService {
           platform: "facebook"
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: [
             "instagram_ad_post_owners.post_owner_name",
@@ -1972,7 +1973,7 @@ class AdvertiserService {
           platform: "instagram"
         },
         {
-          index: "google_ads_data_v2",
+          index: NETWORK_INDEXES.google,
           field: "post_owner_name",
           searchFields: ["post_owner_name"],
           dateFields: [
@@ -2002,14 +2003,14 @@ class AdvertiserService {
       // ads and Google organic results are excluded). Exists-based, no
       // `*PowerAdspy*` wildcard — mirrors the builders / fixed dashboardService.
       const mediaFilterFor = (index) => {
-        if (index === "search_mix") {
+        if (index === NETWORK_INDEXES.facebook) {
           return { filter: [{ bool: { should: [
             { bool: { filter: [{ term: { "facebook_ad.type.keyword": "IMAGE" } }, { exists: { field: "new_nas_image_url" } }] } },
             { bool: { filter: [{ term: { "facebook_ad.type.keyword": "VIDEO" } }, { exists: { field: "Thumbnail" } }] } },
             { bool: { must_not: [{ terms: { "facebook_ad.type.keyword": ["IMAGE", "VIDEO"] } }] } },
           ], minimum_should_match: 1 } }], mustNot: [] };
         }
-        if (index === "instagram_search_mix") {
+        if (index === NETWORK_INDEXES.instagram) {
           return { filter: [{ bool: { should: [
             { bool: { filter: [{ terms: { "instagram_ad.type.keyword": ["IMAGE", "STORIES"] } }, { exists: { field: "new_nas_image_url" } }] } },
             { bool: { filter: [{ term: { "instagram_ad.type.keyword": "VIDEO" } }, { exists: { field: "thumbnail" } }] } },
@@ -2017,7 +2018,7 @@ class AdvertiserService {
           ], minimum_should_match: 1 } }], mustNot: [] };
         }
         /* v8 ignore next -- search_mix/instagram return earlier, so this if is only evaluated for google (always true); getAdCount's config has no youtube, so the false branch is unreachable */
-        if (index === "google_ads_data_v2") {
+        if (index === NETWORK_INDEXES.google) {
           return { filter: [], mustNot: [
             { bool: { filter: [{ term: { type: "IMAGE" } }, { bool: { should: [
               { bool: { must_not: [{ exists: { field: "new_nas_image_url" } }] } },
@@ -2133,22 +2134,22 @@ class AdvertiserService {
 
       const advertiserIndexConfigs = [
         {
-          index: "search_mix",
+          index: NETWORK_INDEXES.facebook,
           field: "facebook_ad_post_owners.post_owner_name",
         },
         {
-          index: "instagram_search_mix",
+          index: NETWORK_INDEXES.instagram,
           field: "instagram_ad_post_owners.post_owner_name",
         },
-        { index: "youtube_ads_data", field: "post_owner" },
-        { index: "google_ads_data_v2", field: "post_owner_name" },
+        { index: NETWORK_INDEXES.youtube, field: "post_owner" },
+        { index: NETWORK_INDEXES.google, field: "post_owner_name" },
       ];
 
       const indexConfigs = [
-        { index: "search_mix", field: "facebook_ad.type" },
-        { index: "instagram_search_mix", field: "instagram_ad.type" },
-        { index: "youtube_ads_data", field: "ad_type" },
-        { index: "google_ads_data_v2", field: "type" },
+        { index: NETWORK_INDEXES.facebook, field: "facebook_ad.type" },
+        { index: NETWORK_INDEXES.instagram, field: "instagram_ad.type" },
+        { index: NETWORK_INDEXES.youtube, field: "ad_type" },
+        { index: NETWORK_INDEXES.google, field: "type" },
       ];
 
       let totals = {

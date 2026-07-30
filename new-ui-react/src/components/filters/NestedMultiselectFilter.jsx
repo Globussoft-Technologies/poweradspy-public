@@ -15,7 +15,7 @@ const NestedMultiselectFilter = ({
   maxItems,
   accented = false,
 }) => {
-  const { theme } = useTheme();
+  const { theme = "dark" } = useTheme() || {};
   const isLightTheme = theme === "light";
   const [expandedParents, setExpandedParents] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState("");

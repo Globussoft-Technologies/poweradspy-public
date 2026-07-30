@@ -15,6 +15,7 @@ import { json } from "stream/consumers";
 import axios from "axios";
 import { getIO } from "../../utils/socket.js";
 import { esClient, esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
+import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 import UserDailyTokens from "../../models/user_daily_tokens.model.js";
 import TokenSyncState from "../../models/jobTokenState.js";
 
@@ -3422,8 +3423,8 @@ async generateCompetitorsInBackground({
   async getAdvertiserAdCount(advertiser) {
     let totalAdsCount = 0;
     const advertiserIndexConfigs = [
-      { index: "search_mix", field: "facebook_ad_post_owners.post_owner_name" },
-      { index: "instagram_search_mix", field: "instagram_ad_post_owners.post_owner_name" }
+      { index: NETWORK_INDEXES.facebook, field: "facebook_ad_post_owners.post_owner_name" },
+      { index: NETWORK_INDEXES.instagram, field: "instagram_ad_post_owners.post_owner_name" }
     ];
 
     for (const [serverName, serverData] of Object.entries(this.esServers)) {

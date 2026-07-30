@@ -1,11 +1,9 @@
-import path from "path";
 import { createRequire } from "module";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
-// These values preserve the existing competitor behavior only when a network
-// is absent from the API's resolved configuration.
+// These values preserve the existing competitor behavior when the local
+// competitor config does not explicitly define an index for a network.
 const FALLBACK_NETWORK_INDEXES = Object.freeze({
   facebook: "search_mix",
   instagram: "instagram_search_mix",
@@ -20,34 +18,27 @@ const FALLBACK_NETWORK_INDEXES = Object.freeze({
   tiktok: "tiktok_ads",
 });
 
-// Use the same resolved `src/config/networks` contract as API scripts. The
-// override supports deployments where the two services are not sibling dirs.
-const API_ROOT = process.env.PAS_NODE_API_ROOT
-  ? path.resolve(process.env.PAS_NODE_API_ROOT)
-  : path.resolve(__dirname, "../../pas_node_api");
+let COMPETITOR_CONFIG;
+try {
+  COMPETITOR_CONFIG = require("../config/localDev.json");
+} catch (error) {
+  throw new Error("Unable to load compeitetor_analysis config/localDev.json.", { cause: error });
+}
 
-function loadApiNetworks() {
-  try {
-    const apiRequire = createRequire(path.join(API_ROOT, "package.json"));
-    return apiRequire("./src/config/networks");
-  } catch (error) {
-    throw new Error(
-      `Unable to load pas_node_api network configuration from ${API_ROOT}. `
-      + "Set PAS_NODE_API_ROOT to the API project directory.",
-      { cause: error },
-    );
-  }
+function loadCompetitorConfig() {
+  return COMPETITOR_CONFIG;
 }
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function loadNetworkIndexes(networksConfig = loadApiNetworks()) {
+function loadNetworkIndexes(config = loadCompetitorConfig()) {
+  const networkIndexes = config?.ES_INDEXES || config?.esIndexes || {};
+
   return Object.fromEntries(
     Object.entries(FALLBACK_NETWORK_INDEXES).map(([network, fallbackIndex]) => {
-      const database = networksConfig[network]?.database || {};
-      const configuredIndex = database.elastic?.index || database.elastic_tiktok?.index;
+      const configuredIndex = networkIndexes[network];
       return [network, isNonEmptyString(configuredIndex) ? configuredIndex.trim() : fallbackIndex];
     }),
   );
@@ -69,10 +60,10 @@ function resolveNetworkIndex(index) {
 }
 
 export {
-  API_ROOT,
   FALLBACK_NETWORK_INDEXES,
   NETWORK_INDEXES,
   getNetworkIndexAliases,
+  loadCompetitorConfig,
   loadNetworkIndexes,
   resolveNetworkIndex,
 };

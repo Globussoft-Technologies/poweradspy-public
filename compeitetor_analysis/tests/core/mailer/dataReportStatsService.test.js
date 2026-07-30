@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NETWORK_INDEXES } from "../../../utils/networkIndexes.js";
 
 const { configGet, ClientCtor, countSpy, loggerError, esClient, esServers } = vi.hoisted(() => ({
   configGet: vi.fn(),
@@ -46,9 +47,17 @@ beforeEach(() => {
   for (const k of Object.keys(esServers)) delete esServers[k];
   for (const k of Object.keys(esClient)) delete esClient[k];
   esServers.srv = { indexes: [
-    "search_mix", "instagram_search_mix", "google_ads_data_v2", "youtube_ads_data",
-    "gdn_search_mix", "native_search_mix", "linkedin_ads_data", "quora_search_mix",
-    "reddit_search_mix", "pinterest_search_mix", "tiktok_ads",
+    NETWORK_INDEXES.facebook,
+    NETWORK_INDEXES.instagram,
+    NETWORK_INDEXES.google,
+    NETWORK_INDEXES.youtube,
+    NETWORK_INDEXES.gdn,
+    NETWORK_INDEXES.native,
+    NETWORK_INDEXES.linkedin,
+    NETWORK_INDEXES.quora,
+    NETWORK_INDEXES.reddit,
+    NETWORK_INDEXES.pinterest,
+    NETWORK_INDEXES.tiktok,
   ] };
   esClient.srv = { count: countSpy };
 });

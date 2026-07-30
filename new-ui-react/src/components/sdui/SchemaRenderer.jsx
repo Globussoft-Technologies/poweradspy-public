@@ -1,6 +1,7 @@
 import React, { useRef } from "react";
 import COMPONENT_MAP from "./componentMap";
 import DocumentSection from "./DocumentSection";
+import ColorSwatchMultiSelect from "../filters/ColorSwatchMultiSelect";
 
 /**
  * SchemaRenderer — The heart of SDUI rendering.
@@ -21,6 +22,7 @@ const SchemaRenderer = ({
   isDependencySatisfied,
   activePlatforms = [],
   noSection = false,
+  layoutVariant,
   isFilterRestricted,
   filterHasPlanEntry,
   onRestricted,
@@ -31,6 +33,8 @@ const SchemaRenderer = ({
 
   if (!doc || doc.visible === false) return null;
   const isAiMetaDocument = doc._id === "ai_meta";
+  const isAiWorkspace =
+    isAiMetaDocument && layoutVariant === "ai-workspace";
   if (
     doc._id === "google_transparency" &&
     !activePlatforms.some(
@@ -48,7 +52,12 @@ const SchemaRenderer = ({
       if (shouldShowFilter && !shouldShowFilter(filter)) return null;
       if (isDependencySatisfied && !isDependencySatisfied(filter)) return null;
 
-      const Component = COMPONENT_MAP[filter.type];
+      // Colors retain the normal SDUI chip type and hex values, but the AI
+      // workspace gives them a visual, named presentation.
+      const Component =
+        isAiWorkspace && filter._id === "ai_colors"
+          ? ColorSwatchMultiSelect
+          : COMPONENT_MAP[filter.type];
       if (!Component) {
         if (import.meta.env.DEV) {
           return (
@@ -233,7 +242,24 @@ const SchemaRenderer = ({
         dependsOn: filter.depends_on,
       };
 
-      return <Component key={filter._id} {...componentProps} />;
+      const renderedFilter = <Component {...componentProps} />;
+      if (isAiWorkspace) {
+        const spansBothColumns = [
+          "ai_hook",
+          "ai_colors",
+          "ai_category_id",
+        ].includes(filter._id);
+        return (
+          <div
+            key={filter._id}
+            className={spansBothColumns ? "md:col-span-2" : ""}
+          >
+            {renderedFilter}
+          </div>
+        );
+      }
+
+      return React.cloneElement(renderedFilter, { key: filter._id });
     });
   };
 
@@ -246,7 +272,15 @@ const SchemaRenderer = ({
 
   if (noSection || isDirectToggle) {
     return (
-      <div className={isDirectToggle ? "px-2.5 mb-1" : ""}>
+      <div
+        className={
+          isDirectToggle
+            ? "px-2.5 mb-1"
+            : isAiWorkspace
+              ? "grid grid-cols-1 items-start gap-3 md:grid-cols-2"
+              : ""
+        }
+      >
         {renderFilters()}
       </div>
     );

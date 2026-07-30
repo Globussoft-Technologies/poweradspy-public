@@ -15,7 +15,7 @@ const FilterCheckboxList = ({
   showSearch = true,
   accented = false,
 }) => {
-  const { theme } = useTheme();
+  const { theme = "dark" } = useTheme() || {};
   const isLightTheme = theme === "light";
   const [expandedCount, setExpandedCount] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");

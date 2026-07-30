@@ -14,6 +14,7 @@ import config from "config";
 import elasticsearch from "elasticsearch";
 import moment from "moment";
 import pLimit from "p-limit";
+import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 
 // Diagnostic logging gate — flip MAIL_DEBUG_LOG in config (e.g. true in
 // localDev.json, false in default.json/production). When the flag is off
@@ -43,7 +44,7 @@ function dlog(...args) {
 // keyword form).
 const AD_PREVIEW_FIELD_CANDIDATES = {
   facebook: {
-    index: "search_mix",
+    index: NETWORK_INDEXES.facebook,
     searchFields: [
       "facebook_ad_post_owners.post_owner_name",
       "facebook_ad_post_owners.post_owner_lower",
@@ -81,7 +82,7 @@ const AD_PREVIEW_FIELD_CANDIDATES = {
     ],
   },
   instagram: {
-    index: "instagram_search_mix",
+    index: NETWORK_INDEXES.instagram,
     searchFields: [
       "instagram_ad_post_owners.post_owner_name",
       "instagram_ad_post_owners.post_owner_lower",
@@ -118,7 +119,7 @@ const AD_PREVIEW_FIELD_CANDIDATES = {
     ],
   },
   google: {
-    index: "google_ads_data_v2",
+    index: NETWORK_INDEXES.google,
     searchFields: ["post_owner_name", "post_owner_lower"],
     sortField: "last_seen",
     typeField: "type",
@@ -340,7 +341,7 @@ class  MonitorService{
     // we use the same fields the production search hits.
     const CFG = {
       facebook:  {
-        index: "search_mix",
+        index: NETWORK_INDEXES.facebook,
         fields: [
           "facebook_ad_post_owners.post_owner_name",
           "facebook_ad_post_owners.post_owner_name_ru",
@@ -353,7 +354,7 @@ class  MonitorService{
         lastSeen: "facebook_ad.last_seen",
       },
       instagram: {
-        index: "instagram_search_mix",
+        index: NETWORK_INDEXES.instagram,
         fields: [
           "instagram_ad_post_owners.post_owner_name",
           "instagram_ad_post_owners.post_owner_name_ru",
@@ -366,7 +367,7 @@ class  MonitorService{
         lastSeen: "instagram_ad.last_seen",
       },
       google:    {
-        index: "google_ads_data_v2",
+        index: NETWORK_INDEXES.google,
         fields: ["post_owner_name"],
         primaryField: "post_owner_name",
         lastSeen: "last_seen",
@@ -515,7 +516,7 @@ class  MonitorService{
     // production search returns.
     const CFG = {
       facebook:  {
-        index: "search_mix",
+        index: NETWORK_INDEXES.facebook,
         fields: [
           "facebook_ad_post_owners.post_owner_name",
           "facebook_ad_post_owners.post_owner_name_ru",
@@ -528,7 +529,7 @@ class  MonitorService{
         mediaFilter: FB_NAS_FILTER,
       },
       instagram: {
-        index: "instagram_search_mix",
+        index: NETWORK_INDEXES.instagram,
         fields: [
           "instagram_ad_post_owners.post_owner_name",
           "instagram_ad_post_owners.post_owner_name_ru",
@@ -541,7 +542,7 @@ class  MonitorService{
         mediaFilter: IG_NAS_FILTER,
       },
       google:    {
-        index: "google_ads_data_v2",
+        index: NETWORK_INDEXES.google,
         fields: ["post_owner_name"],
         primaryField: "post_owner_name",
         excludeType: { field: "type", values: ["ORGANIC SEARCH"] },
@@ -667,25 +668,25 @@ class  MonitorService{
         const platformConfig = {
         facebook: {
             statusField: "facebook_status",
-            index: "search_mix",
+            index: NETWORK_INDEXES.facebook,
             esField: "facebook_ad_post_owners.post_owner_name",
             lastSeenField: "facebook_ad.last_seen",
         },
         instagram: {
             statusField: "instagram_status",
-            index: "instagram_search_mix",
+            index: NETWORK_INDEXES.instagram,
             esField: "instagram_ad_post_owners.post_owner_name",
             lastSeenField: "instagram_ad.last_seen",
         },
         youtube: {
             statusField: "youtube_status",
-            index: "youtube_ads_data",
+            index: NETWORK_INDEXES.youtube,
             esField: "post_owner",
             lastSeenField: "last_seen",
         },
         google: {
             statusField: "google_status",
-            index: "google_ads_data_v2",
+            index: NETWORK_INDEXES.google,
             esField: "post_owner_name",
             lastSeenField: "last_seen",
         },

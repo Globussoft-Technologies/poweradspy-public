@@ -15,6 +15,7 @@ import AdDetailModal from "./AdDetailModal";
 import AdFilterBar from "./AdFilterBar";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
+import { getAiColorLabel } from "../../utils/aiColorPalette";
 
 // Env kill-switch for the "Total Ads: X" count shown next to the filter chips
 // on every search. Set VITE_SHOW_TOTAL_ADS_COUNT=false to hide it; any other
@@ -236,7 +237,11 @@ const AdGrid = ({
         if (!optionMap[filterId]) optionMap[filterId] = {};
         for (const opt of options) {
           const val = opt.value ?? opt.label ?? opt;
-          const lbl = opt.label ?? opt.value ?? opt;
+          const configuredLabel = opt.label ?? opt.value ?? opt;
+          const lbl =
+            f._id === "ai_colors"
+              ? getAiColorLabel(val, configuredLabel)
+              : configuredLabel;
           optionMap[filterId][String(val)] = String(lbl);
 
           // Nested SDUI filters store child values under a separate state key.
