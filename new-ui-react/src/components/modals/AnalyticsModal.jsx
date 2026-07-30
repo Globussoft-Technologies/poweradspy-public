@@ -1150,10 +1150,26 @@ const CreativePreview = ({
           the thumbnail visible and rely on hiding the play button to signal
           that playback isn't possible. */}
       {imgError && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-900/70 to-zinc-800/40 pointer-events-none">
-          <Image size={28} className="text-zinc-500" strokeWidth={1.5} />
-          <span className="text-[10px] font-medium text-zinc-400 tracking-wide">Preview unavailable</span>
-        </div>
+        isQuora && isVideo && effectiveVideoSrc && !videoUnavailable ? (
+          // Quora video whose thumbnail 404'd — show a real frame from the video (muted,
+          // metadata only; "#t=0.1" paints the frame at 0.1s) instead of "Preview
+          // unavailable". Clicking anywhere plays it (container onClick); onError →
+          // handleVideoError sets videoUnavailable and this falls back to the text below.
+          <video
+            key={`poster_${effectiveVideoSrc}`}
+            src={`${effectiveVideoSrc}#t=0.1`}
+            muted
+            playsInline
+            preload="metadata"
+            onError={handleVideoError}
+            className="absolute inset-0 w-full h-full object-contain bg-zinc-900"
+          />
+        ) : (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-900/70 to-zinc-800/40 pointer-events-none">
+            <Image size={28} className="text-zinc-500" strokeWidth={1.5} />
+            <span className="text-[10px] font-medium text-zinc-400 tracking-wide">Preview unavailable</span>
+          </div>
+        )
       )}
       {/* Play button — always show for videos regardless of thumbnail state,
           unless the video URL is known-dead. */}

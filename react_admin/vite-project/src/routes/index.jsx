@@ -27,6 +27,7 @@ import Reddit from "../components/Pas/CrawlerInsight/Reddit";
 import Tiktok from "../components/Pas/CrawlerInsight/Tiktok";
 import Youtube from "../components/Pas/CrawlerInsight/Youtube";
 import SystemInfo from "../pages/user/SystemInfo";
+import DomainRegistrationStats from "../pages/user/DomainRegistrationStats";
 import NasStorage from "../pages/user/NasStorage";
 import InfraStorage from "../pages/user/InfraStorage";
 import CompetitorDetails from "../components/Pas/CompetitorDetails"
@@ -59,6 +60,7 @@ export const routes = createBrowserRouter(
         <Route path="system-info" element={<AuthCheck><SystemInfo /></AuthCheck>} />
         <Route path="nas-storage" element={<AuthCheck><NasStorage /></AuthCheck>} />
         <Route path="infrastructure" element={<AuthCheck><InfraStorage /></AuthCheck>} />
+        <Route path="domain-registration-stats" element={<AuthCheck><DomainRegistrationStats /></AuthCheck>} />
         <Route path="crawler-insights" element={<AuthCheck><CrawlerInsight /></AuthCheck>}>
           <Route index element={<AuthCheck><Facebook /></AuthCheck>} />
           <Route path="gdn" element={<AuthCheck><GDN /></AuthCheck>} />

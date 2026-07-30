@@ -28,7 +28,8 @@ import {
   fetchExporterHealth,
   fetchOcrAnalytics,
   fetchNasStorage,
-  fetchInfraStorage
+  fetchInfraStorage,
+  fetchDomainRegistrationStats
 } from "./../actions/powerAdsPyActionsApi";
 const initialState = {
   nasStorage: null,
@@ -37,6 +38,9 @@ const initialState = {
   infraStorage: null,
   loadingInfraStorage: false,
   infraStorageError: null,
+  domainRegistrationStats: null,
+  loadingDomainRegistrationStats: false,
+  domainRegistrationStatsError: null,
   countData: [],
   countryData: [],
   funnelData: [],
@@ -249,6 +253,22 @@ const networkTypesSlice = createSlice({
             state.loadingDomainsData = false;
             state.error = action.payload;
           });
+
+      // Domain Registration Date — daily per-platform processing stats.
+      // Keeps the previous payload on a failed refetch so the table does not blank out.
+      builder
+        .addCase(fetchDomainRegistrationStats.pending, (state) => {
+          state.loadingDomainRegistrationStats = true;
+        })
+        .addCase(fetchDomainRegistrationStats.fulfilled, (state, action) => {
+          state.loadingDomainRegistrationStats = false;
+          state.domainRegistrationStats = action.payload;
+          state.domainRegistrationStatsError = null;
+        })
+        .addCase(fetchDomainRegistrationStats.rejected, (state, action) => {
+          state.loadingDomainRegistrationStats = false;
+          state.domainRegistrationStatsError = action.payload;
+        });
       //System details
       builder
       .addCase(fetchSystemDetails.pending, (state) => {

@@ -5,8 +5,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 const { captured } = vi.hoisted(() => ({ captured: { current: null } }));
 
 vi.mock("react-date-range", () => ({
-  DateRangePicker: ({ ranges, onChange }) => {
-    captured.current = { ranges, onChange };
+  DateRangePicker: ({ ranges, onChange, minDate, maxDate }) => {
+    captured.current = { ranges, onChange, minDate, maxDate };
     return (
       <div data-testid="date-range-picker">
         <button data-testid="fire-change" onClick={() => onChange({ selection: { startDate: new Date(0), endDate: new Date(1) } })} />
@@ -37,6 +37,31 @@ describe("pages/user/RangeDatePicker", () => {
     expect(captured.current.ranges[0].key).toBe("selection");
     fireEvent.click(screen.getByTestId("fire-change"));
     expect(onDateChange).toHaveBeenCalled();
+  });
+
+  it("forwards minDate/maxDate when given, and leaves them undefined when not", () => {
+    const min = new Date(2021, 0, 1);
+    const max = new Date(2026, 6, 29);
+    const { unmount } = render(
+      <RangeDatePicker
+        onApply={vi.fn()} onCancel={vi.fn()} onDateChange={vi.fn()}
+        selectedDates={{ startDate: new Date(), endDate: new Date() }}
+        minDate={min} maxDate={max}
+      />
+    );
+    expect(captured.current.minDate).toBe(min);
+    expect(captured.current.maxDate).toBe(max);
+
+    // Callers that omit them keep react-date-range's own defaults.
+    unmount();
+    render(
+      <RangeDatePicker
+        onApply={vi.fn()} onCancel={vi.fn()} onDateChange={vi.fn()}
+        selectedDates={{ startDate: new Date(), endDate: new Date() }}
+      />
+    );
+    expect(captured.current.minDate).toBeUndefined();
+    expect(captured.current.maxDate).toBeUndefined();
   });
 
   it("Apply: invokes onApply (and not onCancel)", () => {

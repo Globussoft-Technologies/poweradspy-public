@@ -827,12 +827,29 @@ const AdDetailModal = ({
                         spinner. Not absolute: the <img> is display:none on error so
                         the container would otherwise collapse to zero height. */}
                     {imgError && (
-                      <div className="relative z-[2] flex flex-col items-center justify-center gap-2 w-full min-h-[320px] pointer-events-none">
-                        <Image size={32} className="text-zinc-500" strokeWidth={1.5} />
-                        <span className="text-[11px] font-medium text-zinc-400 tracking-wide">
-                          Preview unavailable
-                        </span>
-                      </div>
+                      platform === "quora" && isVideo && (resolvedVideoUrl || ad.videoUrl) && !videoUnavailable ? (
+                        // Quora video whose thumbnail 404'd — show a real frame from the
+                        // video itself (muted, metadata only; "#t=0.1" forces the browser to
+                        // paint the frame at 0.1s) instead of "Preview unavailable". The play
+                        // overlay sits on top; if the video URL is also dead, onError →
+                        // handleVideoError sets videoUnavailable and this falls back to the text.
+                        <video
+                          key={`poster_${resolvedVideoUrl || ad.videoUrl}`}
+                          src={`${resolvedVideoUrl || ad.videoUrl}#t=0.1`}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          onError={handleVideoError}
+                          className="w-full h-auto max-h-[90vh] min-h-[320px] object-contain relative z-[1] bg-zinc-900"
+                        />
+                      ) : (
+                        <div className="relative z-[2] flex flex-col items-center justify-center gap-2 w-full min-h-[320px] pointer-events-none">
+                          <Image size={32} className="text-zinc-500" strokeWidth={1.5} />
+                          <span className="text-[11px] font-medium text-zinc-400 tracking-wide">
+                            Preview unavailable
+                          </span>
+                        </div>
+                      )
                     )}
                     {currentMediaIsVideo && !videoUnavailable && (
                       <div

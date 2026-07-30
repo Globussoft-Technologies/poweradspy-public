@@ -666,6 +666,28 @@ export const fetchStatusAccountInfo = createAsyncThunk(
   }
 );
 
+// Domain Registration Date — daily per-platform processing stats (processed / updated / failed)
+// for the registration-date crawler, from admin_panel_backend
+// POST /admin-panel/domain-registration-stats/daily. Body: { range: { from, to }, networks? }.
+export const fetchDomainRegistrationStats = createAsyncThunk(
+  "domainRegistrationStats/fetch",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(
+        `${PAS_ADMIN_BASEURL}/domain-registration-stats/daily`,
+        args,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      return data?.data ?? data;
+    } catch (error) {
+      return rejectWithValue(
+        error?.response?.data?.error || error?.response?.data?.message || error.message
+      );
+    }
+  }
+);
+
 //domain process api
 export const fetchDomaninProcessDetails = createAsyncThunk(
   "netwokDomainProcess/details",

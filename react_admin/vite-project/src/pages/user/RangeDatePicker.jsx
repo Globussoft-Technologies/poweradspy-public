@@ -3,7 +3,9 @@ import { DateRangePicker } from "react-date-range";
 import "react-date-range/dist/styles.css";
 import "react-date-range/dist/theme/default.css";
 
-const RangeDatePicker = ({ selectedDates, onDateChange, onApply, onCancel }) => {
+// minDate/maxDate are optional. Left out, react-date-range falls back to its own defaults
+// (today -100y .. today +20y), which is why the year dropdown otherwise lists 1926-2046.
+const RangeDatePicker = ({ selectedDates, onDateChange, onApply, onCancel, minDate, maxDate }) => {
 
   return (
     <div
@@ -13,6 +15,8 @@ const RangeDatePicker = ({ selectedDates, onDateChange, onApply, onCancel }) => 
         <DateRangePicker
           ranges={[{ startDate: selectedDates.startDate, endDate: selectedDates.endDate, key: "selection" }]}
           onChange={onDateChange }
+          minDate={minDate}
+          maxDate={maxDate}
         />
         <div className="!flex !h-9 !justify-end !space-x-2 ">
         <button className="!px-4 !flex !items-center"
