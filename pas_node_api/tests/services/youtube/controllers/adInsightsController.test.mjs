@@ -147,6 +147,24 @@ describe("services/youtube/controllers/adInsightsController > getYoutubeAdCountr
     );
     expect(out.data[0]).toEqual({ country: "Germany", iso: "DE" });
   });
+  it("deduplicates country names and ISO aliases by resolved ISO", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [
+        { nicename: "United Kingdom", country: "United Kingdom", iso: "GB" },
+        { nicename: "United States", country: "United States", iso: "US" },
+      ]) },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
+        countries: ["United Kingdom", "United States", "US"],
+      } }] } })) },
+    };
+    const out = await getYoutubeAdCountry(
+      { body: { youtube_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
+    );
+    expect(out.data).toEqual([
+      { country: "United Kingdom", iso: "GB" },
+      { country: "United States", iso: "US" },
+    ]);
+  });
   it("Czechia → CZ fixup", async () => {
     const db = {
       elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: { countries: ["Czechia"] } }] } })) },
@@ -490,6 +508,27 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserCount
     );
     expect(out.data[0].country).toBe("Germany");
     expect(out.data[0].ad_count).toBe(2);
+  });
+  it("merges advertiser country-name and ISO buckets without double-counting ads", async () => {
+    const db = mkDb({
+      metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" },
+      esHits: [
+        { fields: { ad_id: [1], "countries.keyword": ["United States", "US"] } },
+        { fields: { ad_id: [2], "countries.keyword": ["US"] } },
+        { fields: { ad_id: [3], "countries.keyword": ["United Kingdom"] } },
+      ],
+      countryRows: [
+        { nicename: "United States", country: "United States", iso: "US" },
+        { nicename: "United Kingdom", country: "United Kingdom", iso: "GB" },
+      ],
+    });
+    const out = await getAdvertiserCountryData(
+      { body: { youtube_ad_id: "1" }, query: {} }, db, fakeLogger
+    );
+    expect(out.data).toEqual([
+      { country: "United States", iso: "US", ad_ids: [1, 2], ad_count: 2 },
+      { country: "United Kingdom", iso: "GB", ad_ids: [3], ad_count: 1 },
+    ]);
   });
   it("_source shape support", async () => {
     const db = mkDb({

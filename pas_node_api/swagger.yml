@@ -6087,7 +6087,8 @@ paths:
       summary: Get ad country targeting data
       description: |
         Fetches country data from ES `countries` field,
-        then maps each country to its ISO code via `country_data`.
+        maps country names and ISO aliases through `country_data`, and
+        deduplicates equivalent values by ISO code.
       requestBody:
         required: true
         content:
@@ -6229,6 +6230,7 @@ paths:
       summary: Get advertiser-level country data
       description: |
         Fetches country-level ad counts for a YouTube advertiser for a specific year.
+        Equivalent country names and ISO aliases are merged into one ISO-based result.
         Default year is the year of the provided ad.
       requestBody:
         required: true

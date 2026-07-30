@@ -63,6 +63,30 @@ function fixCountryIso(country, iso) {
   return iso;
 }
 
+function countryLookupKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function resolveCountry(value, isoMap) {
+  const lookup = isoMap.get(countryLookupKey(value));
+  let country = lookup?.country || value;
+  let iso = lookup?.iso || null;
+
+  // ES can contain an ISO value (for example "US") alongside the country name.
+  if (!iso && typeof value === 'string' && /^[a-z]{2}$/i.test(value.trim())) {
+    iso = value.trim().toUpperCase();
+  }
+  iso = fixCountryIso(country, iso);
+  if (iso) iso = String(iso).toUpperCase();
+  if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
+
+  return { country, iso };
+}
+
+function canonicalCountryKey(country, iso) {
+  return iso ? `iso:${iso}` : `name:${countryLookupKey(country)}`;
+}
+
 async function getYoutubeAdCountry(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
@@ -97,19 +121,19 @@ async function getYoutubeAdCountry(req, db, logger) {
     // Batch lookup all country ISO codes in a single query
     const isoMap = await batchCountryLookup(db, countries);
 
-    const countryData = [];
+    const countryDataMap = new Map();
     for (const name of countries) {
-      const lookup = isoMap.get(name);
-      let displayName = lookup?.country || name;
-      let iso = lookup?.iso || null;
+      const resolved = resolveCountry(name, isoMap);
+      const key = canonicalCountryKey(resolved.country, resolved.iso);
+      const existing = countryDataMap.get(key);
 
-      iso = fixCountryIso(displayName, iso);
-      countryData.push({
-        country: displayName ? displayName.replace(/\b\w/g, c => c.toUpperCase()) : displayName,
-        iso,
-      });
+      // Prefer a descriptive country name over a raw two-letter alias.
+      if (!existing || (String(existing.country || '').length <= 2 && String(resolved.country || '').length > 2)) {
+        countryDataMap.set(key, resolved);
+      }
     }
 
+    const countryData = [...countryDataMap.values()];
     return { code: 200, message: 'youtube country data fetched.', data: countryData };
   } catch (err) {
     logger.error('Error in getYoutubeAdCountry', { error: err.message });
@@ -313,21 +337,29 @@ async function aggregateCountryData(db, hits) {
   const allCountryNames = Object.keys(countryMap);
   const isoMap = await batchCountryLookup(db, allCountryNames);
 
-  const result = [];
-  const countryEntries = Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size);
+  const canonicalMap = new Map();
+  for (const [name, idSet] of Object.entries(countryMap)) {
+    const resolved = resolveCountry(name, isoMap);
+    const key = canonicalCountryKey(resolved.country, resolved.iso);
+    const existing = canonicalMap.get(key);
 
-  for (const [name, idSet] of countryEntries) {
-    const adIds = [...idSet];
-    const lookup = isoMap.get(name);
-    let country = lookup?.country || name;
-    let iso = lookup?.iso || null;
+    if (!existing) {
+      canonicalMap.set(key, { ...resolved, adIds: new Set(idSet) });
+      continue;
+    }
 
-    iso = fixCountryIso(country, iso);
-    if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
-
-    result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });
+    for (const adId of idSet) existing.adIds.add(adId);
+    if (String(existing.country || '').length <= 2 && String(resolved.country || '').length > 2) {
+      existing.country = resolved.country;
+    }
   }
-  return result;
+
+  return [...canonicalMap.values()]
+    .map(({ country, iso, adIds }) => {
+      const ids = [...adIds];
+      return { country, iso, ad_ids: ids, ad_count: ids.length };
+    })
+    .sort((a, b) => b.ad_count - a.ad_count);
 }
 
 async function batchCountryLookup(db, names) {
@@ -336,12 +368,18 @@ async function batchCountryLookup(db, names) {
   const placeholders = uniqueNames.map(() => '?').join(',');
   try {
     const rows = await db.sql.query(
-      `SELECT nicename, name AS country, iso FROM country_data WHERE nicename IN (${placeholders})`,
-      uniqueNames
+      `SELECT nicename, name AS country, iso
+       FROM country_data
+       WHERE nicename IN (${placeholders}) OR iso IN (${placeholders})`,
+      [...uniqueNames, ...uniqueNames]
     );
     const map = new Map();
     if (rows) {
-      for (const row of rows) map.set(row.nicename, { country: row.country, iso: row.iso });
+      for (const row of rows) {
+        const value = { country: row.country, iso: row.iso };
+        map.set(countryLookupKey(row.nicename), value);
+        map.set(countryLookupKey(row.iso), value);
+      }
     }
     return map;
   } catch {
