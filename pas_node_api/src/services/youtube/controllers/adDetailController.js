@@ -10,10 +10,7 @@ const AD_DETAIL_SQL = `
     youtube_ad.id AS ad_id,
     youtube_ad.type,
     youtube_ad.ad_position,
-    youtube_ad.likes,
     youtube_ad.dislikes,
-    youtube_ad.comments AS comment,
-    youtube_ad.views AS view,
     youtube_ad.post_date,
     youtube_ad.first_seen,
     youtube_ad.last_seen,
@@ -126,6 +123,12 @@ async function getAdDetails(req, db, logger) {
     // only from ES, so ES-unavailable/doc-missing/overlay-failure paths
     // correctly return null rather than a value the filter wouldn't match.
     adData.language = null;
+    // Engagement is sourced exclusively from Elasticsearch. Keep these null when
+    // ES is unavailable or the document/field is missing; never fall back to the
+    // potentially stale values in youtube_ad.
+    adData.likes = null;
+    adData.comment = null;
+    adData.view = null;
 
     // ─── Step 2: Overlay ES data ────────────────────────
     if (db.elastic) {
@@ -144,6 +147,12 @@ async function getAdDetails(req, db, logger) {
         const hits = esResult.hits || esResult.body?.hits;
         if (hits?.hits?.length > 0) {
           const src = hits.hits[0]._source;
+
+          // Engagement
+          const esLikes = src.reactions?.likes ?? src['reactions.likes'];
+          if (esLikes !== undefined && esLikes !== null) adData.likes = esLikes;
+          if (src.comments !== undefined && src.comments !== null) adData.comment = src.comments;
+          if (src.views !== undefined && src.views !== null) adData.view = src.views;
 
           // Translation overlay
           const lang = p.language || 'en';

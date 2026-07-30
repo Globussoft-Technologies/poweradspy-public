@@ -361,6 +361,45 @@ describe("buildSearchPayload > gender", () => {
   });
 });
 
+describe("buildSearchPayload > CTA, gender, and age on every network", () => {
+  const networks = [
+    "facebook", "instagram", "youtube", "linkedin", "reddit", "tiktok",
+    "quora", "pinterest", "google", "gdn", "native",
+  ];
+
+  it.each(networks)("preserves CTA, gender_filter, and ageRange for %s", (platform) => {
+    const p = buildSearchPayload({
+      activePlatforms: [platform],
+      cta_filter: ["Shop Now"],
+      gender_filter: ["male"],
+      ageRange: ["18-24"],
+      filterPlatformSupport: {
+        cta_filter: ["facebook"],
+        cta: ["facebook"],
+        gender_filter: ["facebook"],
+        gender: ["facebook"],
+        age_filter: ["facebook"],
+        age: ["facebook"],
+      },
+    });
+
+    expect(p.call_to_action).toEqual(["Shop Now"]);
+    expect(p.gender).toEqual(["male"]);
+    expect(p.gender_activity).toBe("male");
+    expect(p.lower_age).toBe(18);
+    expect(p.upper_age).toBe(24);
+  });
+
+  it("supports an object ageRange", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["native"],
+      ageRange: { min: 25, max: 34 },
+    });
+    expect(p.lower_age).toBe(25);
+    expect(p.upper_age).toBe(34);
+  });
+});
+
 describe("buildSearchPayload > ad type normalization", () => {
   it("dash → underscore + uppercase", () => {
     const p = buildSearchPayload({ ad_type: ["text-image"] });
@@ -395,6 +434,24 @@ describe("buildSearchPayload > ad_sub_position", () => {
 });
 
 describe("buildSearchPayload > verified + metaAdsLib + platform", () => {
+  it.each([
+    "facebook", "instagram", "youtube", "linkedin", "reddit", "tiktok",
+    "quora", "pinterest", "google", "gdn", "native",
+  ])("verified=true sends 1 for %s even when config omits that platform", (platform) => {
+    const p = buildSearchPayload({
+      verified_filter: true,
+      activePlatforms: [platform],
+      filterPlatformSupport: {
+        verified_filter: ["facebook"],
+        verified: ["facebook"],
+      },
+    });
+    expect(p.verified).toBe(1);
+  });
+  it("accepts the API-compatible string value '1'", () => {
+    const p = buildSearchPayload({ verified: "1", activePlatforms: ["native"] });
+    expect(p.verified).toBe(1);
+  });
   it("verified=true → 1 (on supported platforms)", () => {
     const p = buildSearchPayload({ verified: true, activePlatforms: ["facebook"] });
     expect(p.verified).toBe(1);
@@ -446,9 +503,19 @@ describe("buildSearchPayload > lang + size", () => {
     const p = buildSearchPayload({ image_size: "MEDIUM", activePlatforms: ["gdn"] });
     expect(p.size).toBe("MEDIUM");
   });
-  it("size gate bypassed because 'image_size_filter' is not in FILTER_PLATFORM_SUPPORT", () => {
-    const p = buildSearchPayload({ image_size: "LARGE", activePlatforms: ["facebook"] });
-    expect(p.size).toBe("LARGE");
+  it.each([
+    "facebook", "instagram", "youtube", "linkedin", "reddit", "tiktok",
+    "quora", "pinterest", "google", "gdn", "native",
+  ])("size is sent for %s", (platform) => {
+    const p = buildSearchPayload({
+      image_size_filter: ["300x250"],
+      activePlatforms: [platform],
+      filterPlatformSupport: {
+        image_size_filter: ["gdn"],
+        image_size: ["gdn"],
+      },
+    });
+    expect(p.size).toBe("300x250");
   });
 });
 
@@ -611,10 +678,10 @@ describe("buildSearchPayload > comprehensive branch coverage", () => {
         image_size_filter: ["facebook"], image_size: ["facebook"],
       },
     });
-    expect(p.gender).toBe("NA");
+    expect(p.gender).toEqual(["male"]);
     expect(p.likes).toBe("NA");
-    expect(p.verified).toBe("NA");
-    expect(p.size).toBe("NA");
+    expect(p.verified).toBe(1);
+    expect(p.size).toBe("LARGE");
   });
 
   it("gender 'all' → gender_activity 'All'", () => {
@@ -666,8 +733,8 @@ describe("buildSearchPayload > platform-support gating (false + secondary-operan
       age: "18-24", activePlatforms: fb,
       filterPlatformSupport: { age_filter: ["nope"], age: ["nope"] },
     });
-    expect(p.lower_age).toBe("NA");
-    expect(p.upper_age).toBe("NA");
+    expect(p.lower_age).toBe(18);
+    expect(p.upper_age).toBe(24);
   });
   it("age: filter unsupported but secondary 'age' supported (|| second operand)", () => {
     const p = buildSearchPayload({
@@ -752,30 +819,30 @@ describe("buildSearchPayload > platform-support gating (false + secondary-operan
     expect(p.ctr).toEqual([1, 5]);
   });
 
-  it("size: both unsupported → NA (926 false)", () => {
+  it("size: platform support config does not remove the selected value", () => {
     const p = buildSearchPayload({
       image_size: ["VERT"], activePlatforms: fb,
       filterPlatformSupport: { image_size_filter: ["nope"], image_size: ["nope"] },
     });
-    expect(p.size).toBe("NA");
+    expect(p.size).toBe("VERT");
   });
   it("size: supported array joins (926 array branch)", () => {
     const p = buildSearchPayload({
-      image_size: ["VERT", "HORIZ"], activePlatforms: fb,
+      image_size: ["VERT", "HORIZ"], activePlatforms: ["gdn"],
       filterPlatformSupport: { image_size_filter: ["facebook"] },
     });
     expect(p.size).toBe("VERT,HORIZ");
   });
   it("size: supported empty array → NA (926 inner)", () => {
     const p = buildSearchPayload({
-      image_size: [], activePlatforms: fb,
+      image_size: [], activePlatforms: ["gdn"],
       filterPlatformSupport: { image_size_filter: ["facebook"] },
     });
     expect(p.size).toBe("NA");
   });
   it("size: supported scalar → v(imageSize) (926 non-array branch)", () => {
     const p = buildSearchPayload({
-      image_size: "VERT", activePlatforms: fb,
+      image_size: "VERT", activePlatforms: ["gdn"],
       filterPlatformSupport: { image_size_filter: ["facebook"] },
     });
     expect(p.size).toBe("VERT");
@@ -803,7 +870,7 @@ describe("buildSearchPayload > platform-support gating (false + secondary-operan
       cta: ["Shop Now"], activePlatforms: fb,
       filterPlatformSupport: { cta_filter: ["nope"], cta: ["nope"] },
     });
-    expect(p.call_to_action).toBe("NA");
+    expect(p.call_to_action).toEqual(["Shop Now"]);
   });
   it("call_to_action: secondary 'cta' supported (836 second operand)", () => {
     const p = buildSearchPayload({

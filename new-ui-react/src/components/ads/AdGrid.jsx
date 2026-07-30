@@ -201,15 +201,32 @@ const AdGrid = ({
   // Build maps from SDUI config:
   //   filterOptionLabels: { filterId -> { value -> displayLabel } }
   //   filterCategoryLabels: { filterId -> filter.label }  — used to prefix chips (e.g. "Age: 18-24")
+  // Platform-specific config refreshes can omit filters that remain selected,
+  // so retain metadata already seen instead of degrading their chip labels.
+  const seenFilterOptionLabels = useRef({});
+  const seenFilterCategoryLabels = useRef({
+    image_size_filter: "Image Size",
+    image_size: "Image Size",
+  });
   const { filterOptionLabels, filterCategoryLabels } = useMemo(() => {
-    if (!config) return { filterOptionLabels: {}, filterCategoryLabels: {} };
+    if (!config) {
+      return {
+        filterOptionLabels: { ...seenFilterOptionLabels.current },
+        filterCategoryLabels: { ...seenFilterCategoryLabels.current },
+      };
+    }
     const allFilters = [
       ...(config.searchbar?.flatMap(d => d.filters || []) || []),
       ...(config.navbar?.flatMap(d => d.filters || []) || []),
       ...(config.sidebar?.flatMap(d => d.filters || []) || []),
     ];
-    const optionMap = {};
-    const categoryMap = {};
+    const optionMap = Object.fromEntries(
+      Object.entries(seenFilterOptionLabels.current).map(([filterId, labels]) => [
+        filterId,
+        { ...labels },
+      ]),
+    );
+    const categoryMap = { ...seenFilterCategoryLabels.current };
     for (const f of allFilters) {
       if (!f._id) continue;
       if (f.label) categoryMap[f._id] = f.label;
@@ -233,6 +250,8 @@ const AdGrid = ({
 
       addOptionLabels(f._id, f.options);
     }
+    seenFilterOptionLabels.current = optionMap;
+    seenFilterCategoryLabels.current = categoryMap;
     return { filterOptionLabels: optionMap, filterCategoryLabels: categoryMap };
   }, [config]);
 

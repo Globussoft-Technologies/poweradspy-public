@@ -909,10 +909,16 @@ export const buildSearchPayload = (filters = {}) => {
   const adPositionFilter = pick('ad_position_filter', 'ad_position', 'position');
   const adSubPosition = pick('ad_sub_position', 'ad_sub_position_filter', 'adSubPosition', 'subposition', 'sub_position');
   const gender = pick('gender', 'gender_filter', 'gender_selector');
-  const ageFilter = pick('age_filter', 'age', 'lower_age', 'lowerAge');
+  const ageFilter = pick('age_filter', 'age', 'ageRange', 'age_range', 'lower_age', 'lowerAge');
   // Parse age ranges like ["13-17", "25-34"] → lower_age = min start, upper_age = max end
   const parsedAge = (() => {
     if (!ageFilter) return { lower: undefined, upper: undefined };
+    if (typeof ageFilter === 'object' && !Array.isArray(ageFilter)) {
+      return {
+        lower: ageFilter.min ?? ageFilter.lower ?? ageFilter.lower_age ?? ageFilter.lowerAge,
+        upper: ageFilter.max ?? ageFilter.upper ?? ageFilter.upper_age ?? ageFilter.upperAge,
+      };
+    }
     if (typeof ageFilter === 'number' || (typeof ageFilter === 'string' && !ageFilter.includes('-') && !ageFilter.includes('+'))) {
       return { lower: ageFilter, upper: pick('upper_age', 'upperAge') };
     }
@@ -1156,7 +1162,9 @@ export const buildSearchPayload = (filters = {}) => {
     // Per-platform filter skipping: only include filter fields that at least one
     // resolved network supports. Unsupported fields are sent as 'NA' so the backend
     // ignores them cleanly.
-    call_to_action: ps(resolvedNetworks, 'cta_filter') || ps(resolvedNetworks, 'cta') ? v(cta_filter) : 'NA',
+    // CTA, Gender, and Age are request-wide filters. Preserve their selected
+    // values for every network regardless of SDUI platform_applicability.
+    call_to_action: v(cta_filter),
     adcategory,
     country: resolvedCountry,
     state: 'NA',
@@ -1169,20 +1177,18 @@ export const buildSearchPayload = (filters = {}) => {
     })(),
     ad_position: resolvedAdPosition,
     gender: (() => {
-      if (!ps(resolvedNetworks, 'gender_filter') && !ps(resolvedNetworks, 'gender')) return 'NA';
       if (!gender || gender === '' || gender === 'all') return 'NA';
       if (Array.isArray(gender)) return gender.length > 0 ? gender : 'NA';
       return [gender];
     })(),
     gender_activity: (() => {
-      if (!ps(resolvedNetworks, 'gender_filter') && !ps(resolvedNetworks, 'gender')) return 'NA';
       if (!gender || gender === '') return 'NA';
       if (gender === 'all') return 'All';
       if (Array.isArray(gender)) return gender.length > 0 ? gender.join(',') : 'NA';
       return gender;
     })(),
-    lower_age: ps(resolvedNetworks, 'age_filter') || ps(resolvedNetworks, 'age') ? v(lower_age) : 'NA',
-    upper_age: ps(resolvedNetworks, 'age_filter') || ps(resolvedNetworks, 'age') ? v(upper_age) : 'NA',
+    lower_age: v(lower_age),
+    upper_age: v(upper_age),
     industry: resolvedIndustry.length > 0 ? resolvedIndustry : 'NA',
     subCategory: Array.isArray(subcategoryVal) && subcategoryVal.length > 0 ? subcategoryVal : v(subcategoryVal),
     ecommerce: Array.isArray(ecommerce) && ecommerce.length > 0 ? ecommerce : v(ecommerce),
@@ -1239,8 +1245,11 @@ export const buildSearchPayload = (filters = {}) => {
     html: 'NA',
     commentdata: v(commentdata),
     page_creation: 'NA',
-    verified: ps(resolvedNetworks, 'verified_filter') || ps(resolvedNetworks, 'verified')
-      ? ((verified === true || verified === 1 || verified === 'true') ? 1 : 'NA')
+    // Verified Only is a request-wide filter supported for every platform.
+    // Do not apply platform-applicability gating here: a restricted entry in
+    // the dynamic SDUI map used to turn an active toggle into "NA".
+    verified: (verified === true || verified === 1 || verified === '1' || verified === 'true')
+      ? 1
       : 'NA',
     mixdata: 'NA',
     html_content: 'NA',
@@ -1274,9 +1283,11 @@ export const buildSearchPayload = (filters = {}) => {
       ? ['facebook', 'instagram']
       : 'NA',
     market_platform: v(market_platform),
-    size: ps(resolvedNetworks, 'image_size_filter') || ps(resolvedNetworks, 'image_size')
-      ? (Array.isArray(imageSize) ? (imageSize.length > 0 ? imageSize.join(',') : 'NA') : v(imageSize))
-      : 'NA',
+    // Preserve Image Size for every platform when selected. The backend
+    // decides how each network uses the shared request field.
+    size: Array.isArray(imageSize)
+      ? (imageSize.length > 0 ? imageSize.join(',') : 'NA')
+      : v(imageSize),
     language: ps(resolvedNetworks, 'language') ? (resolvedLang !== 'NA' ? resolvedLang : 'en') : 'NA',
     ad_position_filter: v(adPositionFilter) !== 'NA' ? adPositionFilter : 'NA',
     userkeyword: false,

@@ -113,8 +113,18 @@ describe("services/youtube/controllers/adDetailController > ES overlay", () => {
   }
 
   it("applies full ES overlay (all branches active)", async () => {
-    const adRow = { id: 1, last_seen: new Date().toISOString(), category: "old_cat" };
+    const adRow = {
+      id: 1,
+      last_seen: new Date().toISOString(),
+      category: "old_cat",
+      likes: 999,
+      comment: 999,
+      view: 999,
+    };
     const hits = { hits: { hits: [{ _source: {
+      reactions: { likes: 42 },
+      comments: 7,
+      views: 1234,
       "youtube_translations.es": "Hola",
       image_brand: "brand",
       image_object: "obj",
@@ -141,6 +151,9 @@ describe("services/youtube/controllers/adDetailController > ES overlay", () => {
       { body: { ad_id: "1", language: "es" }, query: {} }, db, fakeLogger
     );
     expect(out.data[0]["youtube_translations.es"]).toBe("Hola");
+    expect(out.data[0].likes).toBe(42);
+    expect(out.data[0].comment).toBe(7);
+    expect(out.data[0].view).toBe(1234);
     expect(out.data[0].imageBrand).toBe("brand");
     expect(out.data[0].imageObject).toBe("obj");
     expect(out.data[0].imageCeleb).toBe("celeb");
@@ -178,7 +191,9 @@ describe("services/youtube/controllers/adDetailController > ES overlay", () => {
 
   it("ES with 0 hits leaves adData unchanged", async () => {
     const db = {
-      sql: { query: vi.fn(async () => [{ id: 1, last_seen: null }]) },
+      sql: { query: vi.fn(async () => [{
+        id: 1, last_seen: null, likes: 999, comment: 999, view: 999,
+      }]) },
       elastic: { indexName: "youtube_ads", search: vi.fn(async () => ({ hits: { hits: [] } })) },
     };
     const out = await getAdDetails(
@@ -186,6 +201,20 @@ describe("services/youtube/controllers/adDetailController > ES overlay", () => {
     );
     expect(out.code).toBe(200);
     expect(out.data[0].imageBrand).toBeUndefined();
+    expect(out.data[0].likes).toBeNull();
+    expect(out.data[0].comment).toBeNull();
+    expect(out.data[0].view).toBeNull();
+  });
+
+  it("preserves zero engagement values from ES", async () => {
+    const db = makeDb(
+      { id: 1, last_seen: null },
+      { hits: { hits: [{ _source: { reactions: { likes: 0 }, comments: 0, views: 0 } }] } }
+    );
+    const out = await getAdDetails(
+      { body: { ad_id: "1" }, query: {} }, db, fakeLogger
+    );
+    expect(out.data[0]).toMatchObject({ likes: 0, comment: 0, view: 0 });
   });
 
   it("ES throws → logger.warn, returns SQL-only response", async () => {
