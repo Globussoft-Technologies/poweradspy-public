@@ -574,10 +574,20 @@ describe("buildSearchPayload > misc fields", () => {
     const p = buildSearchPayload({ native_network: ["X"], activePlatforms: ["native"] });
     expect(p.nativeNetwork).toEqual(["X"]);
   });
-  it("nativeNetwork gate bypassed because 'native_network_filter' is not in FILTER_PLATFORM_SUPPORT", () => {
+  it("nativeNetwork is removed outside the Native platform", () => {
     const p = buildSearchPayload({ native_network: ["X"], activePlatforms: ["facebook"] });
-    expect(p.nativeNetwork).toEqual(["X"]);
+    expect(p.nativeNetwork).toBe("NA");
   });
+  it.each(["youtube", "google"])(
+    "nativeNetwork is inactive when switching to %s",
+    (platform) => {
+      const p = buildSearchPayload({
+        native_network: ["taboola"],
+        activePlatforms: [platform],
+      });
+      expect(p.nativeNetwork).toBe("NA");
+    },
+  );
   it("commentdata passed through via v()", () => {
     const p = buildSearchPayload({ commentdata: "x" });
     expect(p.commentdata).toBe("x");
@@ -767,24 +777,24 @@ describe("buildSearchPayload > platform-support gating (false + secondary-operan
     expect(p.ad_sub_position).toBe("NA");
   });
 
-  it("nativeNetwork: preserves an explicit selection even when the active platform is unsupported", () => {
+  it("nativeNetwork: does not leak an explicit selection into another platform", () => {
     const p = buildSearchPayload({
       native_network: ["taboola"], activePlatforms: fb,
       filterPlatformSupport: { native_network_filter: ["nope"], native_network: ["nope"] },
     });
-    expect(p.nativeNetwork).toEqual(["taboola"]);
+    expect(p.nativeNetwork).toBe("NA");
   });
-  it("nativeNetwork: secondary supported with values (876 second operand)", () => {
+  it("nativeNetwork: dynamic support cannot make it active outside Native", () => {
     const p = buildSearchPayload({
       native_network: ["taboola"], activePlatforms: fb,
       filterPlatformSupport: { native_network_filter: ["nope"], native_network: ["facebook"] },
     });
-    expect(p.nativeNetwork).toEqual(["taboola"]);
+    expect(p.nativeNetwork).toBe("NA");
   });
 
   it("nativeNetwork: normalizes a scalar selection to an array", () => {
     const p = buildSearchPayload({
-      native_network_filter: "taboola", activePlatforms: fb,
+      native_network_filter: "taboola", activePlatforms: ["native"],
     });
     expect(p.nativeNetwork).toEqual(["taboola"]);
   });

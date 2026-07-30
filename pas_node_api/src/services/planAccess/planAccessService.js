@@ -129,7 +129,12 @@ async function getConfig() {
       const collection = db.collection(COLLECTION);
       const docs = await collection.find({}).toArray();
       if (docs.length > 0) {
-        const reconciliation = reconcileConfiguredPlanGroups(docs);
+        // Keep configured 2026 plan IDs usable even when an older live Mongo
+        // collection predates a newly classified baseline filter. Published
+        // Plan Control decisions remain authoritative in enforcement mode; this
+        // merge only keeps the legacy fallback complete.
+        const { mergeContributions } = require('./restructure2026');
+        const reconciliation = reconcileConfiguredPlanGroups(mergeContributions(docs));
         _configCache = reconciliation.docs;
         _configCacheAt = Date.now();
         await persistReconciledPlanGroups(collection, reconciliation);
@@ -357,6 +362,8 @@ const BODY_KEY_TO_FILTER_ID = {
   verified: 'verified',
   // body key 'size' vs SDUI _id 'image_size' and query_param 'imageSize'
   size: 'image_size',
+  // SDUI stores native_network_filter but the API payload uses nativeNetwork.
+  nativeNetwork: 'native_network',
 
   // ── Lander / merchant ────────────────────────────────────────────────────
   // body key 'ecommerce' vs SDUI doc _id 'ecommerce_platform' (seed _id was 'ecommerce')

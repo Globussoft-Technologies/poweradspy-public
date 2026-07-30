@@ -69,6 +69,11 @@ describe("restructure2026 — config.pricing.planIds is the only source of these
 
     const category = docs.find((d) => d._id === "category"); // all tiers
     expect(category.allowed_plan_ids).toContain(101);
+
+    const nativeNetwork = docs.find((d) => d._id === "native_network"); // Platinum+
+    expect(nativeNetwork.allowed_plan_ids).toEqual(expect.arrayContaining([103, 113, 104, 114]));
+    expect(nativeNetwork.allowed_plan_ids).not.toContain(101);
+    expect(nativeNetwork.allowed_plan_ids).not.toContain(102);
   });
 
   // 2026-07-14: project_access was left out of every tier list, so canAccessProjects

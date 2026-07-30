@@ -367,6 +367,14 @@ describe("planAccessService > stripRestrictedFilters", () => {
     freshSut().stripRestrictedFilters(body, { keyword_search: { enabled: true, planAllowed: true } });
     expect(body.keyword).toBe("x");
   });
+  it("maps the nativeNetwork API field to the native_network entitlement", () => {
+    const body = { nativeNetwork: ["taboola"] };
+    const out = freshSut().stripRestrictedFilters(body, {
+      native_network: { enabled: false, planAllowed: false },
+    });
+    expect(out.planRestricted).toEqual(["nativeNetwork"]);
+    expect(body.nativeNetwork).toBeUndefined();
+  });
   it("sduiQueryParamMap entries respected when BODY_KEY_TO_FILTER_ID doesn't cover", () => {
     const body = { custom_field: "x" };
     const out = freshSut().stripRestrictedFilters(body, { my_filter: { enabled: false, planAllowed: false } }, { custom_field: "my_filter" });

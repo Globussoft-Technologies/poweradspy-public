@@ -1214,10 +1214,10 @@ export const buildSearchPayload = (filters = {}) => {
     })(),
     funnel: Array.isArray(funnel) && funnel.length > 0 ? funnel : v(funnel),
     affiliate: Array.isArray(affiliate) && affiliate.length > 0 ? affiliate : 'NA',
-    // Preserve an explicit Native Network selection in the request. The filter
-    // can remain active while another platform tab is selected, and gating it
-    // by resolvedNetworks here silently replaced the user's value with "NA".
-    nativeNetwork: nativeNetwork === undefined || nativeNetwork === null || nativeNetwork === ''
+    // Native Network is a Native-only filter. A persisted value must never leak
+    // into YouTube/Google/another platform request and trigger a false plan gate.
+    nativeNetwork: !resolvedNetworks.includes('native') ||
+      nativeNetwork === undefined || nativeNetwork === null || nativeNetwork === ''
       ? 'NA'
       : (Array.isArray(nativeNetwork) ? (nativeNetwork.length > 0 ? nativeNetwork : 'NA') : [nativeNetwork]),
     order_column,
