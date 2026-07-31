@@ -34,9 +34,11 @@ const VALID_AI_META = {
 };
 
 function mkRes() {
-  const r = { statusCode: 200, body: null };
+  const r = { statusCode: 200, body: null, headers: {} };
   r.status = vi.fn((c) => { r.statusCode = c; return r; });
   r.json = vi.fn((b) => { r.body = b; return r; });
+  r.setHeader = vi.fn((name, value) => { r.headers[name.toLowerCase()] = value; return r; });
+  r.getHeader = vi.fn((name) => r.headers[name.toLowerCase()]);
   return r;
 }
 
@@ -1001,6 +1003,7 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.body.error.code).toBe("VALIDATION_ERROR");
     const fields = res.body.error.details.map((d) => d.field);
     expect(fields).toEqual(expect.arrayContaining(["ad_id", "network", "ai_meta"]));
+    expect(res.headers["server-timing"]).toContain("validation;dur=");
   });
 
   it("400 for unsupported network", async () => {
@@ -1037,11 +1040,15 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     const updateFn = vi.fn(async () => {});
     esWithAd([{ _id: "ad-1" }], updateFn);
     const res = mkRes();
-    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META } }, res);
+    await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META }, requestId: "req-123" }, res);
     expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.message).toBe("AI-Meta labels stored successfully");
     expect(res.body.stored_fields).toEqual(expect.arrayContaining(["ad_type", "offering_type"]));
+    expect(res.headers["x-request-id"]).toBe("req-123");
+    expect(res.headers["server-timing"]).toContain("lookup;dur=");
+    expect(res.headers["server-timing"]).toContain("es_write;dur=");
+    expect(res.headers["server-timing"]).toContain("sql;dur=");
     // Development keeps the original `ai` field because its mapping is already correct.
     const call = updateFn.mock.calls[0][0];
     expect(call.body.script.source).toContain("ctx._source.ai = params.aiMeta");

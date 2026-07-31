@@ -1,5 +1,6 @@
 'use strict';
 
+const { performance } = require('node:perf_hooks');
 const serviceRegistry = require('../../ServiceRegistry');
 const networksConfig = require('../../../config/networks');
 const config = require('../../../config');
@@ -33,10 +34,94 @@ function readAiMetaFromSource(src, platform) {
 }
 
 /**
+ * Lightweight telemetry for the AI-Meta write path.
+ * We keep the timing state local to this controller so we can expose stage
+ * timings in headers and logs without changing the endpoint payload.
+ */
+function createAiMetaTelemetry() {
+  const startedAt = performance.now();
+  const timings = {};
+
+  return {
+    timings,
+    async time(name, fn) {
+      const stageStartedAt = performance.now();
+      try {
+        return await fn();
+      } finally {
+        timings[name] = performance.now() - stageStartedAt;
+      }
+    },
+    totalMs() {
+      return performance.now() - startedAt;
+    },
+  };
+}
+
+function formatServerTiming(timings) {
+  return Object.entries(timings)
+    .filter(([, value]) => Number.isFinite(value))
+    .map(([name, value]) => `${name};dur=${value.toFixed(1)}`)
+    .join(', ');
+}
+
+function setAiMetaTelemetryHeaders(res, req, timings) {
+  const requestId = req?.requestId || req?.id || null;
+  if (requestId) {
+    res.setHeader('X-Request-Id', requestId);
+  }
+
+  const serverTiming = formatServerTiming({
+    validation: timings.validation_ms,
+    lookup: timings.lookup_ms,
+    es_write: timings.es_write_ms,
+    category_sync: timings.category_sync_ms,
+    sql: timings.sql_ms,
+    total: timings.total_ms,
+  });
+
+  if (serverTiming) {
+    res.setHeader('Server-Timing', serverTiming);
+  }
+
+  return requestId;
+}
+
+function logAiMetaTelemetry(log, payload) {
+  log?.info?.('ai_meta_write_complete', payload);
+}
+
+function finalizeAiMetaResponse(res, req, log, statusCode, body, timings, extra = {}) {
+  const requestId = setAiMetaTelemetryHeaders(res, req, timings);
+
+  logAiMetaTelemetry(log, {
+    event: 'ai_meta_write_complete',
+    request_id: requestId,
+    network: extra.network || null,
+    ad_id: extra.adId ?? null,
+    http_status: statusCode,
+    validation_ms: Math.round(timings.validation_ms || 0),
+    ad_lookup_ms: Math.round(timings.lookup_ms || 0),
+    es_write_ms: Math.round(timings.es_write_ms || 0),
+    category_sync_ms: Math.round(timings.category_sync_ms || 0),
+    category_taxonomy_ms: Math.round(timings.category_taxonomy_ms || 0),
+    category_mirror_ms: Math.round(timings.category_mirror_ms || 0),
+    sql_wait_ms: Math.round(timings.sql_wait_ms || 0),
+    sql_lookup_ms: Math.round(timings.sql_lookup_ms || 0),
+    sql_upsert_ms: Math.round(timings.sql_upsert_ms || 0),
+    sql_category_ms: Math.round(timings.sql_category_ms || 0),
+    total_ms: Math.round(timings.total_ms || 0),
+    retry_count: 0,
+  });
+
+  return res.status(statusCode).json(body);
+}
+
+/**
  * Turn a stored creative value into a fetchable http(s) URL. Already-absolute values
- * pass through untouched (youtube). NAS-relative paths (e.g. `/PowerAdspy/n2/native/adImage/…`)
+ * pass through untouched (youtube). NAS-relative paths (e.g. `/PowerAdspy/n2/native/adImage/`)
  * get their mount prefix stripped and the CDN base prepended, so the classifier receives
- * the resolvable `https://media.globussoft.com/pas-prod/stream/…` path directly instead of
+ * the resolvable `https://media.globussoft.com/pas-prod/stream/` path directly instead of
  * having to rewrite `/PowerAdspy/n2/` itself (Issue "Minor" in the backend fix prompt).
  * Returns null for empty input so callers can emit a clean `null`.
  */
@@ -51,7 +136,7 @@ function served(v) {
 /**
  * Exact-ID ad lookup shared by newCatInsertion (to update) and getAdCategory (to read
  * back). Some platforms index the id as a long (facebook_ad.id), others as a keyword
- * (google.ad_id) — so we try both the string and numeric term. Returns the first ES hit
+ * (google.ad_id)  so we try both the string and numeric term. Returns the first ES hit
  * (with `_source`) or null.
  *
  * @param {object} esForPlat  the platform's ES client (service.db.elastic)
@@ -76,12 +161,12 @@ async function findAdDoc(esForPlat, esIndex, idField, adId) {
 
 /**
  * Write a validated `ai_meta` object onto the ad's ES doc under the resolved AI-Meta field
- * (see AI_META_API_PAYLOAD_SPEC.md §7 mapping).
+ * (see AI_META_API_PAYLOAD_SPEC.md 7 mapping).
  *
  * Idempotency: the whole stored AI-Meta object is REPLACED on every write (a painless assign,
  * not a doc-merge) so re-sending overwrites prior labels and stale sub-fields from an
  * older payload shape are dropped. v1.4 removed the `status` field, so there is no
- * longer a partial/status-only path — every payload is a completed enrichment.
+ * longer a partial/status-only path  every payload is a completed enrichment.
  */
 async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
   const aiMetaField = getAiMetaEsField(platform);
@@ -128,7 +213,7 @@ async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat) {
 
 /**
  * Conflict raised by `syncMasterCategory` when the incoming category/subcategory
- * name↔id pair contradicts what the master `category` taxonomy index already holds.
+ * nameid pair contradicts what the master `category` taxonomy index already holds.
  * Carries the exact legacy response payload so callers reproduce the old 500 body.
  */
 class CategoryTaxonomyConflict extends Error {
@@ -148,7 +233,7 @@ class CategoryTaxonomyConflict extends Error {
  * @param {object} esClient  the ES client that owns the shared `category` index (gdn)
  * @param {object} p         { category, catId, subCategory, subCategoryId, platform }
  * @returns {Promise<{ message: string }>}
- * @throws  {CategoryTaxonomyConflict} on a name↔id mismatch (legacy 500 payload)
+ * @throws  {CategoryTaxonomyConflict} on a nameid mismatch (legacy 500 payload)
  */
 async function syncMasterCategory(esClient, { category, catId, subCategory, subCategoryId, platform }) {
   const existResult = await esClient.search({
@@ -284,7 +369,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
       message = 'Category already exists';
     }
   } else {
-    // ── Insert new category ──────────────────────────────────────────
+    //  Insert new category 
     const docData = { category, cat_id: catId, platforms: [platform] };
     if (subCategory && subCategoryId) {
       docData.subcategory = [{ sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] }];
@@ -302,7 +387,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
  *   1. maintain the shared master `category` taxonomy index (via `syncMasterCategory`
  *      on the gdn ES client), and
  *   2. mirror the flat codes + dotted names onto the ad doc (`mirrorCategoryToEs`).
- * Non-fatal: returns a status object; a taxonomy name↔id conflict or an ES error is
+ * Non-fatal: returns a status object; a taxonomy nameid conflict or an ES error is
  * captured (not thrown), so the AI-Meta write it accompanies still succeeds.
  * Returns null when the payload has no category to apply.
  *
@@ -310,10 +395,12 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
  */
 async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform, normalized, log }) {
   if (!normalized || !normalized.category || !normalized.category_id) return null;
+  const startedAt = performance.now();
   const status = { taxonomy: null, mirrored: false };
 
   if (gdnEs) {
     try {
+      const taxonomyStartedAt = performance.now();
       const { message } = await syncMasterCategory(gdnEs, {
         category:      normalized.category,
         catId:         normalized.category_id,
@@ -321,6 +408,8 @@ async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform
         subCategoryId: normalized.subcategory_id,
         platform,
       });
+      status.timings = status.timings || {};
+      status.timings.taxonomy_ms = performance.now() - taxonomyStartedAt;
       status.taxonomy = message;
     } catch (taxErr) {
       const isConflict = taxErr instanceof CategoryTaxonomyConflict;
@@ -331,25 +420,33 @@ async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform
   }
 
   try {
+    const mirrorStartedAt = performance.now();
     await mirrorCategoryToEs(platEs, esIndex, docId, platform, {
       category:      normalized.category,
       subCategory:   normalized.sub_category,
       categoryId:    normalized.category_id,
       subCategoryId: normalized.subcategory_id,
     });
+    status.timings = status.timings || {};
+    status.timings.mirror_ms = performance.now() - mirrorStartedAt;
     status.mirrored = true;
   } catch (mirrorErr) {
     status.mirror_error = mirrorErr.message;
     log?.warn?.(`[aiMetaCategory] ES mirror failed for platform=${platform}: ${mirrorErr.message}`);
   }
 
+  status.timings = {
+    taxonomy_ms: status.timings?.taxonomy_ms,
+    mirror_ms: status.timings?.mirror_ms,
+    total_ms: performance.now() - startedAt,
+  };
   return status;
 }
 
 /**
  * Resolve a platform's ES index name from config.json (via the shared networks
  * config), instead of reading XX_ELASTIC_INDEX env vars directly. networksConfig
- * already layers config.json → env → built-in default for every network, and
+ * already layers config.json  env  built-in default for every network, and
  * exposes TikTok's index under `elastic_tiktok` rather than `elastic`.
  *
  * @param {string} platform network slug (matches PLATFORM_CONFIG keys)
@@ -417,7 +514,7 @@ const PLATFORM_CONFIG = {
     imageNasField:'new_nas_image_url',
     thumbField:   null,
     destPageField:'gdn_ad_html_lander_content.html_dc_blackhat_lander_text',
-    // GDN is 100% type IMAGE in production (live-verified: 129,927/129,927 docs) — it
+    // GDN is 100% type IMAGE in production (live-verified: 129,927/129,927 docs)  it
     // has no real TEXT-type ads despite the field existing in its schema. The ~24% of
     // GDN ads that do carry a non-empty ad_text are incidental scraped banner
     // boilerplate ("Ads by  Send feedback", "Click here to C0ntinue"), not real ad
@@ -440,7 +537,7 @@ const PLATFORM_CONFIG = {
     ocrField:     'image_ocr',
     newsFeedField:'newsfeed_description',
     // The google ES doc's ad-type field is the flat `type` key (e.g. "IMAGE"),
-    // NOT `ad_type` — confirmed against GoogleSearchQueryBuilder.js/adCountController.js
+    // NOT `ad_type`  confirmed against GoogleSearchQueryBuilder.js/adCountController.js
     // (both query `type`) and the insertion pipeline, which writes `type: 'IMAGE'`
     // verbatim into `_source` (the field's `lowercase_normalizer` only affects the
     // indexed/searchable term, not the stored `_source` value read here).
@@ -451,14 +548,14 @@ const PLATFORM_CONFIG = {
     // SEARCH is already excluded entirely by the displayable-media filter above (its
     // GOOGLE clause has an unconditional `match_phrase: type:'ORGANIC SEARCH'`
     // exclusion) and isn't a real ad type in the frontend's Ad Type filter (only
-    // "Image"/"text" list `google` in sduiConfig.json) — so only IMAGE and TEXT ads
-    // ever reach this feed. TEXT ads have no creative image — `ad_image` should still
+    // "Image"/"text" list `google` in sduiConfig.json)  so only IMAGE and TEXT ads
+    // ever reach this feed. TEXT ads have no creative image  `ad_image` should still
     // be emitted as `null` for them (instead of the key being omitted entirely) so the
     // classifier can distinguish "checked, no image" from "field never sent".
     // Deliberately NOT falling back to `screenshot_url`/`png_file`: those are a
     // Lighthouse/cloaking-detection screenshot of the ad's DESTINATION website
     // (`api_gtext/.../CronController.php::saveScreenShotUsingGAPI`, `BlackhatController.php`,
-    // `docs/GOOGLE_LANDER_MANIFEST.md`) — never the ad creative. Feeding that into
+    // `docs/GOOGLE_LANDER_MANIFEST.md`)  never the ad creative. Feeding that into
     // ad_image would show the classifier an unrelated site's imagery and manufacture
     // false `colors`/`caption` mismatches (the AI-meta caption field exists specifically
     // to catch real ones).
@@ -493,7 +590,7 @@ const PLATFORM_CONFIG = {
     newsFeedField:'newsfeed_description',
     typeField:    'ad_type',
     imageNasField:'new_nas_image_url',
-    // LinkedIn has no `Thumbnail` field — VIDEO ads store their thumbnail in
+    // LinkedIn has no `Thumbnail` field  VIDEO ads store their thumbnail in
     // `ad_video` (confirmed against LinkedinSearchQueryBuilder.js's EXTRA_CONDITION,
     // which requires `ad_video` to exist/be non-placeholder for VIDEO ads).
     thumbField:   'ad_video',
@@ -554,12 +651,12 @@ const PLATFORM_CONFIG = {
 
 /**
  * MySQL fallback config for getDescriptionDetails, mirroring each network's own
- * adDetailController.js join (`<net>_ad` ⟶ `<net>_ad_variants` via `<net>_ad_id`,
- * ⟶ `<net>_ad_post_owners` via `post_owner_id`). Google's tables are prefixed
+ * adDetailController.js join (`<net>_ad`  `<net>_ad_variants` via `<net>_ad_id`,
+ *  `<net>_ad_post_owners` via `post_owner_id`). Google's tables are prefixed
  * `google_text_ad*` rather than `google_ad*`; youtube's variants table has no
  * `image_url` column (video-only creative), only `thumbnail_url`. TikTok has no
  * SQL table carrying ad_text/ad_title/newsfeed_description/image (confirmed via
- * its controllers — only analytics/country-info tables exist there), so it has
+ * its controllers  only analytics/country-info tables exist there), so it has
  * no fallback and stays ES-only.
  *
  * @param {string} platform
@@ -637,14 +734,14 @@ async function getDescriptionDetails(req, res) {
   }
 
   try {
-    // GDN is on gdn_search_mix_v2 — resolve the env-correct index from the live ES client, not the config-immune static map.
+    // GDN is on gdn_search_mix_v2  resolve the env-correct index from the live ES client, not the config-immune static map.
     const esIndex = ((cfg.service === 'gdn' || cfg.service === 'native') && service.db.elastic.indexName) ? service.db.elastic.indexName : cfg.index;
     // Pagination cursor: usually the same field as the ad lookup key, but Google
     // paginates on its distinct internal PK (`id`) while looking ads up by `ad_id`.
     const pageField = cfg.descIdField || cfg.idField;
     // Displayable-media gate: skip ads the UI itself hides for broken/missing/
     // placeholder media (same clauses each network's own SearchMixQueryBuilder
-    // always applies — see displayableMediaFilters.js). Every ad this feed
+    // always applies  see displayableMediaFilters.js). Every ad this feed
     // returns gets sent through the external category/AI-meta classifier, so
     // an undisplayable ad is pure wasted classification spend.
     const mediaFilter = getDisplayableMediaFilter(platform);
@@ -671,7 +768,7 @@ async function getDescriptionDetails(req, res) {
       row.cursor                = src[pageField];
       // Only platforms whose index keeps id and ad_id distinct (Google) carry both.
       if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
-      // GDN sends no ad-copy text at all (see PLATFORM_CONFIG.gdn.suppressTextFields) —
+      // GDN sends no ad-copy text at all (see PLATFORM_CONFIG.gdn.suppressTextFields) 
       // it has no real TEXT-type ads, and the incidental text some IMAGE ads carry is
       // scraped banner boilerplate, not classifiable ad copy.
       if (!cfg.suppressTextFields) {
@@ -712,7 +809,7 @@ async function getDescriptionDetails(req, res) {
         // Prefer the stored NAS copy; fall back to the original scraped URL when the
         // NAS creative is missing. `cfg.alwaysEmitImage` (google) only widens WHEN this
         // runs (so a TEXT-type ad gets an explicit `ad_image: null` instead of the key
-        // being omitted) — it intentionally has no extra fallback source, since google's
+        // being omitted)  it intentionally has no extra fallback source, since google's
         // only other image-shaped fields (`screenshot_url`/`png_file`) are landing-page
         // screenshots, not the ad creative. served() returns a resolvable CDN URL (no
         // more client-side /PowerAdspy/n2 rewrite).
@@ -728,14 +825,14 @@ async function getDescriptionDetails(req, res) {
 
     // SQL fallback: ES is a downstream sync of MySQL, so an ad whose ES doc hasn't
     // (yet) received text/title/description/owner/image carries the real value in
-    // MySQL. Only fills fields ES left null — never overwrites an ES-derived value.
+    // MySQL. Only fills fields ES left null  never overwrites an ES-derived value.
     const sqlCfg = sqlFallbackConfigFor(platform);
     if (sqlCfg && service.db.sql) {
       try {
         // Blank, not falsy: a legit value like ad_text `"0"` must never be treated
         // as missing (a plain `!value` check would wrongly overwrite/skip it).
         const isBlank = (v) => v === null || v === undefined || v === '';
-        // GDN never gets ad_text/ad_title/news_feed_description backfilled either —
+        // GDN never gets ad_text/ad_title/news_feed_description backfilled either 
         // those keys don't exist on the row at all for gdn (suppressTextFields), so
         // they must be excluded from both the "does this row need a SQL lookup" check
         // and the merge, or the fallback would silently reintroduce them from MySQL.
@@ -783,7 +880,7 @@ async function getDescriptionDetails(req, res) {
  *
  * The type name must match how each 6.8 index was actually mapped, or a scripted
  * update addresses a non-existent type and fails with `document_missing_exception`
- * (search sends no type, so it silently succeeds — masking the mismatch). Verified
+ * (search sends no type, so it silently succeeds  masking the mismatch). Verified
  * live: the shared master `category` index is mapped under `_doc`, while every
  * per-network ad index (`search_mix`, `<net>_search_mix`, `<net>_ads_data`) is
  * mapped under `doc`. `INDEX_TYPE` records that; unlisted indices default to `doc`.
@@ -827,7 +924,7 @@ async function newCatInsertion(req, res) {
 
     const platform = (platformRaw || '').toLowerCase().trim();
 
-    // ── Validation ──────────────────────────────────────────────────────
+    //  Validation 
     const errors = [];
     if (!platform || !PLATFORM_CONFIG[platform])
       errors.push(`platform is required. Valid: ${Object.keys(PLATFORM_CONFIG).join(', ')}`);
@@ -868,8 +965,8 @@ async function newCatInsertion(req, res) {
       return res.status(503).json({ code: 503, message: 'ES not available' });
     }
 
-    // ── Step 1: Upsert the master `category` taxonomy index (shared helper,
-    //    also used by POST /ai-meta now that ids travel inside ai_meta). ──
+    //  Step 1: Upsert the master `category` taxonomy index (shared helper,
+    //    also used by POST /ai-meta now that ids travel inside ai_meta). 
     let message;
     try {
       ({ message } = await syncMasterCategory(gdnService.db.elastic, {
@@ -882,7 +979,7 @@ async function newCatInsertion(req, res) {
       throw taxErr;
     }
 
-    // ── Step 2: Update the ad record in the platform's search_mix index ──
+    //  Step 2: Update the ad record in the platform's search_mix index 
     const esForPlat = platService?.db?.elastic || gdnService.db.elastic;
     // Prefer the live ES client's indexName when available (handles gdn_search_mix_v2,
     // native_search_mix_v2, or any future index cutover), fall back to config.
@@ -932,7 +1029,7 @@ async function newCatInsertion(req, res) {
         gdnService.log?.info(`[newCatInsertion] ${esIndex} ${adCategoryStatus} for ad_id=${ad_id}`);
       } else {
         adWarning = `ad_id=${ad_id} not found in ${esIndex}`;
-        gdnService.log?.warn(`[newCatInsertion] ${adWarning} — skipping update`);
+        gdnService.log?.warn(`[newCatInsertion] ${adWarning}  skipping update`);
       }
     } catch (updateErr) {
       adCategoryStatus = 'error';
@@ -940,9 +1037,9 @@ async function newCatInsertion(req, res) {
       gdnService.log?.warn(`[newCatInsertion] ${adWarning}`);
     }
 
-    // ── Step 2b: Optional AI-Meta enrichment (Option A) ─────────────────
+    //  Step 2b: Optional AI-Meta enrichment (Option A) 
     // Additive: when the caller includes an `ai_meta` object we validate + write it
-    // onto the same ad doc's runtime AI-Meta field. This never fails the category write — an
+    // onto the same ad doc's runtime AI-Meta field. This never fails the category write  an
     // invalid ai_meta is reported back as `ai_meta_status='validation_error'` while
     // the category result stands. The dedicated POST /ai-meta endpoint (Option B) is
     // the strict path that 400s on invalid payloads.
@@ -961,8 +1058,8 @@ async function newCatInsertion(req, res) {
 
           // Category on Option A is driven by the top-level classification (Step 1
           // taxonomy + Step 2 flat-code ad update) which runs on every request, so the
-          // ai_meta category is not re-applied here — it would only duplicate that write.
-          // Durable SQL copy + category dual-write (non-fatal — an ES success stands
+          // ai_meta category is not re-applied here  it would only duplicate that write.
+          // Durable SQL copy + category dual-write (non-fatal  an ES success stands
           // even if SQL is unavailable or the AI-Meta table has not been created yet).
           const sqlResult = await persistAiMeta({
             sql:        platService?.db?.sql,
@@ -979,7 +1076,7 @@ async function newCatInsertion(req, res) {
       }
     }
 
-    // ── Step 3: Sync to MongoDB sdui_config (fire-and-forget) ───────────
+    //  Step 3: Sync to MongoDB sdui_config (fire-and-forget) 
     setImmediate(async () => {
       try {
         let syncResponse = null;
@@ -1080,24 +1177,31 @@ async function getAdCategory(req, res) {
 }
 
 /**
- * POST /ai-meta  (Option B — dedicated AI-Meta enrichment endpoint)
+ * POST /ai-meta  (Option B  dedicated AI-Meta enrichment endpoint)
  *
  * Standalone, spec-conformant write path for AI-generated meta labels
- * (AI_META_API_PAYLOAD_SPEC.md §2/§3/§6). As of v1.6 the category classification
+ * (AI_META_API_PAYLOAD_SPEC.md 2/3/6). As of v1.6 the category classification
  * travels inside `ai_meta` (name + 4-char `category_id` + 8-char `subcategory_id`),
  * so this endpoint is now ALSO the category writer: when a category is present it
  * maintains the master `category` taxonomy index, mirrors the flat codes + names onto
- * the ad doc, and dual-writes to SQL — everything the classification POST does.
+ * the ad doc, and dual-writes to SQL  everything the classification POST does.
  *
- * Body: { ad_id, network, ai_meta:{…} }
- * Responses follow §6 exactly (success / 400 VALIDATION_ERROR / 404 AD_NOT_FOUND).
+ * Body: { ad_id, network, ai_meta:{} }
+ * Responses follow 6 exactly (success / 400 VALIDATION_ERROR / 404 AD_NOT_FOUND).
  */
 async function insertAiMeta(req, res) {
   const body     = req.body || {};
   const adId     = body.ad_id;
   const platform = (body.network || body.platform || '').toLowerCase().trim();
+  const telemetry = createAiMetaTelemetry();
+  let service = null;
+  let es = null;
+  let esIndex = null;
+  let adHit = null;
+  let categorySync = null;
+  let sqlResult = null;
 
-  // ── Top-level validation (spec §2) ──────────────────────────────────
+  const validationStartedAt = performance.now();
   const details = [];
   if (adId === undefined || adId === null || adId === '')
     details.push({ field: 'ad_id', message: 'ad_id is required' });
@@ -1108,45 +1212,56 @@ async function insertAiMeta(req, res) {
   if (body.ai_meta === undefined || body.ai_meta === null)
     details.push({ field: 'ai_meta', message: 'ai_meta is required' });
 
-  // ai_meta field-level validation (spec §3)
+  // ai_meta field-level validation (spec 3)
   let normalized, storedFields, aiErrors = [];
   if (body.ai_meta !== undefined && body.ai_meta !== null) {
     ({ errors: aiErrors, normalized, storedFields } = validateAiMeta(body.ai_meta));
     details.push(...aiErrors);
   }
+  telemetry.validation_ms = performance.now() - validationStartedAt;
 
   if (details.length > 0) {
-    return res.status(400).json({
+    telemetry.total_ms = telemetry.totalMs();
+    return finalizeAiMetaResponse(res, req, null, 400, {
       success: false,
       ad_id:   adId ?? null,
       error:   { code: 'VALIDATION_ERROR', message: 'Request validation failed', details },
-    });
+    }, telemetry, { network: platform, adId });
   }
 
   const cfg = PLATFORM_CONFIG[platform];
-  const service = serviceRegistry.getService(cfg.service);
-  const es = service?.db?.elastic;
+  service = serviceRegistry.getService(cfg.service);
+  es = service?.db?.elastic;
   if (!es) {
-    return res.status(503).json({ success: false, ad_id: adId, error: { code: 'ES_UNAVAILABLE', message: `ES not available for network: ${platform}` } });
+    telemetry.total_ms = telemetry.totalMs();
+    return finalizeAiMetaResponse(res, req, service?.log, 503, {
+      success: false,
+      ad_id: adId,
+      error: { code: 'ES_UNAVAILABLE', message: `ES not available for network: ${platform}` },
+    }, telemetry, { network: platform, adId });
   }
-  const esIndex = es.indexName || cfg.index;
+  esIndex = es.indexName || cfg.index;
 
   try {
-    const adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+    const lookupStartedAt = performance.now();
+    adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+    telemetry.lookup_ms = performance.now() - lookupStartedAt;
     if (!adHit) {
-      return res.status(404).json({
+      telemetry.total_ms = telemetry.totalMs();
+      return finalizeAiMetaResponse(res, req, service?.log, 404, {
         success: false,
         ad_id:   adId,
         error:   { code: 'AD_NOT_FOUND', message: `Ad with id '${adId}' does not exist` },
-      });
+      }, telemetry, { network: platform, adId });
     }
 
+    const esWriteStartedAt = performance.now();
     await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
+    telemetry.es_write_ms = performance.now() - esWriteStartedAt;
     service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
 
-    // Category (v1.6: name + ids inside ai_meta) — maintain the master `category`
-    // taxonomy index and mirror the flat codes + names onto the ad doc. Non-fatal.
-    const categorySync = await applyAiMetaCategoryToEs({
+    const categorySyncStartedAt = performance.now();
+    categorySync = await applyAiMetaCategoryToEs({
       gdnEs:      serviceRegistry.getService('gdn')?.db?.elastic,
       platEs:     es,
       esIndex,
@@ -1155,15 +1270,23 @@ async function insertAiMeta(req, res) {
       normalized,
       log:        service.log,
     });
+    telemetry.category_sync_ms = performance.now() - categorySyncStartedAt;
+    telemetry.category_taxonomy_ms = categorySync?.timings?.taxonomy_ms;
+    telemetry.category_mirror_ms = categorySync?.timings?.mirror_ms;
 
-    // Durable SQL copy + category dual-write (non-fatal).
-    const sqlResult = await persistAiMeta({
+    const sqlStartedAt = performance.now();
+    sqlResult = await persistAiMeta({
       sql:        service?.db?.sql,
       network:    platform,
       adId:       adId,
       normalized: normalized,
       logger:     service.log,
     });
+    telemetry.sql_ms = performance.now() - sqlStartedAt;
+    telemetry.sql_wait_ms = sqlResult?.timings?.connection_wait_ms;
+    telemetry.sql_lookup_ms = sqlResult?.timings?.lookup_ms;
+    telemetry.sql_upsert_ms = sqlResult?.timings?.upsert_ms;
+    telemetry.sql_category_ms = sqlResult?.timings?.category_sync_ms;
 
     const out = {
       success: true,
@@ -1173,10 +1296,16 @@ async function insertAiMeta(req, res) {
       sql: sqlResult,
     };
     if (categorySync) out.category_sync = categorySync;
-    return res.status(200).json(out);
+    telemetry.total_ms = telemetry.totalMs();
+    return finalizeAiMetaResponse(res, req, service?.log, 200, out, telemetry, { network: platform, adId });
   } catch (err) {
     service.log?.error(`[insertAiMeta] network=${platform} ad_id=${adId} error: ${err.message}`);
-    return res.status(500).json({ success: false, ad_id: adId, error: { code: 'INTERNAL_ERROR', message: err.message } });
+    telemetry.total_ms = telemetry.totalMs();
+    return finalizeAiMetaResponse(res, req, service?.log, 500, {
+      success: false,
+      ad_id: adId,
+      error: { code: 'INTERNAL_ERROR', message: err.message },
+    }, telemetry, { network: platform, adId });
   }
 }
 

@@ -5,9 +5,9 @@
  *
  * ES stays the search store; SQL is the durable system-of-record copy. On every
  * AI-Meta write we upsert the validated `ai_meta` object into the per-network
- * `<net>_ad_ai_meta` table, and — when the payload carries a `category` — also
+ * `<net>_ad_ai_meta` table, and when the payload carries a `category` we also
  * dual-write that category into the pre-existing category store
- * (`<net>_ad.category_id` → master `<net>_category`) so the feed/legacy readers
+ * (`<net>_ad.category_id` -> master `<net>_category`) so the feed/legacy readers
  * stay in lockstep. category/sub_category are sourced from the `ai_meta` object
  * (the top-level newCatInsertion category is being retired by the DS pipeline).
  *
@@ -19,7 +19,7 @@
 /**
  * Per-network SQL layout. Table + FK names mirror the DDL in AI_META_SQL_STORAGE.md
  * exactly. `categoryTable` is null for the 4 networks that have NO SQL category
- * store (gdn, google, pinterest, tiktok — verified live: no `<net>_category` table
+ * store (gdn, google, pinterest, tiktok - verified live: no `<net>_category` table
  * and no `<net>_ad.category_id` column); for those, category stays ES-only and the
  * category-table dual-write is skipped. All values are a fixed internal whitelist
  * (never user input), so interpolating them into SQL is injection-safe.
@@ -32,7 +32,7 @@
  *     ig 50001, yt 35431 all resolve on `id`, never on the `ad_id` column), so we
  *     match on `id`.
  *   - google_ads_data_v2 is the one index whose ES `ad_id` is the distinct Google ad
- *     identifier (the numeric hash), which maps to the SQL `ad_id` column — so
+ *     identifier (the numeric hash), which maps to the SQL `ad_id` column - so
  *     google matches on `ad_id`. This mirrors PLATFORM_CONFIG.google in the
  *     controller (idField='ad_id' vs the internal PK cursor).
  */
@@ -50,12 +50,12 @@ const NET_SQL = {
   tiktok:    { adTable: 'tiktok_ads',     metaTable: 'tiktok_ads_ai_meta',      fkCol: 'ad_id',              matchCol: 'id',     categoryTable: null                 },
 };
 
-// Fields stored as MySQL JSON columns — bound as a JSON string (or SQL NULL when absent).
+// Fields stored as MySQL JSON columns - bound as a JSON string (or SQL NULL when absent).
 // `offers` remains here only for compatibility with older payloads.
 const JSON_FIELDS = ['intent', 'hook', 'colors', 'offers', 'roa'];
 // Plain scalar (VARCHAR/TEXT) columns. `offer_type` is the new fixed scalar field.
-// category_id/subcategory_id are the v1.6 4/8-char taxonomy codes — kept here so the
-// row is a faithful copy of the ai_meta object (the SQL→category linkage still goes
+// category_id/subcategory_id are the v1.6 4/8-char taxonomy codes - kept here so the
+// row is a faithful copy of the ai_meta object (the SQL-category linkage still goes
 // through the category NAME, not these codes).
 const SCALAR_FIELDS = ['ad_type', 'offering_type', 'offer_type', 'offering', 'caption', 'category', 'category_id', 'sub_category', 'subcategory_id'];
 const ALL_FIELDS = [...SCALAR_FIELDS, ...JSON_FIELDS];
@@ -65,7 +65,7 @@ function jsonBind(v) {
   return v === undefined || v === null ? null : JSON.stringify(v);
 }
 
-/** Bind a scalar: coerce undefined → null (mysql2 rejects undefined bind params). */
+/** Bind a scalar: coerce undefined -> null (mysql2 rejects undefined bind params). */
 function scalarBind(v) {
   return v === undefined ? null : v;
 }
@@ -93,51 +93,58 @@ async function resolveCategoryId(conn, categoryTable, categoryName) {
  * Upsert the AI-Meta row + optional category dual-write for one ad.
  *
  * @param {object}  args
- * @param {object}  args.sql        the network's SQL connection wrapper (service.db.sql) — { getConnection, ... }
+ * @param {object}  args.sql        the network's SQL connection wrapper (service.db.sql) - { getConnection, ... }
  * @param {string}  args.network    network slug (key of NET_SQL)
  * @param {string|number} args.adId the ad's PUBLIC ad_id (resolved here to the internal PK)
  * @param {object}  args.normalized the validated ai_meta object (from validateAiMeta)
  * @param {object}  [args.logger]   optional logger ({ info, warn })
- * @returns {Promise<object>} status object — never throws. Shapes:
+ * @returns {Promise<object>} status object - never throws. Shapes:
  *   { sql_status:'stored', sql_ad_row_id, category_synced }
  *   { sql_status:'skipped', reason }        (no SQL conn / unknown network)
  *   { sql_status:'ad_not_found' }           (public ad_id has no SQL row)
  *   { sql_status:'error', sql_error }
  */
 async function persistAiMeta({ sql, network, adId, normalized, logger }) {
+  const startedAt = performance.now();
+  const timings = {};
   const cfg = NET_SQL[network];
-  if (!cfg) return { sql_status: 'skipped', reason: `unknown network: ${network}` };
+  if (!cfg) return { sql_status: 'skipped', reason: `unknown network: ${network}`, timings: { total_ms: performance.now() - startedAt } };
   if (!sql || typeof sql.getConnection !== 'function') {
-    return { sql_status: 'skipped', reason: 'SQL not available for network' };
+    return { sql_status: 'skipped', reason: 'SQL not available for network', timings: { total_ms: performance.now() - startedAt } };
   }
   if (!normalized || typeof normalized !== 'object') {
-    return { sql_status: 'skipped', reason: 'no normalized ai_meta' };
+    return { sql_status: 'skipped', reason: 'no normalized ai_meta', timings: { total_ms: performance.now() - startedAt } };
   }
 
   let conn;
   try {
+    const connectionStartedAt = performance.now();
     conn = await sql.getConnection();
+    timings.connection_wait_ms = performance.now() - connectionStartedAt;
   } catch (err) {
-    return { sql_status: 'error', sql_error: `getConnection: ${err.message}` };
+    return { sql_status: 'error', sql_error: `getConnection: ${err.message}`, timings: { ...timings, total_ms: performance.now() - startedAt } };
   }
 
   try {
     await conn.beginTransaction();
 
     // 1) Resolve the internal PK from the public ad_id (FK target). `matchCol` is
-    //    the column the incoming id equals — the PK `id` for every network except
+    //    the column the incoming id equals - the PK `id` for every network except
     //    google (which matches its distinct `ad_id`); see NET_SQL note above.
+    const lookupStartedAt = performance.now();
     const [adRows] = await conn.execute(
       `SELECT id FROM \`${cfg.adTable}\` WHERE \`${cfg.matchCol}\` = ? LIMIT 1`,
       [String(adId)],
     );
+    timings.lookup_ms = performance.now() - lookupStartedAt;
     if (!adRows.length) {
       await conn.rollback();
-      return { sql_status: 'ad_not_found' };
+      return { sql_status: 'ad_not_found', timings: { ...timings, total_ms: performance.now() - startedAt } };
     }
     const adRowId = adRows[0].id;
 
     // 2) Upsert the AI-Meta row (whole-object replace, mirroring the ES write).
+    const upsertStartedAt = performance.now();
     const cols   = [cfg.fkCol, ...ALL_FIELDS];
     const params = [
       adRowId,
@@ -151,10 +158,12 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
       `VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateClause}`,
       params,
     );
+    timings.upsert_ms = performance.now() - upsertStartedAt;
 
-    // 3) Category dual-write — only where a SQL category store exists and the
+    // 3) Category dual-write - only where a SQL category store exists and the
     //    payload carries a category. sub_category has no SQL category-table home
     //    (it lives only in the AI-Meta table column written above).
+    const categoryStartedAt = performance.now();
     let categorySynced = false;
     if (cfg.categoryTable && normalized.category) {
       const catId = await resolveCategoryId(conn, cfg.categoryTable, normalized.category);
@@ -164,14 +173,15 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
       );
       categorySynced = true;
     }
+    timings.category_sync_ms = performance.now() - categoryStartedAt;
 
     await conn.commit();
     logger?.info?.(`[aiMetaSql] ${network} upserted ai_meta for ad_id=${adId} (row=${adRowId}, category_synced=${categorySynced})`);
-    return { sql_status: 'stored', sql_ad_row_id: adRowId, category_synced: categorySynced };
+    return { sql_status: 'stored', sql_ad_row_id: adRowId, category_synced: categorySynced, timings: { ...timings, total_ms: performance.now() - startedAt } };
   } catch (err) {
     try { await conn.rollback(); } catch (_) { /* ignore rollback failure */ }
     logger?.warn?.(`[aiMetaSql] ${network} write failed for ad_id=${adId}: ${err.message}`);
-    return { sql_status: 'error', sql_error: err.message };
+    return { sql_status: 'error', sql_error: err.message, timings: { ...timings, total_ms: performance.now() - startedAt } };
   } finally {
     try { conn.release(); } catch (_) { /* ignore */ }
   }
