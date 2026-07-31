@@ -97,11 +97,17 @@ describe("common/services/domainsWithoutRegistrationService > query + limit", ()
     expect(calls[0].sql.replace(/\s+/g, " ")).toContain("LIMIT 10");
   });
 
-  it("maps a db error to code 400", async () => {
+  it("maps a db query error to a specific server error", async () => {
     serviceRegistry.services.set("quora", {
       db: { sql: { query: async () => { throw new Error("boom"); } } },
     });
     const out = await getDomainsWithoutRegistration({ network: "quora" }, null);
-    expect(out.code).toBe(400);
+    expect(out.code).toBe(500);
+    expect(out.error).toMatchObject({
+      type: "sql_query_error",
+      source: "sql",
+      operation: "get-domains-without-registration-date",
+      network: "quora",
+    });
   });
 });

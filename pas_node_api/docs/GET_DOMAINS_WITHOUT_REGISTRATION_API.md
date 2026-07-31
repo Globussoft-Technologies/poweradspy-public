@@ -49,7 +49,7 @@ TikTok is intentionally excluded (no SQL domains table).
 
 ## 2. Response
 
-Body shape: `{ code, message, data?, meta? }`. `code` is also the HTTP status.
+Body shape: `{ code, message, error?, data?, meta? }`. `code` is also the HTTP status.
 
 | Scenario | HTTP | `code` | `message` |
 |----------|------|--------|-----------|
@@ -57,8 +57,56 @@ Body shape: `{ code, message, data?, meta? }`. `code` is also the HTTP status.
 | `network` missing | **400** | 400 | `Please provide a network. Available: …` |
 | Unsupported `network` | **400** | 400 | `Unsupported network: … Available: …` |
 | Invalid `limit` (non-int / < 1) | **400** | 400 | `Invalid limit. Provide a positive integer up to 50.` |
-| DB query error | **400** | 400 | `Some error ocurred during querying the db` |
+| DB query error | **500** | 500 | `SQL query failed` |
 | Network SQL connection unavailable | **503** | 503 | `SQL connection not available for network …` |
+
+- `error` is a structured object with `type`, `source`, `operation`, `stage`, `network`, `table`, and `details`.
+- Validation problems use `type: validation_error`.
+- SQL issues use `type: sql_connection_error` or `type: sql_query_error`.
+
+### Error examples
+
+#### 400 â€” invalid network
+
+```json
+{
+  "code": 400,
+  "message": "Unsupported network: tiktok. Available: facebook, linkedin, instagram, google, youtube, native, pinterest, reddit, quora, gdn",
+  "error": {
+    "type": "validation_error",
+    "source": "request",
+    "operation": "get-domains-without-registration-date",
+    "field": "network",
+    "value": "tiktok",
+    "details": {
+      "expected": "facebook, linkedin, instagram, google, youtube, native, pinterest, reddit, quora, gdn"
+    }
+  }
+}
+```
+
+#### 500 â€” SQL query failure
+
+```json
+{
+  "code": 500,
+  "message": "SQL query failed",
+  "error": {
+    "type": "sql_query_error",
+    "source": "sql",
+    "operation": "get-domains-without-registration-date",
+    "stage": "query",
+    "network": "google",
+    "table": "google_text_ad_domains",
+    "details": {
+      "message": "Unknown column 'status' in 'where clause'",
+      "code": "ER_BAD_FIELD_ERROR",
+      "errno": 1054,
+      "sqlState": "42S22"
+    }
+  }
+}
+```
 
 ### 200 example
 

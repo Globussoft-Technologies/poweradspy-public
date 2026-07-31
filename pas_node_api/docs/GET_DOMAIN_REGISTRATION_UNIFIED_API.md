@@ -31,7 +31,7 @@ Supported networks: `facebook, linkedin, instagram, google, youtube, native, pin
 
 ## 2. Response
 
-Body shape: `{ code, message, data?, meta? }`. `code` is also the HTTP status.
+Body shape: `{ code, message, error?, data?, meta? }`. `code` is also the HTTP status.
 
 | Scenario | HTTP | `code` | `message` |
 |----------|------|--------|-----------|
@@ -39,14 +39,80 @@ Body shape: `{ code, message, data?, meta? }`. `code` is also the HTTP status.
 | Found in no network | **404** | 404 | `Domain not found` |
 | `domain` missing / empty | **400** | 400 | `Please provide proper domain` |
 | Unknown `network` | **400** | 400 | `Unsupported network(s): …` |
+| All searched networks unavailable | **503** | 503 | `No network SQL connection was available.` |
+
+- `error` is a structured object with `type`, `source`, `operation`, `stage`, `network` (when applicable), and `details`.
+- `meta.errors` is structured per network, so each failing network can report `type`, `source`, `operation`, `stage`, and database details.
+- If every searched network fails, the response returns `code: 503` and `error.details.network_errors` contains the per-network breakdown.
 
 - `data.matches` — one entry per distinct (date, status) the domain was found under, tagged with network: `{ network, domain, domain_registered_date, status }` (status 0 pending / 1 resolved / 2 unresolvable). Ordered by the canonical network order.
 - `data.found_in` — the networks, in the same order.
 - `data.distinct_registered_dates` — the set of distinct dates seen (includes `null` if a matched row has no date).
 - `meta.networks_searched` — which networks were queried.
-- `meta.errors` — present only if a network's query failed (e.g. its SQL connection was down); the rest still return.
+- `meta.errors` — present only if a network's query failed; each entry is a structured error object instead of a plain string.
 
-### 200 — found in two networks with different dates
+### Error examples
+
+#### 400 — invalid network
+
+```json
+{
+  "code": 400,
+  "message": "Unsupported network(s): tiktok. Available: facebook, linkedin, instagram, google, youtube, native, pinterest, reddit, quora, gdn",
+  "error": {
+    "type": "validation_error",
+    "source": "request",
+    "operation": "get-domain-registration",
+    "field": "network",
+    "value": "tiktok",
+    "details": {
+      "expected": "facebook, linkedin, instagram, google, youtube, native, pinterest, reddit, quora, gdn"
+    }
+  }
+}
+```
+
+#### 503 — all networks unavailable
+
+```json
+{
+  "code": 503,
+  "message": "No network SQL connection was available.",
+  "error": {
+    "type": "sql_connection_error",
+    "source": "sql",
+    "operation": "get-domain-registration",
+    "stage": "fanout",
+    "details": {
+      "failed_networks": ["facebook", "google"],
+      "network_errors": {
+        "facebook": {
+          "type": "sql_connection_error",
+          "source": "sql",
+          "operation": "get-domain-registration",
+          "stage": "network_lookup",
+          "network": "facebook",
+          "table": "facebook_ad_domains",
+          "details": { "dependency": "sql" }
+        },
+        "google": {
+          "type": "sql_query_error",
+          "source": "sql",
+          "operation": "get-domain-registration",
+          "stage": "network_lookup",
+          "network": "google",
+          "table": "google_text_ad_domains",
+          "details": {
+            "message": "Unknown column 'status' in 'where clause'",
+            "code": "ER_BAD_FIELD_ERROR"
+          }
+        }
+      }
+    }
+  }
+}
+```
+### 200 - found in two networks with different dates
 
 ```
 GET /api/v1/common/get-domain-registration?domain=example.com
@@ -68,7 +134,7 @@ GET /api/v1/common/get-domain-registration?domain=example.com
 }
 ```
 
-### 200 — scoped to one network
+### 200 - scoped to one network
 
 ```
 GET /api/v1/common/get-domain-registration?domain=example.com&network=google
@@ -115,3 +181,8 @@ per-network ones can be retired.
 - Controller: `src/services/common/controllers/domainRegistrationLookupController.js`
 - Route: `src/services/common/routes/commonRoutes.js` (`GET /get-domain-registration`)
 - Tests: `tests/services/common/domainRegistrationLookupService.test.mjs`
+
+
+
+
+

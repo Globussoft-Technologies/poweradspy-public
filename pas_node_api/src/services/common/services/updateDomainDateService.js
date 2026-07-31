@@ -32,6 +32,7 @@
 
 const serviceRegistry = require('../../ServiceRegistry');
 const { DOMAIN_TABLES } = require('../helpers/domainTables');
+const { buildErrorResponse, classifySqlError, classifyEsError } = require('../helpers/errorResponse');
 
 // Derived from the shared domainTables config (single source of truth).
 const NETWORK_CONFIG = Object.fromEntries(
@@ -99,9 +100,33 @@ function esTaskId(resp) {
  */
 async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
   const es = service.db && service.db.elastic;
-  if (!es || !es.client) return { es_error: 'ES client not available' };
+  if (!es || !es.client) {
+    return {
+      es_error: buildErrorResponse({
+        code: 503,
+        message: 'Elasticsearch client not available',
+        type: 'elasticsearch_connection_error',
+        source: 'elasticsearch',
+        operation: 'update-domain-date',
+        stage: 'propagate_date',
+        table: cfg.table,
+      }).error,
+    };
+  }
   const index = es.indexName;
-  if (!index) return { es_error: 'ES index not configured' };
+  if (!index) {
+    return {
+      es_error: buildErrorResponse({
+        code: 500,
+        message: 'Elasticsearch index not configured',
+        type: 'elasticsearch_configuration_error',
+        source: 'elasticsearch',
+        operation: 'update-domain-date',
+        stage: 'propagate_date',
+        table: cfg.table,
+      }).error,
+    };
+  }
   if (!domainRowIds.length) return { es_index: index, es_matched_ads: 0, es_mode: 'sync', es_updated: 0 };
 
   // Resolve the ads for this domain from SQL (ES docs don't store the domain string; they are
@@ -128,15 +153,34 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
   let updated = 0;
   const tasks = [];
   for (const ids of chunk(matchIds, ES_TERMS_CHUNK)) {
-    const resp = await es.client.updateByQuery({
-      index,
-      conflicts: 'proceed',
-      refresh: false,
-      waitForCompletion: !async, // wait_for_completion — false → background task, returns a task id
-      body: { query: { terms: { [cfg.esMatchField]: ids } }, script },
-    });
-    if (async) { const t = esTaskId(resp); if (t) tasks.push(t); }
-    else updated += esUpdatedCount(resp);
+    try {
+      const resp = await es.client.updateByQuery({
+        index,
+        conflicts: 'proceed',
+        refresh: false,
+        waitForCompletion: !async, // wait_for_completion — false → background task, returns a task id
+        body: { query: { terms: { [cfg.esMatchField]: ids } }, script },
+      });
+      if (async) { const t = esTaskId(resp); if (t) tasks.push(t); }
+      else updated += esUpdatedCount(resp);
+    } catch (err) {
+      return {
+        es_error: buildErrorResponse({
+          code: 500,
+          message: classifyEsError(err).message,
+          type: classifyEsError(err).type,
+          source: classifyEsError(err).source,
+          operation: 'update-domain-date',
+          stage: 'propagate_date',
+          table: cfg.table,
+          details: {
+            index,
+            matched_ads: matchIds.length,
+            ...classifyEsError(err).details,
+          },
+        }).error,
+      };
+    }
   }
 
   if (log && log.info) {
@@ -154,57 +198,121 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
 async function updateOneNetwork(network, cfg, domainName, action, log) {
   const service = serviceRegistry.getService(network);
   if (!service || !service.db || !service.db.sql) {
-    return { status: 'error', message: 'SQL connection not available' };
+    return {
+      status: 'error',
+      code: 503,
+      message: 'SQL connection not available',
+      error: buildErrorResponse({
+        code: 503,
+        message: 'SQL connection not available',
+        type: 'sql_connection_error',
+        source: 'sql',
+        operation: 'update-domain-date',
+        stage: 'network_connection',
+        network,
+        table: cfg.table,
+        details: { dependency: 'sql' },
+      }).error,
+    };
   }
   const sql = service.db.sql;
   const { table, hasUpdatedDate } = cfg;
   const { date, statusValue } = action;
 
+  let rows;
   try {
     // These domains tables have NO unique index on `domain`, so the same domain can appear in
     // MULTIPLE rows (some dated, some NULL). We update EVERY matching row — updating only one
     // left duplicate rows behind, so a follow-up "domains without registration date" fetch kept
     // returning the domain the caller had just updated.
-    const rows = await sql.query(
+    rows = await sql.query(
       `SELECT id, domain_registered_date, status FROM ${table} WHERE domain = ?`,
       [domainName]
     );
-    if (!Array.isArray(rows) || rows.length === 0) return { status: 'not_found' };
-
-    const setParts = [];
-    const params = [];
-    if (date !== null) { setParts.push('domain_registered_date = ?'); params.push(date); }
-    setParts.push('status = ?'); params.push(statusValue);
-    if (hasUpdatedDate) setParts.push('updated_date = NOW()');
-    params.push(domainName);
-
-    await sql.query(`UPDATE ${table} SET ${setParts.join(', ')} WHERE domain = ?`, params);
-
-    const result = {
-      status: 'updated',
-      matched_rows: rows.length,
-      ids: rows.map((r) => r.id),
-      previous_registered_dates: rows.map((r) => r.domain_registered_date ?? null),
-      previous_statuses: rows.map((r) => r.status),
-      new_status: statusValue,
-      updated_date_touched: hasUpdatedDate,
-    };
-
-    // Propagate to ES only when a real date was written (status path leaves the date untouched).
-    if (date !== null) {
-      try {
-        Object.assign(result, await propagateDateToEs(service, cfg, result.ids, date, log));
-      } catch (esErr) {
-        if (log && log.error) log.error('updateDomainDate ES error', { network, error: esErr.message });
-        result.es_error = esErr.message;
-      }
-    }
-
-    return result;
   } catch (err) {
-    if (log && log.error) log.error('updateDomainDate network error', { network, table, error: err.message });
-    return { status: 'error', message: err.message };
+    if (log && log.error) log.error('updateDomainDate network error', { network, table, stage: 'select_rows', error: err.message });
+    const sqlError = classifySqlError(err);
+    return {
+      status: 'error',
+      code: sqlError.httpCode,
+      message: sqlError.message,
+      error: buildErrorResponse({
+        code: sqlError.httpCode,
+        message: sqlError.message,
+        type: sqlError.type,
+        source: sqlError.source,
+        operation: 'update-domain-date',
+        stage: 'select_rows',
+        network,
+        table,
+        details: sqlError.sql,
+      }).error,
+    };
   }
+
+  if (!Array.isArray(rows) || rows.length === 0) return { status: 'not_found' };
+
+  const setParts = [];
+  const params = [];
+  if (date !== null) { setParts.push('domain_registered_date = ?'); params.push(date); }
+  setParts.push('status = ?'); params.push(statusValue);
+  if (hasUpdatedDate) setParts.push('updated_date = NOW()');
+  params.push(domainName);
+
+  try {
+    await sql.query(`UPDATE ${table} SET ${setParts.join(', ')} WHERE domain = ?`, params);
+  } catch (err) {
+    if (log && log.error) log.error('updateDomainDate network error', { network, table, stage: 'update_rows', error: err.message });
+    const sqlError = classifySqlError(err);
+    return {
+      status: 'error',
+      code: sqlError.httpCode,
+      message: sqlError.message,
+      error: buildErrorResponse({
+        code: sqlError.httpCode,
+        message: sqlError.message,
+        type: sqlError.type,
+        source: sqlError.source,
+        operation: 'update-domain-date',
+        stage: 'update_rows',
+        network,
+        table,
+        details: sqlError.sql,
+      }).error,
+    };
+  }
+
+  const result = {
+    status: 'updated',
+    matched_rows: rows.length,
+    ids: rows.map((r) => r.id),
+    previous_registered_dates: rows.map((r) => r.domain_registered_date ?? null),
+    previous_statuses: rows.map((r) => r.status),
+    new_status: statusValue,
+    updated_date_touched: hasUpdatedDate,
+  };
+
+  // Propagate to ES only when a real date was written (status path leaves the date untouched).
+  if (date !== null) {
+    try {
+      Object.assign(result, await propagateDateToEs(service, cfg, result.ids, date, log));
+    } catch (esErr) {
+      if (log && log.error) log.error('updateDomainDate ES error', { network, error: esErr.message });
+      result.es_error = buildErrorResponse({
+        code: 500,
+        message: classifyEsError(esErr).message,
+        type: classifyEsError(esErr).type,
+        source: classifyEsError(esErr).source,
+        operation: 'update-domain-date',
+        stage: 'propagate_date',
+        network,
+        table,
+        details: classifyEsError(esErr).details,
+      }).error;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -279,7 +387,25 @@ async function updateDomainDate(body, log) {
 
   // Every network failed to even run a query (e.g. all SQL connections down) → server problem.
   if (summary.errors === Object.keys(NETWORK_CONFIG).length) {
-    return { code: 503, message: 'No network SQL connection was available.', data: payload };
+    return {
+      code: 503,
+      message: 'No network SQL connection was available.',
+      error: buildErrorResponse({
+        code: 503,
+        message: 'No network SQL connection was available.',
+        type: 'sql_connection_error',
+        source: 'sql',
+        operation: 'update-domain-date',
+        stage: 'fanout',
+        details: {
+          failed_networks: Object.keys(results),
+          network_errors: Object.fromEntries(
+            Object.entries(results).map(([net, r]) => [net, r.error || { message: r.message || 'unknown error' }])
+          ),
+        },
+      }).error,
+      data: payload,
+    };
   }
 
   if (log && log.info) {

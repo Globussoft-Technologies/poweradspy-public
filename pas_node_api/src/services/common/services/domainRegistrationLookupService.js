@@ -20,6 +20,7 @@
 
 const serviceRegistry = require('../../ServiceRegistry');
 const { DOMAIN_TABLES, DOMAIN_NETWORKS } = require('../helpers/domainTables');
+const { buildErrorResponse, classifySqlError } = require('../helpers/errorResponse');
 
 const AVAILABLE_NETWORKS = DOMAIN_NETWORKS.join(', ');
 
@@ -43,16 +44,50 @@ function resolveNetworks(raw) {
 async function lookupOneNetwork(network, domain) {
   const service = serviceRegistry.getService(network);
   if (!service || !service.db || !service.db.sql) {
-    return { network, error: 'SQL connection not available', matches: [] };
+    return {
+      network,
+      error: buildErrorResponse({
+        code: 503,
+        message: 'SQL connection not available',
+        type: 'sql_connection_error',
+        source: 'sql',
+        operation: 'get-domain-registration',
+        stage: 'network_lookup',
+        network,
+        table: DOMAIN_TABLES[network].table,
+        details: { dependency: 'sql' },
+      }).error,
+      matches: [],
+    };
   }
   const { table } = DOMAIN_TABLES[network];
   // NO `LIMIT 1`: these tables have no unique index on `domain`, so a domain can span
   // several rows with DIFFERENT registration dates (e.g. one dated + one still NULL).
   // Return each DISTINCT (date, status) within the network so callers see the real picture.
-  const rows = await service.db.sql.query(
-    `SELECT domain, domain_registered_date, status FROM ${table} WHERE domain = ?`,
-    [domain]
-  );
+  let rows;
+  try {
+    rows = await service.db.sql.query(
+      `SELECT domain, domain_registered_date, status FROM ${table} WHERE domain = ?`,
+      [domain]
+    );
+  } catch (err) {
+    const sqlError = classifySqlError(err);
+    return {
+      network,
+      error: buildErrorResponse({
+        code: sqlError.httpCode,
+        message: sqlError.message,
+        type: sqlError.type,
+        source: sqlError.source,
+        operation: 'get-domain-registration',
+        stage: 'network_lookup',
+        network,
+        table,
+        details: sqlError.sql,
+      }).error,
+      matches: [],
+    };
+  }
   if (!Array.isArray(rows) || rows.length === 0) return { network, found: false, matches: [] };
 
   const seen = new Set();
@@ -76,12 +111,28 @@ async function lookupOneNetwork(network, domain) {
 async function lookupDomainRegistration(params, log) {
   const domain = params && params.domain != null ? String(params.domain).trim() : '';
   if (domain === '') {
-    return { code: 400, message: 'Please provide proper domain' };
+    return buildErrorResponse({
+      code: 400,
+      message: 'Please provide proper domain',
+      type: 'validation_error',
+      source: 'request',
+      operation: 'get-domain-registration',
+      field: 'domain',
+    });
   }
 
   const resolved = resolveNetworks(params.network);
   if (resolved.error) {
-    return { code: 400, message: resolved.error };
+    return buildErrorResponse({
+      code: 400,
+      message: resolved.error,
+      type: 'validation_error',
+      source: 'request',
+      operation: 'get-domain-registration',
+      field: 'network',
+      value: params.network,
+      details: { expected: AVAILABLE_NETWORKS },
+    });
   }
 
   const matches = [];
@@ -107,9 +158,27 @@ async function lookupDomainRegistration(params, log) {
     networks_searched: resolved.networks,
     found_count: matches.length,
   };
-  if (Object.keys(errors).length) meta.errors = errors;
+  if (Object.keys(errors).length) {
+    meta.errors = errors;
+    meta.partial_failure = true;
+    meta.error_count = Object.keys(errors).length;
+  }
 
   if (matches.length === 0) {
+    if (Object.keys(errors).length === resolved.networks.length) {
+      return buildErrorResponse({
+        code: 503,
+        message: 'No network SQL connection was available.',
+        type: 'sql_connection_error',
+        source: 'sql',
+        operation: 'get-domain-registration',
+        stage: 'fanout',
+        details: {
+          failed_networks: resolved.networks,
+          network_errors: errors,
+        },
+      });
+    }
     return { code: 404, message: 'Domain not found', data: { domain, matches: [], found_in: [] }, meta };
   }
 

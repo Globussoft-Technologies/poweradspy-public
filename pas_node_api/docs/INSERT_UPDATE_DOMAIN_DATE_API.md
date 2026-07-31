@@ -84,10 +84,126 @@ Body shape: `{ code, message?, error?, data? }`. `code` is also the HTTP status.
 | neither `domain_date` nor `status`, bad `Y-m-d`, out-of-range/conflicting `status` | **400** | 400 |
 | No network SQL connection available at all | **503** | 503 |
 
+- `error` is a structured object with `type`, `source`, `operation`, `stage`, `network`, `table`, and `details`.
+- Per-network failures are reported inside `data.results[network].error` with the same structure.
+- Elasticsearch failures are reported inside `data.results[network].es_error`.
+- SQL connection failures use `type: sql_connection_error`; SQL query failures use `type: sql_query_error`; ES failures use `type: elasticsearch_connection_error` or `type: elasticsearch_error`.
+
 `data.status` / `data.domain_date` echo the resolved action. `data.results` reports the outcome per
 network: `es_mode` (`sync`|`async`), `es_matched_ads`, and either `es_updated` (sync) or `es_tasks`
-(async ES task ids), or `es_error`. `data.summary` totals them: `es_matched_ads` (ads targeted across
-networks), `es_updated` (sync-confirmed updates), `es_async_networks`, `es_errors`.
+(async ES task ids), plus structured `error` / `es_error` objects when a network fails. `data.summary`
+totals them: `es_matched_ads` (ads targeted across networks), `es_updated` (sync-confirmed updates),
+`es_async_networks`, `es_errors`.
+
+### Error examples
+
+#### 400 â€” invalid date format
+
+```json
+{
+  "code": 400,
+  "message": "The domain_date does not match the format Y-m-d.",
+  "error": {
+    "type": "validation_error",
+    "source": "request",
+    "operation": "update-domain-date",
+    "field": "domain_date",
+    "value": "07/09/2026"
+  }
+}
+```
+
+#### 503 â€” all SQL networks unavailable
+
+```json
+{
+  "code": 503,
+  "message": "No network SQL connection was available.",
+  "error": {
+    "type": "sql_connection_error",
+    "source": "sql",
+    "operation": "update-domain-date",
+    "stage": "fanout",
+    "details": {
+      "failed_networks": ["facebook", "linkedin"]
+    }
+  },
+  "data": {
+    "domain": "example.com",
+    "domain_date": "2026-07-09",
+    "status": 1,
+    "results": {
+      "facebook": {
+        "status": "error",
+        "code": 503,
+        "message": "SQL connection not available",
+        "error": {
+          "type": "sql_connection_error",
+          "source": "sql",
+          "operation": "update-domain-date",
+          "stage": "network_connection",
+          "network": "facebook",
+          "table": "facebook_ad_domains"
+        }
+      }
+    },
+    "summary": {
+      "updated": 0,
+      "not_found": 0,
+      "errors": 2,
+      "es_matched_ads": 0,
+      "es_updated": 0,
+      "es_async_networks": 0,
+      "es_errors": 0
+    }
+  }
+}
+```
+
+#### 200 with ES failure on one network
+
+```json
+{
+  "code": 200,
+  "message": "Domain date update processed",
+  "data": {
+    "domain": "example.com",
+    "domain_date": "2026-07-09",
+    "status": 1,
+    "results": {
+      "google": {
+        "status": "updated",
+        "matched_rows": 2,
+        "ids": [11, 12],
+        "new_status": 1,
+        "updated_date_touched": true,
+        "es_index": "google_ads_data",
+        "es_mode": "sync",
+        "es_matched_ads": 3,
+        "es_error": {
+          "type": "elasticsearch_connection_error",
+          "source": "elasticsearch",
+          "operation": "update-domain-date",
+          "stage": "propagate_date",
+          "table": "google_text_ad_domains",
+          "details": {
+            "message": "Elasticsearch client not available"
+          }
+        }
+      }
+    },
+    "summary": {
+      "updated": 1,
+      "not_found": 9,
+      "errors": 0,
+      "es_matched_ads": 3,
+      "es_updated": 0,
+      "es_async_networks": 0,
+      "es_errors": 1
+    }
+  }
+}
+```
 
 ### 200 example — set a date (status → 1)
 

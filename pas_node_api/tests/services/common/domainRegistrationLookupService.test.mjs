@@ -112,6 +112,23 @@ describe("domainRegistrationLookupService > lookup", () => {
     const out = await lookupDomainRegistration({ domain: "x.com" }, null);
     expect(out.code).toBe(200);
     expect(out.data.found_in).toEqual(["google"]);
-    expect(out.meta.errors.quora).toContain("boom");
+    expect(out.meta.partial_failure).toBe(true);
+    expect(out.meta.error_count).toBe(1);
+    expect(out.meta.errors.quora).toMatchObject({
+      type: "sql_query_error",
+      source: "sql",
+      operation: "get-domain-registration",
+      network: "quora",
+    });
+  });
+
+  it("503 when every searched network fails to connect", async () => {
+    const out = await lookupDomainRegistration({ domain: "x.com" }, null);
+    expect(out.code).toBe(503);
+    expect(out.error).toMatchObject({
+      type: "sql_connection_error",
+      source: "sql",
+      operation: "get-domain-registration",
+    });
   });
 });

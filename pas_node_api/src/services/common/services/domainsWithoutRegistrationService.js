@@ -24,6 +24,7 @@
 
 const serviceRegistry = require('../../ServiceRegistry');
 const { DOMAIN_TABLES } = require('../helpers/domainTables');
+const { buildErrorResponse, classifySqlError } = require('../helpers/errorResponse');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 50;
@@ -57,22 +58,57 @@ async function getDomainsWithoutRegistration(params, log) {
   const network = params && params.network != null ? String(params.network).toLowerCase().trim() : '';
 
   if (!network) {
-    return { code: 400, message: `Please provide a network. Available: ${AVAILABLE_NETWORKS}` };
+    return buildErrorResponse({
+      code: 400,
+      message: `Please provide a network. Available: ${AVAILABLE_NETWORKS}`,
+      type: 'validation_error',
+      source: 'request',
+      operation: 'get-domains-without-registration-date',
+      field: 'network',
+      details: { expected: AVAILABLE_NETWORKS },
+    });
   }
 
   const cfg = NETWORK_CONFIG[network];
   if (!cfg) {
-    return { code: 400, message: `Unsupported network: ${network}. Available: ${AVAILABLE_NETWORKS}` };
+    return buildErrorResponse({
+      code: 400,
+      message: `Unsupported network: ${network}. Available: ${AVAILABLE_NETWORKS}`,
+      type: 'validation_error',
+      source: 'request',
+      operation: 'get-domains-without-registration-date',
+      field: 'network',
+      value: network,
+      details: { expected: AVAILABLE_NETWORKS },
+    });
   }
 
   const limit = normalizeLimit(params.limit);
   if (limit === null) {
-    return { code: 400, message: `Invalid limit. Provide a positive integer up to ${MAX_LIMIT}.` };
+    return buildErrorResponse({
+      code: 400,
+      message: `Invalid limit. Provide a positive integer up to ${MAX_LIMIT}.`,
+      type: 'validation_error',
+      source: 'request',
+      operation: 'get-domains-without-registration-date',
+      field: 'limit',
+      value: params.limit,
+      details: { min: 1, max: MAX_LIMIT },
+    });
   }
 
   const service = serviceRegistry.getService(network);
   if (!service || !service.db || !service.db.sql) {
-    return { code: 503, message: `SQL connection not available for network ${network}.` };
+    return buildErrorResponse({
+      code: 503,
+      message: `SQL connection not available for network ${network}.`,
+      type: 'sql_connection_error',
+      source: 'sql',
+      operation: 'get-domains-without-registration-date',
+      network,
+      table: cfg.table,
+      details: { dependency: 'sql' },
+    });
   }
 
   const { table, sortColumn } = cfg;
@@ -95,7 +131,17 @@ async function getDomainsWithoutRegistration(params, log) {
     };
   } catch (err) {
     if (log && log.error) log.error('getDomainsWithoutRegistration db error', { network, table, error: err.message });
-    return { code: 400, message: 'Some error ocurred during querying the db' };
+    const sqlError = classifySqlError(err);
+    return buildErrorResponse({
+      code: sqlError.httpCode,
+      message: sqlError.message,
+      type: sqlError.type,
+      source: sqlError.source,
+      operation: 'get-domains-without-registration-date',
+      network,
+      table,
+      details: sqlError.sql,
+    });
   }
 }
 

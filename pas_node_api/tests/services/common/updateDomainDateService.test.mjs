@@ -210,7 +210,11 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     const out = await updateDomainDate({ domain_name: "x.com", domain_date: "2026-07-09" }, null);
     expect(out.code).toBe(200);
     expect(out.data.results.google.status).toBe("updated"); // SQL still succeeded
-    expect(out.data.results.google.es_error).toBeTruthy();
+    expect(out.data.results.google.es_error).toMatchObject({
+      type: "elasticsearch_connection_error",
+      source: "elasticsearch",
+      operation: "update-domain-date",
+    });
     expect(out.data.summary.es_errors).toBe(1);
   });
 
@@ -220,12 +224,25 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     const out = await updateDomainDate({ domain_name: "x.com", domain_date: "2026-07-09" }, null);
     expect(out.code).toBe(200);
     expect(out.data.results.quora.status).toBe("error");
+    expect(out.data.results.quora.error).toMatchObject({
+      type: "sql_query_error",
+      source: "sql",
+      operation: "update-domain-date",
+      stage: "select_rows",
+      network: "quora",
+    });
     expect(out.data.summary.errors).toBe(1);
   });
 
   it("503 when no network has a working SQL connection", async () => {
     const out = await updateDomainDate({ domain_name: "x.com", domain_date: "2026-07-09" }, null);
     expect(out.code).toBe(503);
+    expect(out.error).toMatchObject({
+      type: "sql_connection_error",
+      source: "sql",
+      operation: "update-domain-date",
+      stage: "fanout",
+    });
     expect(out.data.summary.errors).toBe(10);
   });
 });
