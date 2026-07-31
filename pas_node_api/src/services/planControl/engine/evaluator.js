@@ -139,10 +139,11 @@ function evaluateEntitlement(input) {
   }
 
   // ── Check parent capability first (hierarchical deny) ─────────────────
+  let parentDecision = null;
   if (capDef.parentCapability) {
     const parentCap = getParentCapability(capabilityId);
     if (parentCap) {
-      const parentDecision = evaluateEntitlement({
+      parentDecision = evaluateEntitlement({
         ...input,
         capabilityId: capDef.parentCapability,
       });
@@ -238,14 +239,29 @@ function evaluateEntitlement(input) {
     // an older policy was published. Their saved rule can still say
     // `not_applicable`; for a currently network-aware capability that legacy
     // value must behave exactly like the admin UI's "All enabled networks".
-    const networkMode = storedNetworkMode === 'not_applicable'
+    let networkMode = storedNetworkMode === 'not_applicable'
       ? 'inherit_general'
       : storedNetworkMode;
+    // Older admin drafts created empty custom lists for every child even when
+    // the parent already owned the network selection. Treat that legacy empty
+    // child list as parent inheritance; use an explicit capability deny when a
+    // child must be unavailable on every network.
+    if (networkMode === 'custom'
+      && capDef.parentCapability
+      && parentDecision
+      && !(capabilityPolicy?.networks?.allowed || []).length) {
+      networkMode = 'inherit_parent';
+    }
     baseContext.networkMode = networkMode;
 
     if (networkMode === 'custom') {
       // Per-capability network override
       allowedNetworks = capabilityPolicy?.networks?.allowed || [];
+    } else if (networkMode === 'inherit_parent' && parentDecision) {
+      // A child follows the parent's exact effective custom/general networks.
+      // The parent decision above remains authoritative and already applies
+      // plan/JWT boundaries before returning this list.
+      allowedNetworks = parentDecision.allowedNetworks || [];
     } else {
       // inherit_general — use the family's general network list
       allowedNetworks = variantPolicy.generalNetworks || familyPolicy?.generalNetworks || [];

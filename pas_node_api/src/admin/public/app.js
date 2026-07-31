@@ -2966,6 +2966,19 @@ function pv2CapabilityIsEnabled(policy, cap, seen = new Set()) {
   return pv2CapabilityIsEnabled(policy, parent, seen);
 }
 
+function pv2MakeChildrenInheritParentNetworks(parentId) {
+  const parent = (pvCatalog.capabilities || []).find((cap) => cap.id === parentId);
+  if (!parent?.networkAware) return 0;
+  const children = (pvCatalog.capabilities || []).filter((cap) => (
+    cap.parentCapability === parentId && cap.networkAware
+  ));
+  for (const child of children) {
+    const childRule = pv2RuleForEdit(child.id);
+    childRule.networks = { mode: 'inherit_parent' };
+  }
+  return children.length;
+}
+
 function pv2ApplyCapabilityTree(parentId, action) {
   if (!pvCurrentDraft || currentRole !== 'editor') {
     showToast?.('Open a safe working draft before changing a feature group.', 'error');
@@ -2984,7 +2997,11 @@ function pv2ApplyCapabilityTree(parentId, action) {
   };
   if (action === 'allow_tree') ensureRule(parent).effect = 'allow';
   if (action === 'deny_tree') ensureRule(parent).effect = 'deny';
-  for (const child of children) ensureRule(child).effect = 'inherit';
+  for (const child of children) {
+    const childRule = ensureRule(child);
+    childRule.effect = 'inherit';
+    if (parent.networkAware && child.networkAware) childRule.networks = { mode: 'inherit_parent' };
+  }
   pv2SetDirty();
   pvRenderCapabilities();
   const message = action === 'allow_tree'
@@ -3052,7 +3069,16 @@ function pvRenderCapabilities() {
       : '';
     const accessOptions = `<option value="allow" ${enabled ? 'selected' : ''}>Enable</option><option value="deny" ${enabled ? '' : 'selected'}>Disable</option>`;
     const scopeMeaning = `${enabled ? 'Enabled' : 'Disabled'} for plan #${pv2Escape(variantKey)}.`;
-    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}${ruleScope}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Enable or disable for plan #${pv2Escape(variantKey)}" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)">${accessOptions}</select><div class="pv2-access-meaning">${scopeMeaning}</div></td><td>${cap.networkAware ? `<select class="pv2-input" title="Use all enabled networks or select networks only for this feature" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)"><option value="inherit_general" ${rule.networks?.mode !== 'custom' ? 'selected' : ''}>All enabled networks</option><option value="custom" ${rule.networks?.mode === 'custom' ? 'selected' : ''}>Select networks</option></select>${rule.networks?.mode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks.allowed || []).length} selected</button>` : ''}` : '<span style="color:var(--text-muted)" title="This feature has the same setting on every network">Same for every network</span>'}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
+    const legacyEmptyChildNetworks = parent?.networkAware
+      && rule.networks?.mode === 'custom'
+      && !(rule.networks?.allowed || []).length;
+    const networkMode = (rule.networks?.mode === 'inherit_parent' || legacyEmptyChildNetworks) && parent
+      ? 'inherit_parent'
+      : rule.networks?.mode === 'custom' ? 'custom' : 'inherit_general';
+    const networkControl = cap.networkAware
+      ? `<select class="pv2-input" title="Choose whether this feature follows its parent, uses every plan network, or has a custom list" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','networkMode',this.value)">${parent?.networkAware ? `<option value="inherit_parent" ${networkMode === 'inherit_parent' ? 'selected' : ''}>Same as ${pv2Escape(parent.label)}</option>` : ''}<option value="inherit_general" ${networkMode === 'inherit_general' ? 'selected' : ''}>All enabled networks</option><option value="custom" ${networkMode === 'custom' ? 'selected' : ''}>Select networks</option></select>${networkMode === 'custom' ? `<button class="btn btn-ghost btn-sm" ${editable ? '' : 'disabled'} onclick="pv2EditCapabilityNetworks('${pv2Escape(cap.id)}')">${(rule.networks?.allowed || []).length} selected</button>` : networkMode === 'inherit_parent' ? `<div class="pv2-access-meaning">Automatically follows ${pv2Escape(parent.label)} networks.</div>` : ''}`
+      : '<span style="color:var(--text-muted)" title="This feature has the same setting on every network">Same for every network</span>';
+    return `<tr class="${parent ? 'pv2-child-row' : children.length ? 'pv2-parent-row' : ''}" data-pv-capability="${pv2Escape(cap.id)}"><td>${relation}${ruleScope}<div class="pv2-feature-name"><b>${pv2Escape(cap.label)}</b><div style="font-size:9px;color:var(--text-muted)">${pv2Escape(cap.description)}</div><code style="font-size:8px;color:#64748b">${pv2Escape(cap.id)}</code>${treeActions}</div></td><td><span style="font-size:10px">${cap.status === 'needs_review' ? 'New feature' : pv2Escape(pv2Humanize(cap.status))}</span>${review}</td><td><select class="pv2-input" title="Enable or disable for plan #${pv2Escape(variantKey)}" ${editable ? '' : 'disabled'} onchange="pvUpdateCap('${pv2Escape(cap.id)}','effect',this.value)">${accessOptions}</select><div class="pv2-access-meaning">${scopeMeaning}</div></td><td>${networkControl}</td><td>${limits}</td><td><button class="btn btn-ghost btn-sm" data-plan-read="true" onclick="pvOpenPreview('${pv2Escape(cap.id)}')">View frontend</button></td></tr>`;
   }).join('');
 }
 
@@ -3093,6 +3119,8 @@ function pvUpdateCap(capId, field, value) {
     targetCapabilities[capId].networks = targetCapabilities[capId].networks || {};
     targetCapabilities[capId].networks.mode = value;
     if (value === 'custom') targetCapabilities[capId].networks.allowed ||= [];
+    else delete targetCapabilities[capId].networks.allowed;
+    pv2MakeChildrenInheritParentNetworks(capId);
   }
   pv2SetDirty(); pv2RenderVariantNote(); pvRenderCapabilities();
 }
@@ -3179,12 +3207,21 @@ function pv2EditCapabilityNetworks(capId) {
   const current = new Set(rule.networks?.allowed || []);
   pv2OpenForm('Select feature networks', `
     <p style="grid-column:1/-1;font-size:10px;color:var(--text-muted)">Choose the networks enabled for this feature. Unchecked networks stay disabled.</p>
+    <div style="grid-column:1/-1;display:flex;gap:8px"><button type="button" class="btn btn-ghost btn-sm" onclick="pv2SetAllNetworkChoices(true)">Select all</button><button type="button" class="btn btn-ghost btn-sm" onclick="pv2SetAllNetworkChoices(false)">Clear all</button></div>
     ${(pvCatalog.networks || []).map((network) => `<label class="pv2-network"><input type="checkbox" name="networks" value="${pv2Escape(network.id)}" ${current.has(network.id) ? 'checked' : ''}> ${pv2Escape(network.label || network.id)}</label>`).join('')}
   `, (form) => {
     rule.networks.allowed = form.getAll('networks').map(String);
+    const inheritedChildren = pv2MakeChildrenInheritParentNetworks(capId);
     pv2SetDirty(); pv2RenderVariantNote(); pvRenderCapabilities();
+    if (inheritedChildren) showToast?.(`${inheritedChildren} child features now automatically follow these parent networks.`, 'success');
     return true;
   }, { submitLabel: 'Use selected networks' });
+}
+
+function pv2SetAllNetworkChoices(checked) {
+  document.querySelectorAll('#pv2-form-body input[name="networks"]').forEach((input) => {
+    input.checked = Boolean(checked);
+  });
 }
 
 function pv2RenderDrafts(drafts) {
@@ -3585,7 +3622,7 @@ function pvOpenHowToUse() {
         ['3', 'Select the exact billing plan ID', 'The dropdown lists every real monthly, yearly, trial, platform and legacy plan ID in this family. Choose one ID and edit it normally; features, networks and limits then change only for that selected ID. If a published policy already uses the same settings for all IDs, its original source ID is shown and this dropdown stays locked.'],
         ['4', 'Open one complete-policy draft to edit', 'A working draft contains every plan family, not only the family visible when it was created. While that draft is selected, switch Basic, Standard and Palladium directly—your unsaved browser edits remain in the same draft snapshot.'],
         ['5', 'Enable networks for the selected ID', 'The green/amber summary names the exact networks enabled for the selected plan ID. Check or uncheck the networks you want.'],
-        ['6', 'Use parent and child feature controls', 'A disabled parent disables every child. For the selected plan ID, use Enable parent + children, Disable parent + children, or Children same as parent.'],
+        ['6', 'Use parent and child feature controls', 'A disabled parent disables every child. Parent network selection automatically applies to network-aware children through Same as parent; a child only needs its own selection when you deliberately customize it. Network selection includes Select all and Clear all.'],
         ['7', 'Choose feature-specific networks where applicable', 'Network-aware rows can use the family’s general networks or a smaller custom list. “Same for every network” means that feature does not receive network context, so a custom network rule would not be enforced.'],
         ['8', 'Set limits only where registered', 'Brand Limit, Token Limit, Member Limit and similar fields appear only when runtime code registered that limit type. Empty means no configured limit; 0 means zero usage allowed.'],
         ['9', 'Review a new feature', 'Choose Enable or Disable, then choose whether the review is for this plan or all plans. Pending review warnings remain visible until saved.'],
@@ -3726,4 +3763,4 @@ function pvEditFamily() {
 }
 
 window.addEventListener('beforeunload', (event) => { if (pv2Dirty) { event.preventDefault(); event.returnValue = ''; } });
-Object.assign(window, { pvLoadInit, pvCreateDraft, pvSelectDraft, pvExitDraft, pvDeleteDraft, pvSaveDraft, pvPublishDraft, pvLoadPlanEditor, pvUpdateCap, pvRenderFamilies, pvRenderCapabilities, pvGenerationChanged, pvOpenGenerationWizard, pvDuplicateGeneration, pvAddFamily, pvEditFamily, pvValidateDraft, pv2ShowNeedsReview, pvRestoreVersion, pvOpenPreview, pvClosePreview, pvOpenHowToUse, pvGoUnlockEditing, pv2SwitchPreviewState, pv2SelectFamily, pv2VariantChanged, pv2ApplyAllChanged, pv2CopySelectedPlanToFamily, pv2ToggleNetwork, pv2ResetVariantNetworks, pv2ApplyCapabilityTree, pv2SetLimit, pv2ReviewCap, pv2EditCapabilityNetworks, pv2SubmitForm, pv2CloseForm });
+Object.assign(window, { pvLoadInit, pvCreateDraft, pvSelectDraft, pvExitDraft, pvDeleteDraft, pvSaveDraft, pvPublishDraft, pvLoadPlanEditor, pvUpdateCap, pvRenderFamilies, pvRenderCapabilities, pvGenerationChanged, pvOpenGenerationWizard, pvDuplicateGeneration, pvAddFamily, pvEditFamily, pvValidateDraft, pv2ShowNeedsReview, pvRestoreVersion, pvOpenPreview, pvClosePreview, pvOpenHowToUse, pvGoUnlockEditing, pv2SwitchPreviewState, pv2SelectFamily, pv2VariantChanged, pv2ApplyAllChanged, pv2CopySelectedPlanToFamily, pv2ToggleNetwork, pv2ResetVariantNetworks, pv2ApplyCapabilityTree, pv2SetLimit, pv2ReviewCap, pv2EditCapabilityNetworks, pv2SetAllNetworkChoices, pv2SubmitForm, pv2CloseForm });

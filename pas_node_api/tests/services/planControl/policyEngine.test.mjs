@@ -101,6 +101,7 @@ describe('plan-control policy engine', () => {
       requestedNetworks: ['youtube'],
       policySnapshot: policy,
     })).toMatchObject({ allowed: false, reasonCode: 'NETWORK_NOT_PERMITTED' });
+
   });
 
   it('treats network "all" as every network enabled by the plan', () => {
@@ -134,6 +135,46 @@ describe('plan-control policy engine', () => {
       allowed: true,
       allowedNetworks: ['facebook', 'instagram'],
     });
+  });
+
+  it('lets child features inherit the exact custom networks selected on their parent', () => {
+    const policy = snapshot();
+    policy.policies['growth-2027'].capabilities['intelligence.market_trends'] = {
+      effect: 'allow',
+      networks: { mode: 'custom', allowed: ['facebook'] },
+    };
+    policy.policies['growth-2027'].capabilities['intelligence.market_trends.overview'] = {
+      effect: 'inherit',
+      networks: { mode: 'inherit_parent' },
+    };
+    const identity = resolvePlanIdentity(101, policy);
+    expect(validateSnapshot(policy).valid).toBe(true);
+    expect(evaluateEntitlement({
+      user: {},
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends.overview',
+      requestedNetworks: ['facebook'],
+      policySnapshot: policy,
+    })).toMatchObject({ allowed: true, allowedNetworks: ['facebook'], networkMode: 'inherit_parent' });
+    expect(evaluateEntitlement({
+      user: {},
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends.overview',
+      requestedNetworks: ['instagram'],
+      policySnapshot: policy,
+    })).toMatchObject({ allowed: false, reasonCode: 'NETWORK_NOT_PERMITTED' });
+
+    policy.policies['growth-2027'].capabilities['intelligence.market_trends.overview'].networks = {
+      mode: 'custom',
+      allowed: [],
+    };
+    expect(evaluateEntitlement({
+      user: {},
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends.overview',
+      requestedNetworks: ['facebook'],
+      policySnapshot: policy,
+    })).toMatchObject({ allowed: true, allowedNetworks: ['facebook'], networkMode: 'inherit_parent' });
   });
 
   it('applies a yearly-only override without changing monthly access', () => {
@@ -273,6 +314,8 @@ describe('plan-control policy engine', () => {
     expect(adminBundle).toContain("sourceStatus: 'recovered_uniform'");
     expect(adminBundle).toContain('No plan setup is required.');
     expect(adminBundle).toContain('RECOVERED FROM REVISION · APPLIED TO ALL');
+    expect(adminBundle).toContain('Same as ${pv2Escape(parent.label)}');
+    expect(adminBundle).toContain('pv2SetAllNetworkChoices(true)');
     expect(adminBundle).not.toContain('select the intended source ID, check this option');
   });
 

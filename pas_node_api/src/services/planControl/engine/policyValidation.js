@@ -11,7 +11,7 @@ const {
 
 const ID_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const EFFECTS = new Set(['inherit', 'allow', 'deny']);
-const NETWORK_MODES = new Set(['not_applicable', 'inherit_general', 'custom']);
+const NETWORK_MODES = new Set(['not_applicable', 'inherit_general', 'inherit_parent', 'custom']);
 const GENERATION_STATUSES = new Set(['draft', 'validated', 'active', 'legacy', 'archived']);
 const FAMILY_STATUSES = new Set(['active', 'legacy', 'deleted', 'custom', 'draft', 'archived']);
 
@@ -136,6 +136,9 @@ function validateSnapshot(input) {
       }
       if (!capability.networkAware && mode !== 'not_applicable') {
         pushIssue(warnings, 'NETWORK_MODE_NOT_APPLICABLE', `${capPath}.networks`, 'This capability is not network-aware.');
+      }
+      if (mode === 'inherit_parent' && !capability.parentCapability) {
+        pushIssue(errors, 'NETWORK_PARENT_REQUIRED', `${capPath}.networks.mode`, 'Only a child capability can inherit parent networks.');
       }
       if (mode === 'custom') {
         for (const [i, network] of (rule.networks?.allowed || []).entries()) {
