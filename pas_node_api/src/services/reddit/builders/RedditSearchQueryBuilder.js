@@ -26,6 +26,12 @@ const {
 
 const DEFAULT_RED_INDEX = process.env.RED_ELASTIC_INDEX || 'reddit_search_mix';
 
+// IMPORTANT: If you change this displayable-media gate, you MUST update all 3
+// mirrored copies of `displayableMediaFilters.js`:
+//   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
+//   - admin_panel_backend/utils/displayable-media-filters.js
+//   - compeitetor_analysis/utils/displayableMediaFilters.js
+// This gate is the source of truth for network-visible ad counts.
 // Displayable-media gate (mirrors Facebook's IMAGE+VIDEO pattern).
 //   IMAGE → must have new_nas_image_url
 //   VIDEO → must have `Thumbnail` (where Reddit stores the video thumbnail)

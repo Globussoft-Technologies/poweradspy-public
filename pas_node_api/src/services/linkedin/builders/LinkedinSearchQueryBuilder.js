@@ -46,6 +46,12 @@ const DEFAULT_LI_INDEX = process.env.LI_ELASTIC_INDEX || 'linkedin_ads_data';
 // path the UI hides as blocked media, so counting them inflated "Total Ads"
 // (ES said 16 but only the ones with real thumbnails rendered). Filtering here
 // makes hits.total equal what actually shows.
+// IMPORTANT: If you change this displayable-media gate, you MUST update all 3
+// mirrored copies of `displayableMediaFilters.js`:
+//   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
+//   - admin_panel_backend/utils/displayable-media-filters.js
+//   - compeitetor_analysis/utils/displayableMediaFilters.js
+// This gate is the source of truth for network-visible ad counts.
 const EXTRA_CONDITION = [
   {
     bool: {

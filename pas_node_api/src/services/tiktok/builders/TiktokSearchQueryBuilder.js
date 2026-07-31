@@ -225,6 +225,12 @@ class TiktokSearchQueryBuilder {
       buckets.must.push({ match_all: {} });
     }
 
+    // IMPORTANT: If you change this displayable-media gate, you MUST update all 3
+    // mirrored copies of `displayableMediaFilters.js`:
+    //   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
+    //   - admin_panel_backend/utils/displayable-media-filters.js
+    //   - compeitetor_analysis/utils/displayableMediaFilters.js
+    // This gate is the source of truth for network-visible ad counts.
     // Displayable-media gate. The UI hides a TikTok ad if EITHER its thumbnail
     // (`video_cover`) OR its video (`video_url`) is a legacy pasvideos/pasimages/
     // bydefault path — so existence alone isn't enough (both fields can hold a

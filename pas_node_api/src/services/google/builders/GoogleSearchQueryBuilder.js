@@ -47,6 +47,12 @@ const CONTENT_FIELDS = [
  * NAS image must_not — IMAGE ads with no/empty new_nas_image_url are excluded.
  * `type` is keyword+normalizer so the term value is lowercased to match.
  */
+// IMPORTANT: If you change this displayable-media gate, you MUST update all 3
+// mirrored copies of `displayableMediaFilters.js`:
+//   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
+//   - admin_panel_backend/utils/displayable-media-filters.js
+//   - compeitetor_analysis/utils/displayableMediaFilters.js
+// This gate is the source of truth for network-visible ad counts.
 const IMAGE_MUST_NOT = {
   bool: {
     filter: [

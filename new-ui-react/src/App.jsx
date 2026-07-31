@@ -2042,7 +2042,14 @@ const App = () => {
         ) : ui.activePage === "projects" && canAccessProjects ? (
           <AllProjects
             onSearch={handleSearch}
-            onNavigateToAds={() => { coalesceNextHistoryWrite(); dispatch(setActivePage("ads")); }}
+            onNavigateToAds={() => {
+              // Let the selected advertiser/platform state flush before the Ads
+              // Library mounts and issues its first request; otherwise the initial
+              // fetch can race the state update and briefly show an empty result.
+              dispatch(setShowSavedAdsPage(false));
+              coalesceNextHistoryWrite();
+              window.requestAnimationFrame(() => dispatch(setActivePage("ads")));
+            }}
             onRecentActivityClick={handleRecentActivityClick}
             onCountryClick={handleCountryClick}
             setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}

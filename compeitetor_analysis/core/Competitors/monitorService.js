@@ -15,6 +15,7 @@ import elasticsearch from "elasticsearch";
 import moment from "moment";
 import pLimit from "p-limit";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
+import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
 
 // Diagnostic logging gate — flip MAIL_DEBUG_LOG in config (e.g. true in
 // localDev.json, false in default.json/production). When the flag is off
@@ -451,65 +452,10 @@ class  MonitorService{
    * ads whose image / nas / thumbnail field holds a placeholder (i.e. not a
    * real stored "*PowerAdspy*" media path) are ignored — otherwise the
    * all-time total is inflated relative to what the user actually sees.
-   * These clauses mirror FB_NAS_FILTER / IG_NAS_FILTER / GOOGLE_NAS_MUST_NOT
-   * in core/Dashboard/dashboardService.js (kept in sync intentionally).
+   * This method shares the same source-of-truth media gates as the dashboard
+   * service and the search UI through the common displayable-media helper.
    */
   async countAdsAllTime(competitorName, platform) {
-    const FB_NAS_FILTER = {
-      bool: {
-        should: [
-          { bool: { filter: [
-            { term:     { 'facebook_ad.type.keyword': 'IMAGE' } },
-            { exists:   { field: 'new_nas_image_url' } },
-            { wildcard: { 'new_nas_image_url.keyword': '*PowerAdspy*' } },
-          ]}},
-          { bool: { filter: [
-            { term:     { 'facebook_ad.type.keyword': 'VIDEO' } },
-            { exists:   { field: 'Thumbnail' } },
-            { wildcard: { 'Thumbnail.keyword': '*PowerAdspy*' } },
-          ]}},
-          { bool: { must_not: [
-            { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
-          ]}},
-        ],
-        minimum_should_match: 1,
-      },
-    };
-    const IG_NAS_FILTER = {
-      bool: {
-        should: [
-          { bool: { filter: [
-            { terms:    { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
-            { exists:   { field: 'new_nas_image_url' } },
-            { wildcard: { 'new_nas_image_url.keyword': '*PowerAdspy*' } },
-          ]}},
-          { bool: { filter: [
-            { term:     { 'instagram_ad.type.keyword': 'VIDEO' } },
-            { exists:   { field: 'thumbnail' } },
-            { wildcard: { 'thumbnail.keyword': '*PowerAdspy*' } },
-          ]}},
-          { bool: { must_not: [
-            { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
-          ]}},
-        ],
-        minimum_should_match: 1,
-      },
-    };
-    const GOOGLE_NAS_MUST_NOT = {
-      bool: {
-        filter: [
-          { term: { type: 'IMAGE' } },
-          { bool: {
-            should: [
-              { bool: { must_not: [{ exists: { field: 'new_nas_image_url' } }] } },
-              { term: { 'new_nas_image_url.keyword': '' } },
-            ],
-            minimum_should_match: 1,
-          }},
-        ],
-      },
-    };
-
     // ── Field lists MIRROR the production search builders ──────────────
     // (pas_node_api/src/services/<net>/builders/*QueryBuilder._getPostOwnerNameEnv).
     // Same idea as countAdsLastDayIST above — count must equal what the
@@ -526,7 +472,7 @@ class  MonitorService{
           "facebook_ad_post_owners.post_owner_name_exactly",
         ],
         primaryField: "facebook_ad_post_owners.post_owner_name",
-        mediaFilter: FB_NAS_FILTER,
+        mediaFilter: getDisplayableMediaFilter("facebook"),
       },
       instagram: {
         index: NETWORK_INDEXES.instagram,
@@ -539,14 +485,13 @@ class  MonitorService{
           "instagram_ad_post_owners.post_owner_name_exactly",
         ],
         primaryField: "instagram_ad_post_owners.post_owner_name",
-        mediaFilter: IG_NAS_FILTER,
+        mediaFilter: getDisplayableMediaFilter("instagram"),
       },
       google:    {
         index: NETWORK_INDEXES.google,
         fields: ["post_owner_name"],
         primaryField: "post_owner_name",
-        excludeType: { field: "type", values: ["ORGANIC SEARCH"] },
-        mediaMustNot: [GOOGLE_NAS_MUST_NOT],
+        mediaFilter: getDisplayableMediaFilter("google"),
       },
     };
     const cfg = CFG[platform];

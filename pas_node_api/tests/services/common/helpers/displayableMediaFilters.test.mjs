@@ -96,4 +96,15 @@ describe("common/helpers/displayableMediaFilters > getDisplayableMediaFilter", (
     expect(json).toContain('"term":{"new_nas_image_url":""}');
     expect(json).not.toContain('"new_nas_image_url.keyword":""');
   });
+
+  it("google keeps the transparency platform 18 exception in the IMAGE gate", () => {
+    const json = JSON.stringify(getDisplayableMediaFilter("google"));
+    expect(json).toContain('"platform":18');
+  });
+
+  it("google keeps the lowercase source-of-truth terms from the builder", () => {
+    const json = JSON.stringify(getDisplayableMediaFilter("google"));
+    expect(json).toContain('"term":{"type":"image"}');
+    expect(json).toContain('"term":{"type":"organic search"}');
+  });
 });

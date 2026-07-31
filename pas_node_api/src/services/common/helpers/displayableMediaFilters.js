@@ -250,6 +250,9 @@ const GOOGLE = [
                 },
               },
             ],
+            must_not: [
+              { term: { platform: 18 } },
+            ],
           },
         },
         { term: { type: 'organic search' } },

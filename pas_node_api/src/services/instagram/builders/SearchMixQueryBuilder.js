@@ -37,6 +37,12 @@ const {
 const DEFAULT_IG_INDEX = igNet?.database?.elastic?.index || process.env.IG_ELASTIC_INDEX || 'search_mix';
 
 const DEFAULT_IMAGE_WILDCARD = { value: '*DefaultImage*' };
+// IMPORTANT: If you change this displayable-media gate, you MUST update all 3
+// mirrored copies of `displayableMediaFilters.js`:
+//   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
+//   - admin_panel_backend/utils/displayable-media-filters.js
+//   - compeitetor_analysis/utils/displayableMediaFilters.js
+// This gate is the source of truth for network-visible ad counts.
 const EXTRA_CONDITION = [
   {
     bool: {

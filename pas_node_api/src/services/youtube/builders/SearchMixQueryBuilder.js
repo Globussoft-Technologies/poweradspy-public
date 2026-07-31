@@ -47,6 +47,12 @@ const DEFAULT_YT_INDEX = ytNet?.database?.elastic?.index || process.env.YT_ELAST
 //     only a pasimages SQL path (invisible to ES) the UI hides — requiring the
 //     field here drops them from the count. Good IMAGE ads carry a NAS path
 //     (…/yt/adImage/…) that isn't a blocked pattern, so they stay.
+// IMPORTANT: If you change this displayable-media gate, you MUST update all 3
+// mirrored copies of `displayableMediaFilters.js`:
+//   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
+//   - admin_panel_backend/utils/displayable-media-filters.js
+//   - compeitetor_analysis/utils/displayableMediaFilters.js
+// This gate is the source of truth for network-visible ad counts.
 const EXTRA_CONDITION = [
   {
     bool: {

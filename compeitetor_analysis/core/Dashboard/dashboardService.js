@@ -13,6 +13,7 @@ import { getAllCountries } from '../../models/countries.js';
 // import {client} from '../../utils/Elasticsearch.js';
 import { esClient,esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
+import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
 import elasticsearch from "elasticsearch";
 import DashboardValidation from "./dashboardValidation.js";
 import moment from "moment";
@@ -37,77 +38,6 @@ const nowIST = () => moment.utc().utcOffset("+05:30");
 // The constants and helpers below mirror those rules and are reused by both
 // getCompetitorsCount and getCompetitorsCountNew.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Mirrors the Facebook search builder's EXTRA_CONDITION exactly (exists-based,
-// no `*PowerAdspy*` wildcard). The wildcard was stricter than the actual search
-// and excluded ads whose NAS path doesn't contain "PowerAdspy" → undercounted
-// advertisers (e.g. "T Bank"). Now the count == what search returns.
-const FB_NAS_FILTER = {
-  bool: {
-    should: [
-      { bool: { filter: [
-        { term:   { 'facebook_ad.type.keyword': 'IMAGE' } },
-        { exists: { field: 'new_nas_image_url' } },
-      ]}},
-      { bool: { filter: [
-        { term:   { 'facebook_ad.type.keyword': 'VIDEO' } },
-        { exists: { field: 'Thumbnail' } },
-      ]}},
-      { bool: { must_not: [
-        { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
-      ]}},
-    ],
-    minimum_should_match: 1,
-  },
-};
-
-// Mirrors the Instagram search builder's EXTRA_CONDITION exactly (exists-based,
-// no `*PowerAdspy*` wildcard) — same undercount fix as Facebook above.
-const IG_NAS_FILTER = {
-  bool: {
-    should: [
-      { bool: { filter: [
-        { terms:  { 'instagram_ad.type.keyword': ['IMAGE', 'STORIES'] } },
-        { exists: { field: 'new_nas_image_url' } },
-      ]}},
-      { bool: { filter: [
-        { term:   { 'instagram_ad.type.keyword': 'VIDEO' } },
-        { exists: { field: 'thumbnail' } },
-      ]}},
-      { bool: { must_not: [
-        { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
-      ]}},
-    ],
-    minimum_should_match: 1,
-  },
-};
-
-const GOOGLE_NAS_MUST_NOT = {
-  bool: {
-    filter: [
-      { term: { type: 'IMAGE' } },
-      { bool: {
-        should: [
-          { bool: { must_not: [{ exists: { field: 'new_nas_image_url' } }] } },
-          { term: { 'new_nas_image_url.keyword': '' } },
-        ],
-        minimum_should_match: 1,
-      }},
-    ],
-  },
-};
-
-const NAS_FILTER_BY_INDEX = {
-  [NETWORK_INDEXES.facebook]:           { filter: FB_NAS_FILTER, must_not: [] },
-  [NETWORK_INDEXES.instagram]: { filter: IG_NAS_FILTER, must_not: [] },
-  [NETWORK_INDEXES.google]:   {
-    filter: null,
-    must_not: [
-      GOOGLE_NAS_MUST_NOT,
-      { match_phrase: { type: 'ORGANIC SEARCH' } },
-    ],
-  },
-};
 
 // Match the search builder's _getPostOwnerNameEnv exactly: phrase across
 // multilingual variants OR prefix match on the base field.
@@ -148,6 +78,12 @@ const AD_ID_FIELD_BY_INDEX = {
   [NETWORK_INDEXES.google]:   'id',
 };
 
+const NETWORK_BY_INDEX = Object.freeze(
+  Object.fromEntries(
+    Object.entries(NETWORK_INDEXES).map(([network, index]) => [index, network]),
+  ),
+);
+
 function buildOwnerClause(index, competitor) {
   const cfg = OWNER_FIELDS_BY_INDEX[index];
   /* v8 ignore next -- index is always a known OWNER_FIELDS_BY_INDEX key (search_mix/instagram_search_mix) */
@@ -166,14 +102,9 @@ function buildOwnerClause(index, competitor) {
 }
 
 function nasClausesFor(index) {
-  /* v8 ignore next -- index always has a NAS_FILTER_BY_INDEX entry, so the `|| {}` is defensive */
-  const nas = NAS_FILTER_BY_INDEX[index] || {};
-  const filter = nas.filter ? [nas.filter] : [];
-  /* v8 ignore next 3 -- NAS config always defines must_not as an array, so the non-array fallbacks are unreachable */
-  const mustNot = Array.isArray(nas.must_not)
-    ? nas.must_not
-    : (nas.must_not ? [nas.must_not] : []);
-  return { filter, mustNot };
+  const network = NETWORK_BY_INDEX[index];
+  const filter = network ? getDisplayableMediaFilter(network) : null;
+  return { filter: Array.isArray(filter) ? filter : [], mustNot: [] };
 }
 
 // Returns the deduped (collapsed-by-ad-id) count of docs matching `boolQuery`.

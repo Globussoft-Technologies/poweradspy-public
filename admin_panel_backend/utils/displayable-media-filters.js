@@ -212,7 +212,7 @@ const GOOGLE = [
         {
           bool: {
             filter: [
-              { term: { type: 'IMAGE' } },
+              { term: { type: 'image' } },
               {
                 bool: {
                   should: [
@@ -223,9 +223,12 @@ const GOOGLE = [
                 },
               },
             ],
+            must_not: [
+              { term: { platform: 18 } },
+            ],
           },
         },
-        { match_phrase: { type: 'ORGANIC SEARCH' } },
+        { term: { type: 'organic search' } },
       ],
     },
   },
