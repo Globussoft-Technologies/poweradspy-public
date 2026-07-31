@@ -197,6 +197,10 @@ function validateSnapshot(input) {
       if (application?.mode !== 'same_settings_all_plan_ids') {
         pushIssue(errors, 'INVALID_FAMILY_APPLICATION_MODE', `${path}.mode`, 'The family application mode is invalid.');
       }
+      if (application?.sourceStatus !== undefined
+        && !['selected_by_admin', 'recovered_uniform'].includes(application.sourceStatus)) {
+        pushIssue(errors, 'INVALID_FAMILY_APPLICATION_SOURCE_STATUS', `${path}.sourceStatus`, 'The all-plan source status is invalid.');
+      }
       const sourcePlanId = Number(application?.sourcePlanId);
       if (!Number.isInteger(sourcePlanId) || !(family.variants || []).some((variant) => Number(variant.planId) === sourcePlanId)) {
         pushIssue(errors, 'INVALID_FAMILY_APPLICATION_SOURCE', `${path}.sourcePlanId`, 'The all-plan source must be a billing plan ID in this family.');

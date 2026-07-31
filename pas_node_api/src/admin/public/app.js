@@ -2432,7 +2432,27 @@ const pv2ApplyAllSelection = {};
 function pv2Escape(value) { return escapeHtml(String(value ?? '')); }
 function pv2FamilyApplication(snapshot = pv2Snapshot(), familyId = pv2SelectedFamilyId) {
   const application = snapshot?.adminMetadata?.familyApplications?.[familyId];
-  return application?.mode === 'same_settings_all_plan_ids' ? application : null;
+  if (application?.mode === 'same_settings_all_plan_ids') return application;
+
+  // Revisions published before familyApplications metadata existed still retain
+  // the exact effective policy. An empty variantOverrides object means every
+  // billing ID is using the same family rule. Recover that state in the UI so
+  // admins never have to recreate or guess the already-published settings.
+  const family = (snapshot?.planFamilies || []).find((item) => item.familyId === familyId);
+  const variants = family?.variants || [];
+  const policy = snapshot?.policies?.[familyId];
+  if (variants.length > 1 && policy && Object.keys(policy.variantOverrides || {}).length === 0) {
+    const referencePlanId = Number(variants[0]?.planId);
+    if (Number.isInteger(referencePlanId)) {
+      return {
+        mode: 'same_settings_all_plan_ids',
+        sourcePlanId: referencePlanId,
+        sourceStatus: 'recovered_uniform',
+        recovered: true,
+      };
+    }
+  }
+  return null;
 }
 function pv2ResetTransientPlanSelections() {
   for (const key of Object.keys(pv2VariantSelection)) delete pv2VariantSelection[key];
@@ -2649,10 +2669,8 @@ function pvLoadPlanEditor() {
   if (recordedSourcePlanId) pv2VariantSelection[family.familyId] = recordedSourcePlanId;
   const showFamilyCopy = Boolean(recordedApplication) || pv2ApplyAllSelection[family.familyId] === true;
   const lockFamilyCopy = Boolean(recordedApplication);
-  const policyForFamily = pv2FamilyPolicy();
-  const legacyUniformSettings = !recordedApplication
-    && variants.length > 1
-    && Object.keys(policyForFamily.variantOverrides || {}).length === 0;
+  const recoveredUniformSettings = recordedApplication?.sourceStatus === 'recovered_uniform'
+    || recordedApplication?.recovered === true;
   const salesSource = pvCurrentDraft
     ? `Stored in working draft ${pvCurrentDraft.draftId}.`
     : pvLivePolicy
@@ -2665,9 +2683,9 @@ function pvLoadPlanEditor() {
   document.getElementById('pv2-summary').innerHTML = `
     <div class="pv2-stat"><span class="pv2-kicker">Name customers see <span class="pv2-info" title="The friendly plan name shown in customer-facing screens.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.label)}</b></div><div class="pv2-explain">Display name only. Changing it does not change access.</div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Plan display order <span class="pv2-info" title="Previously called Tier Rank. A higher number places a plan higher in comparisons; it does not automatically grant features.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.tierRank)}</b></div><div class="pv2-explain">Higher number = higher plan in UI ordering. Feature access is still controlled below.</div></div>
-    <div class="pv2-stat"><span class="pv2-kicker">Select billing plan ID <span class="pv2-info" title="Choose the exact billing ID to inspect or edit. Normal changes affect only this selected ID.">?</span></span><div style="margin-top:6px"><b>${variants.length} plan ID${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="${lockFamilyCopy ? `Locked to source plan #${pv2Escape(recordedSourcePlanId)} because the published settings apply to every plan ID` : 'Choose a billing plan ID'}" style="width:100%;margin-top:6px" ${lockFamilyCopy ? 'disabled' : ''} onchange="pv2VariantChanged()">${variants.map((v) => `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}</option>`).join('')}</select><div id="pv2-variant-note" class="pv2-source-note"></div></div>
+    <div class="pv2-stat"><span class="pv2-kicker">Select billing plan ID <span class="pv2-info" title="Choose the exact billing ID to inspect or edit. Normal changes affect only this selected ID.">?</span></span><div style="margin-top:6px"><b>${variants.length} plan ID${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="${lockFamilyCopy ? recoveredUniformSettings ? 'Locked because the published family policy already applies identically to every billing plan ID' : `Locked to source plan #${pv2Escape(recordedSourcePlanId)} because the published settings apply to every plan ID` : 'Choose a billing plan ID'}" style="width:100%;margin-top:6px" ${lockFamilyCopy ? 'disabled' : ''} onchange="pv2VariantChanged()">${variants.map((v) => `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}</option>`).join('')}</select><div id="pv2-variant-note" class="pv2-source-note"></div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Available for new purchases <span class="pv2-info" title="Open means billing may sell this family to new customers. Closed keeps existing customers but prevents new signups.">?</span></span><div style="margin-top:6px"><b style="color:${family.openForNewSignups ? '#22c55e' : '#f59e0b'}">${family.openForNewSignups ? 'Yes, open' : 'No, closed'}</b></div><div class="pv2-explain">${family.openForNewSignups ? 'New customers may buy this plan.' : 'Existing plan IDs remain valid, but new sales are closed.'}</div><div class="pv2-source-note"><b>How this is known:</b> ${pv2Escape(salesSource)}</div>${editable ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pvEditFamily()">Edit plan details</button>' : ''}</div>
-    <div class="pv2-stat" style="grid-column:1/-1"><label style="display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.4"><input id="pv2-apply-all-family" type="checkbox" ${showFamilyCopy ? 'checked' : ''} ${editable && !lockFamilyCopy ? '' : 'disabled'} onchange="pv2ApplyAllChanged(this.checked)"> <span><b>Same settings for all plan IDs</b>${lockFamilyCopy ? ' <span class="pv2-live-badge">APPLIED TO ALL</span>' : legacyUniformSettings ? ' <span class="pv2-live-badge">ALL IDs CURRENTLY SAME</span>' : ''}<br><span id="pv2-apply-all-note" style="color:var(--text-muted)">${lockFamilyCopy ? `Saved policy: plan #${pv2Escape(recordedSourcePlanId)} is the locked source and these same settings apply to all ${variants.length} plan IDs in ${pv2Escape(family.adminLabel)}. Edit the settings below and Save; this mode cannot be unchecked in this draft.` : showFamilyCopy ? `When you Save, plan #${pv2Escape(selectedVariant)} settings will apply to every plan ID in ${pv2Escape(family.adminLabel)}.` : legacyUniformSettings ? `All ${variants.length} plan IDs currently use the same family settings, but this older revision did not record which plan ID was the original source. To record it permanently, open an edit draft, select the intended source ID, check this option, then Save and Publish.` : `Off: changes apply only to plan #${pv2Escape(selectedVariant)}.`}</span></span></label></div>`;
+    <div class="pv2-stat" style="grid-column:1/-1"><label style="display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.4"><input id="pv2-apply-all-family" type="checkbox" ${showFamilyCopy ? 'checked' : ''} ${editable && !lockFamilyCopy ? '' : 'disabled'} onchange="pv2ApplyAllChanged(this.checked)"> <span><b>Same settings for all plan IDs</b>${lockFamilyCopy ? ` <span class="pv2-live-badge">${recoveredUniformSettings ? 'RECOVERED · APPLIED TO ALL' : 'APPLIED TO ALL'}</span>` : ''}<br><span id="pv2-apply-all-note" style="color:var(--text-muted)">${lockFamilyCopy ? recoveredUniformSettings ? `This published revision already has one identical family policy for all ${variants.length} plan IDs in ${pv2Escape(family.adminLabel)}. Its exact settings were recovered automatically; older history did not store the originally clicked source ID, so plan #${pv2Escape(recordedSourcePlanId)} is only a locked reference. No plan setup is required. Edit below and Save to preserve this state permanently.` : `Saved policy: plan #${pv2Escape(recordedSourcePlanId)} is the locked source and these same settings apply to all ${variants.length} plan IDs in ${pv2Escape(family.adminLabel)}. Edit the settings below and Save; this mode cannot be unchecked in this draft.` : showFamilyCopy ? `When you Save, plan #${pv2Escape(selectedVariant)} settings will apply to every plan ID in ${pv2Escape(family.adminLabel)}.` : `Off: changes apply only to plan #${pv2Escape(selectedVariant)}.`}</span></span></label></div>`;
   pv2RenderNetworks();
   pvRenderCapabilities();
   pv2RenderVariantNote();
@@ -2703,7 +2721,9 @@ function pv2VariantChanged() {
   if (recordedApplication) {
     pv2VariantSelection[pv2SelectedFamilyId] = String(recordedApplication.sourcePlanId);
     pvLoadPlanEditor();
-    showToast?.(`All-plan mode is locked to source plan #${recordedApplication.sourcePlanId}.`, 'success');
+    showToast?.(recordedApplication.sourceStatus === 'recovered_uniform' || recordedApplication.recovered
+      ? 'All-plan mode is locked because every billing ID already uses the same published settings.'
+      : `All-plan mode is locked to source plan #${recordedApplication.sourcePlanId}.`, 'success');
     return;
   }
   const value = document.getElementById('pv2-variant')?.value || '';
@@ -2725,7 +2745,9 @@ function pv2ApplyAllChanged(checked) {
   if (recordedApplication) {
     const checkbox = document.getElementById('pv2-apply-all-family');
     if (checkbox) checkbox.checked = true;
-    showToast?.(`These published settings already apply to every plan ID from source #${recordedApplication.sourcePlanId}; this mode cannot be unchecked in this draft.`, 'error');
+    showToast?.(recordedApplication.sourceStatus === 'recovered_uniform' || recordedApplication.recovered
+      ? 'These published settings already apply to every plan ID; this mode cannot be unchecked in this draft.'
+      : `These published settings already apply to every plan ID from source #${recordedApplication.sourcePlanId}; this mode cannot be unchecked in this draft.`, 'error');
     return;
   }
   pv2ApplyAllSelection[pv2SelectedFamilyId] = Boolean(checked);
@@ -2744,6 +2766,7 @@ function pv2CopySelectedPlanToFamily() {
     return;
   }
   const family = pv2Families().find((item) => item.familyId === pv2SelectedFamilyId);
+  const existingApplication = pv2FamilyApplication(pvCurrentDraft.snapshot, pv2SelectedFamilyId);
   const sourcePlanId = String(pv2SelectedVariantKey() || '');
   const sourceVariant = (family?.variants || []).find((variant) => String(variant.planId) === sourcePlanId);
   if (!family || !sourceVariant) {
@@ -2796,6 +2819,9 @@ function pv2CopySelectedPlanToFamily() {
       pvCurrentDraft.snapshot.adminMetadata.familyApplications[pv2SelectedFamilyId] = {
         mode: 'same_settings_all_plan_ids',
         sourcePlanId: Number(sourcePlanId),
+        sourceStatus: existingApplication?.sourceStatus === 'recovered_uniform' || existingApplication?.recovered
+          ? 'recovered_uniform'
+          : 'selected_by_admin',
       };
       pv2ApplyAllSelection[pv2SelectedFamilyId] = true;
       pv2VariantSelection[pv2SelectedFamilyId] = sourcePlanId;
@@ -2809,7 +2835,9 @@ function pv2RenderVariantNote() {
   const variantKey = pv2SelectedVariantKey();
   const application = pv2FamilyApplication();
   note.innerHTML = application
-    ? `<b>Source plan #${pv2Escape(variantKey)}.</b> The settings shown below are the common settings applied to every plan ID in this family.`
+    ? application.sourceStatus === 'recovered_uniform' || application.recovered
+      ? `<b>Common family settings (reference plan #${pv2Escape(variantKey)}).</b> The exact published settings shown below apply to every plan ID. The original source click was not stored by the older revision.`
+      : `<b>Source plan #${pv2Escape(variantKey)}.</b> The settings shown below are the common settings applied to every plan ID in this family.`
     : `<b>Editing plan #${pv2Escape(variantKey)}.</b> Changes below affect only this plan ID.`;
 }
 
@@ -3565,7 +3593,7 @@ function pvOpenHowToUse() {
         <p><b>Plan display order:</b> sorting/position only; it does not automatically grant access.</p>
         <p><b>Billing option:</b> provider product ID for monthly, yearly, trial, legacy or a future billing cycle.</p>
         <p><b>Selected plan ID:</b> the exact monthly, yearly, trial, platform or legacy ID currently being edited.</p>
-        <p><b>Same settings for all plan IDs:</b> when checked, Save uses the selected plan ID’s complete settings for every ID in that plan. After it is saved/published, the checked state and source plan ID are recorded permanently. An edit draft keeps both locked so switching IDs cannot silently change the common settings.</p>
+        <p><b>Same settings for all plan IDs:</b> when checked, Save uses the selected plan ID’s complete settings for every ID in that plan. After it is saved/published, the checked state and source plan ID are recorded permanently. An edit draft keeps both locked so switching IDs cannot silently change the common settings. Older published revisions that already contain one common family policy are recovered automatically as <i>RECOVERED · APPLIED TO ALL</i>; their exact settings remain intact and no manual plan setup is required.</p>
         <p><b>Available for new purchases:</b> whether new customers may buy it. The plan card explains whether this value came from live policy, the draft, legacy plan_groups or a safe missing-value default.</p>
         <p><b>Blocking error:</b> invalid or unsafe policy that cannot publish. <b>Review warning:</b> visible follow-up work that does not block an unrelated compatibility-mode change.</p>
         <p><b>Lifecycle:</b> draft, active, legacy or archived state of the plan definition.</p>

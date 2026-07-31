@@ -248,6 +248,31 @@ describe('plan-control policy engine', () => {
     }));
   });
 
+  it('accepts recovered uniform-family metadata and keeps the admin recovery path visible', () => {
+    const policy = snapshot();
+    policy.policies['growth-2027'].variantOverrides = {};
+    policy.adminMetadata = {
+      familyApplications: {
+        'growth-2027': {
+          mode: 'same_settings_all_plan_ids',
+          sourcePlanId: 101,
+          sourceStatus: 'recovered_uniform',
+        },
+      },
+    };
+    expect(validateSnapshot(policy).valid).toBe(true);
+
+    policy.adminMetadata.familyApplications['growth-2027'].sourceStatus = 'guessed_source';
+    expect(validateSnapshot(policy).errors).toContainEqual(expect.objectContaining({
+      code: 'INVALID_FAMILY_APPLICATION_SOURCE_STATUS',
+    }));
+
+    const adminBundle = fs.readFileSync(path.join(process.cwd(), 'src', 'admin', 'public', 'app.js'), 'utf8');
+    expect(adminBundle).toContain("sourceStatus: 'recovered_uniform'");
+    expect(adminBundle).toContain('No plan setup is required.');
+    expect(adminBundle).not.toContain('select the intended source ID, check this option');
+  });
+
   it('rejects per-plan overrides while same settings are locked for every plan ID', () => {
     const policy = snapshot();
     policy.adminMetadata = {
