@@ -311,19 +311,20 @@ const AdDetailModal = ({
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   })();
 
-  // Image-loaded gate so the user sees a spinner instead of the browser's
-  // top-to-bottom progressive JPEG render while bytes arrive.
-  const [imgLoaded, setImgLoaded] = useState(false);
+  // Keep load status keyed to the media URL. Resetting a boolean in an effect
+  // races cached images: the ref marks them loaded during commit, then the
+  // effect hides them again for one frame.
+  const [loadedImageSrc, setLoadedImageSrc] = useState("");
   // Broken thumbnail/image URL — show a "Preview unavailable" placeholder
   // instead of spinning the loader forever (matches MasonryCard/AnalyticsModal).
-  const [imgError, setImgError] = useState(false);
+  const [failedImageSrc, setFailedImageSrc] = useState("");
   // Callback ref handles cache races: when the modal opens with an image
   // the browser already has cached, `load` can fire before React attaches
   // its onLoad handler. Checking `complete` synchronously at mount catches
   // that case.
   const handleImgRef = React.useCallback((node) => {
     if (node && node.complete && node.naturalWidth > 0) {
-      setImgLoaded(true);
+      setLoadedImageSrc(node.dataset.mediaSrc || node.getAttribute("src") || "");
     }
   }, []);
 
@@ -421,12 +422,9 @@ const AdDetailModal = ({
     clearVideoStallTimer();
   }, [ad, clearVideoStallTimer]);
 
-  // Reset the image-load gate whenever the displayed image will change
-  // (different ad selected, or carousel paged). Must live before the
-  // early-return below so the hook count stays consistent across renders.
+  // Reset playback state whenever the displayed media changes. Image load and
+  // error state are URL-keyed, so they switch synchronously without an effect.
   useEffect(() => {
-    setImgLoaded(false);
-    setImgError(false);
     setIsPlaying(false);
     setVideoUnavailable(false);
   }, [ad, activeIndex]);
@@ -524,9 +522,23 @@ const AdDetailModal = ({
     return names;
   }, [adCountryRaw]);
 
+  // Keep the Countries row present before the async ad-country request
+  // resolves. Adding the whole row later changed the Details card height and
+  // pushed the action bar, which made both highlighted regions jump together.
+  const displayedCountryNames = useMemo(() => {
+    if (adCountryNames.length > 0) return adCountryNames;
+    const fallback = Array.isArray(ad?.countries)
+      ? ad.countries
+      : ad?.countries
+        ? [ad.countries]
+        : [];
+    return fallback.map((country) => String(country).trim()).filter(Boolean);
+  }, [adCountryNames, ad?.countries]);
+
   if (!ad) return null;
 
   const platform = (ad.network || "").toLowerCase();
+  const hasOriginalUrl = Boolean(ad.adUrl && ad.adUrl !== "#");
   // Network shown in the UI. YouTube DISPLAY ads surfaced under GDN carry
   // badgeNetwork:'gdn' so they display as GDN, while `platform` (= ad.network)
   // keeps routing share/insights to YouTube where the ad actually lives.
@@ -587,6 +599,11 @@ const AdDetailModal = ({
   const currentPoster = currentMediaIsVideo && currentIsPrimary
     ? (ad.thumbnail || ad.imageOriginalUrl || "")
     : "";
+  const displayedImageSrc = currentPoster || currentImg;
+  const imgLoaded =
+    Boolean(displayedImageSrc) && loadedImageSrc === displayedImageSrc;
+  const imgError =
+    Boolean(displayedImageSrc) && failedImageSrc === displayedImageSrc;
   const rawTitleStr =
     (ad.carouselTitles?.length > activeIndex
       ? ad.carouselTitles[activeIndex]
@@ -626,29 +643,40 @@ const AdDetailModal = ({
         onClick={(e) => e.stopPropagation()}
         className="relative z-10 w-full max-w-sm md:max-w-xl lg:max-w-3xl flex justify-center items-center"
       >
-        {/* Nav arrows */}
-        {hasPrev && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onPrev?.();
-            }}
-            className="absolute top-1/2 -translate-y-1/2 -left-4 sm:-left-14 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-          >
-            <ChevronLeft size={24} />
-          </button>
-        )}
-        {hasNext && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onNext?.();
-            }}
-            className="absolute top-1/2 -translate-y-1/2 -right-4 sm:-right-14 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-          >
-            <ChevronRight size={24} />
-          </button>
-        )}
+        {/* Keep both controls mounted so rapid clicks at either end cannot
+            fall through to the backdrop and close/reopen the modal. */}
+        <button
+          type="button"
+          aria-label="Previous ad"
+          disabled={!hasPrev}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hasPrev) onPrev?.();
+          }}
+          className={`absolute top-1/2 -translate-y-1/2 -left-4 sm:-left-14 z-10 p-2 rounded-full text-white transition-colors ${
+            hasPrev
+              ? "bg-white/10 hover:bg-white/20"
+              : "bg-white/5 opacity-30 cursor-not-allowed"
+          }`}
+        >
+          <ChevronLeft size={24} />
+        </button>
+        <button
+          type="button"
+          aria-label="Next ad"
+          disabled={!hasNext}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hasNext) onNext?.();
+          }}
+          className={`absolute top-1/2 -translate-y-1/2 -right-4 sm:-right-14 z-10 p-2 rounded-full text-white transition-colors ${
+            hasNext
+              ? "bg-white/10 hover:bg-white/20"
+              : "bg-white/5 opacity-30 cursor-not-allowed"
+          }`}
+        >
+          <ChevronRight size={24} />
+        </button>
 
         <div
           className="w-[90vw] relative max-w-sm md:max-w-xl lg:max-w-3xl max-h-[90vh] flex flex-col md:flex-row rounded-2xl shadow-2xl"
@@ -797,21 +825,22 @@ const AdDetailModal = ({
                         playsInline
                         preload="metadata"
                         className="w-full h-auto max-h-[90vh] object-contain relative z-[1]"
-                        onLoadedData={() => setImgLoaded(true)}
-                        onError={() => setImgError(true)}
+                        onLoadedData={() => setLoadedImageSrc(currentImg)}
+                        onError={() => setFailedImageSrc(currentImg)}
                       />
                     ) : (
                       <img
-                        key={currentPoster || currentImg}
+                        key={displayedImageSrc}
                         ref={handleImgRef}
-                        src={currentPoster || currentImg}
+                        src={displayedImageSrc}
+                        data-media-src={displayedImageSrc}
                         alt={currentTitle}
                         decoding="async"
                         className={`w-full h-auto max-h-[90vh] object-contain relative z-[1] transition-opacity duration-300 ${imgLoaded ? "opacity-100" : "opacity-0"}`}
-                        onLoad={() => setImgLoaded(true)}
+                        onLoad={() => setLoadedImageSrc(displayedImageSrc)}
                         onError={(e) => {
                           e.target.style.display = "none";
-                          setImgError(true);
+                          setFailedImageSrc(displayedImageSrc);
                         }}
                       />
                     )}
@@ -1358,7 +1387,7 @@ const AdDetailModal = ({
             )}
 
             {/* Meta details */}
-            <div
+<div
   className="rounded-xl p-3 space-y-2"
   style={{
     background: "rgba(255,255,255,0.06)",
@@ -1777,7 +1806,7 @@ const AdDetailModal = ({
       </>
     )}
 
-  {adCountryNames.length > 0 && (
+  {(
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1794,16 +1823,16 @@ const AdDetailModal = ({
         style={{ color: "var(--color-text-secondary)" }}
       >
         <MapPin size={10} className="shrink-0" />
-        <span className="truncate">{adCountryNames[0]}</span>
-        {adCountryNames.length > 1 && (
+        <span className="truncate">{displayedCountryNames[0] || "—"}</span>
+        {displayedCountryNames.length > 1 && (
           <span className="relative group shrink-0">
             <span className="text-[#6b99ff] font-bold cursor-default whitespace-nowrap">
-              +{adCountryNames.length - 1} more
+              +{displayedCountryNames.length - 1} more
             </span>
             {/* Full list on hover */}
             <span className="absolute bottom-full right-0 mb-1.5 hidden group-hover:block z-50 pointer-events-none">
               <span className="block px-2.5 py-1.5 rounded-lg text-[10px] leading-relaxed text-white bg-slate-800 border border-slate-700 shadow-lg w-max max-w-[220px] max-h-[160px] overflow-y-auto text-left">
-                {adCountryNames.join(", ")}
+                {displayedCountryNames.join(", ")}
               </span>
             </span>
           </span>
@@ -1896,7 +1925,7 @@ const AdDetailModal = ({
               >
                 Analytics
               </button>
-              {ad.adUrl && ad.adUrl !== "#" && (
+              {hasOriginalUrl && (
                 <a
                   href={ad.adUrl}
                   target="_blank"

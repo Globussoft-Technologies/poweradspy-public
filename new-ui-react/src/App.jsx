@@ -420,10 +420,51 @@ const App = () => {
   const [isGeneratingStrategy, setIsGeneratingStrategy] = useState(false);
 
   // Toast State
-  const [toast, setToast] = useState({ show: false, message: "", type: "success" });
-  const showToast = useCallback((message, type = "success") => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
+  const [toast, setToast] = useState({
+    show: false,
+    message: "",
+    type: "success",
+    position: "top",
+    source: null,
+  });
+  const toastTimerRef = useRef(null);
+  const searchToastStartedAtRef = useRef(0);
+  const showToast = useCallback((
+    message,
+    type = "success",
+    durationMs = 3000,
+    position = "top",
+    source = null,
+  ) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ show: true, message, type, position, source });
+    if (Number.isFinite(durationMs) && durationMs > 0) {
+      toastTimerRef.current = setTimeout(
+        () => setToast({
+          show: false,
+          message: "",
+          type: "success",
+          position: "top",
+          source: null,
+        }),
+        durationMs,
+      );
+    }
+  }, []);
+  const hideToastAfter = useCallback((source, delayMs = 0) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToast((current) => {
+        if (source && current.source !== source) return current;
+        return {
+          show: false,
+          message: "",
+          type: "success",
+          position: "top",
+          source: null,
+        };
+      });
+    }, delayMs);
   }, []);
 
   // Landing State (from URL)
@@ -1205,8 +1246,14 @@ const App = () => {
             country,         // selected country code(s) or null
           }).then((res) => {
             if (res?.data?.status === 'skip') return;
-            if (adsFound) showToast('Hang On! Syncing Recent Ads for You', 'success');
-            else showToast('Your request is now in motion — ads will be provided soon.', 'success');
+            if (!adsFound) {
+              showToast(
+                'Your request is now in motion — ads will be provided soon.',
+                'success',
+                3000,
+                'bottom',
+              );
+            }
           }).catch(() => {});
         }
 
@@ -1302,7 +1349,13 @@ const App = () => {
           setHasMore(false);
         }
       } finally {
-        if (!controller.signal.aborted) setLoadingMore(false);
+        if (!controller.signal.aborted) {
+          setLoadingMore(false);
+          if (page === 0 && searchToastStartedAtRef.current > 0) {
+            hideToastAfter("search", 2000);
+            searchToastStartedAtRef.current = 0;
+          }
+        }
       }
     };
     if (sdui.loading || sdui.activePlatforms.length === 0) return;
@@ -1325,6 +1378,7 @@ const App = () => {
     guest?.loading,
     location.pathname,
     projectContextTrigger,
+    hideToastAfter,
   ]);
 
   // Guest-safe wrappers — guest: toaster, logged-in on guest page: redirect to dashboard
@@ -1380,12 +1434,27 @@ const App = () => {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiRunIdRef = useRef(0);
 
-  const handleSearch = useCallback((query, type, platform) => {
+  const handleSearch = useCallback((query, type, platform, options = {}) => {
     if (guest?.isPublicLanding && guest?.isRestricted) {
       guest.showGuestWarning("Please login to search");
       return;
     }
     if (guestGuard("Please login to search", { searchQuery: query, searchIn: type || ui.searchIn })) return;
+    const trimmedQuery = String(query || "").trim();
+    if (trimmedQuery && options.showScraperToast) {
+      const searchType = String(type || ui.searchIn || "keyword").toLowerCase();
+      const searchLabel = ["keyword", "advertiser", "domain"].includes(searchType)
+        ? searchType
+        : "keyword";
+      searchToastStartedAtRef.current = Date.now();
+      showToast(
+        `Your ${searchLabel} search is underway. We’re scanning for the newest matching ads.`,
+        "info",
+        null,
+        "top",
+        "search",
+      );
+    }
     dispatch(setSearchQuery(query));
     setSearchTrigger(prev => prev + 1);
     if (type) dispatch(setSearchIn(type));
@@ -1407,7 +1476,7 @@ const App = () => {
       const country = labelsToCountryCodes(selCountries, findCountryOptions(sdui.config));
       lastDailyKeywordRef.current = { query, si, userEmail, network, country };
     }
-  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
+  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute, showToast]);
 
   // Orchestrates AI search: prompt → DS plan → try each fallback payload
   // (most-specific first) until one returns results → commit that tier's filters
@@ -1820,7 +1889,9 @@ const App = () => {
         isSidebarOpen={ui.isSidebarOpen}
         setIsSidebarOpen={(val) => dispatch(setSidebarOpen(val))}
         committedQuery={ui.searchQuery}
-        onSearch={handleSearch}
+        onSearch={(query, type, platform) =>
+          handleSearch(query, type, platform, { showScraperToast: true })
+        }
         onAiSearch={runAiSearch}
         onExitAiSearch={exitAiSearch}
         aiSearchAvailable={aiSearchAvailable}
@@ -2177,15 +2248,41 @@ const App = () => {
       {/* Toast Notification */}
       {toast.show && (
         <div 
-          className="fixed bottom-16 left-1/2 -translate-x-1/2 z-[400] px-4 py-2.5 rounded-xl backdrop-blur-md border flex items-center gap-3 animate-in slide-in-from-bottom-4 duration-300"
+          className={`fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 ${
+            toast.position === 'bottom'
+              ? 'bottom-16 slide-in-from-bottom-4'
+              : 'top-[140px] slide-in-from-top-4'
+          }`}
           style={{ 
-            backgroundColor: toast.type === 'success' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-            borderColor: toast.type === 'success' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
-            color: toast.type === 'success' ? '#4ade80' : '#f87171'
+            backgroundColor: toast.type === 'info'
+              ? 'rgba(59, 130, 246, 0.15)'
+              : toast.type === 'success'
+                ? 'rgba(34, 197, 94, 0.15)'
+                : 'rgba(239, 68, 68, 0.15)',
+            borderColor: toast.type === 'info'
+              ? 'rgba(59, 130, 246, 0.35)'
+              : toast.type === 'success'
+                ? 'rgba(34, 197, 94, 0.3)'
+                : 'rgba(239, 68, 68, 0.3)',
+            color: toast.type === 'info'
+              ? '#60a5fa'
+              : toast.type === 'success'
+                ? '#4ade80'
+                : '#f87171'
           }}
         >
-          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white ${toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
-            {toast.type === 'success' ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />}
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white ${
+            toast.type === 'info'
+              ? 'bg-blue-500'
+              : toast.type === 'success'
+                ? 'bg-green-500'
+                : 'bg-red-500'
+          }`}>
+            {toast.type === 'info'
+              ? <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+              : toast.type === 'success'
+                ? <Check size={14} strokeWidth={3} />
+                : <X size={14} strokeWidth={3} />}
           </div>
           <span className="font-semibold tracking-tight text-xs">{toast.message}</span>
         </div>
