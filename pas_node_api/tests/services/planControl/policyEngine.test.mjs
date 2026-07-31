@@ -229,6 +229,40 @@ describe('plan-control policy engine', () => {
     });
   });
 
+  it('validates the persisted source for same-settings-all-plan-IDs mode', () => {
+    const policy = snapshot();
+    policy.policies['growth-2027'].variantOverrides = {};
+    policy.adminMetadata = {
+      familyApplications: {
+        'growth-2027': {
+          mode: 'same_settings_all_plan_ids',
+          sourcePlanId: 101,
+        },
+      },
+    };
+    expect(validateSnapshot(policy).valid).toBe(true);
+
+    policy.adminMetadata.familyApplications['growth-2027'].sourcePlanId = 999;
+    expect(validateSnapshot(policy).errors).toContainEqual(expect.objectContaining({
+      code: 'INVALID_FAMILY_APPLICATION_SOURCE',
+    }));
+  });
+
+  it('rejects per-plan overrides while same settings are locked for every plan ID', () => {
+    const policy = snapshot();
+    policy.adminMetadata = {
+      familyApplications: {
+        'growth-2027': {
+          mode: 'same_settings_all_plan_ids',
+          sourcePlanId: 101,
+        },
+      },
+    };
+    expect(validateSnapshot(policy).errors).toContainEqual(expect.objectContaining({
+      code: 'ALL_PLAN_MODE_HAS_VARIANT_OVERRIDES',
+    }));
+  });
+
   it('keeps Plan Control internals behind the shared request enforcement layer', () => {
     const srcRoot = path.join(process.cwd(), 'src');
     const violations = [];

@@ -183,6 +183,30 @@ function validateSnapshot(input) {
     }
   }
 
+  const familyApplications = snapshot.adminMetadata?.familyApplications;
+  if (familyApplications !== undefined && (!familyApplications || typeof familyApplications !== 'object' || Array.isArray(familyApplications))) {
+    pushIssue(errors, 'INVALID_FAMILY_APPLICATION_METADATA', 'adminMetadata.familyApplications', 'Family application metadata must be an object.');
+  } else {
+    for (const [familyId, application] of Object.entries(familyApplications || {})) {
+      const path = `adminMetadata.familyApplications.${familyId}`;
+      const family = families.find((item) => item.familyId === familyId);
+      if (!family) {
+        pushIssue(errors, 'UNKNOWN_FAMILY_APPLICATION', path, 'All-plan application metadata references an unknown family.');
+        continue;
+      }
+      if (application?.mode !== 'same_settings_all_plan_ids') {
+        pushIssue(errors, 'INVALID_FAMILY_APPLICATION_MODE', `${path}.mode`, 'The family application mode is invalid.');
+      }
+      const sourcePlanId = Number(application?.sourcePlanId);
+      if (!Number.isInteger(sourcePlanId) || !(family.variants || []).some((variant) => Number(variant.planId) === sourcePlanId)) {
+        pushIssue(errors, 'INVALID_FAMILY_APPLICATION_SOURCE', `${path}.sourcePlanId`, 'The all-plan source must be a billing plan ID in this family.');
+      }
+      if (Object.keys(policies[familyId]?.variantOverrides || {}).length) {
+        pushIssue(errors, 'ALL_PLAN_MODE_HAS_VARIANT_OVERRIDES', `policies.${familyId}.variantOverrides`, 'A family marked as same settings for all plan IDs cannot contain per-plan overrides.');
+      }
+    }
+  }
+
   const activeCapabilities = getCapabilities().filter((cap) => cap.planControlled && cap.status === 'active');
   for (const cap of activeCapabilities) {
     if (!cap.description || !cap.owner || !cap.lockedExperience || !cap.routes?.length || !cap.frontend?.location) {
