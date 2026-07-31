@@ -6,12 +6,14 @@ import evaluatorModule from '../../../src/services/planControl/engine/evaluator.
 import validationModule from '../../../src/services/planControl/engine/policyValidation.js';
 import capabilityModule from '../../../src/services/planControl/registries/capabilityRegistry.js';
 import routeClassificationModule from '../../../src/services/planControl/registries/routeClassification.js';
+import storageModule from '../../../src/services/planControl/storage/storage.js';
 
 const { resolvePlanIdentity } = identityModule;
 const { evaluateEntitlement } = evaluatorModule;
 const { checksumSnapshot, diffSnapshots, validateSnapshot } = validationModule;
 const { getCapabilities } = capabilityModule;
 const { hasSelectedValue } = routeClassificationModule;
+const { recoverUniformFamilyApplications, recoverPublishedFamilyApplications } = storageModule;
 
 function snapshot() {
   return {
@@ -270,7 +272,60 @@ describe('plan-control policy engine', () => {
     const adminBundle = fs.readFileSync(path.join(process.cwd(), 'src', 'admin', 'public', 'app.js'), 'utf8');
     expect(adminBundle).toContain("sourceStatus: 'recovered_uniform'");
     expect(adminBundle).toContain('No plan setup is required.');
+    expect(adminBundle).toContain('RECOVERED FROM REVISION · APPLIED TO ALL');
     expect(adminBundle).not.toContain('select the intended source ID, check this option');
+  });
+
+  it('durably backfills only uniform families without changing their plan rules', () => {
+    const policy = snapshot();
+    policy.policies['growth-2027'].variantOverrides = {};
+    const exactRulesBefore = JSON.stringify(policy.policies);
+
+    const recovered = recoverUniformFamilyApplications(policy);
+    expect(recovered.recoveredFamilyIds).toEqual(['growth-2027']);
+    expect(recovered.snapshot.adminMetadata.familyApplications['growth-2027']).toEqual({
+      mode: 'same_settings_all_plan_ids',
+      sourcePlanId: 101,
+      sourceStatus: 'recovered_uniform',
+    });
+    expect(JSON.stringify(recovered.snapshot.policies)).toBe(exactRulesBefore);
+
+    expect(recoverUniformFamilyApplications(recovered.snapshot).recoveredFamilyIds).toEqual([]);
+    policy.policies['growth-2027'].variantOverrides = {
+      102: { capabilities: { 'ads.search': { effect: 'deny' } } },
+    };
+    expect(recoverUniformFamilyApplications(policy).recoveredFamilyIds).toEqual([]);
+  });
+
+  it('recovers Revision 30 all-plan sources from its immutable publish diff', () => {
+    const policy = snapshot();
+    const recovered = recoverPublishedFamilyApplications({
+      revision: 30,
+      reason: 'all done new & legacy',
+      snapshot: policy,
+      diff: [{
+        path: 'policies.growth-2027.variantOverrides.102.capabilities.ads.search.effect',
+        before: 'allow',
+        after: 'deny',
+      }],
+    });
+
+    expect(recovered.diffRecoveredFamilyIds).toEqual(['growth-2027']);
+    expect(recovered.snapshot.adminMetadata.familyApplications['growth-2027']).toEqual({
+      mode: 'same_settings_all_plan_ids',
+      sourcePlanId: 102,
+      sourceStatus: 'recovered_from_publish_diff',
+    });
+    expect(recovered.snapshot.policies['growth-2027'].variantOverrides).toEqual({});
+    expect(recovered.snapshot.policies['growth-2027'].capabilities['ads.search'].effect).toBe('deny');
+    expect(validateSnapshot(recovered.snapshot).valid).toBe(true);
+
+    const unrelated = recoverPublishedFamilyApplications({
+      reason: 'single billing ID adjustment',
+      snapshot: policy,
+      diff: [{ path: 'policies.growth-2027.variantOverrides.102.capabilities.ads.search.effect' }],
+    });
+    expect(unrelated.recoveredFamilyIds).toEqual([]);
   });
 
   it('rejects per-plan overrides while same settings are locked for every plan ID', () => {

@@ -38,6 +38,159 @@ function normalizedDraft(draft) {
   return draft ? { ...draft, draftRevision: draftRevisionOf(draft) } : null;
 }
 
+function effectiveVariantPolicy(policy, planId) {
+  const override = policy?.variantOverrides?.[String(planId)] || {};
+  const capabilities = {};
+  const capabilityIds = new Set([
+    ...Object.keys(policy?.capabilities || {}),
+    ...Object.keys(override.capabilities || {}),
+  ]);
+  for (const capabilityId of capabilityIds) {
+    const baseRule = policy?.capabilities?.[capabilityId];
+    const overrideRule = override.capabilities?.[capabilityId];
+    capabilities[capabilityId] = overrideRule ? {
+      ...(baseRule || {}),
+      ...overrideRule,
+      networks: {
+        ...(baseRule?.networks || {}),
+        ...(overrideRule.networks || {}),
+      },
+      limits: {
+        ...(baseRule?.limits || {}),
+        ...(overrideRule.limits || {}),
+      },
+    } : baseRule;
+  }
+  return {
+    generalNetworks: Array.isArray(override.generalNetworks)
+      ? [...override.generalNetworks]
+      : [...(policy?.generalNetworks || [])],
+    capabilities,
+  };
+}
+
+function canonicalPolicyValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalPolicyValue).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  }
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalPolicyValue(value[key])]));
+}
+
+function uniformEffectiveFamilyPolicy(family, policy) {
+  const variants = family?.variants || [];
+  if (variants.length < 2 || !policy) return null;
+  const first = effectiveVariantPolicy(policy, variants[0].planId);
+  const fingerprint = JSON.stringify(canonicalPolicyValue(first));
+  return variants.every((variant) => (
+    JSON.stringify(canonicalPolicyValue(effectiveVariantPolicy(policy, variant.planId))) === fingerprint
+  )) ? first : null;
+}
+
+function recoverUniformFamilyApplications(input) {
+  const existingApplications = input?.adminMetadata?.familyApplications || {};
+  const recoveredApplications = {};
+  let recoveredPolicies = input?.policies;
+  for (const family of input?.planFamilies || []) {
+    if (existingApplications[family.familyId]) continue;
+    const variants = family.variants || [];
+    const policy = input?.policies?.[family.familyId];
+    const commonPolicy = uniformEffectiveFamilyPolicy(family, policy);
+    if (variants.length < 2 || !commonPolicy) continue;
+    const referencePlanId = Number(variants[0]?.planId);
+    if (!Number.isInteger(referencePlanId)) continue;
+    recoveredApplications[family.familyId] = {
+      mode: 'same_settings_all_plan_ids',
+      sourcePlanId: referencePlanId,
+      sourceStatus: 'recovered_uniform',
+    };
+    if (Object.keys(policy.variantOverrides || {}).length) {
+      if (recoveredPolicies === input.policies) recoveredPolicies = { ...(input.policies || {}) };
+      recoveredPolicies[family.familyId] = {
+        ...policy,
+        generalNetworks: commonPolicy.generalNetworks,
+        capabilities: commonPolicy.capabilities,
+        variantOverrides: {},
+      };
+    }
+  }
+  const recoveredFamilyIds = Object.keys(recoveredApplications);
+  if (!recoveredFamilyIds.length) return { snapshot: input, recoveredFamilyIds };
+  return {
+    snapshot: {
+      ...input,
+      policies: recoveredPolicies,
+      adminMetadata: {
+        ...(input.adminMetadata || {}),
+        familyApplications: {
+          ...existingApplications,
+          ...recoveredApplications,
+        },
+      },
+    },
+    recoveredFamilyIds,
+  };
+}
+
+function recoverPublishedFamilyApplications(activePolicy) {
+  const uniformRecovery = recoverUniformFamilyApplications(activePolicy?.snapshot);
+  const snapshot = uniformRecovery.snapshot;
+  const normalizedReason = String(activePolicy?.reason || '').trim().toLowerCase();
+  if (normalizedReason !== 'all done new & legacy') return uniformRecovery;
+
+  const applications = snapshot?.adminMetadata?.familyApplications || {};
+  const changedVariants = new Map();
+  for (const change of activePolicy?.diff || []) {
+    const match = /^policies\.([^.]+)\.variantOverrides\.([^.]+)(?:\.|$)/.exec(String(change?.path || ''));
+    if (!match || !/^\d+$/.test(match[2])) continue;
+    const candidates = changedVariants.get(match[1]) || new Set();
+    candidates.add(Number(match[2]));
+    changedVariants.set(match[1], candidates);
+  }
+
+  const recoveredApplications = {};
+  const recoveredPolicies = { ...(snapshot?.policies || {}) };
+  for (const family of snapshot?.planFamilies || []) {
+    if (applications[family.familyId]) continue;
+    const candidates = [...(changedVariants.get(family.familyId) || [])]
+      .filter((planId) => (family.variants || []).some((variant) => Number(variant.planId) === planId));
+    if (candidates.length !== 1) continue;
+    const sourcePlanId = candidates[0];
+    const policy = snapshot?.policies?.[family.familyId];
+    if (!policy) continue;
+    const commonPolicy = effectiveVariantPolicy(policy, sourcePlanId);
+    recoveredPolicies[family.familyId] = {
+      ...policy,
+      generalNetworks: commonPolicy.generalNetworks,
+      capabilities: commonPolicy.capabilities,
+      variantOverrides: {},
+    };
+    recoveredApplications[family.familyId] = {
+      mode: 'same_settings_all_plan_ids',
+      sourcePlanId,
+      sourceStatus: 'recovered_from_publish_diff',
+    };
+  }
+
+  const diffRecoveredFamilyIds = Object.keys(recoveredApplications);
+  if (!diffRecoveredFamilyIds.length) return uniformRecovery;
+  return {
+    snapshot: {
+      ...snapshot,
+      policies: recoveredPolicies,
+      adminMetadata: {
+        ...(snapshot.adminMetadata || {}),
+        familyApplications: {
+          ...applications,
+          ...recoveredApplications,
+        },
+      },
+    },
+    recoveredFamilyIds: [...uniformRecovery.recoveredFamilyIds, ...diffRecoveredFamilyIds],
+    diffRecoveredFamilyIds,
+  };
+}
+
 async function pruneOldPolicyVersions(versions, activeVersionId) {
   const expiredVersions = await versions
     .find({}, { projection: { _id: 1, versionId: 1 } })
@@ -95,7 +248,9 @@ async function getLatestPolicy() {
     let policy = null;
     if (pointer?.versionId) {
       const pointed = await versions.findOne({ versionId: pointer.versionId });
-      if (pointed && checksumSnapshot(pointed.snapshot) === pointed.checksum) policy = pointed;
+      if (pointed && checksumSnapshot(pointed.snapshot) === pointed.checksum) {
+        policy = await persistRecoveredFamilyApplications(pointed, pointer, versions);
+      }
       else log.error('Active plan policy failed checksum or is missing', { versionId: pointer.versionId });
     } else {
       // Compatibility for installations created before the active pointer existed.
@@ -114,6 +269,82 @@ async function getLatestPolicy() {
     }
     throw error;
   }
+}
+
+async function persistRecoveredFamilyApplications(activePolicy, pointer, versions) {
+  const recovered = recoverPublishedFamilyApplications(activePolicy);
+  if (!recovered.recoveredFamilyIds.length) return activePolicy;
+
+  const validation = validateSnapshot(recovered.snapshot);
+  if (!validation.valid) {
+    log.error('Unable to persist recovered all-plan metadata because validation failed', {
+      versionId: activePolicy.versionId,
+      errors: validation.errors,
+    });
+    return activePolicy;
+  }
+
+  const revision = Number(pointer.revision) + 1;
+  const versionId = `policy_${revision}_${crypto.randomUUID()}`;
+  const timestamp = now();
+  const recoveredVersion = {
+    versionId,
+    revision,
+    status: 'published',
+    sourceDraftId: null,
+    basedOnVersionId: activePolicy.versionId,
+    schemaVersion: activePolicy.schemaVersion || 1,
+    createdAt: timestamp,
+    createdBy: { adminId: 'system:family-application-backfill' },
+    reason: 'Automatic durable recovery of same-settings-for-all-plan-IDs state',
+    checksum: validation.checksum,
+    validation: {
+      warnings: validation.warnings,
+      summary: validation.summary,
+    },
+    diff: diffSnapshots(activePolicy.snapshot, recovered.snapshot),
+    snapshot: recovered.snapshot,
+  };
+
+  await versions.insertOne(recoveredVersion);
+  const { state } = await collections();
+  const activation = await state.updateOne(
+    {
+      _id: ACTIVE_POINTER_ID,
+      versionId: activePolicy.versionId,
+      revision: Number(pointer.revision),
+    },
+    {
+      $set: {
+        versionId,
+        revision,
+        checksum: recoveredVersion.checksum,
+        updatedAt: timestamp,
+        updatedBy: recoveredVersion.createdBy.adminId,
+      },
+    },
+  );
+  if (activation.modifiedCount !== 1) {
+    await versions.deleteOne({ versionId });
+    const currentPointer = await state.findOne({ _id: ACTIVE_POINTER_ID });
+    const winner = currentPointer?.versionId
+      ? await versions.findOne({ versionId: currentPointer.versionId })
+      : null;
+    return winner && checksumSnapshot(winner.snapshot) === winner.checksum ? winner : activePolicy;
+  }
+
+  try {
+    await pruneOldPolicyVersions(versions, versionId);
+  } catch (error) {
+    log.error('Unable to prune plan policy history after metadata backfill', { error: error.message });
+  }
+  policyEvents.emit('published', { versionId, revision });
+  log.info('Persisted recovered all-plan metadata in a new immutable policy revision', {
+    versionId,
+    revision,
+    families: recovered.recoveredFamilyIds,
+  });
+  return recoveredVersion;
 }
 
 async function getPolicyVersion(versionId) {
@@ -353,6 +584,8 @@ async function listDrafts() {
 
 module.exports = {
   policyEvents,
+  recoverUniformFamilyApplications,
+  recoverPublishedFamilyApplications,
   getActivePointer,
   getLatestPolicy,
   getPolicyVersion,

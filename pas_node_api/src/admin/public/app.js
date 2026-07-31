@@ -2430,6 +2430,9 @@ const pv2VariantSelection = {};
 const pv2ApplyAllSelection = {};
 
 function pv2Escape(value) { return escapeHtml(String(value ?? '')); }
+function pv2RecoveredApplication(application) {
+  return application?.recovered === true || String(application?.sourceStatus || '').startsWith('recovered_');
+}
 function pv2FamilyApplication(snapshot = pv2Snapshot(), familyId = pv2SelectedFamilyId) {
   const application = snapshot?.adminMetadata?.familyApplications?.[familyId];
   if (application?.mode === 'same_settings_all_plan_ids') return application;
@@ -2671,6 +2674,7 @@ function pvLoadPlanEditor() {
   const lockFamilyCopy = Boolean(recordedApplication);
   const recoveredUniformSettings = recordedApplication?.sourceStatus === 'recovered_uniform'
     || recordedApplication?.recovered === true;
+  const recoveredFromPublishDiff = recordedApplication?.sourceStatus === 'recovered_from_publish_diff';
   const salesSource = pvCurrentDraft
     ? `Stored in working draft ${pvCurrentDraft.draftId}.`
     : pvLivePolicy
@@ -2683,9 +2687,9 @@ function pvLoadPlanEditor() {
   document.getElementById('pv2-summary').innerHTML = `
     <div class="pv2-stat"><span class="pv2-kicker">Name customers see <span class="pv2-info" title="The friendly plan name shown in customer-facing screens.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.label)}</b></div><div class="pv2-explain">Display name only. Changing it does not change access.</div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Plan display order <span class="pv2-info" title="Previously called Tier Rank. A higher number places a plan higher in comparisons; it does not automatically grant features.">?</span></span><div style="margin-top:6px"><b>${pv2Escape(family.tierRank)}</b></div><div class="pv2-explain">Higher number = higher plan in UI ordering. Feature access is still controlled below.</div></div>
-    <div class="pv2-stat"><span class="pv2-kicker">Select billing plan ID <span class="pv2-info" title="Choose the exact billing ID to inspect or edit. Normal changes affect only this selected ID.">?</span></span><div style="margin-top:6px"><b>${variants.length} plan ID${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="${lockFamilyCopy ? recoveredUniformSettings ? 'Locked because the published family policy already applies identically to every billing plan ID' : `Locked to source plan #${pv2Escape(recordedSourcePlanId)} because the published settings apply to every plan ID` : 'Choose a billing plan ID'}" style="width:100%;margin-top:6px" ${lockFamilyCopy ? 'disabled' : ''} onchange="pv2VariantChanged()">${variants.map((v) => `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}</option>`).join('')}</select><div id="pv2-variant-note" class="pv2-source-note"></div></div>
+    <div class="pv2-stat"><span class="pv2-kicker">Select billing plan ID <span class="pv2-info" title="Choose the exact billing ID to inspect or edit. Normal changes affect only this selected ID.">?</span></span><div style="margin-top:6px"><b>${variants.length} plan ID${variants.length === 1 ? '' : 's'}</b></div><select id="pv2-variant" class="pv2-input" title="${lockFamilyCopy ? recoveredUniformSettings ? 'Locked because the published family policy already applies identically to every billing plan ID' : recoveredFromPublishDiff ? `Locked to recovered Revision source plan #${pv2Escape(recordedSourcePlanId)}` : `Locked to source plan #${pv2Escape(recordedSourcePlanId)} because the published settings apply to every plan ID` : 'Choose a billing plan ID'}" style="width:100%;margin-top:6px" ${lockFamilyCopy ? 'disabled' : ''} onchange="pv2VariantChanged()">${variants.map((v) => `<option value="${pv2Escape(v.planId)}" ${String(selectedVariant) === String(v.planId) ? 'selected' : ''}>${pv2Escape(v.billingCycle)} #${pv2Escape(v.planId)}</option>`).join('')}</select><div id="pv2-variant-note" class="pv2-source-note"></div></div>
     <div class="pv2-stat"><span class="pv2-kicker">Available for new purchases <span class="pv2-info" title="Open means billing may sell this family to new customers. Closed keeps existing customers but prevents new signups.">?</span></span><div style="margin-top:6px"><b style="color:${family.openForNewSignups ? '#22c55e' : '#f59e0b'}">${family.openForNewSignups ? 'Yes, open' : 'No, closed'}</b></div><div class="pv2-explain">${family.openForNewSignups ? 'New customers may buy this plan.' : 'Existing plan IDs remain valid, but new sales are closed.'}</div><div class="pv2-source-note"><b>How this is known:</b> ${pv2Escape(salesSource)}</div>${editable ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pvEditFamily()">Edit plan details</button>' : ''}</div>
-    <div class="pv2-stat" style="grid-column:1/-1"><label style="display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.4"><input id="pv2-apply-all-family" type="checkbox" ${showFamilyCopy ? 'checked' : ''} ${editable && !lockFamilyCopy ? '' : 'disabled'} onchange="pv2ApplyAllChanged(this.checked)"> <span><b>Same settings for all plan IDs</b>${lockFamilyCopy ? ` <span class="pv2-live-badge">${recoveredUniformSettings ? 'RECOVERED · APPLIED TO ALL' : 'APPLIED TO ALL'}</span>` : ''}<br><span id="pv2-apply-all-note" style="color:var(--text-muted)">${lockFamilyCopy ? recoveredUniformSettings ? `This published revision already has one identical family policy for all ${variants.length} plan IDs in ${pv2Escape(family.adminLabel)}. Its exact settings were recovered automatically; older history did not store the originally clicked source ID, so plan #${pv2Escape(recordedSourcePlanId)} is only a locked reference. No plan setup is required. Edit below and Save to preserve this state permanently.` : `Saved policy: plan #${pv2Escape(recordedSourcePlanId)} is the locked source and these same settings apply to all ${variants.length} plan IDs in ${pv2Escape(family.adminLabel)}. Edit the settings below and Save; this mode cannot be unchecked in this draft.` : showFamilyCopy ? `When you Save, plan #${pv2Escape(selectedVariant)} settings will apply to every plan ID in ${pv2Escape(family.adminLabel)}.` : `Off: changes apply only to plan #${pv2Escape(selectedVariant)}.`}</span></span></label></div>`;
+    <div class="pv2-stat" style="grid-column:1/-1"><label style="display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.4"><input id="pv2-apply-all-family" type="checkbox" ${showFamilyCopy ? 'checked' : ''} ${editable && !lockFamilyCopy ? '' : 'disabled'} onchange="pv2ApplyAllChanged(this.checked)"> <span><b>Same settings for all plan IDs</b>${lockFamilyCopy ? ` <span class="pv2-live-badge">${recoveredUniformSettings ? 'RECOVERED · APPLIED TO ALL' : recoveredFromPublishDiff ? 'RECOVERED FROM REVISION · APPLIED TO ALL' : 'APPLIED TO ALL'}</span>` : ''}<br><span id="pv2-apply-all-note" style="color:var(--text-muted)">${lockFamilyCopy ? recoveredUniformSettings ? `This published revision already has one identical family policy for all ${variants.length} plan IDs in ${pv2Escape(family.adminLabel)}. Its exact settings were recovered automatically; older history did not store the originally clicked source ID, so plan #${pv2Escape(recordedSourcePlanId)} is only a locked reference. No plan setup is required. Edit below and Save to preserve this state permanently.` : recoveredFromPublishDiff ? `Recovered from the immutable publish diff: plan #${pv2Escape(recordedSourcePlanId)} was the edited source in Revision 30. Its stored features, networks, and limits now apply to all ${variants.length} plan IDs and this mode is locked.` : `Saved policy: plan #${pv2Escape(recordedSourcePlanId)} is the locked source and these same settings apply to all ${variants.length} plan IDs in ${pv2Escape(family.adminLabel)}. Edit the settings below and Save; this mode cannot be unchecked in this draft.` : showFamilyCopy ? `When you Save, plan #${pv2Escape(selectedVariant)} settings will apply to every plan ID in ${pv2Escape(family.adminLabel)}.` : `Off: changes apply only to plan #${pv2Escape(selectedVariant)}.`}</span></span></label></div>`;
   pv2RenderNetworks();
   pvRenderCapabilities();
   pv2RenderVariantNote();
@@ -2721,7 +2725,7 @@ function pv2VariantChanged() {
   if (recordedApplication) {
     pv2VariantSelection[pv2SelectedFamilyId] = String(recordedApplication.sourcePlanId);
     pvLoadPlanEditor();
-    showToast?.(recordedApplication.sourceStatus === 'recovered_uniform' || recordedApplication.recovered
+    showToast?.(pv2RecoveredApplication(recordedApplication)
       ? 'All-plan mode is locked because every billing ID already uses the same published settings.'
       : `All-plan mode is locked to source plan #${recordedApplication.sourcePlanId}.`, 'success');
     return;
@@ -2745,7 +2749,7 @@ function pv2ApplyAllChanged(checked) {
   if (recordedApplication) {
     const checkbox = document.getElementById('pv2-apply-all-family');
     if (checkbox) checkbox.checked = true;
-    showToast?.(recordedApplication.sourceStatus === 'recovered_uniform' || recordedApplication.recovered
+    showToast?.(pv2RecoveredApplication(recordedApplication)
       ? 'These published settings already apply to every plan ID; this mode cannot be unchecked in this draft.'
       : `These published settings already apply to every plan ID from source #${recordedApplication.sourcePlanId}; this mode cannot be unchecked in this draft.`, 'error');
     return;
@@ -2819,8 +2823,8 @@ function pv2CopySelectedPlanToFamily() {
       pvCurrentDraft.snapshot.adminMetadata.familyApplications[pv2SelectedFamilyId] = {
         mode: 'same_settings_all_plan_ids',
         sourcePlanId: Number(sourcePlanId),
-        sourceStatus: existingApplication?.sourceStatus === 'recovered_uniform' || existingApplication?.recovered
-          ? 'recovered_uniform'
+        sourceStatus: pv2RecoveredApplication(existingApplication)
+          ? existingApplication.sourceStatus || 'recovered_uniform'
           : 'selected_by_admin',
       };
       pv2ApplyAllSelection[pv2SelectedFamilyId] = true;
@@ -2835,8 +2839,10 @@ function pv2RenderVariantNote() {
   const variantKey = pv2SelectedVariantKey();
   const application = pv2FamilyApplication();
   note.innerHTML = application
-    ? application.sourceStatus === 'recovered_uniform' || application.recovered
-      ? `<b>Common family settings (reference plan #${pv2Escape(variantKey)}).</b> The exact published settings shown below apply to every plan ID. The original source click was not stored by the older revision.`
+    ? pv2RecoveredApplication(application)
+      ? application.sourceStatus === 'recovered_from_publish_diff'
+        ? `<b>Recovered source plan #${pv2Escape(variantKey)}.</b> Revision 30's immutable diff identified this plan as the edited source; the settings shown below apply to every plan ID.`
+        : `<b>Common family settings (reference plan #${pv2Escape(variantKey)}).</b> The exact published settings shown below apply to every plan ID. The original source click was not stored by the older revision.`
       : `<b>Source plan #${pv2Escape(variantKey)}.</b> The settings shown below are the common settings applied to every plan ID in this family.`
     : `<b>Editing plan #${pv2Escape(variantKey)}.</b> Changes below affect only this plan ID.`;
 }

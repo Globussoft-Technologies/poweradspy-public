@@ -198,7 +198,7 @@ function validateSnapshot(input) {
         pushIssue(errors, 'INVALID_FAMILY_APPLICATION_MODE', `${path}.mode`, 'The family application mode is invalid.');
       }
       if (application?.sourceStatus !== undefined
-        && !['selected_by_admin', 'recovered_uniform'].includes(application.sourceStatus)) {
+        && !['selected_by_admin', 'recovered_uniform', 'recovered_from_publish_diff'].includes(application.sourceStatus)) {
         pushIssue(errors, 'INVALID_FAMILY_APPLICATION_SOURCE_STATUS', `${path}.sourceStatus`, 'The all-plan source status is invalid.');
       }
       const sourcePlanId = Number(application?.sourcePlanId);
