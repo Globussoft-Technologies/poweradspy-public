@@ -1,9 +1,11 @@
 'use strict';
 
+const { getDisplayableMediaFilter } = require('../../common/helpers/displayableMediaFilters');
 
 /**
  * Get total ad count for the Facebook platform from Elasticsearch.
- * Uses the ES count API with the same image filter condition as search.
+ * Uses the shared displayable-media gate so the count stays aligned with the
+ * same NAS/placeholder rules the live search path uses.
  *
  * @param {Object} req    - Express request
  * @param {Object} db     - { sql, elastic } injected database connections
@@ -16,6 +18,7 @@ async function getAdsCount(req, db, logger) {
   }
 
   try {
+    const displayableMediaFilter = getDisplayableMediaFilter('facebook') || [];
 
     const result = await db.elastic.search({
       index: process.env.FB_ES_INDEX,
@@ -26,60 +29,7 @@ async function getAdsCount(req, db, logger) {
           bool: {
             filter: [
               { terms: { 'facebook_ad.status': [1, 5, 6] } },
-              {
-                bool: {
-                  should: [
-                    // IMAGE ads must have a real NAS image URL
-                    {
-                      bool: {
-                        filter: [
-                          { term: { 'facebook_ad.type.keyword': 'IMAGE' } },
-                          { exists: { field: 'new_nas_image_url' } }
-                        ],
-                        must_not: [
-                          { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } }
-                        ]
-                      }
-                    },
-                    // VIDEO ads must have a real thumbnail
-                    {
-                      bool: {
-                        filter: [
-                          { term: { 'facebook_ad.type.keyword': 'VIDEO' } },
-                          { exists: { field: 'Thumbnail' } }
-                        ],
-                        must_not: [
-                          { wildcard: { 'Thumbnail.keyword': { value: '*DefaultImage*' } } }
-                        ]
-                      }
-                    },
-                    // All other types need new_nas_image_url or othermedia, none may be DefaultImage
-                    {
-                      bool: {
-                        must_not: [
-                          { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } }
-                        ],
-                        filter: [
-                          {
-                            bool: {
-                              should: [
-                                { exists: { field: 'new_nas_image_url' } },
-                                { exists: { field: 'othermedia' } }
-                              ],
-                              minimum_should_match: 1
-                            }
-                          }
-                        ],
-                        must_not: [
-                          { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
-                          { wildcard: { 'othermedia.keyword': { value: '*DefaultImage*' } } }
-                        ]
-                      }
-                    }
-                  ],
-                  minimum_should_match: 1
-                }
-              }
+              ...displayableMediaFilter,
             ]
           }
         }

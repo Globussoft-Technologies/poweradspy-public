@@ -86,14 +86,29 @@ const doc = {
       parent_filter_id: "ai_category_id",
       child_filter_id: "ai_subcategory_id",
       options: [
-        "1009",
-        "1010",
-        "1021",
-        "1025",
-        "1026",
-        "1027",
-        "1036",
-      ].map((value) => ({ value })),
+        {
+          value: "1009",
+          children: [
+            { value: "10090001" },
+            { value: "10090002" },
+          ],
+        },
+        {
+          value: "1010",
+          children: [
+            { value: "10100001" },
+            { value: "10100002" },
+          ],
+        },
+        {
+          value: "1021",
+          children: [{ value: "10210001" }],
+        },
+        { value: "1025", children: [{ value: "10250001" }] },
+        { value: "1026", children: [{ value: "10260001" }] },
+        { value: "1027", children: [{ value: "10270001" }] },
+        { value: "1036", children: [{ value: "10360001" }] },
+      ],
     },
   ],
 };
@@ -114,6 +129,7 @@ describe("AiQuickFilters", () => {
     expect(onApply).toHaveBeenCalledWith({
       country_filter: ["US"],
       ai_category_id: ["1009"],
+      ai_subcategory_id: ["10090001", "10090002"],
     });
   });
 
@@ -159,6 +175,7 @@ describe("AiQuickFilters", () => {
     const replacementValues = onApply.mock.calls[1][0];
     expect(replacementValues).toEqual({
       ai_category_id: ["1009"],
+      ai_subcategory_id: ["10090001", "10090002"],
     });
 
     rerender(

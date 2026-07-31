@@ -64,6 +64,27 @@ const NestedMultiselectFilter = ({
     );
   }, [options]);
 
+  // When a parent category is already selected from another surface (for
+  // example a quick filter), auto-expand that branch so the selected leaves
+  // are immediately visible instead of hiding behind a collapsed parent.
+  const selectedExpansionKeys = useMemo(() => {
+    const selectedSet = new Set(Array.isArray(selected) ? selected : []);
+    const expanded = new Set();
+
+    const walk = (node) => {
+      const nodeValue = node.value ?? node.label;
+      const childOptions = node.children || node.sub_options || [];
+      const childHasSelection = childOptions.some(walk);
+      if (childHasSelection || selectedSet.has(nodeValue)) {
+        expanded.add(node._id ?? nodeValue);
+      }
+      return childHasSelection || selectedSet.has(nodeValue);
+    };
+
+    sortedOptions.forEach(walk);
+    return expanded;
+  }, [selected, sortedOptions]);
+
   // Filter options by search term — show parent if it or any child matches
   const filteredOptions = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
@@ -100,8 +121,9 @@ const NestedMultiselectFilter = ({
   // Auto-expand parents that have matching children during search
   const effectiveExpanded = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return expandedParents;
+    if (!q) return new Set([...expandedParents, ...selectedExpansionKeys]);
     const autoExpanded = new Set(expandedParents);
+    selectedExpansionKeys.forEach((key) => autoExpanded.add(key));
     filteredOptions.forEach((opt) => {
       const childOptions = opt.children || opt.sub_options || [];
       const hasMatchingChild = childOptions.some((c) =>

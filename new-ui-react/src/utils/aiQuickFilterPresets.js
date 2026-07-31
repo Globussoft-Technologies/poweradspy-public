@@ -94,6 +94,102 @@ const collectOptionValues = (options = [], result = new Set()) => {
   return result;
 };
 
+const toArray = (value) =>
+  isEmptyValue(value) ? [] : (Array.isArray(value) ? value : [value]);
+
+const findOptionByValue = (options = [], targetValue) => {
+  for (const option of options) {
+    const optionValue = String(option?.value ?? option?.label ?? "");
+    if (optionValue === String(targetValue)) return option;
+    const nested = findOptionByValue(option?.children || option?.sub_options || [], targetValue);
+    if (nested) return nested;
+  }
+  return null;
+};
+
+const collectLeafValues = (option, result = []) => {
+  const children = option?.children || option?.sub_options || [];
+  if (children.length === 0) {
+    const value = option?.value ?? option?.label;
+    if (!isEmptyValue(value)) result.push(value);
+    return result;
+  }
+  for (const child of children) collectLeafValues(child, result);
+  return result;
+};
+
+const getNestedFilters = (doc) =>
+  (doc?.filters || []).filter(
+    (filter) =>
+      (filter?.parent_filter_id || filter?._id) &&
+      filter?.child_filter_id,
+  );
+
+const expandNestedSelections = (doc, values) => {
+  const next = { ...(values || {}) };
+  for (const filter of getNestedFilters(doc)) {
+    const parentKey = filter.parent_filter_id || filter._id;
+    const childKey = filter.child_filter_id;
+    const parentValues = toArray(next[parentKey]);
+    if (parentValues.length === 0) continue;
+
+    const expandedChildren = new Set(toArray(next[childKey]).map((value) => String(value)));
+    for (const parentValue of parentValues) {
+      const option = findOptionByValue(filter.options || [], parentValue);
+      if (!option) continue;
+      collectLeafValues(option).forEach((leafValue) => {
+        expandedChildren.add(String(leafValue));
+      });
+    }
+
+    next[childKey] = [...expandedChildren];
+  }
+  return next;
+};
+
+/**
+ * Normalize the current AI filter state so nested category parents always carry
+ * the matching child leaves in the same draft snapshot.
+ *
+ * This keeps quick-filter presets and the popup's draft view aligned: if a
+ * category parent is active, the popup sees the branch as fully selected even
+ * when the state was restored from storage or a different surface.
+ */
+export const normalizeAiFilterValues = (values, doc) =>
+  expandNestedSelections(doc, values);
+
+const getComparableAiState = (filterValues, doc) => {
+  const state = {};
+  const nestedFilters = getNestedFilters(doc);
+  const nestedParentKeys = new Set(
+    nestedFilters.map((filter) => filter.parent_filter_id || filter._id),
+  );
+  const nestedChildKeys = new Set(
+    nestedFilters.map((filter) => filter.child_filter_id),
+  );
+
+  for (const filter of Array.isArray(doc?.filters) ? doc.filters : []) {
+    if (nestedParentKeys.has(filter._id) || nestedChildKeys.has(filter._id)) {
+      const parentKey = filter.parent_filter_id || filter._id;
+      const childKey = filter.child_filter_id;
+      const parentValues = toArray(filterValues?.[parentKey]);
+      if (parentValues.length > 0) {
+        state[parentKey] = parentValues;
+        continue;
+      }
+      const childValues = toArray(filterValues?.[childKey]);
+      if (childValues.length > 0) state[childKey] = childValues;
+      continue;
+    }
+
+    if (!isEmptyValue(filterValues?.[filter._id])) {
+      state[filter._id] = filterValues[filter._id];
+    }
+  }
+
+  return state;
+};
+
 export const getAiFilterKeys = (doc) => {
   const keys = new Set();
   for (const filter of Array.isArray(doc?.filters) ? doc.filters : []) {
@@ -151,15 +247,16 @@ export const findActiveAiQuickFilterPreset = (
   doc,
   presets = resolveAiQuickFilterPresets(doc),
 ) => {
-  const activeAiKeys = getAiFilterKeys(doc).filter(
-    (key) => !isEmptyValue(filterValues?.[key]),
+  const effectiveValues = getComparableAiState(filterValues, doc);
+  const activeAiKeys = Object.keys(effectiveValues).filter(
+    (key) => !isEmptyValue(effectiveValues?.[key]),
   );
   return presets.find((preset) => {
     const presetKeys = Object.keys(preset.filters);
     return (
       presetKeys.length === activeAiKeys.length &&
       presetKeys.every((key) =>
-        valuesMatch(filterValues?.[key], preset.filters[key]),
+        valuesMatch(effectiveValues?.[key], preset.filters[key]),
       )
     );
   }) || null;
@@ -174,7 +271,7 @@ export const replaceAiFilters = (filterValues, doc, replacement = {}) => {
   for (const [key, value] of Object.entries(replacement)) {
     if (!isEmptyValue(value)) next[key] = value;
   }
-  return next;
+  return expandNestedSelections(doc, next);
 };
 
 export const discardAiFilterDraft = () => {

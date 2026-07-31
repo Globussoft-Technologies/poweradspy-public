@@ -185,18 +185,14 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
         params: { aiMeta: normalized },
       },
     },
-    refresh: false,
+    refresh: 'wait_for',
   }));
   const updateMs = performance.now() - updateStartedAt;
 
-  const refreshStartedAt = performance.now();
-  await esForPlat.indices.refresh({ index: esIndex });
-  const refreshMs = performance.now() - refreshStartedAt;
-
   return {
     update_ms: updateMs,
-    refresh_ms: refreshMs,
-    total_ms: updateMs + refreshMs,
+    refresh_ms: 0,
+    total_ms: updateMs,
   };
 }
 

@@ -87,14 +87,31 @@ const makeDoc = () => ({
       parent_filter_id: "ai_category_id",
       child_filter_id: "ai_subcategory_id",
       options: [
-        "1009",
-        "1010",
-        "1021",
-        "1025",
-        "1026",
-        "1027",
-        "1036",
-      ].map((value) => ({ value })),
+        {
+          value: "1009",
+          children: [
+            { value: "10090001" },
+            { value: "10090002" },
+          ],
+        },
+        {
+          value: "1010",
+          children: [
+            { value: "10100001" },
+            { value: "10100002" },
+          ],
+        },
+        {
+          value: "1021",
+          children: [
+            { value: "10210001" },
+          ],
+        },
+        { value: "1025", children: [{ value: "10250001" }] },
+        { value: "1026", children: [{ value: "10260001" }] },
+        { value: "1027", children: [{ value: "10270001" }] },
+        { value: "1036", children: [{ value: "10360001" }] },
+      ],
     },
   ],
 });
@@ -150,6 +167,19 @@ describe("AI quick filter presets", () => {
     expect(next.ai_hook).toEqual(["scarcity", "urgency", "discount"]);
   });
 
+  it("expands nested category presets to the matching child leaves", () => {
+    const doc = makeDoc();
+    const next = replaceAiFilters(
+      { country_filter: ["US"] },
+      doc,
+      { ai_category_id: ["1009"] },
+    );
+
+    expect(next.country_filter).toEqual(["US"]);
+    expect(next.ai_category_id).toEqual(["1009"]);
+    expect(next.ai_subcategory_id).toEqual(["10090001", "10090002"]);
+  });
+
   it("recognizes a preset regardless of selected-value ordering", () => {
     const doc = makeDoc();
     const preset = resolveAiQuickFilterPresets(doc).find(
@@ -160,6 +190,20 @@ describe("AI quick filter presets", () => {
     };
 
     expect(findActiveAiQuickFilterPreset(values, doc)?.id).toBe("black_friday");
+  });
+
+  it("recognizes a category preset even when its child leaves are present", () => {
+    const doc = makeDoc();
+
+    expect(
+      findActiveAiQuickFilterPreset(
+        {
+          ai_category_id: ["1009"],
+          ai_subcategory_id: ["10090001", "10090002"],
+        },
+        doc,
+      )?.id,
+    ).toBe("b2b_saas");
   });
 
   it("replaces the previous strategy instead of combining filter groups", () => {
@@ -176,6 +220,7 @@ describe("AI quick filter presets", () => {
     expect(next).toEqual({
       country_filter: ["US"],
       ai_category_id: ["1009"],
+      ai_subcategory_id: ["10090001", "10090002"],
     });
   });
 

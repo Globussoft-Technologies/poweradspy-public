@@ -5,6 +5,7 @@ import { useTheme } from "../../hooks/useTheme";
 import {
   AI_FILTER_DRAFT_KEY,
   getAiFilterKeys,
+  normalizeAiFilterValues,
 } from "../../utils/aiQuickFilterPresets";
 import {
   AI_COLOR_GROUPS,
@@ -551,7 +552,10 @@ const AiSignalsModal = ({
   const [activeFilterId, setActiveFilterId] = useState(readActiveGroup);
   const [searchQuery, setSearchQuery] = useState("");
   const [draftValues, setDraftValues] = useState(() =>
-    buildDraftFromValues(readDraft(filterValues || {}), filterKeys),
+    buildDraftFromValues(
+      normalizeAiFilterValues(readDraft(filterValues || {}), doc),
+      filterKeys,
+    ),
   );
   const wasOpenRef = useRef(false);
   const activeFilter =
@@ -748,8 +752,13 @@ const AiSignalsModal = ({
     if (isOpen) return;
     // Keep the dormant modal aligned with chip removals and other external
     // filter changes; session storage is reserved for an actively open draft.
-    setDraftValues(buildDraftFromValues(filterValues || {}, filterKeys));
-  }, [filterKeys, filterValues, isOpen]);
+    setDraftValues(
+      buildDraftFromValues(
+        normalizeAiFilterValues(filterValues || {}, doc),
+        filterKeys,
+      ),
+    );
+  }, [doc, filterKeys, filterValues, isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -771,10 +780,15 @@ const AiSignalsModal = ({
     } catch {}
 
     if (!wasOpenRef.current && !hasStoredDraft) {
-      setDraftValues(buildDraftFromValues(filterValues || {}, filterKeys));
+      setDraftValues(
+        buildDraftFromValues(
+          normalizeAiFilterValues(filterValues || {}, doc),
+          filterKeys,
+        ),
+      );
     }
     wasOpenRef.current = true;
-  }, [isOpen, filterValues, filterKeys]);
+  }, [doc, filterKeys, filterValues, isOpen]);
 
   useEffect(() => {
     const activeGroupExists = visibleFilters.some(
