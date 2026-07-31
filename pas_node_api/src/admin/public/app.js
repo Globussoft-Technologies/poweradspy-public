@@ -3123,6 +3123,9 @@ function pvUpdateCap(capId, field, value) {
     pv2MakeChildrenInheritParentNetworks(capId);
   }
   pv2SetDirty(); pv2RenderVariantNote(); pvRenderCapabilities();
+  if (field === 'networkMode' && value === 'custom') {
+    requestAnimationFrame(() => pv2EditCapabilityNetworks(capId));
+  }
 }
 function pv2SetLimit(capId, name, value) {
   if (!pvCurrentDraft || currentRole !== 'editor') return;

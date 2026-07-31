@@ -316,6 +316,7 @@ describe('plan-control policy engine', () => {
     expect(adminBundle).toContain('RECOVERED FROM REVISION · APPLIED TO ALL');
     expect(adminBundle).toContain('Same as ${pv2Escape(parent.label)}');
     expect(adminBundle).toContain('pv2SetAllNetworkChoices(true)');
+    expect(adminBundle).toContain('requestAnimationFrame(() => pv2EditCapabilityNetworks(capId))');
     expect(adminBundle).not.toContain('select the intended source ID, check this option');
   });
 
