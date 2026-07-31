@@ -43,7 +43,18 @@ function mkRes() {
 }
 
 function mkService({ esSearch, esIndex, esUpdate, sql, log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } = {}) {
-  return { db: { elastic: { search: esSearch, index: esIndex, update: esUpdate }, sql }, log };
+  return {
+    db: {
+      elastic: {
+        search: esSearch,
+        index: esIndex,
+        update: esUpdate,
+        indices: { refresh: vi.fn(async () => {}) },
+      },
+      sql,
+    },
+    log,
+  };
 }
 
 beforeEach(() => {
@@ -991,7 +1002,17 @@ describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", (
 describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)", () => {
   function esWithAd(adHits, updateFn) {
     const search = vi.fn(async () => ({ hits: { hits: adHits } }));
-    const svc = { db: { elastic: { search, update: updateFn || vi.fn(async () => {}), index: vi.fn() } }, log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
+    const svc = {
+      db: {
+        elastic: {
+          search,
+          update: updateFn || vi.fn(async () => {}),
+          index: vi.fn(),
+          indices: { refresh: vi.fn(async () => {}) },
+        },
+      },
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
     serviceRegistry.getService.mockReturnValue(svc);
     return svc;
   }
@@ -1047,6 +1068,8 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.body.stored_fields).toEqual(expect.arrayContaining(["ad_type", "offering_type"]));
     expect(res.headers["x-request-id"]).toBe("req-123");
     expect(res.headers["server-timing"]).toContain("lookup;dur=");
+    expect(res.headers["server-timing"]).toContain("es_update;dur=");
+    expect(res.headers["server-timing"]).toContain("es_refresh;dur=");
     expect(res.headers["server-timing"]).toContain("es_write;dur=");
     expect(res.headers["server-timing"]).toContain("sql;dur=");
     // Development keeps the original `ai` field because its mapping is already correct.
@@ -1077,7 +1100,17 @@ describe("addCategoryController > newCatInsertion + ai_meta (Option A)", () => {
       if (params.index === "category") return { hits: { hits: existHits } };
       return { hits: { hits: adHits } };
     });
-    const svc = { db: { elastic: { search, index: vi.fn(async () => {}), update: updateFn || vi.fn(async () => {}) } }, log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
+    const svc = {
+      db: {
+        elastic: {
+          search,
+          index: vi.fn(async () => {}),
+          update: updateFn || vi.fn(async () => {}),
+          indices: { refresh: vi.fn(async () => {}) },
+        },
+      },
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
     serviceRegistry.getService.mockReturnValue(svc);
     return svc;
   }
@@ -1149,7 +1182,12 @@ describe("addCategoryController > SQL dual-write wiring", () => {
     });
     const svc = {
       db: {
-        elastic: { search, index: vi.fn(async () => {}), update: vi.fn(async () => {}) },
+        elastic: {
+          search,
+          index: vi.fn(async () => {}),
+          update: vi.fn(async () => {}),
+          indices: { refresh: vi.fn(async () => {}) },
+        },
         sql: { getConnection: vi.fn(async () => sqlConn) },
       },
       log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1228,7 +1266,9 @@ describe("addCategoryController > SQL dual-write wiring", () => {
       db: {
         elastic: {
           search: vi.fn(async (p) => (p.index === "category" ? { hits: { hits: [] } } : { hits: { hits: [{ _id: "ad-1", _source: {} }] } })),
-          index: vi.fn(async () => {}), update: vi.fn(async () => {}),
+          index: vi.fn(async () => {}),
+          update: vi.fn(async () => {}),
+          indices: { refresh: vi.fn(async () => {}) },
         },
         sql: { getConnection: vi.fn(async () => { throw new Error("pool-empty"); }) },
       },

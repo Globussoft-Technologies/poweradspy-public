@@ -74,6 +74,8 @@ function setAiMetaTelemetryHeaders(res, req, timings) {
   const serverTiming = formatServerTiming({
     validation: timings.validation_ms,
     lookup: timings.lookup_ms,
+    es_update: timings.es_update_ms,
+    es_refresh: timings.es_refresh_ms,
     es_write: timings.es_write_ms,
     category_sync: timings.category_sync_ms,
     sql: timings.sql_ms,
@@ -102,6 +104,8 @@ function finalizeAiMetaResponse(res, req, log, statusCode, body, timings, extra 
     http_status: statusCode,
     validation_ms: Math.round(timings.validation_ms || 0),
     ad_lookup_ms: Math.round(timings.lookup_ms || 0),
+    es_update_ms: Math.round(timings.es_update_ms || 0),
+    es_refresh_ms: Math.round(timings.es_refresh_ms || 0),
     es_write_ms: Math.round(timings.es_write_ms || 0),
     category_sync_ms: Math.round(timings.category_sync_ms || 0),
     category_taxonomy_ms: Math.round(timings.category_taxonomy_ms || 0),
@@ -170,6 +174,7 @@ async function findAdDoc(esForPlat, esIndex, idField, adId) {
  */
 async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
   const aiMetaField = getAiMetaEsField(platform);
+  const updateStartedAt = performance.now();
   await esForPlat.update(withEsType(esForPlat, {
     index: esIndex,
     id:    docId,
@@ -180,8 +185,19 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
         params: { aiMeta: normalized },
       },
     },
-    refresh: 'wait_for',
+    refresh: false,
   }));
+  const updateMs = performance.now() - updateStartedAt;
+
+  const refreshStartedAt = performance.now();
+  await esForPlat.indices.refresh({ index: esIndex });
+  const refreshMs = performance.now() - refreshStartedAt;
+
+  return {
+    update_ms: updateMs,
+    refresh_ms: refreshMs,
+    total_ms: updateMs + refreshMs,
+  };
 }
 
 /**
@@ -1255,9 +1271,10 @@ async function insertAiMeta(req, res) {
       }, telemetry, { network: platform, adId });
     }
 
-    const esWriteStartedAt = performance.now();
-    await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
-    telemetry.es_write_ms = performance.now() - esWriteStartedAt;
+    const esTimings = await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
+    telemetry.es_update_ms = esTimings.update_ms;
+    telemetry.es_refresh_ms = esTimings.refresh_ms;
+    telemetry.es_write_ms = esTimings.total_ms;
     service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
 
     const categorySyncStartedAt = performance.now();
