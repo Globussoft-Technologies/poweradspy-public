@@ -2249,30 +2249,43 @@ const App = () => {
       {toast.show && (
         <div 
           className={`fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 ${
-            toast.position === 'bottom'
+            toast.source === 'search'
+              ? 'lg:left-[65%] top-[90px] slide-in-from-top-4'
+              : toast.position === 'bottom'
               ? 'bottom-16 slide-in-from-bottom-4'
               : 'top-[140px] slide-in-from-top-4'
           }`}
           style={{ 
-            backgroundColor: toast.type === 'info'
+            backgroundColor: toast.source === 'search'
+              ? 'rgba(238, 242, 250, 0.96)'
+              : toast.type === 'info'
               ? 'rgba(59, 130, 246, 0.15)'
               : toast.type === 'success'
                 ? 'rgba(34, 197, 94, 0.15)'
                 : 'rgba(239, 68, 68, 0.15)',
-            borderColor: toast.type === 'info'
+            borderColor: toast.source === 'search'
+              ? 'rgba(51, 82, 150, 0.28)'
+              : toast.type === 'info'
               ? 'rgba(59, 130, 246, 0.35)'
               : toast.type === 'success'
                 ? 'rgba(34, 197, 94, 0.3)'
                 : 'rgba(239, 68, 68, 0.3)',
-            color: toast.type === 'info'
+            color: toast.source === 'search'
+              ? '#335296'
+              : toast.type === 'info'
               ? '#60a5fa'
               : toast.type === 'success'
                 ? '#4ade80'
-                : '#f87171'
+                : '#f87171',
+            boxShadow: toast.source === 'search'
+              ? '0 4px 12px rgba(51, 82, 150, 0.14)'
+              : undefined
           }}
         >
           <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white ${
-            toast.type === 'info'
+            toast.source === 'search'
+              ? 'bg-[#335296]'
+              : toast.type === 'info'
               ? 'bg-blue-500'
               : toast.type === 'success'
                 ? 'bg-green-500'
