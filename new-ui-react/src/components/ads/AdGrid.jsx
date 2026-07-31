@@ -89,6 +89,7 @@ const AdGrid = ({
   isFilterRestricted,
   onDateRestricted,
   onSortRestricted,
+  onAdTypeRestricted,
   onAiFilterRestricted,
   PRIMARY_SORT_LABELS,
   guest,
@@ -944,6 +945,7 @@ const AdGrid = ({
             isFilterRestricted={isFilterRestricted}
             onDateRestricted={onDateRestricted}
             onSortRestricted={onSortRestricted}
+            onAdTypeRestricted={onAdTypeRestricted}
             guest={guest}
             DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}
           />

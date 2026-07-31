@@ -6,6 +6,7 @@ import { findCategoryOptions } from "./utils/categoryTaxonomy";
 import { findCountryOptions, labelsToCountryCodes } from "./utils/countryFilter";
 import {
   isAdAnalyticsAllowed,
+  isKeywordAnalyticsAllowed,
   isPlanNetworkAllowed,
   normalizePlanNetwork,
 } from "./utils/planEntitlement";
@@ -556,6 +557,7 @@ const App = () => {
   const hasCompetitiveIntelligenceAccess = entitlements
     ? canUseCapability('intelligence.competitive')
     : hasAdAnalyticsAccess;
+  const hasKeywordAnalyticsAccess = isKeywordAnalyticsAllowed(entitlements, planAccess);
   const canAccessIntel = () => {
     if (guest?.isRestricted) {
       dispatch(openModal('isPricingModalOpen'));
@@ -570,7 +572,11 @@ const App = () => {
   };
   const openKeywordExplorer = (keyword) => {
     if (!(GOOGLE_INTEL_ON && keywordExplorerAllowed)) return;
-    if (!keyword || !canAccessIntel()) return;
+    if (!keyword) return;
+    if (guest?.isRestricted || !hasKeywordAnalyticsAccess) {
+      dispatch(openModal('isPricingModalOpen'));
+      return;
+    }
     setKeywordExplorer(String(keyword));
   };
   // A keyword clicked inside Advertiser Profile must close the parent modal
@@ -2133,6 +2139,7 @@ const App = () => {
             isFilterRestricted={isFilterRestricted}
             onDateRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onSortRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+            onAdTypeRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onAiFilterRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onGuestLimit={() => dispatch(openModal('isPricingModalOpen'))}
             PRIMARY_SORT_LABELS={PRIMARY_SORT_LABELS}

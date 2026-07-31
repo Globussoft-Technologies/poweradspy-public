@@ -69,6 +69,7 @@ const AdFilterBar = ({
   isFilterRestricted,
   onDateRestricted,
   onSortRestricted,
+  onAdTypeRestricted,
   className = "",
   showOriginalOnMobile = true,
   showPlatformsOnMobile = true,
@@ -83,6 +84,14 @@ const AdFilterBar = ({
   // Ad type filter dropdown state (owned here, not lifted to AdGrid)
   const [showAdTypeFilter, setShowAdTypeFilter] = useState(false);
   const adTypeFilterRef = useRef(null);
+
+  // Entitlements can refresh after the filter was selected (login, plan change,
+  // or policy publish). Never retain a now-denied value in search state.
+  useEffect(() => {
+    if (!isFilterRestricted?.("ad_type") || !(selAdTypes || []).length) return;
+    setSelAdTypes([]);
+    setShowAdTypeFilter(false);
+  }, [isFilterRestricted, selAdTypes, setSelAdTypes]);
 
   useEffect(() => {
     if (!showAdTypeFilter) return;
@@ -187,6 +196,12 @@ const AdFilterBar = ({
 
   const toggleAdType = (type) => {
     if (guest?.showGuestWarning("Please login to filter by ad type")) return;
+    if (isFilterRestricted?.("ad_type")) {
+      if ((selAdTypes || []).length) setSelAdTypes([]);
+      setShowAdTypeFilter(false);
+      onAdTypeRestricted?.();
+      return;
+    }
     const current = selAdTypes || [];
     const next = current.includes(type)
       ? current.filter((t) => t !== type)
@@ -276,6 +291,13 @@ const AdFilterBar = ({
             onMouseEnter={handleFilterMouseEnter}
             onMouseLeave={() => setShowFilterTip(false)}
             onClick={() => {
+              if (isFilterRestricted?.("ad_type")) {
+                if ((selAdTypes || []).length) setSelAdTypes([]);
+                setShowAdTypeFilter(false);
+                setShowFilterTip(false);
+                onAdTypeRestricted?.();
+                return;
+              }
               setShowAdTypeFilter((p) => !p);
               setShowFilterTip(false);
             }}
@@ -337,6 +359,12 @@ const AdFilterBar = ({
                 <button
                   onClick={() => {
                     if (guest?.showGuestWarning("Please login to change filters")) return;
+                    if (isFilterRestricted?.("ad_type")) {
+                      if ((selAdTypes || []).length) setSelAdTypes([]);
+                      setShowAdTypeFilter(false);
+                      onAdTypeRestricted?.();
+                      return;
+                    }
                     setSelAdTypes([]);
                     setShowAdTypeFilter(false);
                   }}

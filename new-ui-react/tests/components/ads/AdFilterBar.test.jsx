@@ -83,6 +83,8 @@ const baseProps = {
   setPreviewMode: vi.fn(),
   sortTabs: [],
   PRIMARY_SORT_LABELS: [],
+  isFilterRestricted: vi.fn(() => false),
+  onAdTypeRestricted: vi.fn(),
 };
 
 beforeEach(() => {
@@ -92,6 +94,9 @@ beforeEach(() => {
   baseProps.handlePlatformClick.mockClear();
   baseProps.setActiveTab.mockClear();
   baseProps.setPreviewMode.mockClear();
+  baseProps.isFilterRestricted.mockReset();
+  baseProps.isFilterRestricted.mockReturnValue(false);
+  baseProps.onAdTypeRestricted.mockClear();
 });
 
 describe("AdFilterBar > platform tabs", () => {
@@ -329,6 +334,28 @@ describe("AdFilterBar > ad type filter dropdown", () => {
     fireEvent.click(getByText("Image"));
     expect(showGuestWarning).toHaveBeenCalledWith("Please login to filter by ad type");
     expect(setSelAdTypes).not.toHaveBeenCalled();
+  });
+  it("plan-restricted Ad Type opens upgrade without opening or applying the filter", () => {
+    const setSelAdTypes = vi.fn();
+    baseProps.isFilterRestricted.mockImplementation((id) => id === "ad_type");
+    const { getByTestId, queryByText } = render(
+      <AdFilterBar {...baseProps} sdui={{ ...baseSdui, setSelAdTypes }} />,
+    );
+    fireEvent.click(getByTestId("filter-ic").closest("button"));
+    expect(baseProps.onAdTypeRestricted).toHaveBeenCalledTimes(1);
+    expect(queryByText("Image")).toBeNull();
+    expect(setSelAdTypes).not.toHaveBeenCalled();
+  });
+  it("removes an already-selected Ad Type when the refreshed plan disables it", () => {
+    const setSelAdTypes = vi.fn();
+    baseProps.isFilterRestricted.mockImplementation((id) => id === "ad_type");
+    render(
+      <AdFilterBar
+        {...baseProps}
+        sdui={{ ...baseSdui, selAdTypes: ["Image"], setSelAdTypes }}
+      />,
+    );
+    expect(setSelAdTypes).toHaveBeenCalledWith([]);
   });
   it("selAdTypes count badge shows when >0", () => {
     const sdui = { ...baseSdui, selAdTypes: ["Image", "Video"] };

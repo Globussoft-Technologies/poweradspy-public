@@ -3,6 +3,7 @@ import {
   isCapabilityAllowed,
   isCapabilityAllowedOnNetwork,
   isAdAnalyticsAllowed,
+  isKeywordAnalyticsAllowed,
   isLegacyFilterPlanRestricted,
   isPlanNetworkAllowed,
   normalizePlanNetwork,
@@ -87,6 +88,34 @@ describe("plan entitlement decisions", () => {
       },
       competitorLimits: { brandLimit: 0 },
     })).toBe(false);
+  });
+
+  it("allows Keyword Analytics independently from Competitive Intelligence", () => {
+    const entitlements = {
+      capabilities: {
+        "intelligence.competitive": { allowed: false },
+        "intelligence.keyword_explorer.analytics": {
+          allowed: true,
+          networkMode: "custom",
+          allowedNetworks: ["google"],
+        },
+      },
+    };
+    expect(isKeywordAnalyticsAllowed(entitlements, null)).toBe(true);
+  });
+
+  it("denies Keyword Analytics when its own effective capability is disabled", () => {
+    const entitlements = {
+      capabilities: {
+        "intelligence.competitive": { allowed: true },
+        "intelligence.keyword_explorer.analytics": {
+          allowed: false,
+          reasonCode: "VARIANT_DENY",
+          allowedNetworks: ["google"],
+        },
+      },
+    };
+    expect(isKeywordAnalyticsAllowed(entitlements, null)).toBe(false);
   });
 
   it("does not show an upgrade dialog for a plan-allowed filter on an inapplicable network", () => {

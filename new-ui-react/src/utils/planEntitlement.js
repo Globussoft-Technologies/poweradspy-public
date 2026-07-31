@@ -23,6 +23,21 @@ export function isAdAnalyticsAllowed(entitlements, planAccess) {
 }
 
 /**
+ * Keyword Analytics is controlled by its own Plan Control capability. It must
+ * not inherit the unrelated Competitive Intelligence/Ad Analytics UI gate.
+ */
+export function isKeywordAnalyticsAllowed(entitlements, planAccess) {
+  if (entitlements) {
+    return isCapabilityAllowedOnNetwork(
+      entitlements,
+      'intelligence.keyword_explorer.analytics',
+      'google',
+    );
+  }
+  return isAdAnalyticsAllowed(null, planAccess);
+}
+
+/**
  * Legacy plan access exposes two independent facts:
  * - planAllowed: whether the subscription purchased the filter
  * - enabled: whether it is usable on the currently selected network
