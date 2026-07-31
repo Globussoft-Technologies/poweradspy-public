@@ -688,6 +688,25 @@ export const fetchDomainRegistrationStats = createAsyncThunk(
   }
 );
 
+// AI-Meta — daily per-platform count of ads enriched (rows written to <net>_ad_ai_meta),
+// from admin_panel_backend POST /admin-panel/ai-meta-stats/daily.
+export const fetchAiMetaStats = createAsyncThunk(
+  "aiMetaStats/fetch",
+  async (args, { rejectWithValue }) => {
+    try {
+      const token = Cookies.get("token");
+      const { data } = await axios.post(`${PAS_ADMIN_BASEURL}/ai-meta-stats/daily`, args, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return data?.data ?? data;
+    } catch (error) {
+      return rejectWithValue(
+        error?.response?.data?.error || error?.response?.data?.message || error.message
+      );
+    }
+  }
+);
+
 //domain process api
 export const fetchDomaninProcessDetails = createAsyncThunk(
   "netwokDomainProcess/details",

@@ -18,6 +18,7 @@ const agentConfig = require("./agent-config-route")
 const competitorEmailDetails = require("./competitor-email-details")
 const emailAnalytics = require("./email-analytics")
 const domainRegistrationStats = require("./domain-registration-stats")
+const aiMetaStats = require("./ai-meta-stats")
 const app = express();
 
 app.use("/networks-countries", countriesAnalytics);
@@ -45,4 +46,5 @@ app.use("/affiliate_data",affiliateDate)
  app.use("/competitor-email-details", competitorEmailDetails)
  app.use("/email-analytics", emailAnalytics)
  app.use("/domain-registration-stats", domainRegistrationStats)
+ app.use("/ai-meta-stats", aiMetaStats)
 module.exports = app;

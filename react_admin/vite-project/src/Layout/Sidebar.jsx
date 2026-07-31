@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { RxCross1 } from "react-icons/rx";
-import { FiHardDrive, FiServer, FiShare2, FiGlobe } from "react-icons/fi";
+import { FiHardDrive, FiServer, FiShare2, FiGlobe, FiCpu } from "react-icons/fi";
 import AdminContext from "../Context/Context";
 import fbaccountdetails from '../assets/fbaccountdetails.png'
 import systeminfo from '../assets/systeminfo.png'
@@ -171,6 +171,14 @@ const navLabelClass = (active) =>
                     <FiGlobe className="w-[22px] h-[22px] text-[#1f296a]" />
                     <span className={navLabelClass(isActive("/pas/domain-registration-stats"))}>
                       Domain Reg. Stats
+                    </span>
+                  </li>
+                </Link>
+                <Link to={"/pas/ai-meta-stats"} className="block">
+                  <li className={navItemClass(isActive("/pas/ai-meta-stats"))}>
+                    <FiCpu className="w-[22px] h-[22px] text-[#1f296a]" />
+                    <span className={navLabelClass(isActive("/pas/ai-meta-stats"))}>
+                      AI-Meta Stats
                     </span>
                   </li>
                 </Link>

@@ -29,7 +29,8 @@ import {
   fetchOcrAnalytics,
   fetchNasStorage,
   fetchInfraStorage,
-  fetchDomainRegistrationStats
+  fetchDomainRegistrationStats,
+  fetchAiMetaStats
 } from "./../actions/powerAdsPyActionsApi";
 const initialState = {
   nasStorage: null,
@@ -41,6 +42,9 @@ const initialState = {
   domainRegistrationStats: null,
   loadingDomainRegistrationStats: false,
   domainRegistrationStatsError: null,
+  aiMetaStats: null,
+  loadingAiMetaStats: false,
+  aiMetaStatsError: null,
   countData: [],
   countryData: [],
   funnelData: [],
@@ -268,6 +272,22 @@ const networkTypesSlice = createSlice({
         .addCase(fetchDomainRegistrationStats.rejected, (state, action) => {
           state.loadingDomainRegistrationStats = false;
           state.domainRegistrationStatsError = action.payload;
+        });
+
+      // AI-Meta — daily per-platform enrichment counts. Same shape: keep the last good payload
+      // on a failed refetch so the table does not blank out.
+      builder
+        .addCase(fetchAiMetaStats.pending, (state) => {
+          state.loadingAiMetaStats = true;
+        })
+        .addCase(fetchAiMetaStats.fulfilled, (state, action) => {
+          state.loadingAiMetaStats = false;
+          state.aiMetaStats = action.payload;
+          state.aiMetaStatsError = null;
+        })
+        .addCase(fetchAiMetaStats.rejected, (state, action) => {
+          state.loadingAiMetaStats = false;
+          state.aiMetaStatsError = action.payload;
         });
       //System details
       builder
