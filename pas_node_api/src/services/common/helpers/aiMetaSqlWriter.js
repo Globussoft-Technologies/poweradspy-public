@@ -105,24 +105,20 @@ async function resolveCategoryId(conn, categoryTable, categoryName) {
  *   { sql_status:'error', sql_error }
  */
 async function persistAiMeta({ sql, network, adId, normalized, logger }) {
-  const startedAt = performance.now();
-  const timings = {};
   const cfg = NET_SQL[network];
-  if (!cfg) return { sql_status: 'skipped', reason: `unknown network: ${network}`, timings: { total_ms: performance.now() - startedAt } };
+  if (!cfg) return { sql_status: 'skipped', reason: `unknown network: ${network}` };
   if (!sql || typeof sql.getConnection !== 'function') {
-    return { sql_status: 'skipped', reason: 'SQL not available for network', timings: { total_ms: performance.now() - startedAt } };
+    return { sql_status: 'skipped', reason: 'SQL not available for network' };
   }
   if (!normalized || typeof normalized !== 'object') {
-    return { sql_status: 'skipped', reason: 'no normalized ai_meta', timings: { total_ms: performance.now() - startedAt } };
+    return { sql_status: 'skipped', reason: 'no normalized ai_meta' };
   }
 
   let conn;
   try {
-    const connectionStartedAt = performance.now();
     conn = await sql.getConnection();
-    timings.connection_wait_ms = performance.now() - connectionStartedAt;
   } catch (err) {
-    return { sql_status: 'error', sql_error: `getConnection: ${err.message}`, timings: { ...timings, total_ms: performance.now() - startedAt } };
+    return { sql_status: 'error', sql_error: `getConnection: ${err.message}` };
   }
 
   try {
@@ -131,20 +127,17 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
     // 1) Resolve the internal PK from the public ad_id (FK target). `matchCol` is
     //    the column the incoming id equals - the PK `id` for every network except
     //    google (which matches its distinct `ad_id`); see NET_SQL note above.
-    const lookupStartedAt = performance.now();
     const [adRows] = await conn.execute(
       `SELECT id FROM \`${cfg.adTable}\` WHERE \`${cfg.matchCol}\` = ? LIMIT 1`,
       [String(adId)],
     );
-    timings.lookup_ms = performance.now() - lookupStartedAt;
     if (!adRows.length) {
       await conn.rollback();
-      return { sql_status: 'ad_not_found', timings: { ...timings, total_ms: performance.now() - startedAt } };
+      return { sql_status: 'ad_not_found' };
     }
     const adRowId = adRows[0].id;
 
     // 2) Upsert the AI-Meta row (whole-object replace, mirroring the ES write).
-    const upsertStartedAt = performance.now();
     const cols   = [cfg.fkCol, ...ALL_FIELDS];
     const params = [
       adRowId,
@@ -158,12 +151,10 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
       `VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateClause}`,
       params,
     );
-    timings.upsert_ms = performance.now() - upsertStartedAt;
 
     // 3) Category dual-write - only where a SQL category store exists and the
     //    payload carries a category. sub_category has no SQL category-table home
     //    (it lives only in the AI-Meta table column written above).
-    const categoryStartedAt = performance.now();
     let categorySynced = false;
     if (cfg.categoryTable && normalized.category) {
       const catId = await resolveCategoryId(conn, cfg.categoryTable, normalized.category);
@@ -173,15 +164,14 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
       );
       categorySynced = true;
     }
-    timings.category_sync_ms = performance.now() - categoryStartedAt;
 
     await conn.commit();
     logger?.info?.(`[aiMetaSql] ${network} upserted ai_meta for ad_id=${adId} (row=${adRowId}, category_synced=${categorySynced})`);
-    return { sql_status: 'stored', sql_ad_row_id: adRowId, category_synced: categorySynced, timings: { ...timings, total_ms: performance.now() - startedAt } };
+    return { sql_status: 'stored', sql_ad_row_id: adRowId, category_synced: categorySynced };
   } catch (err) {
     try { await conn.rollback(); } catch (_) { /* ignore rollback failure */ }
     logger?.warn?.(`[aiMetaSql] ${network} write failed for ad_id=${adId}: ${err.message}`);
-    return { sql_status: 'error', sql_error: err.message, timings: { ...timings, total_ms: performance.now() - startedAt } };
+    return { sql_status: 'error', sql_error: err.message };
   } finally {
     try { conn.release(); } catch (_) { /* ignore */ }
   }

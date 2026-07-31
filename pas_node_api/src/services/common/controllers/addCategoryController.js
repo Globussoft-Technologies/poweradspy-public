@@ -1,6 +1,5 @@
 'use strict';
 
-const { performance } = require('node:perf_hooks');
 const serviceRegistry = require('../../ServiceRegistry');
 const networksConfig = require('../../../config/networks');
 const config = require('../../../config');
@@ -31,94 +30,6 @@ function readAiMetaFromSource(src, platform) {
   if (src[preferredField] !== undefined) return src[preferredField];
   const fallbackField = preferredField === 'ai_meta' ? 'ai' : 'ai_meta';
   return src[fallbackField] ?? null;
-}
-
-/**
- * Lightweight telemetry for the AI-Meta write path.
- * We keep the timing state local to this controller so we can expose stage
- * timings in headers and logs without changing the endpoint payload.
- */
-function createAiMetaTelemetry() {
-  const startedAt = performance.now();
-  const timings = {};
-
-  return {
-    timings,
-    async time(name, fn) {
-      const stageStartedAt = performance.now();
-      try {
-        return await fn();
-      } finally {
-        timings[name] = performance.now() - stageStartedAt;
-      }
-    },
-    totalMs() {
-      return performance.now() - startedAt;
-    },
-  };
-}
-
-function formatServerTiming(timings) {
-  return Object.entries(timings)
-    .filter(([, value]) => Number.isFinite(value))
-    .map(([name, value]) => `${name};dur=${value.toFixed(1)}`)
-    .join(', ');
-}
-
-function setAiMetaTelemetryHeaders(res, req, timings) {
-  const requestId = req?.requestId || req?.id || null;
-  if (requestId) {
-    res.setHeader('X-Request-Id', requestId);
-  }
-
-  const serverTiming = formatServerTiming({
-    validation: timings.validation_ms,
-    lookup: timings.lookup_ms,
-    es_update: timings.es_update_ms,
-    es_refresh: timings.es_refresh_ms,
-    es_write: timings.es_write_ms,
-    category_sync: timings.category_sync_ms,
-    sql: timings.sql_ms,
-    total: timings.total_ms,
-  });
-
-  if (serverTiming) {
-    res.setHeader('Server-Timing', serverTiming);
-  }
-
-  return requestId;
-}
-
-function logAiMetaTelemetry(log, payload) {
-  log?.info?.('ai_meta_write_complete', payload);
-}
-
-function finalizeAiMetaResponse(res, req, log, statusCode, body, timings, extra = {}) {
-  const requestId = setAiMetaTelemetryHeaders(res, req, timings);
-
-  logAiMetaTelemetry(log, {
-    event: 'ai_meta_write_complete',
-    request_id: requestId,
-    network: extra.network || null,
-    ad_id: extra.adId ?? null,
-    http_status: statusCode,
-    validation_ms: Math.round(timings.validation_ms || 0),
-    ad_lookup_ms: Math.round(timings.lookup_ms || 0),
-    es_update_ms: Math.round(timings.es_update_ms || 0),
-    es_refresh_ms: Math.round(timings.es_refresh_ms || 0),
-    es_write_ms: Math.round(timings.es_write_ms || 0),
-    category_sync_ms: Math.round(timings.category_sync_ms || 0),
-    category_taxonomy_ms: Math.round(timings.category_taxonomy_ms || 0),
-    category_mirror_ms: Math.round(timings.category_mirror_ms || 0),
-    sql_wait_ms: Math.round(timings.sql_wait_ms || 0),
-    sql_lookup_ms: Math.round(timings.sql_lookup_ms || 0),
-    sql_upsert_ms: Math.round(timings.sql_upsert_ms || 0),
-    sql_category_ms: Math.round(timings.sql_category_ms || 0),
-    total_ms: Math.round(timings.total_ms || 0),
-    retry_count: 0,
-  });
-
-  return res.status(statusCode).json(body);
 }
 
 /**
@@ -174,7 +85,6 @@ async function findAdDoc(esForPlat, esIndex, idField, adId) {
  */
 async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
   const aiMetaField = getAiMetaEsField(platform);
-  const updateStartedAt = performance.now();
   await esForPlat.update(withEsType(esForPlat, {
     index: esIndex,
     id:    docId,
@@ -187,13 +97,6 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
     },
     refresh: 'wait_for',
   }));
-  const updateMs = performance.now() - updateStartedAt;
-
-  return {
-    update_ms: updateMs,
-    refresh_ms: 0,
-    total_ms: updateMs,
-  };
 }
 
 /**
@@ -407,12 +310,10 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
  */
 async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform, normalized, log }) {
   if (!normalized || !normalized.category || !normalized.category_id) return null;
-  const startedAt = performance.now();
   const status = { taxonomy: null, mirrored: false };
 
   if (gdnEs) {
     try {
-      const taxonomyStartedAt = performance.now();
       const { message } = await syncMasterCategory(gdnEs, {
         category:      normalized.category,
         catId:         normalized.category_id,
@@ -420,8 +321,6 @@ async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform
         subCategoryId: normalized.subcategory_id,
         platform,
       });
-      status.timings = status.timings || {};
-      status.timings.taxonomy_ms = performance.now() - taxonomyStartedAt;
       status.taxonomy = message;
     } catch (taxErr) {
       const isConflict = taxErr instanceof CategoryTaxonomyConflict;
@@ -432,26 +331,18 @@ async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform
   }
 
   try {
-    const mirrorStartedAt = performance.now();
     await mirrorCategoryToEs(platEs, esIndex, docId, platform, {
       category:      normalized.category,
       subCategory:   normalized.sub_category,
       categoryId:    normalized.category_id,
       subCategoryId: normalized.subcategory_id,
     });
-    status.timings = status.timings || {};
-    status.timings.mirror_ms = performance.now() - mirrorStartedAt;
     status.mirrored = true;
   } catch (mirrorErr) {
     status.mirror_error = mirrorErr.message;
     log?.warn?.(`[aiMetaCategory] ES mirror failed for platform=${platform}: ${mirrorErr.message}`);
   }
 
-  status.timings = {
-    taxonomy_ms: status.timings?.taxonomy_ms,
-    mirror_ms: status.timings?.mirror_ms,
-    total_ms: performance.now() - startedAt,
-  };
   return status;
 }
 
@@ -1205,15 +1096,8 @@ async function insertAiMeta(req, res) {
   const body     = req.body || {};
   const adId     = body.ad_id;
   const platform = (body.network || body.platform || '').toLowerCase().trim();
-  const telemetry = createAiMetaTelemetry();
-  let service = null;
-  let es = null;
-  let esIndex = null;
-  let adHit = null;
-  let categorySync = null;
-  let sqlResult = null;
 
-  const validationStartedAt = performance.now();
+  // Top-level validation (spec 2)
   const details = [];
   if (adId === undefined || adId === null || adId === '')
     details.push({ field: 'ad_id', message: 'ad_id is required' });
@@ -1230,51 +1114,39 @@ async function insertAiMeta(req, res) {
     ({ errors: aiErrors, normalized, storedFields } = validateAiMeta(body.ai_meta));
     details.push(...aiErrors);
   }
-  telemetry.validation_ms = performance.now() - validationStartedAt;
 
   if (details.length > 0) {
-    telemetry.total_ms = telemetry.totalMs();
-    return finalizeAiMetaResponse(res, req, null, 400, {
+    return res.status(400).json({
       success: false,
       ad_id:   adId ?? null,
       error:   { code: 'VALIDATION_ERROR', message: 'Request validation failed', details },
-    }, telemetry, { network: platform, adId });
+    });
   }
 
   const cfg = PLATFORM_CONFIG[platform];
-  service = serviceRegistry.getService(cfg.service);
-  es = service?.db?.elastic;
+  const service = serviceRegistry.getService(cfg.service);
+  const es = service?.db?.elastic;
   if (!es) {
-    telemetry.total_ms = telemetry.totalMs();
-    return finalizeAiMetaResponse(res, req, service?.log, 503, {
-      success: false,
-      ad_id: adId,
-      error: { code: 'ES_UNAVAILABLE', message: `ES not available for network: ${platform}` },
-    }, telemetry, { network: platform, adId });
+    return res.status(503).json({ success: false, ad_id: adId, error: { code: 'ES_UNAVAILABLE', message: `ES not available for network: ${platform}` } });
   }
-  esIndex = es.indexName || cfg.index;
+  const esIndex = es.indexName || cfg.index;
 
   try {
-    const lookupStartedAt = performance.now();
-    adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
-    telemetry.lookup_ms = performance.now() - lookupStartedAt;
+    const adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
     if (!adHit) {
-      telemetry.total_ms = telemetry.totalMs();
-      return finalizeAiMetaResponse(res, req, service?.log, 404, {
+      return res.status(404).json({
         success: false,
         ad_id:   adId,
         error:   { code: 'AD_NOT_FOUND', message: `Ad with id '${adId}' does not exist` },
-      }, telemetry, { network: platform, adId });
+      });
     }
 
-    const esTimings = await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
-    telemetry.es_update_ms = esTimings.update_ms;
-    telemetry.es_refresh_ms = esTimings.refresh_ms;
-    telemetry.es_write_ms = esTimings.total_ms;
+    await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
     service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
 
-    const categorySyncStartedAt = performance.now();
-    categorySync = await applyAiMetaCategoryToEs({
+    // Category (v1.6: name + ids inside ai_meta) - maintain the master `category`
+    // taxonomy index and mirror the flat codes + names onto the ad doc. Non-fatal.
+    const categorySync = await applyAiMetaCategoryToEs({
       gdnEs:      serviceRegistry.getService('gdn')?.db?.elastic,
       platEs:     es,
       esIndex,
@@ -1283,23 +1155,15 @@ async function insertAiMeta(req, res) {
       normalized,
       log:        service.log,
     });
-    telemetry.category_sync_ms = performance.now() - categorySyncStartedAt;
-    telemetry.category_taxonomy_ms = categorySync?.timings?.taxonomy_ms;
-    telemetry.category_mirror_ms = categorySync?.timings?.mirror_ms;
 
-    const sqlStartedAt = performance.now();
-    sqlResult = await persistAiMeta({
+    // Durable SQL copy + category dual-write (non-fatal).
+    const sqlResult = await persistAiMeta({
       sql:        service?.db?.sql,
       network:    platform,
       adId:       adId,
       normalized: normalized,
       logger:     service.log,
     });
-    telemetry.sql_ms = performance.now() - sqlStartedAt;
-    telemetry.sql_wait_ms = sqlResult?.timings?.connection_wait_ms;
-    telemetry.sql_lookup_ms = sqlResult?.timings?.lookup_ms;
-    telemetry.sql_upsert_ms = sqlResult?.timings?.upsert_ms;
-    telemetry.sql_category_ms = sqlResult?.timings?.category_sync_ms;
 
     const out = {
       success: true,
@@ -1309,16 +1173,10 @@ async function insertAiMeta(req, res) {
       sql: sqlResult,
     };
     if (categorySync) out.category_sync = categorySync;
-    telemetry.total_ms = telemetry.totalMs();
-    return finalizeAiMetaResponse(res, req, service?.log, 200, out, telemetry, { network: platform, adId });
+    return res.status(200).json(out);
   } catch (err) {
     service.log?.error(`[insertAiMeta] network=${platform} ad_id=${adId} error: ${err.message}`);
-    telemetry.total_ms = telemetry.totalMs();
-    return finalizeAiMetaResponse(res, req, service?.log, 500, {
-      success: false,
-      ad_id: adId,
-      error: { code: 'INTERNAL_ERROR', message: err.message },
-    }, telemetry, { network: platform, adId });
+    return res.status(500).json({ success: false, ad_id: adId, error: { code: 'INTERNAL_ERROR', message: err.message } });
   }
 }
 
