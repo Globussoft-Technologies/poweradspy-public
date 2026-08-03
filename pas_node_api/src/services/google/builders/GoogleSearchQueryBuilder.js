@@ -341,56 +341,13 @@ class GoogleSearchQueryBuilder {
   _getLastSeenEnv() {
     const l = this._params.lastSeen;
     if (!l || !l.lower_date || !l.upper_date) return null;
-    const topLevelRange = {
+    return asFilter({
       range: {
         last_seen: {
           gte: l.lower_date,
           lte: l.upper_date,
           format: "yyyy-MM-dd HH:mm:ss",
         },
-      },
-    };
-    const transparencyOnly = this._params.platform?.some((value) => Number(value) === 18);
-    if (transparencyOnly) {
-      // The platform-18 card displays this top-level operational last_seen.
-      // Do not let a historical date from any country_details row make the ad
-      // appear outside the range selected by the user.
-      return asFilter(topLevelRange);
-    }
-    const nestedFilters = [{
-      range: {
-        "country_details.last_seen": {
-          gte: String(l.lower_date).slice(0, 10),
-          lte: String(l.upper_date).slice(0, 10),
-          format: "yyyy-MM-dd",
-        },
-      },
-    }];
-    if (this._params.country?.length) {
-      nestedFilters.unshift(termFilter("country_details.country", this._params.country));
-    }
-    return asFilter({
-      bool: {
-        should: [
-          {
-            bool: {
-              filter: [topLevelRange],
-              // Legacy docs and the valid platform-18 records whose detail list
-              // is empty use top-level last_seen. If searchable per-country
-              // dates exist, require the nested branch so a selected country
-              // and date always refer to the same delivery row.
-              must_not: [{
-                nested: {
-                  path: "country_details",
-                  query: { exists: { field: "country_details.last_seen" } },
-                  score_mode: "none",
-                },
-              }],
-            },
-          },
-          { nested: { path: "country_details", query: { bool: { filter: nestedFilters } }, score_mode: "none" } },
-        ],
-        minimum_should_match: 1,
       },
     });
   }

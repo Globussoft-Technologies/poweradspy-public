@@ -24,15 +24,13 @@ describe('Google Transparency search filters', () => {
     });
   });
 
-  it('existing last-seen range searches top-level and nested last_seen', () => {
+  it('normal Google Last Seen also keeps its existing top-level field', () => {
     const query = new Builder()
       .setLastSeen({ lower_date: '2025-12-12 00:00:00', upper_date: '2025-12-21 23:59:59' })
       .build();
     const json = JSON.stringify(query.body.query);
     expect(json).toContain('"last_seen"');
-    expect(json).toContain('"country_details.last_seen"');
-    expect(json).toContain('"path":"country_details"');
-    expect(json).toContain('"minimum_should_match":1');
+    expect(json).not.toContain('"country_details.last_seen"');
   });
 
   it('keeps country, seen dates, and impressions in one nested row', () => {
