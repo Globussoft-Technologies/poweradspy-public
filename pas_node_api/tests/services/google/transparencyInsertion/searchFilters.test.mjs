@@ -4,6 +4,26 @@ const require = createRequire(import.meta.url);
 const Builder = require('../../../../src/services/google/builders/GoogleSearchQueryBuilder');
 
 describe('Google Transparency search filters', () => {
+  it('platform-18 Last Seen matches only the top-level date displayed on its card', () => {
+    const query = new Builder()
+      .setPlatform([18])
+      .setLastSeen({ lower_date: '2025-12-12 00:00:00', upper_date: '2025-12-21 23:59:59' })
+      .build();
+    const json = JSON.stringify(query.body.query);
+    expect(json).toContain('"last_seen"');
+    expect(json).not.toContain('"country_details.last_seen"');
+    const dateFilter = query.body.query.bool.filter.find((filter) => filter.range?.last_seen);
+    expect(dateFilter).toEqual({
+      range: {
+        last_seen: {
+          gte: '2025-12-12 00:00:00',
+          lte: '2025-12-21 23:59:59',
+          format: 'yyyy-MM-dd HH:mm:ss',
+        },
+      },
+    });
+  });
+
   it('existing last-seen range searches top-level and nested last_seen', () => {
     const query = new Builder()
       .setLastSeen({ lower_date: '2025-12-12 00:00:00', upper_date: '2025-12-21 23:59:59' })

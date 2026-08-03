@@ -341,6 +341,22 @@ class GoogleSearchQueryBuilder {
   _getLastSeenEnv() {
     const l = this._params.lastSeen;
     if (!l || !l.lower_date || !l.upper_date) return null;
+    const topLevelRange = {
+      range: {
+        last_seen: {
+          gte: l.lower_date,
+          lte: l.upper_date,
+          format: "yyyy-MM-dd HH:mm:ss",
+        },
+      },
+    };
+    const transparencyOnly = this._params.platform?.some((value) => Number(value) === 18);
+    if (transparencyOnly) {
+      // The platform-18 card displays this top-level operational last_seen.
+      // Do not let a historical date from any country_details row make the ad
+      // appear outside the range selected by the user.
+      return asFilter(topLevelRange);
+    }
     const nestedFilters = [{
       range: {
         "country_details.last_seen": {
@@ -358,7 +374,7 @@ class GoogleSearchQueryBuilder {
         should: [
           {
             bool: {
-              filter: [{ range: { last_seen: { gte: l.lower_date, lte: l.upper_date, format: "yyyy-MM-dd HH:mm:ss" } } }],
+              filter: [topLevelRange],
               // Legacy docs and the valid platform-18 records whose detail list
               // is empty use top-level last_seen. If searchable per-country
               // dates exist, require the nested branch so a selected country

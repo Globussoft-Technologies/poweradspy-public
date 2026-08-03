@@ -437,7 +437,7 @@ The existing Google search APIs accept these platform-18 filters:
 
 | Request field | Shape | ES behavior |
 |---|---|---|
-| `seen_btn_sort` | existing two-value last-seen range | matches top-level `last_seen` **or** nested `country_details.last_seen` |
+| `seen_btn_sort` | existing two-value last-seen range | for platform 18, matches only the top-level `last_seen` displayed on the card |
 | `country_first_seen` | `[from,to]` timestamps/dates | nested `first_seen` range |
 | `country_last_seen` | `[from,to]` timestamps/dates | nested `last_seen` range |
 | `country_times_shown` / `times_shown` | `[min,max]` | overlaps the nested impression interval |
