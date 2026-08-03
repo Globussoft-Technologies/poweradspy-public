@@ -58,7 +58,12 @@ async function processRedditAd(ad, ctx) {
   try {
     // 5. Parallel pre-TX lookups
     const [userRes, existing, translation] = await Promise.all([
-      repo.getUserByRedditId(sql, ad.reddit_id),
+      repo.getOrCreateUserByRedditId(sql, {
+        redditUsername: normalized.reddit_id,
+        currentCountry: normalized.country,
+        ipAddress: normalized.ip_address ?? null,
+        systemId: normalized.system_id ?? null,
+      }),
       repo.getAdByAdId(sql, ad.ad_id),
       api.translate({
         call_to_action: ad.call_to_action ?? '',
@@ -69,9 +74,9 @@ async function processRedditAd(ad, ctx) {
     ]);
 
     if (userRes.code !== 200) {
-      return rejected(401, 'Current reddit_id not found.', {
+      return serverError(500, 'The discovering Reddit account could not be registered.', {
         field: 'reddit_id',
-        hint: 'Ensure the reddit_id exists in the system.',
+        hint: 'Retry the request. The ad was not inserted.',
       });
     }
 

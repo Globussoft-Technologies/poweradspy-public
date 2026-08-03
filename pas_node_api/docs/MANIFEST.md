@@ -267,6 +267,7 @@ Endpoints: `/api/v1/instagram/insertion/{gramAdsData,adsLibrary,delete}`. Facebo
 - 📄 Endpoints: `/api/v1/quora/insertion/{quoraAdsData,delete}`.
 
 **Reddit — DONE & live-tested** (branch: `quorafixes`)
+- ✅ Unknown crawler `reddit_id` values are automatically registered in `reddit_user` from payload country/IP/system metadata, with a per-username MySQL advisory lock to prevent duplicates across workers.
 - ✅ validate (exact PHP rules — type IMAGE/VIDEO/TEXT, platform required, ip validation).
 - ✅ normalize (cleanStr, urldecode, amp-fix, epoch→datetime coercion, version gate).
 - ✅ repository (reddit_ad, variants, post_owners, domains, country, country_only, countries, countries_only, meta_data, account_activities, analytics, users, url + getJoinedAd + deleteAdCascade).

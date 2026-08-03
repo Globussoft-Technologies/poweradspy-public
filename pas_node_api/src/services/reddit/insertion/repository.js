@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('node:crypto');
+
 /**
  * Reddit insertion — data repository (raw parameterized SQL).
  * Mirrors the Quora/Facebook pattern with reddit_* table/column names.
@@ -234,6 +236,57 @@ async function getUserByRedditId(exec, redditUsername) {
   return found(await exec.query('SELECT id FROM reddit_user WHERE reddit_username = ? LIMIT 1', [redditUsername]));
 }
 
+/**
+ * Return the discovering Reddit user, creating it from crawler metadata when it
+ * is first seen. reddit_user.reddit_username has no unique index in the live
+ * schema, so a connection-scoped MySQL advisory lock prevents two Node workers
+ * from creating duplicate rows for the same username.
+ */
+async function getOrCreateUserByRedditId(sql, {
+  redditUsername,
+  currentCountry,
+  ipAddress = null,
+  systemId = null,
+}) {
+  // All four live columns are latin1. Respect their varchar limits so optional
+  // crawler metadata can never make first-time registration reject the ad.
+  const username = latin1Safe(String(redditUsername)).slice(0, 64);
+  const country = latin1Safe(String(currentCountry)).slice(0, 256);
+  const ip = ipAddress === null ? null : latin1Safe(String(ipAddress)).slice(0, 64);
+  const system = systemId === null ? null : latin1Safe(String(systemId)).slice(0, 15);
+  const lockHash = crypto.createHash('sha256').update(String(redditUsername)).digest('hex');
+  const lockName = `reddit_user:${lockHash.slice(0, 48)}`;
+  const conn = await sql.getConnection();
+  let lockAcquired = false;
+
+  try {
+    const [lockRows] = await conn.execute('SELECT GET_LOCK(?, 10) AS acquired', [lockName]);
+    lockAcquired = Number(lockRows?.[0]?.acquired) === 1;
+    if (!lockAcquired) {
+      throw new Error(`Timed out while registering reddit_id "${redditUsername}".`);
+    }
+
+    const [existing] = await conn.execute(
+      'SELECT id FROM reddit_user WHERE reddit_username = ? LIMIT 1',
+      [username]
+    );
+    if (existing.length) return { code: 200, data: existing, created: false };
+
+    const [insertResult] = await conn.execute(
+      `INSERT INTO reddit_user
+        (reddit_username, current_country, ip_address, System_id)
+       VALUES (?, ?, ?, ?)`,
+      [username, country, ip, system]
+    );
+    return { code: 200, data: [{ id: insertResult.insertId }], created: true };
+  } finally {
+    if (lockAcquired) {
+      await conn.execute('SELECT RELEASE_LOCK(?) AS released', [lockName]).catch(() => null);
+    }
+    conn.release();
+  }
+}
+
 // ── reddit_ad_translation ────────────────────────────────────────────
 async function upsertTranslation(exec, data) {
   const { reddit_ad_id, ...updateData } = data;
@@ -393,7 +446,7 @@ module.exports = {
   upsertAdImageVideo,
   getPostOwnerByName, upsertPostOwner, updatePostOwnerImagePath,
   insertMetaData, updateMetaData,
-  getUserByRedditId,
+  getUserByRedditId, getOrCreateUserByRedditId,
   upsertTranslation,
   insertAnalytics, updateAnalytics, getAnalyticsForDate, updateAnalyticsById,
   getCallToAction, insertCallToAction,
