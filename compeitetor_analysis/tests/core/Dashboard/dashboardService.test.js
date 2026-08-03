@@ -1108,6 +1108,40 @@ describe("dashboardService > getCompetitorsCountNew", () => {
     expect(res.send).toHaveBeenCalled();
   });
 
+  it("uses the builder-style per-word advertiser matcher for multi-word competitors", async () => {
+    const searchCalls = [];
+    const esResponse = {
+      hits: { total: { value: 1 } },
+      aggregations: {
+        unique_ads: { value: 1 },
+        countries: { buckets: [] },
+        impressions: { total_imp: { value: 0 }, imp_count: { value: 0 } },
+        popularity: { total_pop: { value: 0 }, pop_count: { value: 0 } },
+        budget: { sum_avg_budget: { value: 0 }, budget_count: { value: 0 } },
+      },
+    };
+    Object.values(spies.esClient).forEach((c) => {
+      c.search.mockImplementation((req) => {
+        searchCalls.push(req);
+        return Promise.resolve(esResponse);
+      });
+      c.count.mockResolvedValue({ count: 1 });
+    });
+
+    const res = mockRes();
+    await svc.getCompetitorsCountNew({ body: { competitors: ["Cotton On"] } }, res);
+
+    expect(searchCalls.length).toBeGreaterThan(0);
+    const firstOwnerClause = searchCalls[0]?.body?.query?.bool?.must?.[0];
+    const phraseBranch = firstOwnerClause?.bool?.should?.[0];
+
+    expect(phraseBranch?.bool?.must?.length).toBe(2);
+    expect(phraseBranch.bool.must.map((item) => item.multi_match.query)).toEqual([
+      "Cotton",
+      "On",
+    ]);
+  });
+
   it("outer catch", async () => {
     Object.values(spies.esClient).forEach((c) => {
       c.search.mockRejectedValue(new Error("es-down"));

@@ -84,6 +84,25 @@ const NETWORK_BY_INDEX = Object.freeze(
   ),
 );
 
+// Mirror the builder's multi-word advertiser logic without depending on the
+// search service internals. Facebook/Instagram/Google counts need the same
+// matching shape as their live search builders or the project row badges can
+// drift away from what the ads library can actually open.
+function phraseAcrossFieldsLikeBuilder(fields, kw) {
+  if (!kw || !fields || !fields.length) return null;
+  const cleaned = String(kw).replace(/"/g, '').trim();
+  if (!cleaned) return null;
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length === 1) {
+    return { multi_match: { query: words[0], type: 'phrase', fields } };
+  }
+  return {
+    bool: {
+      must: words.map((w) => ({ multi_match: { query: w, type: 'phrase', fields } })),
+    },
+  };
+}
+
 function buildOwnerClause(index, competitor) {
   const cfg = OWNER_FIELDS_BY_INDEX[index];
   /* v8 ignore next -- index is always a known OWNER_FIELDS_BY_INDEX key (search_mix/instagram_search_mix) */
@@ -93,7 +112,7 @@ function buildOwnerClause(index, competitor) {
   return {
     bool: {
       should: [
-        { multi_match: { query: competitor, type: 'phrase', fields: cfg.fields } },
+        phraseAcrossFieldsLikeBuilder(cfg.fields, competitor),
         { prefix: { [cfg.prefixField]: String(competitor).toLowerCase() } },
       ],
       minimum_should_match: 1,

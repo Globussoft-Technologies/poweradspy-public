@@ -7,7 +7,11 @@ const {
 } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const {
+  applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
+  readAiMetaVisibleCount,
+} = require('../../common/helpers/aiMetaSearchFilter');
 
 /**
  * Google ad search — mirrors SearchController::getAdsHandlerO.
@@ -324,6 +328,7 @@ async function searchAds(req, db, logger) {
 
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'google', p);
+  addAiMetaVisibleCountAgg(esParams, 'google', p);
 
   // Deep pagination
   const queryHash = buildQueryHash(p);
@@ -355,7 +360,12 @@ async function searchAds(req, db, logger) {
     // (inflated by duplicates). Fall back to hits.total only when agg is unavailable.
     const esFallbackTotal = typeof hits.total === 'object' ? hits.total.value : hits.total;
     const cardinalityTotal = aggregations?.unique_count?.value;
-    const total = cardinalityTotal != null ? cardinalityTotal : esFallbackTotal;
+    const visibleTotal = readAiMetaVisibleCount(result);
+    const total = visibleTotal != null
+      ? visibleTotal
+      : cardinalityTotal != null
+        ? cardinalityTotal
+        : esFallbackTotal;
 
     const adIds = esHits.map(hit => hit._source['id'] || hit._source['ad_id'] || hit._id);
 

@@ -4,7 +4,11 @@ const RedditSearchQueryBuilder = require('../builders/RedditSearchQueryBuilder')
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const {
+  applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
+  readAiMetaVisibleCount,
+} = require('../../common/helpers/aiMetaSearchFilter');
 
 const AD_DETAIL_SELECT = `
     reddit_ad.id                                    AS id,
@@ -276,6 +280,7 @@ async function searchAds(req, db, logger) {
 
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'reddit', p);
+  addAiMetaVisibleCountAgg(esParams, 'reddit', p);
 
   // Deep pagination
   const queryHash = buildQueryHash(p);
@@ -291,11 +296,12 @@ async function searchAds(req, db, logger) {
     const result = await db.elastic.search(esParams);
     const hits = result.hits || result.body?.hits;
     const total = typeof hits.total === 'object' ? hits.total.value : hits.total;
+    const visibleTotal = readAiMetaVisibleCount(result);
     const esHits = (hits.hits || []);
 
     saveCursor(queryHash, from, size, esHits);
 
-    if (esHits.length === 0) return { code: 200, data: [], total, message: 'No ads found' };
+    if (esHits.length === 0) return { code: 200, data: [], total: visibleTotal ?? total, message: 'No ads found' };
 
     const adIds = esHits.map(hit => hit._source['reddit_ad.id'] || hit._id);
 
@@ -368,7 +374,12 @@ ORDER BY FIELD(reddit_ad.id, ${placeholders})`;
       };
     });
 
-    return { code: 200, data: cleanAdsData(finalAds), total, message: 'Ads fetched successfully' };
+    return {
+      code: 200,
+      data: cleanAdsData(finalAds),
+      total: visibleTotal ?? total,
+      message: 'Ads fetched successfully',
+    };
   } catch (err) {
     logger.error('Error in searchAds (reddit)', { error: err.message, stack: err.stack });
     return { code: 500, message: 'Error occurred in ad search', error: err.message };

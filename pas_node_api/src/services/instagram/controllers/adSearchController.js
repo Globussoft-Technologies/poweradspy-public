@@ -4,7 +4,11 @@ const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const {
+  applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
+  readAiMetaVisibleCount,
+} = require('../../common/helpers/aiMetaSearchFilter');
 
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
@@ -516,6 +520,7 @@ async function searchAds(req, db, logger) {
   // Build and execute
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'instagram', p);
+  addAiMetaVisibleCountAgg(esParams, 'instagram', p);
 
   // ─── Deep pagination: swap from/size → search_after ──
   const queryHash = buildQueryHash(p);
@@ -547,7 +552,10 @@ async function searchAds(req, db, logger) {
       hits_count: result.hits?.hits?.length
     });
     const hits = result.hits || result.body?.hits;
-    const total = typeof hits.total === 'object' ? hits.total.value : hits.total;
+    // AI-filtered searches can collapse multiple ES docs down to one visible ad.
+    // Prefer the distinct-ad agg when present so the header count matches cards.
+    const visibleTotal = readAiMetaVisibleCount(result);
+    const total = visibleTotal ?? (typeof hits.total === 'object' ? hits.total.value : hits.total);
     const esHits = (hits.hits || []);
 
     // Cache cursor for next deep page

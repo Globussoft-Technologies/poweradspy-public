@@ -99,6 +99,9 @@ const AdGrid = ({
   isSearchActive = false,
   onGuestLimit,
   closeDetailSignal,
+  searchQuery,
+  searchIn,
+  exactSearch,
 }) => {
   const {
     activePlatforms,
@@ -108,6 +111,7 @@ const AdGrid = ({
     setAllFilters,
     setSortBy,
     config,
+    filterPlatformSupport,
   } = sdui;
   const aiFiltersDoc = useMemo(
     () =>
@@ -957,6 +961,11 @@ const AdGrid = ({
               !!guest?.isRestricted || !!isFilterRestricted?.("ai_meta")
             }
             onRestricted={onAiFilterRestricted}
+            activePlatforms={activePlatforms}
+            searchQuery={searchQuery}
+            searchIn={searchIn}
+            exactSearch={exactSearch}
+            filterPlatformSupport={filterPlatformSupport}
           />
         </div>
 

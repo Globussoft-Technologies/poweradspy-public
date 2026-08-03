@@ -1904,6 +1904,58 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
 };
 
 /**
+ * Cheap search probe used for UI availability checks.
+ * We keep the full search payload logic, but only ask the backend for one row
+ * so the UI can tell whether a filter preset would actually surface ads.
+ */
+export const fetchAdsPresence = async (filters = {}, { signal } = {}) => {
+  const payload = buildSearchPayload(filters);
+  payload.take = '1';
+  payload.page_size = 1;
+  payload.skip = 0;
+
+  const response = await fetch(`${PAS_API_BASE}/api/v1/common/ads/search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  await checkFor401(response);
+
+  if (response.status === 403) {
+    const json = await response.json();
+    const err = new Error(json.message || 'Access restricted by your plan.');
+    err.code = 403;
+    err.showSubscriptionModal = json.showSubscriptionModal || false;
+    err.platformRestriction = json.platformRestriction || false;
+    err.restrictedFilters = json.restrictedFilters || [];
+    err.allowedPlatforms = json.allowedPlatforms || [];
+    throw err;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Ads API error: ${response.status}`);
+  }
+
+  const json = await response.json();
+  if (json.code === 401 || (typeof json.message === 'string' && json.message.toLowerCase().includes('token expired'))) {
+    handle401();
+    throw new Error('Unauthorized: Token expired');
+  }
+
+  const rawAds = json.data || [];
+  return {
+    hasAds: rawAds.length > 0,
+    total: json.meta?.total ?? 0,
+    meta: json.meta || {},
+  };
+};
+
+/**
  * Fetches up to 100 ads for CSV export using the current search/filter state.
  * Identical to fetchAds but overrides take=100 and skip=0 in the payload.
  */

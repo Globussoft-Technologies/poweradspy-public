@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Briefcase,
@@ -13,10 +14,12 @@ import {
 import {
   discardAiFilterDraft,
   findActiveAiQuickFilterPreset,
+  getAiFilterKeys,
   hasActiveAiFilters,
   replaceAiFilters,
   resolveAiQuickFilterPresets,
 } from "../../utils/aiQuickFilterPresets";
+import { fetchAdsPresence } from "../../services/api";
 
 const PRESET_ICONS = {
   tiktok_ugc: Smartphone,
@@ -40,6 +43,27 @@ const PRESET_ACCENTS = {
   local_lead: "text-indigo-500 bg-indigo-500/10 border-indigo-500/20",
 };
 
+const isEmptyValue = (value) =>
+  value === undefined ||
+  value === null ||
+  value === "" ||
+  value === false ||
+  (Array.isArray(value) && value.length === 0);
+
+const buildAiFilterSignature = (filterValues, doc) => {
+  const keys = [...new Set(getAiFilterKeys(doc))].sort();
+  const parts = [];
+  for (const key of keys) {
+    const value = filterValues?.[key];
+    if (isEmptyValue(value)) continue;
+    const normalized = Array.isArray(value)
+      ? [...value].map((item) => String(item)).sort().join("|")
+      : String(value);
+    parts.push(`${key}:${normalized}`);
+  }
+  return parts.join("||");
+};
+
 /**
  * Home-page shortcuts for coherent AI filter combinations. They commit through
  * the same SDUI state used by the popup, so both surfaces always stay in sync.
@@ -50,9 +74,18 @@ const AiQuickFilters = ({
   onApply,
   isRestricted,
   onRestricted,
+  activePlatforms,
+  searchQuery,
+  searchIn,
+  exactSearch,
+  filterPlatformSupport,
 }) => {
-  const presets = resolveAiQuickFilterPresets(doc);
-  if (!doc || doc.visible === false || presets.length === 0) return null;
+  const presets = useMemo(() => resolveAiQuickFilterPresets(doc), [doc]);
+  const [presetAvailability, setPresetAvailability] = useState({});
+  const aiFilterSignature = useMemo(
+    () => buildAiFilterSignature(filterValues, doc),
+    [filterValues, doc],
+  );
 
   const activePreset = findActiveAiQuickFilterPreset(
     filterValues,
@@ -60,6 +93,67 @@ const AiQuickFilters = ({
     presets,
   );
   const hasAiFilters = hasActiveAiFilters(filterValues, doc);
+
+  useEffect(() => {
+    if (!doc || doc.visible === false || presets.length === 0) {
+      setPresetAvailability({});
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const evaluatePresets = async () => {
+      const settled = await Promise.allSettled(
+        presets.map(async (preset) => {
+          const nextFilters = replaceAiFilters(filterValues, doc, preset.filters);
+          const result = await fetchAdsPresence(
+            {
+              ...nextFilters,
+              activePlatforms,
+              searchQuery,
+              searchIn,
+              exactSearch,
+              filterPlatformSupport,
+            },
+            { signal: controller.signal },
+          );
+          return [preset.id, !!result?.hasAds];
+        }),
+      );
+
+      if (cancelled) return;
+      const nextAvailability = {};
+      for (const item of settled) {
+        if (item.status !== "fulfilled") continue;
+        const [presetId, hasAds] = item.value;
+        nextAvailability[presetId] = hasAds;
+      }
+      setPresetAvailability(nextAvailability);
+    };
+
+    evaluatePresets();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    doc,
+    presets,
+    aiFilterSignature,
+    activePlatforms,
+    searchQuery,
+    searchIn,
+    exactSearch,
+    filterPlatformSupport,
+  ]);
+
+  if (!doc || doc.visible === false || presets.length === 0) return null;
+
+  const visiblePresets = presets.filter(
+    (preset) => presetAvailability[preset.id] !== false || activePreset?.id === preset.id,
+  );
+  if (visiblePresets.length === 0) return null;
 
   const commit = (replacement) => {
     if (isRestricted) {
@@ -83,7 +177,7 @@ const AiQuickFilters = ({
       </div>
 
       <div className="scrollbar-hide flex min-w-0 flex-1 items-stretch gap-2 overflow-x-auto py-0.5">
-        {presets.map((preset) => {
+        {visiblePresets.map((preset) => {
           const Icon = PRESET_ICONS[preset.id] || Zap;
           const isActive = activePreset?.id === preset.id;
           return (

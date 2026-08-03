@@ -4,7 +4,11 @@ const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const {
+  applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
+  readAiMetaVisibleCount,
+} = require('../../common/helpers/aiMetaSearchFilter');
 const {
   isDisplayMergeApplicable,
   getYoutubeDisplayHits,
@@ -519,6 +523,7 @@ async function searchAds(req, db, logger) {
 
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'gdn', p);
+  addAiMetaVisibleCountAgg(esParams, 'gdn', p);
 
   // ─── YouTube DISPLAY merge ────────────────────────────────────────────
   // DISPLAY-type YouTube ads are shown under GDN (and hidden from YouTube). For
@@ -559,12 +564,13 @@ async function searchAds(req, db, logger) {
     const result  = await db.elastic.search(esParams);
     const hits    = result.hits || result.body?.hits;
     const total   = typeof hits.total === 'object' ? hits.total.value : hits.total;
+    const visibleTotal = readAiMetaVisibleCount(result);
     const esHits  = hits.hits || [];
 
     saveCursor(queryHash, from, size, esHits);
 
     if (esHits.length === 0) {
-      return { code: 200, data: [], total, message: 'No ads found' };
+      return { code: 200, data: [], total: visibleTotal ?? total, message: 'No ads found' };
     }
 
     // ─── Phase 2: enrich from SQL (shared with the DISPLAY merge path) ────
@@ -573,7 +579,7 @@ async function searchAds(req, db, logger) {
     return {
       code: 200,
       data: finalAds,
-      total,
+      total: visibleTotal ?? total,
       message: 'Ads fetched successfully',
     };
 

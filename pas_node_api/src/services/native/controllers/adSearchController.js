@@ -4,7 +4,11 @@ const NativeSearchQueryBuilder = require('../builders/NativeSearchQueryBuilder')
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const {
+  applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
+  readAiMetaVisibleCount,
+} = require('../../common/helpers/aiMetaSearchFilter');
 
 // Shared SQL fragment for fetching full native ad details by IDs
 const AD_DETAIL_SELECT = `
@@ -358,6 +362,7 @@ async function searchAds(req, db, logger) {
   // Build and execute
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'native', p);
+  addAiMetaVisibleCountAgg(esParams, 'native', p);
 
   // ─── Deep pagination: swap from/size → search_after ──
   const queryHash = buildQueryHash(p);
@@ -382,13 +387,14 @@ async function searchAds(req, db, logger) {
     const result = await db.elastic.search(esParams);
     const hits = result.hits || result.body?.hits;
     const total = typeof hits.total === 'object' ? hits.total.value : hits.total;
+    const visibleTotal = readAiMetaVisibleCount(result);
     const esHits = (hits.hits || []);
 
     // Cache cursor for next deep page
     saveCursor(queryHash, from, size, esHits);
 
     if (esHits.length === 0) {
-      return { code: 200, data: [], total, message: 'No ads found' };
+      return { code: 200, data: [], total: visibleTotal ?? total, message: 'No ads found' };
     }
 
     // ─── Fetch detailed metadata from SQL ────────────────
@@ -470,7 +476,7 @@ ORDER BY FIELD(native_ad.id, ${placeholders})
     return {
       code: 200,
       data: cleanAdsData(finalAds),
-      total,
+      total: visibleTotal ?? total,
       message: 'Ads fetched successfully',
     };
   } catch (err) {

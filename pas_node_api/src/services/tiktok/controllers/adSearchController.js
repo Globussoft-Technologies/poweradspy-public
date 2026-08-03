@@ -4,7 +4,11 @@ const TiktokSearchQueryBuilder = require('../builders/TiktokSearchQueryBuilder')
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { COUNTRY_LABEL_TO_ISO } = require('../helpers/countries');
 const { LANG_ISO_TO_ES } = require('../helpers/languages');
-const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const {
+  applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
+  readAiMetaVisibleCount,
+} = require('../../common/helpers/aiMetaSearchFilter');
 
 // Resolve language values sent by frontend (ISO codes or full names) to ES field values.
 function resolveLanguageValues(values) {
@@ -343,6 +347,7 @@ async function searchAds(req, db, logger) {
   }
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'tiktok', p);
+  addAiMetaVisibleCountAgg(esParams, 'tiktok', p);
 
 
   logger.info('Executing TikTok ad search', { from: esParams.body.from, size: esParams.body.size, sortField: sort.field });
@@ -351,6 +356,7 @@ async function searchAds(req, db, logger) {
     const result = await db.elastic.search(esParams);
     const hits = result.hits || result.body?.hits;
     const total = typeof hits.total === 'object' ? hits.total.value : hits.total;
+    const visibleTotal = readAiMetaVisibleCount(result);
     const esHits = (hits.hits || []);
 
     if (esHits.length === 0) return { code: 200, data: [], total: 0, message: 'No ads found' };
@@ -361,7 +367,7 @@ async function searchAds(req, db, logger) {
     return {
       code: 200,
       data: cleanAdsData(ads),
-      total: searchFilterTotal,
+      total: visibleTotal != null ? visibleTotal : searchFilterTotal,
       message: 'Ads fetched successfully',
     };
   } catch (err) {

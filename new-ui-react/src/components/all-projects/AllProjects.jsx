@@ -3203,7 +3203,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                         competitor_name:     comp.name,
                                         competitor_platform: p,
                                       });
-                                      onSearch?.(comp.name, "advertiser", p.toLowerCase());
+                                      // Start from a clean filter slate so a stale
+                                      // Ads Library filter from the previous page
+                                      // cannot suppress the exact platform the
+                                      // user clicked in the competitor table.
+                                      onSearch?.(comp.name, "advertiser", p.toLowerCase(), {
+                                        resetFilters: true,
+                                      });
                                       markReturnToAnalytics();
                                       onNavigateToAds?.();
                                     }}
@@ -3219,7 +3225,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                         competitor_name:     comp.name,
                                         competitor_platform: p,
                                       });
-                                      onSearch?.(comp.name, "advertiser", p.toLowerCase());
+                                      // Start from a clean filter slate so a stale
+                                      // Ads Library filter from the previous page
+                                      // cannot suppress the exact platform the
+                                      // user clicked in the competitor table.
+                                      onSearch?.(comp.name, "advertiser", p.toLowerCase(), {
+                                        resetFilters: true,
+                                      });
                                       markReturnToAnalytics();
                                       onNavigateToAds?.();
                                     }}

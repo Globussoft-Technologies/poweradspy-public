@@ -32,7 +32,11 @@
 
 const databaseManager = require('../../../database/DatabaseManager');
 const { matchFilter, multiFieldMatchFilter } = require('../../common/helpers/esQueryHelpers');
-const { getAiMetaFilterClauses } = require('../../common/helpers/aiMetaSearchFilter');
+const {
+  getAiMetaFilterClauses,
+  addAiMetaVisibleCountAgg,
+  readAiMetaVisibleCount,
+} = require('../../common/helpers/aiMetaSearchFilter');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 const {
   AD_DETAIL_SELECT: YT_SELECT,
@@ -237,15 +241,18 @@ async function getYoutubeDisplayHits(upper, sort, p, logger) {
 
   try {
     const index = yt.elastic.indexName || 'youtube_ads_data';
-    const res = await yt.elastic.search({ index, body });
+    const esParams = { body };
+    addAiMetaVisibleCountAgg(esParams, 'youtube', p);
+    const res = await yt.elastic.search({ index, body: esParams.body });
     const hits = res.hits || res.body?.hits;
     const total = typeof hits?.total === 'object' ? hits.total.value : (hits?.total || 0);
+    const visibleTotal = readAiMetaVisibleCount(res);
     const items = (hits?.hits || []).map(h => ({
       src: 'yt',
       id: h._source.ad_id,
       key: toEpochSeconds(h._source[ytField]),
     }));
-    return { items, total };
+    return { items, total: visibleTotal ?? total };
   } catch (err) {
     if (logger) logger.warn('YouTube DISPLAY hits fetch failed; GDN-only fallback', { error: err.message });
     return { items: [], total: 0 };

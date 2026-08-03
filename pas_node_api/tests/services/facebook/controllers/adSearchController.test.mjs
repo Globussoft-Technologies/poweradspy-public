@@ -296,6 +296,34 @@ describe("services/facebook/controllers/adSearchController > regular searchAds",
     expect(out.code).toBe(200);
   });
 
+  it("SQL empty for a valid ES hit returns zero results instead of inventing an ES-only row", async () => {
+    const esHits = [
+      {
+        _source: {
+          "facebook_ad.id": 77,
+          "facebook_ad.type": "IMAGE",
+          "facebook_ad_post_owners.post_owner_name": "Cotton On",
+          "facebook_ad_post_owners.post_owner_image": "https://x/owner.png",
+          new_nas_image_url: "https://x/nas.png",
+          "facebook_ad.likes": 11,
+        },
+      },
+    ];
+    const db = {
+      elastic: { indexName: "facebook", search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: { query: vi.fn(async () => []) },
+    };
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.code).toBe(200);
+    expect(out.data).toEqual([]);
+    expect(out.total).toBe(0);
+    expect(out.message).toBe("No ads found");
+    expect(fakeLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("SQL returned no rows for ES hits; returning empty result"),
+      expect.any(Object),
+    );
+  });
+
   it("0 hits → No ads found", async () => {
     const db = { elastic: { search: vi.fn(async () => mkEsHits([])) } };
     expect((await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger)).message).toBe("No ads found");

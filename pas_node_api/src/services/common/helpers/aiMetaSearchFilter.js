@@ -2,6 +2,24 @@
 
 const config = require('../../../config');
 
+// AI-filtered search results are presented as a visible card count, not as the
+// raw ES hit total. On collapsed indices (Facebook / Instagram) the raw hit
+// total can run ahead of what the UI renders, so we keep a lightweight
+// cardinality count field here and only enable it when an AI filter is active.
+const AI_VISIBLE_COUNT_FIELDS = {
+  facebook: 'facebook_ad.id',
+  instagram: 'instagram_ad.id',
+  youtube: 'ad_id',
+  gdn: 'gdn_ad.id',
+  linkedin: 'linkedin_ad.id',
+  native: 'native_ad.id',
+  reddit: 'reddit_ad.id',
+  quora: 'quora_ad.id',
+  pinterest: 'pinterest_ad.id',
+  google: 'id',
+  tiktok: 'sql_id',
+};
+
 /**
  * The dashboard exposes one logical AI-Meta filter, while production Facebook
  * stores new enrichment under `ai_meta` to avoid its legacy `ai` mapping.
@@ -107,10 +125,46 @@ function applyAiMetaFilters(esParams, network, params) {
   return esParams;
 }
 
+/**
+ * When AI filters are active, request a distinct-ad count alongside the
+ * normal search results so the header total matches the visible cards.
+ *
+ * This is intentionally limited to the collapsed Meta indices, where raw
+ * `hits.total` can overcount the same ad after ES doc duplication.
+ */
+function addAiMetaVisibleCountAgg(esParams, network, params) {
+  if (!esParams?.body) return esParams;
+
+  const field = AI_VISIBLE_COUNT_FIELDS[String(network || '').toLowerCase()];
+  if (!field) return esParams;
+
+  const clauses = getAiMetaFilterClauses(network, params);
+  if (!clauses.length) return esParams;
+
+  esParams.body.aggs = esParams.body.aggs || {};
+  if (!esParams.body.aggs.total_ads) {
+    esParams.body.aggs.total_ads = {
+      cardinality: {
+        field,
+        precision_threshold: 40000,
+      },
+    };
+  }
+
+  return esParams;
+}
+
+function readAiMetaVisibleCount(result) {
+  const aggs = result?.aggregations || result?.body?.aggregations || null;
+  return aggs?.total_ads?.value ?? null;
+}
+
 module.exports = {
   applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
   getAiMetaEsField,
   getAiMetaFilterClauses,
   getHasAiMetaFilter,
+  readAiMetaVisibleCount,
   isEnabled,
 };

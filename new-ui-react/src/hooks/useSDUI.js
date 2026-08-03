@@ -545,7 +545,7 @@ export function useSDUI() {
         // Dynamic platform support map built from config platform_applicability.
         // Keyed by filter _id → array of supported platform strings.
         // Used by buildSearchPayload and AdGrid to gate filter fields per platform.
-        filterPlatformSupport: (() => {
+        filterPlatformSupport: useMemo(() => {
             if (!config) return {};
             const allFilters = [
                 ...(config.searchbar?.flatMap(d => d.filters) || []),
@@ -560,6 +560,6 @@ export function useSDUI() {
                 map[f._id] = Array.isArray(pa) ? pa : [pa];
             }
             return map;
-        })(),
+        }, [config]),
     };
 }

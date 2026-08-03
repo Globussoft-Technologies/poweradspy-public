@@ -1,7 +1,16 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import AiQuickFilters from "../../../src/components/ads/AiQuickFilters";
+import { fetchAdsPresence } from "../../../src/services/api";
+
+vi.mock("../../../src/services/api", async () => {
+  const actual = await vi.importActual("../../../src/services/api");
+  return {
+    ...actual,
+    fetchAdsPresence: vi.fn(async () => ({ hasAds: true })),
+  };
+});
 
 const doc = {
   _id: "ai_meta",
@@ -114,7 +123,12 @@ const doc = {
 };
 
 describe("AiQuickFilters", () => {
-  it("applies a strategy through the shared filter state", () => {
+  beforeEach(() => {
+    fetchAdsPresence.mockReset();
+    fetchAdsPresence.mockImplementation(async () => ({ hasAds: true }));
+  });
+
+  it("applies a strategy through the shared filter state", async () => {
     const onApply = vi.fn();
     render(
       <AiQuickFilters
@@ -124,6 +138,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
+    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /B2B SaaS/i }));
 
     expect(onApply).toHaveBeenCalledWith({
@@ -133,7 +148,7 @@ describe("AiQuickFilters", () => {
     });
   });
 
-  it("shows the matching strategy as selected", () => {
+  it("shows the matching strategy as selected", async () => {
     render(
       <AiQuickFilters
         document={doc}
@@ -143,12 +158,13 @@ describe("AiQuickFilters", () => {
       />,
     );
 
+    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
     expect(
       screen.getByRole("button", { name: /TikTok UGC/i }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("replaces the active strategy when another card is selected", () => {
+  it("replaces the active strategy when another card is selected", async () => {
     const onApply = vi.fn();
     const { rerender } = render(
       <AiQuickFilters
@@ -158,6 +174,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
+    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /Flash Sale/i }));
     const flashValues = onApply.mock.calls[0][0];
     expect(flashValues).toEqual({
@@ -171,6 +188,7 @@ describe("AiQuickFilters", () => {
         onApply={onApply}
       />,
     );
+    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /B2B SaaS/i }));
     const replacementValues = onApply.mock.calls[1][0];
     expect(replacementValues).toEqual({
@@ -193,7 +211,30 @@ describe("AiQuickFilters", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("routes restricted strategy clicks to the upgrade handler", () => {
+  it("hides presets that would return no ads", async () => {
+    fetchAdsPresence.mockImplementation(async (filters) => ({
+      hasAds: !(Array.isArray(filters.ai_hook) && filters.ai_hook.includes("scarcity")),
+    }));
+
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{}}
+        onApply={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+
+    expect(
+      screen.queryByRole("button", { name: /Flash Sale/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /B2B SaaS/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("routes restricted strategy clicks to the upgrade handler", async () => {
     const onApply = vi.fn();
     const onRestricted = vi.fn();
     render(
@@ -206,13 +247,14 @@ describe("AiQuickFilters", () => {
       />,
     );
 
+    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /Flash Sale/i }));
 
     expect(onRestricted).toHaveBeenCalledTimes(1);
     expect(onApply).not.toHaveBeenCalled();
   });
 
-  it("resets AI filters without clearing normal filters", () => {
+  it("resets AI filters without clearing normal filters", async () => {
     const onApply = vi.fn();
     render(
       <AiQuickFilters
@@ -225,6 +267,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
+    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
     fireEvent.click(screen.getByTitle("Clear all AI filters"));
 
     expect(onApply).toHaveBeenCalledWith({ country_filter: ["US"] });

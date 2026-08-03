@@ -1461,13 +1461,23 @@ const App = () => {
         "search",
       );
     }
+    if (options.resetFilters) {
+      // Competitor drill-downs should not inherit stale ad-library filters from
+      // the previous page/session; start the search from a blank filter state so
+      // the clicked advertiser/platform is the only active context.
+      sdui.clearAll?.();
+    }
     dispatch(setSearchQuery(query));
-    setSearchTrigger(prev => prev + 1);
     if (type) dispatch(setSearchIn(type));
     if (platform) {
       sdui.setActivePlatforms([platform]);
       dispatch(setSpecificPlatforms([platform]));
     }
+    // Fire the fetch trigger last so the Ads Library load effect sees the
+    // committed search query, mode, and platform snapshot together. Triggering
+    // early could let the first fetch race a half-updated state and land on the
+    // wrong network set for competitor drill-downs.
+    setSearchTrigger(prev => prev + 1);
 
     // Keyword-search store — only on explicit search submit, AUTHENTICATED users only
     // (never guest / public). Stores the searched network(s): 'all' or the selected slugs.
@@ -2089,6 +2099,9 @@ const App = () => {
           <AdGrid
             ads={visibleAds}
             sdui={sdui}
+            searchQuery={ui.searchQuery}
+            searchIn={ui.searchIn}
+            exactSearch={ui.exactSearch}
             activeTab={ui.activeTab}
             setActiveTab={(val) => dispatch(setActiveTab(val))}
             onAnalyzeAd={handleAnalyzeAd}
