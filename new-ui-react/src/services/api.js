@@ -286,6 +286,20 @@ const formatDate = (dateStr) => {
   }
 };
 
+const toUtcDayIndex = (value) => {
+  if (value == null || value === '') return NaN;
+  const normalized = String(value).trim();
+  if (!normalized) return NaN;
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const [, year, month, day] = match;
+    return Math.floor(Date.UTC(Number(year), Number(month) - 1, Number(day)) / 86400000);
+  }
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return NaN;
+  return Math.floor(parsed.getTime() / 86400000);
+};
+
 // Derive aspect ratio string from width/height or image_size
 const deriveAspectRatio = (raw) => {
   const w = Number(raw.width) || 0;
@@ -392,13 +406,64 @@ export const mapAdToCard = (raw) => {
         .map(resolveNasUrl)
         .filter((url) => typeof url === 'string' && url && !url.includes('DefaultImage'))
     : [];
+  const transparencyCountryDetails = isGoogleTransparency
+    ? (() => {
+        if (Array.isArray(raw.country_details)) return raw.country_details;
+        if (typeof raw.country_details === 'string') {
+          try {
+            const parsed = JSON.parse(raw.country_details);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      })()
+    : [];
+  const transparencyWindow = (() => {
+    if (!isGoogleTransparency || !transparencyCountryDetails.length) return null;
+    const validRows = transparencyCountryDetails
+      .map((detail) => ({
+        firstSeen: detail?.first_seen ?? null,
+        lastSeen: detail?.last_seen ?? null,
+        firstSeenDay: toUtcDayIndex(detail?.first_seen),
+        lastSeenDay: toUtcDayIndex(detail?.last_seen),
+      }))
+      .filter((detail) =>
+        Number.isFinite(detail.firstSeenDay) &&
+        Number.isFinite(detail.lastSeenDay) &&
+        detail.lastSeenDay >= detail.firstSeenDay
+      );
+    if (!validRows.length) return null;
+    const first = validRows.reduce((earliest, row) =>
+      row.firstSeenDay < earliest.firstSeenDay ? row : earliest
+    );
+    const last = validRows.reduce((latest, row) =>
+      row.lastSeenDay > latest.lastSeenDay ? row : latest
+    );
+    return {
+      firstSeenRaw: first.firstSeen,
+      lastSeenRaw: last.lastSeen,
+      runningDays: (last.lastSeenDay - first.firstSeenDay) + 1,
+    };
+  })();
+  const transparencyRunningDays = (() => {
+    if (transparencyWindow) return transparencyWindow.runningDays;
+    if (!isGoogleTransparency) return null;
+    const firstSeenDay = toUtcDayIndex(raw.first_seen);
+    const lastSeenDay = toUtcDayIndex(raw.last_seen);
+    if (!Number.isFinite(firstSeenDay) || !Number.isFinite(lastSeenDay) || lastSeenDay < firstSeenDay) {
+      return null;
+    }
+    return (lastSeenDay - firstSeenDay) + 1;
+  })();
   return {
     id: raw.ad_id || raw.sql_id || raw.id,
     advertiser: raw.post_owner || 'Unknown',
     advertiserImage: raw.post_owner_image ? `${raw.post_owner_image}` : null,
     date: formatDate(raw.post_date),
-    lastSeen: formatDate(raw.last_seen),
-    firstSeen: formatDate(raw.first_seen),
+    lastSeen: formatDate(transparencyWindow?.lastSeenRaw ?? raw.last_seen),
+    firstSeen: formatDate(transparencyWindow?.firstSeenRaw ?? raw.first_seen),
     // IMAGE ads whose NAS image isn't ready yet are flagged preview_unavailable by the
     // backend — show a placeholder (don't fall back to an expiring source URL). The real
     // image appears once NAS is populated (the next search sends image_video_url again).
@@ -453,22 +518,9 @@ export const mapAdToCard = (raw) => {
           operator: raw.impressions.operator ?? null,
         }
       : null,
-    countryDetails: isGoogleTransparency
-      ? (() => {
-          if (Array.isArray(raw.country_details)) return raw.country_details;
-          if (typeof raw.country_details === 'string') {
-            try {
-              const parsed = JSON.parse(raw.country_details);
-              return Array.isArray(parsed) ? parsed : [];
-            } catch {
-              return [];
-            }
-          }
-          return [];
-        })()
-      : [],
-    firstSeenRaw: raw.first_seen ?? null,
-    lastSeenRaw: raw.last_seen ?? null,
+    countryDetails: transparencyCountryDetails,
+    firstSeenRaw: transparencyWindow?.firstSeenRaw ?? raw.first_seen ?? null,
+    lastSeenRaw: transparencyWindow?.lastSeenRaw ?? raw.last_seen ?? null,
     lastShownRaw: raw.last_shown ?? null,
     postDateRaw: raw.post_date ?? null,
     title: raw.ad_title || '',
@@ -591,7 +643,7 @@ export const mapAdToCard = (raw) => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : null;
     })(),
-    runningDays: calculateRunningDays({
+    runningDays: transparencyRunningDays ?? calculateRunningDays({
       lastSeen: raw.last_seen,
       postDate: raw.post_date,
       firstSeen: raw.first_seen,

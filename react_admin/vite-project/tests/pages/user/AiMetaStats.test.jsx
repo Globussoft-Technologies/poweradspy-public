@@ -83,6 +83,7 @@ beforeEach(() => {
   fetchSpy.mockReset();
   rangeProps.current = null;
   unwrapImpl.current = () => Promise.resolve();
+  localStorage.clear();
   useDispatchSpy.mockImplementation(() => ({ unwrap: () => unwrapImpl.current() }));
 });
 
@@ -97,6 +98,27 @@ describe("pages/user/AiMetaStats", () => {
     expect(fetchSpy).toHaveBeenCalledWith({ range: { from: "2026-07-31", to: "2026-07-31" } });
     // Single day → the label collapses to one date rather than "a ~ b".
     expect(screen.getByText("2026-07-31")).toBeInTheDocument();
+  });
+
+  it("restores the previously applied date range after a browser refresh", () => {
+    localStorage.setItem(
+      "aiMetaStatsDateRange",
+      JSON.stringify({ from: "2026-07-24", to: "2026-07-30" })
+    );
+    renderPage();
+
+    expect(screen.getByText("2026-07-24 ~ 2026-07-30")).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledWith({
+      range: { from: "2026-07-24", to: "2026-07-30" },
+    });
+  });
+
+  it("falls back to today when the saved range is invalid", () => {
+    localStorage.setItem("aiMetaStatsDateRange", "not-json");
+    renderPage();
+    expect(fetchSpy).toHaveBeenCalledWith({
+      range: { from: "2026-07-31", to: "2026-07-31" },
+    });
   });
 
   it("swallows a rejected fetch so it never surfaces as an unhandled rejection", async () => {
@@ -209,6 +231,10 @@ describe("pages/user/AiMetaStats", () => {
     act(() => rangeProps.current.onApply());
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[1][0]).toEqual({ range: { from: "2026-07-01", to: "2026-07-15" } });
+    expect(JSON.parse(localStorage.getItem("aiMetaStatsDateRange"))).toEqual({
+      from: "2026-07-01",
+      to: "2026-07-15",
+    });
     expect(screen.getByText("2026-07-01 ~ 2026-07-15")).toBeInTheDocument();
     expect(screen.queryByTestId("range-picker")).not.toBeInTheDocument();
 

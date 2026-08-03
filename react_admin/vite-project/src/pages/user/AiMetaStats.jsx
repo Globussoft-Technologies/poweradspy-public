@@ -19,6 +19,7 @@ import { fetchAiMetaStats } from "../../store/actions/powerAdsPyActionsApi";
 
 // Picker floor; the ceiling is today, since nothing can be processed in the future.
 const MIN_DATE = new Date(2020, 0, 1);
+const DATE_RANGE_STORAGE_KEY = "aiMetaStatsDateRange";
 
 // Local Y-M-D (not toISOString) — the API buckets by the DB's own dates, so shifting the range
 // into UTC could ask for the wrong day for anyone east/west of the server.
@@ -31,6 +32,31 @@ const toApiDate = (date) => {
 
 // Defaults to today — the range runs to end-of-day, so "today" means today up to now.
 const defaultRange = () => ({ startDate: new Date(), endDate: new Date() });
+
+const loadSavedRange = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DATE_RANGE_STORAGE_KEY));
+    if (!saved?.from || !saved?.to) return defaultRange();
+
+    // Parse at local midnight. Parsing YYYY-MM-DD directly uses UTC and can
+    // shift the selected day in time zones behind UTC.
+    const parseLocalDate = (value) => {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+      if (!match) return null;
+      const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+      return toApiDate(date) === value ? date : null;
+    };
+
+    const startDate = parseLocalDate(saved.from);
+    const endDate = parseLocalDate(saved.to);
+    if (!startDate || !endDate || startDate > endDate || startDate < MIN_DATE || endDate > new Date()) {
+      return defaultRange();
+    }
+    return { startDate, endDate };
+  } catch {
+    return defaultRange();
+  }
+};
 
 const fmtNum = (n) => Number(n || 0).toLocaleString("en-US");
 
@@ -50,7 +76,7 @@ const AiMetaStats = () => {
   const loading = useSelector((s) => s.poweradspy?.loadingAiMetaStats);
   const error = useSelector((s) => s.poweradspy?.aiMetaStatsError);
 
-  const [selectedDates, setSelectedDates] = useState(defaultRange);
+  const [selectedDates, setSelectedDates] = useState(loadSavedRange);
   const [draftDates, setDraftDates] = useState(selectedDates);
   const [isOpen, setIsOpen] = useState(false);
   const pickerRef = useRef(null);
@@ -97,6 +123,10 @@ const AiMetaStats = () => {
 
   const handleApply = useCallback(() => {
     setSelectedDates(draftDates); // committing triggers the refetch via `range`
+    localStorage.setItem(
+      DATE_RANGE_STORAGE_KEY,
+      JSON.stringify({ from: toApiDate(draftDates.startDate), to: toApiDate(draftDates.endDate) })
+    );
     setIsOpen(false);
   }, [draftDates]);
 

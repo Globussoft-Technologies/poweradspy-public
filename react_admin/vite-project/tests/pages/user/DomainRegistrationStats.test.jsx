@@ -83,6 +83,7 @@ beforeEach(() => {
   fetchSpy.mockReset();
   rangeProps.current = null;
   unwrapImpl.current = () => Promise.resolve();
+  localStorage.clear();
   useDispatchSpy.mockImplementation(() => ({ unwrap: () => unwrapImpl.current() }));
 });
 
@@ -96,6 +97,27 @@ describe("pages/user/DomainRegistrationStats", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith({ range: { from: "2026-07-23", to: "2026-07-29" } });
     expect(useDispatchSpy).toHaveBeenCalled();
+  });
+
+  it("restores the previously applied date range after a browser refresh", () => {
+    localStorage.setItem(
+      "domainRegistrationStatsDateRange",
+      JSON.stringify({ from: "2026-07-24", to: "2026-07-28" })
+    );
+    renderPage();
+
+    expect(screen.getByText("2026-07-24 ~ 2026-07-28")).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledWith({
+      range: { from: "2026-07-24", to: "2026-07-28" },
+    });
+  });
+
+  it("falls back to the trailing 7 days when the saved range is invalid", () => {
+    localStorage.setItem("domainRegistrationStatsDateRange", "not-json");
+    renderPage();
+    expect(fetchSpy).toHaveBeenCalledWith({
+      range: { from: "2026-07-23", to: "2026-07-29" },
+    });
   });
 
   it("swallows a rejected fetch so it never surfaces as an unhandled rejection", async () => {
@@ -228,6 +250,10 @@ describe("pages/user/DomainRegistrationStats", () => {
     act(() => rangeProps.current.onApply());
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[1][0]).toEqual({ range: { from: "2026-06-01", to: "2026-06-30" } });
+    expect(JSON.parse(localStorage.getItem("domainRegistrationStatsDateRange"))).toEqual({
+      from: "2026-06-01",
+      to: "2026-06-30",
+    });
     expect(screen.queryByTestId("range-picker")).not.toBeInTheDocument();
     expect(screen.getByTestId("tri-down")).toBeInTheDocument();
   });

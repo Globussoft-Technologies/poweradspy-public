@@ -20,6 +20,7 @@ import { fetchDomainRegistrationStats } from "../../store/actions/powerAdsPyActi
 /* ------------------------------------------------------------------ */
 
 const DEFAULT_DAYS = 7;
+const DATE_RANGE_STORAGE_KEY = "domainRegistrationStatsDateRange";
 // Picker bounds. Left unset, react-date-range offers today-100y .. today+20y — the 1926-2046
 // year dropdown. The floor is 2020 (nothing in the domains tables predates it; the oldest rows
 // are late 2022) and the ceiling is today, since no domain can be processed in the future.
@@ -41,6 +42,31 @@ const defaultRange = () => {
   return { startDate: start, endDate: end };
 };
 
+const loadSavedRange = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DATE_RANGE_STORAGE_KEY));
+    if (!saved?.from || !saved?.to) return defaultRange();
+
+    // Parse at local midnight. `new Date('YYYY-MM-DD')` is UTC and can shift to
+    // the previous day in some time zones.
+    const parseLocalDate = (value) => {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+      if (!match) return null;
+      const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+      return toApiDate(date) === value ? date : null;
+    };
+
+    const startDate = parseLocalDate(saved.from);
+    const endDate = parseLocalDate(saved.to);
+    if (!startDate || !endDate || startDate > endDate || startDate < MIN_DATE || endDate > new Date()) {
+      return defaultRange();
+    }
+    return { startDate, endDate };
+  } catch {
+    return defaultRange();
+  }
+};
+
 const fmtNum = (n) => Number(n || 0).toLocaleString("en-US");
 
 const KpiTile = ({ label, value, accent = "#1f296a", sub }) => (
@@ -59,7 +85,7 @@ const DomainRegistrationStats = () => {
   const loading = useSelector((s) => s.poweradspy?.loadingDomainRegistrationStats);
   const error = useSelector((s) => s.poweradspy?.domainRegistrationStatsError);
 
-  const [selectedDates, setSelectedDates] = useState(defaultRange);
+  const [selectedDates, setSelectedDates] = useState(loadSavedRange);
   const [draftDates, setDraftDates] = useState(selectedDates);
   const [isOpen, setIsOpen] = useState(false);
   const pickerRef = useRef(null);
@@ -106,6 +132,10 @@ const DomainRegistrationStats = () => {
 
   const handleApply = useCallback(() => {
     setSelectedDates(draftDates); // committing triggers the refetch via `range`
+    localStorage.setItem(
+      DATE_RANGE_STORAGE_KEY,
+      JSON.stringify({ from: toApiDate(draftDates.startDate), to: toApiDate(draftDates.endDate) })
+    );
     setIsOpen(false);
   }, [draftDates]);
 
