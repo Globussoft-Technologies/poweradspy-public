@@ -1176,6 +1176,7 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(call.body.script.source).toContain("ctx._source.ai = params.aiMeta");
     expect(call.body.script.params.aiMeta.ad_type).toBe("promotional");
     expect(call.body.script.params.aiMeta.offering_type).toBe("product");
+    expect(call.refresh).toBe("wait_for");
     // Elasticsearch v7 expects client timeout options as the second argument; putting
     // requestTimeout in the request params makes it an invalid REST query parameter.
     expect(updateFn.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000, maxRetries: 0 });
@@ -1196,6 +1197,32 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.statusCode).toBe(200);
     const call = update.mock.calls.find((c) => c[0].body?.script)?.[0];
     expect(call.body.script.source).toContain("ctx._source.ai_meta = params.aiMeta");
+    expect(call.refresh).toBe(true);
+  });
+
+  it("forces immediate refresh for configured Google AI-Meta writes and category mirrors", async () => {
+    const update = vi.fn(async () => {});
+    serviceRegistry.getService.mockImplementation((name) => name === "google"
+      ? mkService({
+        esSearch: vi.fn(async () => ({ hits: { hits: [{ _id: "google-es-1", _source: {} }] } })),
+        esUpdate: update,
+      })
+      : null);
+    const res = mkRes();
+    const aiWithCategory = {
+      ...VALID_AI_META,
+      category: "Retail",
+      category_id: "1234",
+      sub_category: "eCommerce",
+      subcategory_id: "12340001",
+    };
+
+    await insertAiMeta({ body: { ad_id: "48979890", network: "google", ai_meta: aiWithCategory } }, res);
+
+    expect(res.statusCode).toBe(200);
+    const adDocumentUpdates = update.mock.calls.map(([params]) => params);
+    expect(adDocumentUpdates).toHaveLength(2);
+    expect(adDocumentUpdates.every((params) => params.refresh === true)).toBe(true);
   });
 
   it("TikTok ES 8 writes are typeless while retaining AI-Meta transport options", async () => {

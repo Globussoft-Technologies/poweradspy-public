@@ -48,6 +48,18 @@ function getVal(jsonValue, envKey, transform) {
 
 const toInt = (v) => parseInt(v, 10);
 const toBool = (v) => v === true || v === 'true';
+const toStringArray = (v) => {
+  if (Array.isArray(v)) return v.map((item) => String(item).trim()).filter(Boolean);
+  if (typeof v !== 'string') return [];
+
+  try {
+    const parsed = JSON.parse(v);
+    if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+  } catch {
+    // A plain comma-separated environment value is also supported.
+  }
+  return v.split(',').map((item) => item.trim()).filter(Boolean);
+};
 
 // ─── Build config object ─────────────────────────────────────
 
@@ -171,6 +183,7 @@ const config = {
   aiMeta: {
     bulkRecommendedSize: getVal(fileConfig.aiMeta?.bulkRecommendedSize, 'AI_META_BULK_RECOMMENDED_SIZE', toInt),
     bulkMaxSize: getVal(fileConfig.aiMeta?.bulkMaxSize, 'AI_META_BULK_MAX_SIZE', toInt),
+    forceRefreshNetworks: getVal(fileConfig.aiMeta?.forceRefreshNetworks, 'AI_META_FORCE_REFRESH_NETWORKS', toStringArray),
   },
 
   circuitBreaker: {
@@ -572,11 +585,15 @@ config.reload = () => {
         if (newFileConfig.apiTimeouts.networkSearchTimeoutMs !== undefined) config.apiTimeouts.networkSearchTimeoutMs = newFileConfig.apiTimeouts.networkSearchTimeoutMs;
       }
 
-      // Update AI-Meta bulk safeguards. The request handler validates values
-      // again before use, so a bad runtime edit cannot remove the hard cap.
+      // Update AI-Meta bulk safeguards and refresh policy. The request handler
+      // validates bulk values again before use, so a bad runtime edit cannot
+      // remove the hard cap.
       if (newFileConfig.aiMeta) {
         if (newFileConfig.aiMeta.bulkRecommendedSize !== undefined) config.aiMeta.bulkRecommendedSize = toInt(newFileConfig.aiMeta.bulkRecommendedSize);
         if (newFileConfig.aiMeta.bulkMaxSize !== undefined) config.aiMeta.bulkMaxSize = toInt(newFileConfig.aiMeta.bulkMaxSize);
+        if (newFileConfig.aiMeta.forceRefreshNetworks !== undefined) {
+          config.aiMeta.forceRefreshNetworks = toStringArray(newFileConfig.aiMeta.forceRefreshNetworks);
+        }
       }
 
       // Update server timeouts

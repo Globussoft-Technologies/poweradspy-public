@@ -35,6 +35,21 @@ function getAiMetaBulkLimits() {
   return { maxSize, recommendedSize };
 }
 
+function getAiMetaRefreshPolicy(platform) {
+  const forceRefreshNetworks = config.aiMeta?.forceRefreshNetworks;
+  if (!Array.isArray(forceRefreshNetworks)) return 'wait_for';
+
+  const normalizedPlatform = String(platform || '').trim().toLowerCase();
+  const usesForcedRefresh = forceRefreshNetworks.some(
+    (network) => String(network || '').trim().toLowerCase() === normalizedPlatform,
+  );
+
+  // `refresh=true` refreshes only the shard receiving this AI-Meta update. This
+  // avoids waiting for long index refresh intervals while keeping other writes on
+  // the lower-cost `wait_for` policy.
+  return usesForcedRefresh ? true : 'wait_for';
+}
+
 function getAiMetaTransportOptions(requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
   // A single bounded attempt keeps slow ES writes inside the application timeout
   // budget. Retrying is delegated to the idempotent caller with Retry-After.
@@ -239,7 +254,7 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform, requ
         params: { aiMeta: normalized },
       },
     },
-    refresh: 'wait_for',
+    refresh: getAiMetaRefreshPolicy(platform),
   }), getAiMetaTransportOptions(requestTimeoutMs));
 }
 
@@ -266,7 +281,7 @@ async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat, requ
         confidence_score:            0,
       },
     },
-    refresh: 'wait_for',
+    refresh: getAiMetaRefreshPolicy(platform),
   }), getAiMetaTransportOptions(requestTimeoutMs));
 }
 

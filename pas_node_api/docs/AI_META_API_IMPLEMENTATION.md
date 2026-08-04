@@ -265,7 +265,11 @@ ctx._source.<resolved_ai_field> = params.aiMeta;
 The object is **replaced** on every write (not doc-merged), so re-sending overwrites prior labels and
 stale sub-fields from an older payload shape (e.g. a leftover `object`/`status`/`brand` from a v1.1v1.4
 write) are dropped. `status` was removed (v1.3), so there is no partial/failed path every payload is a
-completed enrichment. Written with `refresh: wait_for` so it is immediately searchable.
+completed enrichment. The default write policy is `refresh: wait_for` so it is immediately
+searchable. Networks listed in `config.aiMeta.forceRefreshNetworks` use `refresh: true` for
+AI-Meta ad-document writes instead: this forces refresh of only the affected shard and prevents
+the endpoint from waiting behind that index's long `refresh_interval`. The default configuration
+enables this narrowly for Facebook and Google; all other AI-Meta writes retain `wait_for`.
 
 `ai_meta_status` (Option A) / outcome mapping:
 
@@ -314,7 +318,7 @@ schema/design in `docs/AI_META_SQL_STORAGE.md`. In short:
 |---|---|---|
 | 1 | Endpoint choice | **Both** A (extend `newCatInsertion`) and B (dedicated `/ai-meta`), sharing one validator + writer. |
 | 2 | Idempotency | **Overwrite** the whole AI-Meta object is replaced on every write. (`status` was dropped, so the earlier partial/failed policy no longer applies.) |
-| 3 | Indexing trigger | Direct ES write with `refresh: wait_for` immediately searchable, no separate cron. |
+| 3 | Indexing trigger | Direct ES write immediately searchable, no separate cron. The default is `refresh: wait_for`; configured long-refresh networks use shard-scoped `refresh: true`. |
 | 4 | Durable store | **Dual-write to SQL** (`<net>_ad_ai_meta`) alongside ES, non-fatal. category/sub_category sourced from the `ai_meta` object; category also synced to the pre-existing `<net>_ad.category_id` store where one exists (7/11 networks). |
 | 5 | Category location (v1.6) | Category **name + 4/8-char ids live inside `ai_meta`** (top-level classification fields retired). This lets **Option B (`/ai-meta`) be the single endpoint** it maintains the taxonomy index and the flat ES codes from the ids. `newCatInsertion` (Option A) is kept as-is for backward compatibility; its taxonomy logic is now shared via `syncMasterCategory`. |
 
