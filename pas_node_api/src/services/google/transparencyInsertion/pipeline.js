@@ -63,9 +63,17 @@ function uploadedMultimediaPaths(result) {
 }
 
 function hasTranslationContent(translation) {
-  return ['title', 'text', 'newsfeed_description'].some((field) =>
+  return ['title', 'text', 'newsfeed_description', 'post_owner_name'].some((field) =>
     typeof translation?.[field] === 'string' && translation[field].trim() !== ''
   );
+}
+
+function translatedPostOwnerName(postOwner, translation) {
+  if (!postOwner) return null;
+  const translated = translation?.post_owner_name;
+  return typeof translated === 'string' && translated.trim() !== ''
+    ? translated.trim()
+    : postOwner;
 }
 
 function earlierSql(left, right) {
@@ -145,12 +153,14 @@ async function processTransparencyAd(payload, ctx) {
   });
   trace('TRANSLATION_API_REQUEST', {
     endpoint_configured: Boolean(config.insertion.api.translationUrl),
+    post_owner: data.post_owner || '',
     title: data.ad_title || '',
     text: data.ad_text || '',
     newsfeed_description: '',
   });
   const translationResult = await api.translate({
     call_to_action: '',
+    post_owner_name: data.post_owner || '',
     text: data.ad_text || '',
     title: data.ad_title || '',
     newsfeed_description: '',
@@ -165,12 +175,40 @@ async function processTransparencyAd(payload, ctx) {
       hint: 'Check LANGUAGE_TRANSLATION_API, or set insertion.api.translationRequired=false only for an intentional best-effort environment.',
     });
   }
-  const rawTranslation = translationResult.ok ? translationResult.data : null;
+  let rawTranslation = translationResult.ok ? translationResult.data : null;
+  // The shared translation endpoint currently accepts post_owner_name but some
+  // deployments omit that field from the response. For non-ASCII advertiser
+  // names, retry through the endpoint's supported `text` field and merge only
+  // that translated value. Keep the creative's language detection from the
+  // primary request; the advertiser name must not change the ad language.
+  if (
+    translationResult.ok &&
+    data.post_owner &&
+    /[^\x00-\x7F]/.test(data.post_owner) &&
+    !(typeof rawTranslation?.post_owner_name === 'string' && rawTranslation.post_owner_name.trim())
+  ) {
+    const ownerTranslationResult = await api.translate({
+      call_to_action: '',
+      text: data.post_owner,
+      title: '',
+      newsfeed_description: '',
+    });
+    const translatedOwner = ownerTranslationResult.ok
+      ? ownerTranslationResult.data?.text
+      : null;
+    if (typeof translatedOwner === 'string' && translatedOwner.trim()) {
+      rawTranslation = {
+        ...(rawTranslation || {}),
+        post_owner_name: translatedOwner.trim(),
+      };
+    }
+  }
   const translation = hasTranslationContent(rawTranslation) ? rawTranslation : null;
   const languageShouldUpdate = translationResult.ok;
   const translationForSql = translationResult.ok
     ? (translation || { title: '', text: '', newsfeed_description: '' })
     : null;
+  const postOwnerNameForSearch = translatedPostOwnerName(data.post_owner, translation);
   const translationEvent = translation
     ? 'TRANSLATION_API_SUCCEEDED'
     : translationResult.ok
@@ -185,6 +223,7 @@ async function processTransparencyAd(payload, ctx) {
     translated_title: translation?.title ?? null,
     translated_text: translation?.text ?? null,
     translated_newsfeed_description: translation?.newsfeed_description ?? null,
+    translated_post_owner: postOwnerNameForSearch,
     error: translationResult.ok ? null : translationResult.error,
   });
   try {
@@ -203,7 +242,7 @@ async function processTransparencyAd(payload, ctx) {
         found: Boolean(existing),
         internal_id: existing?.id || null,
       });
-      const postOwnerName = data.post_owner || (!existing ? data.advertiser_id : null);
+      const postOwnerName = postOwnerNameForSearch || (!existing ? data.advertiser_id : null);
       const postOwnerId = postOwnerName
         ? await repo.ensurePostOwner(tx, postOwnerName, !existing)
         : existing?.post_owner_id;
@@ -352,6 +391,7 @@ async function processTransparencyAd(payload, ctx) {
         detectedLanguage: translation?.detected_language
           ? String(translation.detected_language).slice(0, 2).toLowerCase()
           : null,
+        postOwnerNameForSearch,
         countryDetails: deliveryRowsToContract(deliveryRows),
       };
     });
@@ -605,6 +645,7 @@ async function processTransparencyAd(payload, ctx) {
       const document = buildTransparencyDoc(
         {
           ...data,
+          post_owner: saved.postOwnerNameForSearch,
           post_owner_image: postOwnerImage,
           postDateEs: saved.postDateEs,
           firstSeenSql: saved.firstSeenSql,

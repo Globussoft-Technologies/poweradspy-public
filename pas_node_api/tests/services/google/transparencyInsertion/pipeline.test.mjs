@@ -153,6 +153,56 @@ describe('Google Transparency pipeline', () => {
     expect(log.info).not.toHaveBeenCalled();
   });
 
+  it('translates a non-ASCII post owner through the text fallback when the primary response omits it', async () => {
+    repo.getAd.mockResolvedValue(null);
+    api.translate
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          detected_language: 'en',
+          language_name: 'English',
+          title: '',
+          text: 'English creative text',
+          newsfeed_description: '',
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          detected_language: 'zh',
+          language_name: 'Unknown',
+          text: 'Shenzhen Weile High-tech Co., Ltd. ',
+        },
+      });
+    const elastic = { indexName: 'google_ads_data_v2', index: vi.fn(async () => ({})) };
+
+    const out = await processTransparencyAd(payload({
+      post_owner: '深圳唯乐高科技有限公司',
+    }), { db: { sql: {}, elastic }, log });
+
+    expect(out).toMatchObject({ code: 200, data: { id: 42 } });
+    expect(api.translate).toHaveBeenCalledTimes(2);
+    expect(api.translate).toHaveBeenNthCalledWith(2, {
+      call_to_action: '',
+      text: '深圳唯乐高科技有限公司',
+      title: '',
+      newsfeed_description: '',
+    });
+    expect(repo.ensurePostOwner).toHaveBeenCalledWith(
+      expect.anything(),
+      'Shenzhen Weile High-tech Co., Ltd.',
+      true
+    );
+    expect(repo.ensureLanguage).toHaveBeenCalledWith(expect.anything(), 'en', 'English');
+    expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        post_owner_name: 'Shenzhen Weile High-tech Co., Ltd.',
+        post_owner_lower: 'shenzhen weile high-tech co., ltd.',
+        lang_detect: 'en',
+      }),
+    }));
+  });
+
   it('uses the update branch idempotently for an existing creative', async () => {
     repo.getAd.mockResolvedValue({ id: 99, last_shown: '2025-12-23 00:00:00' });
     const out = await processTransparencyAd(payload(), { db: { sql: {}, elastic: null }, log });

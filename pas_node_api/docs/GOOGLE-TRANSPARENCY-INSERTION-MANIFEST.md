@@ -167,11 +167,16 @@ Run `--apply` separately in each environment with that environment's config.
 For each valid item:
 
 1. Normalize RFC 3339 timestamps and derive the destination domain.
-2. Send title/text to the existing configured `translationUrl`. When
+2. Send title/text and `post_owner` to the existing configured `translationUrl`.
+   The request uses the dedicated `post_owner_name` field; a non-empty
+   translated `post_owner_name` becomes the canonical
+   SQL owner name and Elasticsearch `post_owner_name`. If it is empty, the
+   original owner name is preserved. When
    translation is required and unavailable, return `503` before any SQL write.
    A successful response counts as usable only when at least one translated
-   title, text, or description is non-empty. A bare `detected_language=en`
-   accompanying three empty translated values is an empty result, not English.
+   owner, title, text, or description is non-empty. A bare
+   `detected_language=en` accompanying empty translated values is an empty
+   result, not English.
 3. Start one SQL transaction.
 4. Find or create the existing owner, domain, country, and detected-language
    dimensions.
@@ -332,7 +337,9 @@ The additions are declared in `scripts/google_ads_data_v2.mapping.json`.
 `lang_detect` is the normalized two-letter detected-language value used by the
 existing language filter. `ad_title`, `ad_text`, and
 `news_feed_description` contain translated copy; `title` and `text` retain the
-original creative.
+original creative. `post_owner_name` contains the translated owner when the
+translation service returns a non-empty translated `post_owner_name`; otherwise
+it contains the original owner.
 `country_details` is a bounded `nested` field so its country, code,
 `first_seen`, `last_seen`, and `times_shown` bounds are searchable while preserving per-country
 association. Unknown nested keys remain disabled. Large display-only URLs and

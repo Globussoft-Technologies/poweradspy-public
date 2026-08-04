@@ -28,13 +28,23 @@ const log = logger.createChild('insertion-api');
  *
  * @returns {{ ok:boolean, data?:Object, error?:string }}
  */
-async function translate({ call_to_action = '', text = '', title = '', newsfeed_description = '' }) {
+async function translate(params = {}) {
+  const {
+    call_to_action = '', text = '', title = '', newsfeed_description = '',
+  } = params;
   const url = config.insertion.api.translationUrl;
   if (!url) return { ok: false, error: 'translationUrl not configured' };
 
+  const payload = { call_to_action, text, title, newsfeed_description };
+  // Preserve the established request shape for other networks. Only callers
+  // that explicitly request owner translation send this extension field.
+  if (Object.prototype.hasOwnProperty.call(params, 'post_owner_name')) {
+    payload.post_owner_name = params.post_owner_name ?? '';
+  }
+
   const res = await postJson(
     url,
-    { call_to_action, text, title, newsfeed_description },
+    payload,
     { timeoutMs: config.insertion.api.timeoutMs, verifyTls: false }
   );
 
