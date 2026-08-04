@@ -62,4 +62,14 @@ describe('aiMetaSearchFilter', () => {
       { terms: { 'ai.category_id': ['1038'] } },
     ]));
   });
+
+  it('expands offering_type product/service filters to include both', () => {
+    const clauses = getAiMetaFilterClauses('facebook', {
+      ai_offering_type: ['product'],
+    });
+
+    expect(clauses).toEqual([
+      { terms: { 'ai.offering_type': ['product', 'both'] } },
+    ]);
+  });
 });

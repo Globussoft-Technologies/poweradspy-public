@@ -48,6 +48,61 @@ function served(v) {
   return CDN_BASE + (t.startsWith('/') ? t : '/' + t);
 }
 
+function isBlankValue(v) {
+  return v === null || v === undefined || v === '';
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (!isBlankValue(value)) return value;
+  }
+  return undefined;
+}
+
+function parseNonNegativeInteger(rawValue, fieldName) {
+  const valueText = String(rawValue).trim();
+  if (!/^\d+$/.test(valueText)) {
+    return { error: `${fieldName} must be a non-negative integer` };
+  }
+  const value = Number(valueText);
+  if (!Number.isSafeInteger(value)) {
+    return { error: `${fieldName} exceeds the safe integer range` };
+  }
+  return { value };
+}
+
+function setRetryAfter(res, seconds) {
+  const value = String(seconds ?? 30);
+  if (typeof res?.setHeader === 'function') {
+    res.setHeader('Retry-After', value);
+    return;
+  }
+  if (typeof res?.set === 'function') {
+    res.set('Retry-After', value);
+    return;
+  }
+  if (typeof res?.header === 'function') {
+    res.header('Retry-After', value);
+  }
+}
+
+function getRetryAfterSeconds(err) {
+  const headerValue = err?.meta?.headers?.['retry-after']
+    ?? err?.meta?.headers?.['Retry-After']
+    ?? err?.response?.headers?.['retry-after']
+    ?? err?.response?.headers?.['Retry-After'];
+  const parsed = Number(headerValue);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+}
+
+function getTemporaryEsStatus(err) {
+  const rawStatus = err?.statusCode ?? err?.meta?.statusCode ?? err?.meta?.body?.status ?? err?.meta?.body?.error?.status;
+  const status = Number(rawStatus);
+  if (status === 429) return 429;
+  if ([502, 503, 504].includes(status)) return 503;
+  return null;
+}
+
 /**
  * Exact-ID ad lookup shared by newCatInsertion (to update) and getAdCategory (to read
  * back). Some platforms index the id as a long (facebook_ad.id), others as a keyword
@@ -620,8 +675,24 @@ async function fetchSqlDescriptionFallback(sqlClient, sqlCfg, ids) {
  */
 async function getDescriptionDetails(req, res) {
   const platform = (req.query.platform || req.body.platform || '').toLowerCase().trim();
-  const exVal    = Number(req.query.exVal  || req.body.exVal  || 0);
-  const limit    = Number(req.query.limit  || req.body.limit  || 150);
+  const exValRaw = firstDefined(req.query.exVal, req.body?.exVal);
+  const limitRaw = firstDefined(req.query.limit, req.body?.limit);
+  const exValInput = exValRaw ?? 0;
+  const limitInput = limitRaw ?? 150;
+  const exValParsed = parseNonNegativeInteger(exValInput, 'exVal');
+  if (exValParsed.error) {
+    return res.status(400).json({ code: 400, message: exValParsed.error });
+  }
+  const limitParsed = parseNonNegativeInteger(limitInput, 'limit');
+  if (limitParsed.error) {
+    return res.status(400).json({ code: 400, message: limitParsed.error });
+  }
+  if (limitParsed.value === 0) {
+    return res.status(400).json({ code: 400, message: 'limit must be greater than 0' });
+  }
+
+  const exVal = exValParsed.value;
+  const limit = limitParsed.value;
 
   const cfg = PLATFORM_CONFIG[platform];
   if (!cfg) {
@@ -650,45 +721,61 @@ async function getDescriptionDetails(req, res) {
     const mediaFilter = getDisplayableMediaFilter(platform);
     const boolQuery = { must: [{ range: { [pageField]: { gt: exVal } } }] };
     if (mediaFilter) boolQuery.filter = mediaFilter;
-    const esResult = await service.db.elastic.search({
-      index: esIndex,
-      body: {
-        from: 0,
-        size: limit,
-        sort: [{ [pageField]: 'asc' }],
-        query: { bool: boolQuery },
-      },
-    });
+
+    let esResult;
+    try {
+      esResult = await service.db.elastic.search({
+        index: esIndex,
+        body: {
+          from: 0,
+          size: limit,
+          sort: [{ [pageField]: 'asc' }],
+          query: { bool: boolQuery },
+        },
+      });
+    } catch (err) {
+      const retryableStatus = getTemporaryEsStatus(err);
+      if (retryableStatus) {
+        setRetryAfter(res, getRetryAfterSeconds(err));
+        const message = retryableStatus === 429
+          ? `ES rate limit reached for platform: ${platform}`
+          : `ES temporarily unavailable for platform: ${platform}`;
+        service.log?.warn(`[getDescriptionDetails] platform=${platform} temporary ES error: ${err.message}`);
+        return res.status(retryableStatus).json({ code: retryableStatus, message, error: err.message });
+      }
+      throw err;
+    }
 
     const hits = (esResult.hits || esResult.body?.hits)?.hits || [];
+    const wantsTextFields = !cfg.suppressTextFields;
     const finalArray = hits.map(hit => {
-      const src = hit._source;
+      const src = hit._source || {};
       const row = {};
 
-      row.id                    = src[pageField];
+      row.id = src[pageField];
       // Stable pagination cursor: the exact value the caller should send back as
       // the next `exVal`. This is always the field the ES sort/range used.
-      row.cursor                = src[pageField];
+      row.cursor = src[pageField];
       // Only platforms whose index keeps id and ad_id distinct (Google) carry both.
       if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
-      // GDN sends no ad-copy text at all (see PLATFORM_CONFIG.gdn.suppressTextFields) 
+      // GDN sends no ad-copy text at all (see PLATFORM_CONFIG.gdn.suppressTextFields)
       // it has no real TEXT-type ads, and the incidental text some IMAGE ads carry is
       // scraped banner boilerplate, not classifiable ad copy.
-      if (!cfg.suppressTextFields) {
-        row.ad_text               = src[cfg.textField]     ?? null;
-        row.ad_title              = src[cfg.titleField]    ?? null;
+      if (wantsTextFields) {
+        row.ad_text = src[cfg.textField] ?? null;
+        row.ad_title = src[cfg.titleField] ?? null;
         row.news_feed_description = src[cfg.newsFeedField] ?? null;
       }
-      row.post_owner_name       = src[cfg.ownerField]    ?? null;
+      row.post_owner_name = src[cfg.ownerField] ?? null;
 
       // Read-back of the stored AI/human category so the classifier can verify a
       // prior newCatInsertion write actually attached and skip already-categorised
       // ads (Issue 1). Fields mirror exactly what newCatInsertion writes onto the ad:
       // the literal dotted `${platform}.category` / `${platform}.subCategory` keys plus
       // the flat `category_id` / `subCategory_id` / `confidence_score`.
-      row.category      = src[`${platform}.category`]    ?? null;
-      row.sub_category  = src[`${platform}.subCategory`] ?? null;
-      row.category_id   = src.category_id    ?? null;
+      row.category = src[`${platform}.category`] ?? null;
+      row.sub_category = src[`${platform}.subCategory`] ?? null;
+      row.category_id = src.category_id ?? null;
       row.subcategory_id = src.subCategory_id ?? null;
       if (src.confidence_score !== undefined) row.confidence_score = src.confidence_score;
       // Read-back of any stored AI-Meta enrichment so the classifier can verify a prior
@@ -700,7 +787,7 @@ async function getDescriptionDetails(req, res) {
         row.destination_page_text = src[cfg.destPageField];
       }
 
-      const adType   = src[cfg.typeField] || '';
+      const adType = src[cfg.typeField] || '';
       const nasValue = src[cfg.imageNasField] || '';
       // Original scraped image URL, where the platform keeps one (native). Surfaced
       // both as a fallback for ad_image and on its own so the classifier can recover
@@ -734,15 +821,17 @@ async function getDescriptionDetails(req, res) {
       try {
         // Blank, not falsy: a legit value like ad_text `"0"` must never be treated
         // as missing (a plain `!value` check would wrongly overwrite/skip it).
-        const isBlank = (v) => v === null || v === undefined || v === '';
-        // GDN never gets ad_text/ad_title/news_feed_description backfilled either 
+        // GDN never gets ad_text/ad_title/news_feed_description backfilled either
         // those keys don't exist on the row at all for gdn (suppressTextFields), so
         // they must be excluded from both the "does this row need a SQL lookup" check
         // and the merge, or the fallback would silently reintroduce them from MySQL.
-        const wantsTextFields = !cfg.suppressTextFields;
         const idsNeedingFallback = [...new Set(
           finalArray
-            .filter(row => (wantsTextFields && (isBlank(row.ad_text) || isBlank(row.ad_title) || isBlank(row.news_feed_description))) || isBlank(row.post_owner_name) || row.ad_image === null)
+            // Native TEXT rows can omit `ad_image` entirely, so widen the fallback
+            // trigger only for native. Other platforms keep the original null-only
+            // behavior to avoid pulling SQL unnecessarily when the response shape
+            // already matches the existing contract.
+            .filter(row => (wantsTextFields && (isBlankValue(row.ad_text) || isBlankValue(row.ad_title) || isBlankValue(row.news_feed_description))) || isBlankValue(row.post_owner_name) || row.ad_image === null || (platform === 'native' && isBlankValue(row.ad_image)))
             .map(row => row.id)
         )];
         if (idsNeedingFallback.length) {
@@ -751,12 +840,14 @@ async function getDescriptionDetails(req, res) {
             const sqlRow = fallbackMap.get(String(row.id));
             if (!sqlRow) continue;
             if (wantsTextFields) {
-              if (isBlank(row.ad_text) && !isBlank(sqlRow.ad_text)) row.ad_text = sqlRow.ad_text;
-              if (isBlank(row.ad_title) && !isBlank(sqlRow.ad_title)) row.ad_title = sqlRow.ad_title;
-              if (isBlank(row.news_feed_description) && !isBlank(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
+              if (isBlankValue(row.ad_text) && !isBlankValue(sqlRow.ad_text)) row.ad_text = sqlRow.ad_text;
+              if (isBlankValue(row.ad_title) && !isBlankValue(sqlRow.ad_title)) row.ad_title = sqlRow.ad_title;
+              if (isBlankValue(row.news_feed_description) && !isBlankValue(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
             }
-            if (isBlank(row.post_owner_name) && !isBlank(sqlRow.post_owner_name)) row.post_owner_name = sqlRow.post_owner_name;
-            if (row.ad_image === null && !isBlank(sqlRow.ad_image_url)) row.ad_image = served(sqlRow.ad_image_url);
+            if (isBlankValue(row.post_owner_name) && !isBlankValue(sqlRow.post_owner_name)) row.post_owner_name = sqlRow.post_owner_name;
+            // Native text ads can omit `ad_image` entirely, so treat both null and
+            // undefined as missing and let SQL backfill the creative when available.
+            if (isBlankValue(row.ad_image) && !isBlankValue(sqlRow.ad_image_url)) row.ad_image = served(sqlRow.ad_image_url);
           }
         }
       } catch (sqlErr) {
@@ -764,9 +855,27 @@ async function getDescriptionDetails(req, res) {
       }
     }
 
+    for (const row of finalArray) {
+      if (platform !== 'native') continue;
+      if (!isBlankValue(row.ad_image)) continue;
+      const hasText = !isBlankValue(row.ad_text) || !isBlankValue(row.ad_title) || !isBlankValue(row.news_feed_description);
+      if (!hasText) {
+        row.creative_availability_reason = 'No usable creative image or text was available from ES or SQL.';
+      }
+    }
+
     return res.status(200).json(finalArray);
 
   } catch (err) {
+    const retryableStatus = getTemporaryEsStatus(err);
+    if (retryableStatus) {
+      setRetryAfter(res, getRetryAfterSeconds(err));
+      const message = retryableStatus === 429
+        ? `ES rate limit reached for platform: ${platform}`
+        : `ES temporarily unavailable for platform: ${platform}`;
+      service.log?.warn(`[getDescriptionDetails] platform=${platform} temporary ES error: ${err.message}`);
+      return res.status(retryableStatus).json({ code: retryableStatus, message, error: err.message });
+    }
     service.log?.error(`[getDescriptionDetails] platform=${platform} error: ${err.message}`);
     return res.status(500).json({ code: 500, message: 'Some Error Occured', error: err.message });
   }

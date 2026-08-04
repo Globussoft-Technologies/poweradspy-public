@@ -72,6 +72,12 @@ describe("addCategoryController > getDescriptionDetails", () => {
     await getDescriptionDetails({ query: {}, body: {} }, res);
     expect(res.statusCode).toBe(400);
   });
+  it("400 when exVal is malformed", async () => {
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "facebook", exVal: "nope" }, body: {} }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("exVal must be a non-negative integer");
+  });
   it("503 when no ES service", async () => {
     serviceRegistry.getService.mockReturnValue(null);
     const res = mkRes();
@@ -428,6 +434,19 @@ describe("addCategoryController > getDescriptionDetails", () => {
     const res = mkRes();
     await getDescriptionDetails({ query: {}, body: { platform: "facebook" } }, res);
     expect(res.body).toEqual([]);
+  });
+  it("429 with Retry-After when ES rate-limits", async () => {
+    const search = vi.fn(async () => {
+      const err = new Error("ratelimited");
+      err.statusCode = 429;
+      throw err;
+    });
+    const res = mkRes();
+    res.setHeader = vi.fn();
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    await getDescriptionDetails({ query: { platform: "facebook" }, body: {} }, res);
+    expect(res.statusCode).toBe(429);
+    expect(res.setHeader).toHaveBeenCalledWith("Retry-After", expect.any(String));
   });
   it("500 on ES throw + service.log.error called", async () => {
     const search = vi.fn(async () => { throw new Error("es-down"); });
@@ -895,6 +914,60 @@ describe("addCategoryController > getDescriptionDetails > native image fallback 
     await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
     expect(res.body[0].ad_image).toBe("https://cdn.example/creative.jpg");
     expect(res.body[0].image_url_original).toBe("https://cdn.example/creative.jpg");
+  });
+
+  it("native ads with no usable creative expose a reason instead of a fake placeholder", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "native_ad.id": 10,
+      "native_ad.type": "IMAGE",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
+    expect(res.body[0].creative_availability_reason).toBe("No usable creative image or text was available from ES or SQL.");
+  });
+
+  it("native TEXT ads can still backfill image_url_original from SQL", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "native_ad.id": 11,
+      "native_ad.type": "TEXT",
+    }}]}}));
+    const sqlQuery = vi.fn(async () => ([{
+      _fallback_id: 11,
+      ad_title: null,
+      ad_text: null,
+      news_feed_description: null,
+      ad_image_url: "https://cdn.example/native-text.jpg",
+      post_owner_name: null,
+    }]));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
+    expect(res.body[0].ad_image).toBe("https://cdn.example/native-text.jpg");
+    expect(res.body[0].creative_availability_reason).toBeUndefined();
+  });
+
+  it("native TEXT ads with text already present still backfill missing creative from SQL", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "native_ad.id": 12,
+      "native_ad.type": "TEXT",
+      "native_ad_translation.ad_text": "Existing ad text",
+      "native_ad_translation.ad_title": "Existing title",
+      "native_ad_translation.news_feed_description": "Existing description",
+    }}]}}));
+    const sqlQuery = vi.fn(async () => ([{
+      _fallback_id: 12,
+      ad_title: "Existing title",
+      ad_text: "Existing ad text",
+      news_feed_description: "Existing description",
+      ad_image_url: "https://cdn.example/native-text-only.jpg",
+      post_owner_name: "Owner",
+    }]));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
+    expect(res.body[0].ad_image).toBe("https://cdn.example/native-text-only.jpg");
+    expect(res.body[0].creative_availability_reason).toBeUndefined();
   });
 
   it("IMAGE prefers NAS url over original when both present", async () => {

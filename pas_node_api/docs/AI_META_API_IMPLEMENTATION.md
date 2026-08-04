@@ -54,10 +54,12 @@ helper that strips the stored NAS mount prefix (`/PowerAdspy/n2/`, `pas-dev/stre
 and prepends the configured CDN base (`config.cdn.baseUrl` / `CDN_BASE_URL`). Already-absolute
 `http(s)` URLs pass through untouched. This removes the client-side rewrite the classifier used to do.
 
-**Native creative fallback (Issue 3).** For native `IMAGE` ads, `ad_image` now falls back to
-`image_url_original` when the NAS copy is missing (`served(nasValue) ?? served(origValue) ?? null`),
-and `image_url_original` is also surfaced on its own field. This lets the classifier recover backlog
-ads whose NAS creative was never stored *provided the scraper kept an original URL*. The native
+**Native creative fallback (Issue 3).** For native `IMAGE` and `TEXT` ads, `ad_image` now falls
+back to `image_url_original` when the NAS copy is missing (`served(nasValue) ?? served(origValue) ??
+null`), and `image_url_original` is also surfaced on its own field. This fallback is driven by real
+image availability, not by the native creative-type label, so a TEXT ad with a valid original image
+URL is still classified against the same creative visible in PowerAdSpy. If neither source has a
+usable image, `ad_image` stays null/omitted per the existing response convention. The native
 ingestion pipeline itself faithfully stores whatever the scraper sends; the drop-to-zero at high
 exvals is an **upstream payload/scraper problem**, not a storage regression in this service.
 

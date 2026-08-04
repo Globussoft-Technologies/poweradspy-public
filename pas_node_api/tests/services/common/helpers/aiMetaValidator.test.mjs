@@ -101,7 +101,27 @@ describe("aiMetaValidator v1.4 > colors (hex palette)", () => {
 
 describe("aiMetaValidator v1.4 > offer_type", () => {
   it("accepts the allowed scalar offer_type values", () => {
-    for (const v of ["percentage_discount", "flat_discount", "free_trial", "other"]) {
+    for (const v of [
+      "percentage_discount",
+      "flat_discount",
+      "free_trial",
+      "free_shipping",
+      "buy_one_get_one",
+      "bundle_offer",
+      "coupon",
+      "cashback",
+      "financing",
+      "consultation",
+      "demo",
+      "limited_time_offer",
+      "no_explicit_offer",
+      "preorder",
+      "free_quote",
+      "early_bird_offer",
+      "listed_price",
+      "trade_in_credit",
+      "other",
+    ]) {
       expect(validateAiMeta({ ...FULL, offer_type: v }).errors).toEqual([]);
     }
   });

@@ -55,6 +55,14 @@ function values(value) {
   return String(value).split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+function expandOfferingTypeSelection(selected) {
+  const normalized = [...new Set((selected || []).map((value) => String(value)))];
+  if (normalized.includes('product') || normalized.includes('service')) {
+    normalized.push('both');
+  }
+  return [...new Set(normalized)];
+}
+
 function buildOfferTypeClause(field, selected) {
   // Keep the new scalar contract and older nested JSON payloads both searchable
   // while the index catches up with the offer_type shape change.
@@ -67,6 +75,11 @@ function buildOfferTypeClause(field, selected) {
       minimum_should_match: 1,
     },
   };
+}
+
+function buildOfferingTypeClause(field, selected) {
+  const expanded = expandOfferingTypeSelection(selected);
+  return { terms: { [`${field}.offering_type`]: expanded } };
 }
 
 /**
@@ -94,7 +107,9 @@ function getAiMetaFilterClauses(network, params = {}) {
   for (const [param, suffix] of Object.entries(exactFields)) {
     const selected = values(params[param]);
     if (!selected.length) continue;
-    clauses.push(suffix === 'offer_type'
+    clauses.push(suffix === 'offering_type'
+      ? buildOfferingTypeClause(field, selected)
+      : suffix === 'offer_type'
       ? buildOfferTypeClause(field, selected)
       : { terms: { [`${field}.${suffix}`]: selected } });
   }

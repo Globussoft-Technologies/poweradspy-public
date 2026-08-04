@@ -1483,6 +1483,16 @@ const AnalyticsModal = ({
     if (value === null || value === undefined) return "";
     const text = String(value).trim();
     if (!text) return "";
+    const lower = text.toLowerCase();
+    const friendly = {
+      no_explicit_offer: "No explicit offer",
+      preorder: "Preorder",
+      free_quote: "Free quote",
+      early_bird_offer: "Early bird offer",
+      listed_price: "Listed price",
+      trade_in_credit: "Trade-in credit",
+    }[lower];
+    if (friendly) return friendly;
     return text
       .split(/[_\s]+/)
       .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part)
@@ -1503,34 +1513,56 @@ const AnalyticsModal = ({
     if (!aiMeta || typeof aiMeta !== "object") return [];
     const roa = aiMeta.roa && typeof aiMeta.roa === "object" ? aiMeta.roa : {};
     const offers = Array.isArray(aiMeta.offers) ? aiMeta.offers : [];
-    const offerType = formatAiMetaToken(
-      aiMeta.offer_type ?? offers.find((offer) => offer?.type != null)?.type,
-    );
+    const offerTypeRaw = aiMeta.offer_type ?? offers.find((offer) => offer?.type != null)?.type;
+    const offerType = formatAiMetaToken(offerTypeRaw);
     const colors = formatAiMetaValue(aiMeta.colors);
     const rows = [];
-    const pushRow = (label, value) => {
+    const pushRow = (label, value, render = null) => {
       const text = formatAiMetaValue(value);
-      if (text) rows.push([label, text]);
+      if (text || render) rows.push({ label, value: text, render });
     };
+    const offeringTypeIsBoth = String(aiMeta.offering_type || "").trim().toLowerCase() === "both";
+    const offeringTypeRender = offeringTypeIsBoth ? (
+      <div className="flex flex-wrap justify-end gap-1.5">
+        <span
+          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${
+            isLight
+              ? "border-slate-200 bg-slate-100 text-slate-700"
+              : "border-white/10 bg-white/5 text-white/85"
+          }`}
+        >
+          Product
+        </span>
+        <span
+          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${
+            isLight
+              ? "border-slate-200 bg-slate-100 text-slate-700"
+              : "border-white/10 bg-white/5 text-white/85"
+          }`}
+        >
+          Service
+        </span>
+      </div>
+    ) : null;
 
     // Keep the filterable AI fields together so the Analytics page mirrors the
     // controls exposed in the AI Filters popup.
     pushRow("AD TYPE", formatAiMetaToken(aiMeta.ad_type));
     pushRow("INTENT", aiMeta.intent);
     pushRow("HOOK", aiMeta.hook);
-    pushRow("OFFERING TYPE", formatAiMetaToken(aiMeta.offering_type));
+    pushRow("OFFERING TYPE", formatAiMetaToken(aiMeta.offering_type), offeringTypeRender);
     pushRow("OFFER TYPE", offerType);
     pushRow("COLORS", colors);
 
     return [
-      ["OFFERING", aiMeta.offering],
-      ["CAPTION", aiMeta.caption],
-      ["ROA INTENT", roa.intent],
-      ["ROA HOOK", roa.hook],
-      ["ROA OFFERING TYPE", roa.offering_type],
-      ["ROA OFFERING", roa.offering],
+      { label: "OFFERING", value: formatAiMetaValue(aiMeta.offering) },
+      { label: "CAPTION", value: formatAiMetaValue(aiMeta.caption) },
+      { label: "ROA INTENT", value: formatAiMetaValue(roa.intent) },
+      { label: "ROA HOOK", value: formatAiMetaValue(roa.hook) },
+      { label: "ROA OFFERING TYPE", value: formatAiMetaValue(roa.offering_type) },
+      { label: "ROA OFFERING", value: formatAiMetaValue(roa.offering) },
       ...rows,
-    ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+    ].filter(({ value, render }) => render || (value !== null && value !== undefined && String(value).trim() !== ""));
   })();
   const firstAvailable = (...values) =>
     values.find((value) => value != null && value !== "");
@@ -2270,7 +2302,7 @@ const AnalyticsModal = ({
                       : "bg-white/[0.02] border-white/10 divide-white/10"
                   }`}
                 >
-                  {aiMetaVariableRows.map(([label, value]) => (
+                  {aiMetaVariableRows.map(({ label, value, render }) => (
                     <div
                       key={label}
                       className="grid grid-cols-[minmax(130px,180px)_minmax(0,1fr)] items-start gap-5 px-4 py-3"
@@ -2278,13 +2310,17 @@ const AnalyticsModal = ({
                       <span className="text-[12px] font-bold text-[#aaa]">
                         {label}
                       </span>
-                      <span
-                        className={`min-w-0 text-[14px] font-semibold whitespace-normal break-words leading-relaxed ${
-                          isLight ? "text-gray-900" : "text-white/85"
-                        }`}
-                      >
-                        {String(value)}
-                      </span>
+                      {render ? (
+                        render
+                      ) : (
+                        <span
+                          className={`min-w-0 text-[14px] font-semibold whitespace-normal break-words leading-relaxed ${
+                            isLight ? "text-gray-900" : "text-white/85"
+                          }`}
+                        >
+                          {String(value)}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
