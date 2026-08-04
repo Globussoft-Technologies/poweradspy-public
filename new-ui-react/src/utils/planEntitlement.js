@@ -3,23 +3,21 @@ export function isCapabilityAllowed(entitlements, capabilityId) {
 }
 
 /**
- * Ad Analytics existed under two legacy names during the plan-control
- * migration. The customer modal must honour either migrated capability, while
- * installations without a published policy continue to use plan-access data.
+ * The customer-facing Advanced Analytics modal is controlled only by its
+ * dedicated capability. Competitive Intelligence is a separate product area
+ * and must never unlock this modal when Advanced Analytics is disabled in the
+ * active policy.
  */
 export function isAdAnalyticsAllowed(entitlements, planAccess) {
   if (entitlements) {
-    return (
-      isCapabilityAllowed(entitlements, 'legacy.advanced_ad_analytics') ||
-      isCapabilityAllowed(entitlements, 'intelligence.competitive')
-    );
+    return isCapabilityAllowed(entitlements, 'legacy.advanced_ad_analytics');
   }
 
-  return !!planAccess && (
-    planAccess.filters?.advanced_ad_analytics?.enabled === true ||
-    planAccess.filters?.ad_analytics?.enabled === true ||
-    (planAccess.competitorLimits?.brandLimit ?? 0) > 0
-  );
+  if (!planAccess?.filters) return false;
+  if (planAccess.filters.advanced_ad_analytics !== undefined) {
+    return planAccess.filters.advanced_ad_analytics?.enabled === true;
+  }
+  return planAccess.filters.ad_analytics?.enabled === true;
 }
 
 /**
@@ -27,14 +25,19 @@ export function isAdAnalyticsAllowed(entitlements, planAccess) {
  * not inherit the unrelated Competitive Intelligence/Ad Analytics UI gate.
  */
 export function isKeywordAnalyticsAllowed(entitlements, planAccess) {
-  if (entitlements) {
+  if (entitlements?.capabilities?.['intelligence.keyword_explorer.analytics']) {
     return isCapabilityAllowedOnNetwork(
       entitlements,
       'intelligence.keyword_explorer.analytics',
       'google',
     );
   }
-  return isAdAnalyticsAllowed(null, planAccess);
+
+  // Older/partially upgraded APIs do not expose the child capability. In that
+  // migration state Keyword Analytics follows its own legacy Keyword Explorer
+  // feature, never the unrelated Advanced Analytics/Competitive Intelligence
+  // controls. An explicit unified child decision above remains authoritative.
+  return planAccess?.filters?.keyword_explorer?.enabled === true;
 }
 
 /**
@@ -75,4 +78,32 @@ export function isCapabilityAllowedOnNetwork(entitlements, capabilityId, network
   // network mode. New responses include networkMode; an empty effective list
   // in a new response is an intentional denial.
   return !decision.networkMode;
+}
+
+/**
+ * Resolve the effective Ads Library networks from the published policy first.
+ * The legacy plan-access response is used only when the unified ads.search
+ * decision is unavailable during an older-policy rollout.
+ *
+ * null means access data has not resolved yet; [] is an explicit deny-all.
+ */
+export function resolveAdsSearchAllowedNetworks(entitlements, planAccess) {
+  const decision = entitlements?.capabilities?.['ads.search'];
+  if (decision) {
+    if (!decision.allowed) return [];
+
+    const networks = Array.isArray(decision.allowedNetworks)
+      ? [...new Set(decision.allowedNetworks.map(normalizePlanNetwork).filter(Boolean))]
+      : [];
+    if (networks.length > 0) return networks;
+
+    // New policy responses include networkMode. An empty effective list is an
+    // intentional deny, not permission to query every platform.
+    if (decision.networkMode) return [];
+  }
+
+  if (Array.isArray(planAccess?.allowedPlatforms)) {
+    return [...new Set(planAccess.allowedPlatforms.map(normalizePlanNetwork).filter(Boolean))];
+  }
+  return null;
 }

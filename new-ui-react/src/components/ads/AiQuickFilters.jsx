@@ -95,7 +95,7 @@ const AiQuickFilters = ({
   const hasAiFilters = hasActiveAiFilters(filterValues, doc);
 
   useEffect(() => {
-    if (!doc || doc.visible === false || presets.length === 0) {
+    if (isRestricted || !doc || doc.visible === false || presets.length === 0) {
       setPresetAvailability({});
       return;
     }
@@ -146,6 +146,7 @@ const AiQuickFilters = ({
     searchIn,
     exactSearch,
     filterPlatformSupport,
+    isRestricted,
   ]);
 
   if (!doc || doc.visible === false || presets.length === 0) return null;

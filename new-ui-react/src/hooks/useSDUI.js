@@ -211,6 +211,24 @@ export function useSDUI() {
         setFilterValues(next || {});
     }, []);
 
+    // Ad Type used several state keys during the UI migration. Update its
+    // canonical key and delete every old alias atomically; otherwise a denied
+    // plan can clear `ad_type` while stale `ad_types`/`type` still reaches the
+    // search payload and applies the filter behind the upgrade dialog.
+    const setAdTypes = useCallback((valueOrUpdater) => {
+        setFilterValues(prev => {
+            const current = prev.ad_type || prev.ad_types || prev.type || prev.adType || [];
+            const value = typeof valueOrUpdater === 'function'
+                ? valueOrUpdater(current)
+                : valueOrUpdater;
+            const next = { ...prev, ad_type: value };
+            delete next.ad_types;
+            delete next.type;
+            delete next.adType;
+            return next;
+        });
+    }, []);
+
     const getFilter = useCallback((filterId) => {
         return filterValues[filterId];
     }, [filterValues]);
@@ -509,7 +527,7 @@ export function useSDUI() {
         selCategories,
         setSelCategories: (v) => setFilter('category', typeof v === 'function' ? v(selCategories) : v),
         selAdTypes,
-        setSelAdTypes: (v) => setFilter('ad_type', typeof v === 'function' ? v(selAdTypes) : v),
+        setSelAdTypes: setAdTypes,
         selCTAs,
         setSelCTAs: (v) => setFilter('cta', typeof v === 'function' ? v(selCTAs) : v),
         selCountries,

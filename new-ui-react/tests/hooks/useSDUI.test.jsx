@@ -236,7 +236,7 @@ describe("useSDUI > setters + getters", () => {
 describe("useSDUI > totalActiveFilters", () => {
   beforeEach(() => { fetchSpy.mockResolvedValue(makeConfig()); });
 
-  it("counts truthy values, excluding 'adcategory' and '_autoSortField'", async () => {
+  it("counts truthy values, excluding only the internal '_autoSortField' key", async () => {
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     act(() => {
@@ -248,11 +248,11 @@ describe("useSDUI > totalActiveFilters", () => {
         empty: [],         // empty array → 0
         clear: null,       // null → 0
         blank: "",         // empty string → 0
-        adcategory: "x",   // excluded
+        adcategory: "x",   // selected top-level category → 1
         _autoSortField: "x", // excluded
       });
     });
-    expect(result.current.totalActiveFilters).toBe(3);
+    expect(result.current.totalActiveFilters).toBe(4);
   });
 
   it("counts a configured nested category and its selected children once", async () => {
@@ -773,6 +773,24 @@ describe("useSDUI > backward-compat getters/setters", () => {
     expect(result.current.selCTAs).toEqual(["buy", "click"]);
     act(() => { result.current.setSelCountries((p) => [...p, "uk"]); });
     expect(result.current.selCountries).toEqual(["us", "uk"]);
+  });
+
+  it("setSelAdTypes removes every legacy alias so a denied filter cannot remain active", async () => {
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => {
+      result.current.setAllFilters({
+        ad_types: ["video"],
+        type: ["image"],
+        adType: ["carousel"],
+      });
+    });
+    expect(result.current.selAdTypes).toEqual(["video"]);
+
+    act(() => { result.current.setSelAdTypes([]); });
+    expect(result.current.selAdTypes).toEqual([]);
+    expect(result.current.filterValues).toEqual({ ad_type: [] });
+    expect(result.current.buildQueryParams()).not.toHaveProperty("ad_type");
   });
 
   it("setSortBy normalises aliases", async () => {

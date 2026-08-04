@@ -7,6 +7,7 @@ import {
   isLegacyFilterPlanRestricted,
   isPlanNetworkAllowed,
   normalizePlanNetwork,
+  resolveAdsSearchAllowedNetworks,
 } from "../../src/utils/planEntitlement.js";
 
 describe("plan entitlement decisions", () => {
@@ -14,6 +15,33 @@ describe("plan entitlement decisions", () => {
     expect(normalizePlanNetwork(" YouTube ")).toBe("youtube");
     expect(isPlanNetworkAllowed(["youtube", "GOOGLE", "Native"], "YOUTUBE")).toBe(true);
     expect(isPlanNetworkAllowed(["youtube", "google", "native"], "linkedin")).toBe(false);
+  });
+
+  it("uses the published ads.search network decision instead of a stale legacy platform list", () => {
+    const entitlements = {
+      capabilities: {
+        "ads.search": {
+          allowed: true,
+          networkMode: "custom",
+          allowedNetworks: ["facebook", "instagram"],
+        },
+      },
+    };
+    expect(resolveAdsSearchAllowedNetworks(entitlements, {
+      allowedPlatforms: ["facebook", "instagram", "gdn"],
+    })).toEqual(["facebook", "instagram"]);
+  });
+
+  it("preserves an explicit deny-all network policy and falls back for legacy policies", () => {
+    expect(resolveAdsSearchAllowedNetworks({
+      capabilities: {
+        "ads.search": { allowed: true, networkMode: "custom", allowedNetworks: [] },
+      },
+    }, { allowedPlatforms: ["gdn"] })).toEqual([]);
+
+    expect(resolveAdsSearchAllowedNetworks(null, {
+      allowedPlatforms: ["Facebook", "GDN"],
+    })).toEqual(["facebook", "gdn"]);
   });
 
   const disabledSerp = {
@@ -76,6 +104,16 @@ describe("plan entitlement decisions", () => {
     expect(isAdAnalyticsAllowed(entitlements, null)).toBe(true);
   });
 
+  it("does not let Competitive Intelligence override an Advanced Analytics denial", () => {
+    const entitlements = {
+      capabilities: {
+        "legacy.advanced_ad_analytics": { allowed: false },
+        "intelligence.competitive": { allowed: true },
+      },
+    };
+    expect(isAdAnalyticsAllowed(entitlements, null)).toBe(false);
+  });
+
   it("keeps legacy Ad Analytics compatibility when no published policy exists", () => {
     expect(isAdAnalyticsAllowed(null, {
       filters: { ad_analytics: { enabled: true } },
@@ -87,6 +125,10 @@ describe("plan entitlement decisions", () => {
         advanced_ad_analytics: { enabled: false },
       },
       competitorLimits: { brandLimit: 0 },
+    })).toBe(false);
+    expect(isAdAnalyticsAllowed(null, {
+      filters: { advanced_ad_analytics: { enabled: false } },
+      competitorLimits: { brandLimit: 99 },
     })).toBe(false);
   });
 
@@ -116,6 +158,21 @@ describe("plan entitlement decisions", () => {
       },
     };
     expect(isKeywordAnalyticsAllowed(entitlements, null)).toBe(false);
+  });
+
+  it("uses the legacy Keyword Explorer gate when the child capability is unavailable", () => {
+    expect(isKeywordAnalyticsAllowed({ capabilities: {} }, {
+      filters: {
+        keyword_explorer: { enabled: true },
+        advanced_ad_analytics: { enabled: false },
+      },
+    })).toBe(true);
+    expect(isKeywordAnalyticsAllowed(null, {
+      filters: {
+        keyword_explorer: { enabled: false },
+        advanced_ad_analytics: { enabled: true },
+      },
+    })).toBe(false);
   });
 
   it("does not show an upgrade dialog for a plan-allowed filter on an inapplicable network", () => {

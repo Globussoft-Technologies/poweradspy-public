@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("lucide-react", () => ({
   LayoutGrid: () => <i data-testid="lg-ic" />,
@@ -27,15 +27,21 @@ vi.mock("../../../src/components/shared/SidebarDivider", () => ({
   default: () => <hr data-testid="divider" />,
 }));
 vi.mock("../../../src/components/sdui/SchemaRenderer", () => ({
-  default: ({ document, onFilterChange }) => (
+  default: ({ document, onFilterChange, onDocumentClick }) => (
     <div data-testid={`schema-${document._id}`}>
       {document.title || "DOC"}
       <button
         data-testid={`schema-trigger-${document._id}`}
         onClick={() => onFilterChange && onFilterChange("k", "v")}
       >trigger</button>
+      {onDocumentClick && (
+        <button data-testid={`schema-open-${document._id}`} onClick={onDocumentClick}>open</button>
+      )}
     </div>
   ),
+}));
+vi.mock("../../../src/components/sdui/AiSignalsModal", () => ({
+  default: ({ isOpen }) => <div data-testid="ai-signals-modal" data-open={isOpen} />,
 }));
 
 import Sidebar from "../../../src/components/layout/Sidebar.jsx";
@@ -45,6 +51,7 @@ const baseSdui = {
   loading: false,
   filterValues: {},
   setFilter: vi.fn(),
+  setAllFilters: vi.fn(),
   clearAll: vi.fn(),
   totalActiveFilters: 0,
   shouldShowFilter: () => true,
@@ -65,19 +72,19 @@ describe("Sidebar > nav items", () => {
   });
   it("favourite_hidden_ads visible when isLoggedIn + allowedPlatforms truthy", () => {
     const { getByTestId } = render(<Sidebar {...build({ isLoggedIn: true, allowedPlatforms: ["fb"] })} />);
-    expect(getByTestId("nav-favourite_hidden_ads")).toBeInTheDocument();
+    expect(getByTestId("nav-saved_hidden_ads")).toBeInTheDocument();
   });
   it("favourite_hidden_ads visible when allowedPlatforms=null (default)", () => {
     const { getByTestId } = render(<Sidebar {...build({ isLoggedIn: true })} />);
-    expect(getByTestId("nav-favourite_hidden_ads")).toBeInTheDocument();
+    expect(getByTestId("nav-saved_hidden_ads")).toBeInTheDocument();
   });
   it("favourite_hidden_ads hidden when allowedPlatforms=[]", () => {
     const { queryByTestId } = render(<Sidebar {...build({ isLoggedIn: true, allowedPlatforms: [] })} />);
-    expect(queryByTestId("nav-favourite_hidden_ads")).toBeNull();
+    expect(queryByTestId("nav-saved_hidden_ads")).toBeNull();
   });
   it("favourite_hidden_ads hidden when not logged in", () => {
     const { queryByTestId } = render(<Sidebar {...build({ isLoggedIn: false })} />);
-    expect(queryByTestId("nav-favourite_hidden_ads")).toBeNull();
+    expect(queryByTestId("nav-saved_hidden_ads")).toBeNull();
   });
 });
 
@@ -105,19 +112,19 @@ describe("Sidebar > all_projects gating", () => {
   it("favourite_hidden nav fires onShowSavedAdsPage", () => {
     const onShowSavedAdsPage = vi.fn();
     const { getByTestId } = render(<Sidebar {...build({ isLoggedIn: true, onShowSavedAdsPage })} />);
-    fireEvent.click(getByTestId("nav-favourite_hidden_ads"));
+    fireEvent.click(getByTestId("nav-saved_hidden_ads"));
     expect(onShowSavedAdsPage).toHaveBeenCalled();
   });
   it("favourite_hidden nav click with no onShowSavedAdsPage prop → optional call no-op (line 117 false branch)", () => {
     const { getByTestId } = render(<Sidebar {...build({ isLoggedIn: true })} />);
     // No throw — optional call (.?.()) short-circuits
-    expect(() => fireEvent.click(getByTestId("nav-favourite_hidden_ads"))).not.toThrow();
+    expect(() => fireEvent.click(getByTestId("nav-saved_hidden_ads"))).not.toThrow();
   });
   it("favourite_hidden nav with isOpen=false uses Bookmark size=18 (line 117 ternary false)", () => {
     const { getByTestId } = render(
       <Sidebar {...build({ isLoggedIn: true, isOpen: false })} />,
     );
-    expect(getByTestId("nav-favourite_hidden_ads")).toBeInTheDocument();
+    expect(getByTestId("nav-saved_hidden_ads")).toBeInTheDocument();
   });
 });
 
@@ -194,6 +201,75 @@ describe("Sidebar > SDUI doc rendering", () => {
     const { getAllByTestId } = render(<Sidebar {...build({ sdui })} />);
     // 1 sidebar divider before filters section + 2 between 3 docs = 3 total
     expect(getAllByTestId("divider").length).toBe(3);
+  });
+});
+
+describe("Sidebar > AI Filter plan gating", () => {
+  const aiSdui = {
+    ...baseSdui,
+    config: { sidebar: [{ _id: "ai_meta", title: "AI Filter", filters: [] }] },
+  };
+
+  it("does not open the AI Filter workspace when the active plan disables it", () => {
+    const onRestricted = vi.fn();
+    const { getByTestId } = render(<Sidebar {...build({
+      sdui: aiSdui,
+      isFilterRestricted: (id) => id === "ai_meta",
+      onRestricted,
+    })} />);
+
+    fireEvent.click(getByTestId("schema-open-ai_meta"));
+    expect(onRestricted).toHaveBeenCalledOnce();
+    expect(getByTestId("ai-signals-modal")).toHaveAttribute("data-open", "false");
+  });
+
+  it("opens the AI Filter workspace when the active plan enables it", () => {
+    const { getByTestId } = render(<Sidebar {...build({
+      sdui: aiSdui,
+      isFilterRestricted: () => false,
+    })} />);
+
+    fireEvent.click(getByTestId("schema-open-ai_meta"));
+    expect(getByTestId("ai-signals-modal")).toHaveAttribute("data-open", "true");
+  });
+});
+
+describe("Sidebar > Budget plan gating", () => {
+  it("clears a persisted Sidebar Budget selection when the active policy disables it", async () => {
+    const setAllFilters = vi.fn();
+    const sdui = {
+      ...baseSdui,
+      filterValues: { budget_filter: ["low"] },
+      setAllFilters,
+    };
+    render(<Sidebar {...build({
+      sdui,
+      isFilterRestricted: (id) => id === "sidebar_budget",
+    })} />);
+
+    await waitFor(() => expect(setAllFilters).toHaveBeenCalledWith({}));
+  });
+});
+
+describe("Sidebar > AI Metadata plan gating", () => {
+  it("clears persisted AI selections when the active policy disables AI Metadata", async () => {
+    const setAllFilters = vi.fn();
+    const sdui = {
+      ...baseSdui,
+      filterValues: {
+        country: ["US"],
+        has_ai_meta: true,
+        ai_ad_type: ["ugc"],
+        ai_category_id: ["1009"],
+      },
+      setAllFilters,
+    };
+    render(<Sidebar {...build({
+      sdui,
+      isFilterRestricted: (id) => id === "ai_meta",
+    })} />);
+
+    await waitFor(() => expect(setAllFilters).toHaveBeenCalledWith({ country: ["US"] }));
   });
 });
 

@@ -144,11 +144,11 @@ const SDUI_TO_PLAN_ACCESS = {
   impression_sort:          'impression_sort',
   popularity_sort:          'popularity_sort',
   ad_budget_sort:           'ad_budget_sort',
-  // Budget — single 'ad_budget_sort' doc controls all platform budget access (TikTok + FB/IG)
-  sidebar_budget:           'ad_budget_sort',
-  budget:                   'ad_budget_sort',
+  // TikTok Sidebar Budget is independent from Estimated/Avg Ad Budget.
+  sidebar_budget:           'sidebar_budget',
+  budget:                   'sidebar_budget',
   avg_ad_budget:            'ad_budget_sort',
-  budget_filter:            'ad_budget_sort',
+  budget_filter:            'sidebar_budget',
   image_size_filter:        'image_size',
   imageSize:                'image_size',
   native_network_filter:    'native_network',
@@ -165,6 +165,8 @@ const SDUI_TO_PLAN_ACCESS = {
   // Engagement
   bookmark:             'bookmark',
   // AI
+  ai_meta:              'ai_metadata_filters',
+  ai_metadata_filters:  'ai_metadata_filters',
   adgpt:                'adgpt_access',
 };
 
@@ -193,6 +195,9 @@ const LEGACY_TO_CAPABILITY = {
   project_access: 'projects.access',
 };
 const capabilityForLegacyId = (id) => LEGACY_TO_CAPABILITY[id] || `legacy.${id}`;
+const LEGACY_PLAN_ACCESS_FALLBACK = {
+  sidebar_budget: 'ad_budget_sort',
+};
 
 // Synchronous auth bootstrap — runs once at module load, BEFORE any React render.
 // Resolves ?token= URL param → localStorage → env fallback, so child hooks (useSDUI, etc.)
@@ -267,16 +272,25 @@ export function AuthProvider({ children }) {
   const [loading] = useState(false);
   const [planAccess, setPlanAccess] = useState(null);
   const [entitlements, setEntitlements] = useState(null);
+  const [planAccessResolved, setPlanAccessResolved] = useState(!token);
   const dispatch = useDispatch();
 
   // Fetch plan access restrictions once user is authenticated (skip on public/guest routes)
   useEffect(() => {
     const path = window.location.pathname;
-    if (!token || path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')) return;
+    if (!token || path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')) {
+      setPlanAccessResolved(true);
+      return;
+    }
+    let active = true;
+    setPlanAccessResolved(false);
     Promise.allSettled([fetchPlanAccess(), fetchEntitlements()]).then(([legacy, unified]) => {
+      if (!active) return;
       if (legacy.status === 'fulfilled' && legacy.value) setPlanAccess(legacy.value);
       if (unified.status === 'fulfilled' && unified.value) setEntitlements(unified.value);
+      setPlanAccessResolved(true);
     });
+    return () => { active = false; };
   }, [token]);
 
   // First-login onboarding popup. Prefer the needsOnboarding flag baked into a
@@ -329,7 +343,8 @@ export function AuthProvider({ children }) {
     }
     if (!planAccess?.filters) return false;
     const planAccessId = SDUI_TO_PLAN_ACCESS[sduiFilterId] || sduiFilterId;
-    const status = planAccess.filters[planAccessId];
+    const fallbackId = LEGACY_PLAN_ACCESS_FALLBACK[planAccessId];
+    const status = planAccess.filters[planAccessId] ?? planAccess.filters[fallbackId];
     return isLegacyFilterPlanRestricted(status);
   }, [planAccess, entitlements]);
 
@@ -343,7 +358,9 @@ export function AuthProvider({ children }) {
     }
     if (!planAccess?.filters) return false;
     const planAccessId = SDUI_TO_PLAN_ACCESS[sduiFilterId] || sduiFilterId;
-    return planAccess.filters[planAccessId] !== undefined;
+    const fallbackId = LEGACY_PLAN_ACCESS_FALLBACK[planAccessId];
+    return planAccess.filters[planAccessId] !== undefined ||
+      (fallbackId !== undefined && planAccess.filters[fallbackId] !== undefined);
   }, [planAccess, entitlements]);
 
   const getCapabilityDecision = useCallback(
@@ -384,7 +401,7 @@ export function AuthProvider({ children }) {
   const isAuthenticated = !!token && !!user;
 
   return (
-    <AuthContext.Provider value={{ token, user, isAuthenticated, loading, logout, planAccess, setPlanAccess, entitlements, setEntitlements, isFilterRestricted, filterHasPlanEntry, canUseCapability, canUseCapabilityOnNetwork, getCapabilityLimit, getCapabilityDecision }}>
+    <AuthContext.Provider value={{ token, user, isAuthenticated, loading, logout, planAccess, setPlanAccess, entitlements, setEntitlements, planAccessResolved, isFilterRestricted, filterHasPlanEntry, canUseCapability, canUseCapabilityOnNetwork, getCapabilityLimit, getCapabilityDecision }}>
       {children}
     </AuthContext.Provider>
   );

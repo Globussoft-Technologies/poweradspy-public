@@ -48,6 +48,24 @@ const transparencyVideoAd = {
 };
 
 describe("Google Transparency detail media", () => {
+  it("disables Advanced Analytics without invoking its navigation callback", () => {
+    const onAnalytics = vi.fn();
+    render(
+      <AdDetailModal
+        ad={transparencyTextAd}
+        onClose={vi.fn()}
+        onAnalytics={onAnalytics}
+        analyticsAllowed={false}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    const analyticsButton = screen.getByRole("button", { name: "Analytics" });
+    expect(analyticsButton).toBeDisabled();
+    fireEvent.click(analyticsButton);
+    expect(onAnalytics).not.toHaveBeenCalled();
+  });
+
   it("renders a TEXT creative's image in the ad detail modal", () => {
     const { container } = render(
       <AdDetailModal

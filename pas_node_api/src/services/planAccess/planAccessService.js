@@ -365,6 +365,19 @@ const BODY_KEY_TO_FILTER_ID = {
   // SDUI stores native_network_filter but the API payload uses nativeNetwork.
   nativeNetwork: 'native_network',
 
+  // AI Metadata popup, quick presets, and the logical "has AI metadata"
+  // toggle are one admin-controlled feature. Every request shape must resolve
+  // to the same capability so individual AI fields cannot bypass the parent.
+  has_ai_meta: 'ai_metadata_filters',
+  ai_ad_type: 'ai_metadata_filters',
+  ai_intent: 'ai_metadata_filters',
+  ai_hook: 'ai_metadata_filters',
+  ai_offering_type: 'ai_metadata_filters',
+  ai_offer_type: 'ai_metadata_filters',
+  ai_colors: 'ai_metadata_filters',
+  ai_category_id: 'ai_metadata_filters',
+  ai_subcategory_id: 'ai_metadata_filters',
+
   // ── Lander / merchant ────────────────────────────────────────────────────
   // body key 'ecommerce' vs SDUI doc _id 'ecommerce_platform' (seed _id was 'ecommerce')
   ecommerce: 'ecommerce_platform',

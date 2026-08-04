@@ -3,6 +3,17 @@
 const { resolveFromLegacyFilter } = require('./capabilityRegistry');
 const { BODY_KEY_TO_FILTER_ID } = require('../../planAccess/planAccessService');
 
+// `budget` is TikTok's Sidebar Budget checkbox. `adBudget`/`avgBudget`
+// remain the separate Estimated Ad Budget sort/range capability.
+const SEARCH_BODY_CAPABILITY_OVERRIDES = Object.freeze({
+  budget: 'legacy.sidebar_budget',
+});
+
+function resolveSearchBodyCapability(bodyKey, legacyFilterId) {
+  return SEARCH_BODY_CAPABILITY_OVERRIDES[bodyKey] ||
+    resolveFromLegacyFilter(legacyFilterId);
+}
+
 let _runtime;
 function runtime() {
   if (_runtime) return _runtime;
@@ -143,7 +154,7 @@ function requireSearchCapabilities(options = {}) {
     const capabilities = ['ads.search'];
     for (const [bodyKey, legacyFilterId] of Object.entries(BODY_KEY_TO_FILTER_ID || {})) {
       if (!hasSelectedValue(body[bodyKey])) continue;
-      const capabilityId = resolveFromLegacyFilter(legacyFilterId);
+      const capabilityId = resolveSearchBodyCapability(bodyKey, legacyFilterId);
       if (capabilityId && !capabilities.includes(capabilityId)) capabilities.push(capabilityId);
     }
 
@@ -237,6 +248,7 @@ module.exports = {
   fromQuery,
   normalizeNetworks,
   hasSelectedValue,
+  resolveSearchBodyCapability,
   getCapabilityBindings,
   classifyRoute,
 };

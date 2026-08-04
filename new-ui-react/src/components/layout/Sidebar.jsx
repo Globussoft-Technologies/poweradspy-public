@@ -74,6 +74,42 @@ const Sidebar = ({
     () => sidebarDocs.find((doc) => doc._id === "ai_meta") || null,
     [sidebarDocs],
   );
+  const aiSignalsRestricted = Boolean(isFilterRestricted?.("ai_meta"));
+  const sidebarBudgetRestricted = Boolean(isFilterRestricted?.("sidebar_budget"));
+
+  const openAiSignals = () => {
+    if (guest?.isRestricted || aiSignalsRestricted) {
+      onRestricted?.();
+      return;
+    }
+    setAiSignalsOpen(true);
+  };
+
+  useEffect(() => {
+    if (aiSignalsRestricted && aiSignalsOpen) setAiSignalsOpen(false);
+  }, [aiSignalsOpen, aiSignalsRestricted]);
+
+  useEffect(() => {
+    if (!aiSignalsRestricted) return;
+    const aiKeys = [
+      "has_ai_meta", "ai_ad_type", "ai_intent", "ai_hook",
+      "ai_offering_type", "ai_offer_type", "ai_colors",
+      "ai_category_id", "ai_subcategory_id",
+    ];
+    if (!aiKeys.some((key) => filterValues?.[key] !== undefined)) return;
+    const next = { ...(filterValues || {}) };
+    aiKeys.forEach((key) => delete next[key]);
+    setAllFilters(next);
+  }, [aiSignalsRestricted, filterValues, setAllFilters]);
+
+  useEffect(() => {
+    if (!sidebarBudgetRestricted) return;
+    const budgetKeys = ["budget_filter", "budget", "sidebar_budget"];
+    if (!budgetKeys.some((key) => filterValues?.[key] !== undefined)) return;
+    const next = { ...(filterValues || {}) };
+    budgetKeys.forEach((key) => delete next[key]);
+    setAllFilters(next);
+  }, [filterValues, setAllFilters, sidebarBudgetRestricted]);
 
   useEffect(() => {
     try {
@@ -215,7 +251,7 @@ const Sidebar = ({
                             filterValues={filterValues}
                             onFilterChange={guestSetFilter}
                             onDocumentClick={
-                              doc._id === "ai_meta" ? () => setAiSignalsOpen(true) : undefined
+                              doc._id === "ai_meta" ? openAiSignals : undefined
                             }
                             shouldShowFilter={shouldShowFilter}
                             shouldShowOption={shouldShowOption}
@@ -252,7 +288,7 @@ const Sidebar = ({
         </div>
       </aside>
       <AiSignalsModal
-        isOpen={aiSignalsOpen}
+        isOpen={aiSignalsOpen && !aiSignalsRestricted}
         document={aiSignalsDoc}
         filterValues={filterValues}
         onClose={() => setAiSignalsOpen(false)}

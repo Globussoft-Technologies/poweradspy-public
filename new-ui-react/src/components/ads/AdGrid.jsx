@@ -55,6 +55,7 @@ const AdGrid = ({
   setActiveTab,
   onAnalyzeAd,
   onAnalyticsAd,
+  analyticsAllowed = true,
   setPage,
   hasMore = true,
   loadingMore = false,
@@ -1420,6 +1421,7 @@ const AdGrid = ({
               visualOrder: [...dashboardVisualOrderRef.current],
             })
           }
+          analyticsAllowed={analyticsAllowed}
           onSearch={onSearch}
           onHideAd={onHideAd}
           onHideAdvertiser={onHideAdvertiser}

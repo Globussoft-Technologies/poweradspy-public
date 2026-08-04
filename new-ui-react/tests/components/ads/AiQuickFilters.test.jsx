@@ -247,7 +247,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAdsPresence).not.toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /Flash Sale/i }));
 
     expect(onRestricted).toHaveBeenCalledTimes(1);

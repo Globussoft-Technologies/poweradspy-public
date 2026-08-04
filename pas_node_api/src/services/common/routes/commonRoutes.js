@@ -176,6 +176,10 @@ router.post(
   '/ads/getAdInsights',
   authMiddleware,
   planAccessMiddleware,
+  requireCapability('legacy.advanced_ad_analytics', {
+    network: (req) => req.body?.network || req.query?.network,
+    message: 'Your current plan does not include Advanced Analytics.',
+  }),
   asyncHandler(async (req, res) => {
     const network = (req.body.network || req.query.network || 'facebook').toLowerCase().trim();
 

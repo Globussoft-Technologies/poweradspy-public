@@ -148,6 +148,27 @@ describe("useAuth > AuthProvider + useAuth", () => {
     await act(async () => { await Promise.resolve(); });
     expect(fetchPlanAccessSpy).toHaveBeenCalled();
     expect(result.current.planAccess?.filters?.country?.enabled).toBe(true);
+    expect(result.current.planAccessResolved).toBe(true);
+  });
+
+  it("keeps automatic plan-dependent work pending until both access requests settle", async () => {
+    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    let resolveLegacy;
+    let resolveUnified;
+    fetchPlanAccessSpy.mockReturnValueOnce(new Promise((resolve) => { resolveLegacy = resolve; }));
+    fetchEntitlementsSpy.mockReturnValueOnce(new Promise((resolve) => { resolveUnified = resolve; }));
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+
+    expect(result.current.planAccessResolved).toBe(false);
+    await act(async () => {
+      resolveLegacy({ allowedPlatforms: ["facebook"] });
+      resolveUnified({ capabilities: { "ads.search": { allowed: true, allowedNetworks: ["facebook"] } } });
+      await Promise.resolve();
+    });
+    expect(result.current.planAccessResolved).toBe(true);
   });
 
   it("fetchPlanAccess error path swallowed (catch)", async () => {
@@ -182,6 +203,58 @@ describe("useAuth > AuthProvider + useAuth", () => {
 });
 
 describe("useAuth > isFilterRestricted", () => {
+  it("uses the canonical AI Metadata capability for the AI Filters launcher", async () => {
+    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    fetchEntitlementsSpy.mockResolvedValueOnce({
+      capabilities: { "legacy.ai_metadata_filters": { allowed: false } },
+    });
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.isFilterRestricted("ai_meta")).toBe(true);
+    expect(result.current.isFilterRestricted("ai_metadata_filters")).toBe(true);
+  });
+
+  it("keeps Sidebar Budget separate from the allowed Avg Ad Budget capability", async () => {
+    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    fetchPlanAccessSpy.mockResolvedValueOnce({
+      filters: { ad_budget_sort: { enabled: true } },
+    });
+    fetchEntitlementsSpy.mockResolvedValueOnce({
+      capabilities: {
+        "legacy.sidebar_budget": { allowed: false },
+        "sort.ad_budget": { allowed: true },
+      },
+    });
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.isFilterRestricted("sidebar_budget")).toBe(true);
+    expect(result.current.isFilterRestricted("budget_filter")).toBe(true);
+    expect(result.current.isFilterRestricted("avg_ad_budget")).toBe(false);
+  });
+
+  it("uses the old shared budget rule only when unified entitlements are unavailable", async () => {
+    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    fetchPlanAccessSpy.mockResolvedValueOnce({
+      filters: { ad_budget_sort: { enabled: false } },
+    });
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.filterHasPlanEntry("budget_filter")).toBe(true);
+    expect(result.current.isFilterRestricted("budget_filter")).toBe(true);
+  });
+
   it("maps verified_filter to the enabled verified plan rule", async () => {
     const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
     localStorage.setItem("authToken", token);

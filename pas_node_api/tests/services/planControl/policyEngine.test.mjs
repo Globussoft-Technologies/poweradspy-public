@@ -12,7 +12,7 @@ const { resolvePlanIdentity } = identityModule;
 const { evaluateEntitlement } = evaluatorModule;
 const { checksumSnapshot, diffSnapshots, validateSnapshot } = validationModule;
 const { getCapabilities } = capabilityModule;
-const { hasSelectedValue } = routeClassificationModule;
+const { hasSelectedValue, resolveSearchBodyCapability } = routeClassificationModule;
 const { recoverUniformFamilyApplications, recoverPublishedFamilyApplications } = storageModule;
 
 function snapshot() {
@@ -72,6 +72,24 @@ describe('plan-control policy engine', () => {
     expect(hasSelectedValue(true)).toBe(true);
   });
 
+  it('keeps TikTok Sidebar Budget separate from Estimated Ad Budget', () => {
+    expect(resolveSearchBodyCapability('budget', 'ad_budget_sort'))
+      .toBe('legacy.sidebar_budget');
+    expect(resolveSearchBodyCapability('avgBudget', 'ad_budget_sort'))
+      .toBe('sort.ad_budget');
+  });
+
+  it('maps every AI Metadata request field to its single admin capability', () => {
+    for (const key of [
+      'has_ai_meta', 'ai_ad_type', 'ai_intent', 'ai_hook',
+      'ai_offering_type', 'ai_offer_type', 'ai_colors',
+      'ai_category_id', 'ai_subcategory_id',
+    ]) {
+      expect(resolveSearchBodyCapability(key, 'ai_metadata_filters'))
+        .toBe('legacy.ai_metadata_filters');
+    }
+  });
+
   it('resolves monthly and yearly billing IDs into one family while preserving variants', () => {
     const policy = snapshot();
     expect(resolvePlanIdentity(101, policy)).toMatchObject({
@@ -98,7 +116,7 @@ describe('plan-control policy engine', () => {
       user: {},
       planIdentity: identity,
       capabilityId: 'ads.search',
-      requestedNetworks: ['youtube'],
+      requestedNetworks: ['gdn'],
       policySnapshot: policy,
     })).toMatchObject({ allowed: false, reasonCode: 'NETWORK_NOT_PERMITTED' });
 
