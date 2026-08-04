@@ -12,6 +12,14 @@ const { getDisplayableMediaFilter } = require('../helpers/displayableMediaFilter
 // or CDN_BASE_URL env; e.g. https://media.globussoft.com/pas-prod/stream). Mirrors the
 // creativeScoreController `served()` helper and the FE resolveNasUrl.
 const CDN_BASE = ((config && config.cdn && config.cdn.baseUrl) || process.env.CDN_BASE_URL || '').replace(/\/+$/, '');
+const parsedAiMetaTimeoutMs = Number(process.env.AI_META_OPERATION_TIMEOUT_MS);
+const AI_META_OPERATION_TIMEOUT_MS = Number.isFinite(parsedAiMetaTimeoutMs) && parsedAiMetaTimeoutMs > 0
+  ? parsedAiMetaTimeoutMs
+  : 15000;
+// Bulk writes stay sequential, but a hard cap also prevents one request from holding
+// database connections and ES capacity for an unbounded backlog.
+const AI_META_BULK_RECOMMENDED_SIZE = 5;
+const AI_META_BULK_MAX_SIZE = 10;
 
 /**
  * Resolve which ES object field stores AI-Meta for a given platform/environment.
@@ -46,6 +54,17 @@ function served(v) {
   if (!CDN_BASE) return v;
   const t = v.replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|pas-dev\/stream|pas-prod\/stream)\//i, '/');
   return CDN_BASE + (t.startsWith('/') ? t : '/' + t);
+}
+
+function isPlaceholderCreativeUrl(v) {
+  if (isBlankValue(v)) return false;
+  const text = String(v).trim().toLowerCase();
+  return /(?:^|\/)bydefault_ads\.(?:jpg|png)(?:[?#].*)?$/.test(text);
+}
+
+function resolveCreativeUrl(v) {
+  const url = served(v);
+  return url && !isPlaceholderCreativeUrl(url) ? url : null;
 }
 
 function isBlankValue(v) {
@@ -99,8 +118,58 @@ function getTemporaryEsStatus(err) {
   const rawStatus = err?.statusCode ?? err?.meta?.statusCode ?? err?.meta?.body?.status ?? err?.meta?.body?.error?.status;
   const status = Number(rawStatus);
   if (status === 429) return 429;
-  if ([502, 503, 504].includes(status)) return 503;
+  if ([408, 502, 503, 504].includes(status)) return 503;
+
+  // The Elasticsearch client can surface a connection timeout without an HTTP
+  // status. Treat these transport failures as retryable category-sync failures.
+  const errorName = String(err?.name || '').toLowerCase();
+  const errorMessage = String(err?.message || '').toLowerCase();
+  if (errorName.includes('timeout') || /\b(?:timed?\s*out|timeout|socket\s+hang\s+up|econnreset|econnrefused)\b/.test(errorMessage)) {
+    return 503;
+  }
   return null;
+}
+
+function setAiMetaTimingHeaders(res, timings = {}) {
+  if (!res || typeof res.setHeader !== 'function') return;
+  const serverTiming = [];
+  const headerMap = {
+    es_search_ms: 'X-ES-Search-Ms',
+    es_write_ms: 'X-ES-Write-Ms',
+    category_sync_ms: 'X-Category-Sync-Ms',
+    sql_ms: 'X-SQL-Ms',
+    total_ms: 'X-Total-Ms',
+  };
+
+  for (const [key, headerName] of Object.entries(headerMap)) {
+    const value = timings[key];
+    if (Number.isFinite(value)) {
+      const rounded = Math.max(0, Math.round(value));
+      res.setHeader(headerName, String(rounded));
+      serverTiming.push(`${key.replace(/_ms$/, '').replace(/_/g, '-')};dur=${rounded}`);
+    }
+  }
+
+  if (serverTiming.length) {
+    res.setHeader('Server-Timing', serverTiming.join(', '));
+  }
+}
+
+function recordCategorySyncError(status, phase, err) {
+  const retryableStatus = getTemporaryEsStatus(err);
+  const retryAfterSeconds = retryableStatus ? getRetryAfterSeconds(err) : null;
+  status[`${phase}_error`] = err.message;
+  status[`${phase}_status_code`] = retryableStatus || 500;
+  if (retryableStatus) {
+    status[`${phase}_retry_after_seconds`] = retryAfterSeconds;
+    status.retryable = true;
+    status.status_code = status.status_code ? Math.max(status.status_code, retryableStatus) : retryableStatus;
+    status.retry_after_seconds = status.retry_after_seconds
+      ? Math.max(status.retry_after_seconds, retryAfterSeconds)
+      : retryAfterSeconds;
+  } else {
+    status.status_code = status.status_code || 500;
+  }
 }
 
 /**
@@ -114,7 +183,7 @@ function getTemporaryEsStatus(err) {
  * @param {string} idField    the ad's primary-key field for this platform
  * @param {string|number} adId
  */
-async function findAdDoc(esForPlat, esIndex, idField, adId) {
+async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
   const adIdStr      = String(adId);
   const adIdNum      = Number(adId);
   const adIdNumValid = !Number.isNaN(adIdNum) && String(adIdNum) === adIdStr;
@@ -123,6 +192,7 @@ async function findAdDoc(esForPlat, esIndex, idField, adId) {
 
   const adSearch = await esForPlat.search({
     index: esIndex,
+    requestTimeout: requestTimeoutMs,
     body:  { query: { bool: { should: shouldClauses, minimum_should_match: 1 } } },
   });
   const adHits = (adSearch.hits || adSearch.body?.hits)?.hits || [];
@@ -138,7 +208,7 @@ async function findAdDoc(esForPlat, esIndex, idField, adId) {
  * older payload shape are dropped. v1.4 removed the `status` field, so there is no
  * longer a partial/status-only path  every payload is a completed enrichment.
  */
-async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
+async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
   const aiMetaField = getAiMetaEsField(platform);
   await esForPlat.update(withEsType(esForPlat, {
     index: esIndex,
@@ -150,6 +220,7 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
         params: { aiMeta: normalized },
       },
     },
+    requestTimeout: requestTimeoutMs,
     refresh: 'wait_for',
   }));
 }
@@ -164,7 +235,7 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform) {
  *
  * @param {object} cat  { category, subCategory, categoryId, subCategoryId }
  */
-async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat) {
+async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
   await esForPlat.update(withEsType(esForPlat, {
     index: esIndex,
     id:    docId,
@@ -177,6 +248,7 @@ async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat) {
         confidence_score:            0,
       },
     },
+    requestTimeout: requestTimeoutMs,
     refresh: 'wait_for',
   }));
 }
@@ -205,9 +277,10 @@ class CategoryTaxonomyConflict extends Error {
  * @returns {Promise<{ message: string }>}
  * @throws  {CategoryTaxonomyConflict} on a nameid mismatch (legacy 500 payload)
  */
-async function syncMasterCategory(esClient, { category, catId, subCategory, subCategoryId, platform }) {
+async function syncMasterCategory(esClient, { category, catId, subCategory, subCategoryId, platform, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS }) {
   const existResult = await esClient.search({
     index: 'category',
+    requestTimeout: requestTimeoutMs,
     body: {
       query: {
         bool: {
@@ -256,6 +329,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
       await esClient.update(withEsType(esClient, {
         index: 'category',
         id:    docId,
+        requestTimeout: requestTimeoutMs,
         body: {
           script: {
             source: "if (!ctx._source.platforms.contains(params.platform)) { ctx._source.platforms.add(params.platform); }",
@@ -281,6 +355,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
             await esClient.update(withEsType(esClient, {
               index: 'category',
               id:    docId,
+              requestTimeout: requestTimeoutMs,
               body: {
                 script: {
                   source: `
@@ -314,6 +389,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
         await esClient.update(withEsType(esClient, {
           index: 'category',
           id:    docId,
+          requestTimeout: requestTimeoutMs,
           body: {
             script: {
               source: `
@@ -344,7 +420,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
     if (subCategory && subCategoryId) {
       docData.subcategory = [{ sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] }];
     }
-    await esClient.index(withEsType(esClient, { index: 'category', body: docData, refresh: 'wait_for' }));
+    await esClient.index(withEsType(esClient, { index: 'category', requestTimeout: requestTimeoutMs, body: docData, refresh: 'wait_for' }));
     message = 'New category' + (subCategory ? ' and subcategory' : '') + ' inserted successfully';
   }
 
@@ -363,9 +439,9 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
  *
  * @returns {Promise<{taxonomy, mirrored, taxonomy_error?, mirror_error?}|null>}
  */
-async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform, normalized, log }) {
+async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform, normalized, log, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS }) {
   if (!normalized || !normalized.category || !normalized.category_id) return null;
-  const status = { taxonomy: null, mirrored: false };
+  const status = { taxonomy: null, mirrored: false, retryable: false };
 
   if (gdnEs) {
     try {
@@ -375,12 +451,19 @@ async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform
         subCategory:   normalized.sub_category,
         subCategoryId: normalized.subcategory_id,
         platform,
+        requestTimeoutMs,
       });
       status.taxonomy = message;
     } catch (taxErr) {
       const isConflict = taxErr instanceof CategoryTaxonomyConflict;
       status.taxonomy = isConflict ? 'conflict' : 'error';
-      status.taxonomy_error = isConflict ? taxErr.payload.error : taxErr.message;
+      if (isConflict) {
+        status.taxonomy_error = taxErr.payload.error;
+        status.taxonomy_status_code = taxErr.payload.code || 500;
+        status.status_code = status.status_code || status.taxonomy_status_code;
+      } else {
+        recordCategorySyncError(status, 'taxonomy', taxErr);
+      }
       log?.warn?.(`[aiMetaCategory] taxonomy sync failed for platform=${platform}: ${status.taxonomy_error}`);
     }
   }
@@ -391,10 +474,10 @@ async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform
       subCategory:   normalized.sub_category,
       categoryId:    normalized.category_id,
       subCategoryId: normalized.subcategory_id,
-    });
+    }, requestTimeoutMs);
     status.mirrored = true;
   } catch (mirrorErr) {
-    status.mirror_error = mirrorErr.message;
+    recordCategorySyncError(status, 'mirror', mirrorErr);
     log?.warn?.(`[aiMetaCategory] ES mirror failed for platform=${platform}: ${mirrorErr.message}`);
   }
 
@@ -628,7 +711,7 @@ function sqlFallbackConfigFor(platform) {
     variantsTable: `${prefix}_variants`,
     variantsFk:    `${prefix}_id`,
     ownerTable:    `${prefix}_post_owners`,
-    imageCol:      platform === 'youtube' ? 'thumbnail_url' : 'image_url',
+    imageCol:      platform === 'youtube' ? 'thumbnail_url' : (platform === 'native' ? 'image_url_original' : 'image_url'),
   };
 }
 
@@ -788,22 +871,21 @@ async function getDescriptionDetails(req, res) {
       }
 
       const adType = src[cfg.typeField] || '';
+      if (platform === 'native') row.native_creative_type = src[cfg.typeField] ?? null;
       const nasValue = src[cfg.imageNasField] || '';
       // Original scraped image URL, where the platform keeps one (native). Surfaced
       // both as a fallback for ad_image and on its own so the classifier can recover
       // backlog ads whose NAS creative was never stored (Issue 3).
       const origValue = cfg.imageOrigField ? (src[cfg.imageOrigField] || '') : '';
-      if (cfg.imageOrigField) row.image_url_original = served(origValue) ?? null;
+      if (cfg.imageOrigField) row.image_url_original = resolveCreativeUrl(origValue);
 
-      if (adType === 'IMAGE' || cfg.alwaysEmitImage) {
+      if (adType === 'IMAGE' || cfg.alwaysEmitImage || platform === 'native') {
         // Prefer the stored NAS copy; fall back to the original scraped URL when the
-        // NAS creative is missing. `cfg.alwaysEmitImage` (google) only widens WHEN this
-        // runs (so a TEXT-type ad gets an explicit `ad_image: null` instead of the key
-        // being omitted)  it intentionally has no extra fallback source, since google's
-        // only other image-shaped fields (`screenshot_url`/`png_file`) are landing-page
-        // screenshots, not the ad creative. served() returns a resolvable CDN URL (no
-        // more client-side /PowerAdspy/n2 rewrite).
-        row.ad_image = served(nasValue) ?? served(origValue) ?? null;
+        // NAS creative is missing. Native deliberately runs this for IMAGE and TEXT
+        // records because its original URL is the same dashboard creative regardless
+        // of the scraper's creative-type label. `cfg.alwaysEmitImage` (google) only
+        // widens WHEN this runs; Google has no equivalent original-creative fallback.
+        row.ad_image = resolveCreativeUrl(nasValue) ?? resolveCreativeUrl(origValue) ?? null;
       }
       if (adType === 'VIDEO' && cfg.thumbField) {
         const thumb = src[cfg.thumbField] || '';
@@ -845,9 +927,10 @@ async function getDescriptionDetails(req, res) {
               if (isBlankValue(row.news_feed_description) && !isBlankValue(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
             }
             if (isBlankValue(row.post_owner_name) && !isBlankValue(sqlRow.post_owner_name)) row.post_owner_name = sqlRow.post_owner_name;
+            if (platform === 'native' && isBlankValue(row.image_url_original) && !isBlankValue(sqlRow.ad_image_url)) row.image_url_original = resolveCreativeUrl(sqlRow.ad_image_url);
             // Native text ads can omit `ad_image` entirely, so treat both null and
             // undefined as missing and let SQL backfill the creative when available.
-            if (isBlankValue(row.ad_image) && !isBlankValue(sqlRow.ad_image_url)) row.ad_image = served(sqlRow.ad_image_url);
+            if (isBlankValue(row.ad_image) && !isBlankValue(sqlRow.ad_image_url)) row.ad_image = resolveCreativeUrl(sqlRow.ad_image_url);
           }
         }
       } catch (sqlErr) {
@@ -1205,6 +1288,13 @@ async function insertAiMeta(req, res) {
   const body     = req.body || {};
   const adId     = body.ad_id;
   const platform = (body.network || body.platform || '').toLowerCase().trim();
+  const requestId = req.id || req.requestId || null;
+  const timings = { startedAt: Date.now() };
+  const finish = (statusCode, payload) => {
+    timings.total_ms = Date.now() - timings.startedAt;
+    setAiMetaTimingHeaders(res, timings);
+    return res.status(statusCode).json({ request_id: requestId, ...payload });
+  };
 
   // Top-level validation (spec 2)
   const details = [];
@@ -1225,7 +1315,7 @@ async function insertAiMeta(req, res) {
   }
 
   if (details.length > 0) {
-    return res.status(400).json({
+    return finish(400, {
       success: false,
       ad_id:   adId ?? null,
       error:   { code: 'VALIDATION_ERROR', message: 'Request validation failed', details },
@@ -1236,25 +1326,30 @@ async function insertAiMeta(req, res) {
   const service = serviceRegistry.getService(cfg.service);
   const es = service?.db?.elastic;
   if (!es) {
-    return res.status(503).json({ success: false, ad_id: adId, error: { code: 'ES_UNAVAILABLE', message: `ES not available for network: ${platform}` } });
+    return finish(503, { success: false, ad_id: adId, error: { code: 'ES_UNAVAILABLE', message: `ES not available for network: ${platform}` } });
   }
   const esIndex = es.indexName || cfg.index;
 
   try {
+    const esSearchStartedAt = Date.now();
     const adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+    timings.es_search_ms = Date.now() - esSearchStartedAt;
     if (!adHit) {
-      return res.status(404).json({
+      return finish(404, {
         success: false,
         ad_id:   adId,
         error:   { code: 'AD_NOT_FOUND', message: `Ad with id '${adId}' does not exist` },
       });
     }
 
+    const esWriteStartedAt = Date.now();
     await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
+    timings.es_write_ms = Date.now() - esWriteStartedAt;
     service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
 
     // Category (v1.6: name + ids inside ai_meta) - maintain the master `category`
     // taxonomy index and mirror the flat codes + names onto the ad doc. Non-fatal.
+    const categorySyncStartedAt = Date.now();
     const categorySync = await applyAiMetaCategoryToEs({
       gdnEs:      serviceRegistry.getService('gdn')?.db?.elastic,
       platEs:     es,
@@ -1263,9 +1358,12 @@ async function insertAiMeta(req, res) {
       platform,
       normalized,
       log:        service.log,
+      requestTimeoutMs: AI_META_OPERATION_TIMEOUT_MS,
     });
+    timings.category_sync_ms = Date.now() - categorySyncStartedAt;
 
     // Durable SQL copy + category dual-write (non-fatal).
+    const sqlStartedAt = Date.now();
     const sqlResult = await persistAiMeta({
       sql:        service?.db?.sql,
       network:    platform,
@@ -1273,6 +1371,31 @@ async function insertAiMeta(req, res) {
       normalized: normalized,
       logger:     service.log,
     });
+    timings.sql_ms = Date.now() - sqlStartedAt;
+
+    const categorySyncHasFailure = Boolean(categorySync && (categorySync.taxonomy_error || categorySync.mirror_error));
+    if (categorySyncHasFailure) {
+      const statusCode = categorySync.status_code || 500;
+      const errorCode = categorySync.retryable ? 'CATEGORY_SYNC_RETRYABLE' : 'CATEGORY_SYNC_FAILED';
+      if (categorySync.retryable) {
+        setRetryAfter(res, categorySync.retry_after_seconds);
+      }
+      return finish(statusCode, {
+        success: false,
+        ad_id:   adId,
+        message: categorySync.retryable
+          ? 'AI-Meta stored but category sync must be retried'
+          : 'AI-Meta stored but category sync failed',
+        stored_fields: storedFields,
+        sql: sqlResult,
+        category_sync: categorySync,
+        error: {
+          code: errorCode,
+          message: categorySync.mirror_error || categorySync.taxonomy_error || 'Category sync failed',
+          details: categorySync,
+        },
+      });
+    }
 
     const out = {
       success: true,
@@ -1282,11 +1405,142 @@ async function insertAiMeta(req, res) {
       sql: sqlResult,
     };
     if (categorySync) out.category_sync = categorySync;
-    return res.status(200).json(out);
+    return finish(200, out);
   } catch (err) {
     service.log?.error(`[insertAiMeta] network=${platform} ad_id=${adId} error: ${err.message}`);
-    return res.status(500).json({ success: false, ad_id: adId, error: { code: 'INTERNAL_ERROR', message: err.message } });
+    return finish(500, { success: false, ad_id: adId, error: { code: 'INTERNAL_ERROR', message: err.message } });
   }
 }
 
-module.exports = { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta };
+function createCapturedResponse() {
+  const captured = { statusCode: 200, body: null, headers: {} };
+  const res = {
+    status(code) {
+      captured.statusCode = code;
+      return res;
+    },
+    json(body) {
+      captured.body = body;
+      return res;
+    },
+    setHeader(name, value) {
+      captured.headers[name] = value;
+      return res;
+    },
+    set(name, value) {
+      captured.headers[name] = value;
+      return res;
+    },
+    header(name, value) {
+      captured.headers[name] = value;
+      return res;
+    },
+  };
+  return { res, captured };
+}
+
+function normalizeAiMetaBulkItems(body) {
+  if (Array.isArray(body)) return body;
+  if (!body || typeof body !== 'object') return null;
+  for (const key of ['items', 'requests', 'records', 'data']) {
+    if (Array.isArray(body[key])) return body[key];
+  }
+  return null;
+}
+
+async function insertAiMetaBulk(req, res) {
+  const body = req.body || {};
+  const requestId = req.id || req.requestId || null;
+  const items = normalizeAiMetaBulkItems(body);
+  const timings = { startedAt: Date.now() };
+
+  if (!items || items.length === 0) {
+    setAiMetaTimingHeaders(res, { total_ms: 0 });
+    return res.status(400).json({
+      request_id: requestId,
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'bulk items are required',
+        details: [{ field: 'items', message: 'At least one ai_meta item is required' }],
+      },
+    });
+  }
+
+  if (items.length > AI_META_BULK_MAX_SIZE) {
+    setAiMetaTimingHeaders(res, { total_ms: 0 });
+    return res.status(400).json({
+      request_id: requestId,
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: `bulk requests are limited to ${AI_META_BULK_MAX_SIZE} items`,
+        details: [{
+          field: 'items',
+          message: `Send at most ${AI_META_BULK_MAX_SIZE} items per request; ${AI_META_BULK_RECOMMENDED_SIZE} is the recommended batch size`,
+        }],
+      },
+    });
+  }
+
+  const results = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const childRequestId = item.request_id ?? item.requestId ?? (requestId ? `${requestId}:${index + 1}` : null);
+    const { res: childRes, captured } = createCapturedResponse();
+    try {
+      await insertAiMeta({
+        ...req,
+        id: childRequestId,
+        requestId: childRequestId,
+        body: item,
+      }, childRes);
+    } catch (err) {
+      // Keep a malformed/unexpected item from aborting a partially completed batch.
+      captured.statusCode = 500;
+      captured.body = {
+        request_id: childRequestId,
+        success: false,
+        ad_id: item.ad_id ?? null,
+        error: { code: 'INTERNAL_ERROR', message: err.message },
+      };
+    }
+
+    const childBody = captured.body || {};
+    results.push({
+      index,
+      request_id: childBody.request_id ?? childRequestId,
+      ad_id: childBody.ad_id ?? item.ad_id ?? null,
+      network: (item.network || item.platform || '').toLowerCase().trim() || null,
+      status_code: captured.statusCode,
+      success: Boolean(childBody.success),
+      message: childBody.message ?? null,
+      error: childBody.error ?? null,
+      stored_fields: childBody.stored_fields ?? undefined,
+      sql: childBody.sql ?? undefined,
+      category_sync: childBody.category_sync ?? undefined,
+    });
+  }
+
+  const successCount = results.filter((item) => item.success).length;
+  const failedCount = results.length - successCount;
+  const statusCode = failedCount > 0 ? 207 : 200;
+  timings.total_ms = Date.now() - timings.startedAt;
+  setAiMetaTimingHeaders(res, timings);
+  return res.status(statusCode).json({
+    request_id: requestId,
+    success: failedCount === 0,
+    code: statusCode,
+    message: failedCount === 0
+      ? 'All AI-Meta records stored successfully'
+      : 'One or more AI-Meta records failed',
+    summary: {
+      total: results.length,
+      success: successCount,
+      failed: failedCount,
+    },
+    results,
+  });
+}
+
+module.exports = { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk };

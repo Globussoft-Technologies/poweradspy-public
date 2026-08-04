@@ -1521,36 +1521,17 @@ const AnalyticsModal = ({
       const text = formatAiMetaValue(value);
       if (text || render) rows.push({ label, value: text, render });
     };
-    const offeringTypeIsBoth = String(aiMeta.offering_type || "").trim().toLowerCase() === "both";
-    const offeringTypeRender = offeringTypeIsBoth ? (
-      <div className="flex flex-wrap justify-end gap-1.5">
-        <span
-          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${
-            isLight
-              ? "border-slate-200 bg-slate-100 text-slate-700"
-              : "border-white/10 bg-white/5 text-white/85"
-          }`}
-        >
-          Product
-        </span>
-        <span
-          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${
-            isLight
-              ? "border-slate-200 bg-slate-100 text-slate-700"
-              : "border-white/10 bg-white/5 text-white/85"
-          }`}
-        >
-          Service
-        </span>
-      </div>
-    ) : null;
+    const offeringTypeRaw = String(aiMeta.offering_type || "").trim().toLowerCase();
+    const offeringTypeText = offeringTypeRaw === "both"
+      ? "Product & Service"
+      : formatAiMetaToken(aiMeta.offering_type);
 
     // Keep the filterable AI fields together so the Analytics page mirrors the
     // controls exposed in the AI Filters popup.
     pushRow("AD TYPE", formatAiMetaToken(aiMeta.ad_type));
     pushRow("INTENT", aiMeta.intent);
     pushRow("HOOK", aiMeta.hook);
-    pushRow("OFFERING TYPE", formatAiMetaToken(aiMeta.offering_type), offeringTypeRender);
+    pushRow("OFFERING TYPE", offeringTypeText);
     pushRow("OFFER TYPE", offerType);
     pushRow("COLORS", colors);
 

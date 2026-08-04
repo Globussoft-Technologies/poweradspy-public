@@ -47,6 +47,7 @@ Each row in the response gained the following fields (additive no existing field
 | `subcategory_id` | string \| null | Flat `subCategory_id` |
 | `confidence_score` | number \| null | `0` once a human/AI category is assigned |
 | `ai_meta` | object \| null | Read-back of any stored AI-Meta enrichment (see 2), regardless of whether ES stored it under `ai` or `ai_meta` |
+| `native_creative_type` | string \| null | **Native only** source creative label when available (`IMAGE` / `TEXT`) |
 | `image_url_original` | string \| null | **Native only** original scraped URL, fallback creative source |
 
 **Image URLs are now resolvable.** `ad_image` and `thumbnail` are passed through a `served()`
@@ -62,6 +63,8 @@ URL is still classified against the same creative visible in PowerAdSpy. If neit
 usable image, `ad_image` stays null/omitted per the existing response convention. The native
 ingestion pipeline itself faithfully stores whatever the scraper sends; the drop-to-zero at high
 exvals is an **upstream payload/scraper problem**, not a storage regression in this service.
+The placeholder filenames `/bydefault_ads.jpg` and `/bydefault_ads.png` are treated as missing
+creative values, so they do not block fallback to a real `image_url_original`.
 
 ### 1.2 `POST /newCatInsertion` ad-level status + optional `ai_meta`
 
@@ -190,6 +193,40 @@ must carry its ids (2.1).
 | `404` | `{ success:false, ad_id, error:{ code:"AD_NOT_FOUND", message } }` |
 | `503` | `{ success:false, ad_id, error:{ code:"ES_UNAVAILABLE", message } }` |
 
+**Retryable category-sync failures.** When the taxonomy or ES mirror step times out, the endpoint
+returns a structured failure instead of claiming full success. The response includes
+`error.code = CATEGORY_SYNC_RETRYABLE` when the failure is retryable, `category_sync.retryable = true`,
+the retry delay in seconds, and a `Retry-After` header on the HTTP response.
+
+**Timing headers.** Successful and retryable responses include coarse timings for the major stages:
+`X-ES-Search-Ms`, `X-ES-Write-Ms`, `X-Category-Sync-Ms`, `X-SQL-Ms`, `X-Total-Ms`, plus
+`Server-Timing`.
+
+### 2.3.1 `POST /ai-meta/bulk`
+
+Bulk wrapper for backlog draining. The endpoint accepts either a raw array of requests or an object
+with one of `items`, `requests`, `records`, or `data`.
+
+Processing is intentionally **sequential** so one batch does not fan out concurrent SQL/ES writes.
+Each element runs through the exact same validator, ES writer, SQL writer, and category-sync path as
+the single-item endpoint.
+
+**Batch limit.** Send **5 items per request** as the recommended operating size, with **10 items**
+as the enforced maximum. Submit the next batch only after the prior response returns; this keeps
+the bulk drain to one SQL/ES write chain at a time and avoids concentrating load on a network's
+database.
+
+Response behavior:
+
+- `200` when every item succeeds.
+- `207` when the batch has a mix of successes and failures.
+- `summary.total`, `summary.success`, `summary.failed`.
+- `results[]` with the per-item `request_id`, `ad_id`, `network`, `status_code`, `success`,
+  `message`, `error`, `stored_fields`, `sql`, and `category_sync`.
+
+The bulk route is intended for modest backlog draining, not unbounded fan-out. Requests above 10
+items return `400 VALIDATION_ERROR` before any item is written.
+
 
 ### 2.4 Write policy idempotency (both options)
 
@@ -263,11 +300,12 @@ schema/design in `docs/AI_META_SQL_STORAGE.md`. In short:
  colors, offer_type scalar + legacy offers compatibility, `caption`/`roa`, cardinality, no-status, removed brand/celebrity ignored, and the
  v1.6 category group: nameid pairing, 4/8-char formats, subcategory_id prefix, half-pair drop).
 - `tests/services/common/controllers/addCategoryController.test.mjs` feed read-back, native
- fallback, `ad_status` transitions, `getAdCategory`, `insertAiMeta` (200/400/404/503), Option-A
- `ai_meta` integration, and the SQL dual-write wiring (both options, ES category mirror, non-fatal).
+  fallback, `ad_status` transitions, `getAdCategory`, `insertAiMeta` (200/400/404/503), bulk
+  batching (207 mixed-result handling), Option-A `ai_meta` integration, and the SQL dual-write
+  wiring (both options, ES category mirror, non-fatal).
 - `tests/services/common/helpers/aiMetaSqlWriter.test.mjs` `persistAiMeta` (upsert params, JSON NULL
- binding, category nameid resolve/insert, networks without a category store, rollback on error).
-- `tests/services/common/routes/commonRoutes.test.mjs` route registration.
+  binding, category nameid resolve/insert, networks without a category store, rollback on error).
+- `tests/services/common/routes/commonRoutes.test.mjs` route registration, including `/ai-meta/bulk`.
 
 Run:
 ```bash

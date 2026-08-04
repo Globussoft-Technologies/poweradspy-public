@@ -55,7 +55,7 @@ for (const n of [
 }
 const shareAdExports = mkCtrlMock("shareAdController", ["createShareLink", "getSharedAd"]);
 const categoryExports = mkCtrlMock("categoryController", ["syncCategory", "syncAllCategories"]);
-const addCategoryExports = mkCtrlMock("addCategoryController", ["getDescriptionDetails", "newCatInsertion"]);
+const addCategoryExports = mkCtrlMock("addCategoryController", ["getDescriptionDetails", "newCatInsertion", "getAdCategory", "insertAiMeta", "insertAiMetaBulk"]);
 const dashboardShareExports = mkCtrlMock("dashboardShareController", ["createDashboardShare", "getDashboardShare", "guestSearch"]);
 const dailyKeywordExports = mkCtrlMock("dailyKeywordRequestController", ["dailyKeywordRequest", "getPriorityRequests"]);
 const notifExports = mkCtrlMock("notificationController", ["getNotifications", "markNotificationsRead"]);
@@ -147,6 +147,7 @@ describe("commonRoutes > registration", () => {
       "/newCatInsertion", "/register-push-token", "/send-push-notification/:action",
       "/push-notifications/all", "/push-notifications/read", "/send-mail-dailyup",
       "/reset-daily-keyword-status", "/notifications/read",
+      "/ai-meta", "/ai-meta/bulk",
     ]) expect(routes.post[p]).toBeDefined();
     for (const p of [
       "/dashboard/share/:token", "/ads/share/:token",

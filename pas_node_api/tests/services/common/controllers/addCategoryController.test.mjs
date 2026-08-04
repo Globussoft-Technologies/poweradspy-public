@@ -18,7 +18,7 @@ require.cache[catCtrlPath] = {
 const config = require("../../../../src/config");
 const originalEnv = config.env;
 
-const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta } = require(
+const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk } = require(
   "../../../../src/services/common/controllers/addCategoryController"
 );
 
@@ -931,6 +931,7 @@ describe("addCategoryController > getDescriptionDetails > native image fallback 
     const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
       "native_ad.id": 11,
       "native_ad.type": "TEXT",
+      "native_ad.nas_url": "/bydefault_ads.jpg",
     }}]}}));
     const sqlQuery = vi.fn(async () => ([{
       _fallback_id: 11,
@@ -944,7 +945,38 @@ describe("addCategoryController > getDescriptionDetails > native image fallback 
     const res = mkRes();
     await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
     expect(res.body[0].ad_image).toBe("https://cdn.example/native-text.jpg");
+    expect(res.body[0].image_url_original).toBe("https://cdn.example/native-text.jpg");
     expect(res.body[0].creative_availability_reason).toBeUndefined();
+  });
+
+  it("native TEXT ads use an ES original image without requiring a SQL fallback", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "native_ad.id": 13,
+      "native_ad.type": "TEXT",
+      "native_ad.nas_url": "/bydefault_ads.jpg",
+      image_url_original: "https://cdn.example/native-text-original.jpg",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
+    expect(res.body[0].ad_image).toBe("https://cdn.example/native-text-original.jpg");
+    expect(res.body[0].image_url_original).toBe("https://cdn.example/native-text-original.jpg");
+    expect(res.body[0].native_creative_type).toBe("TEXT");
+  });
+
+  it("native IMAGE ads treat bydefault_ads.jpg as missing and fall back to image_url_original", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
+      "native_ad.id": 12,
+      "native_ad.type": "IMAGE",
+      "native_ad.nas_url": "/bydefault_ads.jpg",
+      image_url_original: "https://cdn.example/native-original.jpg",
+    }}]}}));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "native" }, body: {} }, res);
+    expect(res.body[0].ad_image).toBe("https://cdn.example/native-original.jpg");
+    expect(res.body[0].image_url_original).toBe("https://cdn.example/native-original.jpg");
+    expect(res.body[0].native_creative_type).toBe("IMAGE");
   });
 
   it("native TEXT ads with text already present still backfill missing creative from SQL", async () => {
@@ -1155,6 +1187,91 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.statusCode).toBe(200);
     const call = update.mock.calls.find((c) => c[0].body?.script)?.[0];
     expect(call.body.script.source).toContain("ctx._source.ai_meta = params.aiMeta");
+  });
+
+  it("returns a retryable response when category mirroring times out after storing ai_meta", async () => {
+    let updateCount = 0;
+    const esUpdate = vi.fn(async () => {
+      updateCount += 1;
+      if (updateCount === 2) {
+        const err = new Error("Request timed out");
+        err.name = "TimeoutError";
+        throw err;
+      }
+      return {};
+    });
+    const sqlConn = mkSqlConn();
+    serviceRegistry.getService.mockImplementation((name) => {
+      if (name === "instagram") {
+        return mkService({
+          esSearch: vi.fn(async () => ({ hits: { hits: [{ _id: "es-1", _source: {} }] } })),
+          esUpdate,
+          sql: { getConnection: vi.fn(async () => sqlConn) },
+          log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        });
+      }
+      return null;
+    });
+    const res = mkRes();
+    res.setHeader = vi.fn();
+    const aiWithCat = { ...VALID_AI_META, category: "Retail", category_id: "1234", sub_category: "eCommerce", subcategory_id: "12340001" };
+    await insertAiMeta({ id: "req-123", body: { ad_id: "48979890", network: "instagram", ai_meta: aiWithCat } }, res);
+    expect(res.statusCode).toBe(503);
+    expect(res.body.success).toBe(false);
+    expect(res.body.request_id).toBe("req-123");
+    expect(res.body.error.code).toBe("CATEGORY_SYNC_RETRYABLE");
+    expect(res.body.sql).toMatchObject({ sql_status: "stored", category_synced: true });
+    expect(res.body.category_sync.retryable).toBe(true);
+    expect(res.setHeader).toHaveBeenCalledWith("Retry-After", expect.any(String));
+  });
+});
+
+describe("addCategoryController > insertAiMetaBulk", () => {
+  it("processes a batch sequentially and reports mixed outcomes", async () => {
+    const updateFn = vi.fn(async () => {});
+    serviceRegistry.getService.mockImplementation((name) => {
+      if (name === "instagram") {
+        return mkService({
+          esSearch: vi.fn(async () => ({ hits: { hits: [{ _id: "es-1", _source: {} }] } })),
+          esUpdate: updateFn,
+          log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        });
+      }
+      return null;
+    });
+
+    const res = mkRes();
+    const batch = {
+      items: [
+        { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META },
+        { ad_id: "2", network: "instagram" },
+      ],
+    };
+
+    await insertAiMetaBulk({ id: "bulk-req", body: batch }, res);
+
+    expect(res.statusCode).toBe(207);
+    expect(res.body.success).toBe(false);
+    expect(res.body.summary).toEqual({ total: 2, success: 1, failed: 1 });
+    expect(res.body.results).toHaveLength(2);
+    expect(res.body.results[0]).toMatchObject({ index: 0, success: true, ad_id: "48979890", network: "instagram" });
+    expect(res.body.results[1]).toMatchObject({ index: 1, success: false, error: { code: "VALIDATION_ERROR" } });
+  });
+
+  it("rejects batches above the hard limit before starting any writes", async () => {
+    const res = mkRes();
+    const items = Array.from({ length: 11 }, () => ({
+      ad_id: "48979890",
+      network: "instagram",
+      ai_meta: VALID_AI_META,
+    }));
+
+    await insertAiMetaBulk({ id: "bulk-too-large", body: { items } }, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.message).toContain("10 items");
+    expect(serviceRegistry.getService).not.toHaveBeenCalled();
   });
 });
 

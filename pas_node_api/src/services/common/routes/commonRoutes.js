@@ -22,7 +22,7 @@ const { getAdInsights: ttAdInsights } = require('../controllers/tiktokCommonInsi
 const { getAdCountry } = require('../controllers/adCountryController');
 const { createShareLink, getSharedAd } = require('../controllers/shareAdController');
 const { syncCategory, syncAllCategories } = require('../controllers/categoryController');
-const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta } = require('../controllers/addCategoryController');
+const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk } = require('../controllers/addCategoryController');
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
 const { storeKeywordSearch, scraperWork, insertSyntheticKeywords } = require('../controllers/keywordSearchController');
@@ -407,6 +407,15 @@ router.get(
 router.post(
   '/ai-meta',
   asyncHandler(insertAiMeta)
+);
+
+// POST /api/v1/common/ai-meta/bulk
+// Sequential bulk processor for backlog draining. Each item is handled through the
+// same single-item validator/writer so timing, SQL, category sync, and retryable
+// error handling stay identical. No auth — internal only.
+router.post(
+  '/ai-meta/bulk',
+  asyncHandler(insertAiMetaBulk)
 );
 
 // GET /api/v1/common/image-proxy?url=...
