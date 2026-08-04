@@ -62,7 +62,7 @@ describe("common/services/domainsWithoutRegistrationService > validation", () =>
 });
 
 describe("common/services/domainsWithoutRegistrationService > query + limit", () => {
-  it("filters NULL registration date, orders by updated_date DESC, applies default limit", async () => {
+  it("uses the indexed Google keyset path and applies the default limit", async () => {
     const calls = mockNetwork("google", [{ id: 1, domain: "a.com", domain_registered_date: null, updated_date: "2026-01-01" }]);
     const out = await getDomainsWithoutRegistration({ network: "google" }, null);
 
@@ -73,9 +73,76 @@ describe("common/services/domainsWithoutRegistrationService > query + limit", ()
     const sql = calls[0].sql.replace(/\s+/g, " ");
     expect(sql).toContain("FROM google_text_ad_domains");
     expect(sql).toContain("WHERE domain_registered_date IS NULL AND status = 0");
-    expect(sql).toContain("GROUP BY domain");
-    expect(sql).toContain("ORDER BY MAX(updated_date) DESC");
-    expect(sql).toContain(`LIMIT ${DEFAULT_LIMIT}`);
+    expect(sql).toContain("updated_date IS NOT NULL");
+    expect(sql).toContain("ORDER BY updated_date DESC, id DESC");
+    expect(sql).not.toContain("GROUP BY domain");
+    expect(out.meta.query_mode).toBe("indexed_keyset");
+    expect(out.meta.scanned_rows).toBe(2);
+  });
+
+  it("deduplicates Google domains while preserving newest-first order", async () => {
+    const rows = [
+      { id: 5, domain: "a.com", updated_date: "2026-01-05" },
+      { id: 4, domain: "A.COM", updated_date: "2026-01-04" },
+      { id: 3, domain: "b.com", updated_date: "2026-01-03" },
+    ];
+    mockNetwork("google", rows);
+
+    const out = await getDomainsWithoutRegistration({ network: "google", limit: 2 }, null);
+
+    expect(out.code).toBe(200);
+    expect(out.data).toEqual([
+      { domain: "a.com", updated_date: "2026-01-05" },
+      { domain: "b.com", updated_date: "2026-01-03" },
+    ]);
+  });
+
+  it("continues with a keyset cursor when the first batch contains only duplicates", async () => {
+    const date = "2026-01-05";
+    const firstBatch = Array.from({ length: 100 }, (_, index) => ({
+      id: 200 - index,
+      domain: "a.com",
+      updated_date: date,
+    }));
+    const calls = [];
+    serviceRegistry.services.set("google", {
+      db: { sql: { query: async (sql, params) => {
+        calls.push({ sql, params });
+        return calls.length === 1
+          ? firstBatch
+          : [{ id: 99, domain: "b.com", updated_date: "2026-01-04" }];
+      } } },
+    });
+
+    const out = await getDomainsWithoutRegistration({ network: "google", limit: 2 }, null);
+
+    expect(out.code).toBe(200);
+    expect(out.data.map((row) => row.domain)).toEqual(["a.com", "b.com"]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].sql.replace(/\s+/g, " ")).toContain("updated_date < ? OR (updated_date = ? AND id < ?)");
+    expect(calls[1].params).toEqual([date, date, 101]);
+  });
+
+  it("returns retryable 429 when another Google lookup owns the advisory lock", async () => {
+    let released = false;
+    serviceRegistry.services.set("google", {
+      db: {
+        sql: {
+          getConnection: async () => ({
+            query: async () => [[{ acquired: 0 }], []],
+            execute: async () => { throw new Error("must not execute"); },
+            release: () => { released = true; },
+          }),
+        },
+      },
+    });
+
+    const out = await getDomainsWithoutRegistration({ network: "google" }, null);
+
+    expect(out.code).toBe(429);
+    expect(out.error.type).toBe("request_in_progress");
+    expect(out.error.details.retry_after_seconds).toBe(2);
+    expect(released).toBe(true);
   });
 
   it("uses updated_date for facebook and clamps limit to the max", async () => {

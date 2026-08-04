@@ -45,6 +45,39 @@ marks a domain unresolvable) and the [`get-domain-registration`](GET_DOMAIN_REGI
 
 TikTok is intentionally excluded (no SQL domains table).
 
+## Google production performance
+
+Google uses an indexed keyset scan instead of executing `GROUP BY domain` over the complete
+pending set. Rows are read by `updated_date DESC, id DESC`; the first occurrence of each domain
+is retained, preserving the legacy `MAX(updated_date)` ordering and unique-domain response.
+
+The supporting SQL index is managed by this idempotent script:
+
+```bash
+# Read-only preflight
+node scripts/apply-domain-pending-recency-index.js --status
+
+# Add the online composite index
+node scripts/apply-domain-pending-recency-index.js --apply
+
+# Monitor an apply already running in another terminal
+node scripts/apply-domain-pending-recency-index.js --monitor
+
+# Optional rollback (removes only the index owned by this script)
+node scripts/apply-domain-pending-recency-index.js --rollback
+```
+
+When MySQL exposes stage counters, apply/monitor prints actual percentage and ETA every five
+seconds. Without permission to read the Performance Schema stage tables it prints the live
+process state and elapsed time instead of inventing an estimate.
+
+Deploy the index first and application code second. The code remains valid before the index
+exists, but production performance is only guaranteed after the index is present.
+
+Google lookups also use a MySQL advisory lock. It prevents separate PM2 workers or backend
+instances from running the same lookup concurrently. A concurrent request receives HTTP `429`
+with `error.type = request_in_progress` and `retry_after_seconds = 2`; the caller should retry.
+
 ---
 
 ## 2. Response
@@ -57,6 +90,7 @@ Body shape: `{ code, message, error?, data?, meta? }`. `code` is also the HTTP s
 | `network` missing | **400** | 400 | `Please provide a network. Available: …` |
 | Unsupported `network` | **400** | 400 | `Unsupported network: … Available: …` |
 | Invalid `limit` (non-int / < 1) | **400** | 400 | `Invalid limit. Provide a positive integer up to 50.` |
+| Concurrent Google lookup | **429** | 429 | `A Google pending-domain lookup is already running. Please retry shortly.` |
 | DB query error | **500** | 500 | `SQL query failed` |
 | Network SQL connection unavailable | **503** | 503 | `SQL connection not available for network …` |
 

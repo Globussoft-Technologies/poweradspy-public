@@ -10,8 +10,8 @@
  *
  * The `status = 0` filter is what stops the backfill loop from re-serving domains that were
  * already tried and marked UNRESOLVABLE (`status = 2`) by the update API — see
- * updateDomainDateService. DISTINCT (GROUP BY domain) means a domain that spans several rows
- * (no unique index on `domain`) is returned once, not once per row.
+ * updateDomainDateService. Google uses an indexed newest-first keyset scan and Node-side
+ * deduplication; the other networks retain the legacy aggregate lookup.
  *
  * Schema note (verified against the PHP models + insertion repos):
  *   - Every network's domains table has `domain_registered_date`.
@@ -28,6 +28,11 @@ const { buildErrorResponse, classifySqlError } = require('../helpers/errorRespon
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 50;
+const GOOGLE_NETWORK = 'google';
+const GOOGLE_LOCK_NAME = 'pas:pending-domains:google';
+const GOOGLE_LOCK_WAIT_SECONDS = 1;
+const GOOGLE_MIN_BATCH_SIZE = 100;
+const GOOGLE_BATCH_MULTIPLIER = 5;
 
 // network → { table, sortColumn }. sortColumn is the "most recently updated"
 // signal for that table. Derived from the shared domainTables config.
@@ -47,6 +52,122 @@ function normalizeLimit(raw) {
   const n = Number(raw);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return null;
   return Math.min(n, MAX_LIMIT);
+}
+
+/**
+ * Read Google pending domains through the recency index instead of grouping the
+ * complete pending set. Rows are scanned newest-first, therefore the first row
+ * seen for a domain is exactly the MAX(updated_date) row the legacy query
+ * returned. Keyset pagination keeps the work bounded when duplicate domains
+ * occur near the front of the index.
+ *
+ * NULL updated_date rows sort after dated rows and are handled in a second
+ * phase so they are not lost at the keyset boundary.
+ */
+async function fetchGooglePendingDomains(exec, cfg, limit) {
+  const { table, sortColumn } = cfg;
+  const batchSize = Math.max(GOOGLE_MIN_BATCH_SIZE, limit * GOOGLE_BATCH_MULTIPLIER);
+  const unique = new Map();
+  let scannedRows = 0;
+  let phase = 'dated';
+  let cursorDate = null;
+  let cursorId = null;
+
+  while (unique.size < limit) {
+    const clauses = ['domain_registered_date IS NULL', 'status = 0'];
+    const params = [];
+
+    if (phase === 'dated') {
+      clauses.push(`${sortColumn} IS NOT NULL`);
+      if (cursorDate !== null && cursorId !== null) {
+        clauses.push(`(${sortColumn} < ? OR (${sortColumn} = ? AND id < ?))`);
+        params.push(cursorDate, cursorDate, cursorId);
+      }
+    } else {
+      clauses.push(`${sortColumn} IS NULL`);
+      if (cursorId !== null) {
+        clauses.push('id < ?');
+        params.push(cursorId);
+      }
+    }
+
+    const orderBy = phase === 'dated'
+      ? `${sortColumn} DESC, id DESC`
+      : 'id DESC';
+    const rows = await exec.query(
+      `SELECT id, domain, ${sortColumn}
+         FROM ${table}
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY ${orderBy}
+        LIMIT ${batchSize}`,
+      params
+    );
+    const batch = Array.isArray(rows) ? rows : [];
+    scannedRows += batch.length;
+
+    for (const row of batch) {
+      const domain = row && row.domain != null ? String(row.domain).trim() : '';
+      const domainKey = domain.toLowerCase();
+      if (!domain || unique.has(domainKey)) continue;
+      unique.set(domainKey, { domain, [sortColumn]: row[sortColumn] ?? null });
+      if (unique.size >= limit) break;
+    }
+
+    if (batch.length < batchSize) {
+      if (phase === 'dated') {
+        phase = 'undated';
+        cursorDate = null;
+        cursorId = null;
+        continue;
+      }
+      break;
+    }
+
+    const last = batch[batch.length - 1];
+    cursorId = last.id;
+    if (phase === 'dated') cursorDate = last[sortColumn];
+  }
+
+  return { data: [...unique.values()].slice(0, limit), scannedRows };
+}
+
+/**
+ * GET_LOCK is server-wide and connection-scoped. It prevents separate PM2
+ * workers/backend instances from running the same Google lookup concurrently.
+ * Tests and lightweight adapters without getConnection retain a safe fallback.
+ */
+async function withGoogleLookupLock(sql, work, log) {
+  if (typeof sql.getConnection !== 'function') {
+    return { acquired: true, value: await work(sql) };
+  }
+
+  const connection = await sql.getConnection();
+  let acquired = false;
+  try {
+    const [lockRows] = await connection.query(
+      'SELECT GET_LOCK(?, ?) AS acquired',
+      [GOOGLE_LOCK_NAME, GOOGLE_LOCK_WAIT_SECONDS]
+    );
+    acquired = Number(lockRows?.[0]?.acquired) === 1;
+    if (!acquired) return { acquired: false, value: null };
+
+    const exec = {
+      query: async (statement, params = []) => {
+        const [rows] = await connection.execute(statement, params);
+        return rows;
+      },
+    };
+    return { acquired: true, value: await work(exec) };
+  } finally {
+    if (acquired) {
+      try {
+        await connection.query('SELECT RELEASE_LOCK(?)', [GOOGLE_LOCK_NAME]);
+      } catch (error) {
+        if (log?.warn) log.warn('Unable to release Google pending-domain advisory lock', { error: error.message });
+      }
+    }
+    connection.release();
+  }
 }
 
 /**
@@ -114,6 +235,41 @@ async function getDomainsWithoutRegistration(params, log) {
   const { table, sortColumn } = cfg;
 
   try {
+    if (network === GOOGLE_NETWORK) {
+      const lookup = await withGoogleLookupLock(
+        service.db.sql,
+        (exec) => fetchGooglePendingDomains(exec, cfg, limit),
+        log
+      );
+      if (!lookup.acquired) {
+        return buildErrorResponse({
+          code: 429,
+          message: 'A Google pending-domain lookup is already running. Please retry shortly.',
+          type: 'request_in_progress',
+          source: 'sql',
+          operation: 'get-domains-without-registration-date',
+          network,
+          table,
+          details: { retry_after_seconds: 2 },
+        });
+      }
+
+      const { data, scannedRows } = lookup.value;
+      return {
+        code: 200,
+        message: 'Domains fetched successfully',
+        data,
+        meta: {
+          network,
+          limit,
+          sort_column: sortColumn,
+          count: data.length,
+          query_mode: 'indexed_keyset',
+          scanned_rows: scannedRows,
+        },
+      };
+    }
+
     const rows = await service.db.sql.query(
       `SELECT domain, MAX(${sortColumn}) AS ${sortColumn}
          FROM ${table}
@@ -145,4 +301,9 @@ async function getDomainsWithoutRegistration(params, log) {
   }
 }
 
-module.exports = { getDomainsWithoutRegistration, NETWORK_CONFIG, DEFAULT_LIMIT, MAX_LIMIT };
+module.exports = {
+  getDomainsWithoutRegistration,
+  NETWORK_CONFIG,
+  DEFAULT_LIMIT,
+  MAX_LIMIT,
+};
