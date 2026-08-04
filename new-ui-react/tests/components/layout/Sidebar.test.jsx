@@ -27,8 +27,16 @@ vi.mock("../../../src/components/shared/SidebarDivider", () => ({
   default: () => <hr data-testid="divider" />,
 }));
 vi.mock("../../../src/components/sdui/SchemaRenderer", () => ({
-  default: ({ document, onFilterChange, onDocumentClick }) => (
-    <div data-testid={`schema-${document._id}`}>
+  default: ({ document, onFilterChange, onDocumentClick, shouldShowFilter, shouldShowOption }) => (
+    <div
+      data-testid={`schema-${document._id}`}
+      data-first-filter-visible={String(
+        shouldShowFilter?.(document.filters?.[0] || document),
+      )}
+      data-first-option-visible={String(
+        shouldShowOption?.(document.filters?.[0]?.options?.[0]),
+      )}
+    >
       {document.title || "DOC"}
       <button
         data-testid={`schema-trigger-${document._id}`}
@@ -235,6 +243,40 @@ describe("Sidebar > AI Filter plan gating", () => {
 });
 
 describe("Sidebar > Budget plan gating", () => {
+  it("keeps disabled Sidebar Budget visible while its child stays plan-guarded", () => {
+    const sdui = {
+      ...baseSdui,
+      config: {
+        sidebar: [{
+          _id: "sidebar_budget",
+          title: "Budget",
+          filters: [{
+            _id: "budget_filter",
+            platform_applicability: ["tiktok"],
+            options: [{ value: "low", platform_applicability: ["tiktok"] }],
+          }],
+        }],
+      },
+      activePlatforms: ["facebook", "instagram", "youtube"],
+      shouldShowFilter: () => false,
+      shouldShowOption: () => false,
+    };
+
+    const { getByTestId } = render(<Sidebar {...build({
+      sdui,
+      isFilterRestricted: (id) => id === "sidebar_budget" || id === "budget_filter",
+    })} />);
+
+    expect(getByTestId("schema-sidebar_budget")).toHaveAttribute(
+      "data-first-filter-visible",
+      "true",
+    );
+    expect(getByTestId("schema-sidebar_budget")).toHaveAttribute(
+      "data-first-option-visible",
+      "true",
+    );
+  });
+
   it("clears a persisted Sidebar Budget selection when the active policy disables it", async () => {
     const setAllFilters = vi.fn();
     const sdui = {

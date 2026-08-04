@@ -8,6 +8,9 @@ vi.mock("lucide-react", () => ({
 vi.mock("../../../src/components/sdui/SDUIIcon", () => ({
   default: ({ icon, size }) => <i data-testid="sdui-icon" data-type={icon?.type} data-size={size} />,
 }));
+vi.mock("../../../src/hooks/useTheme", () => ({
+  useTheme: () => ({ theme: "light" }),
+}));
 
 import DocumentSection from "../../../src/components/sdui/DocumentSection.jsx";
 
@@ -54,12 +57,19 @@ describe("DocumentSection", () => {
     );
     expect(container.querySelector("div.max-h-0")).not.toBeNull();
   });
+  it("stays collapsed on reload even when SDUI requests an open section", () => {
+    const { container } = render(
+      <DocumentSection document={{ ...DOC, collapsed_by_default: false }}>x</DocumentSection>,
+    );
+    expect(container.querySelector("div.max-h-0")).not.toBeNull();
+  });
   it("clicking toggle expands, then collapses", () => {
     const { getByRole, container } = render(
       <DocumentSection document={DOC}>x</DocumentSection>,
     );
     fireEvent.click(getByRole("button"));
-    expect(container.querySelector("div.max-h-\\[300px\\]")).not.toBeNull();
+    expect(container.querySelector("div.max-h-\\[320px\\]")).not.toBeNull();
+    expect(container.querySelector("div.overflow-y-auto")).not.toBeNull();
     fireEvent.click(getByRole("button"));
     expect(container.querySelector("div.max-h-0")).not.toBeNull();
   });

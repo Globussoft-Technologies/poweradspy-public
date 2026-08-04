@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark } from "lucide-react";
 import NavItem from "../shared/NavItem";
@@ -76,6 +76,22 @@ const Sidebar = ({
   );
   const aiSignalsRestricted = Boolean(isFilterRestricted?.("ai_meta"));
   const sidebarBudgetRestricted = Boolean(isFilterRestricted?.("sidebar_budget"));
+
+  // Keep the disabled Sidebar Budget control discoverable. Its SDUI
+  // applicability is TikTok-only, but a plan can disable TikTok and/or this
+  // capability; hiding it at the platform-visibility layer then makes the
+  // upgrade path disappear completely. SchemaRenderer still owns the click
+  // guard, so the restricted value cannot be applied or reach the search API.
+  const shouldShowPlanAwareFilter = useCallback((item) => {
+    const id = item?._id;
+    if (
+      sidebarBudgetRestricted &&
+      (id === "sidebar_budget" || id === "budget_filter")
+    ) {
+      return true;
+    }
+    return shouldShowFilter?.(item) ?? true;
+  }, [shouldShowFilter, sidebarBudgetRestricted]);
 
   const openAiSignals = () => {
     if (guest?.isRestricted || aiSignalsRestricted) {
@@ -231,7 +247,7 @@ const Sidebar = ({
                 ) : sidebarDocs.length > 0 ? (
                   sidebarDocs
                     .filter((doc) => {
-                      if (!shouldShowFilter(doc)) return false;
+                      if (!shouldShowPlanAwareFilter(doc)) return false;
                       // Hide the category filter when not in keyword search mode
                       // if (searchIn !== "keyword") {
                       //   const isCategoryDoc =
@@ -255,8 +271,12 @@ const Sidebar = ({
                             onDocumentClick={
                               doc._id === "ai_meta" ? openAiSignals : undefined
                             }
-                            shouldShowFilter={shouldShowFilter}
-                            shouldShowOption={shouldShowOption}
+                            shouldShowFilter={shouldShowPlanAwareFilter}
+                            shouldShowOption={
+                              sidebarBudgetRestricted && doc._id === "sidebar_budget"
+                                ? () => true
+                                : shouldShowOption
+                            }
                             isDependencySatisfied={isDependencySatisfied}
                             activePlatforms={activePlatforms}
                             isFilterRestricted={isFilterRestricted}

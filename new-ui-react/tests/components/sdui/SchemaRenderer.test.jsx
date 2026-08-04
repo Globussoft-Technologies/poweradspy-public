@@ -84,6 +84,45 @@ describe("SchemaRenderer > top-level guards", () => {
 });
 
 describe("SchemaRenderer > section wrapping", () => {
+  it("renders the plan-enabled Avg. Ad Budget control inside Engagement", () => {
+    const shouldShowFilter = (item) => {
+      const applicability = item?.platform_applicability;
+      if (!applicability || applicability === "all") return true;
+      return applicability.some((platform) =>
+        ["facebook", "instagram", "youtube", "google", "gdn", "native", "pinterest"].includes(platform),
+      );
+    };
+    const { getByTestId } = render(
+      <SchemaRenderer
+        activePlatforms={["facebook", "instagram", "youtube", "google", "gdn", "native", "pinterest"]}
+        shouldShowFilter={shouldShowFilter}
+        isFilterRestricted={(id) => id !== "avg_ad_budget"}
+        filterHasPlanEntry={(id) => id === "avg_ad_budget"}
+        onRestricted={vi.fn()}
+        document={{
+          _id: "engagement",
+          title: "Engagement",
+          filters: [{
+            _id: "avg_ad_budget",
+            label: "Avg. Ad Budget",
+            type: "range_slider",
+            platform_applicability: ["facebook", "instagram", "youtube"],
+          }, {
+            _id: "likes_range",
+            label: "Likes",
+            type: "range_slider",
+            platform_applicability: ["facebook"],
+          }],
+        }}
+      />,
+    );
+
+    expect(getByTestId("stub-avg_ad_budget")).toHaveAttribute(
+      "data-label",
+      "Avg. Ad Budget",
+    );
+  });
+
   it("wraps in DocumentSection by default", () => {
     const { getByTestId } = render(
       <SchemaRenderer

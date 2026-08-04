@@ -5,7 +5,9 @@ import { useTheme } from "../../hooks/useTheme";
 
 /**
  * Renders a single SDUIDocument as a collapsible section.
- * Shows title bar with icon + chevron, collapse/expand based on collapsed_by_default.
+ * Shows title bar with icon + chevron. Sections start collapsed on every page
+ * load so a server-side presentation hint cannot unexpectedly open the whole
+ * filter sidebar.
  */
 const DocumentSection = ({ document: doc, children, clickOnly = false, onHeaderClick }) => {
   const { theme } = useTheme();
@@ -73,11 +75,23 @@ const DocumentSection = ({ document: doc, children, clickOnly = false, onHeaderC
       {!clickOnly && (
         <div
           ref={contentRef}
-          className={`transition-all duration-200 overflow-hidden ${isCollapsed ? "max-h-0 opacity-0" : "max-h-[300px] overflow-y-auto opacity-100 mb-2"}`}
+          className={`sdui-section-scroll transition-all duration-200 ${isCollapsed ? "max-h-0 overflow-hidden opacity-0" : "max-h-[320px] overflow-y-auto opacity-100 mb-2"}`}
         >
           {children}
         </div>
       )}
+      <style>{`
+        .sdui-section-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(71, 85, 105, 0.75) transparent;
+        }
+        .sdui-section-scroll::-webkit-scrollbar { width: 5px; }
+        .sdui-section-scroll::-webkit-scrollbar-track { background: transparent; }
+        .sdui-section-scroll::-webkit-scrollbar-thumb {
+          background: rgba(71, 85, 105, 0.75);
+          border-radius: 9999px;
+        }
+      `}</style>
     </div>
   );
 };
