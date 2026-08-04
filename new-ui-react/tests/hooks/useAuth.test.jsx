@@ -238,6 +238,8 @@ describe("useAuth > isFilterRestricted", () => {
     expect(result.current.isFilterRestricted("sidebar_budget")).toBe(true);
     expect(result.current.isFilterRestricted("budget_filter")).toBe(true);
     expect(result.current.isFilterRestricted("avg_ad_budget")).toBe(false);
+    expect(result.current.isFilterRestricted("ad_budget")).toBe(false);
+    expect(result.current.isFilterRestricted("adBudget")).toBe(false);
   });
 
   it("uses the old shared budget rule only when unified entitlements are unavailable", async () => {

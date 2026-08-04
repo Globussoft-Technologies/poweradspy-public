@@ -144,9 +144,11 @@ const SDUI_TO_PLAN_ACCESS = {
   impression_sort:          'impression_sort',
   popularity_sort:          'popularity_sort',
   ad_budget_sort:           'ad_budget_sort',
+  ad_budget:                'ad_budget_sort',
+  adBudget:                 'ad_budget_sort',
+  ad_budget_filter:         'ad_budget_sort',
   // TikTok Sidebar Budget is independent from Estimated/Avg Ad Budget.
   sidebar_budget:           'sidebar_budget',
-  budget:                   'sidebar_budget',
   avg_ad_budget:            'ad_budget_sort',
   budget_filter:            'sidebar_budget',
   image_size_filter:        'image_size',

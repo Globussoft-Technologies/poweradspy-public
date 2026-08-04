@@ -239,7 +239,7 @@ describe("Sidebar > Budget plan gating", () => {
     const setAllFilters = vi.fn();
     const sdui = {
       ...baseSdui,
-      filterValues: { budget_filter: ["low"] },
+      filterValues: { budget_filter: ["low"], ad_budget: [100, 500] },
       setAllFilters,
     };
     render(<Sidebar {...build({
@@ -247,7 +247,7 @@ describe("Sidebar > Budget plan gating", () => {
       isFilterRestricted: (id) => id === "sidebar_budget",
     })} />);
 
-    await waitFor(() => expect(setAllFilters).toHaveBeenCalledWith({}));
+    await waitFor(() => expect(setAllFilters).toHaveBeenCalledWith({ ad_budget: [100, 500] }));
   });
 });
 

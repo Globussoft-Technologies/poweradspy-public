@@ -104,7 +104,9 @@ const Sidebar = ({
 
   useEffect(() => {
     if (!sidebarBudgetRestricted) return;
-    const budgetKeys = ["budget_filter", "budget", "sidebar_budget"];
+    // Do not clear the generic/numeric Ad Budget value here. This gate owns
+    // only the TikTok Low/Medium/High Sidebar Budget control.
+    const budgetKeys = ["budget_filter", "sidebar_budget"];
     if (!budgetKeys.some((key) => filterValues?.[key] !== undefined)) return;
     const next = { ...(filterValues || {}) };
     budgetKeys.forEach((key) => delete next[key]);
