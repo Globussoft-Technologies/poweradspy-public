@@ -1297,6 +1297,33 @@ describe("addCategoryController > insertAiMetaBulk", () => {
     expect(res.body.results).toHaveLength(2);
     expect(res.body.results[0]).toMatchObject({ index: 0, success: true, ad_id: "48979890", network: "instagram" });
     expect(res.body.results[1]).toMatchObject({ index: 1, success: false, error: { code: "VALIDATION_ERROR" } });
+    expect(res.body.results[1]).toMatchObject({ retryable: false, retry_after: null });
+  });
+
+  it("exposes retry metadata for a temporary ES write failure", async () => {
+    const timeoutError = new Error("Request timed out");
+    timeoutError.name = "TimeoutError";
+    serviceRegistry.getService.mockImplementation((name) => name === "instagram"
+      ? mkService({
+        esSearch: vi.fn(async () => ({ hits: { hits: [{ _id: "es-1", _source: {} }] } })),
+        esUpdate: vi.fn(async () => { throw timeoutError; }),
+      })
+      : null);
+    const res = mkRes();
+
+    await insertAiMetaBulk({
+      id: "retryable-bulk",
+      body: { items: [{ ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META }] },
+    }, res);
+
+    expect(res.statusCode).toBe(207);
+    expect(res.body.results[0]).toMatchObject({
+      status_code: 503,
+      success: false,
+      retryable: true,
+      retry_after: 30,
+      error: { code: "ES_UNAVAILABLE" },
+    });
   });
 
   it("rejects batches above the hard limit before starting any writes", async () => {

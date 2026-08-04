@@ -1485,6 +1485,24 @@ function normalizeAiMetaBulkItems(body) {
   return null;
 }
 
+function getBulkRetryMetadata(body, statusCode, headers) {
+  const errorCode = body?.error?.code;
+  const retryable = body?.success === false && (
+    body?.category_sync?.retryable === true
+    || ([429, 503].includes(statusCode) && ['ES_UNAVAILABLE', 'CATEGORY_SYNC_RETRYABLE'].includes(errorCode))
+  );
+  if (!retryable) return { retryable: false, retry_after: null };
+
+  const retryAfterHeader = headers?.['Retry-After'] ?? headers?.['retry-after'];
+  const retryAfter = Number(retryAfterHeader ?? body?.category_sync?.retry_after_seconds);
+  return {
+    retryable: true,
+    // Retry-After is set by every temporary ES path; retain a safe default if a
+    // custom adapter returns a retryable error without the header.
+    retry_after: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 30,
+  };
+}
+
 async function insertAiMetaBulk(req, res) {
   const body = req.body || {};
   const requestId = req.id || req.requestId || null;
@@ -1545,6 +1563,7 @@ async function insertAiMetaBulk(req, res) {
     }
 
     const childBody = captured.body || {};
+    const retryMetadata = getBulkRetryMetadata(childBody, captured.statusCode, captured.headers);
     results.push({
       index,
       request_id: childBody.request_id ?? childRequestId,
@@ -1552,6 +1571,8 @@ async function insertAiMetaBulk(req, res) {
       network: (item.network || item.platform || '').toLowerCase().trim() || null,
       status_code: captured.statusCode,
       success: Boolean(childBody.success),
+      retryable: retryMetadata.retryable,
+      retry_after: retryMetadata.retry_after,
       message: childBody.message ?? null,
       error: childBody.error ?? null,
       stored_fields: childBody.stored_fields ?? undefined,

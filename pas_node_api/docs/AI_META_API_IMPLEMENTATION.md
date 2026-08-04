@@ -230,10 +230,28 @@ Response behavior:
 - `207` when the batch has a mix of successes and failures.
 - `summary.total`, `summary.success`, `summary.failed`.
 - `results[]` with the per-item `request_id`, `ad_id`, `network`, `status_code`, `success`,
-  `message`, `error`, `stored_fields`, `sql`, and `category_sync`.
+  `retryable`, `retry_after`, `message`, `error`, `stored_fields`, `sql`, and `category_sync`.
+
+Retryable result example:
+
+```json
+{
+  "status_code": 503,
+  "success": false,
+  "retryable": true,
+  "retry_after": 30,
+  "error": {
+    "code": "ES_UNAVAILABLE",
+    "message": "Elasticsearch is temporarily unavailable; retry this idempotent request"
+  }
+}
+```
 
 The bulk route is intended for modest backlog draining, not unbounded fan-out. Requests above the
-configured `aiMeta.bulkMaxSize` return `400 VALIDATION_ERROR` before any item is written.
+configured `aiMeta.bulkMaxSize` return `400 VALIDATION_ERROR` before any item is written. Submit
+separate batches per network when draining a backlog: sequential processing intentionally prevents
+a slow Facebook or Google ES write from creating concurrent database pressure, but it also means a
+slow item delays subsequent mixed-network items.
 
 
 ### 2.4 Write policy idempotency (both options)
