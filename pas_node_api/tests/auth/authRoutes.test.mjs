@@ -72,6 +72,27 @@ require.cache[planSvcPath] = {
   id: planSvcPath, filename: planSvcPath, loaded: true, exports: planSvc,
 };
 
+const policyStoragePath = require.resolve("../../src/services/planControl/storage/storage");
+const getLatestPolicy = vi.fn(async () => null);
+require.cache[policyStoragePath] = {
+  id: policyStoragePath, filename: policyStoragePath, loaded: true,
+  exports: { getLatestPolicy },
+};
+
+const evaluatorPath = require.resolve("../../src/services/planControl/engine/evaluator");
+const evaluateEntitlement = vi.fn(() => ({ allowed: true, allowedNetworks: [] }));
+require.cache[evaluatorPath] = {
+  id: evaluatorPath, filename: evaluatorPath, loaded: true,
+  exports: { evaluateEntitlement },
+};
+
+const identityResolverPath = require.resolve("../../src/services/planControl/engine/planIdentityResolver");
+const resolvePlanIdentity = vi.fn(() => null);
+require.cache[identityResolverPath] = {
+  id: identityResolverPath, filename: identityResolverPath, loaded: true,
+  exports: { resolvePlanIdentity },
+};
+
 // bcryptjs
 const bcryptPath = require.resolve("bcryptjs");
 const bcryptCompare = vi.fn();
@@ -118,6 +139,9 @@ beforeEach(() => {
   planSvc.getFilterStatus.mockReset().mockReturnValue({});
   planSvc.getCompetitorLimits.mockReset().mockReturnValue({ brandLimit: 5, competitorLimit: 5 });
   planSvc.resolvePlanTier.mockReset().mockReturnValue(null);
+  getLatestPolicy.mockReset().mockResolvedValue(null);
+  evaluateEntitlement.mockReset().mockReturnValue({ allowed: true, allowedNetworks: [] });
+  resolvePlanIdentity.mockReset().mockReturnValue(null);
 });
 
 describe("authRoutes > module load", () => {
@@ -353,6 +377,22 @@ describe("authRoutes > GET /plan-access", () => {
     await getHandler("get", "/plan-access")({ user: { plan_id: 1 }, query: {} }, res);
     expect(res.body.data.allowedPlatforms).toEqual(["facebook", "google"]);
     expect(res.body.data.customPlatformRestriction).toBe(false);
+  });
+
+  it("uses published ads.search networks when stale legacy access omits GDN/Native", async () => {
+    planSvc.getConfig.mockResolvedValue([{}]);
+    planSvc.getAllowedPlatforms.mockReturnValue(["facebook", "instagram"]);
+    getLatestPolicy.mockResolvedValue({ versionId: "policy-live", snapshot: {} });
+    resolvePlanIdentity.mockReturnValue({ planId: 27, familyId: "platinum-legacy" });
+    evaluateEntitlement.mockImplementation(({ capabilityId }) => capabilityId === "ads.search"
+      ? { allowed: true, allowedNetworks: ["facebook", "instagram", "gdn", "native"] }
+      : { allowed: true, allowedNetworks: [] });
+    freshSut();
+    const res = mkRes();
+    await getHandler("get", "/plan-access")({ user: { plan_id: 27 }, query: {} }, res);
+    expect(res.body.data.allowedPlatforms).toEqual([
+      "facebook", "instagram", "gdn", "native",
+    ]);
   });
 
   // 2026-07-14: this route is a separate implementation from planAccessMiddleware and

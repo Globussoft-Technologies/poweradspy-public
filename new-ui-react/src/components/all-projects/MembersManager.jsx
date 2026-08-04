@@ -46,7 +46,7 @@ const clearSessionItem = (key) => {
   }
 };
 
-export default function MembersManager({ userId, projects = [] }) {
+export default function MembersManager({ userId, projects = [], memberLimit = null, onMemberLimitReached }) {
   const restoredDraft = readJsonSessionItem(MEMBERS_MANAGER_DRAFT_KEY);
   const [open, setOpen] = useState(Boolean(restoredDraft?.open));
   const [members, setMembers] = useState([]);
@@ -104,6 +104,16 @@ export default function MembersManager({ userId, projects = [] }) {
     setErr("");
     if (!name.trim() || !/^\S+@\S+\.\S+$/.test(email.trim())) {
       setErr("Enter a name and a valid email.");
+      return;
+    }
+    const numericMemberLimit = Number(memberLimit);
+    if (
+      memberLimit !== null && memberLimit !== undefined &&
+      Number.isFinite(numericMemberLimit) && numericMemberLimit >= 0 &&
+      members.length >= numericMemberLimit
+    ) {
+      setErr(`Your current plan allows a maximum of ${numericMemberLimit} project members.`);
+      onMemberLimitReached?.();
       return;
     }
     setBusy(true);

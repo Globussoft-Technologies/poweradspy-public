@@ -35,6 +35,20 @@ class memberController {
       const e = String(email).trim().toLowerCase();
       const existing = await Member.findOne({ user_id: uid, email: e });
       if (existing) return res.send(Response.userFailResp("Member with this email already exists", ""));
+      // Enforce the live admin-controlled quota at the API boundary. The
+      // middleware attaches this decision, so direct requests cannot bypass
+      // the frontend member count check.
+      const rawMemberLimit = req.planControlDecision?.limits?.memberLimit;
+      const memberLimit = Number(rawMemberLimit);
+      if (rawMemberLimit !== undefined && Number.isFinite(memberLimit) && memberLimit >= 0) {
+        const currentMembers = await Member.countDocuments({ user_id: uid });
+        if (currentMembers >= memberLimit) {
+          return res.send(Response.quotaExceededResp(
+            `Your current plan allows a maximum of ${memberLimit} project members.`,
+            { memberLimit, currentMembers },
+          ));
+        }
+      }
       const member = await Member.create({ user_id: uid, name: String(name).trim(), email: e });
       return res.send(Response.userSuccessResp("member added", { member }));
     } catch (e) {

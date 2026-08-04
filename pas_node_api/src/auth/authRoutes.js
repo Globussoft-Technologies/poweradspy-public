@@ -18,6 +18,9 @@ const config = require('../config');
 const logger = require('../logger');
 const planAccessService = require('../services/planAccess/planAccessService');
 const { overlayAiMetaLegacyDecision } = require('../services/planControl/legacyPlanAccessBridge');
+const { getLatestPolicy } = require('../services/planControl/storage/storage');
+const { evaluateEntitlement } = require('../services/planControl/engine/evaluator');
+const { resolvePlanIdentity } = require('../services/planControl/engine/planIdentityResolver');
 const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
 
 const log = logger.createChild('auth');
@@ -179,6 +182,31 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
     }
   } else {
     allowedPlatforms = planAccessService.getAllowedPlatforms(planId, config2);
+  }
+
+  // Plan Control is authoritative for regular and legacy plan networks. The
+  // legacy platform_access document can lag behind a published policy and hide
+  // valid tabs such as GDN/Native. Keep it only as an availability fallback.
+  try {
+    const activePolicy = await getLatestPolicy();
+    const planIdentity = resolvePlanIdentity(planId, activePolicy);
+    if (activePolicy && planIdentity) {
+      const adsSearchDecision = evaluateEntitlement({
+        user: req.user,
+        planIdentity,
+        capabilityId: 'ads.search',
+        requestedNetworks: [],
+        policySnapshot: activePolicy,
+      });
+      allowedPlatforms = adsSearchDecision.allowed
+        ? [...new Set((adsSearchDecision.allowedNetworks || []).map((network) => String(network).toLowerCase()))]
+        : [];
+    }
+  } catch (error) {
+    log.warn?.('Unable to overlay published ads.search networks on legacy plan-access response', {
+      planId: Number(planId),
+      error: error.message,
+    });
   }
 
   const filters = planAccessService.getFilterStatus(planId, network, config2);

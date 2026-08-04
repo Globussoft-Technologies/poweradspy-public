@@ -476,6 +476,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   // Only an explicit unified-policy denial locks a child control.
   const capabilityAllowed = (capabilityId) =>
     getCapabilityDecision(capabilityId)?.allowed !== false;
+  const projectMemberLimit = getCapabilityLimit('projects.members', 'memberLimit');
   const [competitorUserId, setCompetitorUserId] = useState(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isProjectLoading, setIsProjectLoading] = useState(false);
@@ -2261,7 +2262,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             </div>
             <div className="flex items-center gap-3">
               {capabilityAllowed("projects.members") ? (
-                <MembersManager userId={competitorUserId} projects={projects} />
+                <MembersManager
+                  userId={competitorUserId}
+                  projects={projects}
+                  memberLimit={projectMemberLimit}
+                  onMemberLimitReached={onBrandLimitReached}
+                />
               ) : (
                 <button
                   disabled

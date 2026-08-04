@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  mFind: vi.fn(), mFindOne: vi.fn(), mCreate: vi.fn(), mFindOneAndUpdate: vi.fn(), mDeleteOne: vi.fn(),
+  mFind: vi.fn(), mFindOne: vi.fn(), mCountDocuments: vi.fn(), mCreate: vi.fn(), mFindOneAndUpdate: vi.fn(), mDeleteOne: vi.fn(),
   ccFindOne: vi.fn(), ccUpdateMany: vi.fn(), ccUpdateOne: vi.fn(),
   loggerError: vi.fn(),
 }));
 
 vi.mock("../../../models/member.js", () => ({
-  default: { find: h.mFind, findOne: h.mFindOne, create: h.mCreate, findOneAndUpdate: h.mFindOneAndUpdate, deleteOne: h.mDeleteOne },
+  default: { find: h.mFind, findOne: h.mFindOne, countDocuments: h.mCountDocuments, create: h.mCreate, findOneAndUpdate: h.mFindOneAndUpdate, deleteOne: h.mDeleteOne },
 }));
 vi.mock("../../../models/brandCcMember.js", () => ({
   default: { findOne: h.ccFindOne, updateMany: h.ccUpdateMany, updateOne: h.ccUpdateOne },
@@ -78,6 +78,34 @@ describe("memberController > addMember", () => {
     h.mCreate.mockResolvedValue({ _id: "m1", email: "a@b.c" });
     const res = mockRes();
     await ctrl.addMember({ body: { user_id: 1, name: "Al", email: "A@B.c" } }, res);
+    expect(j(res)).toContain("member added");
+  });
+  it("blocks direct API creation when the published member limit is reached", async () => {
+    h.mFindOne.mockResolvedValue(null);
+    h.mCountDocuments.mockResolvedValue(5);
+    const res = mockRes();
+    await ctrl.addMember({
+      body: { user_id: 1, name: "Al", email: "a@b.c" },
+      planControlDecision: { limits: { memberLimit: 5 } },
+    }, res);
+    expect(res.send.mock.calls[0][0]).toMatchObject({
+      statusCode: 403,
+      body: {
+        showSubscriptionModal: true,
+        limits: { memberLimit: 5, currentMembers: 5 },
+      },
+    });
+    expect(h.mCreate).not.toHaveBeenCalled();
+  });
+  it("allows creation while usage is below the published member limit", async () => {
+    h.mFindOne.mockResolvedValue(null);
+    h.mCountDocuments.mockResolvedValue(4);
+    h.mCreate.mockResolvedValue({ _id: "m1", email: "a@b.c" });
+    const res = mockRes();
+    await ctrl.addMember({
+      body: { user_id: 1, name: "Al", email: "a@b.c" },
+      planControlDecision: { limits: { memberLimit: 5 } },
+    }, res);
     expect(j(res)).toContain("member added");
   });
   it("duplicate-key (11000) → fail", async () => {
