@@ -552,7 +552,10 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     expect(res.body.message).toContain("New category");
     expect(res.body.updated).toBe(true);
     expect(res.body.warning).toBeUndefined();
-    expect(indexFn).toHaveBeenCalledWith(expect.objectContaining({ index: "category" }));
+    expect(indexFn).toHaveBeenCalledWith(
+      expect.objectContaining({ index: "category" }),
+      expect.objectContaining({ requestTimeout: 15000 }),
+    );
     expect(updateFn).toHaveBeenCalled();
     const updateCall = updateFn.mock.calls[0][0];
     expect(updateCall.body.doc).toMatchObject({
@@ -1161,7 +1164,7 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
 
   it("200 success replaces the whole ai object in development + returns stored_fields", async () => {
     const updateFn = vi.fn(async () => {});
-    esWithAd([{ _id: "ad-1" }], updateFn);
+    const svc = esWithAd([{ _id: "ad-1" }], updateFn);
     const res = mkRes();
     await insertAiMeta({ body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META } }, res);
     expect(res.statusCode).toBe(200);
@@ -1173,6 +1176,12 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(call.body.script.source).toContain("ctx._source.ai = params.aiMeta");
     expect(call.body.script.params.aiMeta.ad_type).toBe("promotional");
     expect(call.body.script.params.aiMeta.offering_type).toBe("product");
+    // Elasticsearch v7 expects client timeout options as the second argument; putting
+    // requestTimeout in the request params makes it an invalid REST query parameter.
+    expect(updateFn.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000 });
+    expect(call).not.toHaveProperty("requestTimeout");
+    expect(svc.db.elastic.search.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000 });
+    expect(svc.db.elastic.search.mock.calls[0][0]).not.toHaveProperty("requestTimeout");
   });
 
   it("production facebook writes to ai_meta to bypass the poisoned ai mapping", async () => {

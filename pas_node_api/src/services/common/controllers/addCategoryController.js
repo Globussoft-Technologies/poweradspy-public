@@ -192,9 +192,8 @@ async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = A
 
   const adSearch = await esForPlat.search({
     index: esIndex,
-    requestTimeout: requestTimeoutMs,
     body:  { query: { bool: { should: shouldClauses, minimum_should_match: 1 } } },
-  });
+  }, { requestTimeout: requestTimeoutMs });
   const adHits = (adSearch.hits || adSearch.body?.hits)?.hits || [];
   return adHits[0] || null;
 }
@@ -220,9 +219,8 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform, requ
         params: { aiMeta: normalized },
       },
     },
-    requestTimeout: requestTimeoutMs,
     refresh: 'wait_for',
-  }));
+  }), { requestTimeout: requestTimeoutMs });
 }
 
 /**
@@ -248,9 +246,8 @@ async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat, requ
         confidence_score:            0,
       },
     },
-    requestTimeout: requestTimeoutMs,
     refresh: 'wait_for',
-  }));
+  }), { requestTimeout: requestTimeoutMs });
 }
 
 /**
@@ -280,7 +277,6 @@ class CategoryTaxonomyConflict extends Error {
 async function syncMasterCategory(esClient, { category, catId, subCategory, subCategoryId, platform, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS }) {
   const existResult = await esClient.search({
     index: 'category',
-    requestTimeout: requestTimeoutMs,
     body: {
       query: {
         bool: {
@@ -292,7 +288,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
         },
       },
     },
-  });
+  }, { requestTimeout: requestTimeoutMs });
 
   const hits = (existResult.hits || existResult.body?.hits)?.hits || [];
   let message = 'Category/Subcategory successfully processed';
@@ -329,7 +325,6 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
       await esClient.update(withEsType(esClient, {
         index: 'category',
         id:    docId,
-        requestTimeout: requestTimeoutMs,
         body: {
           script: {
             source: "if (!ctx._source.platforms.contains(params.platform)) { ctx._source.platforms.add(params.platform); }",
@@ -337,7 +332,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
             params: { platform },
           },
         },
-      }));
+      }), { requestTimeout: requestTimeoutMs });
     }
 
     // Handle subcategory
@@ -355,7 +350,6 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
             await esClient.update(withEsType(esClient, {
               index: 'category',
               id:    docId,
-              requestTimeout: requestTimeoutMs,
               body: {
                 script: {
                   source: `
@@ -377,7 +371,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
                   },
                 },
               },
-            }));
+            }), { requestTimeout: requestTimeoutMs });
           }
           break;
         } else if (sub.sub_cat === subCategory) {
@@ -389,7 +383,6 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
         await esClient.update(withEsType(esClient, {
           index: 'category',
           id:    docId,
-          requestTimeout: requestTimeoutMs,
           body: {
             script: {
               source: `
@@ -406,7 +399,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
               },
             },
           },
-        }));
+        }), { requestTimeout: requestTimeoutMs });
         message = 'Subcategory inserted successfully';
       } else {
         message = 'Category and Subcategory already exist';
@@ -420,7 +413,11 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
     if (subCategory && subCategoryId) {
       docData.subcategory = [{ sub_cat: subCategory, sub_cat_id: subCategoryId, platforms: [platform] }];
     }
-    await esClient.index(withEsType(esClient, { index: 'category', requestTimeout: requestTimeoutMs, body: docData, refresh: 'wait_for' }));
+    await esClient.index(withEsType(esClient, {
+      index: 'category',
+      body: docData,
+      refresh: 'wait_for',
+    }), { requestTimeout: requestTimeoutMs });
     message = 'New category' + (subCategory ? ' and subcategory' : '') + ' inserted successfully';
   }
 
