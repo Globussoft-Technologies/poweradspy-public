@@ -89,6 +89,8 @@ beforeEach(() => {
   mongoDb.command.mockClear().mockResolvedValue({ ok: 1 });
   esClient.ping.mockClear().mockResolvedValue();
   esClient.info.mockClear().mockResolvedValue({ body: { version: { number: "7.17.0" } } });
+  esClient.search.mockClear(); esClient.index.mockClear(); esClient.update.mockClear();
+  esClient.delete.mockClear(); esClient.bulk.mockClear();
   esClient.close.mockClear().mockResolvedValue();
 });
 
@@ -285,10 +287,15 @@ describe("DatabaseManager > public getters", () => {
     const dm = freshSut();
     await dm.connectAll({ facebook: fbCfg });
     const e = dm.getElastic("facebook");
-    e.search({});  e.index({}); e.update({}); e.delete({}); e.bulk({});
-    expect(esClient.search).toHaveBeenCalled();
-    expect(esClient.index).toHaveBeenCalled();
-    expect(esClient.update).toHaveBeenCalled();
+    const transportOptions = { requestTimeout: 15000, maxRetries: 0 };
+    e.search({ index: "ads" }, transportOptions);
+    e.index({ index: "ads" }, transportOptions);
+    e.update({ index: "ads" }, transportOptions);
+    e.delete({ index: "ads" }, transportOptions);
+    e.bulk({ operations: [] }, transportOptions);
+    expect(esClient.search).toHaveBeenCalledWith({ index: "ads" }, transportOptions);
+    expect(esClient.index).toHaveBeenCalledWith({ index: "ads" }, transportOptions);
+    expect(esClient.update).toHaveBeenCalledWith({ index: "ads" }, transportOptions);
     expect(esClient.delete).toHaveBeenCalled();
     expect(esClient.bulk).toHaveBeenCalled();
   });

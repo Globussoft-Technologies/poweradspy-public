@@ -168,6 +168,11 @@ const config = {
     networkSearchTimeoutMs: getVal(fileConfig.apiTimeouts?.networkSearchTimeoutMs, 'API_NETWORK_SEARCH_TIMEOUT_MS', toInt),
   },
 
+  aiMeta: {
+    bulkRecommendedSize: getVal(fileConfig.aiMeta?.bulkRecommendedSize, 'AI_META_BULK_RECOMMENDED_SIZE', toInt),
+    bulkMaxSize: getVal(fileConfig.aiMeta?.bulkMaxSize, 'AI_META_BULK_MAX_SIZE', toInt),
+  },
+
   circuitBreaker: {
     failureThreshold: getVal(fileConfig.circuitBreaker?.failureThreshold, 'CB_FAILURE_THRESHOLD', toInt),
     resetTimeoutMs: getVal(fileConfig.circuitBreaker?.resetTimeoutMs, 'CB_RESET_TIMEOUT_MS', toInt),
@@ -565,6 +570,13 @@ config.reload = () => {
       // Update API timeouts
       if (newFileConfig.apiTimeouts) {
         if (newFileConfig.apiTimeouts.networkSearchTimeoutMs !== undefined) config.apiTimeouts.networkSearchTimeoutMs = newFileConfig.apiTimeouts.networkSearchTimeoutMs;
+      }
+
+      // Update AI-Meta bulk safeguards. The request handler validates values
+      // again before use, so a bad runtime edit cannot remove the hard cap.
+      if (newFileConfig.aiMeta) {
+        if (newFileConfig.aiMeta.bulkRecommendedSize !== undefined) config.aiMeta.bulkRecommendedSize = toInt(newFileConfig.aiMeta.bulkRecommendedSize);
+        if (newFileConfig.aiMeta.bulkMaxSize !== undefined) config.aiMeta.bulkMaxSize = toInt(newFileConfig.aiMeta.bulkMaxSize);
       }
 
       // Update server timeouts

@@ -1178,9 +1178,9 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(call.body.script.params.aiMeta.offering_type).toBe("product");
     // Elasticsearch v7 expects client timeout options as the second argument; putting
     // requestTimeout in the request params makes it an invalid REST query parameter.
-    expect(updateFn.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000 });
+    expect(updateFn.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000, maxRetries: 0 });
     expect(call).not.toHaveProperty("requestTimeout");
-    expect(svc.db.elastic.search.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000 });
+    expect(svc.db.elastic.search.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000, maxRetries: 0 });
     expect(svc.db.elastic.search.mock.calls[0][0]).not.toHaveProperty("requestTimeout");
   });
 
@@ -1196,6 +1196,19 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.statusCode).toBe(200);
     const call = update.mock.calls.find((c) => c[0].body?.script)?.[0];
     expect(call.body.script.source).toContain("ctx._source.ai_meta = params.aiMeta");
+  });
+
+  it("TikTok ES 8 writes are typeless while retaining AI-Meta transport options", async () => {
+    const update = vi.fn(async () => {});
+    const svc = esWithAd([{ _id: "tt-es-1" }], update);
+    svc.db.elastic.esMajor = 8;
+    const res = mkRes();
+
+    await insertAiMeta({ body: { ad_id: "48979890", network: "tiktok", ai_meta: VALID_AI_META } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(update.mock.calls[0][0]).not.toHaveProperty("type");
+    expect(update.mock.calls[0][1]).toMatchObject({ requestTimeout: 15000, maxRetries: 0 });
   });
 
   it("returns a retryable response when category mirroring times out after storing ai_meta", async () => {
@@ -1232,6 +1245,25 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(res.body.sql).toMatchObject({ sql_status: "stored", category_synced: true });
     expect(res.body.category_sync.retryable).toBe(true);
     expect(res.setHeader).toHaveBeenCalledWith("Retry-After", expect.any(String));
+  });
+
+  it("returns an application-level retryable response when the primary ES write times out", async () => {
+    const timeoutError = new Error("Request timed out");
+    timeoutError.name = "TimeoutError";
+    const update = vi.fn(async () => { throw timeoutError; });
+    serviceRegistry.getService.mockReturnValue(mkService({
+      esSearch: vi.fn(async () => ({ hits: { hits: [{ _id: "es-1", _source: {} }] } })),
+      esUpdate: update,
+    }));
+    const res = mkRes();
+    res.setHeader = vi.fn();
+
+    await insertAiMeta({ id: "write-timeout", body: { ad_id: "48979890", network: "instagram", ai_meta: VALID_AI_META } }, res);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toMatchObject({ request_id: "write-timeout", success: false, error: { code: "ES_UNAVAILABLE" } });
+    expect(res.setHeader).toHaveBeenCalledWith("Retry-After", expect.any(String));
+    expect(res.setHeader).toHaveBeenCalledWith("X-ES-Write-Ms", expect.any(String));
   });
 });
 
@@ -1281,6 +1313,27 @@ describe("addCategoryController > insertAiMetaBulk", () => {
     expect(res.body.error.code).toBe("VALIDATION_ERROR");
     expect(res.body.error.message).toContain("10 items");
     expect(serviceRegistry.getService).not.toHaveBeenCalled();
+  });
+
+  it("uses the configured bulk maximum and recommendation", async () => {
+    const previousAiMetaConfig = { ...config.aiMeta };
+    config.aiMeta = { bulkRecommendedSize: 2, bulkMaxSize: 3 };
+    try {
+      const res = mkRes();
+      const items = Array.from({ length: 4 }, () => ({
+        ad_id: "48979890",
+        network: "instagram",
+        ai_meta: VALID_AI_META,
+      }));
+
+      await insertAiMetaBulk({ id: "configured-limit", body: { items } }, res);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.message).toContain("3 items");
+      expect(res.body.error.details[0].message).toContain("2 is the recommended batch size");
+    } finally {
+      config.aiMeta = previousAiMetaConfig;
+    }
   });
 });
 

@@ -202,6 +202,13 @@ the retry delay in seconds, and a `Retry-After` header on the HTTP response.
 `X-ES-Search-Ms`, `X-ES-Write-Ms`, `X-Category-Sync-Ms`, `X-SQL-Ms`, `X-Total-Ms`, plus
 `Server-Timing`.
 
+**ES timeout and proxy requirement.** AI-Meta ES operations use one client-side attempt with a
+15-second default timeout (`AI_META_OPERATION_TIMEOUT_MS` can override it) and no hidden client
+retries. A temporary primary ES read/write failure returns `503 ES_UNAVAILABLE` with `Retry-After`;
+category mirror/taxonomy failures return `503 CATEGORY_SYNC_RETRYABLE`. The production reverse
+proxy and Cloudflare origin timeout must exceed 15 seconds; **30 seconds or greater is required**
+to leave response-headroom for the API to return its structured retryable response and timing headers.
+
 ### 2.3.1 `POST /ai-meta/bulk`
 
 Bulk wrapper for backlog draining. The endpoint accepts either a raw array of requests or an object
@@ -211,10 +218,11 @@ Processing is intentionally **sequential** so one batch does not fan out concurr
 Each element runs through the exact same validator, ES writer, SQL writer, and category-sync path as
 the single-item endpoint.
 
-**Batch limit.** Send **5 items per request** as the recommended operating size, with **10 items**
-as the enforced maximum. Submit the next batch only after the prior response returns; this keeps
-the bulk drain to one SQL/ES write chain at a time and avoids concentrating load on a network's
-database.
+**Batch limit.** `config.json` controls the limits under `aiMeta`: `bulkRecommendedSize` defaults
+to **5** and `bulkMaxSize` defaults to **10**. Submit the next batch only after the prior response
+returns; this keeps the bulk drain to one SQL/ES write chain at a time and avoids concentrating load
+on a network's database. The configured values can be refreshed through `config.reload()`; invalid
+or missing values fall back to these safe defaults.
 
 Response behavior:
 
@@ -224,8 +232,8 @@ Response behavior:
 - `results[]` with the per-item `request_id`, `ad_id`, `network`, `status_code`, `success`,
   `message`, `error`, `stored_fields`, `sql`, and `category_sync`.
 
-The bulk route is intended for modest backlog draining, not unbounded fan-out. Requests above 10
-items return `400 VALIDATION_ERROR` before any item is written.
+The bulk route is intended for modest backlog draining, not unbounded fan-out. Requests above the
+configured `aiMeta.bulkMaxSize` return `400 VALIDATION_ERROR` before any item is written.
 
 
 ### 2.4 Write policy idempotency (both options)
@@ -301,8 +309,11 @@ schema/design in `docs/AI_META_SQL_STORAGE.md`. In short:
  v1.6 category group: nameid pairing, 4/8-char formats, subcategory_id prefix, half-pair drop).
 - `tests/services/common/controllers/addCategoryController.test.mjs` feed read-back, native
   fallback, `ad_status` transitions, `getAdCategory`, `insertAiMeta` (200/400/404/503), bulk
-  batching (207 mixed-result handling), Option-A `ai_meta` integration, and the SQL dual-write
-  wiring (both options, ES category mirror, non-fatal).
+  batching (207 mixed-result handling), primary ES-write and category-mirror retryable timeout
+  paths, Option-A `ai_meta` integration, and the SQL dual-write wiring (both options, ES category
+  mirror, non-fatal).
+- `tests/database/DatabaseManager.test.mjs` verifies ES request transport options are forwarded
+  through the database adapter rather than silently discarded.
 - `tests/services/common/helpers/aiMetaSqlWriter.test.mjs` `persistAiMeta` (upsert params, JSON NULL
   binding, category nameid resolve/insert, networks without a category store, rollback on error).
 - `tests/services/common/routes/commonRoutes.test.mjs` route registration, including `/ai-meta/bulk`.

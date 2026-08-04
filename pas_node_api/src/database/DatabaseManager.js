@@ -308,14 +308,16 @@ class DatabaseManager {
         client,
         esMajor,
         indexName: elasticConfig.index,
-        get:    (params) => client.get(params),
-        search: (params) => client.search(params),
-        analyze:(params) => client.indices.analyze(params),
-        count:  (params) => client.count(params),
-        index:  (params) => client.index(params),
-        update: (params) => client.update(params),
-        delete: (params) => client.delete(params),
-        bulk:   (params) => client.bulk(params),
+        // Preserve Elasticsearch transport options (for example requestTimeout)
+        // instead of dropping them at this service wrapper boundary.
+        get:    (params, options) => client.get(params, options),
+        search: (params, options) => client.search(params, options),
+        analyze:(params, options) => client.indices.analyze(params, options),
+        count:  (params, options) => client.count(params, options),
+        index:  (params, options) => client.index(params, options),
+        update: (params, options) => client.update(params, options),
+        delete: (params, options) => client.delete(params, options),
+        bulk:   (params, options) => client.bulk(params, options),
         close:  () => this._releaseEsClient(elasticConfig),
       };
     } catch (err) {
@@ -338,13 +340,14 @@ class DatabaseManager {
         client,
         esMajor,
         indexName: elasticConfig.index,
-        search: (params) => client.search(params),
-        analyze:(params) => client.indices.analyze(params),
-        count:  (params) => client.count(params),
-        index:  (params) => client.index(params),
-        update: (params) => client.update(params),
-        delete: (params) => client.delete(params),
-        bulk:   (params) => client.bulk(params),
+        // Keep the TikTok adapter behavior aligned with the main ES adapter.
+        search: (params, options) => client.search(params, options),
+        analyze:(params, options) => client.indices.analyze(params, options),
+        count:  (params, options) => client.count(params, options),
+        index:  (params, options) => client.index(params, options),
+        update: (params, options) => client.update(params, options),
+        delete: (params, options) => client.delete(params, options),
+        bulk:   (params, options) => client.bulk(params, options),
         close:  () => this._releaseEsClient(elasticConfig),
       };
     } catch (err) {

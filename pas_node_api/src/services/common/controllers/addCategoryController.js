@@ -18,8 +18,28 @@ const AI_META_OPERATION_TIMEOUT_MS = Number.isFinite(parsedAiMetaTimeoutMs) && p
   : 15000;
 // Bulk writes stay sequential, but a hard cap also prevents one request from holding
 // database connections and ES capacity for an unbounded backlog.
-const AI_META_BULK_RECOMMENDED_SIZE = 5;
-const AI_META_BULK_MAX_SIZE = 10;
+const DEFAULT_AI_META_BULK_RECOMMENDED_SIZE = 5;
+const DEFAULT_AI_META_BULK_MAX_SIZE = 10;
+
+function getPositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getAiMetaBulkLimits() {
+  const maxSize = getPositiveInteger(config.aiMeta?.bulkMaxSize, DEFAULT_AI_META_BULK_MAX_SIZE);
+  const recommendedSize = Math.min(
+    getPositiveInteger(config.aiMeta?.bulkRecommendedSize, DEFAULT_AI_META_BULK_RECOMMENDED_SIZE),
+    maxSize,
+  );
+  return { maxSize, recommendedSize };
+}
+
+function getAiMetaTransportOptions(requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
+  // A single bounded attempt keeps slow ES writes inside the application timeout
+  // budget. Retrying is delegated to the idempotent caller with Retry-After.
+  return { requestTimeout: requestTimeoutMs, maxRetries: 0 };
+}
 
 /**
  * Resolve which ES object field stores AI-Meta for a given platform/environment.
@@ -193,7 +213,7 @@ async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = A
   const adSearch = await esForPlat.search({
     index: esIndex,
     body:  { query: { bool: { should: shouldClauses, minimum_should_match: 1 } } },
-  }, { requestTimeout: requestTimeoutMs });
+  }, getAiMetaTransportOptions(requestTimeoutMs));
   const adHits = (adSearch.hits || adSearch.body?.hits)?.hits || [];
   return adHits[0] || null;
 }
@@ -220,7 +240,7 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform, requ
       },
     },
     refresh: 'wait_for',
-  }), { requestTimeout: requestTimeoutMs });
+  }), getAiMetaTransportOptions(requestTimeoutMs));
 }
 
 /**
@@ -247,7 +267,7 @@ async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat, requ
       },
     },
     refresh: 'wait_for',
-  }), { requestTimeout: requestTimeoutMs });
+  }), getAiMetaTransportOptions(requestTimeoutMs));
 }
 
 /**
@@ -288,7 +308,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
         },
       },
     },
-  }, { requestTimeout: requestTimeoutMs });
+  }, getAiMetaTransportOptions(requestTimeoutMs));
 
   const hits = (existResult.hits || existResult.body?.hits)?.hits || [];
   let message = 'Category/Subcategory successfully processed';
@@ -332,7 +352,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
             params: { platform },
           },
         },
-      }), { requestTimeout: requestTimeoutMs });
+      }), getAiMetaTransportOptions(requestTimeoutMs));
     }
 
     // Handle subcategory
@@ -371,7 +391,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
                   },
                 },
               },
-            }), { requestTimeout: requestTimeoutMs });
+            }), getAiMetaTransportOptions(requestTimeoutMs));
           }
           break;
         } else if (sub.sub_cat === subCategory) {
@@ -399,7 +419,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
               },
             },
           },
-        }), { requestTimeout: requestTimeoutMs });
+        }), getAiMetaTransportOptions(requestTimeoutMs));
         message = 'Subcategory inserted successfully';
       } else {
         message = 'Category and Subcategory already exist';
@@ -417,7 +437,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
       index: 'category',
       body: docData,
       refresh: 'wait_for',
-    }), { requestTimeout: requestTimeoutMs });
+    }), getAiMetaTransportOptions(requestTimeoutMs));
     message = 'New category' + (subCategory ? ' and subcategory' : '') + ' inserted successfully';
   }
 
@@ -1329,8 +1349,12 @@ async function insertAiMeta(req, res) {
 
   try {
     const esSearchStartedAt = Date.now();
-    const adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
-    timings.es_search_ms = Date.now() - esSearchStartedAt;
+    let adHit;
+    try {
+      adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+    } finally {
+      timings.es_search_ms = Date.now() - esSearchStartedAt;
+    }
     if (!adHit) {
       return finish(404, {
         success: false,
@@ -1340,8 +1364,12 @@ async function insertAiMeta(req, res) {
     }
 
     const esWriteStartedAt = Date.now();
-    await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
-    timings.es_write_ms = Date.now() - esWriteStartedAt;
+    try {
+      await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
+    } finally {
+      // Preserve the failed attempt duration in timing headers as well.
+      timings.es_write_ms = Date.now() - esWriteStartedAt;
+    }
     service.log?.info(`[insertAiMeta] stored for ad_id=${adId} network=${platform}`);
 
     // Category (v1.6: name + ids inside ai_meta) - maintain the master `category`
@@ -1405,6 +1433,18 @@ async function insertAiMeta(req, res) {
     return finish(200, out);
   } catch (err) {
     service.log?.error(`[insertAiMeta] network=${platform} ad_id=${adId} error: ${err.message}`);
+    const retryableStatus = getTemporaryEsStatus(err);
+    if (retryableStatus) {
+      setRetryAfter(res, getRetryAfterSeconds(err));
+      return finish(retryableStatus, {
+        success: false,
+        ad_id: adId,
+        error: {
+          code: 'ES_UNAVAILABLE',
+          message: 'Elasticsearch is temporarily unavailable; retry this idempotent request',
+        },
+      });
+    }
     return finish(500, { success: false, ad_id: adId, error: { code: 'INTERNAL_ERROR', message: err.message } });
   }
 }
@@ -1450,6 +1490,7 @@ async function insertAiMetaBulk(req, res) {
   const requestId = req.id || req.requestId || null;
   const items = normalizeAiMetaBulkItems(body);
   const timings = { startedAt: Date.now() };
+  const { maxSize, recommendedSize } = getAiMetaBulkLimits();
 
   if (!items || items.length === 0) {
     setAiMetaTimingHeaders(res, { total_ms: 0 });
@@ -1464,17 +1505,17 @@ async function insertAiMetaBulk(req, res) {
     });
   }
 
-  if (items.length > AI_META_BULK_MAX_SIZE) {
+  if (items.length > maxSize) {
     setAiMetaTimingHeaders(res, { total_ms: 0 });
     return res.status(400).json({
       request_id: requestId,
       success: false,
       error: {
         code: 'VALIDATION_ERROR',
-        message: `bulk requests are limited to ${AI_META_BULK_MAX_SIZE} items`,
+        message: `bulk requests are limited to ${maxSize} items`,
         details: [{
           field: 'items',
-          message: `Send at most ${AI_META_BULK_MAX_SIZE} items per request; ${AI_META_BULK_RECOMMENDED_SIZE} is the recommended batch size`,
+          message: `Send at most ${maxSize} items per request; ${recommendedSize} is the recommended batch size`,
         }],
       },
     });

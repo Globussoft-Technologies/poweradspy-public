@@ -189,6 +189,7 @@ describe("config/index > reload()", () => {
     configJsonContent = JSON.stringify({
       rateLimit: { windowMs: 100000, maxRequests: 50 },
       apiTimeouts: { networkSearchTimeoutMs: 5000 },
+      aiMeta: { bulkRecommendedSize: 3, bulkMaxSize: 6 },
       serverTimeouts: { keepAliveTimeoutMs: 10000 },
       cluster: { maxRestarts: 99, restartWindowMs: 60000 },
       circuitBreaker: { failureThreshold: 7 },
@@ -201,6 +202,7 @@ describe("config/index > reload()", () => {
     expect(c.reload()).toBe(true);
     expect(c.rateLimit.windowMs).toBe(100000);
     expect(c.apiTimeouts.networkSearchTimeoutMs).toBe(5000);
+    expect(c.aiMeta).toEqual({ bulkRecommendedSize: 3, bulkMaxSize: 6 });
     expect(c.serverTimeouts.keepAliveTimeoutMs).toBe(10000);
     expect(c.cluster.maxRestarts).toBe(99);
     expect(c.circuitBreaker.failureThreshold).toBe(7);
