@@ -176,6 +176,10 @@ async function processTransparencyAd(payload, ctx) {
     });
   }
   let rawTranslation = translationResult.ok ? translationResult.data : null;
+  const ownerNeedsTranslation = Boolean(
+    data.post_owner && /[^\x00-\x7F]/.test(data.post_owner)
+  );
+  let ownerTranslationError = null;
   // The shared translation endpoint currently accepts post_owner_name but some
   // deployments omit that field from the response. For non-ASCII advertiser
   // names, retry through the endpoint's supported `text` field and merge only
@@ -183,8 +187,7 @@ async function processTransparencyAd(payload, ctx) {
   // primary request; the advertiser name must not change the ad language.
   if (
     translationResult.ok &&
-    data.post_owner &&
-    /[^\x00-\x7F]/.test(data.post_owner) &&
+    ownerNeedsTranslation &&
     !(typeof rawTranslation?.post_owner_name === 'string' && rawTranslation.post_owner_name.trim())
   ) {
     const ownerTranslationResult = await api.translate({
@@ -201,7 +204,24 @@ async function processTransparencyAd(payload, ctx) {
         ...(rawTranslation || {}),
         post_owner_name: translatedOwner.trim(),
       };
+    } else {
+      ownerTranslationError = ownerTranslationResult.ok
+        ? 'translation API returned an empty post-owner translation'
+        : ownerTranslationResult.error || 'post-owner translation failed';
     }
+  }
+  const resolvedPostOwner = typeof rawTranslation?.post_owner_name === 'string'
+    ? rawTranslation.post_owner_name.trim()
+    : '';
+  if (
+    ownerNeedsTranslation &&
+    config.insertion.api.translationRequired &&
+    (!resolvedPostOwner || resolvedPostOwner === data.post_owner.trim())
+  ) {
+    return serverError(503, 'The advertiser name could not be translated, so the ad was not saved.', {
+      error: ownerTranslationError || 'translation API did not return a translated post_owner_name',
+      hint: 'The creative language remains based on ad_title/ad_text; post_owner must be translated independently.',
+    });
   }
   const translation = hasTranslationContent(rawTranslation) ? rawTranslation : null;
   const languageShouldUpdate = translationResult.ok;

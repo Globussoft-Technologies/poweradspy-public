@@ -203,6 +203,33 @@ describe('Google Transparency pipeline', () => {
     }));
   });
 
+  it('does not commit SQL when a required non-ASCII post owner cannot be translated', async () => {
+    api.translate
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          detected_language: 'en',
+          language_name: 'English',
+          title: '',
+          text: 'English creative text',
+          newsfeed_description: '',
+        },
+      })
+      .mockResolvedValueOnce({ ok: false, error: 'owner translation unavailable' });
+
+    const out = await processTransparencyAd(payload({
+      post_owner: '深圳唯乐高科技有限公司',
+    }), { db: { sql: {}, elastic: null }, log });
+
+    expect(out).toMatchObject({
+      code: 503,
+      status: 'server_error',
+      message: 'The advertiser name could not be translated, so the ad was not saved.',
+      error: 'owner translation unavailable',
+    });
+    expect(repo.withTransaction).not.toHaveBeenCalled();
+  });
+
   it('uses the update branch idempotently for an existing creative', async () => {
     repo.getAd.mockResolvedValue({ id: 99, last_shown: '2025-12-23 00:00:00' });
     const out = await processTransparencyAd(payload(), { db: { sql: {}, elastic: null }, log });
