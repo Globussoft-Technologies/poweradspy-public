@@ -1919,9 +1919,14 @@ const AdDetailModal = ({
             {/* Action buttons */}
             <div className="flex gap-2 pt-1">
               <button
-                disabled={!analyticsAllowed}
                 onClick={() => {
-                  if (!analyticsAllowed) return;
+                  // Keep restricted features discoverable. The parent owns the
+                  // entitlement decision and opens Pricing when access is
+                  // denied; an HTML-disabled button would swallow this click.
+                  if (!analyticsAllowed) {
+                    onAnalytics?.(ad);
+                    return;
+                  }
                   // Fire-and-forget preload of the creative so it's already
                   // decoded by the time AnalyticsModal mounts its own <img>.
                   // Browser HTTP cache holds raw bytes; each <img> element
@@ -1936,11 +1941,11 @@ const AdDetailModal = ({
                   }
                   onAnalytics?.(ad);
                 }}
-                title={analyticsAllowed ? "Open Advanced Analytics" : "Advanced Analytics is not included in this plan"}
+                title={analyticsAllowed ? "Open Advanced Analytics" : "View plans to unlock Advanced Analytics"}
                 className={`flex-1 py-2 rounded-lg text-[11px] font-bold transition-colors text-white ${
                   analyticsAllowed
                     ? "bg-[#335296] hover:opacity-80"
-                    : "bg-[#335296]/40 cursor-not-allowed opacity-60"
+                    : "bg-[#335296] cursor-pointer hover:opacity-80"
                 }`}
               >
                 Analytics
