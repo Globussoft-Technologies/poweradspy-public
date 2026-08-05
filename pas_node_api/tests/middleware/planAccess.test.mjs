@@ -198,6 +198,29 @@ describe("middleware/planAccess > planAccessMiddleware (SQL user path)", () => {
     expect(planSvc.stripRestrictedFilters).not.toHaveBeenCalled();
   });
 
+  it("published Ads Search networks replace stale SQL legacy platforms for downstream dispatch", async () => {
+    configExports.planControl = { enforcementMode: "enforce" };
+    planSvc.getConfig.mockResolvedValue([{}]);
+    planSvc.getAllowedPlatforms.mockReturnValue(["facebook"]);
+    const { planAccessMiddleware } = freshSut();
+    const req = {
+      user: { plan_id: 55 },
+      body: { network: ["native"] },
+      query: {},
+      planControlDecisions: [{
+        capabilityId: "ads.search",
+        allowed: true,
+        allowedNetworks: ["facebook", "gdn", "native"],
+      }],
+    };
+    const next = vi.fn();
+
+    await planAccessMiddleware(req, mkRes(), next);
+
+    expect(next).toHaveBeenCalled();
+    expect(req.planAccess.allowedPlatforms).toEqual(["facebook", "gdn", "native"]);
+  });
+
   it("403 when platformRestricted (non-silent) present", async () => {
     planSvc.getConfig.mockResolvedValue([{}]);
     planSvc.stripRestrictedFilters.mockReturnValue({ planRestricted: [], platformRestricted: ["country"] });
@@ -321,6 +344,29 @@ describe("middleware/planAccess > planAccessMiddleware (aMember user path)", () 
     await planAccessMiddleware(req, mkRes(), next);
     expect(next).toHaveBeenCalled();
     expect(planSvc.stripRestrictedFilters).not.toHaveBeenCalled();
+  });
+
+  it("published Ads Search networks replace stale aMember legacy platforms for downstream dispatch", async () => {
+    configExports.planControl = { enforcementMode: "enforce" };
+    planSvc.getConfig.mockResolvedValue([{}]);
+    planSvc.getAllowedPlatforms.mockReturnValue(["facebook", "instagram"]);
+    const { planAccessMiddleware } = freshSut();
+    const req = {
+      user: { userSubscriptionType: 55, platformAccess: { facebook: 1, instagram: 1, gdn: 1, native: 1 } },
+      body: { network: ["gdn"] },
+      query: {},
+      planControlDecisions: [{
+        capabilityId: "ads.search",
+        allowed: true,
+        allowedNetworks: ["Facebook", "Instagram", "GDN", "Native"],
+      }],
+    };
+    const next = vi.fn();
+
+    await planAccessMiddleware(req, mkRes(), next);
+
+    expect(next).toHaveBeenCalled();
+    expect(req.planAccess.allowedPlatforms).toEqual(["facebook", "instagram", "gdn", "native"]);
   });
 
   it("aMember network from body wins", async () => {

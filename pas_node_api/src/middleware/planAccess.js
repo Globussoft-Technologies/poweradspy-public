@@ -16,6 +16,28 @@ const log = logger.createChild('plan-access');
 // (e.g. Basic 2026), regardless of what the user actually clicked.
 const SILENT_STRIP_FILTERS = new Set(['ad_position', 'language']);
 
+/**
+ * When the versioned Plan Control gate has already evaluated Ads Search, its
+ * effective network list must also drive downstream dispatch. Keeping the
+ * legacy list here can produce a split decision: the request is allowed by
+ * Plan Control, then the common search controller silently skips the network.
+ */
+function overlayPlanControlAllowedPlatforms(req, legacyAllowedPlatforms) {
+  const adsSearchDecision = Array.isArray(req.planControlDecisions)
+    ? req.planControlDecisions.find((decision) => decision?.capabilityId === 'ads.search')
+    : null;
+
+  if (!adsSearchDecision?.allowed || !Array.isArray(adsSearchDecision.allowedNetworks)) {
+    return legacyAllowedPlatforms;
+  }
+
+  return [...new Set(
+    adsSearchDecision.allowedNetworks
+      .map((network) => String(network).trim().toLowerCase())
+      .filter(Boolean)
+  )];
+}
+
 // ─── SDUI Query Param Map Cache ───────────────────────────────────────────────
 // Builds a dynamic map of { query_param: plan_access_config._id } from sdui_config
 // so new SDUI filters added via the admin dashboard are automatically enforced
@@ -129,6 +151,10 @@ async function planAccessMiddleware(req, res, next) {
         allowedPlatforms = ALL_PLATFORMS.filter(p => jwtAllowed.has(p) && configAllowed.has(p));
       }
 
+      if (hasPlanControlDecision) {
+        allowedPlatforms = overlayPlanControlAllowedPlatforms(req, allowedPlatforms);
+      }
+
       let aMemberPlanRestricted = [];
       let aMemberPlatformRestricted = [];
       if (!hasPlanControlDecision) {
@@ -207,7 +233,10 @@ async function planAccessMiddleware(req, res, next) {
     const network = req.body?.network || req.query?.network || 'all';
 
     // Compute allowed platforms
-    const allowedPlatforms = planAccessService.getAllowedPlatforms(planId, planConfig);
+    let allowedPlatforms = planAccessService.getAllowedPlatforms(planId, planConfig);
+    if (hasPlanControlDecision) {
+      allowedPlatforms = overlayPlanControlAllowedPlatforms(req, allowedPlatforms);
+    }
 
     // Compute filter status for the requested platform(s)
     const filterStatus = planAccessService.getFilterStatus(planId, network, planConfig);
