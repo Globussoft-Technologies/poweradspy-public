@@ -14,19 +14,15 @@ const ONBOARDING_DISMISS_KEY_PREFIX = 'pas_onboarding_dismissed_';
 // Node.js logout route — clears cookie + redirects to aMember logout
 const LOGOUT_URL = (import.meta.env.VITE_PAS_API_BASE_URL || '') + '/logout';
 
-// User-specific session state keys. Keeps `pas-theme` (user preference) and
-// `clientIP` (non-identifying). These must not leak between different users
-// sharing the same browser.
+// User-specific session state keys that should disappear immediately on logout.
+// These are the bits that must not leak between different users sharing the
+// same browser.
 const SESSION_STATE_KEYS = [
-  'sdui.filterValues',
-  'sdui.activePlatforms',
   'sdui_config_cache',
   'sdui_etag',
   'sdui_cached_at',
   'pas_dashboard_view',
   'pas_dashboard_selected_proj_id',
-  // redux-persist UI state — search query, active page, selected platforms, etc.
-  'persist:root',
 ];
 
 // Filter/UI selections should survive a logout for a grace period, not vanish
@@ -36,6 +32,29 @@ const FILTER_STATE_KEYS = ['sdui.filterValues', 'sdui.activePlatforms', 'persist
 const FILTER_RETENTION_MS = 24 * 60 * 60 * 1000; // 24h
 const FILTER_LOGOUT_TS_KEY = 'pas_filters_logout_at';
 const SESSION_STORAGE_KEYS = ['guestToDashboard', 'pendingSearch', 'pendingRedirect'];
+const ENV_AUTH_FALLBACK_LOCK_KEY = 'pas_disable_env_auth_fallback';
+
+function getBlockedEnvAuthToken() {
+  try { return localStorage.getItem(ENV_AUTH_FALLBACK_LOCK_KEY) || ''; } catch { return ''; }
+}
+
+export function disableEnvAuthFallback(token = import.meta.env.VITE_PAS_API_TOKEN || '') {
+  try {
+    if (token) {
+      localStorage.setItem(ENV_AUTH_FALLBACK_LOCK_KEY, token);
+    } else {
+      localStorage.removeItem(ENV_AUTH_FALLBACK_LOCK_KEY);
+    }
+  } catch {}
+}
+
+function enableEnvAuthFallback() {
+  try { localStorage.removeItem(ENV_AUTH_FALLBACK_LOCK_KEY); } catch {}
+}
+
+function isEnvAuthFallbackDisabled() {
+  return !!getBlockedEnvAuthToken();
+}
 
 export function getOnboardingDismissKey(userId) {
   if (!userId) return '';
@@ -70,7 +89,7 @@ function shouldResetOnboardingDismiss(userLike) {
 export function markFiltersForExpiry() {
   try {
     SESSION_STATE_KEYS.forEach(k => localStorage.removeItem(k));
-    localStorage.removeItem(FILTER_LOGOUT_TS_KEY);
+    localStorage.setItem(FILTER_LOGOUT_TS_KEY, String(Date.now()));
   } catch {}
   try {
     SESSION_STORAGE_KEYS.forEach(k => sessionStorage.removeItem(k));
@@ -211,6 +230,7 @@ function bootstrapAuth() {
   const isFreshLogin = !!urlToken;
   if (urlToken) {
     localStorage.setItem('authToken', urlToken);
+    enableEnvAuthFallback();
     window.history.replaceState({}, '', window.location.pathname);
   }
 
@@ -219,7 +239,7 @@ function bootstrapAuth() {
   let isEnvLogin = false;
   if (!token) {
     const envToken = import.meta.env.VITE_PAS_API_TOKEN;
-    if (envToken) {
+    if (envToken && envToken !== getBlockedEnvAuthToken()) {
       localStorage.setItem('authToken', envToken);
       token = envToken;
       isEnvLogin = true;
@@ -240,6 +260,7 @@ function bootstrapAuth() {
     // every page load (e.g. the reload the /logout redirect chain itself triggers),
     // or the timestamp gets consumed before the 24h window ever elapses.
     expireStaleFilters();
+    enableEnvAuthFallback();
     if (isFreshLogin && shouldResetOnboardingDismiss(payload)) {
       clearOnboardingDismissForUserId(payload.user_id || payload.id);
     }
@@ -262,6 +283,7 @@ function bootstrapAuth() {
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
     markFiltersForExpiry();
+    disableEnvAuthFallback();
     return { token: null, user: null };
   }
 }
@@ -276,6 +298,44 @@ export function AuthProvider({ children }) {
   const [entitlements, setEntitlements] = useState(null);
   const [planAccessResolved, setPlanAccessResolved] = useState(!token);
   const dispatch = useDispatch();
+
+  // Keep React state aligned with the shared browser storage. This lets a
+  // logout in one tab clear the other tabs without requiring a refresh.
+  useEffect(() => {
+    const syncAuthFromStorage = (event) => {
+      if (event.storageArea !== localStorage) return;
+      if (!['authToken', 'authUser', ENV_AUTH_FALLBACK_LOCK_KEY].includes(event.key)) return;
+
+      const nextToken = localStorage.getItem('authToken');
+      if (!nextToken) {
+        setToken(null);
+        setUser(null);
+        setPlanAccess(null);
+        setEntitlements(null);
+        setPlanAccessResolved(true);
+        return;
+      }
+
+      try {
+        const rawUser = localStorage.getItem('authUser');
+        const nextUser = rawUser ? JSON.parse(rawUser) : JSON.parse(atob(nextToken.split('.')[1]));
+        setToken(nextToken);
+        setUser(nextUser);
+        setPlanAccess(null);
+        setEntitlements(null);
+        setPlanAccessResolved(false);
+      } catch {
+        setToken(null);
+        setUser(null);
+        setPlanAccess(null);
+        setEntitlements(null);
+        setPlanAccessResolved(true);
+      }
+    };
+
+    window.addEventListener('storage', syncAuthFromStorage);
+    return () => window.removeEventListener('storage', syncAuthFromStorage);
+  }, []);
 
   // Fetch plan access restrictions once user is authenticated (skip on public/guest routes)
   useEffect(() => {
@@ -388,6 +448,7 @@ export function AuthProvider({ children }) {
     // Clear all auth data from localStorage
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
+    disableEnvAuthFallback(import.meta.env.VITE_PAS_API_TOKEN || '');
     // Start the 24h filter-retention clock; filters/UI state are only wiped once
     // that window elapses (see expireStaleFilters, run on next app load/login).
     markFiltersForExpiry();
@@ -396,6 +457,9 @@ export function AuthProvider({ children }) {
     document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.poweradspy.com;';
     setToken(null);
     setUser(null);
+    setPlanAccess(null);
+    setEntitlements(null);
+    setPlanAccessResolved(true);
     // Redirect to Node.js /logout → clears server cookie → aMember /logout
     setTimeout(() => { window.location.href = LOGOUT_URL; }, 50);
   };
@@ -420,5 +484,8 @@ export function useAuth() {
  * Used by api.js instead of hardcoded VITE_PAS_API_TOKEN.
  */
 export function getAuthToken() {
-  return localStorage.getItem('authToken') || '';
+  const token = localStorage.getItem('authToken') || '';
+  if (token) return token;
+  if (isEnvAuthFallbackDisabled()) return '';
+  return import.meta.env.VITE_PAS_API_TOKEN || '';
 }

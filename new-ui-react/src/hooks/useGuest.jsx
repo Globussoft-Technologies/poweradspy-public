@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { getAuthToken } from './useAuth';
 import { fetchDashboardState, fetchSharedAd, trackEvent } from '../services/api';
 
 const GuestContext = createContext(null);
@@ -31,7 +32,7 @@ export function GuestProvider({ guestToken, shareToken, publicLanding, children 
   const [showLoginPopup, setShowLoginPopup] = useState(false);
 
   // Check if user is already logged in (real token, not env fallback)
-  const storedToken = localStorage.getItem('authToken');
+  const storedToken = getAuthToken();
   const envToken = import.meta.env.VITE_PAS_API_TOKEN;
   const isLoggedIn = !!storedToken && storedToken !== envToken;
 

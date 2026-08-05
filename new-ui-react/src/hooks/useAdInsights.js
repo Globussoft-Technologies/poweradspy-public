@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { getAuthToken } from '../hooks/useAuth';
 
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || '';
-const PAS_API_TOKEN = getAuthToken()  || import.meta.env.VITE_PAS_API_TOKEN;
+const PAS_API_TOKEN = getAuthToken();
 
 // Maps network name → the ad ID field name expected by the backend
 const NETWORK_AD_ID_FIELD = {

@@ -75,7 +75,7 @@ export function useInterestBehaviour({ adId, network, adDetails }) {
     abortRef.current = controller;
     setState((s) => ({ ...s, loading: true }));
 
-    const token = getAuthToken() || import.meta.env.VITE_PAS_API_TOKEN;
+    const token = getAuthToken();
 
     (async () => {
       try {

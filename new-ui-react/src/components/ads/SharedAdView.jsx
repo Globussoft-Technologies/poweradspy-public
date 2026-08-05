@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { getAuthToken } from "../../hooks/useAuth";
 import { ctaHref, destinationUrls, parseAdCtas } from "../../utils/cta";
 import {
   Play,
@@ -272,7 +273,7 @@ const SharedAdView = ({ shareToken }) => {
           />
         </a>
         {(() => {
-          const storedToken = localStorage.getItem('authToken');
+          const storedToken = getAuthToken();
           const envToken = import.meta.env.VITE_PAS_API_TOKEN;
           const isLoggedIn = !!storedToken && storedToken !== envToken;
           return isLoggedIn ? (

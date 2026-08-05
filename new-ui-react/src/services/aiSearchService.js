@@ -8,7 +8,7 @@ import { getAuthToken } from '../hooks/useAuth';
 import { handle401 } from './api';
 
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || '';
-const getPASToken = () => getAuthToken() || import.meta.env.VITE_PAS_API_TOKEN;
+const getPASToken = () => getAuthToken();
 const authHeaders = () => (getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {});
 
 /**

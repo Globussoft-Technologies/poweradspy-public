@@ -31,7 +31,7 @@ import PlanLockedSection from './shared/PlanLockedSection';
 
 // ─── API ──────────────────────────────────────────────────────────────────
 const BASE = `${import.meta.env.VITE_PAS_API_BASE_URL || ''}/api/v1/intelligence`;
-const token = () => getAuthToken() || import.meta.env.VITE_PAS_API_TOKEN;
+const token = () => getAuthToken();
 async function apiGet(path, params = {}) {
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => { if (v != null && v !== '') qs.append(k, v); });

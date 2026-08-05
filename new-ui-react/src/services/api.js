@@ -8,8 +8,8 @@ import { dedupeInFlight } from '../utils/requestDeduper';
 
 // ─── PAS API Configuration ────────────────────────────────────────────────────
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || "";
-import { getAuthToken, markFiltersForExpiry } from '../hooks/useAuth';
-const getPASToken = () => getAuthToken() || import.meta.env.VITE_PAS_API_TOKEN;
+import { disableEnvAuthFallback, getAuthToken, markFiltersForExpiry } from '../hooks/useAuth';
+const getPASToken = () => getAuthToken();
 const COMPETITOR_API_BASE = import.meta.env.VITE_NODE_API_URL || "http://localhost:5000/api";
 
 // ─── 401 Handler ─────────────────────────────────────────────────────────────
@@ -26,6 +26,7 @@ export const handle401 = () => {
   localStorage.removeItem('authToken');
   localStorage.removeItem('authUser');
   markFiltersForExpiry();
+  disableEnvAuthFallback(import.meta.env.VITE_PAS_API_TOKEN || '');
   document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;';
   document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.poweradspy.com;';
   window.location.href = LOGOUT_URL;

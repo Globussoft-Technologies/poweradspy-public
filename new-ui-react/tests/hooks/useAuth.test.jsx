@@ -129,6 +129,19 @@ describe("useAuth > bootstrapAuth", () => {
     expect(result.current.user.id).toBe(11);
     vi.unstubAllEnvs();
   });
+
+  it("logout lock blocks env fallback from auto-restoring a session", async () => {
+    const envToken = makeJwt({ id: 99, exp: Math.floor(Date.now() / 1000) + 3600 });
+    vi.stubEnv("VITE_PAS_API_TOKEN", envToken);
+    localStorage.setItem("pas_disable_env_auth_fallback", envToken);
+    const mod = await loadSut();
+    expect(localStorage.getItem("authToken")).toBeNull();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.token).toBeNull();
+    vi.unstubAllEnvs();
+  });
 });
 
 describe("useAuth > AuthProvider + useAuth", () => {
@@ -574,5 +587,34 @@ describe("useAuth > onboarding dismiss behavior", () => {
 
     expect(localStorage.getItem("pas_onboarding_dismissed_2")).toBe("1");
     vi.useRealTimers();
+  });
+});
+
+describe("useAuth > cross-tab sync", () => {
+  it("storage logout from another tab clears the current tab auth state", async () => {
+    const token = makeJwt({ id: 5, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    localStorage.setItem("authUser", JSON.stringify({ id: 5 }));
+
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.isAuthenticated).toBe(true);
+
+    act(() => {
+      localStorage.removeItem("authToken");
+      localStorage.removeItem("authUser");
+      window.dispatchEvent(new StorageEvent("storage", {
+        key: "authToken",
+        oldValue: token,
+        newValue: null,
+        storageArea: localStorage,
+      }));
+    });
+
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.token).toBeNull();
+    expect(result.current.user).toBeNull();
   });
 });
