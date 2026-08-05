@@ -14,7 +14,7 @@ const payload = {
   country: ['India'],
   first_seen: null,
   image_url_original: 'https://tmpfiles.org/example/banner.png',
-  last_seen: '2026-08-04T06:53:39+00:00',
+  last_seen: 1785826419,
   network: 'mob-network',
   platform: 19,
   post_date: 1785826419,
@@ -49,6 +49,11 @@ describe('isolated AdMob insertion contract', () => {
     expect(new Set(result.errors.map((error) => error.field))).toEqual(expect.objectContaining(new Set(['ad_id', 'country', 'last_seen', 'source_app'])));
   });
 
+  it('requires epoch timestamps for first_seen and last_seen', () => {
+    const result = validateAdmobPayload({ ...payload, last_seen: '2026-08-04T06:53:39+00:00' });
+    expect(result.errors).toContainEqual(expect.objectContaining({ field: 'last_seen', reason: 'INVALID_FORMAT' }));
+  });
+
   it('accepts a missing version', () => {
     const { version, ...withoutVersion } = payload;
     expect(validateAdmobPayload(withoutVersion)).toEqual({ code: 200, status: 'ok' });
@@ -63,12 +68,12 @@ describe('isolated AdMob insertion contract', () => {
     const doc = buildAdmobDocument({
       id: 42, ad_id: payload.ad_id, post_owner_id: null, post_owner: null,
       post_owner_image: null, type: 'BANNER', platform: 19, network: 'mob-network',
-      source: 'android', status: 1, last_seen: new Date(payload.last_seen),
+      source: 'android', status: 1, last_seen: new Date(payload.last_seen * 1000),
       image_url_original: payload.image_url_original,
       image_url: '/pas-dev/stream/admob/adImage/202608/42.webp',
-      countries: [{ name: 'India', appearance_count: 2, first_seen: payload.last_seen, last_seen: payload.last_seen }],
+      countries: [{ name: 'India', appearance_count: 2, first_seen: new Date(payload.last_seen * 1000), last_seen: new Date(payload.last_seen * 1000) }],
       states: [], sub_networks: [],
-      source_apps: [{ name: 'CRM', package: 'com.example.crm', appearance_count: 2, first_seen: payload.last_seen, last_seen: payload.last_seen }],
+      source_apps: [{ name: 'CRM', package: 'com.example.crm', appearance_count: 2, first_seen: new Date(payload.last_seen * 1000), last_seen: new Date(payload.last_seen * 1000) }],
     });
     expect(doc.type).toBe('BANNER');
     expect(doc.country).toEqual(['India']);

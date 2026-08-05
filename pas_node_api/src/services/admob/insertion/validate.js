@@ -20,10 +20,10 @@ const ADMOB_ADS_RULES = {
   city: 'string|nullable',
   country: 'required|array',
   destination_url: 'url|nullable',
-  first_seen: 'rfc3339|nullable',
+  first_seen: 'epoch|nullable',
   image_url_original: 'url|nullable',
   ip_address: 'ip|nullable',
-  last_seen: 'required|rfc3339',
+  last_seen: 'required|epoch',
   network: 'required|string|in:mob-network',
   sub_network: 'string|nullable',
   newsfeed_description: 'string|nullable',
@@ -45,8 +45,6 @@ const ADMOB_ADS_RULES = {
 
 const ALLOWED_FIELDS = new Set(Object.keys(ADMOB_ADS_RULES));
 
-const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-
 function empty(value) {
   return value === undefined || value === null || (typeof value === 'string' && !value.trim());
 }
@@ -63,10 +61,6 @@ function httpUrl(value) {
 
 function add(errors, field, reason, message) {
   errors.push({ field, reason, message });
-}
-
-function validRfc3339(value) {
-  return RFC3339.test(String(value)) && !Number.isNaN(Date.parse(value));
 }
 
 function validateRule(errors, field, value, ruleText) {
@@ -91,10 +85,8 @@ function validateRule(errors, field, value, ruleText) {
       add(errors, field, 'INVALID_TYPE', `${field} must be an integer.`);
     } else if (rule === 'url' && !httpUrl(value)) {
       add(errors, field, 'INVALID_FORMAT', `${field} must be null, empty, or an absolute HTTP(S) URL.`);
-    } else if (rule === 'rfc3339' && !validRfc3339(value)) {
-      add(errors, field, 'INVALID_FORMAT', `${field} must be a valid RFC 3339 timestamp.`);
     } else if (rule === 'epoch' && !(Number.isInteger(Number(value)) && Number(value) >= 0)) {
-      add(errors, field, 'INVALID_FORMAT', `${field} must be null or a non-negative Unix timestamp.`);
+      add(errors, field, 'INVALID_FORMAT', `${field} must be a non-negative Unix timestamp in seconds or milliseconds.`);
     } else if (rule === 'ip' && isIP(String(value)) === 0) {
       add(errors, field, 'INVALID_FORMAT', `${field} must be a valid IPv4 or IPv6 address.`);
     } else if (rule.startsWith('in:')) {
