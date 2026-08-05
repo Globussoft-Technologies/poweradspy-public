@@ -100,12 +100,36 @@ function syntheticKwUploadMw(req, res, next) {
 }
 
 const router = Router();
+const enforceSearchCapabilities = requireSearchCapabilities();
+
+function requireCommonSearchCapabilities(req, res, next) {
+  const requested = Array.isArray(req.body?.network)
+    ? req.body.network
+    : typeof req.body?.network === 'string' && req.body.network !== 'all'
+      ? req.body.network.split(',')
+      : [];
+  const planControlledNetworks = requested.filter(
+    (network) => String(network).trim().toLowerCase() !== 'admob'
+  );
+
+  if (requested.length === 0 || planControlledNetworks.length === requested.length) {
+    return enforceSearchCapabilities(req, res, next);
+  }
+  if (planControlledNetworks.length === 0) return next();
+
+  const originalNetwork = req.body.network;
+  req.body.network = planControlledNetworks;
+  return enforceSearchCapabilities(req, res, (error) => {
+    req.body.network = originalNetwork;
+    return next(error);
+  });
+}
 
 // POST /api/common/ads/search
 router.post(
   '/ads/search',
   authMiddleware,
-  requireSearchCapabilities(),
+  requireCommonSearchCapabilities,
   planAccessMiddleware,
   validator(searchSchema),
   asyncHandler(searchAllNetworks)
