@@ -25,11 +25,8 @@ const SESSION_STATE_KEYS = [
   'pas_dashboard_selected_proj_id',
 ];
 
-// Filter/UI selections should survive a logout for a grace period, not vanish
-// or persist forever — kept separate from SESSION_STATE_KEYS above (which are
-// wiped immediately).
+// Filter/UI selections must be cleared on logout so the next user starts fresh.
 const FILTER_STATE_KEYS = ['sdui.filterValues', 'sdui.activePlatforms', 'persist:root'];
-const FILTER_RETENTION_MS = 24 * 60 * 60 * 1000; // 24h
 const FILTER_LOGOUT_TS_KEY = 'pas_filters_logout_at';
 const SESSION_STORAGE_KEYS = ['guestToDashboard', 'pendingSearch', 'pendingRedirect'];
 const ENV_AUTH_FALLBACK_LOCK_KEY = 'pas_disable_env_auth_fallback';
@@ -89,23 +86,18 @@ function shouldResetOnboardingDismiss(userLike) {
 export function markFiltersForExpiry() {
   try {
     SESSION_STATE_KEYS.forEach(k => localStorage.removeItem(k));
-    localStorage.setItem(FILTER_LOGOUT_TS_KEY, String(Date.now()));
+    FILTER_STATE_KEYS.forEach(k => localStorage.removeItem(k));
+    localStorage.removeItem(FILTER_LOGOUT_TS_KEY);
   } catch {}
   try {
     SESSION_STORAGE_KEYS.forEach(k => sessionStorage.removeItem(k));
   } catch {}
 }
 
-// Called only when a session is (re)established (see bootstrapAuth's success path):
-// if the 24h post-logout retention window has elapsed, clears the saved filters so
-// the app loads with default filter settings; otherwise leaves them for this login.
+// Clean up any stale logout marker left behind by older builds. No filter
+// retention is used now, so the timestamp is only safe to discard.
 function expireStaleFilters() {
-  const loggedOutAt = Number(localStorage.getItem(FILTER_LOGOUT_TS_KEY));
-  if (!loggedOutAt) return;
-  if (Date.now() - loggedOutAt > FILTER_RETENTION_MS) {
-    FILTER_STATE_KEYS.forEach(k => localStorage.removeItem(k));
-  }
-  localStorage.removeItem(FILTER_LOGOUT_TS_KEY);
+  try { localStorage.removeItem(FILTER_LOGOUT_TS_KEY); } catch {}
 }
 
 // ─── SDUI filter _id / group_id  →  plan_access_config _id ──────────────────
@@ -255,10 +247,8 @@ function bootstrapAuth() {
       throw new Error('Token expired');
     }
     // A session is actually being (re)established here — this is the "next login"
-    // moment. Resolve any pending post-logout retention window now: keep filters if
-    // logout was under 24h ago, otherwise reset them to defaults. Must NOT run on
-    // every page load (e.g. the reload the /logout redirect chain itself triggers),
-    // or the timestamp gets consumed before the 24h window ever elapses.
+    // moment. Clean up any stale logout marker left by older builds so a future
+    // bootstrap starts from a consistent state.
     expireStaleFilters();
     enableEnvAuthFallback();
     if (isFreshLogin && shouldResetOnboardingDismiss(payload)) {
@@ -277,9 +267,8 @@ function bootstrapAuth() {
     return { token, user: payload };
   } catch {
     // Token is expired/invalid at page load (e.g. user came back later without
-    // logging out). Wipe auth immediately, but only start the filter retention
-    // clock — mirrors the manual logout() path, so filters still survive up to
-    // 24h from here before resetting to defaults.
+    // logging out). Wipe auth immediately and clear user-specific filters so the
+    // next session starts clean.
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
     markFiltersForExpiry();
@@ -449,8 +438,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
     disableEnvAuthFallback(import.meta.env.VITE_PAS_API_TOKEN || '');
-    // Start the 24h filter-retention clock; filters/UI state are only wiped once
-    // that window elapses (see expireStaleFilters, run on next app load/login).
+    // Clear user-specific filters and selected networks immediately on logout.
     markFiltersForExpiry();
     // Clear cookie from frontend side too (in case server cookie clear fails due to cross-domain)
     document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;';

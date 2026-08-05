@@ -2059,6 +2059,52 @@ export const fetchAdsPresence = async (filters = {}, { signal } = {}) => {
 };
 
 /**
+ * Batch availability probe for the AI quick filters.
+ * The frontend sends one request with every candidate preset, and the backend
+ * reuses the live search path to answer which presets would actually surface ads.
+ */
+export const fetchAiQuickFilterAvailability = async (payload = {}, { signal } = {}) => {
+  const response = await fetch(`${PAS_API_BASE}/api/v1/common/ads/ai-quick-filters/availability`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  await checkFor401(response);
+
+  if (response.status === 403) {
+    const json = await response.json();
+    const err = new Error(json.message || 'Access restricted by your plan.');
+    err.code = 403;
+    err.showSubscriptionModal = json.showSubscriptionModal || false;
+    err.platformRestriction = json.platformRestriction || false;
+    err.restrictedFilters = json.restrictedFilters || [];
+    err.allowedPlatforms = json.allowedPlatforms || [];
+    throw err;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Ads API error: ${response.status}`);
+  }
+
+  const json = await response.json();
+  if (json.code === 401 || (typeof json.message === 'string' && json.message.toLowerCase().includes('token expired'))) {
+    handle401();
+    throw new Error('Unauthorized: Token expired');
+  }
+
+  return {
+    availability: json.availability || {},
+    visiblePresetIds: json.visiblePresetIds || [],
+    totalPresets: json.totalPresets || 0,
+  };
+};
+
+/**
  * Fetches up to 100 ads for CSV export using the current search/filter state.
  * Identical to fetchAds but overrides take=100 and skip=0 in the payload.
  */

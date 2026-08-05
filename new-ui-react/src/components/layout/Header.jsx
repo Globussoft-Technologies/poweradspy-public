@@ -512,7 +512,13 @@ const Header = ({
               </button>
             )}
 
-            <div className={`flex-1 relative flex items-center gap-0 bg-theme-text/[0.04] border rounded-lg transition-all text-white ${aiMode ? "border-[#6b99ff] ring-2 ring-[#6b99ff]/60 shadow-[0_0_18px_rgba(107,153,255,0.45)]" : "border-white/20 focus-within:border-[#6b99ff]/50"}`}>
+            <div
+              className={`relative flex flex-1 items-center gap-0 rounded-lg border bg-theme-text/[0.04] transition-all ${
+                aiMode
+                  ? "border-[#6b99ff] ring-2 ring-[#6b99ff]/60 shadow-[0_0_18px_rgba(107,153,255,0.45)]"
+                  : "border-theme-border focus-within:border-[#6b99ff]/50"
+              }`}
+            >
               {!aiMode && searchTypeDoc?.visible !== false && (
                 <div
                   className="relative group/si border-r border-theme-border"
@@ -549,11 +555,6 @@ const Header = ({
                 </div>
               )}
 
-              {aiMode && (
-                <span className="notranslate flex items-center gap-1 pl-3 pr-1 text-[#6b99ff] shrink-0">
-                  <Sparkles size={15} />
-                </span>
-              )}
               <div className="flex-1">
                 <AutocompleteFilter
                   placeholder={
@@ -596,38 +597,38 @@ const Header = ({
                   minimal={true}
                 />
               </div>
-
-              {aiSearchAvailable && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !aiMode;
-                    setAiMode(next);
-                    // Turning OFF is an explicit "leave AI search" → clear the
-                    // visible prompt and abandon the AI-applied query + filters.
-                    if (!next) {
-                      setLocalQuery("");
-                      onExitAiSearch?.();
-                    }
-                  }}
-                  disabled={aiSearchLoading}
-                  title={aiMode ? t("ai_search_off", "Switch to normal search") : t("ai_search_on", "Search with AI")}
-                  aria-pressed={aiMode}
-                  className={`notranslate flex items-center gap-1 px-2.5 py-2.5 mr-1 rounded-md text-xs 2xl:text-[13px] font-bold whitespace-nowrap transition-colors ${
-                    aiMode
-                      ? "text-[#6b99ff]"
-                      : "text-theme-text-muted hover:text-[#6b99ff] hover:bg-theme-text/[0.04]"
-                  } ${aiSearchLoading ? "opacity-70 cursor-wait" : ""}`}
-                >
-                  {aiSearchLoading ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Sparkles size={16} />
-                  )}
-                  <span className="hidden sm:inline">{t("ai_search_label", "AI")}</span>
-                </button>
-              )}
             </div>
+
+            {aiSearchAvailable && (
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !aiMode;
+                  setAiMode(next);
+                  // Turning OFF is an explicit "leave AI search" → clear the
+                  // visible prompt and abandon the AI-applied query + filters.
+                  if (!next) {
+                    setLocalQuery("");
+                    onExitAiSearch?.();
+                  }
+                }}
+                disabled={aiSearchLoading}
+                title={aiMode ? t("ai_search_off", "Switch to normal search") : t("ai_search_on", "Search with AI")}
+                aria-pressed={aiMode}
+                className={`notranslate inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-xs font-semibold whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6b99ff]/30 2xl:text-[13px] ${
+                  aiMode
+                    ? "border-[#6b99ff] bg-[#3762c1]/15 text-[#6b99ff] shadow-[0_0_0_1px_rgba(107,153,255,0.08)]"
+                    : "border-[#6b99ff]/45 bg-[#3762c1]/[0.06] text-[#6b99ff] hover:border-[#6b99ff]/70 hover:bg-[#3762c1]/10"
+                } ${aiSearchLoading ? "opacity-70 cursor-wait" : ""}`}
+              >
+                {aiSearchLoading ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Sparkles size={16} />
+                )}
+                <span className="hidden sm:inline">{t("ai_search_button_label", "Ask AI")}</span>
+              </button>
+            )}
 
             {!aiMode && localQuery.trim().length > 0 && localSearchIn === "keyword" && (
               <label

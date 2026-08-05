@@ -19,7 +19,7 @@ import {
   replaceAiFilters,
   resolveAiQuickFilterPresets,
 } from "../../utils/aiQuickFilterPresets";
-import { fetchAdsPresence } from "../../services/api";
+import { buildSearchPayload, fetchAiQuickFilterAvailability } from "../../services/api";
 
 const PRESET_ICONS = {
   tiktok_ugc: Smartphone,
@@ -81,7 +81,9 @@ const AiQuickFilters = ({
   filterPlatformSupport,
 }) => {
   const presets = useMemo(() => resolveAiQuickFilterPresets(doc), [doc]);
-  const [presetAvailability, setPresetAvailability] = useState({});
+  // `null` means that the batch probe has not answered for this search context.
+  // An empty object is a completed response where no preset is eligible.
+  const [presetAvailability, setPresetAvailability] = useState(null);
   const aiFilterSignature = useMemo(
     () => buildAiFilterSignature(filterValues, doc),
     [filterValues, doc],
@@ -96,7 +98,7 @@ const AiQuickFilters = ({
 
   useEffect(() => {
     if (isRestricted || !doc || doc.visible === false || presets.length === 0) {
-      setPresetAvailability({});
+      setPresetAvailability(null);
       return;
     }
 
@@ -104,35 +106,41 @@ const AiQuickFilters = ({
     let cancelled = false;
 
     const evaluatePresets = async () => {
-      const settled = await Promise.allSettled(
-        presets.map(async (preset) => {
-          const nextFilters = replaceAiFilters(filterValues, doc, preset.filters);
-          const result = await fetchAdsPresence(
-            {
-              ...nextFilters,
-              activePlatforms,
-              searchQuery,
-              searchIn,
-              exactSearch,
-              filterPlatformSupport,
-            },
-            { signal: controller.signal },
-          );
-          return [preset.id, !!result?.hasAds];
+      const presetPayload = presets.map((preset) => ({
+        id: preset.id,
+        payload: buildSearchPayload({
+          ...replaceAiFilters(filterValues, doc, preset.filters),
+          activePlatforms,
+          searchQuery,
+          searchIn,
+          exactSearch,
+          filterPlatformSupport,
         }),
+      }));
+
+      const result = await fetchAiQuickFilterAvailability(
+        {
+          activePlatforms,
+          searchQuery,
+          searchIn,
+          exactSearch,
+          filterPlatformSupport,
+          presets: presetPayload,
+        },
+        { signal: controller.signal },
       );
 
       if (cancelled) return;
-      const nextAvailability = {};
-      for (const item of settled) {
-        if (item.status !== "fulfilled") continue;
-        const [presetId, hasAds] = item.value;
-        nextAvailability[presetId] = hasAds;
-      }
-      setPresetAvailability(nextAvailability);
+      setPresetAvailability(
+        result?.availability && typeof result.availability === "object"
+          ? result.availability
+          : {},
+      );
     };
 
-    evaluatePresets();
+    evaluatePresets().catch(() => {
+      if (!cancelled) setPresetAvailability({});
+    });
     return () => {
       cancelled = true;
       controller.abort();
@@ -151,9 +159,15 @@ const AiQuickFilters = ({
 
   if (!doc || doc.visible === false || presets.length === 0) return null;
 
-  const visiblePresets = presets.filter(
-    (preset) => presetAvailability[preset.id] !== false || activePreset?.id === preset.id,
-  );
+  // Never treat a missing availability value as eligible. It previously made a
+  // failed or empty batch response render every quick filter. Retain an already
+  // active preset so the user can see and reset the filter they have applied.
+  const visiblePresets = presets.filter((preset) => {
+    // Restricted users need an actionable shortcut that opens the upgrade flow.
+    // They cannot execute a search, so availability cannot be safely probed.
+    if (isRestricted) return true;
+    return presetAvailability?.[preset.id] === true || activePreset?.id === preset.id;
+  });
   if (visiblePresets.length === 0) return null;
 
   const commit = (replacement) => {

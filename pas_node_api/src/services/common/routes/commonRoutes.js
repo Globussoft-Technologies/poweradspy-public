@@ -6,6 +6,7 @@ const dns = require('dns').promises;
 const net = require('net');
 const { asyncHandler } = require('../../../middleware/errorHandler');
 const { searchAllNetworks, getAdsByAdvertiserAll, searchAdvertiserNames } = require('../controllers/commonSearchController');
+const { getAiQuickFilterAvailability } = require('../controllers/aiQuickFilterAvailabilityController');
 const { getAdvertiserAds } = require('../controllers/advertiserAdsController');
 const { getAdInsightData } = require('../controllers/adInsightDataController');
 const { getAdInsights: fbAdInsights } = require('../controllers/commonInsightsController');
@@ -133,6 +134,19 @@ router.post(
   planAccessMiddleware,
   validator(searchSchema),
   asyncHandler(searchAllNetworks)
+);
+
+// POST /api/common/ads/ai-quick-filters/availability
+// Single availability probe for the home-page AI quick filters. The frontend
+// sends all candidate presets in one payload and the backend checks each one
+// against the live search path, returning only the presets that would surface
+// at least one ad for the current search context.
+router.post(
+  '/ads/ai-quick-filters/availability',
+  authMiddleware,
+  requireSearchCapabilities(),
+  planAccessMiddleware,
+  asyncHandler(getAiQuickFilterAvailability)
 );
 
 // POST /api/common/advertiser/names

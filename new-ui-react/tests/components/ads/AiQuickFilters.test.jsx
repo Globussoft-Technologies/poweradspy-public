@@ -2,15 +2,26 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AiQuickFilters from "../../../src/components/ads/AiQuickFilters";
-import { fetchAdsPresence } from "../../../src/services/api";
+import { fetchAiQuickFilterAvailability } from "../../../src/services/api";
 
 vi.mock("../../../src/services/api", async () => {
   const actual = await vi.importActual("../../../src/services/api");
   return {
     ...actual,
-    fetchAdsPresence: vi.fn(async () => ({ hasAds: true })),
+    fetchAiQuickFilterAvailability: vi.fn(async () => ({ availability: {} })),
   };
 });
+
+const allPresetsAvailable = {
+  tiktok_ugc: true,
+  b2b_saas: true,
+  flash_sale: true,
+  luxury_brand: true,
+  app_install: true,
+  black_friday: true,
+  high_ticket: true,
+  local_lead: true,
+};
 
 const doc = {
   _id: "ai_meta",
@@ -124,8 +135,10 @@ const doc = {
 
 describe("AiQuickFilters", () => {
   beforeEach(() => {
-    fetchAdsPresence.mockReset();
-    fetchAdsPresence.mockImplementation(async () => ({ hasAds: true }));
+    fetchAiQuickFilterAvailability.mockReset();
+    fetchAiQuickFilterAvailability.mockImplementation(async () => ({
+      availability: allPresetsAvailable,
+    }));
   });
 
   it("applies a strategy through the shared filter state", async () => {
@@ -138,7 +151,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: /B2B SaaS/i }));
 
     expect(onApply).toHaveBeenCalledWith({
@@ -146,6 +159,32 @@ describe("AiQuickFilters", () => {
       ai_category_id: ["1009"],
       ai_subcategory_id: ["10090001", "10090002"],
     });
+  });
+
+  it("loads preset availability through a single batch API call", async () => {
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ country_filter: ["US"] }}
+        activePlatforms={["facebook", "instagram"]}
+        searchQuery="lead gen"
+        searchIn="advertiser"
+        exactSearch
+        filterPlatformSupport={{ ai_ad_type: ["facebook"] }}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    const [payload] = fetchAiQuickFilterAvailability.mock.calls[0];
+    expect(payload).toMatchObject({
+      activePlatforms: ["facebook", "instagram"],
+      searchQuery: "lead gen",
+      searchIn: "advertiser",
+      exactSearch: true,
+      presets: expect.any(Array),
+    });
+    expect(payload.presets).toHaveLength(8);
+    expect(payload.presets.every((preset) => preset.id && preset.payload)).toBe(true);
   });
 
   it("shows the matching strategy as selected", async () => {
@@ -158,7 +197,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     expect(
       screen.getByRole("button", { name: /TikTok UGC/i }),
     ).toHaveAttribute("aria-pressed", "true");
@@ -174,7 +213,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: /Flash Sale/i }));
     const flashValues = onApply.mock.calls[0][0];
     expect(flashValues).toEqual({
@@ -188,7 +227,7 @@ describe("AiQuickFilters", () => {
         onApply={onApply}
       />,
     );
-    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(2));
     fireEvent.click(screen.getByRole("button", { name: /B2B SaaS/i }));
     const replacementValues = onApply.mock.calls[1][0];
     expect(replacementValues).toEqual({
@@ -212,8 +251,11 @@ describe("AiQuickFilters", () => {
   });
 
   it("hides presets that would return no ads", async () => {
-    fetchAdsPresence.mockImplementation(async (filters) => ({
-      hasAds: !(Array.isArray(filters.ai_hook) && filters.ai_hook.includes("scarcity")),
+    fetchAiQuickFilterAvailability.mockImplementation(async (payload) => ({
+      availability: {
+        flash_sale: !payload?.presets?.find((preset) => preset.id === "flash_sale")?.payload?.ai_hook?.includes("scarcity"),
+        b2b_saas: true,
+      },
     }));
 
     render(
@@ -224,7 +266,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
 
     expect(
       screen.queryByRole("button", { name: /Flash Sale/i }),
@@ -232,6 +274,22 @@ describe("AiQuickFilters", () => {
     expect(
       screen.getByRole("button", { name: /B2B SaaS/i }),
     ).toBeInTheDocument();
+  });
+
+  it("does not render unverified presets after an empty availability response", async () => {
+    fetchAiQuickFilterAvailability.mockImplementation(async () => ({ availability: {} }));
+
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{}}
+        onApply={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: /TikTok UGC/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /B2B SaaS/i })).not.toBeInTheDocument();
   });
 
   it("routes restricted strategy clicks to the upgrade handler", async () => {
@@ -247,7 +305,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchAdsPresence).not.toHaveBeenCalled());
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).not.toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /Flash Sale/i }));
 
     expect(onRestricted).toHaveBeenCalledTimes(1);
@@ -267,7 +325,7 @@ describe("AiQuickFilters", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchAdsPresence).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByTitle("Clear all AI filters"));
 
     expect(onApply).toHaveBeenCalledWith({ country_filter: ["US"] });

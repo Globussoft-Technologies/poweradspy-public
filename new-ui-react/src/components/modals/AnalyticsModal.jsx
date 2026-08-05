@@ -4,6 +4,7 @@ import {
   calculateRunningDays,
   normalizeEcommercePlatformKey,
 } from "../../utils/helper";
+import { getAiColorLabel } from "../../utils/aiColorPalette";
 import { getAffiliateNetworkLogo } from "../../utils/affiliateLogos";
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
@@ -1516,13 +1517,69 @@ const AnalyticsModal = ({
     const text = String(value).trim();
     return text && text !== "null" && text !== "undefined" ? text : "";
   };
+  const normalizeAiMetaColors = (value) => {
+    const items = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(/[,\|]/)
+        : value != null
+          ? [value]
+          : [];
+
+    return items
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+      .map((token) => {
+        const raw = token.replace(/\s+/g, "");
+        const hex = raw.startsWith("#") ? raw : `#${raw}`;
+        return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(hex)
+          ? hex.toUpperCase()
+          : null;
+      })
+      .filter(Boolean);
+  };
+  const renderAiMetaColorSwatches = (swatches) => {
+    if (!swatches.length) return null;
+
+    return (
+      <div className="flex max-w-full flex-wrap items-center gap-2" aria-label="Detected color palette">
+        {swatches.map((color, index) => {
+          const configuredLabel = getAiColorLabel(color);
+          const colorLabel = configuredLabel === color
+            ? `Color ${index + 1}`
+            : configuredLabel;
+
+          return (
+            <div
+              key={`${color}-${index}`}
+              className={`inline-flex shrink-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 ${
+                isLight
+                  ? "border-gray-200 bg-white text-gray-600 shadow-sm"
+                  : "border-white/15 bg-white/[0.035] text-white/65"
+              }`}
+              title={colorLabel}
+            >
+              <span
+                className="h-5 w-5 shrink-0 rounded-md border border-black/15 shadow-sm"
+                style={{ backgroundColor: color }}
+                aria-hidden="true"
+              />
+              <span className="text-[12px] font-medium leading-none">
+                {colorLabel}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
   const aiMetaVariableRows = (() => {
     if (!aiMeta || typeof aiMeta !== "object") return [];
     const roa = aiMeta.roa && typeof aiMeta.roa === "object" ? aiMeta.roa : {};
     const offers = Array.isArray(aiMeta.offers) ? aiMeta.offers : [];
     const offerTypeRaw = aiMeta.offer_type ?? offers.find((offer) => offer?.type != null)?.type;
     const offerType = formatAiMetaToken(offerTypeRaw);
-    const colors = formatAiMetaValue(aiMeta.colors);
+    const colorSwatches = normalizeAiMetaColors(aiMeta.colors);
     const rows = [];
     const pushRow = (label, value, render = null) => {
       const text = formatAiMetaValue(value);
@@ -1540,7 +1597,7 @@ const AnalyticsModal = ({
     pushRow("HOOK", aiMeta.hook);
     pushRow("OFFERING TYPE", offeringTypeText);
     pushRow("OFFER TYPE", offerType);
-    pushRow("COLORS", colors);
+    pushRow("COLORS", colorSwatches.length ? colorSwatches : aiMeta.colors, colorSwatches.length ? renderAiMetaColorSwatches(colorSwatches) : null);
 
     return [
       { label: "OFFERING", value: formatAiMetaValue(aiMeta.offering) },
@@ -2300,6 +2357,16 @@ const AnalyticsModal = ({
                 >
                   <Sparkles size={16} />
                   AI Insights
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-extrabold leading-none tracking-[0.16em] ${
+                      isLight
+                        ? "border-indigo-200 bg-indigo-50 text-indigo-600 shadow-sm"
+                        : "border-amber-400/35 bg-amber-400/10 text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+                    }`}
+                  >
+                    <Sparkles size={8} strokeWidth={2.5} />
+                    NEW
+                  </span>
                 </h2>
                 <div
                   className={`rounded-2xl border-2 divide-y ${
@@ -2317,7 +2384,7 @@ const AnalyticsModal = ({
                         {label}
                       </span>
                       {render ? (
-                        render
+                        <div className="min-w-0">{render}</div>
                       ) : (
                         <span
                           className={`min-w-0 text-[14px] font-semibold whitespace-normal break-words leading-relaxed ${

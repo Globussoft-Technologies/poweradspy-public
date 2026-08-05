@@ -380,13 +380,14 @@ describe("useAuth > filterHasPlanEntry", () => {
 });
 
 describe("useAuth > logout", () => {
-  it("clears auth data + non-filter session state + cookies + redirects, but retains filters for the 24h grace period", async () => {
+  it("clears auth data, filters, selected networks, cookies, and redirects", async () => {
     vi.useFakeTimers();
     const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
     localStorage.setItem("authToken", token);
     localStorage.setItem("authUser", "{}");
     localStorage.setItem("persist:root", "x");
     localStorage.setItem("sdui.filterValues", "v");
+    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook", "instagram"]));
     localStorage.setItem("sdui_config_cache", "y");
     localStorage.setItem("pas_onboarding_dismissed_1", "1");
 
@@ -405,10 +406,10 @@ describe("useAuth > logout", () => {
     expect(localStorage.getItem("authUser")).toBeNull();
     expect(localStorage.getItem("sdui_config_cache")).toBeNull();
     expect(localStorage.getItem("pas_onboarding_dismissed_1")).toBeNull();
-    // Filters/UI state survive the logout itself — only the retention window expiring wipes them.
-    expect(localStorage.getItem("persist:root")).toBe("x");
-    expect(localStorage.getItem("sdui.filterValues")).toBe("v");
-    expect(localStorage.getItem("pas_filters_logout_at")).toBeTruthy();
+    expect(localStorage.getItem("persist:root")).toBeNull();
+    expect(localStorage.getItem("sdui.filterValues")).toBeNull();
+    expect(localStorage.getItem("sdui.activePlatforms")).toBeNull();
+    expect(localStorage.getItem("pas_filters_logout_at")).toBeNull();
     expect(result.current.token).toBeNull();
     expect(result.current.user).toBeNull();
 
@@ -418,68 +419,7 @@ describe("useAuth > logout", () => {
   });
 });
 
-describe("useAuth > filter retention window", () => {
-  it("filters survive login within 24h of logout", async () => {
-    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
-    localStorage.setItem("authToken", token);
-    localStorage.setItem("sdui.filterValues", "v");
-    localStorage.setItem("persist:root", "x");
-    localStorage.setItem("pas_filters_logout_at", String(Date.now() - 60 * 1000)); // 1 min ago
-    await loadSut();
-    expect(localStorage.getItem("sdui.filterValues")).toBe("v");
-    expect(localStorage.getItem("persist:root")).toBe("x");
-    // Timestamp consumed once resolved at login so a later reload mid-session can't
-    // misfire against this now-stale clock.
-    expect(localStorage.getItem("pas_filters_logout_at")).toBeNull();
-  });
-
-  it("filters are cleared to defaults once 24h have elapsed since logout, evaluated on next login", async () => {
-    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
-    localStorage.setItem("authToken", token);
-    localStorage.setItem("sdui.filterValues", "v");
-    localStorage.setItem("sdui.activePlatforms", "p");
-    localStorage.setItem("persist:root", "x");
-    localStorage.setItem("pas_filters_logout_at", String(Date.now() - 25 * 60 * 60 * 1000)); // 25h ago
-    await loadSut();
-    expect(localStorage.getItem("sdui.filterValues")).toBeNull();
-    expect(localStorage.getItem("sdui.activePlatforms")).toBeNull();
-    expect(localStorage.getItem("persist:root")).toBeNull();
-    expect(localStorage.getItem("pas_filters_logout_at")).toBeNull();
-  });
-
-  it("no successful login yet (no token) → stale retention timestamp left untouched, filters not evaluated", async () => {
-    // Regression guard: this must NOT run the expiry check, otherwise the redirect
-    // chain that logout() itself triggers (no valid token yet) would consume the
-    // timestamp seconds after logout, and the 24h window would never get enforced.
-    vi.stubEnv("VITE_PAS_API_TOKEN", ""); // avoid local-dev env-fallback token counting as a login
-    localStorage.setItem("sdui.filterValues", "v");
-    localStorage.setItem("pas_filters_logout_at", String(Date.now() - 25 * 60 * 60 * 1000)); // 25h ago
-    await loadSut();
-    expect(localStorage.getItem("sdui.filterValues")).toBe("v");
-    expect(localStorage.getItem("pas_filters_logout_at")).toBeTruthy();
-    vi.unstubAllEnvs();
-  });
-
-  it("expired token at load (forced logout) → does not evaluate retention itself, only starts a fresh clock", async () => {
-    const expired = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) - 100 });
-    localStorage.setItem("authToken", expired);
-    localStorage.setItem("sdui.filterValues", "v");
-    localStorage.setItem("pas_filters_logout_at", String(Date.now() - 25 * 60 * 60 * 1000)); // stale, 25h ago
-    await loadSut();
-    // Old stale timestamp gets overwritten by markFiltersForExpiry, not evaluated/cleared here.
-    expect(localStorage.getItem("sdui.filterValues")).toBe("v");
-    const newTs = Number(localStorage.getItem("pas_filters_logout_at"));
-    expect(Date.now() - newTs).toBeLessThan(5000);
-  });
-
-  it("no logout timestamp present → filters untouched after login", async () => {
-    const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
-    localStorage.setItem("authToken", token);
-    localStorage.setItem("sdui.filterValues", "v");
-    await loadSut();
-    expect(localStorage.getItem("sdui.filterValues")).toBe("v");
-  });
-
+describe("useAuth > cleanup helpers", () => {
   it("markFiltersForExpiry swallows sessionStorage errors", async () => {
     const mod = await loadSut();
     vi.spyOn(Storage.prototype, "removeItem").mockImplementation((k) => {
