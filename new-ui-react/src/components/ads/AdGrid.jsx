@@ -833,23 +833,22 @@ const AdGrid = ({
 
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
+      const delta = scrollTop - lastScrollTopRef.current;
+      const layoutShifted =
+        scrollHeight !== lastScrollHeightRef.current ||
+        clientHeight !== lastClientHeightRef.current;
+
+      lastScrollTopRef.current = scrollTop;
+      lastScrollHeightRef.current = scrollHeight;
+      lastClientHeightRef.current = clientHeight;
 
       // Handle sticky header toggle (Hide on scroll down, Show on ANY scroll up)
       if (onScrollChange) {
-        const delta = scrollTop - lastScrollTopRef.current;
         // A change in scrollHeight/clientHeight since the previous event means
         // this scroll was caused by a layout shift — the header's own collapse/
         // expand, or masonry items measuring in — not by the user. Toggling on
         // those is what creates the feedback "jump" loop, so react to genuine
         // user scrolls only.
-        const layoutShifted =
-          scrollHeight !== lastScrollHeightRef.current ||
-          clientHeight !== lastClientHeightRef.current;
-
-        lastScrollTopRef.current = scrollTop;
-        lastScrollHeightRef.current = scrollHeight;
-        lastClientHeightRef.current = clientHeight;
-
         // Only collapse when enough scrollable overflow remains after the
         // header reveals its height (~280px). Otherwise collapsing makes the
         // content fit exactly, the scrollbar vanishes, no further scroll events
@@ -875,7 +874,9 @@ const AdGrid = ({
       setShowScrollTop(scrollTop > 500);
 
       if (
-        scrollHeight - (scrollTop + clientHeight) < 2800 &&
+        !layoutShifted &&
+        Math.abs(delta) > 0 &&
+        scrollHeight - (scrollTop + clientHeight) < 400 &&
         hasMoreRef.current &&
         !loadingMoreRef.current &&
         !bumpLockRef.current
