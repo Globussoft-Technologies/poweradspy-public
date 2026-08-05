@@ -1447,8 +1447,17 @@ const App = () => {
     // These pages render their own data sources. In particular, a direct reload
     // on /market-trends must not trigger the Ads Library search endpoint first.
     if (['/projects', '/market-trends', '/keywords-explorer', '/saved'].includes(location.pathname)) return;
-    loadAds();
-    return () => controller.abort();
+    // Refresh/bootstrap resolves SDUI config, persisted platforms and plan
+    // entitlements in several closely-spaced renders. Starting immediately on
+    // every render sent a burst of requests that were then aborted by the next
+    // render (visible as 10–15 `(canceled)` /search rows) and still consumed the
+    // server rate-limit bucket. Let page-zero state settle briefly so only the
+    // final payload is sent. Pagination remains immediate.
+    const startTimer = setTimeout(loadAds, page === 0 ? 120 : 0);
+    return () => {
+      clearTimeout(startTimer);
+      controller.abort();
+    };
   }, [
     debouncedFilterKey,
     platformKey,
