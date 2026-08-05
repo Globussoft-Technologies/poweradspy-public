@@ -102,14 +102,14 @@ describe("services/tiktok/controllers/hideAdsController > getHiddenPostOwners", 
     const db = mkDb(async () => []);
     const out = await getHiddenPostOwners({ body: { user_id: "u" } }, db, fakeLogger);
     expect(out).toEqual({
-      code: 400, message: "no data found", data: null, addata: null, favorite: null,
+      code: 200, message: "no data found", data: [], addata: [], favorite: [],
     });
   });
 
   it("400 when query returns null", async () => {
     const db = mkDb(async () => null);
     const out = await getHiddenPostOwners({ body: { user_id: "u" } }, db, fakeLogger);
-    expect(out.code).toBe(400);
+    expect(out.code).toBe(200);
   });
 
   it("200 with sorted buckets for type 1/2/3", async () => {

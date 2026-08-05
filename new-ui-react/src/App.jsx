@@ -6,6 +6,7 @@ import { findCategoryOptions } from "./utils/categoryTaxonomy";
 import { findCountryOptions, labelsToCountryCodes } from "./utils/countryFilter";
 import {
   isAdAnalyticsAllowed,
+  isAdsSearchAccessReady,
   isKeywordAnalyticsAllowed,
   isPlanNetworkAllowed,
   normalizePlanNetwork,
@@ -695,12 +696,44 @@ const App = () => {
   // Re-fetch plan access with the current network whenever specificPlatforms changes.
   // This covers: initial load (redux-persist restores platforms without handlePlatformClick firing)
   // and real-time platform switching.
+  const selectedPlanAccessNetwork = ui.specificPlatforms.length === 1
+    ? ui.specificPlatforms[0]
+    : ui.specificPlatforms.length > 1
+      ? ui.specificPlatforms
+      : 'all';
+  const selectedPlanAccessNetworkKey = Array.isArray(selectedPlanAccessNetwork)
+    ? [...selectedPlanAccessNetwork].sort().join(',')
+    : selectedPlanAccessNetwork;
+  const [resolvedPlanAccessNetworkKey, setResolvedPlanAccessNetworkKey] = useState(null);
+  const planNetworkAccessReady =
+    !token ||
+    (planAccessResolved && resolvedPlanAccessNetworkKey === selectedPlanAccessNetworkKey);
   useEffect(() => {
-    if (!token) return;
-    const sp = ui.specificPlatforms;
-    const network = sp.length === 1 ? sp[0] : sp.length > 1 ? sp : 'all';
-    fetchPlanAccess(network).then(data => { if (data) setPlanAccess(data); }).catch(() => {});
-  }, [ui.specificPlatforms, token]);
+    if (!token) {
+      setResolvedPlanAccessNetworkKey(null);
+      return;
+    }
+    if (!planAccessResolved || resolvedPlanAccessNetworkKey === selectedPlanAccessNetworkKey) return;
+    // AuthProvider has already loaded the unscoped "all" response during
+    // bootstrap. App only owns subsequent platform-specific transitions.
+    if (resolvedPlanAccessNetworkKey === null && selectedPlanAccessNetworkKey === 'all') {
+      setResolvedPlanAccessNetworkKey('all');
+      return;
+    }
+    let active = true;
+    fetchPlanAccess(selectedPlanAccessNetwork)
+      .then(data => { if (active && data) setPlanAccess(data); })
+      .catch(() => {})
+      .finally(() => { if (active) setResolvedPlanAccessNetworkKey(selectedPlanAccessNetworkKey); });
+    return () => { active = false; };
+  }, [
+    token,
+    planAccessResolved,
+    resolvedPlanAccessNetworkKey,
+    selectedPlanAccessNetwork,
+    selectedPlanAccessNetworkKey,
+    setPlanAccess,
+  ]);
 
   // Intelligence access — the NAV TAB shows whenever the env flag is on (PRD FR-17:
   // "not a hard removal"); per-plan access (intelAccess.enabled) only decides whether
@@ -762,6 +795,15 @@ const App = () => {
   const planAllowedPlatformKey = Array.isArray(planAllowedPlatforms)
     ? planAllowedPlatforms.join(',')
     : 'unresolved';
+  // `null` explicitly means that neither unified entitlements nor the legacy
+  // plan response has supplied an authoritative network list yet. Authenticated
+  // searches must fail closed during that window; treating null as "all" sends
+  // temporary all-network payloads that the backend correctly rejects with 403.
+  const adsSearchAccessReady = isAdsSearchAccessReady(
+    isAuthenticated,
+    guest?.isGuest,
+    planAllowedPlatforms,
+  );
   const platformOptions = useMemo(() => {
     const opts = platformFilter?.options || [];
     let allOpts;
@@ -831,6 +873,11 @@ const App = () => {
   }, [platformOptions]);
 
   const isAllActive = ui.specificPlatforms.length === 0;
+  const hasAllActivePlatforms =
+    sdui.activePlatforms.length === allPlatformValues.length &&
+    allPlatformValues.every((platform) => sdui.activePlatforms.includes(platform));
+  const needsAllPlatformSync =
+    isAuthenticated && isAllActive && platformOptions.length > 0 && !hasAllActivePlatforms;
 
   // `specificPlatforms: []` is the UI's "All" state. On a fresh session,
   // useSDUI initially derives activePlatforms from selected_by_default options,
@@ -848,15 +895,10 @@ const App = () => {
       guest?.uiState
     ) return;
 
-    const alreadyAll =
-      sdui.activePlatforms.length === allPlatformValues.length &&
-      allPlatformValues.every((platform) =>
-        sdui.activePlatforms.includes(platform),
-      );
-
-    if (!alreadyAll) sdui.setActivePlatforms(allPlatformValues);
+    if (!hasAllActivePlatforms) sdui.setActivePlatforms(allPlatformValues);
   }, [
     allPlatformValues,
+    hasAllActivePlatforms,
     guest?.uiState,
     isAllActive,
     isAuthenticated,
@@ -873,7 +915,6 @@ const App = () => {
       ? allPlatformValues.filter((network) => isAdsSearchNetworkAllowed(planAllowedPlatforms, network))
       : allPlatformValues;
     sdui.setActivePlatforms(permitted);
-    if (!guest?.isPublicLanding) fetchPlanAccess('all').then(data => { if (data) setPlanAccess(data); }).catch(() => {});
   };
 
   const handlePlatformClick = (platformValue) => {
@@ -898,14 +939,12 @@ const App = () => {
         ? allPlatformValues.filter((network) => isAdsSearchNetworkAllowed(planAllowedPlatforms, network))
         : allPlatformValues;
       sdui.setActivePlatforms(permitted);
-      if (!guest?.isPublicLanding) fetchPlanAccess('all').then(data => { if (data) setPlanAccess(data); }).catch(() => {});
     } else {
       // Clear a persisted filter that is not valid for the destination network
       // before it can silently trigger a plan-upgrade response.
       sdui.clearFiltersUnsupportedBy(newSpecific);
       dispatch(setSpecificPlatforms(newSpecific));
       sdui.setActivePlatforms(newSpecific);
-      if (!guest?.isPublicLanding) fetchPlanAccess(newSpecific.length === 1 ? newSpecific[0] : newSpecific).then(data => { if (data) setPlanAccess(data); }).catch(() => {});
     }
   };
 
@@ -937,14 +976,37 @@ const App = () => {
   const _isPublicRoute = window.location.pathname.startsWith('/guest/') || window.location.pathname.startsWith('/share/') || window.location.pathname === '/guest-landing';
 
   useEffect(() => {
-    if (sdui.activePlatforms.length === 0 || landingAd?._fromUrl || _isPublicRoute) return;
+    if (
+      sdui.loading ||
+      !isAuthenticated ||
+      !planNetworkAccessReady ||
+      !adsSearchAccessReady ||
+      sdui.activePlatforms.length === 0 ||
+      landingAd?._fromUrl ||
+      _isPublicRoute
+    ) return;
+    let cancelled = false;
     const loadHidden = async () => {
       try {
-        const results = await Promise.all(
-          sdui.activePlatforms.map((p) =>
-            fetchHiddenAndFavourites(p).then(r => ({ ...r, platform: p.toLowerCase() }))
-          ),
-        );
+        // This legacy endpoint is platform-scoped. Bound concurrency so selecting
+        // "All" does not send 10+ requests in the same instant.
+        const platforms = [...new Set(
+          sdui.activePlatforms
+            .filter((network) => isPlanNetworkAllowed(planAllowedPlatforms, network))
+            .map((p) => p.toLowerCase()),
+        )];
+        if (platforms.length === 0) return;
+        const results = [];
+        let nextIndex = 0;
+        const worker = async () => {
+          while (!cancelled && nextIndex < platforms.length) {
+            const platform = platforms[nextIndex++];
+            const result = await fetchHiddenAndFavourites(platform);
+            results.push({ ...result, platform });
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(2, platforms.length) }, worker));
+        if (cancelled) return;
         const allHiddenAds = new Set();
         const allHiddenAdvertisers = new Set();
         const allFavourites = new Set();
@@ -961,8 +1023,22 @@ const App = () => {
         console.error("Failed to fetch hidden/favourites:", err);
       }
     };
-    loadHidden();
-  }, [platformKey]);
+    // Keep hidden-state fan-out out of the critical auth/config/search burst.
+    const startTimer = setTimeout(loadHidden, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(startTimer);
+    };
+  }, [
+    platformKey,
+    planAllowedPlatformKey,
+    isAuthenticated,
+    planNetworkAccessReady,
+    adsSearchAccessReady,
+    sdui.loading,
+    landingAd?._fromUrl,
+    _isPublicRoute,
+  ]);
 
   const visibleAds = useMemo(() => {
     const filtered = ads.filter((ad) => {
@@ -1436,6 +1512,10 @@ const App = () => {
         }
         // Network/platform restrictions are not plan-upgrade decisions.
         if (err.code === 403) {
+          // A denied page cannot have a next page. Without this, the grid's
+          // near-bottom scroll handler keeps incrementing `page` against an
+          // empty result and amplifies one denial into a burst of 403 requests.
+          setHasMore(false);
           if (page === 0) setError(err.message || "This option is not available for the selected network.");
           return;
         }
@@ -1456,6 +1536,11 @@ const App = () => {
       }
     };
     if (sdui.loading || sdui.activePlatforms.length === 0) return;
+    if (!planNetworkAccessReady) return;
+    if (!adsSearchAccessReady) return;
+    // The "All" navbar selection is restored in a separate effect. Do not issue
+    // a search with its temporary subset of default platforms.
+    if (needsAllPlatformSync) return;
     // In guest mode, wait for guest state to load before fetching ads
     if (guest?.isGuest && guest?.loading) return;
     // These pages render their own data sources. In particular, a direct reload
@@ -1487,7 +1572,10 @@ const App = () => {
     hideToastAfter,
     planAllowedPlatformKey,
     planAccessResolved,
+    planNetworkAccessReady,
+    adsSearchAccessReady,
     isAuthenticated,
+    needsAllPlatformSync,
   ]);
 
   // Guest-safe wrappers — guest: toaster, logged-in on guest page: redirect to dashboard

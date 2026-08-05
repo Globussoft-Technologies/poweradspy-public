@@ -2,6 +2,7 @@ import { SDUI_BASE, CLIENT_VERSION, CACHE_TTL } from '../constants/sduiVersions'
 import { normalizeSDUIConfig } from './sduiNormalizer';
 import { isSchemaCompatible } from './sduiVersionCheck';
 import { getSDUIFallbackConfig } from '../config/defaultConfig';
+import { dedupeInFlight } from '../utils/requestDeduper';
 
 // ── Cache keys ─────────────────────────────────────────────────────────────
 const LS_CONFIG_KEY = 'sdui_config_cache';
@@ -97,7 +98,7 @@ function isHardRefresh() {
  * @param {boolean} options.skipCache - Bypass memory + localStorage cache
  * @returns {Promise<Object>} Normalized SDUI config
  */
-export async function fetchSDUIConfig(options = {}) {
+async function loadSDUIConfig(options = {}) {
     const { skipCache = false, platforms = [] } = options;
 
     // When platforms change, always skip cache to get platform-specific config
@@ -193,6 +194,14 @@ export async function fetchSDUIConfig(options = {}) {
         // Layer 5: Hardcoded fallback
         return useFallback();
     }
+}
+
+export function fetchSDUIConfig(options = {}) {
+    const platforms = Array.isArray(options.platforms)
+        ? [...options.platforms].map(String).sort()
+        : [];
+    const key = `sdui-config:${options.skipCache === true ? 'fresh' : 'cached'}:${platforms.join(',')}`;
+    return dedupeInFlight(key, () => loadSDUIConfig(options));
 }
 
 function useFallback() {

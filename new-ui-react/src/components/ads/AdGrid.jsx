@@ -811,8 +811,10 @@ const AdGrid = ({
   const lastClientHeightRef = useRef(0);
   const hasMoreRef = useRef(hasMore);
   const loadingMoreRef = useRef(loadingMore);
+  const adsLengthRef = useRef(ads.length);
   hasMoreRef.current = hasMore;
   loadingMoreRef.current = loadingMore;
+  adsLengthRef.current = ads.length;
 
   // Synchronous lock that serializes page bumps. `loadingMore` is React state,
   // so it only flips to true on the next render — in the gap between issuing a
@@ -876,6 +878,7 @@ const AdGrid = ({
       if (
         !layoutShifted &&
         Math.abs(delta) > 0 &&
+        adsLengthRef.current > 0 &&
         scrollHeight - (scrollTop + clientHeight) < 400 &&
         hasMoreRef.current &&
         !loadingMoreRef.current &&

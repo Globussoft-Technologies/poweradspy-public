@@ -74,13 +74,13 @@ describe("services/youtube/controllers/hideAdsController > getHiddenPostOwners",
   it("400 when empty rows", async () => {
     const db = mkDb(async () => []);
     expect(await getHiddenPostOwners({ body: { user_id: "u" } }, db, fakeLogger))
-      .toEqual({ code: 400, message: "no data found", data: null, addata: null, favorite: null });
+      .toEqual({ code: 200, message: "no data found", data: [], addata: [], favorite: [] });
   });
 
   it("400 when null rows", async () => {
     const db = mkDb(async () => null);
     const out = await getHiddenPostOwners({ body: { user_id: "u" } }, db, fakeLogger);
-    expect(out.code).toBe(400);
+    expect(out.code).toBe(200);
   });
 
   it("200 buckets type 1/2/3, ignores unknown", async () => {

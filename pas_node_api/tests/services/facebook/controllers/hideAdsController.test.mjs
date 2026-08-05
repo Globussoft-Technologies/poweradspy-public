@@ -137,10 +137,10 @@ describe("services/facebook/controllers/hideAdsController > getHiddenPostOwners"
   });
   it("400 when no rows", async () => {
     expect(await getHiddenPostOwners({ body: { user_id: "u" } }, mkDb(async () => []), fakeLogger))
-      .toEqual({ code: 400, message: "no data found", data: null, addata: null, favorite: null });
+      .toEqual({ code: 200, message: "no data found", data: [], addata: [], favorite: [] });
   });
   it("400 when null rows", async () => {
-    expect((await getHiddenPostOwners({ body: { user_id: "u" } }, mkDb(async () => null), fakeLogger)).code).toBe(400);
+    expect((await getHiddenPostOwners({ body: { user_id: "u" } }, mkDb(async () => null), fakeLogger)).code).toBe(200);
   });
   it("200 buckets type 1/2/3, ignores unknown", async () => {
     const db = mkDb(async () => [

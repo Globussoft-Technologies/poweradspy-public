@@ -148,19 +148,23 @@ export function useSDUI() {
     }, [applyConfig]);
 
     // ── Re-fetch config when platforms change ─────────────────────────────
-    const isInitialMount = useRef(true);
+    const lastConfigPlatformKeyRef = useRef(JSON.stringify(activePlatforms));
     // Track all platform values count to detect "ALL" selection
     const allPlatformCountRef = useRef(0);
     useEffect(() => {
-        // Skip on initial mount (initial fetch handles it)
-        if (isInitialMount.current) {
-            isInitialMount.current = false;
-            // Store initial "all" count for comparison
-            allPlatformCountRef.current = activePlatforms.length;
-            return;
-        }
+        // The initial unfiltered fetch owns bootstrap. A ref keyed by the real
+        // selection remains correct when StrictMode replays effect setup.
+        if (loading || !config) return;
+        const platformKey = JSON.stringify(activePlatforms);
+        if (lastConfigPlatformKeyRef.current === platformKey) return;
+        lastConfigPlatformKeyRef.current = platformKey;
 
         // If activePlatforms includes all platforms, treat as "ALL" — no param needed
+        if (allPlatformCountRef.current === 0) {
+            const platformsDoc = config.navbar?.find(d => d._id === 'platforms');
+            allPlatformCountRef.current = platformsDoc?.filters
+                ?.flatMap(filter => filter.options || []).length || activePlatforms.length;
+        }
         const isAll = activePlatforms.length === 0 || activePlatforms.length >= allPlatformCountRef.current;
 
         let cancelled = false;
@@ -176,7 +180,7 @@ export function useSDUI() {
         };
         reload();
         return () => { cancelled = true; };
-    }, [activePlatforms, applyConfig]);
+    }, [activePlatforms, applyConfig, config, loading]);
 
     // ── Polling for config changes ──────────────────────────────────────────
     const handleConfigChanged = useCallback((freshConfig) => {

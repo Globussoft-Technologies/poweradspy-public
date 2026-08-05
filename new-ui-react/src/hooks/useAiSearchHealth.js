@@ -48,7 +48,8 @@ export function useAiSearchHealth({ enabled = true, intervalMs = DEFAULT_INTERVA
       }
     };
 
-    runCheck();
+    // StrictMode cancels its probe mount before this task reaches the network.
+    const startTimer = setTimeout(runCheck, 0);
     timerRef.current = setInterval(runCheck, intervalMs);
 
     const onVisibility = () => { if (document.visibilityState === 'visible') runCheck(); };
@@ -56,6 +57,7 @@ export function useAiSearchHealth({ enabled = true, intervalMs = DEFAULT_INTERVA
 
     return () => {
       cancelled = true;
+      clearTimeout(startTimer);
       controller?.abort();
       clearInterval(timerRef.current);
       document.removeEventListener('visibilitychange', onVisibility);

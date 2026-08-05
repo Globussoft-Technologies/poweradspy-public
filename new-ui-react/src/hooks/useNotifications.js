@@ -24,6 +24,7 @@ export function useNotifications() {
   // Server-driven poll cadence (env-controlled via meta.pollIntervalMs); falls back to default.
   const [pollMs, setPollMs] = useState(POLL_INTERVAL);
   const intervalRef = useRef(null);
+  const initialPollUserRef = useRef(null);
 
   // Get previously shown notification IDs from localStorage
   const getShownNotificationIds = useCallback(() => {
@@ -90,11 +91,17 @@ export function useNotifications() {
       setUnreadCount(0);
       // Clear localStorage when user logs out
       localStorage.removeItem(SHOWN_NOTIFICATIONS_KEY);
+      initialPollUserRef.current = null;
       return;
     }
 
-    // Initial fetch
-    poll();
+    // Initial fetch for this user only. Updating pollMs re-arms the interval
+    // without immediately hitting the endpoint a second time.
+    const userKey = user.id ?? user.user_id ?? user.email;
+    if (initialPollUserRef.current !== userKey) {
+      initialPollUserRef.current = userKey;
+      poll();
+    }
 
     // Set up interval at the current (possibly server-driven) cadence. Re-arms when
     // pollMs changes after the server reports its interval.

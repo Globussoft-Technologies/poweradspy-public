@@ -4,6 +4,7 @@ const GEMINI_API_KEY = "";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 import { calculateRunningDays } from '../utils/helper';
 import { expandCountryFilterValues } from '../utils/countryFilter';
+import { dedupeInFlight } from '../utils/requestDeduper';
 
 // ─── PAS API Configuration ────────────────────────────────────────────────────
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || "";
@@ -54,15 +55,18 @@ const checkFor401 = async (res) => {
  */
 export const fetchPlanAccess = async (network) => {
   const query = network && network !== 'all' ? `?network=${encodeURIComponent(Array.isArray(network) ? network.join(',') : network)}` : '';
-  const res = await fetch(`${PAS_API_BASE}/api/v1/auth/plan-access${query}`, {
-    headers: {
-      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
-    },
+  const token = getPASToken() || '';
+  return dedupeInFlight(`plan-access:${token}:${query}`, async () => {
+    const res = await fetch(`${PAS_API_BASE}/api/v1/auth/plan-access${query}`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    await checkFor401(res);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data || null;
   });
-  await checkFor401(res);
-  if (!res.ok) return null;
-  const json = await res.json();
-  return json.data || null;
 };
 
 /**
@@ -71,15 +75,18 @@ export const fetchPlanAccess = async (network) => {
  * during rollout.
  */
 export const fetchEntitlements = async () => {
-  const res = await fetch(`${PAS_API_BASE}/api/v1/auth/entitlements`, {
-    headers: {
-      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
-    },
+  const token = getPASToken() || '';
+  return dedupeInFlight(`entitlements:${token}`, async () => {
+    const res = await fetch(`${PAS_API_BASE}/api/v1/auth/entitlements`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    await checkFor401(res);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data || null;
   });
-  await checkFor401(res);
-  if (!res.ok) return null;
-  const json = await res.json();
-  return json.data || null;
 };
 
 /**
@@ -769,6 +776,19 @@ const PLATFORM_ROUTE_MAP = {
   tiktok: 'tiktok',
 };
 
+const HIDDEN_STATE_CACHE_MS = 30 * 1000;
+const hiddenStateCache = new Map();
+const hiddenStateGeneration = new Map();
+
+const hiddenStateCacheKey = (platformRoute) => `${getPASToken() || ''}:${platformRoute}`;
+
+export const invalidateHiddenAndFavouritesCache = (network) => {
+  const platformRoute = PLATFORM_ROUTE_MAP[(network || 'facebook').toLowerCase()] || 'facebook';
+  const cacheKey = hiddenStateCacheKey(platformRoute);
+  hiddenStateCache.delete(cacheKey);
+  hiddenStateGeneration.set(cacheKey, (hiddenStateGeneration.get(cacheKey) || 0) + 1);
+};
+
 /**
  * Hide ad (type=2), hide advertiser (type=1), or favourite ad (type=3).
  * @param {Object} params
@@ -798,7 +818,9 @@ export const hideAds = async ({ network, adId, postOwnerId, type }) => {
 
   await checkFor401(res);
   if (!res.ok) throw new Error(`hide_ads failed: ${res.status}`);
-  return res.json();
+  const json = await res.json();
+  invalidateHiddenAndFavouritesCache(network);
+  return json;
 };
 
 /**
@@ -829,7 +851,9 @@ export const unHideAds = async ({ network, adId, postOwnerId, type }) => {
 
   await checkFor401(res);
   if (!res.ok) throw new Error(`un-hide failed: ${res.status}`);
-  return res.json();
+  const json = await res.json();
+  invalidateHiddenAndFavouritesCache(network);
+  return json;
 };
 
 /**
@@ -839,27 +863,40 @@ export const unHideAds = async ({ network, adId, postOwnerId, type }) => {
  * @returns {Promise<{ hiddenAdvertiserIds: number[], hiddenAdIds: number[], favouriteAdIds: number[] }>}
  */
 export const fetchHiddenAndFavourites = async (network) => {
-  try {
-    const platformRoute = PLATFORM_ROUTE_MAP[(network || 'facebook').toLowerCase()] || 'facebook';
-    const res = await fetch(`${PAS_API_BASE}/api/v1/${platformRoute}/ads/getHiddenPostOwners`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${getPASToken()}`,
-      },
-      body: JSON.stringify({}),
-    });
-    await checkFor401(res);
-    if (!res.ok) return { hiddenAdvertiserIds: [], hiddenAdIds: [], favouriteAdIds: [] };
-    const json = await res.json();
-    return {
-      hiddenAdvertiserIds: json.data || [],
-      hiddenAdIds: json.addata || [],
-      favouriteAdIds: json.favorite || [],
-    };
-  } catch {
-    return { hiddenAdvertiserIds: [], hiddenAdIds: [], favouriteAdIds: [] };
-  }
+  const platformRoute = PLATFORM_ROUTE_MAP[(network || 'facebook').toLowerCase()] || 'facebook';
+  const cacheKey = hiddenStateCacheKey(platformRoute);
+  const cached = hiddenStateCache.get(cacheKey);
+  if (cached && Date.now() - cached.storedAt < HIDDEN_STATE_CACHE_MS) return cached.data;
+  const requestGeneration = hiddenStateGeneration.get(cacheKey) || 0;
+
+  return dedupeInFlight(`hidden-state:${cacheKey}`, async () => {
+    try {
+      const res = await fetch(`${PAS_API_BASE}/api/v1/${platformRoute}/ads/getHiddenPostOwners`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getPASToken()}`,
+        },
+        body: JSON.stringify({}),
+      });
+      await checkFor401(res);
+      if (!res.ok) return { hiddenAdvertiserIds: [], hiddenAdIds: [], favouriteAdIds: [] };
+      const json = await res.json();
+      const data = {
+        hiddenAdvertiserIds: json.data || [],
+        hiddenAdIds: json.addata || [],
+        favouriteAdIds: json.favorite || [],
+      };
+      // A hide/favourite mutation may have completed while this read was in
+      // flight. Never let that older response repopulate the invalidated cache.
+      if ((hiddenStateGeneration.get(cacheKey) || 0) === requestGeneration) {
+        hiddenStateCache.set(cacheKey, { data, storedAt: Date.now() });
+      }
+      return data;
+    } catch {
+      return { hiddenAdvertiserIds: [], hiddenAdIds: [], favouriteAdIds: [] };
+    }
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2886,10 +2923,12 @@ const NOTIFY_TYPE_TO_UI = { 1: 0, 2: 1, 3: 2 };
  * carries meta.pollIntervalMs (env-controlled) so the bell can self-pace its polling.
  */
 export const fetchNotifications = async () => {
-  try {
+  const token = getPASToken() || '';
+  return dedupeInFlight(`keyword-ad-notifications:${token}`, async () => {
+    try {
     const res = await fetch(`${PAS_API_BASE}/api/v1/common/keyword-ad-notifications`, {
       headers: {
-        Authorization: `Bearer ${getPASToken()}`,
+        Authorization: `Bearer ${token}`,
       },
     });
     await checkFor401(res);
@@ -2906,9 +2945,10 @@ export const fetchNotifications = async () => {
       created_at: n.createdAt || n.updatedAt,
     }));
     return { data, meta: json.meta || { unreadCount: data.length } };
-  } catch {
-    return { data: [], meta: { unreadCount: 0 } };
-  }
+    } catch {
+      return { data: [], meta: { unreadCount: 0 } };
+    }
+  });
 };
 
 /**

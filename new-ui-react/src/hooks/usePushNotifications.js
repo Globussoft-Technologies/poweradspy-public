@@ -40,6 +40,7 @@ export const usePushNotifications = () => {
     if (!isSupported || !user) return;
 
     let unsubscribe;
+    let cancelled = false;
 
     const setup = async () => {
       try {
@@ -52,7 +53,7 @@ export const usePushNotifications = () => {
         // (illegal constructor) — we MUST use registration.showNotification() instead.
         const messaging = await getMessagingIfSupported();
         if (messaging) {
-          unsubscribe = onMessage(messaging, async (payload) => {
+          const stopListening = onMessage(messaging, async (payload) => {
             const d = payload.data || {};
             if (Notification.permission !== 'granted') return;
             try {
@@ -68,6 +69,8 @@ export const usePushNotifications = () => {
               console.warn('[usePushNotifications] showNotification failed:', e);
             }
           });
+          if (cancelled) stopListening();
+          else unsubscribe = stopListening;
         }
 
         // If permission was already granted in a previous session, silently fetch a
@@ -76,21 +79,26 @@ export const usePushNotifications = () => {
         if (Notification.permission === 'granted') {
           try {
             const fcmToken = await getFCMToken();
-            await registerTokenWithBackend(fcmToken);
-            setTokenRegistered(true);
-            setError(null);
+            if (!cancelled) await registerTokenWithBackend(fcmToken);
+            if (!cancelled) {
+              setTokenRegistered(true);
+              setError(null);
+            }
           } catch (err) {
             console.warn('[usePushNotifications] Auto re-register failed:', err.message);
           }
         }
       } catch (err) {
         console.error('[usePushNotifications] SW setup failed:', err);
-        setError(err.message);
+        if (!cancelled) setError(err.message);
       }
     };
 
     setup();
-    return () => { if (unsubscribe) unsubscribe(); };
+    return () => {
+      cancelled = true;
+      if (unsubscribe) unsubscribe();
+    };
   }, [isSupported, user]);
 
   // Request notification permission and register token with backend

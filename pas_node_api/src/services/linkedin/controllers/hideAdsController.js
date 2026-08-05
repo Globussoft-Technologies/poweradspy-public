@@ -86,7 +86,7 @@ async function getHiddenPostOwners(req, db, logger) {
     );
 
     if (!rows || rows.length === 0) {
-      return { code: 400, message: 'no data found', data: null, addata: null, favorite: null };
+      return { code: 200, message: 'no data found', data: [], addata: [], favorite: [] };
     }
 
     const postOwnerArray = [];

@@ -107,3 +107,12 @@ export function resolveAdsSearchAllowedNetworks(entitlements, planAccess) {
   }
   return null;
 }
+
+/**
+ * Guests use separate public search endpoints and do not need plan resolution.
+ * Authenticated Ads Library requests must wait for an authoritative array;
+ * `null` means policy bootstrap is still unresolved, not "allow every network".
+ */
+export function isAdsSearchAccessReady(isAuthenticated, isGuest, allowedNetworks) {
+  return !isAuthenticated || isGuest === true || Array.isArray(allowedNetworks);
+}
