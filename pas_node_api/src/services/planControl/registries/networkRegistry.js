@@ -54,14 +54,6 @@ const NETWORK_DEFINITIONS = [
     supportsGeneralAccess: true,
   },
   {
-    id: 'admob',
-    label: 'AdMob',
-    status: 'active',
-    aliases: ['mob-network', 'mobile_ads'],
-    supportsGeneralAccess: true,
-    defaultPlanAccess: true,
-  },
-  {
     id: 'gdn',
     label: 'GDN',
     status: 'active',

@@ -158,7 +158,7 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
   if (req.user?.platformAccess && !req.user?.plan_id) {
     const pa = req.user.platformAccess;
     const paLower = Object.fromEntries(Object.entries(pa).map(([k, v]) => [k.toLowerCase(), v]));
-    const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'admob', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok'];
+    const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok'];
     const jwtAllowed = new Set(ALL_PLATFORMS.filter(p => !(p in paLower) || paLower[p] === 1));
 
     // True when JWT has explicit 0s — custom plan with restricted platform selection.

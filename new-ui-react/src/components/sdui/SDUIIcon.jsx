@@ -1,4 +1,5 @@
 import React from 'react';
+import admobIcon from '../../assets/admob.svg';
 
 /**
  * Renders an icon based on the SDUIIcon schema.
@@ -20,9 +21,12 @@ const SDUIIcon = ({ icon, size = 14, className = '' }) => {
     }
 
     if (icon.type === 'url') {
+        const iconUrl = /(?:^|\/)admob\.svg(?:[?#].*)?$/i.test(icon.value)
+            ? admobIcon
+            : icon.value;
         return (
             <img
-                src={icon.value}
+                src={iconUrl}
                 alt=""
                 width={size}
                 height={size}

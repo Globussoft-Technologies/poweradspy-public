@@ -111,7 +111,7 @@ describe('plan-control policy engine', () => {
       capabilityId: 'ads.search',
       requestedNetworks: ['facebook'],
       policySnapshot: policy,
-    })).toMatchObject({ allowed: true, allowedNetworks: ['facebook', 'instagram', 'admob'] });
+    })).toMatchObject({ allowed: true, allowedNetworks: ['facebook', 'instagram'] });
     expect(evaluateEntitlement({
       user: {},
       planIdentity: identity,
@@ -133,7 +133,7 @@ describe('plan-control policy engine', () => {
       policySnapshot: policy,
     })).toMatchObject({
       allowed: true,
-      allowedNetworks: ['facebook', 'instagram', 'admob'],
+      allowedNetworks: ['facebook', 'instagram'],
     });
   });
 
@@ -151,7 +151,7 @@ describe('plan-control policy engine', () => {
       policySnapshot: policy,
     })).toMatchObject({
       allowed: true,
-      allowedNetworks: ['facebook', 'instagram', 'admob'],
+      allowedNetworks: ['facebook', 'instagram'],
     });
   });
 

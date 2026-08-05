@@ -206,7 +206,7 @@ async function searchAllNetworks(req, res) {
 
   const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
   const isAllowed = (net) =>
-    (!allowedPlatforms || allowedPlatforms.includes(net)) &&
+    (net === 'admob' || !allowedPlatforms || allowedPlatforms.includes(net)) &&
     ((net === 'admob' && reqNetworks !== 'all' && reqNetworks.includes('admob')) ||
       !sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&

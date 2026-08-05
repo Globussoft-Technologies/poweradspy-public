@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 
 export const ADMOB_FRONTEND_ENABLED =
-    String(import.meta.env.VITE_ENABLE_ADMOB ?? 'true').toLowerCase() === 'true';
+    String(import.meta.env.VITE_ENABLE_ADMOB ?? 'false').toLowerCase() === 'true';
 
 export const PLATFORMS = [
     { id: 'Facebook',  label: 'FB',  Icon: Facebook,      color: 'text-blue-400',   activeBg: 'rgba(59,130,246,0.22)',  activeBorder: 'rgba(59,130,246,0.5)'  },

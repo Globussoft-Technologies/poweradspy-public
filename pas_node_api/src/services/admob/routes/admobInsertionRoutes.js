@@ -5,8 +5,6 @@ const { asyncHandler } = require('../../../middleware/errorHandler');
 const { insertionAuth } = require('../../../middleware/insertionAuth');
 const { insertionEnabled } = require('../../../middleware/insertionEnabled');
 const { authMiddleware } = require('../../../middleware/auth');
-const { planAccessMiddleware } = require('../../../middleware/planAccess');
-const { requireCapability } = require('../../planControl/registries/routeClassification');
 const controller = require('../controllers/admobInsertionController');
 const { searchAds } = require('../controllers/adSearchController');
 
@@ -15,8 +13,6 @@ function createAdmobRoutes(service) {
   router.post(
     '/ads/search',
     authMiddleware,
-    requireCapability('ads.search', { network: () => 'admob' }),
-    planAccessMiddleware,
     asyncHandler(async (req, res) => {
       const result = await searchAds(req, service.db, service.log);
       return res.status(result.code).json(result);

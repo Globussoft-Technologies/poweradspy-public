@@ -43,6 +43,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
 import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setSearchIn, setExactSearch, setActiveTab, setPreviewMode, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
 import { useBrowserHistoryState, coalesceNextHistoryWrite } from './hooks/useBrowserHistoryState';
+import { ADMOB_FRONTEND_ENABLED } from './constants';
 
 // Components
 import Header from "./components/layout/Header";
@@ -78,6 +79,10 @@ import NotificationPermissionPrompt from "./components/layout/NotificationPermis
 import UnsubscribePage from "./components/UnsubscribePage";
 
 const USE_SAMPLE_DATA = false;
+
+const isAdsSearchNetworkAllowed = (allowedNetworks, network) =>
+  (ADMOB_FRONTEND_ENABLED && normalizePlanNetwork(network) === 'admob') ||
+  isPlanNetworkAllowed(allowedNetworks, network);
 
 // Maps API body keys (from restrictedFilters response) → SDUI filterValues keys
 // Mirrors the pick() logic in api.js so we can clear the right SDUI state entries
@@ -745,6 +750,15 @@ const App = () => {
     () => resolveAdsSearchAllowedNetworks(entitlements, planAccess),
     [entitlements, planAccess],
   );
+  const adsAllowedPlatforms = useMemo(() => {
+    if (!Array.isArray(planAllowedPlatforms) || !ADMOB_FRONTEND_ENABLED) {
+      return planAllowedPlatforms;
+    }
+    if (planAllowedPlatforms.some((network) => normalizePlanNetwork(network) === 'admob')) {
+      return planAllowedPlatforms;
+    }
+    return [...planAllowedPlatforms, 'admob'];
+  }, [planAllowedPlatforms]);
   const planAllowedPlatformKey = Array.isArray(planAllowedPlatforms)
     ? planAllowedPlatforms.join(',')
     : 'unresolved';
@@ -762,7 +776,7 @@ const App = () => {
     // Only hide tabs for amember custom plan users with explicit platform restrictions.
     // Regular plan-tier restrictions still show all tabs (clicking restricted ones opens upgrade modal).
     if (planAccess?.customPlatformRestriction && Array.isArray(planAllowedPlatforms)) {
-      return allOpts.filter((o) => isPlanNetworkAllowed(planAllowedPlatforms, o.value || o.label));
+      return allOpts.filter((o) => isAdsSearchNetworkAllowed(planAllowedPlatforms, o.value || o.label));
     }
     return allOpts;
   }, [platformFilter, planAccess?.customPlatformRestriction, planAllowedPlatforms]);
@@ -856,7 +870,7 @@ const App = () => {
     if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", {})) return;
     dispatch(setSpecificPlatforms([]));
     const permitted = Array.isArray(planAllowedPlatforms)
-      ? allPlatformValues.filter((network) => isPlanNetworkAllowed(planAllowedPlatforms, network))
+      ? allPlatformValues.filter((network) => isAdsSearchNetworkAllowed(planAllowedPlatforms, network))
       : allPlatformValues;
     sdui.setActivePlatforms(permitted);
     if (!guest?.isPublicLanding) fetchPlanAccess('all').then(data => { if (data) setPlanAccess(data); }).catch(() => {});
@@ -867,7 +881,7 @@ const App = () => {
     const normalizedPlatform = normalizePlanNetwork(platformValue);
     if (
       Array.isArray(planAllowedPlatforms) &&
-      !isPlanNetworkAllowed(planAllowedPlatforms, normalizedPlatform)
+      !isAdsSearchNetworkAllowed(planAllowedPlatforms, normalizedPlatform)
     ) {
       dispatch(openModal('isPricingModalOpen'));
       return;
@@ -881,7 +895,7 @@ const App = () => {
     if (newSpecific.length === 0) {
       dispatch(setSpecificPlatforms([]));
       const permitted = Array.isArray(planAllowedPlatforms)
-        ? allPlatformValues.filter((network) => isPlanNetworkAllowed(planAllowedPlatforms, network))
+        ? allPlatformValues.filter((network) => isAdsSearchNetworkAllowed(planAllowedPlatforms, network))
         : allPlatformValues;
       sdui.setActivePlatforms(permitted);
       if (!guest?.isPublicLanding) fetchPlanAccess('all').then(data => { if (data) setPlanAccess(data); }).catch(() => {});
@@ -1204,7 +1218,7 @@ const App = () => {
         // per-platform field gating is handled inside buildSearchPayload via platformSupports,
         // so all selected platforms are always queried and unsupported filter fields are sent as 'NA'.
         const permittedPlatforms = Array.isArray(planAllowedPlatforms)
-          ? sdui.activePlatforms.filter((network) => isPlanNetworkAllowed(planAllowedPlatforms, network))
+          ? sdui.activePlatforms.filter((network) => isAdsSearchNetworkAllowed(planAllowedPlatforms, network))
           : sdui.activePlatforms;
 
         // A persisted/deep-linked selection can predate the current published
@@ -1869,7 +1883,7 @@ const App = () => {
   const handleExportAll = useCallback(async () => {
     try {
       const permittedPlatforms = Array.isArray(planAllowedPlatforms)
-        ? sdui.effectivePlatforms.filter((network) => isPlanNetworkAllowed(planAllowedPlatforms, network))
+        ? sdui.effectivePlatforms.filter((network) => isAdsSearchNetworkAllowed(planAllowedPlatforms, network))
         : sdui.effectivePlatforms;
       const _fv = sdui.filterValues || {};
       const _ok = (v) => v && v !== 'NA' && !(Array.isArray(v) && (v.length === 0 || v.every(x => x === 'NA' || x === '' || x == null)));
@@ -2018,7 +2032,7 @@ const App = () => {
         specificPlatforms={ui.specificPlatforms}
         setSpecificPlatforms={(val) => dispatch(setSpecificPlatforms(val))}
         platformOptions={platformOptions}
-        allowedPlatforms={planAllowedPlatforms}
+        allowedPlatforms={adsAllowedPlatforms}
         sortTabs={sortTabs}
         isAllActive={isAllActive}
         handleAllClick={handleAllClick}
@@ -2065,7 +2079,7 @@ const App = () => {
           keywordExplorerEnabled={GOOGLE_INTEL_ON}
           guest={guest}
           isLoggedIn={!guest?.isRestricted}
-          allowedPlatforms={planAllowedPlatforms}
+          allowedPlatforms={adsAllowedPlatforms}
           showSavedAdsPage={ui.showSavedAdsPage}
           onShowSavedAdsPage={() => {
             const next = !ui.showSavedAdsPage;
@@ -2156,8 +2170,9 @@ const App = () => {
         ) : ui.showSavedAdsPage ? (
           <SavedAdsPage
             sdui={sdui}
-            allowedPlatforms={(planAllowedPlatforms || []).filter(
+            allowedPlatforms={(adsAllowedPlatforms || []).filter(
               (network) =>
+                normalizePlanNetwork(network) === 'admob' ||
                 !entitlements ||
                 (
                   canUseCapabilityOnNetwork('ads.search', network) &&
@@ -2224,7 +2239,7 @@ const App = () => {
               setError(null);
               setPage(0);
             }}
-            allowedPlatforms={planAllowedPlatforms}
+            allowedPlatforms={adsAllowedPlatforms}
             onClearAll={() => {
               if (sdui.clearAll) sdui.clearAll();
               dispatch(setSearchQuery(""));

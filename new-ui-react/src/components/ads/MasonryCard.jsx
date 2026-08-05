@@ -58,6 +58,7 @@ import rdIcon from "../../assets/rd.png";
 import quoraIcon from "../../assets/quora.png";
 import pinterestIcon from "../../assets/pinterest.png";
 import tiktokIcon from "../../assets/tiktoklogo.jpg";
+import admobIcon from "../../assets/admob.svg";
 import he from "he";
 
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
@@ -164,7 +165,7 @@ const PLATFORM_ICONS = {
   quora: quoraIcon,
   pinterest: pinterestIcon,
   tiktok: tiktokIcon,
-  admob: "/admob.svg",
+  admob: admobIcon,
 };
 
 const AD_TYPE_ICONS = {

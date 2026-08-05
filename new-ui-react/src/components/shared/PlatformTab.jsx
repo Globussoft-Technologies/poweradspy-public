@@ -10,6 +10,7 @@ import rdIcon from "../../assets/rd.png";
 import quoraIcon from "../../assets/quora.png";
 import pinterestIcon from "../../assets/pinterest.png";
 import tiktokIcon from "../../assets/tiktoklogo.jpg";
+import admobIcon from "../../assets/admob.svg";
 
 const PLATFORM_ASSET_MAP = {
   facebook: fbIcon,
@@ -33,6 +34,7 @@ const PLATFORM_ASSET_MAP = {
   pt: pinterestIcon,
   tiktok: tiktokIcon,
   tt: tiktokIcon,
+  admob: admobIcon,
 };
 
 const PLATFORM_FULL_NAMES = {
@@ -57,6 +59,7 @@ const PLATFORM_FULL_NAMES = {
   pinterest: "Pinterest",
   tt: "TikTok",
   tiktok: "TikTok",
+  admob: "AdMob",
   all: "All Platforms",
 };
 

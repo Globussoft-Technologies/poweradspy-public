@@ -126,11 +126,6 @@ const RESTRUCTURE_2026_PLANS = [
   },
 ];
 
-// AdMob is temporarily included in every plan generation by default.
-for (const plan of [...LEGACY_PLANS, ...RESTRUCTURE_2026_PLANS]) {
-  if (!plan.platforms.includes('AdMob')) plan.platforms.push('AdMob');
-}
-
 const CATALOGS = {
   legacy: LEGACY_PLANS,
   '2026-restructure': RESTRUCTURE_2026_PLANS,

@@ -259,11 +259,7 @@ const AdFilterBar = ({
       <div
         className={`flex items-center min-w-[120px] ${!showPlatformsOnMobile ? "hidden md:flex" : "flex"} ${!hasActiveFilter ? "flex-1 2xl:flex-initial" : ""}`}
       >
-        <div className={`flex items-center gap-0.5 p-1 bg-theme-card rounded-xl border border-theme-border overflow-x-auto hide-scrollbar ${
-          !hasActiveFilter
-            ? "w-full max-w-[600px] 2xl:w-auto"
-            : `max-w-[200px] sm:max-w-[500px] ${isScrolled ? "2xl:max-w-none" : "max-w-[400px] sm:max-w-[45vw] lg:max-w-[50vw] xl:max-w-none"}`
-        }`}>
+        <div className="flex w-full max-w-[760px] items-center gap-0.5 overflow-x-auto rounded-xl border border-theme-border bg-theme-card p-1 hide-scrollbar 2xl:w-auto">
           <PlatformTab
             label="All"
             active={isAllActive}
