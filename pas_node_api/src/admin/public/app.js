@@ -1061,7 +1061,9 @@ const SDUI_FILTER_TYPES = [
 ];
 const SDUI_DISPLAY_MODES = ['input','tab_toggle','icon_pill','dropdown','accordion','inline'];
 const SDUI_ICON_TYPES    = ['svg','url','none'];
-const SDUI_PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok'];
+// Keep this list aligned with supported platform-selector values so the matrix
+// editor can display and edit every network, including AdMob.
+const SDUI_PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok','admob'];
 // Keep the AI category editor stable: nested_multiselect must survive edit/re-render cycles.
 const SDUI_TYPES_WITH_OPTS = ['icon_toggle','checkbox','radio','segmented_control','dropdown_single','dropdown_multi','chip_multi_select','nested_select','nested_multiselect','date_preset','combobox'];
 const SDUI_INPUT_TYPES   = ['text_input','autocomplete'];
@@ -1823,6 +1825,9 @@ function sduiApplyJson() {
     parsed._id = sduiEditDoc._id;
     parsed.config_type = sduiEditDoc.config_type;
     sduiEditDoc = parsed;
+    // Keep the matrix-specific draft consistent with raw JSON edits. Without
+    // this, review replaces the JSON value with the stale state from modal open.
+    sduiInitPlatformMatrixState(sduiEditDoc);
     errEl.style.display = 'none';
     sduiRenderIssueBox('sdui-json-issues', sduiValidateDocDetailed(sduiEditDoc), 'Fix these fields before saving the document.');
     showToast('JSON applied — switch tabs to see reflected values', 'success');
