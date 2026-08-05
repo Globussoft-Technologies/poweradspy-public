@@ -223,7 +223,7 @@ var FILTER_TYPES = [
 var DISPLAY_MODES = ['input','tab_toggle','icon_pill','dropdown','accordion','inline'];
 var ICON_TYPES    = ['svg','url','none'];
 var CONFIG_TYPES  = ['searchbar','navbar','sidebar'];
-var PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok'];
+var PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok','admob'];
 // Preserve nested category editing in the admin UI when sibling AI filters are removed.
 var TYPES_WITH_OPTS = ['icon_toggle','checkbox','radio','segmented_control','dropdown_single','dropdown_multi','chip_multi_select','nested_select','nested_multiselect','date_preset','combobox'];
 var RANGE_TYPES   = ['range_slider'];

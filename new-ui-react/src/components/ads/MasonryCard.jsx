@@ -164,6 +164,7 @@ const PLATFORM_ICONS = {
   quora: quoraIcon,
   pinterest: pinterestIcon,
   tiktok: tiktokIcon,
+  admob: "/admob.svg",
 };
 
 const AD_TYPE_ICONS = {
@@ -254,6 +255,7 @@ const MasonryCard = ({
   guest,
 }) => {
   const platform = String(ad.network || "").toLowerCase();
+  const isAdmob = platform === "admob";
   // Network shown on the corner badge. YouTube DISPLAY ads surfaced under GDN
   // carry badgeNetwork:'gdn' so they show the GDN badge (while still routing to
   // YouTube via ad.network).
@@ -273,7 +275,7 @@ const MasonryCard = ({
     renderTypeLower === "native_ad";
   const isBannerAd = renderTypeLower === "banner";
   const isTextImageAd = renderTypeLower === "text-image";
-  const isActive = (ad.status || "").toLowerCase() === "active";
+  const isActive = String(ad.status ?? "").toLowerCase() === "active";
   const hasMediaOverlay = !isTextOnlyAd && !isBannerAd && !isTextImageAd;
 
   // In light theme the card surface flips to white (index.css remaps bg-[#0f111a]),
@@ -599,21 +601,67 @@ const MasonryCard = ({
           className="relative overflow-hidden flex items-center justify-center group/carousel bg-[#0a0a0a]"
           style={lockedHeight ? { height: lockedHeight } : { minHeight: 220 }}
         >
-          {isBannerAd ? (
+          {isAdmob && (!currentImg || imgError || ad.previewUnavailable) ? (
             <div className="w-full flex flex-col items-center justify-center p-6 bg-gradient-to-br from-indigo-950/40 to-slate-900/40 min-h-[240px]">
-              <p className="text-[13px] font-bold text-white/90 text-center line-clamp-3 mb-2">
-                {ad.subtitle ||
-                  ad.newsfeed_description ||
-                  ad.newsfeeddescription ||
-                  ""}
-              </p>
-              <p className="text-[12px] text-zinc-300 text-center line-clamp-4 mb-2">
-                {ad.adText || ""}
-              </p>
-              <p className="text-[11px] font-medium text-zinc-400 text-center line-clamp-1">
-                {currentTitle || ad.ad_title || ad.title || ""}
-              </p>
+              {(ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription) && (
+                <p className="text-[13px] font-bold text-white/90 text-center line-clamp-3 mb-2">
+                  {ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription}
+                </p>
+              )}
+              {ad.adText && (
+                <p className="text-[12px] text-zinc-300 text-center line-clamp-4 mb-2">
+                  {ad.adText}
+                </p>
+              )}
+              {(currentTitle || ad.ad_title || ad.title) && (
+                <p className="text-[11px] font-medium text-zinc-400 text-center line-clamp-1">
+                  {currentTitle || ad.ad_title || ad.title}
+                </p>
+              )}
             </div>
+          ) : isBannerAd ? (
+            currentImg && !imgError ? (
+              <div className="relative w-full min-h-[240px] overflow-hidden bg-zinc-950">
+                <img
+                  src={currentImg}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-2xl"
+                />
+                <img
+                  key={`${currentImg}_${imgRetryCount}`}
+                  src={currentImg}
+                  alt={currentTitle || "Banner ad"}
+                  decoding="async"
+                  onLoad={handleImgLoad}
+                  onError={handleImgError}
+                  className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ${
+                    isImageLoading ? "opacity-0" : "opacity-100"
+                  }`}
+                />
+                {isImageLoading && (
+                  <div className="absolute inset-0 media-shimmer pointer-events-none" />
+                )}
+              </div>
+            ) : (
+              <div className="w-full flex flex-col items-center justify-center p-6 bg-gradient-to-br from-indigo-950/40 to-slate-900/40 min-h-[240px]">
+                {(ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription) && (
+                  <p className="text-[13px] font-bold text-white/90 text-center line-clamp-3 mb-2">
+                    {ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription}
+                  </p>
+                )}
+                {ad.adText && (
+                  <p className="text-[12px] text-zinc-300 text-center line-clamp-4 mb-2">
+                    {ad.adText}
+                  </p>
+                )}
+                {(currentTitle || ad.ad_title || ad.title) && (
+                  <p className="text-[11px] font-medium text-zinc-400 text-center line-clamp-1">
+                    {currentTitle || ad.ad_title || ad.title}
+                  </p>
+                )}
+              </div>
+            )
           ) : isTextOnlyAd ? (
             platform === "google" ? (
               // Google Search ad → SERP-style listing: Sponsored chip, destination
@@ -1054,6 +1102,7 @@ const MasonryCard = ({
         <div className="px-4 py-3.5 flex flex-col gap-3 flex-1">
           {/* Advertiser row */}
           <div className="flex items-start justify-between gap-3">
+            {ad.advertiser && (
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
               <div className="relative flex-shrink-0">
                 {ad.advertiserImage &&
@@ -1131,6 +1180,7 @@ const MasonryCard = ({
                 </div>
               </div>
             </div>
+            )}
 
             {/* Star rating pill — popularity is derived from impressions +
                 engagement (see getStarRating in constants/index.js). */}

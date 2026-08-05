@@ -63,17 +63,9 @@ function uploadedMultimediaPaths(result) {
 }
 
 function hasTranslationContent(translation) {
-  return ['title', 'text', 'newsfeed_description', 'post_owner_name'].some((field) =>
+  return ['title', 'text', 'newsfeed_description'].some((field) =>
     typeof translation?.[field] === 'string' && translation[field].trim() !== ''
   );
-}
-
-function translatedPostOwnerName(postOwner, translation) {
-  if (!postOwner) return null;
-  const translated = translation?.post_owner_name;
-  return typeof translated === 'string' && translated.trim() !== ''
-    ? translated.trim()
-    : postOwner;
 }
 
 function earlierSql(left, right) {
@@ -153,14 +145,12 @@ async function processTransparencyAd(payload, ctx) {
   });
   trace('TRANSLATION_API_REQUEST', {
     endpoint_configured: Boolean(config.insertion.api.translationUrl),
-    post_owner: data.post_owner || '',
     title: data.ad_title || '',
     text: data.ad_text || '',
     newsfeed_description: '',
   });
   const translationResult = await api.translate({
     call_to_action: '',
-    post_owner_name: data.post_owner || '',
     text: data.ad_text || '',
     title: data.ad_title || '',
     newsfeed_description: '',
@@ -175,60 +165,13 @@ async function processTransparencyAd(payload, ctx) {
       hint: 'Check LANGUAGE_TRANSLATION_API, or set insertion.api.translationRequired=false only for an intentional best-effort environment.',
     });
   }
-  let rawTranslation = translationResult.ok ? translationResult.data : null;
-  const ownerNeedsTranslation = Boolean(
-    data.post_owner && /[^\x00-\x7F]/.test(data.post_owner)
-  );
-  let ownerTranslationError = null;
-  // The shared translation endpoint currently accepts post_owner_name but some
-  // deployments omit that field from the response. For non-ASCII advertiser
-  // names, retry through the endpoint's supported `text` field and merge only
-  // that translated value. Keep the creative's language detection from the
-  // primary request; the advertiser name must not change the ad language.
-  if (
-    translationResult.ok &&
-    ownerNeedsTranslation &&
-    !(typeof rawTranslation?.post_owner_name === 'string' && rawTranslation.post_owner_name.trim())
-  ) {
-    const ownerTranslationResult = await api.translate({
-      call_to_action: '',
-      text: data.post_owner,
-      title: '',
-      newsfeed_description: '',
-    });
-    const translatedOwner = ownerTranslationResult.ok
-      ? ownerTranslationResult.data?.text
-      : null;
-    if (typeof translatedOwner === 'string' && translatedOwner.trim()) {
-      rawTranslation = {
-        ...(rawTranslation || {}),
-        post_owner_name: translatedOwner.trim(),
-      };
-    } else {
-      ownerTranslationError = ownerTranslationResult.ok
-        ? 'translation API returned an empty post-owner translation'
-        : ownerTranslationResult.error || 'post-owner translation failed';
-    }
-  }
-  const resolvedPostOwner = typeof rawTranslation?.post_owner_name === 'string'
-    ? rawTranslation.post_owner_name.trim()
-    : '';
-  if (
-    ownerNeedsTranslation &&
-    config.insertion.api.translationRequired &&
-    (!resolvedPostOwner || resolvedPostOwner === data.post_owner.trim())
-  ) {
-    return serverError(503, 'The advertiser name could not be translated, so the ad was not saved.', {
-      error: ownerTranslationError || 'translation API did not return a translated post_owner_name',
-      hint: 'The creative language remains based on ad_title/ad_text; post_owner must be translated independently.',
-    });
-  }
+  const rawTranslation = translationResult.ok ? translationResult.data : null;
   const translation = hasTranslationContent(rawTranslation) ? rawTranslation : null;
   const languageShouldUpdate = translationResult.ok;
   const translationForSql = translationResult.ok
     ? (translation || { title: '', text: '', newsfeed_description: '' })
     : null;
-  const postOwnerNameForSearch = translatedPostOwnerName(data.post_owner, translation);
+  const postOwnerNameForSearch = data.post_owner || (!existing ? data.advertiser_id : null);
   const translationEvent = translation
     ? 'TRANSLATION_API_SUCCEEDED'
     : translationResult.ok
@@ -243,7 +186,7 @@ async function processTransparencyAd(payload, ctx) {
     translated_title: translation?.title ?? null,
     translated_text: translation?.text ?? null,
     translated_newsfeed_description: translation?.newsfeed_description ?? null,
-    translated_post_owner: postOwnerNameForSearch,
+    post_owner: postOwnerNameForSearch,
     error: translationResult.ok ? null : translationResult.error,
   });
   try {

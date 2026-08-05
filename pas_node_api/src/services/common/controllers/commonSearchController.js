@@ -13,6 +13,7 @@ const { searchAds: qrSearchAds }  = require('../../quora/controllers/adSearchCon
 const { searchAds: pinSearchAds } = require('../../pinterest/controllers/adSearchController');
 const { searchAds: googSearchAds } = require('../../google/controllers/adSearchController');
 const { searchAds: ttSearchAds }   = require('../../tiktok/controllers/adSearchController');
+const { searchAds: admobSearchAds } = require('../../admob/controllers/adSearchController');
 const { getClientIp, getLocation, detectCountry } = require('../../../utils/geoip');
 const { mergeNetworkResults }        = require('../../../utils/resultMerger');
 const { getApplicableNetworks }      = require('../helpers/filterApplicability');
@@ -41,6 +42,7 @@ const NETWORK_SEARCH = {
   pinterest: pinSearchAds,
   google:    googSearchAds,
   tiktok:    ttSearchAds,
+  admob:     admobSearchAds,
 };
 
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
@@ -140,6 +142,7 @@ async function searchAllNetworks(req, res) {
   const pinService  = serviceRegistry.getService('pinterest');
   const googService = serviceRegistry.getService('google');
   const ttService   = serviceRegistry.getService('tiktok');
+  const admobService = serviceRegistry.getService('admob');
 
   // ── 3. Fire networks in parallel — only plan-allowed + filter-applicable ─────
   // Four layers of restriction (intersected):
@@ -204,7 +207,8 @@ async function searchAllNetworks(req, res) {
   const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
   const isAllowed = (net) =>
     (!allowedPlatforms || allowedPlatforms.includes(net)) &&
-    (!sduiApplicable   || sduiApplicable.includes(net))   &&
+    ((net === 'admob' && reqNetworks !== 'all' && reqNetworks.includes('admob')) ||
+      !sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&
     (!_popularitySortActive || _POPULARITY_NETWORKS.has(net)) &&
     isUserRequested(net);
@@ -235,6 +239,8 @@ async function searchAllNetworks(req, res) {
     allTasks.push(withTimeout(googSearchAds(googleSearchReq, googService.db, googService.log), ms, 'google'));
   if (ttService && isAllowed('tiktok'))
     allTasks.push(withTimeout(ttSearchAds(searchReq, ttService.db, ttService.log), ms, 'tiktok'));
+  if (admobService && isAllowed('admob'))
+    allTasks.push(withTimeout(admobSearchAds(searchReq, admobService.db, admobService.log), ms, 'admob'));
 
   const settled = await Promise.allSettled(allTasks);
 
@@ -245,7 +251,7 @@ async function searchAllNetworks(req, res) {
   // SDUI filter applicability (e.g. `gender` filter → only facebook queried).
   const totals            = {
     facebook: 0, instagram: 0, youtube: 0, gdn: 0, linkedin: 0,
-    native: 0, reddit: 0, quora: 0, pinterest: 0, google: 0, tiktok: 0,
+    native: 0, reddit: 0, quora: 0, pinterest: 0, google: 0, tiktok: 0, admob: 0,
   };
   const networksWithData  = [];   // networks that returned data (for suggestion)
   const networkErrors     = {};
@@ -399,6 +405,7 @@ async function searchAllNetworks(req, res) {
       pinterest: [pinService, pinSearchAds, searchReq],
       google: [googService, googSearchAds, googleSearchReq],
       tiktok: [ttService, ttSearchAds, searchReq],
+      admob: [admobService, admobSearchAds, searchReq],
     };
     const alreadyQueried = new Set(Object.keys(NETWORK_FNS).filter(
       n => isAllowed(n) && NETWORK_FNS[n][0]

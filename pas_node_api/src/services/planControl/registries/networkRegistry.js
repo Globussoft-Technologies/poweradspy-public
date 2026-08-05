@@ -20,6 +20,7 @@
  * @property {'active'|'deprecated'|'planned'} status
  * @property {string[]} aliases           - Alternate IDs that should resolve to this network
  * @property {boolean} supportsGeneralAccess - Can this network appear in general plan access?
+ * @property {boolean} [defaultPlanAccess] - Temporarily available to every active plan
  */
 
 /** @type {NetworkDefinition[]} */
@@ -51,6 +52,14 @@ const NETWORK_DEFINITIONS = [
     status: 'active',
     aliases: ['google_ads'],
     supportsGeneralAccess: true,
+  },
+  {
+    id: 'admob',
+    label: 'AdMob',
+    status: 'active',
+    aliases: ['mob-network', 'mobile_ads'],
+    supportsGeneralAccess: true,
+    defaultPlanAccess: true,
   },
   {
     id: 'gdn',
@@ -113,6 +122,10 @@ const ALL_NETWORK_IDS = NETWORK_DEFINITIONS
 /** Frozen set for O(1) membership checks. */
 const ACTIVE_NETWORK_SET = new Set(ALL_NETWORK_IDS);
 
+const DEFAULT_PLAN_NETWORK_IDS = NETWORK_DEFINITIONS
+  .filter((n) => n.status === 'active' && n.defaultPlanAccess)
+  .map((n) => n.id);
+
 /** Map: any alias or canonical ID → canonical network ID. */
 const _aliasMap = new Map();
 for (const net of NETWORK_DEFINITIONS) {
@@ -169,6 +182,10 @@ function getAllActiveNetworks() {
   return NETWORK_DEFINITIONS.filter((n) => n.status === 'active');
 }
 
+function withDefaultPlanNetworks(networks = []) {
+  return [...new Set([...(Array.isArray(networks) ? networks : []), ...DEFAULT_PLAN_NETWORK_IDS])];
+}
+
 /**
  * Validate an array of network IDs — returns { valid, invalid, resolved }.
  * @param {string[]} ids
@@ -194,9 +211,11 @@ module.exports = {
   NETWORK_DEFINITIONS,
   ALL_NETWORK_IDS,
   ACTIVE_NETWORK_SET,
+  DEFAULT_PLAN_NETWORK_IDS,
   resolveNetworkId,
   getNetworkDefinition,
   isActiveNetwork,
   getAllActiveNetworks,
+  withDefaultPlanNetworks,
   validateNetworkIds,
 };

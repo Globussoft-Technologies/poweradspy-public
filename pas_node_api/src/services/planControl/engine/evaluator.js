@@ -38,6 +38,7 @@ const {
 } = require('./reasonCodes');
 
 const { isRegisteredCapability, getCapability, getParentCapability } = require('../registries/capabilityRegistry');
+const { withDefaultPlanNetworks } = require('../registries/networkRegistry');
 
 /**
  * @typedef {Object} EvaluateInput
@@ -264,7 +265,9 @@ function evaluateEntitlement(input) {
       allowedNetworks = parentDecision.allowedNetworks || [];
     } else {
       // inherit_general — use the family's general network list
-      allowedNetworks = variantPolicy.generalNetworks || familyPolicy?.generalNetworks || [];
+      allowedNetworks = withDefaultPlanNetworks(
+        variantPolicy.generalNetworks || familyPolicy?.generalNetworks || []
+      );
     }
 
     // Intersect with custom plan JWT boundaries if applicable

@@ -153,27 +153,18 @@ describe('Google Transparency pipeline', () => {
     expect(log.info).not.toHaveBeenCalled();
   });
 
-  it('translates a non-ASCII post owner through the text fallback when the primary response omits it', async () => {
+  it('preserves a non-ASCII post owner without translating it or changing creative language', async () => {
     repo.getAd.mockResolvedValue(null);
-    api.translate
-      .mockResolvedValueOnce({
-        ok: true,
-        data: {
-          detected_language: 'en',
-          language_name: 'English',
-          title: '',
-          text: 'English creative text',
-          newsfeed_description: '',
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        data: {
-          detected_language: 'zh',
-          language_name: 'Unknown',
-          text: 'Shenzhen Weile High-tech Co., Ltd. ',
-        },
-      });
+    api.translate.mockResolvedValue({
+      ok: true,
+      data: {
+        detected_language: 'en',
+        language_name: 'English',
+        title: '',
+        text: 'English creative text',
+        newsfeed_description: '',
+      },
+    });
     const elastic = { indexName: 'google_ads_data_v2', index: vi.fn(async () => ({})) };
 
     const out = await processTransparencyAd(payload({
@@ -181,53 +172,26 @@ describe('Google Transparency pipeline', () => {
     }), { db: { sql: {}, elastic }, log });
 
     expect(out).toMatchObject({ code: 200, data: { id: 42 } });
-    expect(api.translate).toHaveBeenCalledTimes(2);
-    expect(api.translate).toHaveBeenNthCalledWith(2, {
+    expect(api.translate).toHaveBeenCalledOnce();
+    expect(api.translate).toHaveBeenCalledWith({
       call_to_action: '',
-      text: '深圳唯乐高科技有限公司',
+      text: 'Text creative',
       title: '',
       newsfeed_description: '',
     });
     expect(repo.ensurePostOwner).toHaveBeenCalledWith(
       expect.anything(),
-      'Shenzhen Weile High-tech Co., Ltd.',
+      '深圳唯乐高科技有限公司',
       true
     );
     expect(repo.ensureLanguage).toHaveBeenCalledWith(expect.anything(), 'en', 'English');
     expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({
-        post_owner_name: 'Shenzhen Weile High-tech Co., Ltd.',
-        post_owner_lower: 'shenzhen weile high-tech co., ltd.',
+        post_owner_name: '深圳唯乐高科技有限公司',
+        post_owner_lower: '深圳唯乐高科技有限公司',
         lang_detect: 'en',
       }),
     }));
-  });
-
-  it('does not commit SQL when a required non-ASCII post owner cannot be translated', async () => {
-    api.translate
-      .mockResolvedValueOnce({
-        ok: true,
-        data: {
-          detected_language: 'en',
-          language_name: 'English',
-          title: '',
-          text: 'English creative text',
-          newsfeed_description: '',
-        },
-      })
-      .mockResolvedValueOnce({ ok: false, error: 'owner translation unavailable' });
-
-    const out = await processTransparencyAd(payload({
-      post_owner: '深圳唯乐高科技有限公司',
-    }), { db: { sql: {}, elastic: null }, log });
-
-    expect(out).toMatchObject({
-      code: 503,
-      status: 'server_error',
-      message: 'The advertiser name could not be translated, so the ad was not saved.',
-      error: 'owner translation unavailable',
-    });
-    expect(repo.withTransaction).not.toHaveBeenCalled();
   });
 
   it('uses the update branch idempotently for an existing creative', async () => {

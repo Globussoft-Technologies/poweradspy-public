@@ -101,7 +101,7 @@ async function planAccessMiddleware(req, res, next) {
       // were added to defaults); explicit 0 = denied (custom plan that didn't purchase this platform).
       const pa = req.user.platformAccess;
       const paLower = Object.fromEntries(Object.entries(pa).map(([k, v]) => [k.toLowerCase(), v]));
-      const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok'];
+      const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'admob', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok'];
       const jwtAllowed = new Set(ALL_PLATFORMS.filter(p => !(p in paLower) || paLower[p] === 1));
 
       // True when the JWT has at least one platform explicitly set to 0 (custom plan with restricted platforms).

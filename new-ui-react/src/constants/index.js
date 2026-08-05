@@ -7,6 +7,9 @@ import {
     Search, Globe, MessageSquare, Heart, Play
 } from 'lucide-react';
 
+export const ADMOB_FRONTEND_ENABLED =
+    String(import.meta.env.VITE_ENABLE_ADMOB ?? 'true').toLowerCase() === 'true';
+
 export const PLATFORMS = [
     { id: 'Facebook',  label: 'FB',  Icon: Facebook,      color: 'text-blue-400',   activeBg: 'rgba(59,130,246,0.22)',  activeBorder: 'rgba(59,130,246,0.5)'  },
     { id: 'Instagram', label: 'IG',  Icon: Instagram,     color: 'text-pink-400',   activeBg: 'rgba(236,72,153,0.22)', activeBorder: 'rgba(236,72,153,0.5)'  },
@@ -17,7 +20,8 @@ export const PLATFORMS = [
     { id: 'Reddit',    label: 'RDT', Icon: MessageSquare, color: 'text-orange-400', activeBg: 'rgba(251,146,60,0.22)',  activeBorder: 'rgba(251,146,60,0.5)'  },
     { id: 'Pinterest', label: 'PIN', Icon: Heart,         color: 'text-rose-400',   activeBg: 'rgba(251,113,133,0.22)', activeBorder: 'rgba(251,113,133,0.5)' },
     { id: 'TikTok',    label: 'TT',  Icon: Play,          color: 'text-cyan-400',   activeBg: 'rgba(34,211,238,0.18)',  activeBorder: 'rgba(34,211,238,0.45)' },
-];
+    { id: 'AdMob',     label: 'AdMob', Icon: Globe,       color: 'text-yellow-400', activeBg: 'rgba(251,188,4,0.18)',   activeBorder: 'rgba(251,188,4,0.45)' },
+].filter((platform) => ADMOB_FRONTEND_ENABLED || platform.id.toLowerCase() !== 'admob');
 
 export const AD_CATEGORIES = [
     { id: 'all', label: 'All Ads' },
@@ -133,6 +137,7 @@ export const PLATFORM_ACCENT = {
     reddit:    { border: 'border-orange-500/20',glow: 'shadow-orange-500/5',text: 'text-orange-400',bg: 'bg-orange-500/10' },
     pinterest: { border: 'border-rose-500/20',  glow: 'shadow-rose-500/5',  text: 'text-rose-400',  bg: 'bg-rose-500/10' },
     tiktok:    { border: 'border-cyan-500/20',  glow: 'shadow-cyan-500/5',  text: 'text-cyan-400',  bg: 'bg-cyan-500/10' },
+    admob:     { border: 'border-yellow-500/20', glow: 'shadow-yellow-500/5', text: 'text-yellow-400', bg: 'bg-yellow-500/10' },
 };
 
 // ─── Star Rating Conversion ──────────────────────────────────────────────────

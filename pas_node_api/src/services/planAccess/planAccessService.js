@@ -230,7 +230,8 @@ function getAllowedPlatforms(planId, config) {
       allowed.push(platform);
     }
   }
-  return allowed;
+  const { withDefaultPlanNetworks } = require('../planControl/registries/networkRegistry');
+  return withDefaultPlanNetworks(allowed);
 }
 
 /**

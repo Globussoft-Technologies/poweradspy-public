@@ -17,6 +17,7 @@ const logger = require('../logger');
 const { parseSchedule } = require('./parseSchedule');
 const { runActiveCountSnapshot } = require('./activeCountSnapshotJob');
 const { runKeywordStatsRefresh } = require('../services/google/jobs/refreshKeywordStats');
+const { runAdmobEsOutbox } = require('../services/admob/jobs/admobEsOutboxJob');
 
 const log = logger.createChild('cron-manager');
 
@@ -35,6 +36,7 @@ const REGISTRY = {
       // If an operator explicitly turns it off, they can set false in config.
       recomputeScores: jobCfg.recomputeScores !== false,
     }),
+  admobEsOutbox: (jobCfg) => runAdmobEsOutbox(jobCfg),
 };
 
 /**

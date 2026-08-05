@@ -54,6 +54,7 @@ const NAS_KEY_PREFIX = {
   pinterest: 'pint',
   reddit: 'reddit',
   google: 'gt',
+  admob: 'admob',
   gdn: 'gdn',
   native: 'native',
   tiktok: 'tiktok',

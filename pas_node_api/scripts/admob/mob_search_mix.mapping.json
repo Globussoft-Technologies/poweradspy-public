@@ -1,0 +1,65 @@
+{
+  "settings": {
+    "number_of_shards": 2,
+    "number_of_replicas": 1,
+    "refresh_interval": "30s",
+    "analysis": {
+      "normalizer": {
+        "mob_lowercase": {
+          "type": "custom",
+          "filter": ["lowercase", "asciifolding"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "doc": {
+      "dynamic": "strict",
+      "properties": {
+        "id": { "type": "long" },
+        "ad_id": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "post_owner_id": { "type": "long" },
+        "post_owner": { "type": "text", "fields": { "keyword": { "type": "keyword", "normalizer": "mob_lowercase" } } },
+        "post_owner_image": { "type": "keyword", "index": false },
+        "type": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "platform": { "type": "short" },
+        "network": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "source": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "ad_title": { "type": "text" },
+        "ad_text": { "type": "text" },
+        "newsfeed_description": { "type": "text" },
+        "ad_image_size": { "type": "keyword" },
+        "ad_number_position": { "type": "short" },
+        "ad_position": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "ad_sub_position": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "city": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "ip_address": { "type": "ip", "ignore_malformed": true },
+        "first_seen": { "type": "date" },
+        "last_seen": { "type": "date" },
+        "post_date": { "type": "date", "format": "strict_date_optional_time||epoch_second||epoch_millis" },
+        "system_id": { "type": "keyword" },
+        "version": { "type": "keyword" },
+        "status": { "type": "byte" },
+        "ad_url": { "type": "keyword", "index": false },
+        "destination_url": { "type": "keyword", "index": false },
+        "redirect_url": { "type": "keyword", "index": false },
+        "placement_url": { "type": "keyword", "index": false },
+        "target_site": { "type": "keyword", "index": false },
+        "destination_host": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "image_url_original": { "type": "keyword", "index": false },
+        "image_url": { "type": "keyword", "index": false },
+        "country": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "state": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "sub_network": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "source_app": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "source_app_pkg": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "source_app_count": { "type": "long" },
+        "country_details": { "type": "nested", "properties": { "name": { "type": "keyword", "normalizer": "mob_lowercase" }, "appearance_count": { "type": "long" }, "first_seen": { "type": "date" }, "last_seen": { "type": "date" } } },
+        "state_details": { "type": "nested", "properties": { "name": { "type": "keyword", "normalizer": "mob_lowercase" }, "appearance_count": { "type": "long" }, "first_seen": { "type": "date" }, "last_seen": { "type": "date" } } },
+        "sub_network_details": { "type": "nested", "properties": { "name": { "type": "keyword", "normalizer": "mob_lowercase" }, "appearance_count": { "type": "long" }, "first_seen": { "type": "date" }, "last_seen": { "type": "date" } } },
+        "source_app_details": { "type": "nested", "properties": { "name": { "type": "keyword", "normalizer": "mob_lowercase" }, "package": { "type": "keyword", "normalizer": "mob_lowercase" }, "appearance_count": { "type": "long" }, "first_seen": { "type": "date" }, "last_seen": { "type": "date" } } },
+        "indexed_at": { "type": "date" }
+      }
+    }
+  }
+}

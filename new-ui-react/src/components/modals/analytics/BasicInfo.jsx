@@ -23,6 +23,7 @@ const BasicInfo = ({
   tiktokAnalytics,
   ad,
   isTransparency = false,
+  hideEmpty = false,
 }) => {
   const { theme } = useTheme();
   const isLight = theme === "light";
@@ -331,9 +332,17 @@ const BasicInfo = ({
     ];
   }
 
-  const hasOutgoingData = sourceUrl || stepRedirect || targetUrl;
+  const outgoingRows = [
+    { label: "SOURCE URL", icon: Globe, value: sourceUrl, href: sourceUrl },
+    { label: "STEP REDIRECT", icon: RefreshCw, value: stepRedirect, href: stepRedirect },
+    { label: "TARGET URL", icon: Target, value: targetUrl, href: targetUrl },
+  ];
+  const visibleOutgoingRows = hideEmpty
+    ? outgoingRows.filter((row) => Boolean(String(row.value || "").trim()))
+    : outgoingRows;
+  const hasOutgoingData = visibleOutgoingRows.some((row) => row.value);
   const showOutgoingLinks = !hideOutgoingLinks.includes(p) && hasOutgoingData;
-  const visibleBasicRows = isTransparency
+  const visibleBasicRows = isTransparency || hideEmpty
     ? basicRows.filter((row) => Boolean(String(row.value || "").trim()))
     : basicRows;
 
@@ -460,26 +469,7 @@ const BasicInfo = ({
           <div
             className={`rounded-xl overflow-hidden border border-l-2 border-l-[#3759a3]/40 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
           >
-            {[
-              {
-                label: "SOURCE URL",
-                icon: Globe,
-                value: sourceUrl,
-                href: sourceUrl,
-              },
-              {
-                label: "STEP REDIRECT",
-                icon: RefreshCw,
-                value: stepRedirect,
-                href: stepRedirect,
-              },
-              {
-                label: "TARGET URL",
-                icon: Target,
-                value: targetUrl,
-                href: targetUrl,
-              },
-            ].map((url, i, arr) => (
+            {visibleOutgoingRows.map((url, i, arr) => (
               <div
                 key={i}
                 className={`flex items-center gap-3 px-4 py-3 transition-all group ${i < arr.length - 1 ? (isLight ? "border-b border-gray-200" : "border-b border-white/5") : ""} ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}

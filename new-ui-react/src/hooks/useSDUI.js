@@ -1,9 +1,40 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchSDUIConfig } from '../services/sduiService';
 import { useSDUIPolling } from './useSDUIPolling';
+import { ADMOB_FRONTEND_ENABLED } from '../constants';
 
 const LS_FILTERS_KEY = 'sdui.filterValues';
 const LS_PLATFORMS_KEY = 'sdui.activePlatforms';
+
+const withoutDisabledPlatforms = (platforms) => {
+    const values = Array.isArray(platforms) ? platforms : [];
+    if (ADMOB_FRONTEND_ENABLED) return values;
+    return values.filter(platform => String(platform).toLowerCase() !== 'admob');
+};
+
+const withoutDisabledPlatformConfig = (cfg) => {
+    if (ADMOB_FRONTEND_ENABLED || !cfg?.navbar) return cfg;
+    return {
+        ...cfg,
+        navbar: cfg.navbar.map(doc => {
+            if (doc?._id !== 'platforms') return doc;
+            return {
+                ...doc,
+                filters: (doc.filters || []).map(filter => {
+                    const matrix = { ...(filter.platform_filter_matrix || {}) };
+                    delete matrix.admob;
+                    return {
+                        ...filter,
+                        options: (filter.options || []).filter(
+                            option => String(option?.value).toLowerCase() !== 'admob'
+                        ),
+                        ...(filter.platform_filter_matrix ? { platform_filter_matrix: matrix } : {}),
+                    };
+                }),
+            };
+        }),
+    };
+};
 
 const loadLS = (key, fallback) => {
     try {
@@ -37,7 +68,14 @@ export function useSDUI() {
     const [filterValues, setFilterValues] = useState(() => loadLS(LS_FILTERS_KEY, {}));
 
     // ── Platform state ──────────────────────────────────────────────────────
-    const [activePlatforms, setActivePlatforms] = useState(() => loadLS(LS_PLATFORMS_KEY, []));
+    const [activePlatforms, setActivePlatformsState] = useState(() =>
+        withoutDisabledPlatforms(loadLS(LS_PLATFORMS_KEY, []))
+    );
+    const setActivePlatforms = useCallback((nextValue) => {
+        setActivePlatformsState(previous => withoutDisabledPlatforms(
+            typeof nextValue === 'function' ? nextValue(previous) : nextValue
+        ));
+    }, []);
     const [platformFilterMatrix, setPlatformFilterMatrix] = useState({});``
 
     // Refs to avoid circular deps — always up to date
@@ -49,11 +87,12 @@ export function useSDUI() {
 
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
     const applyConfig = useCallback((cfg) => {
-        setConfig(cfg);
+        const frontendConfig = withoutDisabledPlatformConfig(cfg);
+        setConfig(frontendConfig);
         setError(null);
 
         // Extract platform filter matrix from the platforms navbar document
-        const platformsDoc = cfg?.navbar?.find(d => d._id === 'platforms');
+        const platformsDoc = frontendConfig?.navbar?.find(d => d._id === 'platforms');
         if (platformsDoc) {
             const matrixFilter = platformsDoc.filters?.find(f => f.platform_filter_matrix);
             if (matrixFilter) {
@@ -84,7 +123,7 @@ export function useSDUI() {
 
         // Fallback: if config has no platforms doc, default to all platforms
         if (!platformsDoc && activePlatformsRef.current.length === 0) {
-            setActivePlatforms(['facebook', 'instagram', 'youtube', 'linkedin', 'google', 'native', 'reddit', 'pinterest', 'tiktok']);
+            setActivePlatforms(['facebook', 'instagram', 'youtube', 'linkedin', 'google', 'native', 'reddit', 'pinterest', 'tiktok', 'admob']);
         }
     }, []); // No deps — uses ref for activePlatforms
 

@@ -581,7 +581,15 @@ const AdDetailModal = ({
   const isGoogleTransparency =
     ad.isGoogleTransparency === true ||
     (platform === "google" && Number(ad.platform) === 18);
-  const isActive = (ad.status || "").toLowerCase() === "active";
+  const isAdmob = platform === "admob";
+  const hasDisplayableAdmobValue = (value) => {
+    if (Array.isArray(value)) return value.some(hasDisplayableAdmobValue);
+    if (value === null || value === undefined) return false;
+    const normalized = String(value).trim().toLowerCase();
+    return !["", "-", "--", "—", "na", "n/a", "null", "undefined"].includes(normalized);
+  };
+  const shouldShowDetailValue = (value) => !isAdmob || hasDisplayableAdmobValue(value);
+  const isActive = String(ad.status ?? "").toLowerCase() === "active";
 
   const starRating = ad.popularity ? getStarRating(ad.popularity) : 0;
 
@@ -1020,6 +1028,8 @@ const AdDetailModal = ({
             {/* Advertiser header */}
             <div className="flex items-center gap-1 pr-0">
               {/* <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]' : 'bg-white/20'}`} /> */}
+              {ad.advertiser && (
+                <>
               {ad.advertiserImage ? (
                 <img
                   src={ad.advertiserImage}
@@ -1092,6 +1102,8 @@ const AdDetailModal = ({
                   )}
                 </div>
               </div>
+                </>
+              )}
               <button
                 onClick={() => {
                   if (guest?.showGuestWarning("Please login to save ads")) return;
@@ -1550,7 +1562,7 @@ const AdDetailModal = ({
               </div>
             </div> */}
            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px]">
-  {ad.adType && (
+  {ad.adType && shouldShowDetailValue(ad.adType) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1573,7 +1585,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.adPosition && (
+  {ad.adPosition && shouldShowDetailValue(ad.adPosition) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1596,7 +1608,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.runningDays && platform !== "quora" && (
+  {ad.runningDays && shouldShowDetailValue(ad.runningDays) && platform !== "quora" && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1619,7 +1631,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.date && (
+  {ad.date && shouldShowDetailValue(ad.date) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1642,7 +1654,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.firstSeen && (
+  {ad.firstSeen && shouldShowDetailValue(ad.firstSeen) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1665,7 +1677,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.lastSeen && (
+  {ad.lastSeen && shouldShowDetailValue(ad.lastSeen) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1688,7 +1700,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {(
+  {shouldShowDetailValue(displayLanguage) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1711,7 +1723,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.network && (
+  {ad.network && shouldShowDetailValue(platformDisplayName) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
@@ -1807,7 +1819,7 @@ const AdDetailModal = ({
       </>
     )}
 
-  {(
+  {shouldShowDetailValue(displayedCountryNames) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"

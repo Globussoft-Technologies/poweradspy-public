@@ -12,6 +12,7 @@ const { getLatestPolicy } = require('../storage/storage');
 const { evaluateAllCapabilities } = require('../engine/evaluator');
 const { resolvePlanIdentity } = require('../engine/planIdentityResolver');
 const { getCapabilities } = require('../registries/capabilityRegistry');
+const { withDefaultPlanNetworks } = require('../registries/networkRegistry');
 
 const router = typeof express.Router === 'function'
   ? express.Router()
@@ -61,7 +62,9 @@ router.get('/entitlements', authMiddleware, async (req, res) => {
         policyVersion: policySnapshot?.versionId || null,
         enforcementMode: config.planControl?.enforcementMode || 'enforce',
         // Since generalNetworks are on the family policy, we extract them from the snapshot
-        generalNetworks: policySnapshot?.snapshot?.policies?.[planIdentity?.familyId]?.generalNetworks || [],
+        generalNetworks: withDefaultPlanNetworks(
+          policySnapshot?.snapshot?.policies?.[planIdentity?.familyId]?.generalNetworks || []
+        ),
         capabilities: evaluations,
       },
     });

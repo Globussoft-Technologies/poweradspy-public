@@ -3,6 +3,35 @@
 const crypto = require('crypto');
 const { getDB } = require('../db');
 const { buildSDUIDocuments } = require('../seed/seedData');
+const networks = require('../../../config/networks');
+
+const ADMOB_PLATFORM_OPTION = {
+  _id: 'admob',
+  filter_id: 'platform_selector',
+  label: 'AdMob',
+  value: 'admob',
+  rank: 12,
+  selected_by_default: true,
+  icon_url: '/admob.svg',
+  icon_type: 'url',
+};
+
+function includeAdmobPlatform(docs) {
+  const platforms = docs.find((doc) => doc?._id === 'platforms');
+  const selector = platforms?.filters?.find((filter) => filter?._id === 'platform_selector');
+  if (!selector) return docs;
+  selector.options ||= [];
+  if (!networks.admob?.enabled) {
+    selector.options = selector.options.filter((option) => option?.value !== 'admob');
+    return docs;
+  }
+  if (!selector.options.some((option) => option?.value === 'admob')) {
+    selector.options.push({ ...ADMOB_PLATFORM_OPTION });
+  }
+  selector.platform_filter_matrix ||= {};
+  selector.platform_filter_matrix.admob ||= ['ad_type', 'country', 'state', 'source'];
+  return docs;
+}
 
 /**
  * GET /api/sdui/config
@@ -20,7 +49,7 @@ async function getSDUIConfig() {
   }
 
   // Use MongoDB as the source of truth. Fall back to seed only if DB is empty.
-  const docs = dbDocs.length > 0 ? dbDocs : buildSDUIDocuments();
+  const docs = includeAdmobPlatform(dbDocs.length > 0 ? dbDocs : buildSDUIDocuments());
 
   // Pre-seed known types, but also accept any new config_type dynamically
   const result = {

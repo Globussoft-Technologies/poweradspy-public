@@ -1,5 +1,6 @@
 import React from "react";
 import SDUIIcon from "../sdui/SDUIIcon";
+import { ADMOB_FRONTEND_ENABLED } from "../../constants";
 
 /**
  * PlatformToggle — Icon-based toggle buttons for selecting platforms.
@@ -34,7 +35,9 @@ const PlatformToggle = ({
         </span>
       )}
       <div className="flex items-center gap-1 flex-wrap">
-        {options.map((opt) => {
+        {options
+          .filter((opt) => ADMOB_FRONTEND_ENABLED || String(opt?.value).toLowerCase() !== "admob")
+          .map((opt) => {
           const value = opt.value ?? opt.label ?? opt;
           const optLabel = opt.label ?? opt;
           const isActive = selected.includes(value);
@@ -63,7 +66,7 @@ const PlatformToggle = ({
               <span>{optLabel}</span>
             </button>
           );
-        })}
+          })}
       </div>
     </div>
   );

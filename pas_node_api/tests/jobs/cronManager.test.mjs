@@ -24,7 +24,12 @@ const configPath = require.resolve("../../src/config");
 let configExports = { crons: { timezone: "Asia/Kolkata", jobs: {} } };
 require.cache[configPath] = {
   id: configPath, filename: configPath, loaded: true,
-  get exports() { return configExports; },
+  get exports() {
+    return {
+      ...configExports,
+      getRawFileConfig: configExports.getRawFileConfig || (() => ({})),
+    };
+  },
   set exports(v) { configExports = v; },
 };
 
@@ -34,6 +39,20 @@ const runActiveCountSnapshot = vi.fn(async () => ({ date: "x", results: [] }));
 require.cache[jobPath] = {
   id: jobPath, filename: jobPath, loaded: true,
   exports: { runActiveCountSnapshot },
+};
+
+const keywordJobPath = require.resolve("../../src/services/google/jobs/refreshKeywordStats");
+const runKeywordStatsRefresh = vi.fn(async () => ({ processed: 0 }));
+require.cache[keywordJobPath] = {
+  id: keywordJobPath, filename: keywordJobPath, loaded: true,
+  exports: { runKeywordStatsRefresh },
+};
+
+const admobJobPath = require.resolve("../../src/services/admob/jobs/admobEsOutboxJob");
+const runAdmobEsOutbox = vi.fn(async () => ({ processed: 0, indexed: 0, failed: 0 }));
+require.cache[admobJobPath] = {
+  id: admobJobPath, filename: admobJobPath, loaded: true,
+  exports: { runAdmobEsOutbox },
 };
 
 const sutPath = require.resolve("../../src/jobs/cronManager");
@@ -46,6 +65,8 @@ beforeEach(() => {
   cronSchedule.mockClear();
   cronValidate.mockClear();
   runActiveCountSnapshot.mockClear();
+  runKeywordStatsRefresh.mockClear();
+  runAdmobEsOutbox.mockClear();
 });
 
 describe("jobs/cronManager > initConfigCrons", () => {
@@ -79,6 +100,18 @@ describe("jobs/cronManager > initConfigCrons", () => {
     const callback = cronSchedule.mock.calls[0][1];
     await callback();
     expect(runActiveCountSnapshot).toHaveBeenCalledWith({ retentionDays: 90 });
+  });
+
+  it("runs the registered AdMob ES outbox job with its bounded config", async () => {
+    const jobConfig = { enabled: true, schedule: "1 min", batchSize: 25, maxAttempts: 10 };
+    configExports = {
+      crons: { timezone: "Asia/Kolkata", jobs: { admobEsOutbox: jobConfig } },
+    };
+    const { initConfigCrons } = freshSut();
+    initConfigCrons();
+    const callback = cronSchedule.mock.calls[0][1];
+    await callback();
+    expect(runAdmobEsOutbox).toHaveBeenCalledWith(jobConfig);
   });
 
   it("skips a job whose schedule is invalid", () => {

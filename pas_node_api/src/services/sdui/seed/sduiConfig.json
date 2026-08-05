@@ -356,9 +356,25 @@
             "selected_by_default": true,
             "icon_url": "https://img.icons8.com/?size=100&id=12244&format=png",
             "icon_type": "url"
+          },
+          {
+            "_id": "admob",
+            "filter_id": "platform_selector",
+            "label": "AdMob",
+            "value": "admob",
+            "rank": 12,
+            "selected_by_default": true,
+            "icon_url": "/admob.svg",
+            "icon_type": "url"
           }
         ],
         "platform_filter_matrix": {
+          "admob": [
+            "ad_type",
+            "country",
+            "state",
+            "source"
+          ],
           "quora": [
             "category",
             "cta",

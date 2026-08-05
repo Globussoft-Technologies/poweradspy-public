@@ -121,6 +121,8 @@ export function getSDUIFallbackConfig() {
                             { _id: 'p_yt', label: 'YT', value: 'youtube', rank: 3, selected_by_default: false },
                             { _id: 'p_google', label: 'GGL', value: 'google', rank: 4, selected_by_default: false },
                             { _id: 'p_linkedin', label: 'IN', value: 'linkedin', rank: 5, selected_by_default: false },
+                            { _id: 'p_tiktok', label: 'TT', value: 'tiktok', rank: 11, selected_by_default: false },
+                            { _id: 'p_admob', label: 'AdMob', value: 'admob', rank: 12, selected_by_default: false, icon_url: '/admob.svg', icon_type: 'url' },
                         ],
                     },
                 ],

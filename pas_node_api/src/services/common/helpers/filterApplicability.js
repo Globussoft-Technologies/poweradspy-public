@@ -19,7 +19,7 @@ const { getSDUIConfig } = require('../../sdui/services/sduiService');
 // All known network slugs — used as the "no restriction" set
 const ALL_NETWORKS = [
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin',
-  'native', 'reddit', 'quora', 'pinterest', 'google', 'tiktok',
+  'native', 'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
 ];
 
 /**

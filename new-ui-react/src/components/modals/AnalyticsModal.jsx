@@ -1284,6 +1284,8 @@ const AnalyticsModal = ({
     Number(adDetailsData?.platform) === 18;
   const isTikTok =
     normalizePlatformSlug(ad?.network || ad?.platform) === "tiktok";
+  const isAdmob =
+    normalizePlatformSlug(ad?.network || ad?.platform) === "admob";
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -1470,6 +1472,11 @@ const AnalyticsModal = ({
   }
 
   if (!processedAd) return null;
+  const admobCountry = isAdmob
+    ? (processedAd.countries || ad?.countries || [])
+        .map((country) => ({ country: String(country).trim() }))
+        .filter((item) => item.country)
+    : null;
   // For TikTok, media fields (video_cover, video_url) come from the analytics SSE event, not adDetails
   const d = isTikTok
     ? { ...(adDetailsData || {}), ...(tiktokAnalytics || {}), ...(ad || {}) }
@@ -1628,6 +1635,16 @@ const AnalyticsModal = ({
       </div>
     );
   };
+  const hasDisplayableAdmobValue = (value) => {
+    if (Array.isArray(value)) return value.some(hasDisplayableAdmobValue);
+    if (value === null || value === undefined) return false;
+    if (typeof value === "object") return Object.values(value).some(hasDisplayableAdmobValue);
+    const normalized = String(value).trim().toLowerCase();
+    return !["", "-", "--", "—", "na", "n/a", "null", "undefined"].includes(normalized);
+  };
+  const hasAdmobDemographics =
+    hasDisplayableAdmobValue(insights.userData) ||
+    hasDisplayableAdmobValue(insights.advertiserUserData);
   const detailRows = (() => {
     const tt = tiktokAnalytics || {};
     if (isTikTok)
@@ -1927,6 +1944,13 @@ const AnalyticsModal = ({
       ? rows.filter((item) => hasTransparencyDetailValue(item.value))
       : rows;
   })();
+  const visibleDetailRows = detailRows.filter((item) => {
+    if (isAdmob) return hasDisplayableAdmobValue(item.value);
+    return !(
+      ["FUNNEL", "AFFILIATE", "ECOMMERCE PLATFORM", "CATEGORY", "SUB CATEGORY"].includes(item.label) &&
+      item.value === "—"
+    );
+  });
 
   return (
     <div
@@ -2181,7 +2205,7 @@ const AnalyticsModal = ({
             </div>
 
             {/* Ad Details table */}
-            {!isTransparency && <div className="pt-4 mt-4">
+            {!isTransparency && visibleDetailRows.length > 0 && <div className="pt-4 mt-4">
               <h2
                 className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
               >
@@ -2196,7 +2220,7 @@ const AnalyticsModal = ({
                     isLight ? "divide-gray-200" : "divide-white/10"
                   }`}
                 >
-                  {detailRows.filter(item => !(["FUNNEL", "AFFILIATE", "ECOMMERCE PLATFORM", "CATEGORY", "SUB CATEGORY"].includes(item.label) && item.value === "—")).map((item, i, arr) => {
+                  {visibleDetailRows.map((item, i, arr) => {
                     // A lone last item (odd count) stays in its single column so its
                     // label/value keep the same spacing as every other cell, instead of
                     // stretching full-width and slamming the value to the far-right edge.
@@ -2266,6 +2290,7 @@ const AnalyticsModal = ({
               tiktokAnalytics={tiktokAnalytics}
               ad={ad}
               isTransparency={isTransparency}
+              hideEmpty={isAdmob}
             />}
 
             {aiMetaVariableRows.length > 0 && (
@@ -2414,7 +2439,7 @@ const AnalyticsModal = ({
                 targetSiteData={insights.targetSite}
                 isLight={isLight}
               />
-            ) : !isTransparency && !["gdn", "pinterest", "reddit", "linkedin", "youtube", "quora"].includes(
+            ) : !isTransparency && (!isAdmob || hasAdmobDemographics) && !["gdn", "pinterest", "reddit", "linkedin", "youtube", "quora"].includes(
                 ctx.platform,
               ) && !(insightErrors.userData && !insights.advertiserUserData) ? (
               <Demographics
@@ -2429,7 +2454,7 @@ const AnalyticsModal = ({
 
             <CountryAnalytics
               adId={ad?.id}
-              adCountry={insights.country}
+              adCountry={insights.country || admobCountry}
               advertiserCountry={insights.advertiserCountryData}
               platform={ctx.platform}
               network={ctx.platform}

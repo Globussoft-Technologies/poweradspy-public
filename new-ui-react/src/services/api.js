@@ -242,6 +242,30 @@ export const getYoutubeEmbedUrl = (url) => {
 // in `ad_url` is never the right source for in-app playback on those networks.
 export const getVideoEmbedUrl = (url) => getYoutubeEmbedUrl(url);
 
+const BLOCKED_DASHBOARD_MEDIA_RE = /\/(pasimages|pasvideoes|pasvideos|pasimage|pasvideo)\/|bydefault_ads/i;
+
+/**
+ * Returns true when an ad only exposes media that the dashboard must not render.
+ * A valid platform embed is a usable creative even when the stored thumbnail is
+ * the generic `bydefault_ads` placeholder (common for older YouTube records).
+ */
+export const shouldHideAdForBlockedMedia = (ad = {}) => {
+  const mediaUrls = [
+    ad.thumbnail,
+    ad.videoUrl,
+    ad.videoUrlFallback,
+    ...(Array.isArray(ad.carouselMedia) ? ad.carouselMedia : []),
+  ];
+  const hasBlockedMedia = mediaUrls.some(
+    (url) => typeof url === 'string' && BLOCKED_DASHBOARD_MEDIA_RE.test(url),
+  );
+
+  if (!hasBlockedMedia) return false;
+
+  const embedUrl = getVideoEmbedUrl(ad.videoOriginalUrl || ad.adUrl);
+  return !embedUrl;
+};
+
 // Route a remote image through our backend so the browser sees same-origin-style
 // bytes with CORS headers — needed to embed CDN images in a canvas/PDF without
 // running into the cross-origin canvas-taint restriction.
@@ -332,6 +356,7 @@ const PLATFORM_ID_TO_NETWORK = {
   11: 'twitter',
   12: 'gdn',
   18: 'google',
+  19: 'admob',
 };
 
 // Map ad type — supports more granular types from API
@@ -377,6 +402,7 @@ const calcEngPerDay = (raw) => {
 
 export const mapAdToCard = (raw) => {
   const resolvedNetwork = (raw.platform_network || raw.network || PLATFORM_ID_TO_NETWORK[Number(raw.platform)] || '').toLowerCase();
+  const isAdmob = resolvedNetwork === 'admob';
   const isGoogleTransparency = resolvedNetwork === 'google' && Number(raw.platform) === 18;
   const isTikTok = resolvedNetwork.toLowerCase() === 'tiktok' || !!raw.video_cover;
   const mappedAdType = mapAdType(raw.type);
@@ -457,9 +483,9 @@ export const mapAdToCard = (raw) => {
     }
     return (lastSeenDay - firstSeenDay) + 1;
   })();
-  return {
+  const card = {
     id: raw.ad_id || raw.sql_id || raw.id,
-    advertiser: raw.post_owner || 'Unknown',
+    advertiser: isAdmob ? (raw.post_owner ?? null) : (raw.post_owner || 'Unknown'),
     advertiserImage: raw.post_owner_image ? `${raw.post_owner_image}` : null,
     date: formatDate(raw.post_date),
     lastSeen: formatDate(transparencyWindow?.lastSeenRaw ?? raw.last_seen),
@@ -589,7 +615,7 @@ export const mapAdToCard = (raw) => {
     regionCode: isGoogleTransparency ? raw.region_code || null : null,
     source: isGoogleTransparency ? raw.source || null : null,
     version: isGoogleTransparency ? raw.version || null : null,
-    countries: isGoogleTransparency
+    countries: isGoogleTransparency || isAdmob
       ? (Array.isArray(raw.country)
         ? raw.country
         : typeof raw.country === 'string'
@@ -683,6 +709,45 @@ export const mapAdToCard = (raw) => {
       if (typeof v === 'object') return v;
       try { return JSON.parse(v); } catch { return null; }
     })(),
+  };
+
+  if (!isAdmob) return card;
+
+  // AdMob payload fields are nullable by contract. Preserve producer nulls
+  // instead of manufacturing placeholders, derived dates, or source fallbacks.
+  return {
+    ...raw,
+    ...card,
+    advertiser: raw.post_owner ?? null,
+    advertiserImage: raw.post_owner_image ?? null,
+    date: raw.post_date == null ? null : formatDate(raw.post_date),
+    firstSeen: raw.first_seen == null ? null : formatDate(raw.first_seen),
+    lastSeen: raw.last_seen == null ? null : formatDate(raw.last_seen),
+    thumbnail: raw.image_video_url ?? raw.image_url ?? null,
+    videoUrl: raw.video_url ?? null,
+    videoUrlFallback: null,
+    title: raw.ad_title ?? null,
+    subtitle: raw.newsfeed_description ?? null,
+    adText: raw.ad_text ?? null,
+    textImageTitle: null,
+    adUrl: raw.ad_url ?? null,
+    metaAdUrl: null,
+    adPosition: raw.ad_position ?? null,
+    destinationUrl: raw.destination_url ?? null,
+    redirectUrl: raw.redirect_url ?? null,
+    subnetwork: raw.sub_network ?? null,
+    source: raw.source ?? null,
+    version: raw.version ?? null,
+    imageOriginalUrl: raw.image_url_original ?? null,
+    postOwnerId: raw.post_owner_id ?? null,
+    status: raw.status ?? null,
+    runningDays: raw.days_running ?? null,
+    cta: null,
+    keywords: null,
+    aspectRatio: raw.ad_image_size ?? null,
+    adLanguage: null,
+    industry: null,
+    category: null,
   };
 };
 

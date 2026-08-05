@@ -17,6 +17,7 @@ const {
   buildCampaignPrompt,
   getYoutubeEmbedUrl,
   getVideoEmbedUrl,
+  shouldHideAdForBlockedMedia,
   buildSearchPayload,
 } = await import("../../src/services/api.js");
 
@@ -690,5 +691,55 @@ describe("api > getVideoEmbedUrl dispatcher", () => {
   });
   it("returns null for unsupported host", () => {
     expect(getVideoEmbedUrl("https://example.com/x")).toBeNull();
+  });
+});
+
+describe("api > shouldHideAdForBlockedMedia", () => {
+  it("hides an ad that only has the default placeholder", () => {
+    expect(shouldHideAdForBlockedMedia({
+      thumbnail: "https://media.globussoft.com/pas-prod/stream/bydefault_ads.png",
+    })).toBe(true);
+  });
+
+  it("allows a default placeholder when a YouTube embed is available", () => {
+    expect(shouldHideAdForBlockedMedia({
+      thumbnail: "https://media.globussoft.com/pas-prod/stream/bydefault_ads.png",
+      adUrl: "https://www.youtube.com/watch?v=lW2v-F20ecI",
+    })).toBe(false);
+  });
+
+  it("keeps the shared YouTube response visible after API mapping", () => {
+    const mapped = mapAdToCard({
+      id: 5086296,
+      ad_id: 5086296,
+      network: "youtube",
+      type: "VIDEO",
+      image_video_url: "https://media.globussoft.com/pas-prod/stream/bydefault_ads.png",
+      ad_image_video: null,
+      ad_url: "https://www.youtube.com/watch?v=lW2v-F20ecI",
+      ad_title: "Main Koi Aisa Geet Gaoon",
+    });
+
+    expect(mapped).toMatchObject({
+      adId: 5086296,
+      network: "youtube",
+      adType: "video",
+      thumbnail: "https://media.globussoft.com/pas-prod/stream/bydefault_ads.png",
+    });
+    expect(getVideoEmbedUrl(mapped.adUrl)).toContain("youtube.com/embed/lW2v-F20ecI");
+    expect(shouldHideAdForBlockedMedia(mapped)).toBe(false);
+  });
+
+  it("continues to hide blocked legacy media without an embed fallback", () => {
+    expect(shouldHideAdForBlockedMedia({
+      videoUrl: "https://media.globussoft.com/pasvideos/old.mp4",
+      adUrl: "https://example.com/ad",
+    })).toBe(true);
+  });
+
+  it("allows normal media", () => {
+    expect(shouldHideAdForBlockedMedia({
+      thumbnail: "https://cdn.example.com/creative.jpg",
+    })).toBe(false);
   });
 });

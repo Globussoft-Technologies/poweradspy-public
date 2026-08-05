@@ -274,6 +274,32 @@ module.exports = {
       },
     },
   },
+  admob: {
+    name: 'AdMob',
+    slug: 'admob',
+    enabled: toBool(netVal(netCfg.admob, 'enabled', 'ADMOB_ENABLED', true)),
+    insertion: insertionConfig(netCfg.admob, 'ADMOB'),
+    database: {
+      sql: {
+        enabled: toBool(netVal(netCfg.admob?.sql, 'enabled', 'ADMOB_SQL_ENABLED', false)),
+        poolSize: netVal(netCfg.admob?.sql, 'poolSize', 'ADMOB_SQL_POOL_SIZE', config.databases.sql.poolSize),
+        host: netVal(netCfg.admob?.sql, 'host', 'ADMOB_SQL_HOST', config.databases.sql.host, true),
+        port: netVal(netCfg.admob?.sql, 'port', 'ADMOB_SQL_PORT', config.databases.sql.port, true),
+        user: netVal(netCfg.admob?.sql, 'user', 'ADMOB_SQL_USER', config.databases.sql.user, true),
+        password: netVal(netCfg.admob?.sql, 'password', 'ADMOB_SQL_PASSWORD', config.databases.sql.password, true),
+        database: netVal(netCfg.admob?.sql, 'database', 'ADMOB_SQL_DATABASE', 'pasdev_admob'),
+      },
+      elastic: {
+        enabled: toBool(netVal(netCfg.admob?.elastic, 'enabled', 'ADMOB_ELASTIC_ENABLED', false)),
+        index: netVal(netCfg.admob?.elastic, 'index', 'ADMOB_ELASTIC_INDEX', 'mob_search_mix'),
+        node: netVal(netCfg.admob?.elastic, 'node', 'ADMOB_ELASTIC_NODE', config.databases.elastic.node, true),
+        auth: {
+          username: netVal(netCfg.admob?.elastic, 'username', 'ADMOB_ELASTIC_USERNAME', config.databases.elastic.auth.username, true),
+          password: netVal(netCfg.admob?.elastic, 'password', 'ADMOB_ELASTIC_PASSWORD', config.databases.elastic.auth.password, true),
+        },
+      },
+    },
+  },
   native: {
     name: 'Native',
     slug: 'native',

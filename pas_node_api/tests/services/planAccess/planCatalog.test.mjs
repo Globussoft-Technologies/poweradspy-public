@@ -40,7 +40,7 @@ describe("planCatalog", () => {
     expect(isSubset(byTier["Basic (2026)"], byTier["Standard (2026)"])).toBe(true);
     expect(isSubset(byTier["Standard (2026)"], byTier["Platinum (2026)"])).toBe(true);
     expect(isSubset(byTier["Platinum (2026)"], byTier["Palladium (2026)"])).toBe(true);
-    expect(byTier["Palladium (2026)"].size).toBe(11); // all networks
+    expect(byTier["Palladium (2026)"].size).toBe(12); // all networks, including default AdMob
   });
 
   it("2026-restructure prices match the published pricing (Standard revised to $129, 2026-07-15)", () => {

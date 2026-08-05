@@ -36,6 +36,19 @@ const SORT_TO_PLAN_ACCESS_ID = {
   domain_reg_sort: 'domain_reg_sort',
 };
 
+const ADMOB_AD_TYPE_OPTIONS = [
+  "BANNER",
+  "WEBVIEW_BANNER",
+  "INTERSTITIAL_OR_NATIVE",
+  "INTERSTITIAL_WEBVIEW",
+  "NATIVE_OR_UNKNOWN",
+  "REWARDED_OR_VIDEO",
+  "PLAY_STORE_AD",
+  "VISUAL_BANNER",
+  "VISUAL_NATIVE_AD",
+  "UNKNOWN",
+].map((value) => ({ label: value, value }));
+
 export const resolveSortPlanAccessId = (label, value) => {
   const normalize = (input) => String(input ?? '').toLowerCase().trim().replace(/[\s-]+/g, '_');
   const rawLabel = String(label ?? '').toLowerCase().trim();
@@ -102,7 +115,10 @@ const AdFilterBar = ({
       )
         setShowAdTypeFilter(false);
     };
-    const onScroll = () => setShowAdTypeFilter(false);
+    const onScroll = (event) => {
+      if (adTypeFilterRef.current?.contains(event.target)) return;
+      setShowAdTypeFilter(false);
+    };
     document.addEventListener("mousedown", handler);
     window.addEventListener("scroll", onScroll, true);
     return () => {
@@ -152,6 +168,11 @@ const AdFilterBar = ({
   };
 
   const AD_TYPE_OPTIONS = useMemo(() => {
+    const activeLower = activePlatforms.map((platform) => platform.toLowerCase());
+    if (activeLower.length === 1 && activeLower[0] === "admob") {
+      return ADMOB_AD_TYPE_OPTIONS;
+    }
+
     // Search all sections (sidebar + navbar) for the ad_type document
     const allDocs = [...(config?.sidebar || []), ...(config?.navbar || [])];
     // Find the doc that contains an ad_type filter
@@ -181,7 +202,6 @@ const AdFilterBar = ({
       ];
     }
     // Filter by active platforms — same as shouldShowOption in sidebar
-    const activeLower = activePlatforms.map((p) => p.toLowerCase());
     return opts.filter((opt) => {
       if (!opt.platform_applicability || opt.platform_applicability === "all")
         return true;
@@ -329,8 +349,8 @@ const AdFilterBar = ({
             </div>
           )}
           {showAdTypeFilter && (
-            <div className="absolute top-full right-0 mt-1 bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1 min-w-[160px]">
-              <p className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-theme-text-muted border-b border-theme-border mb-1">
+            <div className="absolute top-full right-0 mt-1 w-[205px] max-h-[240px] overflow-y-auto overscroll-contain custom-scrollbar bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1">
+              <p className="sticky top-0 z-10 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-theme-text-muted bg-theme-card border-b border-theme-border mb-1">
                 {t("ad_type")}
               </p>
               {AD_TYPE_OPTIONS.map((opt) => {
@@ -341,7 +361,7 @@ const AdFilterBar = ({
                   <button
                     key={value}
                     onClick={() => toggleAdType(value)}
-                    className={`w-full text-left px-4 py-2 text-[13px] font-semibold flex items-center justify-between transition-colors ${
+                    className={`w-full text-left px-3 py-1.5 text-[11px] font-semibold flex items-center justify-between gap-2 transition-colors ${
                       isSelected
                         ? "text-[#6b99ff] bg-[#3762c1]/10"
                         : "text-theme-text-secondary hover:text-theme-text hover:bg-theme-text/[0.04]"

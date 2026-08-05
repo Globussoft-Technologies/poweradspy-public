@@ -29,6 +29,7 @@ import {
   fetchPlanAccess,
   fetchKeywordExplorerAccess,
   saveKeywordSearch,
+  shouldHideAdForBlockedMedia,
   trackEvent,
 } from "./services/api";
 import { useGuest } from "./hooks/useGuest";
@@ -817,6 +818,40 @@ const App = () => {
 
   const isAllActive = ui.specificPlatforms.length === 0;
 
+  // `specificPlatforms: []` is the UI's "All" state. On a fresh session,
+  // useSDUI initially derives activePlatforms from selected_by_default options,
+  // which can be only a subset of the navbar. That mismatch triggers a
+  // platform-filtered config request even though the All tab is selected and
+  // can hide filters such as Budget until the user switches tabs. Once the
+  // platform options are available, keep the SDUI selection in sync with the
+  // visible All state. Public/shared views restore their own platform state.
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      !isAllActive ||
+      platformOptions.length === 0 ||
+      landingAd?._fromUrl ||
+      guest?.uiState
+    ) return;
+
+    const alreadyAll =
+      sdui.activePlatforms.length === allPlatformValues.length &&
+      allPlatformValues.every((platform) =>
+        sdui.activePlatforms.includes(platform),
+      );
+
+    if (!alreadyAll) sdui.setActivePlatforms(allPlatformValues);
+  }, [
+    allPlatformValues,
+    guest?.uiState,
+    isAllActive,
+    isAuthenticated,
+    landingAd,
+    platformOptions.length,
+    sdui.activePlatforms,
+    sdui.setActivePlatforms,
+  ]);
+
   const handleAllClick = () => {
     if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", {})) return;
     dispatch(setSpecificPlatforms([]));
@@ -916,16 +951,13 @@ const App = () => {
   }, [platformKey]);
 
   const visibleAds = useMemo(() => {
-    const BLOCKED_MEDIA_RE = /\/(pasimages|pasvideoes|pasvideos|pasimage|pasvideo)\/|bydefault_ads/i;
-    const isBlockedMedia = (u) => typeof u === 'string' && BLOCKED_MEDIA_RE.test(u);
     const filtered = ads.filter((ad) => {
       const platform = (ad.network || '').toLowerCase();
       const adId = Number(ad.adId || ad.id);
       const ownerId = Number(ad.postOwnerId);
       if (hiddenAdIds.has(`${platform}:${adId}`)) return false;
       if (hiddenAdvertiserIds.has(`${platform}:${ownerId}`)) return false;
-      if (isBlockedMedia(ad.thumbnail) || isBlockedMedia(ad.videoUrl) || isBlockedMedia(ad.videoUrlFallback)) return false;
-      if (Array.isArray(ad.carouselMedia) && ad.carouselMedia.some(isBlockedMedia)) return false;
+      if (shouldHideAdForBlockedMedia(ad)) return false;
       return true;
     });
 

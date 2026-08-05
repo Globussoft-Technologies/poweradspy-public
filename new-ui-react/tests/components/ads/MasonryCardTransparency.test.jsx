@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import MasonryCard from "../../../src/components/ads/MasonryCard.jsx";
 import { ThemeProvider } from "../../../src/hooks/useTheme.jsx";
+import { mapAdToCard } from "../../../src/services/api.js";
 
 vi.mock("../../../src/services/adPdf", () => ({
   downloadAdAsPdf: vi.fn(),
@@ -15,6 +16,28 @@ const renderCard = (ad) => render(
 );
 
 describe("MasonryCard Google Transparency media", () => {
+  it("renders and plays a shared YouTube ad with the default placeholder", () => {
+    const ad = mapAdToCard({
+      id: 5086296,
+      ad_id: 5086296,
+      network: "youtube",
+      type: "VIDEO",
+      image_video_url: "https://media.globussoft.com/pas-prod/stream/bydefault_ads.png",
+      ad_image_video: null,
+      ad_url: "https://www.youtube.com/watch?v=lW2v-F20ecI",
+      ad_title: "Main Koi Aisa Geet Gaoon",
+      post_owner: "Kishore Kumar Official",
+    });
+    const { container } = renderCard(ad);
+
+    expect(screen.getByText("Kishore Kumar Official")).toBeInTheDocument();
+    expect(container.querySelector('img[src*="bydefault_ads.png"]')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    expect(container.querySelector('iframe[src*="youtube.com/embed/lW2v-F20ecI"]'))
+      .not.toBeNull();
+  });
+
   it("shows the Transparency marker and mixed carousel media", () => {
     const { container } = renderCard({
       id: 18,
