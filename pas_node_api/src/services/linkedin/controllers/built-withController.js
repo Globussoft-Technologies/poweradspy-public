@@ -74,10 +74,16 @@ async function updateBuiltWith(req, db, logger) {
   const adId = post.id;
   const status = Number(post.status);
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  const built_with                    = post.built_with ?? null;
-  const built_with_cms                = post.built_with_cms ?? null;
-  const built_with_analytics_tracking = post.built_with_analytics_tracking ?? null;
-  const affiliate_data                = post.affiliate_data ?? null;
+
+  const emptyToNull = (value) => (value === undefined || value === null || value === '' ? null : value);
+  const emptyToString = (value) => (value === undefined || value === null ? '' : value);
+
+  // The split table uses a nullable ENUM for built_with and nullable VARCHAR
+  // for affiliate_data, but its CMS and analytics VARCHAR columns are NOT NULL.
+  const built_with                    = emptyToNull(post.built_with);
+  const built_with_cms                = emptyToString(post.built_with_cms);
+  const built_with_analytics_tracking = emptyToString(post.built_with_analytics_tracking);
+  const affiliate_data                = emptyToNull(post.affiliate_data);
 
   try {
     const existing = await db.sql.query(
@@ -89,7 +95,7 @@ async function updateBuiltWith(req, db, logger) {
     }
 
     if (status === 1) {
-      const built_with_status = (built_with != null || built_with_cms != null || built_with_analytics_tracking != null) ? 1 : 3;
+      const built_with_status = (built_with || built_with_cms || built_with_analytics_tracking) ? 1 : 3;
       const affiliate_status  = affiliate_data != null ? 1 : 3;
 
       const upd = await db.sql.query(
