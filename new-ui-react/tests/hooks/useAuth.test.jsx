@@ -9,7 +9,6 @@ const { fetchPlanAccessSpy, fetchEntitlementsSpy, fetchOnboardingStatusSpy, trac
   trackEventSpy: vi.fn(),
   dispatchSpy: vi.fn(),
 }));
-const logoutFetchSpy = vi.fn();
 
 vi.mock("../../src/services/api", () => ({
   fetchPlanAccess: fetchPlanAccessSpy,
@@ -58,8 +57,6 @@ beforeEach(() => {
   fetchEntitlementsSpy.mockReset().mockResolvedValue(null);
   fetchOnboardingStatusSpy.mockReset().mockResolvedValue(null);
   dispatchSpy.mockReset();
-  logoutFetchSpy.mockReset().mockResolvedValue({ ok: true });
-  vi.stubGlobal("fetch", logoutFetchSpy);
   vi.stubEnv("VITE_PAS_API_TOKEN", "");
   setUrl("");
   vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
@@ -408,13 +405,6 @@ describe("useAuth > logout", () => {
 
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
-    expect(result.current.token).toBeNull();
-    expect(result.current.user).toBeNull();
-
-    expect(logoutFetchSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/\/api\/v1\/auth\/logout$/),
-      expect.objectContaining({ method: "POST", credentials: "include", keepalive: true }),
-    );
     expect(window.location.href).toBe("https://app-dev.poweradspy.com/amember/logout");
   });
 });

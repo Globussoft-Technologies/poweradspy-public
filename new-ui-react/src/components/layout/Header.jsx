@@ -154,14 +154,7 @@ const Header = ({
   const [shareCopied, setShareCopied] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const langRef = useRef(null);
-
-  const handleLogout = () => {
-    if (isLoggingOut) return;
-    setIsLoggingOut(true);
-    logout();
-  };
 
   // Local input state — only syncs to Redux on Enter/button click via onSearch
   const [localQuery, setLocalQuery] = useState(searchQuery || "");
@@ -971,13 +964,10 @@ const Header = ({
             {/* Logout (Logged-in only) */}
             {!isLanding && !isGuestMode && (
               <button
-                onClick={handleLogout}
-                disabled={isLoggingOut}
+                onClick={logout}
                 className="group w-full flex items-center gap-2 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-500 rounded-b-lg transition-all duration-300"
               >
-                {isLoggingOut
-                  ? <Loader2 size={14} className="animate-spin" />
-                  : <LogOut size={14} className="group-hover:scale-110 transition-transform" />}
+                <LogOut size={14} className="group-hover:scale-110 transition-transform" />
                 <span className="group-hover:translate-x-1 transition-transform">{t("logout")}</span>
               </button>
             )}

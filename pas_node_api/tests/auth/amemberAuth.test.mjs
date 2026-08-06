@@ -62,7 +62,6 @@ function mkRes() {
   r.json = vi.fn((b) => { r.body = b; return r; });
   r.cookie = vi.fn((name, val, opts) => { r.cookies[name] = { val, opts }; return r; });
   r.clearCookie = vi.fn(() => r);
-  r.set = vi.fn(() => r);
   r.redirect = vi.fn((url) => { r.redirectedTo = url; return r; });
   return r;
 }
@@ -102,8 +101,6 @@ describe("auth/amemberAuth > /logout", () => {
     const res = mkRes();
     handlers.get["/logout"]({}, res);
     expect(res.clearCookie).toHaveBeenCalledTimes(2);
-    expect(res.set).toHaveBeenCalledWith("Cache-Control", expect.stringContaining("no-store"));
-    expect(res.set).toHaveBeenCalledWith("Clear-Site-Data", '"cache", "cookies", "storage"');
     expect(res.redirectedTo).toBe("https://am.test/logout");
   });
   it("falls back to default logout URL when config missing", () => {

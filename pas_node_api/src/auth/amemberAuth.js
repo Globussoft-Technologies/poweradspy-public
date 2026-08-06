@@ -332,22 +332,9 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
 // aMember redirects here after its own logout.
 // Clears auth cookie and redirects to aMember login page.
 router.get('/logout', (req, res) => {
-  // Never cache a logout redirect, and expire both the host-only cookie created
-  // during login and the legacy parent-domain variant.
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.set('Pragma', 'no-cache');
-  // Frontend JavaScript cannot remove HttpOnly aMember/PHP session cookies.
-  // Clear-Site-Data lets the browser clear cookies for the PowerAdSpy domain
-  // before following the redirect to aMember's server-side logout endpoint.
-  res.set('Clear-Site-Data', '"cache", "cookies", "storage"');
-  const isProd = config.env === 'production';
-  const cookieOptions = {
-    path: '/',
-    secure: isProd,
-    sameSite: isProd ? 'None' : 'Lax',
-  };
-  res.clearCookie('authToken', cookieOptions);
-  res.clearCookie('authToken', { ...cookieOptions, domain: '.poweradspy.com' });
+  // Clear cookie with all possible domain combinations
+  res.clearCookie('authToken', { path: '/' });
+  res.clearCookie('authToken', { path: '/', domain: '.poweradspy.com' });
   log.info('User logged out');
   // Redirect to aMember's /logout endpoint — this kills the aMember session too
   const amemberLogout = config.amember.amemberLogoutUrl || 'https://app-dev.poweradspy.com/amember/logout';
