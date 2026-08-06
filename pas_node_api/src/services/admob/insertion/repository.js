@@ -183,16 +183,21 @@ async function queueEs(tx, id) {
 }
 
 async function getPendingEs(sql, limit, maxAttempts) {
+  const safeLimit = Math.min(Math.max(Math.trunc(Number(limit)) || 25, 1), 100);
+  const safeMaxAttempts = Math.min(Math.max(Math.trunc(Number(maxAttempts)) || 10, 1), 50);
+
+  // This server rejects LIMIT placeholders in prepared statements. These
+  // values are bounded integers, so inlining them remains safe.
   return sql.query(
     `SELECT o.ad_id, a.ad_id AS public_ad_id, o.attempts
      FROM mob_es_outbox o
      INNER JOIN mob_ads a ON a.id = o.ad_id
      WHERE o.next_retry_at IS NOT NULL
        AND o.next_retry_at <= NOW(3)
-       AND o.attempts < ?
+       AND o.attempts < ${safeMaxAttempts}
      ORDER BY o.next_retry_at ASC, o.ad_id ASC
-     LIMIT ?`,
-    [maxAttempts, limit]
+     LIMIT ${safeLimit}`,
+    []
   );
 }
 

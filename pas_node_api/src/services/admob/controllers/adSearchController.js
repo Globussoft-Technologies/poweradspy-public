@@ -8,11 +8,23 @@ function active(value) {
 
 function values(value) {
   const list = Array.isArray(value) ? value : active(value) ? [value] : [];
-  return list.map((item) => String(item).trim()).filter((item) => item && item !== 'NA');
+  return list
+    .flatMap((item) => String(item).split(','))
+    .map((item) => item.trim())
+    .filter((item) => item && item.toUpperCase() !== 'NA');
 }
 
 function totalHits(total) {
   return typeof total === 'object' && total !== null ? Number(total.value || 0) : Number(total || 0);
+}
+
+function imageSizeValues(value) {
+  return [...new Set(values(value).flatMap((size) => {
+    const normalized = size.replace(/\s/g, '').replace(/[x\u00d7*]/i, 'x');
+    const [width, height] = normalized.split('x');
+    if (!width || !height) return [size];
+    return [`${width}x${height}`, `${width}*${height}`, `${width}\u00d7${height}`];
+  }))];
 }
 
 function daysRunning(firstSeen, lastSeen) {
@@ -74,10 +86,20 @@ async function searchAds(req, db, logger) {
   const country = values(input.country).map((value) => value.toLowerCase());
   const state = values(input.state).map((value) => value.toLowerCase());
   const source = values(input.source).map((value) => value.toLowerCase());
+  const subNetwork = values(input.sub_network ?? input.subNetwork).map((value) => value.toLowerCase());
+  const sourceApp = values(input.source_app ?? input.sourceApp).map((value) => value.toLowerCase());
+  const adPosition = values(input.ad_position ?? input.ad_position_filter).map((value) => value.toLowerCase());
+  const adSubPosition = values(input.ad_sub_position).map((value) => value.toLowerCase());
+  const imageSize = imageSizeValues(input.ad_image_size ?? input.size);
   if (type.length) filter.push({ terms: { type } });
   if (country.length) filter.push({ terms: { country } });
   if (state.length) filter.push({ terms: { state } });
   if (source.length) filter.push({ terms: { source } });
+  if (subNetwork.length) filter.push({ terms: { sub_network: subNetwork } });
+  if (sourceApp.length) filter.push({ terms: { source_app: sourceApp } });
+  if (adPosition.length) filter.push({ terms: { ad_position: adPosition } });
+  if (adSubPosition.length) filter.push({ terms: { ad_sub_position: adSubPosition } });
+  if (imageSize.length) filter.push({ terms: { ad_image_size: imageSize } });
 
   const sortField = input.running_longest_sort === 'running_longest_sort' ? 'first_seen' : 'last_seen';
   const body = {

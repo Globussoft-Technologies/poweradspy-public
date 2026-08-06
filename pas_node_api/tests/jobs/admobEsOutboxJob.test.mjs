@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import jobModule from '../../src/services/admob/jobs/admobEsOutboxJob.js';
+import repositoryModule from '../../src/services/admob/insertion/repository.js';
 
 const { runAdmobEsOutbox } = jobModule;
+const { getPendingEs } = repositoryModule;
 
 function dependencies({ pending = [], indexError = null } = {}) {
   const sql = {};
@@ -35,6 +37,17 @@ function dependencies({ pending = [], indexError = null } = {}) {
 }
 
 describe('AdMob Elasticsearch outbox worker', () => {
+  it('uses bounded literal values instead of unsupported LIMIT placeholders', async () => {
+    const sql = { query: vi.fn(async () => []) };
+
+    await getPendingEs(sql, 25, 10);
+
+    const [statement, params] = sql.query.mock.calls[0];
+    expect(statement).toContain('o.attempts < 10');
+    expect(statement).toContain('LIMIT 25');
+    expect(params).toEqual([]);
+  });
+
   it('indexes pending ads and deletes only successful outbox rows', async () => {
     const setup = dependencies({ pending: [{ ad_id: 1, public_ad_id: 'ADMOB-1', attempts: 0 }] });
 

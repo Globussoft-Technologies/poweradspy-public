@@ -23,7 +23,15 @@ let _configFetchInflight = null;
 // started blocking otherwise-authorized Google searches. Keep it available to all
 // active plans for now; the plan-control revamp will replace this compatibility
 // grant with an explicit, versioned capability policy.
-const TEMPORARILY_UNRESTRICTED_FILTER_IDS = new Set(['google_transparency']);
+// Temporary exceptions that must remain available to every plan while the
+// SDUI/admin rollout is still stabilizing. These stay free-for-all even if a
+// matching plan-access doc exists in config.
+const TEMPORARILY_UNRESTRICTED_FILTER_IDS = new Set([
+  'google_transparency',
+  'admob_network',
+  'admob_source_app',
+  'source_app',
+]);
 
 /**
  * Make config.pricing.planIds authoritative for 2026 plan-group membership.

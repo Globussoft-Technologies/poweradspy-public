@@ -232,6 +232,17 @@ describe("planAccessService > getFilterStatus", () => {
     expect(freshSut().getFilterStatus(5, "google", config).google_transparency)
       .toEqual({ enabled: true, planAllowed: true });
   });
+  it("temporarily grants AdMob source app and network filters for every plan", () => {
+    const config = [
+      { _id: "admob_network", category: "sidebar", allowed_plan_ids: [], platform_support: { admob: true } },
+      { _id: "admob_source_app", category: "sidebar", allowed_plan_ids: [], platform_support: { admob: true } },
+      { _id: "source_app", category: "sidebar", allowed_plan_ids: [], platform_support: { admob: true } },
+    ];
+    const out = freshSut().getFilterStatus(5, "admob", config);
+    expect(out.admob_network).toEqual({ enabled: true, planAllowed: true });
+    expect(out.admob_source_app).toEqual({ enabled: true, planAllowed: true });
+    expect(out.source_app).toEqual({ enabled: true, planAllowed: true });
+  });
   it("network='all' skips platform_support check", () => {
     const config = [{ _id: "f1", category: "filter", platform_support: { facebook: false } }];
     expect(freshSut().getFilterStatus(5, "all", config).f1.enabled).toBe(true);

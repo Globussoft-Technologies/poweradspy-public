@@ -970,6 +970,8 @@ export const FILTER_PLATFORM_SUPPORT = {
   ad_position:    ['facebook', 'youtube'],
   ad_sub_position:['google'],
   image_size:     ['gdn'],
+  admob_network_filter: ['admob'],
+  admob_source_app_filter: ['admob'],
   native_network: ['native'],
   has_ai_meta:    ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'google', 'tiktok'],
   language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google'],
@@ -1103,6 +1105,8 @@ export const buildSearchPayload = (filters = {}) => {
   const industryFilter = pick('industry', 'industry_filter');
   const ecommerce = pick('ecommerce_platform_filter', 'ecommerce', 'ecommerce_filter', 'ecommerce_platform');
   const source = pick('source', 'source_filter');
+  const admobNetwork = pick('admob_network_filter', 'sub_network', 'subNetwork');
+  const admobSourceApp = pick('admob_source_app_filter', 'source_app_filter', 'source_app', 'sourceApp');
   const funnel = pick('funnel_filter', 'funnel');
   const affiliate = pick('affiliate_network_filter', 'affiliate', 'affiliate_filter', 'affiliate_network', 'affiliates');
   const nativeNetwork = pick('native_network_filter', 'nativeNetwork', 'native_network');
@@ -1366,6 +1370,22 @@ export const buildSearchPayload = (filters = {}) => {
         return t && t !== 'all' && t !== 'na';
       });
       return clean.length > 0 ? clean : 'NA';
+    })(),
+    sub_network: (() => {
+      const hasAdmobSelected = resolvedNetworks.some((network) => String(network).toLowerCase() === 'admob');
+      if (!hasAdmobSelected) return 'NA';
+      const selected = Array.isArray(admobNetwork)
+        ? admobNetwork
+        : (admobNetwork ? [admobNetwork] : []);
+      return selected.length > 0 ? selected : 'NA';
+    })(),
+    source_app: (() => {
+      const hasAdmobSelected = resolvedNetworks.some((network) => String(network).toLowerCase() === 'admob');
+      if (!hasAdmobSelected) return 'NA';
+      const selected = Array.isArray(admobSourceApp)
+        ? admobSourceApp
+        : (admobSourceApp ? [admobSourceApp] : []);
+      return selected.length > 0 ? selected : 'NA';
     })(),
     funnel: Array.isArray(funnel) && funnel.length > 0 ? funnel : v(funnel),
     affiliate: Array.isArray(affiliate) && affiliate.length > 0 ? affiliate : 'NA',

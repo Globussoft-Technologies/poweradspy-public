@@ -16,8 +16,8 @@ A multi‑network ad‑spy backend. For each advertising network it **ingests** 
 per‑network Elasticsearch index for fast faceted search, and **serves** search/detail/landers/OCR
 endpoints to the frontend.
 
-**11 networks:** `facebook`, `instagram`, `gdn`, `youtube`, `google`, `native`, `linkedin`,
-`reddit`, `quora`, `pinterest`, `tiktok`.
+**12 networks:** `facebook`, `instagram`, `gdn`, `youtube`, `google`, `native`, `linkedin`,
+`reddit`, `quora`, `pinterest`, `tiktok`, `admob`.
 
 Every network is **self‑contained** under `src/services/<net>/` and shares only the engine
 (`src/insertion/`), middleware, config loader, and `DatabaseManager`.
@@ -50,7 +50,8 @@ The ES document is built per network by `insertion/esDocBuilder.js` from a SQL "
 | Reddit | `pasdev_reddit` | `reddit_ad` | `reddit_search_mix` | shared 6.8 | nested (dotted) | ✅ |
 | Quora | `pasdev_quora` | `quora_ad` | `quora_search_mix` | shared 6.8 | nested (dotted) | ✅ |
 | Pinterest | `pasdev_pinterest` | `pinterest_ad` | `pinterest_search_mix` | shared 6.8 | nested (dotted) | ✅ |
-| TikTok | `tiktok_database_development` | *(read‑only)* | `tiktok_ads` | **separate 8.1** | **flat** | ❌ read‑only |
+| TikTok | `tiktok_database_development` | *(read-only)* | `tiktok_ads` | **separate 8.1** | **flat** | ❌ read-only |
+| AdMob | `pasdev_admob` | `mob_ads` | `mob_search_mix` | shared 6.8 | **flat + nested detail arrays** | ✅ |
 
 > ES server versions: all networks share the 6.8 cluster **except TikTok**, which is on a separate
 > 8.1 cluster (config key `elastic_tiktok`). Index names resolve from
@@ -265,6 +266,7 @@ Each file contains the **full table‑level SQL `erDiagram`** + the **ES field r
 | Reddit | [reddit.md](reddit.md) |
 | Quora | [quora.md](quora.md) |
 | Pinterest | [pinterest.md](pinterest.md) |
+| AdMob | [admob.md](admob.md) |
 | TikTok | [tiktok.md](tiktok.md) |
 
 ---

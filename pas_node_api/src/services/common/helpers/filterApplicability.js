@@ -42,8 +42,9 @@ const BODY_TO_SDUI_FILTER_IDS = {
   city:           ['city_filter'],
   type:           ['ad_type_filter', 'ad_types', 'ad_type'],
   ad_position:    ['ad_position_filter', 'ad_position'],
+  ad_sub_position:['ad_sub_position_filter', 'ad_sub_position'],
   adcategory:     ['adcategory', 'category', 'categories'],
-  subCategory:    ['subcategory'],
+  subCategory:    ['subcategory', 'category', 'categories'],
   ecommerce:      ['ecommerce_platform_filter', 'ecommerce', 'ecommerce_filter'],
   source:         ['source_filter', 'source', 'marketing_platform'],
   funnel:         ['funnel_filter', 'funnel'],
@@ -52,6 +53,9 @@ const BODY_TO_SDUI_FILTER_IDS = {
   lang:           ['language_filter', 'language'],
   market_platform: ['marketing_platform_filter', 'market_platform'],
   size:           ['image_size_filter', 'image_size'],
+  ad_image_size:  ['image_size_filter', 'image_size'],
+  sub_network:    ['admob_network_filter', 'sub_network_filter', 'sub_network'],
+  source_app:     ['source_app_filter', 'admob_source_app_filter', 'source_app'],
   verified:       ['verified_filter', 'verified'],
   popularity:     ['popularity_range_filter', 'popularity'],
   likes:          ['likes_range_filter', 'likes'],
@@ -76,7 +80,7 @@ const NON_FILTER_BODY_KEYS = new Set([
   'not_country', 'adDetail_id', 'platform', 'userkeyword', 'country_session',
   'ipBasedCountry', 'exact_search', 'language', 'lang',
   'advertiser', 'domain', 'keyword', // search inputs — applicability handled by search_input filter (usually 'all')
-  'track', 'ad_position_filter',
+  'track',
 ]);
 
 // Static network restrictions for filters not driven by SDUI platform_applicability.
@@ -87,10 +91,9 @@ const STATIC_FILTER_NETWORKS = {
   adBudget: ['facebook', 'instagram', 'youtube'],
   // TikTok categorical budget ["Low","Medium","High"] — same platforms as adBudget
   budget:   ['tiktok'],
-  // ad_position only applies to Facebook and YouTube
-  ad_position: ['facebook', 'youtube'],
-  // ad_sub_position only applies to Google
-  ad_sub_position: ['google'],
+  // These fields belong to the isolated AdMob index even if SDUI is unavailable.
+  sub_network: ['admob'],
+  source_app: ['admob'],
 };
 
 // In-memory cache — SDUI config is rebuilt every minute max
@@ -106,6 +109,26 @@ const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 async function _buildIndex() {
   const config = await getSDUIConfig();
   const index = {}; // bodyKey -> Set<network>
+  const matrixNetworksByDocument = new Map();
+
+  // The platform matrix is the source of truth for sidebar availability.
+  for (const sectionDocs of Object.values(config || {})) {
+    if (!Array.isArray(sectionDocs)) continue;
+    for (const doc of sectionDocs) {
+      for (const filter of (doc.filters || [])) {
+        const matrix = filter.platform_filter_matrix;
+        if (!matrix || typeof matrix !== 'object') continue;
+        for (const [network, documentIds] of Object.entries(matrix)) {
+          if (!Array.isArray(documentIds)) continue;
+          for (const documentId of documentIds) {
+            const key = String(documentId);
+            if (!matrixNetworksByDocument.has(key)) matrixNetworksByDocument.set(key, new Set());
+            matrixNetworksByDocument.get(key).add(String(network).toLowerCase());
+          }
+        }
+      }
+    }
+  }
 
   // Walk all sections (sidebar, navbar, searchbar, etc.)
   for (const sectionDocs of Object.values(config || {})) {
@@ -131,9 +154,11 @@ async function _buildIndex() {
         if (matchingBodyKeys.length === 0) continue;
 
         // Resolve applicability → array of networks (or null if "all")
-        let networks = null; // null = no restriction
+        const matrixNetworks = matrixNetworksByDocument.get(String(doc._id));
+        let networks = matrixNetworks ? [...matrixNetworks] : null;
         if (Array.isArray(applicability) && applicability.length > 0) {
-          networks = applicability.map(p => String(p).toLowerCase());
+          const explicit = applicability.map(p => String(p).toLowerCase());
+          networks = networks ? [...new Set([...networks, ...explicit])] : explicit;
         }
         // 'all', missing, or non-array → null (no restriction)
 

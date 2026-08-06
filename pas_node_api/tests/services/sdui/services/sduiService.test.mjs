@@ -113,6 +113,40 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
     expect(out.sidebar.map(d => d._id).sort()).toEqual(["sb1", "sb2", "sb3"]);
   });
 
+  it("returns only the approved AdMob sidebar filters", () => {
+    const makeFilter = (id, value) => ({
+      _id: id,
+      platform_applicability: ["google"],
+      options: [{ value, platform_applicability: ["google"] }],
+    });
+    const config = {
+      navbar: [{
+          _id: "platforms",
+          filters: [{ platform_filter_matrix: { admob: ["country", "source", "admob_network", "ad_position", "ad_sub_position", "image_size", "source_app"] } }],
+      }],
+      sidebar: [
+        { _id: "country", filters: [makeFilter("country_filter", "India")] },
+        { _id: "source", title: "TRAFFIC SOURCE", filters: [makeFilter("source_filter", "android")] },
+        { _id: "ad_position", filters: [makeFilter("ad_position_filter", "TOP")] },
+        { _id: "ad_sub_position", filters: [makeFilter("ad_sub_position_filter", "BOTTOM")] },
+        { _id: "image_size", filters: [makeFilter("image_size_filter", "300*250")] },
+        { _id: "source_app", filters: [makeFilter("source_app_filter", "Cricket App")] },
+        { _id: "budget", filters: [makeFilter("budget_filter", "high")] },
+      ],
+    };
+
+    const out = svc.filterConfigByPlatforms(config, ["AdMob"]);
+    expect(out.sidebar.map((doc) => doc._id)).toEqual([
+      "country", "source", "ad_position", "ad_sub_position", "image_size", "source_app", "admob_network",
+    ]);
+    const source = out.sidebar.find((doc) => doc._id === "source");
+    const network = out.sidebar.find((doc) => doc._id === "admob_network");
+    expect(source.title).toBe("SOURCE");
+    expect(source.filters.map((filter) => filter._id)).toEqual(["source_filter"]);
+    expect(network.title).toBe("NETWORK");
+    expect(network.filters[0].options[0].value).toBe("gdn");
+  });
+
   it("when matrix is empty, sidebar docs pass through unchanged", () => {
     const config = {
       navbar: [{ _id: "platforms", filters: [{}] }],

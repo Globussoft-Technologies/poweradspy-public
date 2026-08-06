@@ -178,6 +178,49 @@ describe("filterApplicability > SDUI-derived index", () => {
     expect(out).toEqual(expect.arrayContaining(["facebook", "instagram"]));
   });
 
+  it("uses the platform matrix so unsupported AdMob filters do not query AdMob", async () => {
+    getSDUIConfig.mockResolvedValue({
+      navbar: [{
+        _id: "platforms",
+        filters: [{
+          platform_filter_matrix: {
+            facebook: ["category", "country"],
+            native: ["category", "country"],
+            admob: ["country", "source", "admob_network", "source_app"],
+          },
+        }],
+      }],
+      sidebar: [
+        {
+          _id: "category",
+          filters: [{
+            _id: "categories",
+            query_param: "categories",
+            platform_applicability: "all",
+          }],
+        },
+        {
+          _id: "source_app",
+          filters: [{
+            _id: "source_app_filter",
+            query_param: "sourceApp",
+            platform_applicability: ["admob"],
+          }],
+        },
+      ],
+    });
+    const { getApplicableNetworks } = freshSut();
+
+    const categoryNetworks = await getApplicableNetworks({
+      adcategory: ["Accessories"],
+      subCategory: ["bagget"],
+    });
+    expect(categoryNetworks).toEqual(expect.arrayContaining(["facebook", "native"]));
+    expect(categoryNetworks).not.toContain("admob");
+
+    expect(await getApplicableNetworks({ source_app: ["Cricket App"] })).toEqual(["admob"]);
+  });
+
   it("section without docs (non-array) skipped", async () => {
     getSDUIConfig.mockResolvedValue({ sidebar: null, navbar: "not-array" });
     const { getApplicableNetworks } = freshSut();
@@ -227,11 +270,12 @@ describe("filterApplicability > cache + error handling", () => {
 });
 
 describe("filterApplicability > ALL_NETWORKS export", () => {
-  it("includes all 11 networks", () => {
+  it("includes all 12 networks", () => {
     const { ALL_NETWORKS } = freshSut();
-    expect(ALL_NETWORKS).toHaveLength(11);
+    expect(ALL_NETWORKS).toHaveLength(12);
     expect(ALL_NETWORKS).toContain("facebook");
     expect(ALL_NETWORKS).toContain("tiktok");
+    expect(ALL_NETWORKS).toContain("admob");
   });
 });
 

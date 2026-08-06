@@ -519,6 +519,46 @@ describe("buildSearchPayload > lang + size", () => {
   });
 });
 
+describe("buildSearchPayload > AdMob sidebar filters", () => {
+  it("serializes the configured AdMob source and network values", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["admob"],
+      source_filter: ["android"],
+      admob_network_filter: ["gdn"],
+      source_app_filter: ["Cricket App"],
+      ad_position_filter: ["MIDDLE"],
+      ad_sub_position_filter: ["BOTTOM"],
+      image_size_filter: ["1080*159"],
+    });
+    expect(p.source).toEqual(["android"]);
+    expect(p.sub_network).toEqual(["gdn"]);
+    expect(p.source_app).toEqual(["Cricket App"]);
+    expect(p.ad_position).toEqual(["MIDDLE"]);
+    expect(p.ad_sub_position).toEqual(["BOTTOM"]);
+    expect(p.size).toBe("1080*159");
+  });
+
+  it("does not leak an AdMob network value to another platform", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["google"],
+      admob_network_filter: ["gdn"],
+      source_app_filter: ["Cricket App"],
+    });
+    expect(p.sub_network).toBe("NA");
+    expect(p.source_app).toBe("NA");
+  });
+
+  it("keeps AdMob-specific fields when AdMob is selected alongside other platforms", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["google", "admob"],
+      admob_network_filter: ["gdn"],
+      source_app_filter: ["Cricket App"],
+    });
+    expect(p.sub_network).toEqual(["gdn"]);
+    expect(p.source_app).toEqual(["Cricket App"]);
+  });
+});
+
 describe("buildSearchPayload > misc fields", () => {
   it("skip defaults to 0", () => {
     expect(buildSearchPayload().skip).toBe(0);

@@ -114,4 +114,38 @@ describe('isolated AdMob insertion contract', () => {
     expect(result.data[0]).toEqual(expect.objectContaining({ network: 'admob', platform: 19 }));
     expect(result.data[0].image_video_url).toContain('/admob/adImage/');
   });
+
+  it('applies every supported AdMob sidebar filter to its ES field', async () => {
+    let searchBody;
+    const elastic = {
+      indexName: 'mob_search_mix',
+      search: async ({ body }) => {
+        searchBody = body;
+        return { body: { hits: { total: { value: 0 }, hits: [] } } };
+      },
+    };
+    const result = await searchAds({ body: {
+      country: ['India'],
+      source: ['Android'],
+      sub_network: ['GDN'],
+      source_app: ['Cricket App'],
+      ad_position: ['MIDDLE'],
+      ad_sub_position: ['BOTTOM'],
+      size: '1080*159,300*250',
+    } }, { elastic }, { error() {} });
+
+    expect(result.code).toBe(200);
+    expect(searchBody.query.bool.filter).toEqual(expect.arrayContaining([
+      { terms: { country: ['india'] } },
+      { terms: { source: ['android'] } },
+      { terms: { sub_network: ['gdn'] } },
+      { terms: { source_app: ['cricket app'] } },
+      { terms: { ad_position: ['middle'] } },
+      { terms: { ad_sub_position: ['bottom'] } },
+      { terms: { ad_image_size: [
+        '1080x159', '1080*159', '1080\u00d7159',
+        '300x250', '300*250', '300\u00d7250',
+      ] } },
+    ]));
+  });
 });
