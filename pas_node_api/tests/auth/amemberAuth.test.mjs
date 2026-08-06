@@ -103,6 +103,7 @@ describe("auth/amemberAuth > /logout", () => {
     handlers.get["/logout"]({}, res);
     expect(res.clearCookie).toHaveBeenCalledTimes(2);
     expect(res.set).toHaveBeenCalledWith("Cache-Control", expect.stringContaining("no-store"));
+    expect(res.set).toHaveBeenCalledWith("Clear-Site-Data", '"cache", "cookies", "storage"');
     expect(res.redirectedTo).toBe("https://am.test/logout");
   });
   it("falls back to default logout URL when config missing", () => {

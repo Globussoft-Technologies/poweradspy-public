@@ -336,6 +336,10 @@ router.get('/logout', (req, res) => {
   // during login and the legacy parent-domain variant.
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.set('Pragma', 'no-cache');
+  // Frontend JavaScript cannot remove HttpOnly aMember/PHP session cookies.
+  // Clear-Site-Data lets the browser clear cookies for the PowerAdSpy domain
+  // before following the redirect to aMember's server-side logout endpoint.
+  res.set('Clear-Site-Data', '"cache", "cookies", "storage"');
   const isProd = config.env === 'production';
   const cookieOptions = {
     path: '/',
