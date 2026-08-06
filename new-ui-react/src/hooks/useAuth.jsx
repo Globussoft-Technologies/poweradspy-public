@@ -11,8 +11,6 @@ import {
 const AuthContext = createContext(null);
 const ONBOARDING_DISMISS_KEY_PREFIX = 'pas_onboarding_dismissed_';
 
-const AMEMBER_LOGOUT_URL = 'https://app-dev.poweradspy.com/amember/logout';
-
 // User-specific session state keys that should disappear immediately on logout.
 // These are the bits that must not leak between different users sharing the
 // same browser.
@@ -471,7 +469,6 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     clearBrowserState();
-    window.location.href = AMEMBER_LOGOUT_URL;
   };
 
   const isAuthenticated = !!token && !!user;

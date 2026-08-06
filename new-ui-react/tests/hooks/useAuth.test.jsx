@@ -380,7 +380,7 @@ describe("useAuth > filterHasPlanEntry", () => {
 });
 
 describe("useAuth > logout", () => {
-  it("clears all local/session state and redirects immediately", async () => {
+  it("clears all local/session state before the logout link navigates", async () => {
     const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
     localStorage.setItem("authToken", token);
     localStorage.setItem("authUser", "{}");
@@ -405,7 +405,6 @@ describe("useAuth > logout", () => {
 
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
-    expect(window.location.href).toBe("https://app-dev.poweradspy.com/amember/logout");
   });
 });
 

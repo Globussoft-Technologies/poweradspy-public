@@ -963,13 +963,14 @@ const Header = ({
 
             {/* Logout (Logged-in only) */}
             {!isLanding && !isGuestMode && (
-              <button
+              <a
+                href="https://app-dev.poweradspy.com/amember/logout"
                 onClick={logout}
                 className="group w-full flex items-center gap-2 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-500 rounded-b-lg transition-all duration-300"
               >
                 <LogOut size={14} className="group-hover:scale-110 transition-transform" />
                 <span className="group-hover:translate-x-1 transition-transform">{t("logout")}</span>
-              </button>
+              </a>
             )}
             </div>
           </div>
