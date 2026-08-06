@@ -1375,14 +1375,14 @@ const AdDetailModal = ({
               );
             })()}
 
-            {/* Keywords */}
+            {/* Hashtags */}
             {ad.keywords && (
               <div className="space-y-1.5">
                 <p
                   className="text-[9px] font-bold uppercase tracking-widest"
                   style={{ color: "var(--color-text-muted)" }}
                 >
-                  Keywords
+                  Hashtags
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {ad.keywords.split(",").map((kw, i) => (
