@@ -51,6 +51,73 @@ const loadLS = (key, fallback) => {
     }
 };
 
+const sanitizeFilterValuesByConfig = (values, cfg) => {
+    if (!values || typeof values !== 'object' || !cfg) return values;
+
+    const allFilters = [
+        ...(cfg.searchbar?.flatMap(doc => doc.filters || []) || []),
+        ...(cfg.navbar?.flatMap(doc => doc.filters || []) || []),
+        ...(cfg.sidebar?.flatMap(doc => doc.filters || []) || []),
+    ];
+    const filterIndex = new Map();
+    allFilters.forEach(filter => {
+        filterIndex.set(filter._id, filter);
+        if (filter.query_param) filterIndex.set(filter.query_param, filter);
+    });
+
+    let changed = false;
+    const next = {};
+
+    for (const [key, value] of Object.entries(values)) {
+        if (key === '_autoSortField') {
+            next[key] = value;
+            continue;
+        }
+
+        const filter = filterIndex.get(key);
+        if (!filter) {
+            changed = true;
+            continue;
+        }
+
+        if (
+            filter.type === 'nested_select' ||
+            filter.type === 'nested_multiselect' ||
+            !Array.isArray(filter.options) ||
+            filter.options.length === 0
+        ) {
+            next[key] = value;
+            continue;
+        }
+
+        const allowedValues = new Set(
+            filter.options.map(option => String(option?.value ?? option?._id ?? ''))
+        );
+
+        if (Array.isArray(value)) {
+            const filtered = value.filter(item => allowedValues.has(String(item)));
+            if (filtered.length !== value.length) changed = true;
+            if (filtered.length > 0) next[key] = filtered;
+            else if (value.length > 0) changed = true;
+            continue;
+        }
+
+        if (
+            value !== null &&
+            value !== undefined &&
+            value !== '' &&
+            !allowedValues.has(String(value))
+        ) {
+            changed = true;
+            continue;
+        }
+
+        next[key] = value;
+    }
+
+    return changed ? next : values;
+};
+
 /**
  * useSDUI — The central SDUI state hook.
  * Replaces the old useFilters with a fully dynamic, config-driven approach.
@@ -76,7 +143,7 @@ export function useSDUI() {
             typeof nextValue === 'function' ? nextValue(previous) : nextValue
         ));
     }, []);
-    const [platformFilterMatrix, setPlatformFilterMatrix] = useState({});``
+    const [platformFilterMatrix, setPlatformFilterMatrix] = useState({});
 
     // Refs to avoid circular deps — always up to date
     const activePlatformsRef = useRef(activePlatforms);
@@ -84,12 +151,14 @@ export function useSDUI() {
 
     const platformFilterMatrixRef = useRef(platformFilterMatrix);
     platformFilterMatrixRef.current = platformFilterMatrix;
+    const allPlatformCountRef = useRef(0);
 
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
     const applyConfig = useCallback((cfg) => {
         const frontendConfig = withoutDisabledPlatformConfig(cfg);
         setConfig(frontendConfig);
         setError(null);
+        setFilterValues(previous => sanitizeFilterValuesByConfig(previous, frontendConfig));
 
         // Extract platform filter matrix from the platforms navbar document
         const platformsDoc = frontendConfig?.navbar?.find(d => d._id === 'platforms');
@@ -98,6 +167,7 @@ export function useSDUI() {
             if (matrixFilter) {
                 setPlatformFilterMatrix(matrixFilter.platform_filter_matrix);
             }
+            allPlatformCountRef.current = 0;
 
             // Set default active platforms ONLY if none are selected yet (use ref to avoid dep)
             if (activePlatformsRef.current.length === 0) {
@@ -123,7 +193,7 @@ export function useSDUI() {
 
         // Fallback: if config has no platforms doc, default to all platforms
         if (!platformsDoc && activePlatformsRef.current.length === 0) {
-            setActivePlatforms(['facebook', 'instagram', 'youtube', 'linkedin', 'google', 'native', 'reddit', 'pinterest', 'tiktok', 'admob']);
+            setActivePlatforms(['facebook', 'instagram', 'youtube', 'linkedin', 'google', 'native', 'reddit', 'pinterest', 'tiktok']);
         }
     }, []); // No deps — uses ref for activePlatforms
 
@@ -150,7 +220,6 @@ export function useSDUI() {
     // ── Re-fetch config when platforms change ─────────────────────────────
     const lastConfigPlatformKeyRef = useRef(JSON.stringify(activePlatforms));
     // Track all platform values count to detect "ALL" selection
-    const allPlatformCountRef = useRef(0);
     useEffect(() => {
         // The initial unfiltered fetch owns bootstrap. A ref keyed by the real
         // selection remains correct when StrictMode replays effect setup.
@@ -183,8 +252,38 @@ export function useSDUI() {
     }, [activePlatforms, applyConfig, config, loading]);
 
     // ── Polling for config changes ──────────────────────────────────────────
-    const handleConfigChanged = useCallback((freshConfig) => {
-        applyConfig(freshConfig);
+    const handleConfigChanged = useCallback(async (freshConfig) => {
+        const currentPlatforms = activePlatformsRef.current;
+        if (!currentPlatforms.length) {
+            applyConfig(freshConfig);
+            return;
+        }
+
+        let allPlatformCount = allPlatformCountRef.current;
+        if (allPlatformCount === 0) {
+            const platformsDoc = freshConfig?.navbar?.find(d => d._id === 'platforms');
+            allPlatformCount = platformsDoc?.filters
+                ?.flatMap(filter => filter.options || []).length || currentPlatforms.length;
+            allPlatformCountRef.current = allPlatformCount;
+        }
+
+        const isAll = currentPlatforms.length >= allPlatformCount;
+        if (isAll) {
+            applyConfig(freshConfig);
+            return;
+        }
+
+        try {
+            const scopedConfig = await fetchSDUIConfig({
+                skipCache: true,
+                platforms: currentPlatforms,
+            });
+            applyConfig(scopedConfig);
+        } catch {
+            // If the scoped refresh fails, keep the newly published full config
+            // instead of leaving the UI stale.
+            applyConfig(freshConfig);
+        }
     }, [applyConfig]);
 
     useSDUIPolling(config?.config_version || 0, handleConfigChanged);

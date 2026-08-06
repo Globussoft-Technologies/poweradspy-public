@@ -5,6 +5,7 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models
 import { calculateRunningDays } from '../utils/helper';
 import { expandCountryFilterValues } from '../utils/countryFilter';
 import { dedupeInFlight } from '../utils/requestDeduper';
+import { ADMOB_FRONTEND_ENABLED } from '../constants';
 
 // ─── PAS API Configuration ────────────────────────────────────────────────────
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || "";
@@ -1152,9 +1153,12 @@ export const buildSearchPayload = (filters = {}) => {
     return acc;
   }, new Set());
 
-  const baseNetworks = activePlatforms?.length
+  const requestedNetworks = activePlatforms?.length
     ? activePlatforms.map(p => p.toLowerCase())
     : [(activePlatform || 'facebook').toLowerCase()];
+  const baseNetworks = ADMOB_FRONTEND_ENABLED
+    ? requestedNetworks
+    : requestedNetworks.filter((network) => network !== 'admob');
   // The toggle is valid whenever Google is among the selected networks. If
   // Google is removed, ignore any stale persisted value.
   const googleTransparencyEnabled =
