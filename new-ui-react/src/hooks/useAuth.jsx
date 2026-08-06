@@ -31,6 +31,45 @@ const FILTER_LOGOUT_TS_KEY = 'pas_filters_logout_at';
 const SESSION_STORAGE_KEYS = ['guestToDashboard', 'pendingSearch', 'pendingRedirect'];
 const ENV_AUTH_FALLBACK_LOCK_KEY = 'pas_disable_env_auth_fallback';
 
+// A manual logout must leave no browser state behind for the next user. Cookie
+// names visible to JavaScript are expired for the current host and every parent
+// domain; the httpOnly auth cookie is cleared by the Node /logout route.
+function clearBrowserState() {
+  try { localStorage.clear(); } catch {}
+  try { sessionStorage.clear(); } catch {}
+
+  try {
+    const cookieNames = document.cookie
+      .split(';')
+      .map(cookie => cookie.split('=')[0].trim())
+      .filter(Boolean);
+    const hostname = window.location.hostname;
+    const hostParts = hostname.split('.');
+    const domains = new Set(['', hostname, `.${hostname}`]);
+    for (let i = 1; i < hostParts.length; i += 1) {
+      const parent = hostParts.slice(i).join('.');
+      domains.add(parent);
+      domains.add(`.${parent}`);
+    }
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const paths = new Set(['/']);
+    let path = '';
+    pathParts.forEach(part => {
+      path += `/${part}`;
+      paths.add(path);
+    });
+    const expired = 'expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0';
+    cookieNames.forEach(name => {
+      paths.forEach(cookiePath => {
+        domains.forEach(domain => {
+          const domainPart = domain ? `; domain=${domain}` : '';
+          document.cookie = `${name}=; ${expired}; path=${cookiePath}${domainPart}`;
+        });
+      });
+    });
+  } catch {}
+}
+
 function getBlockedEnvAuthToken() {
   try { return localStorage.getItem(ENV_AUTH_FALLBACK_LOCK_KEY) || ''; } catch { return ''; }
 }
@@ -293,7 +332,8 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const syncAuthFromStorage = (event) => {
       if (event.storageArea !== localStorage) return;
-      if (!['authToken', 'authUser', ENV_AUTH_FALLBACK_LOCK_KEY].includes(event.key)) return;
+      // localStorage.clear() emits a StorageEvent whose key is null.
+      if (event.key !== null && !['authToken', 'authUser', ENV_AUTH_FALLBACK_LOCK_KEY].includes(event.key)) return;
 
       const nextToken = localStorage.getItem('authToken');
       if (!nextToken) {
@@ -431,25 +471,14 @@ export function AuthProvider({ children }) {
   );
 
   const logout = () => {
-    if (shouldResetOnboardingDismiss(user)) {
-      clearOnboardingDismissForUserId(user?.user_id || user?.id);
-    }
-    // Clear all auth data from localStorage
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('authUser');
-    disableEnvAuthFallback(import.meta.env.VITE_PAS_API_TOKEN || '');
-    // Clear user-specific filters and selected networks immediately on logout.
-    markFiltersForExpiry();
-    // Clear cookie from frontend side too (in case server cookie clear fails due to cross-domain)
-    document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;';
-    document.cookie = 'authToken=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.poweradspy.com;';
+    clearBrowserState();
     setToken(null);
     setUser(null);
     setPlanAccess(null);
     setEntitlements(null);
     setPlanAccessResolved(true);
     // Redirect to Node.js /logout → clears server cookie → aMember /logout
-    setTimeout(() => { window.location.href = LOGOUT_URL; }, 50);
+    window.location.href = LOGOUT_URL;
   };
 
   const isAuthenticated = !!token && !!user;

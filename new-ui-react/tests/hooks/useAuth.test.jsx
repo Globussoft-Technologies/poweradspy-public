@@ -380,8 +380,7 @@ describe("useAuth > filterHasPlanEntry", () => {
 });
 
 describe("useAuth > logout", () => {
-  it("clears auth data, filters, selected networks, cookies, and redirects", async () => {
-    vi.useFakeTimers();
+  it("clears all local/session state and redirects immediately", async () => {
     const token = makeJwt({ id: 1, exp: Math.floor(Date.now() / 1000) + 3600 });
     localStorage.setItem("authToken", token);
     localStorage.setItem("authUser", "{}");
@@ -390,6 +389,8 @@ describe("useAuth > logout", () => {
     localStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook", "instagram"]));
     localStorage.setItem("sdui_config_cache", "y");
     localStorage.setItem("pas_onboarding_dismissed_1", "1");
+    sessionStorage.setItem("pendingSearch", "search");
+    sessionStorage.setItem("unrelated-session-state", "value");
 
     Object.defineProperty(window, "location", {
       writable: true, configurable: true,
@@ -402,20 +403,12 @@ describe("useAuth > logout", () => {
     await act(async () => { await Promise.resolve(); });
     act(() => { result.current.logout(); });
 
-    expect(localStorage.getItem("authToken")).toBeNull();
-    expect(localStorage.getItem("authUser")).toBeNull();
-    expect(localStorage.getItem("sdui_config_cache")).toBeNull();
-    expect(localStorage.getItem("pas_onboarding_dismissed_1")).toBeNull();
-    expect(localStorage.getItem("persist:root")).toBeNull();
-    expect(localStorage.getItem("sdui.filterValues")).toBeNull();
-    expect(localStorage.getItem("sdui.activePlatforms")).toBeNull();
-    expect(localStorage.getItem("pas_filters_logout_at")).toBeNull();
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
     expect(result.current.token).toBeNull();
     expect(result.current.user).toBeNull();
 
-    act(() => { vi.advanceTimersByTime(60); });
     expect(window.location.href).toMatch(/\/logout$/);
-    vi.useRealTimers();
   });
 });
 
@@ -507,8 +500,7 @@ describe("useAuth > onboarding dismiss behavior", () => {
     expect(dispatchSpy).not.toHaveBeenCalled();
   });
 
-  it("completed users keep onboarding dismiss key on logout", async () => {
-    vi.useFakeTimers();
+  it("completed users also lose onboarding state on full logout", async () => {
     const token = makeJwt({ id: 2, user_id: 2, needsOnboarding: false, exp: Math.floor(Date.now() / 1000) + 3600 });
     localStorage.setItem("authToken", token);
     localStorage.setItem("authUser", JSON.stringify({ id: 2, user_id: 2, needsOnboarding: false }));
@@ -525,8 +517,7 @@ describe("useAuth > onboarding dismiss behavior", () => {
     await act(async () => { await Promise.resolve(); });
     act(() => { result.current.logout(); });
 
-    expect(localStorage.getItem("pas_onboarding_dismissed_2")).toBe("1");
-    vi.useRealTimers();
+    expect(localStorage.getItem("pas_onboarding_dismissed_2")).toBeNull();
   });
 });
 
