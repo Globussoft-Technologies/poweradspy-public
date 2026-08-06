@@ -11,8 +11,9 @@ import {
 const AuthContext = createContext(null);
 const ONBOARDING_DISMISS_KEY_PREFIX = 'pas_onboarding_dismissed_';
 
-// Node.js logout route — clears cookie + redirects to aMember logout
-const LOGOUT_URL = (import.meta.env.VITE_PAS_API_BASE_URL || '') + '/logout';
+// Clear the API cookie separately, then navigate directly to aMember logout.
+const API_SESSION_LOGOUT_URL = (import.meta.env.VITE_PAS_API_BASE_URL || '') + '/api/v1/auth/logout';
+const AMEMBER_LOGOUT_URL = 'https://app-dev.poweradspy.com/amember/logout';
 
 // User-specific session state keys that should disappear immediately on logout.
 // These are the bits that must not leak between different users sharing the
@@ -477,8 +478,17 @@ export function AuthProvider({ children }) {
     setPlanAccess(null);
     setEntitlements(null);
     setPlanAccessResolved(true);
-    // Redirect to Node.js /logout → clears server cookie → aMember /logout
-    window.location.href = LOGOUT_URL;
+    // Clear the API's httpOnly cookie without depending on a cross-domain
+    // redirect chain. keepalive lets this request finish during navigation.
+    if (typeof fetch === 'function') {
+      fetch(API_SESSION_LOGOUT_URL, {
+        method: 'POST',
+        credentials: 'include',
+        keepalive: true,
+      }).catch(() => {});
+    }
+    // This URL is the authoritative aMember session terminator.
+    window.location.href = AMEMBER_LOGOUT_URL;
   };
 
   const isAuthenticated = !!token && !!user;
