@@ -1966,7 +1966,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         competitorUserId,
         oldName,
         newName,
+        activeProject.id,
+        activeProject.contentRefId,
       );
+
       if (resp?.body?.status === "success") {
         setProjects((prev) =>
           prev.map((p) =>
@@ -2844,7 +2847,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 </button>
                 <button
                   onClick={() => {
-                    const comps = activeProject?.competitors || [];
+                    // Export the same rows that are currently visible after the
+                    // competitor search filter is applied.
+                    const comps = filteredCompetitors;
                     if (!comps.length) return;
                     const getSelectedCountriesForComp = (comp) => {
                       const match = comp?.specificToMatch;

@@ -144,6 +144,29 @@ const isValidWebsiteUrl = (raw) => {
 // silently 422 on every single poll.
 const DS_MAX_LIST_LIMIT = 100;
 
+// Stable request lookup for in-flight competitor generation.
+// `content_ref_id` and `_id` survive a brand rename; advertiser name is only
+// the legacy fallback for older docs or non-generation flows.
+function buildProjectRequestQuery({
+  user_id,
+  project_id = null,
+  content_ref_id = null,
+  advertiserArray = null,
+}) {
+  const query = { user_id: new mongoose.Types.ObjectId(user_id) };
+  const validProjectId =
+    project_id && mongoose.Types.ObjectId.isValid(project_id)
+      ? new mongoose.Types.ObjectId(project_id)
+      : null;
+
+  if (validProjectId) query._id = validProjectId;
+  if (content_ref_id) query.content_ref_id = content_ref_id;
+  if (!validProjectId && !content_ref_id && Array.isArray(advertiserArray) && advertiserArray.length) {
+    query.advertiser = advertiserArray;
+  }
+  return query;
+}
+
 class CompetitorService {
 
   constructor() {
@@ -1233,32 +1256,45 @@ async create(req, res) {
 }
   async updateAdvertiser(req, res) {
     try {
-      const {user_id,advertiser,newadvertiser} = req?.body;
+      const { user_id, advertiser, newadvertiser, project_id, content_ref_id } = req?.body;
       if(!user_id || !advertiser || !newadvertiser){
         return res.send(Response.messageResp("Please provide user_id and advertiser newadvertiser"));
       }
 
       const brand = advertiser[0];
-
-      const brandCheck = await Competitors_request.findOne({
-        user_id,
-        advertiser: {
-          $elemMatch: {
-            $regex: new RegExp("^" + brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i"),
+      const userObjectId = new mongoose.Types.ObjectId(user_id);
+      let brandCheck = null;
+      if (project_id && mongoose.Types.ObjectId.isValid(project_id)) {
+        brandCheck = await Competitors_request.findOne({
+          _id: new mongoose.Types.ObjectId(project_id),
+          user_id: userObjectId,
+        });
+      } else if (content_ref_id) {
+        brandCheck = await Competitors_request.findOne({
+          user_id: userObjectId,
+          content_ref_id,
+        });
+      } else {
+        brandCheck = await Competitors_request.findOne({
+          user_id: userObjectId,
+          advertiser: {
+            $elemMatch: {
+              $regex: new RegExp("^" + brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i"),
+            },
           },
-        },
-      });
+        });
+      }
       if (!brandCheck) {
         return res.send(Response.messageResp("This brand is not requested"));
       }
 
       let updatedData= await Competitors_request.updateOne(
+        { _id: brandCheck._id },
         {
-          _id: brandCheck._id,
-          advertiser: brand,
-        },
-        {
-          $set: { "advertiser.$": newadvertiser },
+          $set: {
+            advertiser: [newadvertiser],
+            project_name: newadvertiser,
+          },
         }
       );
 
@@ -2510,7 +2546,7 @@ async fetchCompetitorsForUpdateNew(req, res) {
   // Attach up to (TARGET - alreadyAttached) fresh, name-unique competitors to the
   // user's request. Caps at TARGET so over-fetching never overshoots the number
   // the user asked for. Returns how many new competitors were attached.
-  async attachCompetitorsCappedToTarget({ user_id, normalizedKey, competitors, TARGET }) {
+  async attachCompetitorsCappedToTarget({ user_id, normalizedKey, competitors, TARGET, content_ref_id = null, project_id = null }) {
     if (!Array.isArray(competitors) || !competitors.length) return 0;
 
     const advertiserArray = [normalizedKey];
@@ -2518,7 +2554,9 @@ async fetchCompetitorsForUpdateNew(req, res) {
     // Names already attached to this user's request
     const existingRows = await this.getCompetitorTableRows({
       project_name: normalizedKey,
-      user_id
+      user_id,
+      content_ref_id,
+      project_id
     });
     const attachedNames = new Set(
       existingRows
@@ -2543,7 +2581,10 @@ async fetchCompetitorsForUpdateNew(req, res) {
 
     await this.saveUniqueCompetitors(normalizedKey, fresh, TARGET);
     const ids = await this.getCompetitorIdsFromMaster(fresh);
-    await this.attachCompetitorsToUserRequest(user_id, advertiserArray, ids, fresh);
+    await this.attachCompetitorsToUserRequest(user_id, advertiserArray, ids, fresh, {
+      content_ref_id,
+      project_id,
+    });
     return fresh.length;
   }
 
@@ -2716,6 +2757,11 @@ async isDailyLimitExceeded(userObjectId) {
       config.get("COMPETITOR_URL_PYTHON") + "/v1/api/competitors/list";
 
     const userObjectId = new mongoose.Types.ObjectId(user_id);
+    const projectQuery = buildProjectRequestQuery({
+      user_id,
+      content_ref_id,
+      advertiserArray: advertiserArray,
+    });
     // TOKEN LIMIT PRE-CHECK
     const exceeded = await this.isDailyLimitExceeded(userObjectId);
     logger.info("Token limit check", {
@@ -2741,7 +2787,7 @@ async isDailyLimitExceeded(userObjectId) {
     // so a page refresh mid-generation can tell "still running" apart from
     // "done" and rejoin the correct socket room.
     await Competitors_request.updateOne(
-      { user_id: userObjectId, advertiser: advertiserArray },
+      projectQuery,
       {
           $set: {
             brand_url: advertiser, // Domain
@@ -2752,6 +2798,7 @@ async isDailyLimitExceeded(userObjectId) {
         $setOnInsert: {
           user_id: userObjectId,
           advertiser: advertiserArray,
+          project_name: normalizedKey,
           competitors: [],
           monitoring: [],
           email_status: 0,
@@ -2763,7 +2810,7 @@ async isDailyLimitExceeded(userObjectId) {
     );
 
     const reqDoc = await Competitors_request.findOne(
-      { user_id: userObjectId, advertiser: advertiserArray },
+      projectQuery,
       { competitors: 1 }
     );
 
@@ -2826,7 +2873,8 @@ async isDailyLimitExceeded(userObjectId) {
           user_id,
           normalizedKey,
           competitors,
-          TARGET
+          TARGET,
+          content_ref_id
         });
         logger.info("Competitors attached to user request 1", {
           user_id,
@@ -2839,7 +2887,8 @@ async isDailyLimitExceeded(userObjectId) {
     // SEND TABLE ROWS
     const rows = await this.getCompetitorTableRows({
       project_name: normalizedKey,
-      user_id
+      user_id,
+      content_ref_id
     });
 
     // start BG
@@ -2876,6 +2925,11 @@ async generateCompetitorsInBackground({
   const startTime = Date.now();
   const advertiserArray = [normalizedKey];
   const userObjectId = new mongoose.Types.ObjectId(user_id);
+  const projectQuery = buildProjectRequestQuery({
+    user_id,
+    content_ref_id,
+    advertiserArray,
+  });
 
   let loopCount = 0;
 
@@ -2936,7 +2990,7 @@ async generateCompetitorsInBackground({
 
       if (exceeded) {
         const reqDoc = await Competitors_request.findOne(
-          { user_id: userObjectId, advertiser: advertiserArray },
+          projectQuery,
           { competitors: 1 }
         );
 
@@ -2955,7 +3009,7 @@ async generateCompetitorsInBackground({
 
       //  CURRENT PROGRESS
       const reqDoc = await Competitors_request.findOne(
-        { user_id: userObjectId, advertiser: advertiserArray },
+        projectQuery,
         { competitors: 1 }
       );
 
@@ -3032,13 +3086,15 @@ async generateCompetitorsInBackground({
           user_id,
           normalizedKey,
           competitors,
-          TARGET
+          TARGET,
+          content_ref_id
         });
 
         // SEND TO UI
         const rows = await this.getCompetitorTableRows({
           project_name: normalizedKey,
-          user_id
+          user_id,
+          content_ref_id
         });
 
         // Enrich rows with ES stats before emitting so FE receives pre-populated data
@@ -3173,7 +3229,11 @@ async generateCompetitorsInBackground({
     // competitors list with no explanation.
     try {
       await Competitors_request.updateOne(
-        { user_id: userObjectId, advertiser: advertiserArray },
+        buildProjectRequestQuery({
+          user_id,
+          content_ref_id,
+          advertiserArray,
+        }),
         { $set: { generation_status: "completed" } }
       );
     } catch (statusErr) {
@@ -3183,7 +3243,11 @@ async generateCompetitorsInBackground({
     if (!tokenExceeded) {
       try {
         const finalDoc = await Competitors_request.findOne(
-          { user_id: userObjectId, advertiser: advertiserArray },
+          buildProjectRequestQuery({
+            user_id,
+            content_ref_id,
+            advertiserArray,
+          }),
           { competitors: 1 }
         );
         const finalCount = finalDoc?.competitors?.length || 0;
@@ -3200,7 +3264,7 @@ async generateCompetitorsInBackground({
     }
   }
 }
-  async attachCompetitorsToUserRequest(user_id, advertiserArray, competitorIds, competitors) {
+  async attachCompetitorsToUserRequest(user_id, advertiserArray, competitorIds, competitors, { content_ref_id = null, project_id = null } = {}) {
   try {
     if (!competitorIds?.length) return;
 
@@ -3239,10 +3303,12 @@ async generateCompetitorsInBackground({
     }
 
     await Competitors_request.updateOne(
-      {
-        user_id: userObjectId,
-        advertiser: dbAdvertiserArray
-      },
+      buildProjectRequestQuery({
+        user_id,
+        project_id,
+        content_ref_id,
+        advertiserArray: dbAdvertiserArray,
+      }),
       update,
       { upsert: true }
     );
@@ -3530,13 +3596,16 @@ async generateCompetitorsInBackground({
     ];
   }
 
-  async getCompetitorTableRows({ project_name, user_id }) {
+  async getCompetitorTableRows({ project_name, user_id, content_ref_id = null, project_id = null }) {
   const userObjectId = new mongoose.Types.ObjectId(user_id);
-
-  const projectDoc = await Competitors_request.findOne({
-    user_id: userObjectId,
-    advertiser: [project_name]
-  }).lean();
+  const projectDoc = await Competitors_request.findOne(
+    buildProjectRequestQuery({
+      user_id,
+      project_id,
+      content_ref_id,
+      advertiserArray: [project_name],
+    }),
+  ).lean();
 
   if (!projectDoc) return [];
 
@@ -3646,12 +3715,14 @@ async checkDailyTokenLimit(req, res) {
       const countryArray = Array.isArray(country) ? country.filter(Boolean) : (country ? [country] : []);
 
       const brand = this.normalizeAdvertiser(fullBrand);
+      const projectQuery = buildProjectRequestQuery({
+        user_id,
+        content_ref_id,
+        advertiserArray: [brand],
+      });
 
       // --- ENSURE PROJECT EXISTS IN MONGODB ---
-      let project = await Competitors_request.findOne({
-        user_id: new mongoose.Types.ObjectId(user_id),
-        advertiser: [brand]
-      });
+      let project = await Competitors_request.findOne(projectQuery);
 
       // Track whether THIS request created the project, so a failed/timed-out
       // DS call below can clean up the phantom empty brand it caused — without
@@ -3662,6 +3733,7 @@ async checkDailyTokenLimit(req, res) {
         project = await Competitors_request.create({
           user_id: new mongoose.Types.ObjectId(user_id),
           advertiser: [brand],
+          project_name: brand,
           brand_url: fullBrand, // Full domain
           competitors: [],
           monitoring: [],

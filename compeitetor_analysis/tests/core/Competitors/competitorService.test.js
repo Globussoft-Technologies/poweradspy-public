@@ -3572,3 +3572,80 @@ describe("competitorService > deleteCompetitor", () => {
     expect(spies.loggerErrorSpy).toHaveBeenCalledWith("Error in deleteCompetitor", expect.any(Error));
   });
 });
+
+describe("competitorService > rename keeps running analysis on one request doc", () => {
+  it("uses project_id as the authoritative rename target", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ _id: "p1" });
+    spies.competitorsReqUpdateOneSpy.mockResolvedValueOnce({ modifiedCount: 1 });
+    const res = mockRes();
+    await svc.updateAdvertiser({
+      body: {
+        user_id: "u1",
+        advertiser: ["Old Brand"],
+        newadvertiser: "New Brand",
+        project_id: "p1",
+        content_ref_id: "ref-1",
+      },
+    }, res);
+    expect(spies.competitorsReqFindOneSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: expect.objectContaining({ _id: "p1" }),
+        user_id: expect.objectContaining({ _id: "u1" }),
+      }),
+    );
+    expect(spies.competitorsReqUpdateOneSpy).toHaveBeenCalledWith(
+      { _id: "p1" },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          advertiser: ["New Brand"],
+          project_name: "New Brand",
+        }),
+      }),
+    );
+  });
+
+  it("getStoreProcessCompetitors forwards content_ref_id into the attach path", async () => {
+    svc.isDailyLimitExceeded = vi.fn().mockResolvedValue(false);
+    svc.attachCompetitorsCappedToTarget = vi.fn().mockResolvedValue(1);
+    svc.getCompetitorTableRows = vi.fn().mockResolvedValue([]);
+    svc.generateCompetitorsInBackground = vi.fn();
+    spies.competitorsReqUpdateOneSpy.mockResolvedValue({});
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({ competitors: [] });
+    spies.axiosGetSpy.mockResolvedValueOnce({
+      data: { data: { competitors: [{ tool_name: "c1" }], total_items: 1, completed_items: 1 } },
+    });
+    const res = mockRes();
+    await svc.getStoreProcessCompetitors({
+      body: { advertiser: "Acme", content_ref_id: "ref-2", user_id: "u1", target: 5 },
+    }, res);
+    expect(svc.attachCompetitorsCappedToTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ content_ref_id: "ref-2" }),
+    );
+  });
+
+  it("getCompetitorTableRows resolves the project by content_ref_id after rename", async () => {
+    spies.competitorsReqFindOneSpy.mockReturnValueOnce({
+      lean: () => Promise.resolve({
+        _id: "p1",
+        competitors: ["c1"],
+        monitoring: [],
+      }),
+    });
+    spies.competitorsFindSpy.mockReturnValueOnce({
+      sort: () => ({
+        lean: () => Promise.resolve([
+          { _id: { toString: () => "c1" }, competitor_name: "C1", competitor_url: "c1.com" },
+        ]),
+      }),
+    });
+    const rows = await svc.getCompetitorTableRows({
+      project_name: "Old Brand",
+      user_id: "u1",
+      content_ref_id: "ref-3",
+    });
+    expect(spies.competitorsReqFindOneSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ content_ref_id: "ref-3" }),
+    );
+    expect(rows).toHaveLength(1);
+  });
+});

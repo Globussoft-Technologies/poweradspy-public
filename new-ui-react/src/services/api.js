@@ -2541,15 +2541,18 @@ export const CompetitorAPI = {
       body: JSON.stringify({ competitors: competitor }),
     }),
 
-  // Rename a project's brand/advertiser name. Backend expects the OLD name
-  // wrapped in an array (it patches advertiser.$ inside competitors_request).
-  renameAdvertiser: (userId, oldName, newName) =>
+  // Rename a project's brand/advertiser name.
+  // Prefer the stable project_id/content_ref_id so a running analysis stays
+  // attached to the same Mongo doc even if the visible brand label changes.
+  renameAdvertiser: (userId, oldName, newName, projectId = null, contentRefId = null) =>
     competitorFetch('/update-advertiser', {
       method: 'PATCH',
       body: JSON.stringify({
         user_id: userId,
         advertiser: [oldName],
         newadvertiser: newName,
+        ...(projectId ? { project_id: projectId } : {}),
+        ...(contentRefId ? { content_ref_id: contentRefId } : {}),
       }),
     }),
 
