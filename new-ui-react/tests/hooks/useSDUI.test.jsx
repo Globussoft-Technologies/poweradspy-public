@@ -106,11 +106,36 @@ describe("useSDUI > initial load", () => {
 
   it("loadLS strips _autoSortField from filterValues", async () => {
     localStorage.setItem("sdui.filterValues", JSON.stringify({ x: 1, _autoSortField: "y" }));
-    fetchSpy.mockResolvedValue(makeConfig());
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{ _id: "d", filters: [{ _id: "x" }] }],
+    }));
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     expect(result.current.filterValues._autoSortField).toBeUndefined();
     expect(result.current.filterValues.x).toBe(1);
+  });
+
+  it("keeps label-stored geo selections after refresh", async () => {
+    localStorage.setItem("sdui.filterValues", JSON.stringify({
+      country_filter: ["United Kingdom"],
+    }));
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "country",
+        filters: [{
+          _id: "country_filter",
+          query_param: "country",
+          type: "combobox",
+          options: [
+            { value: "US", label: "United States" },
+            { value: "UK", label: "United Kingdom" },
+          ],
+        }],
+      }],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.filterValues.country_filter).toEqual(["United Kingdom"]);
   });
 
   it("loadLS missing key → fallback", async () => {
@@ -188,6 +213,25 @@ describe("useSDUI > setters + getters", () => {
       google_transparency_subnetwork: "SHOPPING",
       country: ["India"],
     }));
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "country",
+        filters: [{
+          _id: "country_filter",
+          query_param: "country",
+          type: "combobox",
+          options: [
+            { value: "IN", label: "India" },
+          ],
+        }],
+      }, {
+        _id: "google_transparency",
+        filters: [
+          { _id: "google_transparency_ads", options: [{ value: true, label: "On" }, { value: false, label: "Off" }] },
+          { _id: "google_transparency_subnetwork", options: [{ value: "SHOPPING", label: "Shopping" }] },
+        ],
+      }],
+    }));
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     expect(result.current.filterValues.google_transparency_ads).toBe(true);
@@ -218,6 +262,15 @@ describe("useSDUI > setters + getters", () => {
     localStorage.setItem("sdui.filterValues", JSON.stringify({
       google_transparency_ads: true,
       google_transparency_subnetwork: "SHOPPING",
+    }));
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "google_transparency",
+        filters: [
+          { _id: "google_transparency_ads", options: [{ value: true, label: "On" }, { value: false, label: "Off" }] },
+          { _id: "google_transparency_subnetwork", options: [{ value: "SHOPPING", label: "Shopping" }] },
+        ],
+      }],
     }));
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
@@ -651,9 +704,7 @@ describe("useSDUI > isDependencySatisfied", () => {
 });
 
 describe("useSDUI > platform re-fetch effect", () => {
-  it("changing activePlatforms triggers second fetch with platforms param", async () => {
-    // Need allPlatformCountRef to be >0 so a smaller selection trips isAll=false.
-    // Pre-seed LS so the initial-mount effect snapshots a count of 3.
+  it("changing activePlatforms triggers a fresh config fetch", async () => {
     localStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook", "instagram", "google"]));
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
@@ -662,7 +713,7 @@ describe("useSDUI > platform re-fetch effect", () => {
     fetchSpy.mockResolvedValue(makeConfig());
     act(() => { result.current.setActivePlatforms(["facebook"]); });
     await act(async () => { await Promise.resolve(); });
-    expect(fetchSpy).toHaveBeenCalledWith({ platforms: ["facebook"] });
+    expect(fetchSpy).toHaveBeenCalledWith({ skipCache: true });
   });
 
   it("re-fetch error → warn logged", async () => {
@@ -675,7 +726,7 @@ describe("useSDUI > platform re-fetch effect", () => {
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("Platform config re-fetch failed"), expect.any(String));
   });
 
-  it("activePlatforms growing back to all → empty fetch options", async () => {
+  it("activePlatforms growing back to all still fetches fresh config", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
@@ -683,7 +734,7 @@ describe("useSDUI > platform re-fetch effect", () => {
     fetchSpy.mockResolvedValue(makeConfig());
     act(() => { result.current.setActivePlatforms(["facebook", "instagram", "google"]); });
     await act(async () => { await Promise.resolve(); });
-    expect(fetchSpy).toHaveBeenCalledWith({});
+    expect(fetchSpy).toHaveBeenCalledWith({ skipCache: true });
   });
 });
 

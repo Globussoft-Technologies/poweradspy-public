@@ -176,15 +176,15 @@ describe("AiQuickFilters", () => {
 
     await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     const [payload] = fetchAiQuickFilterAvailability.mock.calls[0];
-    expect(payload).toMatchObject({
-      activePlatforms: ["facebook", "instagram"],
-      searchQuery: "lead gen",
-      searchIn: "advertiser",
-      exactSearch: true,
-      presets: expect.any(Array),
-    });
+    expect(payload).toEqual({ presets: expect.any(Array) });
     expect(payload.presets).toHaveLength(8);
     expect(payload.presets.every((preset) => preset.id && preset.payload)).toBe(true);
+    expect(payload.presets.every((preset) => (
+      preset.payload.network.join(",") === "facebook,instagram" &&
+      preset.payload.advertiser === "lead gen" &&
+      preset.payload.exact_search === 1
+    ))).toBe(true);
+    expect(payload.presets.every((preset) => preset.payload.country === "NA")).toBe(true);
   });
 
   it("shows the matching strategy as selected", async () => {
@@ -227,7 +227,7 @@ describe("AiQuickFilters", () => {
         onApply={onApply}
       />,
     );
-    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(2));
+    expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: /B2B SaaS/i }));
     const replacementValues = onApply.mock.calls[1][0];
     expect(replacementValues).toEqual({
@@ -288,8 +288,79 @@ describe("AiQuickFilters", () => {
     );
 
     await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText(/AI strategy quick filters/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /TikTok UGC/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /B2B SaaS/i })).not.toBeInTheDocument();
+  });
+
+  it("loads Google presets after carrying a country filter across a network switch", async () => {
+    fetchAiQuickFilterAvailability.mockImplementation(async (payload) => ({
+      availability: payload.presets.some((preset) => preset.payload.country !== "NA")
+        ? {}
+        : allPresetsAvailable,
+    }));
+
+    const { rerender } = render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ country_filter: ["Thailand"] }}
+        onApply={vi.fn()}
+        activePlatforms={["facebook", "instagram"]}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", { name: /B2B SaaS/i }),
+    ).toBeInTheDocument();
+
+    rerender(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ country_filter: ["Thailand"] }}
+        onApply={vi.fn()}
+        activePlatforms={["google"]}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(2));
+    const googlePayload = fetchAiQuickFilterAvailability.mock.calls[1][0];
+    expect(googlePayload.presets.every((preset) => (
+      preset.payload.network.join(",") === "google" &&
+      preset.payload.country === "NA"
+    ))).toBe(true);
+    expect(
+      screen.getByRole("button", { name: /B2B SaaS/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not let a later country selection invalidate loaded Google presets", async () => {
+    const googlePlatforms = ["google"];
+    const onApply = vi.fn();
+    const { rerender } = render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{}}
+        onApply={onApply}
+        activePlatforms={googlePlatforms}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ country_filter: ["Thailand"] }}
+        onApply={onApply}
+        activePlatforms={googlePlatforms}
+      />,
+    );
+
+    expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: /B2B SaaS/i }),
+    ).toBeInTheDocument();
   });
 
   it("routes restricted strategy clicks to the upgrade handler", async () => {

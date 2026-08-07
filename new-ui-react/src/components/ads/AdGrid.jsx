@@ -17,6 +17,7 @@ import AiQuickFilters from "./AiQuickFilters";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
 import { getAiColorLabel } from "../../utils/aiColorPalette";
+import { COUNTRY_NAMES } from "../../utils/countries";
 import { getDashboardAdNavigation } from "../../utils/dashboardAdNavigation";
 
 // Env kill-switch for the "Total Ads: X" count shown next to the filter chips
@@ -31,6 +32,12 @@ const COUNTRY_FILTER_KEYS = new Set(["country", "countries", "country_filter", "
 
 const formatCountryChipLabel = (filterId, label) => {
   if (!COUNTRY_FILTER_KEYS.has(filterId)) return label;
+  const raw = String(label ?? "").trim();
+  const rawCode = raw.toUpperCase();
+  if (/^[A-Z]{2}$/.test(rawCode)) {
+    const code = rawCode === "UK" ? "GB" : rawCode;
+    return COUNTRY_NAMES[code] || label;
+  }
   const normalized = String(label ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")

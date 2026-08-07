@@ -9,6 +9,34 @@
  * options before sending to `saveKeywordSearch`.
  */
 
+import { COUNTRY_NAMES, NAME_TO_ISO } from "./countries";
+
+const COUNTRY_CODE_ALIASES = {
+  uk: "GB",
+};
+
+const resolveCountryIso = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const upper = raw.toUpperCase();
+  if (upper === "ALL") return "ALL";
+
+  if (upper.length === 2) {
+    return COUNTRY_CODE_ALIASES[upper.toLowerCase()] || upper;
+  }
+
+  return NAME_TO_ISO[upper] || "";
+};
+
+const resolveCountryName = (value) => {
+  const iso = resolveCountryIso(value);
+  if (iso === "ALL") return "Global Reach";
+  if (iso && COUNTRY_NAMES[iso]) return COUNTRY_NAMES[iso];
+
+  return String(value ?? "").trim();
+};
+
 /**
  * Locate the `country_filter` combobox options anywhere in the SDUI config,
  * regardless of which section (sidebar/navbar/searchbar/filters) holds it.
@@ -100,7 +128,36 @@ export function expandCountryFilterValues(values) {
     list.forEach(add);
   }
 
-  return out;
+  const expanded = [];
+  const pushUnique = (value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return;
+    const key = normalizeCountrySearchValue(raw);
+    if (expanded.some((entry) => normalizeCountrySearchValue(entry) === key)) return;
+    expanded.push(raw);
+  };
+
+  for (const value of out) {
+    const raw = String(value ?? "").trim();
+    if (!raw) continue;
+
+    const normalized = normalizeCountrySearchValue(raw);
+    if (normalized === "all" || normalized === "global reach") {
+      pushUnique("ALL");
+      pushUnique("Global Reach");
+      continue;
+    }
+
+    pushUnique(raw);
+
+    const iso = resolveCountryIso(raw);
+    if (iso) pushUnique(iso);
+
+    const countryName = resolveCountryName(raw);
+    if (countryName) pushUnique(countryName);
+  }
+
+  return expanded;
 }
 
 /**

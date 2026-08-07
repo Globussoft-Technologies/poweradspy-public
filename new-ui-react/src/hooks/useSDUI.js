@@ -51,6 +51,8 @@ const loadLS = (key, fallback) => {
     }
 };
 
+const normalizeStoredValue = (value) => String(value ?? '').trim().toLowerCase();
+
 const sanitizeFilterValuesByConfig = (values, cfg) => {
     if (!values || typeof values !== 'object' || !cfg) return values;
 
@@ -90,12 +92,19 @@ const sanitizeFilterValuesByConfig = (values, cfg) => {
             continue;
         }
 
+        // Some SDUI controls persist their display label instead of the raw
+        // backend value (for example the geo comboboxes). Keep both forms here
+        // so a refresh does not discard a valid cached selection.
         const allowedValues = new Set(
-            filter.options.map(option => String(option?.value ?? option?._id ?? ''))
+            filter.options.flatMap(option => [
+                option?.value,
+                option?.label,
+                option?._id,
+            ].map(normalizeStoredValue).filter(Boolean))
         );
 
         if (Array.isArray(value)) {
-            const filtered = value.filter(item => allowedValues.has(String(item)));
+            const filtered = value.filter(item => allowedValues.has(normalizeStoredValue(item)));
             if (filtered.length !== value.length) changed = true;
             if (filtered.length > 0) next[key] = filtered;
             else if (value.length > 0) changed = true;
@@ -106,7 +115,7 @@ const sanitizeFilterValuesByConfig = (values, cfg) => {
             value !== null &&
             value !== undefined &&
             value !== '' &&
-            !allowedValues.has(String(value))
+            !allowedValues.has(normalizeStoredValue(value))
         ) {
             changed = true;
             continue;
@@ -151,7 +160,6 @@ export function useSDUI() {
 
     const platformFilterMatrixRef = useRef(platformFilterMatrix);
     platformFilterMatrixRef.current = platformFilterMatrix;
-    const allPlatformCountRef = useRef(0);
 
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
     const applyConfig = useCallback((cfg) => {
@@ -167,7 +175,6 @@ export function useSDUI() {
             if (matrixFilter) {
                 setPlatformFilterMatrix(matrixFilter.platform_filter_matrix);
             }
-            allPlatformCountRef.current = 0;
 
             // Set default active platforms ONLY if none are selected yet (use ref to avoid dep)
             if (activePlatformsRef.current.length === 0) {
@@ -219,7 +226,6 @@ export function useSDUI() {
 
     // ── Re-fetch config when platforms change ─────────────────────────────
     const lastConfigPlatformKeyRef = useRef(JSON.stringify(activePlatforms));
-    // Track all platform values count to detect "ALL" selection
     useEffect(() => {
         // The initial unfiltered fetch owns bootstrap. A ref keyed by the real
         // selection remains correct when StrictMode replays effect setup.
@@ -228,18 +234,10 @@ export function useSDUI() {
         if (lastConfigPlatformKeyRef.current === platformKey) return;
         lastConfigPlatformKeyRef.current = platformKey;
 
-        // If activePlatforms includes all platforms, treat as "ALL" — no param needed
-        if (allPlatformCountRef.current === 0) {
-            const platformsDoc = config.navbar?.find(d => d._id === 'platforms');
-            allPlatformCountRef.current = platformsDoc?.filters
-                ?.flatMap(filter => filter.options || []).length || activePlatforms.length;
-        }
-        const isAll = activePlatforms.length === 0 || activePlatforms.length >= allPlatformCountRef.current;
-
         let cancelled = false;
         const reload = async () => {
             try {
-                const cfg = await fetchSDUIConfig(isAll ? {} : { platforms: activePlatforms });
+                const cfg = await fetchSDUIConfig({ skipCache: true });
                 /* v8 ignore next -- cancelled-during-reload race (unmount mid-refetch) is a defensive guard */
                 if (!cancelled) applyConfig(cfg);
             } catch (err) {
@@ -252,38 +250,11 @@ export function useSDUI() {
     }, [activePlatforms, applyConfig, config, loading]);
 
     // ── Polling for config changes ──────────────────────────────────────────
-    const handleConfigChanged = useCallback(async (freshConfig) => {
-        const currentPlatforms = activePlatformsRef.current;
-        if (!currentPlatforms.length) {
-            applyConfig(freshConfig);
-            return;
-        }
-
-        let allPlatformCount = allPlatformCountRef.current;
-        if (allPlatformCount === 0) {
-            const platformsDoc = freshConfig?.navbar?.find(d => d._id === 'platforms');
-            allPlatformCount = platformsDoc?.filters
-                ?.flatMap(filter => filter.options || []).length || currentPlatforms.length;
-            allPlatformCountRef.current = allPlatformCount;
-        }
-
-        const isAll = currentPlatforms.length >= allPlatformCount;
-        if (isAll) {
-            applyConfig(freshConfig);
-            return;
-        }
-
-        try {
-            const scopedConfig = await fetchSDUIConfig({
-                skipCache: true,
-                platforms: currentPlatforms,
-            });
-            applyConfig(scopedConfig);
-        } catch {
-            // If the scoped refresh fails, keep the newly published full config
-            // instead of leaving the UI stale.
-            applyConfig(freshConfig);
-        }
+    const handleConfigChanged = useCallback((freshConfig) => {
+        // Polling already fetched the latest published config, so keep that
+        // full schema in place and let the client-side visibility rules decide
+        // which docs appear for the current platform selection.
+        applyConfig(freshConfig);
     }, [applyConfig]);
 
     useSDUIPolling(config?.config_version || 0, handleConfigChanged);

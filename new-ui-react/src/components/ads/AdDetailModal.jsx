@@ -508,6 +508,7 @@ const AdDetailModal = ({
     for (const item of adCountryRaw) {
       const nameUpper = (item.country || "").toUpperCase();
       const iso = (item.iso || NAME_TO_ISO[nameUpper] || "").toUpperCase();
+      const code = nameUpper === "UK" ? "GB" : nameUpper;
       if (!iso && nameUpper === "ALL") {
         if (!seen.has("ALL")) {
           seen.add("ALL");
@@ -515,10 +516,10 @@ const AdDetailModal = ({
         }
         continue;
       }
-      const key = iso || nameUpper;
+      const key = iso || code;
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      names.push(iso ? COUNTRY_NAMES[iso] || item.country || iso : item.country);
+      names.push(iso ? COUNTRY_NAMES[iso] || item.country || iso : COUNTRY_NAMES[code] || item.country);
     }
     return names;
   }, [adCountryRaw]);
@@ -533,7 +534,16 @@ const AdDetailModal = ({
       : ad?.countries
         ? [ad.countries]
         : [];
-    return fallback.map((country) => String(country).trim()).filter(Boolean);
+    return fallback
+      .map((country) => {
+        const raw = String(country).trim();
+        if (!raw) return "";
+        const upper = raw.toUpperCase();
+        if (upper === "ALL") return "Worldwide";
+        const code = upper === "UK" ? "GB" : upper;
+        return COUNTRY_NAMES[code] || raw;
+      })
+      .filter(Boolean);
   }, [adCountryNames, ad?.countries]);
 
   if (!ad) return null;

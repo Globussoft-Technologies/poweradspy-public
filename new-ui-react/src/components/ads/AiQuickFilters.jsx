@@ -14,7 +14,6 @@ import {
 import {
   discardAiFilterDraft,
   findActiveAiQuickFilterPreset,
-  getAiFilterKeys,
   hasActiveAiFilters,
   replaceAiFilters,
   resolveAiQuickFilterPresets,
@@ -43,27 +42,6 @@ const PRESET_ACCENTS = {
   local_lead: "text-indigo-500 bg-indigo-500/10 border-indigo-500/20",
 };
 
-const isEmptyValue = (value) =>
-  value === undefined ||
-  value === null ||
-  value === "" ||
-  value === false ||
-  (Array.isArray(value) && value.length === 0);
-
-const buildAiFilterSignature = (filterValues, doc) => {
-  const keys = [...new Set(getAiFilterKeys(doc))].sort();
-  const parts = [];
-  for (const key of keys) {
-    const value = filterValues?.[key];
-    if (isEmptyValue(value)) continue;
-    const normalized = Array.isArray(value)
-      ? [...value].map((item) => String(item)).sort().join("|")
-      : String(value);
-    parts.push(`${key}:${normalized}`);
-  }
-  return parts.join("||");
-};
-
 /**
  * Home-page shortcuts for coherent AI filter combinations. They commit through
  * the same SDUI state used by the popup, so both surfaces always stay in sync.
@@ -84,10 +62,6 @@ const AiQuickFilters = ({
   // `null` means that the batch probe has not answered for this search context.
   // An empty object is a completed response where no preset is eligible.
   const [presetAvailability, setPresetAvailability] = useState(null);
-  const aiFilterSignature = useMemo(
-    () => buildAiFilterSignature(filterValues, doc),
-    [filterValues, doc],
-  );
 
   const activePreset = findActiveAiQuickFilterPreset(
     filterValues,
@@ -109,7 +83,10 @@ const AiQuickFilters = ({
       const presetPayload = presets.map((preset) => ({
         id: preset.id,
         payload: buildSearchPayload({
-          ...replaceAiFilters(filterValues, doc, preset.filters),
+          // Availability is network/search scoped. Normal sidebar filters are
+          // intentionally excluded so changing their order cannot change which
+          // quick-filter controls exist; they remain preserved by commit().
+          ...replaceAiFilters({}, doc, preset.filters),
           activePlatforms,
           searchQuery,
           searchIn,
@@ -119,14 +96,7 @@ const AiQuickFilters = ({
       }));
 
       const result = await fetchAiQuickFilterAvailability(
-        {
-          activePlatforms,
-          searchQuery,
-          searchIn,
-          exactSearch,
-          filterPlatformSupport,
-          presets: presetPayload,
-        },
+        { presets: presetPayload },
         { signal: controller.signal },
       );
 
@@ -148,7 +118,6 @@ const AiQuickFilters = ({
   }, [
     doc,
     presets,
-    aiFilterSignature,
     activePlatforms,
     searchQuery,
     searchIn,

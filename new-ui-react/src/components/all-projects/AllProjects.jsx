@@ -46,7 +46,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { CompetitorAPI, CompetitorFetchTimeoutError, trackProjectEvent } from "../../services/api";
 import CompetitorComparison from "./CompetitorComparison";
 import MembersManager from "./MembersManager";
-import { COUNTRIES, NAME_TO_ISO } from "../../utils/countries";
+import { COUNTRIES, COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 
 // Target Countries picker (Configure Analysis) is gated by a build-time env
 // flag, same pattern as VITE_ENABLE_KEYWORD_EXPLORER/VITE_ENABLE_INTELLIGENCE_FEATURE
@@ -127,7 +127,8 @@ export const getCountryInfo = (code) => {
   }
 
   if (target.length === 2) {
-    return { f: target, n: target.toUpperCase() };
+    const code = target === "uk" ? "gb" : target;
+    return { f: code, n: COUNTRY_NAMES[code.toUpperCase()] || target.toUpperCase() };
   }
 
   // Full country name not covered by the ~30-country hardcoded _map above —
