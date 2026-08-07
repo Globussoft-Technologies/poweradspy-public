@@ -87,6 +87,38 @@ The frontend AdMob platform icon is controlled independently with
 `VITE_ENABLE_ADMOB=false`. It is a top-level platform next to TikTok and never
 sets a Google or Google Transparency filter.
 
+When `VITE_ENABLE_ADMOB=false`, the frontend also strips AdMob from platform
+requests, quick-filter availability probes, search results, shared/public result
+meta, and the visible platform selector so AdMob does not surface anywhere in the
+client UI.
+
+## SDUI filter hydration
+
+AdMob sidebar filters are hydrated from persisted AdMob insertion history instead of a
+hand-maintained static list.
+
+- `source`, `sub_network`, `ad_position`, `ad_sub_position`, `ad_image_size`, and
+  `source_app` values are derived from AdMob insertion data and remain available after
+  they have been observed.
+- New values inserted through the AdMob ingestion flow automatically appear in SDUI
+  without manually editing filter options.
+- Hydration prefers persistent SQL dimensions over "currently live ads", so once an
+  AdMob value has been inserted it remains selectable even if matching creatives are
+  no longer part of the latest result set.
+- Option hydration is cached briefly in the API process. Newly inserted AdMob values
+  become available in SDUI after the next refresh cycle, without any manual seed or
+  config update.
+- Empty AdMob-only filters stay visible instead of falling back to generic cross-network
+  options.
+- When the selected platform is only `admob`, the sidebar is narrowed to AdMob
+  sections only: `country`, `source`, `network`, `ad position`, `ad sub position`,
+  `image size`, and `source app`.
+- The generic `All` traffic-source option is not shown for AdMob; only live AdMob
+  source values are surfaced.
+- AI quick filters and AI-meta searches are not applicable to AdMob. When any
+  AI-meta filter is active, the client excludes AdMob from the request instead of
+  letting unsupported AdMob ads leak into those result sets.
+
 AdMob is registered in the Plan Control network registry, so Admin policy can grant or
 deny it per plan. Runtime insertion enablement and customer plan access are separate
 controls; both must be enabled for their respective use cases.

@@ -37,9 +37,30 @@ describe("buildSearchPayload > AI-Meta", () => {
       ai_offer_type: ["percentage_discount"],
     });
 
+    expect(payload.has_ai_meta).toBe(true);
     expect(payload.ai_ad_type).toEqual(["promotional"]);
     expect(payload.ai_intent).toEqual(["conversion"]);
     expect(payload.ai_offer_type).toEqual(["percentage_discount"]);
+  });
+
+  it("drops AdMob from the network list when AI-only filters are active in all-network mode", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook", "admob"],
+      ai_ad_type: ["ugc"],
+    });
+
+    expect(payload.network).toEqual(["facebook"]);
+    expect(payload.has_ai_meta).toBe(true);
+  });
+
+  it("returns no networks for an AdMob-only AI-meta request", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["admob"],
+      ai_intent: ["app_install"],
+    });
+
+    expect(payload.network).toEqual([]);
+    expect(payload.has_ai_meta).toBe(true);
   });
 });
 

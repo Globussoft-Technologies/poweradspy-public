@@ -117,8 +117,9 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
   const { theme } = useTheme();
   const isLight = theme === 'light';
   const isTikTok = (platform || '').toLowerCase() === 'tiktok';
-  const hideToggle = false;
-  const [level, setLevel] = useState('advertiser');
+  const isAdmob = (platform || '').toLowerCase() === 'admob';
+  const hideToggle = isAdmob;
+  const [level, setLevel] = useState(isAdmob ? 'ad' : 'advertiser');
   const [filteredCountryData, setFilteredCountryData] = useState(null);
   const [isFiltering, setIsFiltering] = useState(false);
   const [viewMode, setViewMode] = useState('map');
@@ -130,14 +131,14 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
 
   // Reset state when navigating to a different ad
   useEffect(() => {
-    setLevel('advertiser');
+    setLevel(isAdmob ? 'ad' : 'advertiser');
     setFilteredCountryData(null);
     setIsFiltering(false);
     setViewMode('map');
     setSearchQuery('');
     setDeselectedAd(new Set());
     setDeselectedAdvertiser(new Set());
-  }, [adId]);
+  }, [adId, isAdmob]);
   const mapRootRef = useRef(null);
   const uniqueId = useId();
   const mapId = `country-map-${uniqueId.replace(/:/g, "")}`;

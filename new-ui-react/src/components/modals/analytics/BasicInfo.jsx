@@ -48,6 +48,11 @@ const BasicInfo = ({
     return s === "null" || s === "undefined" ? "" : s;
   };
 
+  const numericCount = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  };
+
   // Split URLs by || separator if present
   const splitUrls = (url) => {
     if (!url) return [];
@@ -85,6 +90,34 @@ const BasicInfo = ({
   // Native: network field
   const nativeNetwork =
     adDetails?.network || ad?.network_name || ad?.network || "";
+  const sourceAppDetails = Array.isArray(adDetails?.source_app_details)
+    ? adDetails.source_app_details
+    : Array.isArray(ad?.source_app_details)
+      ? ad.source_app_details
+      : [];
+  const sourceAppNames = [
+    ...new Set([
+      ...sourceAppDetails
+        .map((item) => String(item?.name || "").trim())
+        .filter(Boolean),
+      ...(Array.isArray(adDetails?.source_app)
+        ? adDetails.source_app
+        : Array.isArray(ad?.source_app)
+          ? ad.source_app
+          : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    ]),
+  ];
+  const sourceAppCount = numericCount(adDetails?.source_app_count)
+    ?? numericCount(ad?.source_app_count)
+    ?? (() => {
+      const detailTotal = sourceAppDetails.reduce(
+        (sum, item) => sum + (Number(item?.appearance_count) || 0),
+        0,
+      );
+      return detailTotal > 0 ? detailTotal : numericCount(sourceAppNames.length);
+    })();
 
   // Map outgoingLinks (array of { source_url, redirect_url, final_url })
   const outgoing = Array.isArray(outgoingLinks)
@@ -304,6 +337,44 @@ const BasicInfo = ({
         value: initialUrl,
         href: initialUrl,
         hoverColor: "hover:text-emerald-400",
+      },
+    ];
+  } else if (p === "admob") {
+    basicRows = [
+      {
+        label: "INITIAL URL",
+        icon: Globe,
+        value: initialUrl,
+        href: initialUrl,
+        hoverColor: "hover:text-[#6b99ff]",
+      },
+      {
+        label: "REDIRECT URL",
+        icon: RefreshCw,
+        value: redirectUrl,
+        href: redirectUrl,
+        hoverColor: "hover:text-white/60",
+      },
+      {
+        label: "AD URL",
+        icon: BookOpen,
+        value: fbPostLink,
+        href: fbPostLink,
+        hoverColor: "hover:text-emerald-400",
+      },
+      {
+        label: "SOURCE APP COUNT",
+        icon: Layout,
+        value: sourceAppCount == null ? "" : String(sourceAppCount),
+        href: null,
+        hoverColor: "",
+      },
+      {
+        label: "SOURCE APP",
+        icon: Network,
+        value: sourceAppNames.join("||"),
+        href: null,
+        hoverColor: "",
       },
     ];
   } else {

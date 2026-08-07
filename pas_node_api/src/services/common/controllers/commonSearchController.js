@@ -207,8 +207,7 @@ async function searchAllNetworks(req, res) {
   const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
   const isAllowed = (net) =>
     (net === 'admob' || !allowedPlatforms || allowedPlatforms.includes(net)) &&
-    ((net === 'admob' && reqNetworks !== 'all' && reqNetworks.includes('admob')) ||
-      !sduiApplicable || sduiApplicable.includes(net)) &&
+    (!sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&
     (!_popularitySortActive || _POPULARITY_NETWORKS.has(net)) &&
     isUserRequested(net);
@@ -251,7 +250,8 @@ async function searchAllNetworks(req, res) {
   // SDUI filter applicability (e.g. `gender` filter → only facebook queried).
   const totals            = {
     facebook: 0, instagram: 0, youtube: 0, gdn: 0, linkedin: 0,
-    native: 0, reddit: 0, quora: 0, pinterest: 0, google: 0, tiktok: 0, admob: 0,
+    native: 0, reddit: 0, quora: 0, pinterest: 0, google: 0, tiktok: 0,
+    admob: 0,
   };
   const networksWithData  = [];   // networks that returned data (for suggestion)
   const networkErrors     = {};

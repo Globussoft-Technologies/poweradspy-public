@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { getDB } = require('../db');
 const { buildSDUIDocuments } = require('../seed/seedData');
+const databaseManager = require('../../../database/DatabaseManager');
 const networks = require('../../../config/networks');
 
 const ADMOB_PLATFORM_OPTION = {
@@ -17,6 +18,15 @@ const ADMOB_PLATFORM_OPTION = {
 };
 
 const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app'];
+const ADMOB_LIVE_FILTER_IDS = new Set([
+  'source_filter',
+  'admob_network_filter',
+  'ad_position_filter',
+  'ad_sub_position_filter',
+  'image_size_filter',
+  'source_app_filter',
+  'admob_source_app_filter',
+]);
 const ADMOB_NETWORK_FILTER = {
   _id: 'admob_network_filter',
   group_id: 'source',
@@ -37,11 +47,369 @@ const ADMOB_NETWORK_FILTER = {
     platform_applicability: ['admob'],
   }],
 };
-
-const ADMOB_OPTION_DEFAULTS = {
-  ad_position_filter: [{ label: 'Middle', value: 'MIDDLE' }],
-  image_size_filter: [{ label: '1080 * 159', value: '1080*159' }],
+const ADMOB_SOURCE_APP_FILTER = {
+  _id: 'source_app_filter',
+  group_id: 'source_app',
+  label: 'Source App',
+  type: 'checkbox',
+  rank: 1,
+  query_param: 'sourceApp',
+  multi_select: true,
+  visible: true,
+  platform_applicability: ['admob'],
+  options: [],
 };
+const ADMOB_SOURCE_APP_DOCUMENT = {
+  _id: 'source_app',
+  config_type: 'sidebar',
+  title: 'SOURCE APP',
+  rank: 24,
+  collapsed_by_default: false,
+  visible: true,
+  display_mode: 'accordion',
+  meta: 'Filter AdMob ads by the apps where they were observed.',
+  filters: [{ ...ADMOB_SOURCE_APP_FILTER }],
+  flag: true,
+};
+
+const ADMOB_LABEL_OVERRIDES = {
+  source_filter: {
+    android: 'Android',
+    ios: 'iOS',
+  },
+  admob_network_filter: {
+    gdn: 'GDN',
+  },
+  ad_position_filter: {
+    feed: 'News Feed',
+    side: 'Side Column',
+    videofeed: 'Video Feed',
+    marketplace: 'Marketplace',
+    shorts: 'Shorts',
+    searchfeed_discovery: 'Search feed Discovery',
+    homefeed_discovery: 'Home feed Discovery',
+    'in-stream': 'In stream',
+    companion: 'Companion',
+    top: 'Top',
+    middle: 'Middle',
+    bottom: 'Bottom',
+  },
+  ad_sub_position_filter: {},
+};
+
+const ADMOB_FILTER_CACHE_TTL_MS = 60 * 1000;
+let admobLiveFilterCache = null;
+let admobLiveFilterCacheAt = 0;
+
+const ADMOB_OPTION_DEFAULTS = {};
+
+function slugifyOptionValue(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'value';
+}
+
+function normalizeAdmobFilterValue(filterId, value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (filterId === 'image_size_filter') {
+    return raw.replace(/\s+/g, '').replace(/[x\u00d7*]/gi, 'x').toLowerCase();
+  }
+  return raw.toLowerCase();
+}
+
+function humanizeAdmobValue(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (match) => match.toUpperCase());
+}
+
+function formatAdmobOptionLabel(filterId, normalizedValue, rawLabel) {
+  const explicit = ADMOB_LABEL_OVERRIDES[filterId]?.[normalizedValue];
+  if (explicit) return explicit;
+  if (filterId === 'source_app_filter' || filterId === 'admob_source_app_filter') {
+    return String(rawLabel ?? normalizedValue).trim();
+  }
+  if (filterId === 'image_size_filter') {
+    return normalizedValue.toLowerCase();
+  }
+  return humanizeAdmobValue(rawLabel ?? normalizedValue);
+}
+
+function canonicalAdmobOptionValue(filterId, normalizedValue) {
+  if (filterId === 'image_size_filter') return normalizedValue.toLowerCase();
+  return normalizedValue;
+}
+
+function buildAdmobOptionsFromEntries(filterId, entries) {
+  const merged = new Map();
+  for (const entry of entries || []) {
+    const key = normalizeAdmobFilterValue(filterId, entry?.key ?? entry?.value);
+    if (!key) continue;
+    const count = Number(entry?.count ?? entry?.doc_count ?? 0) || 0;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.count += count;
+      if (!existing.rawLabel && entry?.label) existing.rawLabel = entry.label;
+      continue;
+    }
+    merged.set(key, {
+      key,
+      count,
+      rawLabel: String(entry?.label ?? entry?.key ?? entry?.value ?? '').trim(),
+    });
+  }
+
+  return [...merged.values()]
+    .sort((left, right) => {
+      if (right.count !== left.count) return right.count - left.count;
+      return left.rawLabel.localeCompare(right.rawLabel, undefined, { sensitivity: 'base' });
+    })
+    .map((entry, index) => ({
+      _id: `admob_${filterId}_${slugifyOptionValue(entry.key)}`,
+      filter_id: filterId,
+      label: formatAdmobOptionLabel(filterId, entry.key, entry.rawLabel),
+      value: canonicalAdmobOptionValue(filterId, entry.key),
+      rank: index + 1,
+      selected_by_default: false,
+      platform_applicability: ['admob'],
+    }));
+}
+
+function elasticBuckets(result, aggName) {
+  const root = result?.body || result;
+  return root?.aggregations?.[aggName]?.buckets || [];
+}
+
+async function fetchAdmobOptionsFromElastic() {
+  const elastic = databaseManager.getElastic('admob');
+  if (!elastic) return null;
+
+  const response = await elastic.search({
+    index: elastic.indexName || 'mob_search_mix',
+    body: {
+      size: 0,
+      query: { bool: { filter: [{ term: { status: 1 } }] } },
+      aggs: {
+        source_values: { terms: { field: 'source', size: 25, order: { _count: 'desc' } } },
+        admob_network_values: { terms: { field: 'sub_network', size: 25, order: { _count: 'desc' } } },
+        ad_position_values: { terms: { field: 'ad_position', size: 50, order: { _count: 'desc' } } },
+        ad_sub_position_values: { terms: { field: 'ad_sub_position', size: 50, order: { _count: 'desc' } } },
+        image_size_values: { terms: { field: 'ad_image_size', size: 200, order: { _count: 'desc' } } },
+        source_app_values: { terms: { field: 'source_app', size: 1000, order: { _count: 'desc' } } },
+      },
+    },
+  });
+
+  return {
+    available: true,
+    optionsByFilter: {
+      source_filter: buildAdmobOptionsFromEntries('source_filter', elasticBuckets(response, 'source_values').map((bucket) => ({
+        key: bucket.key,
+        count: bucket.doc_count,
+      }))),
+      admob_network_filter: buildAdmobOptionsFromEntries('admob_network_filter', elasticBuckets(response, 'admob_network_values').map((bucket) => ({
+        key: bucket.key,
+        count: bucket.doc_count,
+      }))),
+      ad_position_filter: buildAdmobOptionsFromEntries('ad_position_filter', elasticBuckets(response, 'ad_position_values').map((bucket) => ({
+        key: bucket.key,
+        count: bucket.doc_count,
+      }))),
+      ad_sub_position_filter: buildAdmobOptionsFromEntries('ad_sub_position_filter', elasticBuckets(response, 'ad_sub_position_values').map((bucket) => ({
+        key: bucket.key,
+        count: bucket.doc_count,
+      }))),
+      image_size_filter: buildAdmobOptionsFromEntries('image_size_filter', elasticBuckets(response, 'image_size_values').map((bucket) => ({
+        key: bucket.key,
+        count: bucket.doc_count,
+      }))),
+      source_app_filter: buildAdmobOptionsFromEntries('source_app_filter', elasticBuckets(response, 'source_app_values').map((bucket) => ({
+        key: bucket.key,
+        count: bucket.doc_count,
+        label: bucket.key,
+      }))),
+    },
+  };
+}
+
+async function fetchAdmobOptionsFromSql() {
+  const sql = databaseManager.getSQL('admob');
+  if (!sql) return null;
+
+  const [
+    sourceRows,
+    networkRows,
+    positionRows,
+    subPositionRows,
+    imageSizeRows,
+    sourceAppRows,
+  ] = await Promise.all([
+    sql.query(
+      `SELECT MIN(source) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE status = 1 AND source IS NOT NULL AND TRIM(source) <> ''
+       GROUP BY LOWER(TRIM(source))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(x.sub_network) AS value, COUNT(DISTINCT a.id) AS doc_count
+       FROM mob_ad_sub_networks x
+       INNER JOIN mob_ads a ON a.id = x.ad_id
+       WHERE a.status = 1 AND x.sub_network IS NOT NULL AND TRIM(x.sub_network) <> ''
+       GROUP BY LOWER(TRIM(x.sub_network))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(ad_position) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE status = 1 AND ad_position IS NOT NULL AND TRIM(ad_position) <> ''
+       GROUP BY LOWER(TRIM(ad_position))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(ad_sub_position) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE status = 1 AND ad_sub_position IS NOT NULL AND TRIM(ad_sub_position) <> ''
+       GROUP BY LOWER(TRIM(ad_sub_position))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(ad_image_size) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE status = 1 AND ad_image_size IS NOT NULL AND TRIM(ad_image_size) <> ''
+       GROUP BY LOWER(REPLACE(REPLACE(REPLACE(TRIM(ad_image_size), '×', 'x'), '*', 'x'), ' ', ''))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(s.source_app) AS value, COUNT(DISTINCT a.id) AS doc_count
+       FROM mob_ad_source_apps x
+       INNER JOIN mob_source_apps s ON s.id = x.source_app_id
+       INNER JOIN mob_ads a ON a.id = x.ad_id
+       WHERE a.status = 1 AND s.source_app IS NOT NULL AND TRIM(s.source_app) <> ''
+       GROUP BY LOWER(TRIM(s.source_app))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+  ]);
+
+  return {
+    available: true,
+    optionsByFilter: {
+      source_filter: buildAdmobOptionsFromEntries('source_filter', sourceRows),
+      admob_network_filter: buildAdmobOptionsFromEntries('admob_network_filter', networkRows),
+      ad_position_filter: buildAdmobOptionsFromEntries('ad_position_filter', positionRows),
+      ad_sub_position_filter: buildAdmobOptionsFromEntries('ad_sub_position_filter', subPositionRows),
+      image_size_filter: buildAdmobOptionsFromEntries('image_size_filter', imageSizeRows),
+      source_app_filter: buildAdmobOptionsFromEntries('source_app_filter', sourceAppRows.map((row) => ({
+        ...row,
+        label: row.value,
+      }))),
+    },
+  };
+}
+
+async function fetchAdmobPersistentOptionsFromSql() {
+  const sql = databaseManager.getSQL('admob');
+  if (!sql) return null;
+
+  const [
+    sourceRows,
+    networkRows,
+    positionRows,
+    subPositionRows,
+    imageSizeRows,
+    sourceAppRows,
+  ] = await Promise.all([
+    sql.query(
+      `SELECT MIN(source) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE source IS NOT NULL AND TRIM(source) <> ''
+       GROUP BY LOWER(TRIM(source))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(sub_network) AS value, COUNT(*) AS doc_count
+       FROM mob_ad_sub_networks
+       WHERE sub_network IS NOT NULL AND TRIM(sub_network) <> ''
+       GROUP BY LOWER(TRIM(sub_network))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(ad_position) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE ad_position IS NOT NULL AND TRIM(ad_position) <> ''
+       GROUP BY LOWER(TRIM(ad_position))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(ad_sub_position) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE ad_sub_position IS NOT NULL AND TRIM(ad_sub_position) <> ''
+       GROUP BY LOWER(TRIM(ad_sub_position))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(ad_image_size) AS value, COUNT(*) AS doc_count
+       FROM mob_ads
+       WHERE ad_image_size IS NOT NULL AND TRIM(ad_image_size) <> ''
+       GROUP BY LOWER(REPLACE(REPLACE(REPLACE(TRIM(ad_image_size), 'Ã—', 'x'), '*', 'x'), ' ', ''))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+    sql.query(
+      `SELECT MIN(source_app) AS value, SUM(COALESCE(appearance_count, 1)) AS doc_count
+       FROM mob_source_apps
+       WHERE source_app IS NOT NULL AND TRIM(source_app) <> ''
+       GROUP BY LOWER(TRIM(source_app))
+       ORDER BY doc_count DESC, value ASC`
+    ),
+  ]);
+
+  return {
+    available: true,
+    optionsByFilter: {
+      source_filter: buildAdmobOptionsFromEntries('source_filter', sourceRows),
+      admob_network_filter: buildAdmobOptionsFromEntries('admob_network_filter', networkRows),
+      ad_position_filter: buildAdmobOptionsFromEntries('ad_position_filter', positionRows),
+      ad_sub_position_filter: buildAdmobOptionsFromEntries('ad_sub_position_filter', subPositionRows),
+      image_size_filter: buildAdmobOptionsFromEntries('image_size_filter', imageSizeRows),
+      source_app_filter: buildAdmobOptionsFromEntries('source_app_filter', sourceAppRows.map((row) => ({
+        ...row,
+        label: row.value,
+      }))),
+    },
+  };
+}
+
+async function getAdmobLiveFilterOptions() {
+  const now = Date.now();
+  if (admobLiveFilterCache && (now - admobLiveFilterCacheAt) < ADMOB_FILTER_CACHE_TTL_MS) {
+    return admobLiveFilterCache;
+  }
+
+  let live = null;
+  try {
+    live = await fetchAdmobPersistentOptionsFromSql();
+  } catch {
+    live = null;
+  }
+
+  if (!live) {
+    try {
+      live = await fetchAdmobOptionsFromElastic();
+    } catch {
+      live = null;
+    }
+  }
+
+  admobLiveFilterCache = live || { available: false, optionsByFilter: {} };
+  admobLiveFilterCacheAt = now;
+  return admobLiveFilterCache;
+}
 
 function mergeAdmobOptions(filter) {
   const options = (filter.options || []).map((option) => ({
@@ -62,8 +430,29 @@ function mergeAdmobOptions(filter) {
   return options;
 }
 
-function prepareAdmobSidebar(config) {
+function fallbackAdmobOptions(filter) {
+  return (ADMOB_OPTION_DEFAULTS[filter._id] || []).map((option, index) => ({
+    _id: `admob_${filter._id}_${index + 1}`,
+    filter_id: filter._id,
+    label: option.label,
+    value: option.value,
+    rank: index + 1,
+    selected_by_default: false,
+    platform_applicability: ['admob'],
+  }));
+}
+
+function resolveAdmobFilterOptions(filter, liveOptions) {
+  const filterId = filter._id === 'admob_source_app_filter' ? 'source_app_filter' : filter._id;
+  const dynamicOptions = liveOptions?.optionsByFilter?.[filterId];
+  if (liveOptions?.available) return dynamicOptions || [];
+  return fallbackAdmobOptions(filter);
+}
+
+async function prepareAdmobSidebar(config) {
+  const liveOptions = await getAdmobLiveFilterOptions();
   let hasAdmobNetworkDocument = false;
+  let hasSourceAppDocument = false;
   const prepared = {
     ...config,
     navbar: (config.navbar || []).map((doc) => ({
@@ -77,22 +466,16 @@ function prepareAdmobSidebar(config) {
     })),
     sidebar: (config.sidebar || []).map((doc) => {
       if (doc._id === 'admob_network') hasAdmobNetworkDocument = true;
+      if (doc._id === 'source_app') hasSourceAppDocument = true;
       if (!ADMOB_SIDEBAR_IDS.includes(doc._id)) return doc;
 
       const filters = (doc.filters || []).map((filter) => ({
         ...filter,
         platform_applicability: ['admob'],
-        options: mergeAdmobOptions(filter),
+        options: ADMOB_LIVE_FILTER_IDS.has(filter._id)
+          ? resolveAdmobFilterOptions(filter, liveOptions)
+          : mergeAdmobOptions(filter),
       }));
-
-      if (doc._id === 'source') {
-        const sourceFilter = filters.find((filter) => filter._id === 'source_filter');
-        if (sourceFilter) {
-          sourceFilter.options = sourceFilter.options.filter(
-            (option) => String(option.value).toLowerCase() === 'android'
-          );
-        }
-      }
 
       return {
         ...doc,
@@ -115,9 +498,22 @@ function prepareAdmobSidebar(config) {
       filters: [{
         ...ADMOB_NETWORK_FILTER,
         group_id: 'admob_network',
-        options: ADMOB_NETWORK_FILTER.options.map((option) => ({ ...option })),
+        options: resolveAdmobFilterOptions(ADMOB_NETWORK_FILTER, liveOptions),
       }],
       flag: true,
+    });
+  }
+
+  if (!hasSourceAppDocument) {
+    const sourceAppOptions = liveOptions?.available
+      ? (liveOptions.optionsByFilter.source_app_filter || [])
+      : resolveAdmobFilterOptions(ADMOB_SOURCE_APP_FILTER, liveOptions);
+    prepared.sidebar.push({
+      ...ADMOB_SOURCE_APP_DOCUMENT,
+      filters: [{
+        ...ADMOB_SOURCE_APP_FILTER,
+        options: sourceAppOptions,
+      }],
     });
   }
 
@@ -199,12 +595,13 @@ function matchesPlatform(applicability, platforms) {
  * @param {string[]} platforms  e.g. ['facebook', 'youtube']
  * @returns {Object} Filtered config with identical structure
  */
-function filterConfigByPlatforms(config, platforms) {
+async function filterConfigByPlatforms(config, platforms) {
   if (!platforms || !platforms.length) return config;
 
   const normalizedPlatforms = platforms.map((platform) => String(platform).toLowerCase());
+  const isAdmobOnly = normalizedPlatforms.length === 1 && normalizedPlatforms[0] === 'admob';
   const sourceConfig = normalizedPlatforms.length === 1 && normalizedPlatforms[0] === 'admob'
-    ? prepareAdmobSidebar(config)
+    ? await prepareAdmobSidebar(config)
     : config;
 
   // Extract platform_filter_matrix from the navbar "platforms" document
@@ -250,11 +647,11 @@ function filterConfigByPlatforms(config, platforms) {
               });
               return newF;
             })
-            .filter(f => !f.options || f.options.length > 0);
+            .filter(f => isAdmobOnly || !f.options || f.options.length > 0);
         }
         return newDoc;
       })
-      .filter(doc => !doc.filters || doc.filters.length > 0);
+      .filter(doc => isAdmobOnly || !doc.filters || doc.filters.length > 0);
   }
   return filtered;
 }

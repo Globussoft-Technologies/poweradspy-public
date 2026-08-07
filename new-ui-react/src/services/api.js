@@ -212,7 +212,6 @@ const NAS_BASE_URL = (import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, ''
 // back to the shared NAS base. Without this fallback the `/stream/` branch below
 // and the videoUrl gate in mapAdToCard resolve against an empty base, so the UI
 // silently leaks the original source CDN URL instead of serving the NAS copy.
-const NAS_VIDEO_BASE_URL = (import.meta.env.VITE_NAS_VIDEO_URL || import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, '');
 
 export const resolveNasUrl = (url) => {
   if (!url || typeof url !== 'string') return url;
@@ -366,6 +365,60 @@ const PLATFORM_ID_TO_NETWORK = {
   12: 'gdn',
   18: 'google',
   19: 'admob',
+};
+
+const normalizeNetworkSlug = (value) => {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number') {
+    return PLATFORM_ID_TO_NETWORK[value] || String(value).toLowerCase();
+  }
+  return String(value).trim().toLowerCase();
+};
+
+const isFrontendVisibleNetwork = (value) =>
+  ADMOB_FRONTEND_ENABLED || normalizeNetworkSlug(value) !== 'admob';
+
+const sanitizeFrontendNetworkList = (networks = []) => {
+  const values = Array.isArray(networks) ? networks : [];
+  return values.filter(isFrontendVisibleNetwork);
+};
+
+const getSafeFallbackNetwork = (activePlatform) => {
+  const normalized = normalizeNetworkSlug(activePlatform);
+  if (normalized && isFrontendVisibleNetwork(normalized)) return normalized;
+  return 'facebook';
+};
+
+const getRawAdNetwork = (raw = {}) =>
+  normalizeNetworkSlug(
+    raw.network ??
+    raw.badgeNetwork ??
+    raw.platform ??
+    raw.platform_name
+  );
+
+const sanitizeFrontendRawAds = (rawAds = []) => {
+  const values = Array.isArray(rawAds) ? rawAds : [];
+  if (ADMOB_FRONTEND_ENABLED) return values;
+  return values.filter((raw) => isFrontendVisibleNetwork(getRawAdNetwork(raw)));
+};
+
+const sanitizeFrontendMeta = (meta) => {
+  if (ADMOB_FRONTEND_ENABLED || !meta || typeof meta !== 'object') return meta || {};
+
+  const next = { ...meta };
+
+  if (Array.isArray(next.networksWithData)) {
+    next.networksWithData = sanitizeFrontendNetworkList(next.networksWithData);
+  }
+
+  if (next.total && typeof next.total === 'object' && !Array.isArray(next.total)) {
+    next.total = Object.fromEntries(
+      Object.entries(next.total).filter(([network]) => isFrontendVisibleNetwork(network))
+    );
+  }
+
+  return next;
 };
 
 // Map ad type — supports more granular types from API
@@ -1140,6 +1193,8 @@ export const buildSearchPayload = (filters = {}) => {
       .filter((key) => filters[key] !== undefined && filters[key] !== null && filters[key] !== '')
       .map((key) => [key, filters[key]]),
   );
+  const hasActiveAiMetaFilters = Object.keys(aiMetaFilterPayload).length > 0;
+  const effectiveHasAiMetaRequested = hasAiMetaRequested || hasActiveAiMetaFilters;
 
   // Build a map of ad type value → platform_applicability from config options passed in
   const adTypeOptions = filters.adTypeOptions || [];
@@ -1153,12 +1208,14 @@ export const buildSearchPayload = (filters = {}) => {
     return acc;
   }, new Set());
 
-  const requestedNetworks = activePlatforms?.length
-    ? activePlatforms.map(p => p.toLowerCase())
-    : [(activePlatform || 'facebook').toLowerCase()];
-  const baseNetworks = ADMOB_FRONTEND_ENABLED
+  const requestedNetworks = sanitizeFrontendNetworkList(
+    activePlatforms?.length
+      ? activePlatforms.map(p => p.toLowerCase())
+      : [getSafeFallbackNetwork(activePlatform)]
+  );
+  const baseNetworks = requestedNetworks.length > 0
     ? requestedNetworks
-    : requestedNetworks.filter((network) => network !== 'admob');
+    : [getSafeFallbackNetwork(activePlatform)];
   // The toggle is valid whenever Google is among the selected networks. If
   // Google is removed, ignore any stale persisted value.
   const googleTransparencyEnabled =
@@ -1172,10 +1229,13 @@ export const buildSearchPayload = (filters = {}) => {
   // Fallback: if intersection is empty (user's platform doesn't support the selected ad type),
   // use the user's actual selected platforms so the API returns "No ads found" naturally.
   const finalNetworks = networks.length > 0 ? networks : baseNetworks;
+  const aiMetaNetworks = effectiveHasAiMetaRequested
+    ? finalNetworks.filter((network) => ps([network], 'has_ai_meta'))
+    : finalNetworks;
 
   // No frontend network narrowing — all selected platforms are always queried.
   // Each backend controller reads only the fields it supports and ignores the rest.
-  const resolvedNetworks = googleTransparencyEnabled ? ['google'] : finalNetworks;
+  const resolvedNetworks = googleTransparencyEnabled ? ['google'] : aiMetaNetworks;
 
   // youtube_display_ads: include YouTube DISPLAY ads (ad_origin === 'youtube_display' —
   // the ads surfaced under GDN) EXCEPT when the selection already covers GDN. The ALL
@@ -1448,7 +1508,7 @@ export const buildSearchPayload = (filters = {}) => {
     google_transparency_ads: googleTransparencyEnabled,
     // Keep the physical ES field decision in the API. The client only sends
     // the logical filter state from the SDUI configuration.
-    has_ai_meta: ps(resolvedNetworks, 'has_ai_meta') && hasAiMetaRequested,
+    has_ai_meta: effectiveHasAiMetaRequested,
     ...aiMetaFilterPayload,
     google_transparency_subnetwork: (() => {
       if (!googleTransparencyEnabled) return 'NA';
@@ -1907,7 +1967,8 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     handle401();
     throw new Error('Unauthorized: Token expired');
   }
-  const rawAds = json.data || [];
+  const rawAds = sanitizeFrontendRawAds(json.data || []);
+  const sanitizedMeta = sanitizeFrontendMeta(json.meta || {});
 
   // ── Frontend safety-net sort — always applied regardless of network count ─────
   // Backend sorts correctly, but this guarantees order on the client side too
@@ -2021,12 +2082,12 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
       competitor_platform:      filters.competitor_platform ?? 'NA',
       competitor_platform_click: filters.competitor_platform ?? 'NA',
       error_message:            (json.errors && Object.keys(json.errors).length) ? JSON.stringify(json.errors) : 'NA',
-    }, json.meta);
+    }, sanitizedMeta);
   }
 
   return {
     ads: sortedAds,
-    meta: json.meta || {},
+    meta: sanitizedMeta,
   };
 };
 
@@ -2074,11 +2135,12 @@ export const fetchAdsPresence = async (filters = {}, { signal } = {}) => {
     throw new Error('Unauthorized: Token expired');
   }
 
-  const rawAds = json.data || [];
+  const rawAds = sanitizeFrontendRawAds(json.data || []);
+  const sanitizedMeta = sanitizeFrontendMeta(json.meta || {});
   return {
     hasAds: rawAds.length > 0,
-    total: json.meta?.total ?? 0,
-    meta: json.meta || {},
+    total: sanitizedMeta?.total ?? 0,
+    meta: sanitizedMeta,
   };
 };
 
@@ -2088,13 +2150,35 @@ export const fetchAdsPresence = async (filters = {}, { signal } = {}) => {
  * reuses the live search path to answer which presets would actually surface ads.
  */
 export const fetchAiQuickFilterAvailability = async (payload = {}, { signal } = {}) => {
+  const requestPayload = {
+    ...payload,
+    ...(Array.isArray(payload.activePlatforms)
+      ? { activePlatforms: sanitizeFrontendNetworkList(payload.activePlatforms) }
+      : {}),
+    ...(Array.isArray(payload.presets)
+      ? {
+          presets: payload.presets.map((preset) => ({
+            ...preset,
+            payload: preset?.payload
+              ? {
+                  ...preset.payload,
+                  ...(Array.isArray(preset.payload.network)
+                    ? { network: sanitizeFrontendNetworkList(preset.payload.network) }
+                    : {}),
+                }
+              : preset?.payload,
+          })),
+        }
+      : {}),
+  };
+
   const response = await fetch(`${PAS_API_BASE}/api/v1/common/ads/ai-quick-filters/availability`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(requestPayload),
     signal,
   });
 
@@ -2148,7 +2232,7 @@ export const fetchAdsForExport = async (filters = {}) => {
 
   if (!response.ok) return [];
   const json = await response.json();
-  const rawAds = json.data || [];
+  const rawAds = sanitizeFrontendRawAds(json.data || []);
   return rawAds.map(mapAdToCard);
 };
 
@@ -2175,7 +2259,7 @@ export const fetchLandingAd = async (network, adId) => {
 
   const json = await response.json();
   // This endpoint returns an array of ads in 'data'
-  const rawAds = json.data || [];
+  const rawAds = sanitizeFrontendRawAds(json.data || []);
   return {
     ads: rawAds.map(ad => mapAdToCard({ ...ad, network })),
     meta: { total: rawAds.length },
@@ -2893,14 +2977,15 @@ export const guestSearchAds = async (token, skip = 0) => {
   }
 
   const json = await response.json();
-  const rawAds = json.data || [];
+  const rawAds = sanitizeFrontendRawAds(json.data || []);
+  const sanitizedMeta = sanitizeFrontendMeta(json.meta || {});
 
   return {
     ads: rawAds.map(mapAdToCard),
-    availableNetworks: json.meta?.networksWithData || [],
+    availableNetworks: sanitizedMeta?.networksWithData || [],
     noDataMessage: rawAds.length === 0 ? "No ads found" : null,
-    meta: json.meta || {},
-    guestLimitReached: json.meta?.guestLimitReached || false,
+    meta: sanitizedMeta,
+    guestLimitReached: sanitizedMeta?.guestLimitReached || false,
   };
 };
 
@@ -2917,14 +3002,15 @@ export const publicSearchAds = async (skip = 0, network = 'all') => {
   }
 
   const json = await response.json();
-  const rawAds = json.data || [];
+  const rawAds = sanitizeFrontendRawAds(json.data || []);
+  const sanitizedMeta = sanitizeFrontendMeta(json.meta || {});
 
   return {
     ads: rawAds.map(mapAdToCard),
-    availableNetworks: json.meta?.networksWithData || [],
+    availableNetworks: sanitizedMeta?.networksWithData || [],
     noDataMessage: rawAds.length === 0 ? "No ads found" : null,
-    meta: json.meta || {},
-    guestLimitReached: json.meta?.guestLimitReached || false,
+    meta: sanitizedMeta,
+    guestLimitReached: sanitizedMeta?.guestLimitReached || false,
   };
 };
 

@@ -21,6 +21,7 @@ const ALL_NETWORKS = [
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin',
   'native', 'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
 ];
+const NON_ADMOB_NETWORKS = ALL_NETWORKS.filter(network => network !== 'admob');
 
 /**
  * Maps body parameter keys (used by network search controllers) to
@@ -91,10 +92,19 @@ const STATIC_FILTER_NETWORKS = {
   adBudget: ['facebook', 'instagram', 'youtube'],
   // TikTok categorical budget ["Low","Medium","High"] — same platforms as adBudget
   budget:   ['tiktok'],
+  // `has_ai_meta` is request-level, while category still remains `all` in the
+  // live SDUI config. Keep only the fallbacks still needed at runtime.
+  has_ai_meta: NON_ADMOB_NETWORKS,
+  adcategory: NON_ADMOB_NETWORKS,
+  subCategory: NON_ADMOB_NETWORKS,
   // These fields belong to the isolated AdMob index even if SDUI is unavailable.
   sub_network: ['admob'],
   source_app: ['admob'],
 };
+
+// AdMob should not participate in AI/category-driven searches. These filters
+// belong to the non-AdMob discovery experience, so when they are active in
+// an "all platforms" request we explicitly drop AdMob from the candidate set.
 
 // In-memory cache — SDUI config is rebuilt every minute max
 let _cached = null;

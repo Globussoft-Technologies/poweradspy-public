@@ -200,7 +200,12 @@ export function useSDUI() {
 
         // Fallback: if config has no platforms doc, default to all platforms
         if (!platformsDoc && activePlatformsRef.current.length === 0) {
-            setActivePlatforms(['facebook', 'instagram', 'youtube', 'linkedin', 'google', 'native', 'reddit', 'pinterest', 'tiktok']);
+            const fallbackPlatforms = [
+                'facebook', 'instagram', 'youtube', 'linkedin', 'google',
+                'native', 'reddit', 'pinterest', 'tiktok',
+            ];
+            if (ADMOB_FRONTEND_ENABLED) fallbackPlatforms.push('admob');
+            setActivePlatforms(withoutDisabledPlatforms(fallbackPlatforms));
         }
     }, []); // No deps — uses ref for activePlatforms
 

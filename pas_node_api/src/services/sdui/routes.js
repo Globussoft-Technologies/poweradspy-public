@@ -30,7 +30,7 @@ function createSduiRouter() {
       if (platformsParam) {
         const platforms = platformsParam.split(',').map(p => p.trim().toLowerCase()).filter(Boolean);
         if (platforms.length) {
-          config = sduiService.filterConfigByPlatforms(config, platforms);
+          config = await sduiService.filterConfigByPlatforms(config, platforms);
         }
       }
 

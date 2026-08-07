@@ -2345,7 +2345,7 @@ const AnalyticsModal = ({
               outgoingLinks={insights.outgoingLinks}
               platform={ctx.platform}
               tiktokAnalytics={tiktokAnalytics}
-              ad={ad}
+              ad={processedAd || ad}
               isTransparency={isTransparency}
               hideEmpty={isAdmob}
             />}
