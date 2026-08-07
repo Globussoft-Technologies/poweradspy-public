@@ -66,18 +66,14 @@ const PLATFORM_FIELD_MAPPINGS = {
   },
   google: {
     keyword: [
-      'google_ad_variants.title',
-      'google_ad_variants.text',
-      'google_ad_variants.newsfeed_description',
-      'google_ad_variants.title_exactly',
-      'google_ad_variants.text_exactly',
-      'google_ad_variants.newsfeed_description_exactly',
+      'title',
+      'text',
     ],
     advertiser: [
-      'google_ad_post_owners.post_owner_name',
-      'google_ad_post_owners.post_owner_name_exactly',
+      'post_owner_name',
+      'post_owner_lower',
     ],
-    domain: 'google_ad_meta_data.destination_url',
+    domain: 'destination_url',
   },
   gdn: {
     keyword: [
@@ -96,14 +92,14 @@ const PLATFORM_FIELD_MAPPINGS = {
   },
   youtube: {
     keyword: [
-      'youtube_ad_variants.title',
-      'youtube_ad_variants.text',
-      'youtube_ad_variants.newsfeed_description',
+      'title',
+      'text',
+      'newsfeed_description',
     ],
     advertiser: [
-      'youtube_ad_post_owners.post_owner_name',
+      'post_owner',
     ],
-    domain: 'youtube_ad_meta_data.destination_url',
+    domain: 'destination_url',
   },
   linkedin: {
     keyword: [
@@ -112,7 +108,7 @@ const PLATFORM_FIELD_MAPPINGS = {
       'newsfeed_description',
     ],
     advertiser: [
-      'linkedin_ad_post_owners.post_owner_name_exactly',
+      'post_owner',
     ],
     domain: 'destination_url',
   },
@@ -124,7 +120,7 @@ const PLATFORM_FIELD_MAPPINGS = {
     ],
     advertiser: [
       'reddit_ad_post_owners.post_owner_name',
-      'reddit_ad_post_owners.post_owner_name_exactly',
+      'reddit_ad_post_owners.post_owner_lower',
     ],
     domain: 'reddit_ad_meta_data.destination_url',
   },
