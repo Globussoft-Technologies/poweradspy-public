@@ -1287,6 +1287,14 @@ async create(req, res) {
       if (!brandCheck) {
         return res.send(Response.messageResp("This brand is not requested"));
       }
+      if (brandCheck.generation_status === "running") {
+        return res.send(
+          Response.validationFailResp(
+            "Brand cannot be renamed while analysis is running",
+            ""
+          )
+        );
+      }
 
       let updatedData= await Competitors_request.updateOne(
         { _id: brandCheck._id },

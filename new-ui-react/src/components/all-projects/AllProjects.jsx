@@ -1932,6 +1932,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       showToast("Your current plan does not include project management.", "error");
       return;
     }
+    if (activeProject?.generation_status === "running") {
+      showToast("Please wait until analysis completes before renaming the brand.", "error");
+      return;
+    }
     setRenameBrandValue(activeProject?.advertiser || "");
     setShowRenameBrandModal(true);
   };
@@ -1945,6 +1949,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   const handleRenameBrand = async (e) => {
     if (e) e.preventDefault();
     if (!activeProject) return;
+    if (activeProject?.generation_status === "running") {
+      showToast("Please wait until analysis completes before renaming the brand.", "error");
+      return;
+    }
     const oldName = activeProject.advertiser;
     // Brands are stored lowercased (same normalization as project creation).
     const newName = renameBrandValue.trim().toLowerCase();
@@ -2718,15 +2726,23 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 </h1>
                 <button
                   onClick={openRenameBrandModal}
+                  disabled={
+                    activeProject?.generation_status === "running" ||
+                    !capabilityAllowed("projects.manage")
+                  }
                   title={
-                    capabilityAllowed("projects.manage")
-                      ? `Rename brand "${activeProject.advertiser}"`
-                      : "Project management is locked on this plan"
+                    activeProject?.generation_status === "running"
+                      ? "Rename is disabled while analysis is running"
+                      : capabilityAllowed("projects.manage")
+                        ? `Rename brand "${activeProject.advertiser}"`
+                        : "Project management is locked on this plan"
                   }
                   className={`p-2 rounded-lg text-theme-text-muted border border-theme-border transition-all ${
-                    capabilityAllowed("projects.manage")
-                      ? "hover:text-[#6b99ff] hover:bg-[#3762c1]/10 hover:border-[#3759a3]/40"
-                      : "cursor-not-allowed opacity-50"
+                    activeProject?.generation_status === "running"
+                      ? "cursor-not-allowed opacity-50"
+                      : capabilityAllowed("projects.manage")
+                        ? "hover:text-[#6b99ff] hover:bg-[#3762c1]/10 hover:border-[#3759a3]/40"
+                        : "cursor-not-allowed opacity-50"
                   }`}
                 >
                   <Edit2 size={16} />

@@ -3604,6 +3604,26 @@ describe("competitorService > rename keeps running analysis on one request doc",
     );
   });
 
+  it("blocks renaming while analysis is running", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({
+      _id: "p1",
+      generation_status: "running",
+    });
+    const res = mockRes();
+    await svc.updateAdvertiser({
+      body: {
+        user_id: "u1",
+        advertiser: ["Old Brand"],
+        newadvertiser: "New Brand",
+        project_id: "p1",
+      },
+    }, res);
+    expect(spies.competitorsReqUpdateOneSpy).not.toHaveBeenCalled();
+    const body = res.send.mock.calls[0][0].body;
+    expect(body.status).toBe("failed");
+    expect(body.message ?? body.msg).toContain("analysis is running");
+  });
+
   it("getStoreProcessCompetitors forwards content_ref_id into the attach path", async () => {
     svc.isDailyLimitExceeded = vi.fn().mockResolvedValue(false);
     svc.attachCompetitorsCappedToTarget = vi.fn().mockResolvedValue(1);
