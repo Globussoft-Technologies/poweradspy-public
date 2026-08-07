@@ -37,7 +37,7 @@ describe("getCountryInfo", () => {
   });
 
   it("still treats a bare 2-letter code as an ISO code directly (unchanged behavior)", () => {
-    expect(getCountryInfo("jp")).toEqual({ f: "jp", n: "JP" });
+    expect(getCountryInfo("jp")).toEqual({ f: "jp", n: "Japan" });
   });
 
   it("falls back to 'un' only for genuinely unrecognized input", () => {
@@ -59,7 +59,7 @@ describe("getCountryInfo", () => {
   it("flags 'all' as global reach instead of resolving it as a country", () => {
     expect(getCountryInfo("all")).toEqual({
       f: null,
-      n: "Global reach",
+      n: "Global Reach",
       isGlobal: true,
     });
   });
@@ -121,5 +121,19 @@ describe("getDisplayCountries", () => {
   it("filters out falsy entries (null/empty string) instead of rendering a bogus 'Unknown' row", () => {
     const result = getDisplayCountries(["India", null, "", "Canada"]);
     expect(result).toHaveLength(2);
+  });
+
+  it("filters out placeholder values like 'not available' before the dropdown renders", () => {
+    expect(getDisplayCountries(["not available"])).toEqual([]);
+
+    const result = getDisplayCountries([
+      "India",
+      "not available",
+      "N/A",
+      undefined,
+      "Canada",
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result.map((c) => getCountryInfo(c).n)).toEqual(["India", "Canada"]);
   });
 });

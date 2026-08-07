@@ -390,37 +390,6 @@ export function useSDUI() {
         setFilterValues({});
     }, []);
 
-    // Clear any active filters whose platform_applicability doesn't include
-    // any of the incoming platforms. Called when the user switches platform tabs.
-    const clearFiltersUnsupportedBy = useCallback((newPlatforms) => {
-        if (!config || !newPlatforms?.length) return;
-        const allFilters = [
-            ...(config.searchbar?.flatMap(d => d.filters) || []),
-            ...(config.navbar?.flatMap(d => d.filters) || []),
-            ...(config.sidebar?.flatMap(d => d.filters) || []),
-        ];
-        setFilterValues(prev => {
-            const next = { ...prev };
-            for (const [filterId, value] of Object.entries(prev)) {
-                const isActive = Array.isArray(value) ? value.length > 0
-                    : typeof value === 'boolean'
-                        ? value
-                        : value !== null && value !== undefined && value !== '';
-                if (!isActive) continue;
-                const filter = findConfigFilterForStateKey(allFilters, filterId);
-                if (!filter) continue;
-                const pa = filter.platform_applicability;
-                if (!pa || pa === 'all') continue;
-                const list = Array.isArray(pa) ? pa : [pa];
-                const supported = newPlatforms.some(p => list.includes(p));
-                if (!supported) {
-                    next[filterId] = Array.isArray(value) ? [] : '';
-                }
-            }
-            return next;
-        });
-    }, [config]);
-
     // ── Count active filters ────────────────────────────────────────────────
     // A nested SDUI filter stores the selected parent and leaves separately.
     // Group those implementation keys so one category selection counts once.
@@ -543,6 +512,60 @@ export function useSDUI() {
         return intersected.length > 0 ? intersected : activePlatforms;
     }, [config, filterValues, activePlatforms]);
 
+    // Preserve unsupported selections in UI state, but let callers avoid a
+    // request that cannot match any selected platform. This prevents platform
+    // incompatibility from being mistaken for a plan restriction by the API.
+    const hasUnsupportedActiveFiltersFor = useCallback((platforms) => {
+        if (!config || !Array.isArray(platforms) || platforms.length === 0) return false;
+
+        const selectedPlatforms = new Set(platforms.map(normalizeStoredValue));
+        const allFilters = [
+            ...(config.searchbar?.flatMap(d => d.filters) || []),
+            ...(config.navbar?.flatMap(d => d.filters) || []),
+            ...(config.sidebar?.flatMap(d => d.filters) || []),
+        ];
+
+        // The platform matrix controls which UI groups are displayed; it is
+        // not an API-support contract and may intentionally omit toolbar groups.
+        const supportsSelection = (platformApplicability) => {
+            if (!platformApplicability || platformApplicability === 'all') return true;
+            const supportedPlatforms = Array.isArray(platformApplicability)
+                ? platformApplicability
+                : [platformApplicability];
+            return supportedPlatforms.some(platform =>
+                selectedPlatforms.has(normalizeStoredValue(platform))
+            );
+        };
+
+        for (const [filterId, value] of Object.entries(filterValues)) {
+            const isActive = Array.isArray(value) ? value.length > 0
+                : typeof value === 'boolean'
+                    ? value
+                    : value !== null && value !== undefined && value !== '';
+            if (!isActive) continue;
+
+            const filter = findConfigFilterForStateKey(allFilters, filterId);
+            if (!filter) continue;
+
+            const selectedValues = Array.isArray(value) ? value : [value];
+            for (const selectedValue of selectedValues) {
+                const option = filter.options?.find(candidate =>
+                    normalizeStoredValue(candidate.value ?? candidate._id) ===
+                    normalizeStoredValue(selectedValue)
+                );
+                const optionApplicability = option?.platform_applicability;
+                const applicability = optionApplicability && optionApplicability !== 'all'
+                    ? optionApplicability
+                    : filter.platform_applicability;
+                if (!supportsSelection(applicability)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }, [config, filterValues]);
+
     // ── Build query params from filter values + config ──────────────────────
     const buildQueryParams = useCallback(() => {
         if (!config) return {};
@@ -653,13 +676,13 @@ export function useSDUI() {
         setAllFilters,
         getFilter,
         clearAll,
-        clearFiltersUnsupportedBy,
         totalActiveFilters,
         buildQueryParams,
 
         // Platform state
         activePlatforms,
         effectivePlatforms,
+        hasUnsupportedActiveFiltersFor,
         setActivePlatforms,
         platformFilterMatrix,
 

@@ -449,111 +449,118 @@ describe("useSDUI > buildQueryParams", () => {
   });
 });
 
-describe("useSDUI > clearFiltersUnsupportedBy", () => {
-  it("no config → no-op", async () => {
-    fetchSpy.mockRejectedValue(new Error("x"));
-    const { result } = renderHook(() => useSDUI());
-    await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["facebook"]); });
-    expect(result.current.filterValues).toEqual({});
-  });
-
-  it("no newPlatforms → no-op", async () => {
-    fetchSpy.mockResolvedValue(makeConfig());
-    const { result } = renderHook(() => useSDUI());
-    await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setFilter("x", ["a"]); });
-    act(() => { result.current.clearFiltersUnsupportedBy([]); });
-    expect(result.current.filterValues.x).toEqual(["a"]);
-  });
-
-  it("clears filter when its platform_applicability doesn't include the new platforms", async () => {
+describe("useSDUI > platform switches preserve selected filters", () => {
+  it("keeps every selected value while unsupported controls become hidden", async () => {
+    const arrayFilter = { _id: "fb_array", platform_applicability: "facebook" };
+    const scalarFilter = { _id: "fb_scalar", platform_applicability: ["facebook"] };
+    const booleanFilter = { _id: "fb_boolean", platform_applicability: "facebook" };
     fetchSpy.mockResolvedValue(makeConfig({
       sidebar: [{
-        _id: "d",
-        filters: [{ _id: "fb_only", platform_applicability: "facebook" }],
+        _id: "facebook_filters",
+        filters: [arrayFilter, scalarFilter, booleanFilter],
       }],
     }));
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setFilter("fb_only", ["x"]); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["youtube"]); });
-    expect(result.current.filterValues.fb_only).toEqual([]);
+
+    const selectedFilters = {
+      fb_array: ["Video"],
+      fb_scalar: "value",
+      fb_boolean: true,
+    };
+    act(() => { result.current.setAllFilters(selectedFilters); });
+    act(() => { result.current.setActivePlatforms(["native"]); });
+
+    expect(result.current.filterValues).toEqual(selectedFilters);
+    expect(result.current.shouldShowFilter(arrayFilter)).toBe(false);
+    expect(result.current.shouldShowFilter(scalarFilter)).toBe(false);
+    expect(result.current.shouldShowFilter(booleanFilter)).toBe(false);
+    expect(result.current.effectivePlatforms).toEqual(["native"]);
+    expect(result.current.hasUnsupportedActiveFiltersFor(["native"])).toBe(true);
+    expect(result.current.hasUnsupportedActiveFiltersFor(["facebook"])).toBe(false);
   });
 
-  it("filter with platform_applicability as ARRAY → Array.isArray truthy branch (line 209)", async () => {
-    // platform_applicability is already an array, so the
-    // `Array.isArray(pa) ? pa : [pa]` ternary takes the truthy branch.
+  it("keeps Ad Type selected on an unsupported destination platform", async () => {
+    fetchSpy.mockResolvedValue(makeConfig({
+      navbar: [
+        platformsDoc,
+        {
+          _id: "ad_type",
+          filters: [{
+            _id: "ad_types",
+            group_id: "ad_type",
+            query_param: "adTypes",
+            platform_applicability: ["facebook"],
+          }],
+        },
+      ],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    act(() => { result.current.setSelAdTypes(["Video"]); });
+    act(() => { result.current.setActivePlatforms(["native"]); });
+
+    expect(result.current.filterValues.ad_type).toEqual(["Video"]);
+    expect(result.current.selAdTypes).toEqual(["Video"]);
+    expect(result.current.effectivePlatforms).toEqual(["native"]);
+    expect(result.current.hasUnsupportedActiveFiltersFor(["native"])).toBe(true);
+  });
+
+  it("checks selected option applicability before filter-level applicability", async () => {
     fetchSpy.mockResolvedValue(makeConfig({
       sidebar: [{
-        _id: "d",
-        filters: [{ _id: "fb_ig_only", platform_applicability: ["facebook", "instagram"] }],
+        _id: "ad_type",
+        filters: [{
+          _id: "ad_types",
+          group_id: "ad_type",
+          platform_applicability: ["facebook", "native"],
+          options: [
+            { value: "Image", platform_applicability: ["facebook", "native"] },
+            { value: "Video", platform_applicability: ["facebook"] },
+          ],
+        }],
       }],
     }));
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setFilter("fb_ig_only", ["x"]); });
-    // youtube isn't in the array → unsupported → filter cleared
-    act(() => { result.current.clearFiltersUnsupportedBy(["youtube"]); });
-    expect(result.current.filterValues.fb_ig_only).toEqual([]);
+
+    act(() => { result.current.setSelAdTypes(["Image"]); });
+    expect(result.current.hasUnsupportedActiveFiltersFor(["native"])).toBe(false);
+
+    act(() => { result.current.setSelAdTypes(["Image", "Video"]); });
+    expect(result.current.hasUnsupportedActiveFiltersFor(["native"])).toBe(true);
+    expect(result.current.filterValues.ad_type).toEqual(["Image", "Video"]);
   });
 
-  it("filter with platform_applicability='all' → kept", async () => {
+  it("does not treat the platform display matrix as a sorting restriction", async () => {
     fetchSpy.mockResolvedValue(makeConfig({
-      sidebar: [{
-        _id: "d", filters: [{ _id: "any", platform_applicability: "all" }],
-      }],
+      navbar: [
+        platformsDoc,
+        {
+          _id: "sorting",
+          filters: [{
+            _id: "sort_by",
+            group_id: "sorting",
+            platform_applicability: "all",
+            options: [{ value: "running_days", label: "Ad Running Days" }],
+          }],
+        },
+      ],
     }));
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setFilter("any", ["x"]); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["youtube"]); });
-    expect(result.current.filterValues.any).toEqual(["x"]);
-  });
 
-  it("inactive filter values are not modified", async () => {
-    fetchSpy.mockResolvedValue(makeConfig({
-      sidebar: [{ _id: "d", filters: [{ _id: "x", platform_applicability: "facebook" }] }],
-    }));
-    const { result } = renderHook(() => useSDUI());
-    await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setAllFilters({ x: [] }); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["youtube"]); });
-    expect(result.current.filterValues.x).toEqual([]);
-  });
+    act(() => { result.current.setSortBy("Ad Running Days"); });
 
-  it("unmatched filter id → skipped", async () => {
-    fetchSpy.mockResolvedValue(makeConfig());
-    const { result } = renderHook(() => useSDUI());
-    await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setAllFilters({ unknown: ["v"] }); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["youtube"]); });
-    expect(result.current.filterValues.unknown).toEqual(["v"]);
-  });
-
-  it("matches via query_param too", async () => {
-    fetchSpy.mockResolvedValue(makeConfig({
-      sidebar: [{
-        _id: "d",
-        filters: [{ _id: "f1", query_param: "myParam", platform_applicability: "facebook" }],
-      }],
-    }));
-    const { result } = renderHook(() => useSDUI());
-    await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setFilter("myParam", ["x"]); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["youtube"]); });
-    expect(result.current.filterValues.myParam).toEqual([]);
-  });
-
-  it("string filter value (not array) is cleared to ''", async () => {
-    fetchSpy.mockResolvedValue(makeConfig({
-      sidebar: [{ _id: "d", filters: [{ _id: "needle", platform_applicability: "facebook" }] }],
-    }));
-    const { result } = renderHook(() => useSDUI());
-    await act(async () => { await Promise.resolve(); });
-    act(() => { result.current.setFilter("needle", "value"); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["youtube"]); });
-    expect(result.current.filterValues.needle).toBe("");
+    expect(result.current.filterValues.sorting).toBe("running_days");
+    expect(result.current.hasUnsupportedActiveFiltersFor([
+      "facebook",
+      "instagram",
+      "youtube",
+      "google",
+      "native",
+    ])).toBe(false);
   });
 });
 
@@ -925,17 +932,13 @@ describe("useSDUI > backward-compat getters/setters", () => {
 });
 
 describe("useSDUI > non-empty searchbar exercises flatMap callbacks", () => {
-  // Lines 193/240/307/469 host `config.searchbar?.flatMap(d => d.filters)`.
-  // With searchbar=[] (default in makeConfig), the arrow body never executes.
-  // This test feeds a non-empty searchbar so all four callbacks are invoked.
-  it("non-empty searchbar invokes flatMap callbacks across all branches", async () => {
+  it("includes searchbar filters in query parameters and platform support", async () => {
     fetchSpy.mockResolvedValue(makeConfig({
       searchbar: [{ _id: "sb", filters: [{ _id: "sbFilter", query_param: "q" }] }],
     }));
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     act(() => { result.current.setFilter("sbFilter", "hello"); });
-    act(() => { result.current.clearFiltersUnsupportedBy(["facebook"]); });
     expect(result.current.buildQueryParams()).toEqual({ q: "hello" });
     expect(result.current.filterPlatformSupport).toBeDefined();
   });
@@ -994,9 +997,6 @@ describe("useSDUI > effectivePlatforms option-level edge branches", () => {
 });
 
 describe("useSDUI > sparse config (searchbar/navbar/sidebar undefined)", () => {
-  // Covers `config.searchbar?.flatMap(...) || []` branches in
-  // clearFiltersUnsupportedBy (193), effectivePlatforms (240),
-  // buildQueryParams (307), and filterPlatformSupport (469).
   it("config without searchbar/navbar/sidebar → all `|| []` branches taken", async () => {
     // navbar undefined hits the no-platforms-doc fallback (line 84-style)
     fetchSpy.mockResolvedValue({
@@ -1007,14 +1007,10 @@ describe("useSDUI > sparse config (searchbar/navbar/sidebar undefined)", () => {
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     expect(result.current.config).toBeDefined();
-    // Call clearFiltersUnsupportedBy with platforms — triggers line 193 fallbacks
-    act(() => { result.current.clearFiltersUnsupportedBy(["facebook"]); });
-    // Force an active filter so effectivePlatforms iterates (line 240 fallbacks)
+    // Force an active filter so the sparse-config paths are exercised.
     act(() => { result.current.setFilter("ghost", ["x"]); });
     expect(result.current.effectivePlatforms).toBeDefined();
-    // buildQueryParams (line 307 fallbacks)
     expect(result.current.buildQueryParams()).toEqual({});
-    // filterPlatformSupport (line 469 fallbacks) — empty map when no filters
     expect(result.current.filterPlatformSupport).toEqual({});
   });
 });

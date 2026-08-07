@@ -952,9 +952,8 @@ const App = () => {
         : allPlatformValues;
       sdui.setActivePlatforms(permitted);
     } else {
-      // Clear a persisted filter that is not valid for the destination network
-      // before it can silently trigger a plan-upgrade response.
-      sdui.clearFiltersUnsupportedBy(newSpecific);
+      // Network switches affect SDUI visibility, not selected filter state.
+      // Retained unsupported filters intentionally allow an empty result set.
       dispatch(setSpecificPlatforms(newSpecific));
       sdui.setActivePlatforms(newSpecific);
     }
@@ -1379,6 +1378,23 @@ const App = () => {
           ...(_projCtx || {}),
         };
 
+        // Keep unsupported filters selected and visible as chips, but do not
+        // let a known platform mismatch reach the API as a false plan denial.
+        const _hasUnsupportedPlatformFilter =
+          !isLanding &&
+          !isPublicLanding &&
+          !isGuestMode &&
+          sdui.hasUnsupportedActiveFiltersFor?.(permittedPlatforms);
+        const _unsupportedFilterResult = {
+          ads: [],
+          availableNetworks: permittedPlatforms,
+          noDataMessage: 'No ads found',
+          meta: {
+            total: Object.fromEntries(permittedPlatforms.map(platform => [platform, 0])),
+            hasMore: false,
+          },
+        };
+
         // ── Single API call for all platforms including TikTok ──────────────────
         const data = isLanding
           ? await fetchLandingAd(landingAd.network, landingAd.id)
@@ -1401,6 +1417,8 @@ const App = () => {
             })()
           : isGuestMode
           ? await guestSearchAds(guest.guestToken, page)
+          : _hasUnsupportedPlatformFilter
+          ? _unsupportedFilterResult
           : _metaAdsLibUnsupported
           ? await (async () => {
               const d = await fetchAds({ ..._searchParams, activePlatforms: ['facebook', 'instagram'], activePlatform: 'facebook', skip: 0 }, { signal: controller.signal });

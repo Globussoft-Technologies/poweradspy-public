@@ -164,6 +164,36 @@ export const getCountryInfo = (code) => {
   return { f: "un", n: code };
 };
 
+const COUNTRY_PLACEHOLDER_VALUES = new Set([
+  "not available",
+  "notavailable",
+  "n/a",
+  "null",
+  "undefined",
+  "none",
+  "unknown",
+  "unavailable",
+  "not provided",
+  "not specified",
+  "no country",
+  "country not available",
+]);
+
+const normalizeCountryPlaceholderValue = (value) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9/]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const isPlaceholderCountryValue = (value) => {
+  const normalized = normalizeCountryPlaceholderValue(value);
+  return !normalized || COUNTRY_PLACEHOLDER_VALUES.has(normalized);
+};
+
 // Real API responses can list the same country more than once under
 // different raw strings (e.g. "India" and "Republic of India" both resolve
 // to the same ISO code), and can also mix in the "all"/Global-reach artifact
@@ -180,7 +210,11 @@ export const getDisplayCountries = (countries) => {
             .filter((entry) => entry != null && String(entry).trim() !== "")
         : [country],
     )
-    .filter(Boolean);
+    .filter(Boolean)
+    // Production payloads may contain fallback labels such as "not available".
+    // Drop them here so the Top Country UI only exposes actual countries or
+    // the intentional Global Reach state.
+    .filter((entry) => !isPlaceholderCountryValue(entry));
   const seen = new Set();
   const deduped = [];
   for (const c of list) {
