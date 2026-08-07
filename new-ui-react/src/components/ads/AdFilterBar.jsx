@@ -58,6 +58,44 @@ export const resolveSortPlanAccessId = (label, value) => {
     null;
 };
 
+const SORT_VALUE_ALIASES = {
+  newest: "created_at",
+  newest_sort: "created_at",
+  post_date: "created_at",
+  "-created_at": "created_at",
+  popular: "popularity_score",
+  popularity: "popularity_score",
+  "-popularity_score": "popularity_score",
+  impression: "impressions",
+  "-impressions": "impressions",
+  "ad running days": "running_days",
+  "running longest": "running_days",
+  "days running": "running_days",
+  running_longest: "running_days",
+  days_running: "running_days",
+  "-running_days": "running_days",
+  "domain registration date": "domain_reg_date",
+  "domain reg date": "domain_reg_date",
+  domain_sort: "domain_reg_date",
+  domain_reg_sort: "domain_reg_date",
+  "-domain_reg_date": "domain_reg_date",
+};
+
+const normalizeSortValue = (value) => {
+  const normalized = String(value ?? "").toLowerCase().trim();
+  return SORT_VALUE_ALIASES[normalized] || normalized.replace(/[\s-]+/g, "_");
+};
+
+export const resolveActiveSortLabel = (sortTabs = [], sortBy) => {
+  const selectedValue = normalizeSortValue(sortBy);
+  if (!selectedValue) return "";
+  const match = sortTabs.find((tab) =>
+    normalizeSortValue(tab?.value ?? tab?.label ?? tab) === selectedValue ||
+    normalizeSortValue(tab?.label ?? tab) === selectedValue
+  );
+  return match?.label ?? match ?? "";
+};
+
 /**
  * AdFilterBar - Consolidates all ad-level controls:
  * 1. Platform Tabs (with horizontal scroll)

@@ -53,6 +53,47 @@ const loadLS = (key, fallback) => {
 
 const normalizeStoredValue = (value) => String(value ?? '').trim().toLowerCase();
 
+const DATE_FILTER_STATE_KEYS = new Set([
+    'seen_btn_sort',
+    'post_date_btn_sort',
+    'domain_date_btn_sort',
+]);
+
+const findConfigFilterForStateKey = (allFilters, stateKey) => {
+    const exact = allFilters.find(filter =>
+        filter._id === stateKey ||
+        (filter.query_param && filter.query_param === stateKey)
+    );
+    if (exact) return exact;
+
+    // Toolbar controls use stable runtime keys while SDUI retains its original
+    // document/filter names. Resolve those aliases before sanitizing restored
+    // state so a config refresh does not delete a valid toolbar selection.
+    if (stateKey === 'sorting') {
+        return allFilters.find(filter =>
+            filter._id === 'sort_by' ||
+            filter.query_param === 'sortBy' ||
+            filter.group_id === 'sorting'
+        );
+    }
+    if (stateKey === 'ad_type') {
+        return allFilters.find(filter =>
+            filter._id === 'ad_types' ||
+            filter._id === 'ad_type_filter' ||
+            filter.query_param === 'ad_type' ||
+            filter.query_param === 'adTypes' ||
+            filter.group_id === 'ad_type'
+        );
+    }
+    if (DATE_FILTER_STATE_KEYS.has(stateKey)) {
+        return allFilters.find(filter =>
+            filter._id === 'date_range_custom' ||
+            filter.type === 'date_range_custom'
+        );
+    }
+    return null;
+};
+
 const sanitizeFilterValuesByConfig = (values, cfg) => {
     if (!values || typeof values !== 'object' || !cfg) return values;
 
@@ -61,12 +102,6 @@ const sanitizeFilterValuesByConfig = (values, cfg) => {
         ...(cfg.navbar?.flatMap(doc => doc.filters || []) || []),
         ...(cfg.sidebar?.flatMap(doc => doc.filters || []) || []),
     ];
-    const filterIndex = new Map();
-    allFilters.forEach(filter => {
-        filterIndex.set(filter._id, filter);
-        if (filter.query_param) filterIndex.set(filter.query_param, filter);
-    });
-
     let changed = false;
     const next = {};
 
@@ -76,7 +111,7 @@ const sanitizeFilterValuesByConfig = (values, cfg) => {
             continue;
         }
 
-        const filter = filterIndex.get(key);
+        const filter = findConfigFilterForStateKey(allFilters, key);
         if (!filter) {
             changed = true;
             continue;
@@ -372,9 +407,7 @@ export function useSDUI() {
                         ? value
                         : value !== null && value !== undefined && value !== '';
                 if (!isActive) continue;
-                const filter = allFilters.find(f =>
-                    f._id === filterId || (f.query_param && f.query_param === filterId)
-                );
+                const filter = findConfigFilterForStateKey(allFilters, filterId);
                 if (!filter) continue;
                 const pa = filter.platform_applicability;
                 if (!pa || pa === 'all') continue;
@@ -467,13 +500,7 @@ export function useSDUI() {
                     : value !== null && value !== undefined && value !== '';
             if (!isActive) continue;
 
-            // Match filter by _id OR by query_param, with aliases for known mismatched keys
-            const filter = allFilters.find(f =>
-                f._id === filterId ||
-                (f.query_param && f.query_param === filterId) ||
-                (filterId === 'sorting' && (f._id === 'sort_by' || f.query_param === 'sortBy')) ||
-                (filterId === 'ad_type' && (f._id === 'ad_types' || f._id === 'ad_type_filter' || f.query_param === 'ad_type' || f.group_id === 'ad_type'))
-            );
+            const filter = findConfigFilterForStateKey(allFilters, filterId);
             if (!filter) continue;
 
             // Check option-level platform_applicability first (more specific).

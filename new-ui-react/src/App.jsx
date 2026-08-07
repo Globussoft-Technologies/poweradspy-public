@@ -50,6 +50,7 @@ import { ADMOB_FRONTEND_ENABLED } from './constants';
 import Header from "./components/layout/Header";
 import Sidebar from "./components/layout/Sidebar";
 import AdGrid from "./components/ads/AdGrid";
+import { resolveActiveSortLabel } from "./components/ads/AdFilterBar";
 import AIAnalysisModal from "./components/modals/AIAnalysisModal";
 import CampaignModal from "./components/modals/CampaignModal";
 import PricingModal from "./components/modals/PricingModal";
@@ -833,6 +834,17 @@ const App = () => {
       value: t === "Newest" ? "-created_at" : t === "Ad Running Days" ? "-running_days" : "-domain_reg_date",
     }));
   }, [sortOptions]);
+
+  // activeTab is transient UI state, while sorting is persisted by useSDUI.
+  // Rebuild the selected label from the persisted value after refresh so the
+  // toolbar and inline sort buttons reflect the sort still applied to results.
+  useEffect(() => {
+    if (!sdui.sortBy) return;
+    const restoredLabel = resolveActiveSortLabel(sortTabs, sdui.sortBy);
+    if (restoredLabel && ui.activeTab !== restoredLabel) {
+      dispatch(setActiveTab(restoredLabel));
+    }
+  }, [dispatch, sdui.sortBy, sortTabs, ui.activeTab]);
 
   // Derive primary/dropdown split from config: options with primary:true are inline tabs,
   // rest go in the dropdown. Falls back to hardcoded labels if config has no primary flag.

@@ -58,7 +58,25 @@ vi.mock("../../../src/components/ads/AdDateDropdown", () => ({
   ),
 }));
 
-import AdFilterBar from "../../../src/components/ads/AdFilterBar.jsx";
+import AdFilterBar, { resolveActiveSortLabel } from "../../../src/components/ads/AdFilterBar.jsx";
+
+describe("resolveActiveSortLabel", () => {
+  const tabs = [
+    { label: "Newest", value: "created_at" },
+    { label: "Popularity", value: "popularity_score" },
+    { label: "Ad Running Days", value: "running_days" },
+    { label: "Domain Registration Date", value: "domain_reg_date" },
+  ];
+
+  it("restores the configured label from a persisted sort value", () => {
+    expect(resolveActiveSortLabel(tabs, "popularity_score")).toBe("Popularity");
+  });
+
+  it("restores labels from legacy normalized sort aliases", () => {
+    expect(resolveActiveSortLabel(tabs, "domain_sort")).toBe("Domain Registration Date");
+    expect(resolveActiveSortLabel(tabs, "running_longest")).toBe("Ad Running Days");
+  });
+});
 
 const baseSdui = {
   config: null,

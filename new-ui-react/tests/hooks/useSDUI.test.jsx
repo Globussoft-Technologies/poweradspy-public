@@ -138,6 +138,62 @@ describe("useSDUI > initial load", () => {
     expect(result.current.filterValues.country_filter).toEqual(["United Kingdom"]);
   });
 
+  it("keeps date, ad-type, and sort toolbar selections after refresh", async () => {
+    const storedToolbarFilters = {
+      seen_btn_sort: [1786147199, 1785542400],
+      post_date_btn_sort: [1783468799, 1782864000],
+      domain_date_btn_sort: [1780876799, 1780272000],
+      ad_type: ["Image", "Video"],
+      sorting: "popularity_score",
+    };
+    localStorage.setItem("sdui.filterValues", JSON.stringify(storedToolbarFilters));
+    fetchSpy.mockResolvedValue(makeConfig({
+      navbar: [
+        platformsDoc,
+        {
+          _id: "date_filter",
+          filters: [{
+            _id: "date_range_custom",
+            group_id: "date_filter",
+            type: "date_range_custom",
+            query_param: "dateRange",
+          }],
+        },
+        {
+          _id: "sorting",
+          filters: [{
+            _id: "sort_by",
+            group_id: "sorting",
+            query_param: "sortBy",
+            type: "radio",
+            options: [
+              { value: "created_at", label: "Newest" },
+              { value: "popularity_score", label: "Popularity" },
+            ],
+          }],
+        },
+        {
+          _id: "ad_type",
+          filters: [{
+            _id: "ad_types",
+            group_id: "ad_type",
+            query_param: "adTypes",
+            type: "checkbox",
+            options: [
+              { value: "Image", label: "Image" },
+              { value: "Video", label: "Video" },
+            ],
+          }],
+        },
+      ],
+    }));
+
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.filterValues).toEqual(storedToolbarFilters);
+  });
+
   it("loadLS missing key → fallback", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
