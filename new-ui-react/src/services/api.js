@@ -6,6 +6,7 @@ import { calculateRunningDays } from '../utils/helper';
 import { expandCountryFilterValues } from '../utils/countryFilter';
 import { dedupeInFlight } from '../utils/requestDeduper';
 import { ADMOB_FRONTEND_ENABLED } from '../constants';
+const NAS_VIDEO_BASE_URL = (import.meta.env.VITE_NAS_VIDEO_URL || import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, '');
 
 // ─── PAS API Configuration ────────────────────────────────────────────────────
 const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || "";
