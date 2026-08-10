@@ -72,6 +72,13 @@ require.cache[planSvcPath] = {
   id: planSvcPath, filename: planSvcPath, loaded: true, exports: planSvc,
 };
 
+const routeClassificationPath = require.resolve("../../src/services/planControl/registries/routeClassification");
+const getCapabilityDecision = vi.fn(async () => null);
+require.cache[routeClassificationPath] = {
+  id: routeClassificationPath, filename: routeClassificationPath, loaded: true,
+  exports: { getCapabilityDecision },
+};
+
 const policyStoragePath = require.resolve("../../src/services/planControl/storage/storage");
 const getLatestPolicy = vi.fn(async () => null);
 require.cache[policyStoragePath] = {
@@ -142,6 +149,7 @@ beforeEach(() => {
   getLatestPolicy.mockReset().mockResolvedValue(null);
   evaluateEntitlement.mockReset().mockReturnValue({ allowed: true, allowedNetworks: [] });
   resolvePlanIdentity.mockReset().mockReturnValue(null);
+  getCapabilityDecision.mockReset().mockResolvedValue(null);
 });
 
 describe("authRoutes > module load", () => {
@@ -428,11 +436,10 @@ describe("authRoutes > GET /plan-access", () => {
   it("uses published ads.search networks when stale legacy access omits GDN/Native", async () => {
     planSvc.getConfig.mockResolvedValue([{}]);
     planSvc.getAllowedPlatforms.mockReturnValue(["facebook", "instagram"]);
-    getLatestPolicy.mockResolvedValue({ versionId: "policy-live", snapshot: {} });
-    resolvePlanIdentity.mockReturnValue({ planId: 27, familyId: "platinum-legacy" });
-    evaluateEntitlement.mockImplementation(({ capabilityId }) => capabilityId === "ads.search"
-      ? { allowed: true, allowedNetworks: ["facebook", "instagram", "gdn", "native"] }
-      : { allowed: true, allowedNetworks: [] });
+    getCapabilityDecision.mockResolvedValue({
+      allowed: true,
+      allowedNetworks: ["facebook", "instagram", "gdn", "native"],
+    });
     freshSut();
     const res = mkRes();
     await getHandler("get", "/plan-access")({ user: { plan_id: 27 }, query: {} }, res);
@@ -479,6 +486,7 @@ describe("authRoutes > GET /plan-access", () => {
     expect(res.body.data.allowedPlatforms).toContain("facebook");
     expect(res.body.data.allowedPlatforms).not.toContain("google");
     expect(res.body.data.customPlatformRestriction).toBe(true);
+    expect(res.body.data.isCustomPlan).toBe(true);
   });
 
   it("aMember with empty config falls back to ALL_PLATFORMS", async () => {

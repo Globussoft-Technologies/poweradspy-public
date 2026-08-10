@@ -68,7 +68,13 @@ const PlanPrice = ({ plan, billingPeriod }) => {
 // The plans/features shown are fetched from the backend (GET /api/v1/auth/plans-catalog),
 // controlled by config.pricing.activePlanGeneration — see docs/PLAN_ACCESS.md § 2026
 // Pricing Restructure. This modal no longer hardcodes any plan/price/feature data.
-const PricingModal = ({ isOpen, onClose, currentPlanTier }) => {
+const PricingModal = ({
+  isOpen,
+  onClose,
+  currentPlanTier,
+  isCustomPlan = false,
+  customAllowedPlatforms = [],
+}) => {
   const [catalog, setCatalog] = useState(null); // { features, plans } | null while loading
   const [loadFailed, setLoadFailed] = useState(false);
   // Display only — PRD FR-18. priceAnnual is computed server-side from
@@ -117,7 +123,14 @@ const PricingModal = ({ isOpen, onClose, currentPlanTier }) => {
   // legacy group and is never meant to be user-facing. Show the matching catalog entry's
   // plain `label` instead; falls back to the raw value for an unknown/legacy tier not in
   // the currently-active catalog (label === tier for every legacy entry, so no suffix there).
-  const currentPlanLabel = plans.find((p) => p.tier === currentPlanTier)?.label || currentPlanTier;
+  const currentPlanLabel = isCustomPlan
+    ? 'Custom'
+    : (plans.find((p) => p.tier === currentPlanTier)?.label || currentPlanTier);
+  const customNetworkLabels = [...new Set(customAllowedPlatforms)]
+    .map(network => String(network).trim())
+    .filter(Boolean)
+    .map(network => network.charAt(0).toUpperCase() + network.slice(1))
+    .join(', ');
 
   return (
     <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -128,7 +141,7 @@ const PricingModal = ({ isOpen, onClose, currentPlanTier }) => {
             <h2 className="text-2xl font-bold bg-gradient-to-r from-[#6b99ff] to-[#3762c1] bg-clip-text text-transparent">
               Choose Your Plan
             </h2>
-            {currentPlanTier && (
+            {(currentPlanTier || isCustomPlan) && (
               <p className="text-theme-text-secondary text-[11px] mt-1">
                 Current plan: <span className="font-semibold">{currentPlanLabel}</span>
                 {isOnLegacyGenerationTier && <span className="text-amber-500"> · legacy benefits end on upgrade</span>}
@@ -163,6 +176,22 @@ const PricingModal = ({ isOpen, onClose, currentPlanTier }) => {
         </div>
 
         {/* Body — scrollable table */}
+        {isCustomPlan && (
+          <div className="mx-6 mt-4 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-[12px] text-theme-text-secondary">
+            {customNetworkLabels ? (
+              <>
+                Your Custom plan currently includes <span className="font-semibold text-theme-text">{customNetworkLabels}</span> only.
+                Features are available for those purchased networks; choose an upgrade below to unlock additional networks and plan benefits.
+              </>
+            ) : (
+              <>
+                You have a Custom plan, but there are no valid platforms allowed on its active invoice.
+                Choose a plan below to continue, or update the Custom plan's platform selection.
+              </>
+            )}
+          </div>
+        )}
+
         <div className="overflow-x-auto overflow-y-auto pr-6 pb-4 custom-scrollbar">
           {!catalog && !loadFailed && (
             <div className="flex items-center justify-center text-theme-text-secondary text-sm py-16">

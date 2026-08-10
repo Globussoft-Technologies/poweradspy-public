@@ -2,10 +2,29 @@ import React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  ...(await importOriginal()),
   X: () => <i data-testid="x-ic" />,
   Check: () => <i data-testid="check-ic" />,
 }));
+vi.mock("../../../src/services/api", () => {
+  const tiers = ["Basic", "Standard", "Premium", "Platinum", "Titanium", "Palladium"];
+  const catalog = {
+    features: ["Networks", "Keyword search", "Favourite and Hidden", "Export", "Analytics", "Projects"],
+    plans: tiers.map((tier, index) => ({
+      tier,
+      label: tier,
+      price: `$${index === 0 ? 69 : index === 5 ? 349 : 99 + (index * 40)}/Month`,
+      platforms: ["Facebook", "Instagram", "YouTube", "Google", "GDN", "LinkedIn", "Native", "Reddit", "Quora", "Pinterest", "TikTok"],
+      features: [true, true, true, true, false],
+    })),
+  };
+  return {
+    // A synchronous thenable keeps these UI-focused tests deterministic while
+    // preserving the component's production Promise contract.
+    fetchPlansCatalog: () => ({ then: (resolve) => resolve(catalog) }),
+  };
+});
 vi.mock("../../../src/assets/fb.png", () => ({ default: "fb.png" }));
 vi.mock("../../../src/assets/ig.png", () => ({ default: "ig.png" }));
 vi.mock("../../../src/assets/yt.png", () => ({ default: "yt.png" }));
@@ -34,11 +53,12 @@ describe("PricingModal", () => {
     }
   });
   it("currentPlanTier='Standard' → filters out Basic + Standard", () => {
-    const { getByText, queryByText } = render(
+    const { getByText, queryByText, queryAllByText } = render(
       <PricingModal isOpen onClose={() => {}} currentPlanTier="Standard" />,
     );
     expect(queryByText("Basic")).toBeNull();
-    expect(queryByText("Standard")).toBeNull();
+    // The only Standard label is the current-plan header, not an upgrade card.
+    expect(queryAllByText("Standard")).toHaveLength(1);
     expect(getByText("Premium")).toBeInTheDocument();
     expect(getByText("Platinum")).toBeInTheDocument();
   });
@@ -115,7 +135,7 @@ describe("PricingModal", () => {
   it("last visible plan column lacks border-r (border styling absent on last)", () => {
     const { container } = render(<PricingModal isOpen onClose={() => {}} currentPlanTier="Platinum" />);
     // After Platinum, visible = Titanium + Palladium
-    const planCols = container.querySelectorAll('.w-\\[160px\\]');
+    const planCols = container.querySelectorAll('.min-w-\\[160px\\]');
     expect(planCols.length).toBe(2);
     // Last column should NOT have border-r class
     expect(planCols[planCols.length - 1].className).not.toMatch(/border-r/);
@@ -123,5 +143,26 @@ describe("PricingModal", () => {
   it("currentPlanTier=null → uses fallback, all plans rendered", () => {
     const { getByText } = render(<PricingModal isOpen onClose={() => {}} currentPlanTier={null} />);
     expect(getByText("Basic")).toBeInTheDocument();
+  });
+
+  it("explains the purchased network boundary for a Custom plan", () => {
+    const { getByText } = render(
+      <PricingModal
+        isOpen
+        onClose={() => {}}
+        isCustomPlan
+        customAllowedPlatforms={["reddit"]}
+      />,
+    );
+    expect(getByText("Custom")).toBeInTheDocument();
+    expect(getByText("Reddit")).toBeInTheDocument();
+    expect(getByText(/Features are available for those purchased networks/)).toBeInTheDocument();
+  });
+
+  it("explains that an active Custom plan has no valid platform instead of showing no ads", () => {
+    const { getByText } = render(
+      <PricingModal isOpen onClose={() => {}} isCustomPlan customAllowedPlatforms={[]} />,
+    );
+    expect(getByText(/there are no valid platforms allowed on its active invoice/)).toBeInTheDocument();
   });
 });

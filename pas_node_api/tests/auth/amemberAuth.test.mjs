@@ -367,7 +367,7 @@ describe("auth/amemberAuth > custom plan path", () => {
     expect(payload.platformAccess.facebook).toBe(1);
   });
 
-  it("custom plan: void/refunded/failed invoice (status 2,3,4) is skipped", async () => {
+  it("custom plan: aMember status 2 (Recurring Active) is accepted", async () => {
     freshSut();
     let call = 0;
     global.fetch = vi.fn(async (url) => {
@@ -381,7 +381,48 @@ describe("auth/amemberAuth > custom plan path", () => {
     });
     await handlers.get["/loginpage/:encodedUsername"](mkReq(), mkRes());
     const payload = generateToken.mock.calls[0][0];
-    expect(payload.platformAccess.facebook).toBe(0);
+    expect(payload.platformAccess.facebook).toBe(1);
+  });
+
+  it("custom plan: checkbox arrays enable only non-empty selections and normalize key casing", async () => {
+    freshSut();
+    let call = 0;
+    global.fetch = vi.fn(async (url) => {
+      call++;
+      if (call === 1) return { ok: true, json: async () => ({ ok: true, user_id: 42, subscriptions: { 33: "2099-01-01" } }) };
+      if (url.includes("users?")) return { ok: true, json: async () => ([{ nested: { invoices: [{ invoice_id: 1, status: 2 }] } }]) };
+      if (url.includes("invoices/1")) return { ok: true, json: async () => ([
+        { nested: { "invoice-items": [{ item_id: 33, options: JSON.stringify({
+          Facebook: { value: [] },
+          Instagram: { value: [] },
+          Youtube: { value: [] },
+          Google: { value: [] },
+          GDN: { value: [] },
+          Native: { value: [] },
+          Reddit: { value: ["7"] },
+          Quora: { value: [] },
+          Pinterest: { value: [] },
+          TikTok: { value: ["10"] },
+        }) }] } },
+      ]) };
+      return { ok: true, json: async () => ({}) };
+    });
+
+    await handlers.get["/loginpage/:encodedUsername"](mkReq(), mkRes());
+    const platformAccess = generateToken.mock.calls[0][0].platformAccess;
+    expect(platformAccess).toMatchObject({
+      facebook: 0,
+      instagram: 0,
+      youtube: 0,
+      google: 0,
+      gdn: 0,
+      native: 0,
+      reddit: 1,
+      quora: 0,
+      pinterest: 0,
+      tiktok: 1,
+      linkedin: 0,
+    });
   });
 
   it("custom plan: invoice with no platform keys is skipped", async () => {

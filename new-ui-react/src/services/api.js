@@ -1364,7 +1364,12 @@ export const buildSearchPayload = (filters = {}) => {
   }
 
   const payload = {
-    network: resolvedNetworks,
+    // Keep the transport contract for the visible All tab: the client asks for
+    // `all`, while the backend intersects that request with the authenticated
+    // plan's allowed platforms.  `resolvedNetworks` is still used above/below
+    // for platform-specific filter shaping. Google Transparency is an explicit
+    // Google-only mode, so it retains its narrowed request.
+    network: filters.isAllTab === true && !googleTransparencyEnabled ? 'all' : resolvedNetworks,
     youtube_display_ads,
     // user_id: 281,
     advertiser,

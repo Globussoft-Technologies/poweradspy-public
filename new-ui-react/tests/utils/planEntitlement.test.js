@@ -8,6 +8,7 @@ import {
   isPlanNetworkAllowed,
   normalizePlanNetwork,
   resolveAdsSearchAllowedNetworks,
+  resolveCustomPlanDefaultNetwork,
 } from "../../src/utils/planEntitlement.js";
 
 describe("plan entitlement decisions", () => {
@@ -15,6 +16,13 @@ describe("plan entitlement decisions", () => {
     expect(normalizePlanNetwork(" YouTube ")).toBe("youtube");
     expect(isPlanNetworkAllowed(["youtube", "GOOGLE", "Native"], "YOUTUBE")).toBe(true);
     expect(isPlanNetworkAllowed(["youtube", "google", "native"], "linkedin")).toBe(false);
+  });
+
+  it("starts a Custom plan on its first purchased network", () => {
+    const navbarOrder = ["facebook", "instagram", "youtube", "google", "reddit", "quora"];
+    expect(resolveCustomPlanDefaultNetwork(navbarOrder, ["reddit"])).toBe("reddit");
+    expect(resolveCustomPlanDefaultNetwork(navbarOrder, ["quora", "reddit"])).toBe("reddit");
+    expect(resolveCustomPlanDefaultNetwork(navbarOrder, [])).toBeNull();
   });
 
   it("uses the published ads.search network decision instead of a stale legacy platform list", () => {

@@ -137,6 +137,127 @@ describe('plan-control policy engine', () => {
     });
   });
 
+  it('uses a Custom-plan invoice as a code-level network boundary without editing the published policy', () => {
+    const policy = snapshot();
+    policy.planFamilies.push({
+      familyId: 'custom', label: 'Custom', generation: '2027-growth', status: 'custom',
+      variants: [{ planId: 33, billingCycle: 'custom', billingProvider: 'amember' }],
+    });
+    policy.policies.custom = {
+      generalNetworks: ['facebook'],
+      capabilities: {
+        'ads.search': { effect: 'deny', networks: { mode: 'custom', allowed: [] } },
+        'intelligence.market_trends': { effect: 'deny', networks: { mode: 'custom', allowed: [] } },
+        'intelligence.competitive': { effect: 'deny', networks: { mode: 'not_applicable' } },
+      },
+    };
+    const identity = resolvePlanIdentity(33, policy);
+    const user = {
+      userSubscriptionType: 33,
+      platformAccess: { facebook: 0, instagram: 0, reddit: 1, google: 0 },
+    };
+
+    expect(evaluateEntitlement({
+      user, planIdentity: identity, capabilityId: 'ads.search', requestedNetworks: ['reddit'], policySnapshot: policy,
+    })).toMatchObject({
+      allowed: true,
+      planStatus: 'custom',
+      networkMode: 'custom_invoice',
+      allowedNetworks: ['reddit'],
+    });
+    expect(evaluateEntitlement({
+      user, planIdentity: identity, capabilityId: 'ads.search', requestedNetworks: ['facebook'], policySnapshot: policy,
+    })).toMatchObject({ allowed: false, reasonCode: 'CUSTOM_INVOICE_DENY', allowedNetworks: ['reddit'] });
+    expect(evaluateEntitlement({
+      user, planIdentity: identity, capabilityId: 'intelligence.market_trends', requestedNetworks: ['reddit'], policySnapshot: policy,
+    })).toMatchObject({ allowed: true, allowedNetworks: ['reddit'] });
+    expect(evaluateEntitlement({
+      user, planIdentity: identity, capabilityId: 'intelligence.competitive', policySnapshot: policy,
+    })).toMatchObject({ allowed: true, allowedNetworks: ['reddit'] });
+    expect(evaluateEntitlement({
+      user, planIdentity: identity, capabilityId: 'projects.access', policySnapshot: policy,
+    })).toMatchObject({ allowed: false, reasonCode: 'CUSTOM_INVOICE_DENY', allowedNetworks: ['reddit'] });
+    expect(evaluateEntitlement({
+      user, planIdentity: identity, capabilityId: 'intelligence.competitive', requestedNetworks: ['google'], policySnapshot: policy,
+    })).toMatchObject({ allowed: false, reasonCode: 'CUSTOM_INVOICE_DENY' });
+    expect(evaluateEntitlement({
+      user, planIdentity: identity, capabilityId: 'intelligence.keyword_explorer', requestedNetworks: ['reddit'], policySnapshot: policy,
+    })).toMatchObject({ allowed: false, reasonCode: 'CUSTOM_INVOICE_DENY', allowedNetworks: [] });
+
+    expect(policy.policies.custom.capabilities['ads.search'].effect).toBe('deny');
+    expect(policy.policies.custom.generalNetworks).toEqual(['facebook']);
+  });
+
+  it('denies every Custom-plan capability when the active invoice has no selected platform', () => {
+    const policy = snapshot();
+    const identity = {
+      planId: 33,
+      familyId: 'custom',
+      generation: '2027-growth',
+      status: 'custom',
+    };
+    expect(evaluateEntitlement({
+      user: { userSubscriptionType: 33, platformAccess: { facebook: 0, reddit: 0 } },
+      planIdentity: identity,
+      capabilityId: 'ads.search',
+      requestedNetworks: ['all'],
+      policySnapshot: policy,
+    })).toMatchObject({
+      allowed: false,
+      reasonCode: 'CUSTOM_INVOICE_DENY',
+      planStatus: 'custom',
+      allowedNetworks: [],
+    });
+  });
+
+  it('evaluates Custom Analytics and Market Trends from purchased networks without a policy snapshot', () => {
+    const identity = {
+      planId: 33,
+      familyId: 'custom',
+      generation: 'custom',
+      status: 'custom',
+    };
+    const user = {
+      userSubscriptionType: 33,
+      platformAccess: { facebook: 0, reddit: 1, google: 0 },
+    };
+
+    expect(evaluateEntitlement({
+      user,
+      planIdentity: identity,
+      capabilityId: 'intelligence.competitive',
+      policySnapshot: null,
+    })).toMatchObject({ allowed: true, allowedNetworks: ['reddit'], policyVersion: null });
+    expect(evaluateEntitlement({
+      user,
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends',
+      requestedNetworks: ['reddit'],
+      policySnapshot: null,
+    })).toMatchObject({ allowed: true, allowedNetworks: ['reddit'], policyVersion: null });
+    expect(evaluateEntitlement({
+      user,
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends.overview',
+      requestedNetworks: ['reddit'],
+      policySnapshot: null,
+    })).toMatchObject({ allowed: true, allowedNetworks: ['reddit'] });
+    expect(evaluateEntitlement({
+      user,
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends.keywords',
+      requestedNetworks: ['reddit'],
+      policySnapshot: null,
+    })).toMatchObject({ allowed: false, reasonCode: 'CUSTOM_INVOICE_DENY', allowedNetworks: [] });
+    expect(evaluateEntitlement({
+      user,
+      planIdentity: identity,
+      capabilityId: 'intelligence.market_trends',
+      requestedNetworks: ['facebook'],
+      policySnapshot: null,
+    })).toMatchObject({ allowed: false, reasonCode: 'CUSTOM_INVOICE_DENY' });
+  });
+
   it('inherits family networks when an older policy stored not_applicable for a capability that is now network-aware', () => {
     const policy = snapshot();
     policy.policies['growth-2027'].capabilities['intelligence.market_trends.overview'] = {

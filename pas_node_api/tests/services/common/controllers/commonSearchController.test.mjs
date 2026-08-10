@@ -60,6 +60,14 @@ for (const net of ADV_NETWORKS) {
   const p = require.resolve(`../../../../src/services/${net}/controllers/getAdsByAdvertiserController`);
   require.cache[p] = { id: p, filename: p, loaded: true, exports: { getAdsByAdvertiser: advAds[net] } };
 }
+const admobSearchAds = vi.fn(async () => ({ code: 200, data: [], total: 0 }));
+const admobSearchPath = require.resolve("../../../../src/services/admob/controllers/adSearchController");
+require.cache[admobSearchPath] = {
+  id: admobSearchPath,
+  filename: admobSearchPath,
+  loaded: true,
+  exports: { searchAds: admobSearchAds },
+};
 
 // Load SUT after all mocks are in place
 const sutPath = require.resolve("../../../../src/services/common/controllers/commonSearchController");
@@ -87,6 +95,7 @@ beforeEach(() => {
   mergeNetworkResults.mockReset().mockImplementation((arrs) => arrs.flat());
   getApplicableNetworks.mockReset().mockResolvedValue(null);
   for (const n of NETWORKS) searchAds[n].mockReset().mockResolvedValue({ code: 200, data: [], total: 0 });
+  admobSearchAds.mockReset().mockResolvedValue({ code: 200, data: [], total: 0 });
   for (const n of ADV_NETWORKS) advAds[n].mockReset().mockResolvedValue({ code: 200, data: [], total: 0 });
 });
 
@@ -180,6 +189,24 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(searchAds.facebook).toHaveBeenCalled();
     expect(searchAds.instagram).not.toHaveBeenCalled();
     expect(res.json.mock.calls[0][0].meta.planAccess.planId).toBe("p1");
+  });
+
+  it("Custom-plan All requests query only invoice-allowed networks, including no implicit AdMob", async () => {
+    registryReturns({ reddit: svc("reddit"), admob: svc("admob") });
+    searchAds.reddit.mockResolvedValue({ code: 200, data: [{ id: 1 }], total: 1 });
+    admobSearchAds.mockResolvedValue({ code: 200, data: [{ id: 2 }], total: 1 });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { network: "all" },
+      query: {},
+      planAccess: { allowedPlatforms: ["reddit"], isCustomPlan: true },
+    }, res);
+
+    expect(searchAds.reddit).toHaveBeenCalledOnce();
+    expect(admobSearchAds).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].data).toHaveLength(1);
+    expect(res.json.mock.calls[0][0].data[0].network).toBe("reddit");
   });
 
   it("Google Transparency toggle searches only Google even when other networks were selected", async () => {

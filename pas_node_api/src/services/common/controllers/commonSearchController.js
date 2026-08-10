@@ -205,8 +205,12 @@ async function searchAllNetworks(req, res) {
     _body.popularity_sort === 'popularity_sort' || _body.sortBy === 'Popularity';
 
   const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
+  const isCustomPlan = req.planAccess?.isCustomPlan === true;
   const isAllowed = (net) =>
-    (net === 'admob' || !allowedPlatforms || allowedPlatforms.includes(net)) &&
+    // AdMob remains available by default for regular plans. Custom plans are
+    // invoice-selected, so every network (including AdMob) must be explicitly
+    // present in their authenticated allowedPlatforms intersection.
+    ((net === 'admob' && !isCustomPlan) || !allowedPlatforms || allowedPlatforms.includes(net)) &&
     (!sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&
     (!_popularitySortActive || _POPULARITY_NETWORKS.has(net)) &&

@@ -95,7 +95,59 @@ async function checkAmemberAccess(username) {
  * Checks which platforms (Facebook, Instagram, etc.) are enabled for custom plans.
  * Mirrors PHP's custom plan invoice checking logic.
  */
-async function fetchCustomPlanPlatforms(userId, apiUrl, apiKey) {
+const CUSTOM_PLATFORM_KEYS = {
+  facebook: ['facebook'],
+  instagram: ['instagram'],
+  youtube: ['youtube'],
+  google: ['google'],
+  linkedin: ['linkedin'],
+  gdn: ['gdn'],
+  native: ['native'],
+  reddit: ['reddit'],
+  quora: ['quora'],
+  pinterest: ['pinterest'],
+  tiktok: ['tiktok'],
+};
+
+function isSelectedCustomOption(option) {
+  const value = option && typeof option === 'object' && !Array.isArray(option)
+    && Object.prototype.hasOwnProperty.call(option, 'value')
+    ? option.value
+    : option;
+
+  if (Array.isArray(value)) return value.length > 0;
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0 || value === null || value === undefined) return false;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized !== '' && !['0', 'false', 'no', 'off', 'none'].includes(normalized);
+  }
+  if (typeof value === 'object') return Object.values(value).some(isSelectedCustomOption);
+  return Boolean(value);
+}
+
+function extractCustomPlanPlatforms(customOptions) {
+  const platforms = Object.fromEntries(Object.keys(CUSTOM_PLATFORM_KEYS).map(key => [key, 0]));
+  if (!customOptions || typeof customOptions !== 'object' || Array.isArray(customOptions)) {
+    return { platforms, hasPlatformOptions: false };
+  }
+
+  const normalizedOptions = Object.fromEntries(
+    Object.entries(customOptions).map(([key, value]) => [String(key).trim().toLowerCase(), value])
+  );
+  let hasPlatformOptions = false;
+
+  for (const [platform, aliases] of Object.entries(CUSTOM_PLATFORM_KEYS)) {
+    const matchingKey = aliases.find(alias => Object.prototype.hasOwnProperty.call(normalizedOptions, alias));
+    if (!matchingKey) continue;
+    hasPlatformOptions = true;
+    platforms[platform] = isSelectedCustomOption(normalizedOptions[matchingKey]) ? 1 : 0;
+  }
+
+  return { platforms, hasPlatformOptions };
+}
+
+async function fetchCustomPlanPlatforms(userId, apiUrl, apiKey, activeCustomPlanIds = []) {
   const platforms = {
     facebook: 0, instagram: 0, youtube: 0, google: 0, linkedin: 0,
     gdn: 0, native: 0, reddit: 0, quora: 0, pinterest: 0, tiktok: 0,
@@ -120,39 +172,36 @@ async function fetchCustomPlanPlatforms(userId, apiUrl, apiKey) {
       const invRes = await fetch(invUrl);
       const invData = await invRes.json();
 
-      if (!invData?.[0]?.nested?.['invoice-items']?.[0]?.options) continue;
+      const invoiceItems = invData?.[0]?.nested?.['invoice-items'] || [];
+      for (const invoiceItem of invoiceItems) {
+        const itemPlanId = Number(invoiceItem?.product_id ?? invoiceItem?.item_id);
+        if (activeCustomPlanIds.length > 0 && Number.isFinite(itemPlanId)
+          && !activeCustomPlanIds.includes(itemPlanId)) continue;
+        if (invoiceItem?.options === undefined || invoiceItem?.options === null) continue;
 
-      let customOptions;
-      try {
-        const rawOptions = invData[0].nested['invoice-items'][0].options;
-        customOptions = typeof rawOptions === 'string' ? JSON.parse(rawOptions) : rawOptions;
-      } catch (e) {
-        continue;
-      }
+        let customOptions;
+        try {
+          const rawOptions = invoiceItem.options;
+          customOptions = typeof rawOptions === 'string' ? JSON.parse(rawOptions) : rawOptions;
+        } catch (e) {
+          continue;
+        }
 
-      // Check if any platform key exists (mirrors PHP array_key_exists checks)
-      const platformKeys = ['facebook', 'Facebook', 'Instagram', 'Google', 'Youtube', 'YouTube', 'Native', 'GDN', 'Reddit', 'Quora', 'Pinterest', 'tiktok','linkedin'];
-      const hasPlatform = platformKeys.some(k => k in customOptions);
+        const extracted = extractCustomPlanPlatforms(customOptions);
+        if (!extracted.hasPlatformOptions) continue;
 
-      // Trust checkAmemberAccess() for active access validation — same as Laravel.
-      // Only skip invoices that are explicitly invalid: void (2), refunded (3), failed (4).
-      // All other statuses (0=active, 1=paid, 5=recurring finished, etc.) are valid.
-      const invalidStatuses = new Set([2, 3, 4]);
-      if (hasPlatform && !invalidStatuses.has(invoiceStatus)) {
-        // Extract enabled platforms — all keys lowercase for consistency with planAccess middleware
-        if (customOptions.Facebook?.value || customOptions.facebook?.value) platforms.facebook = 1;
-        if (customOptions.Instagram?.value) platforms.instagram = 1;
-        if (customOptions.YouTube?.value || customOptions.Youtube?.value) platforms.youtube = 1;
-        if (customOptions.Google?.value) platforms.google = 1;
-        if (customOptions.GDN?.value) platforms.gdn = 1;
-        if (customOptions.Native?.value) platforms.native = 1;
-        if (customOptions.Reddit?.value) platforms.reddit = 1;
-        if (customOptions.Quora?.value) platforms.quora = 1;
-        if (customOptions.Pinterest?.value) platforms.pinterest = 1;
-        if (customOptions.tiktok?.value) platforms.tiktok = 1;
-        if (customOptions.linkedin?.value) platforms.linkedin = 1;
-
-        return { platforms, isCustom: true, customOptions };
+        // checkAmemberAccess() already established that this custom product is
+        // currently active for the user. aMember status 2 is Recurring Active,
+        // so invoice status must not be interpreted here using unrelated legacy
+        // status constants. The active subscription and matching item are the
+        // authority; the item's Product Options define its network boundary.
+        return {
+          platforms: extracted.platforms,
+          isCustom: true,
+          customOptions,
+          invoiceId,
+          invoiceStatus,
+        };
       }
     }
   } catch (err) {
@@ -260,8 +309,9 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     };
 
     if (hasCustomPlan || hasUnknownPlan) {
+      const activeCustomPlanIds = subscriptionIds.filter(id => customCodes.includes(id) || !allKnownPlanIds.has(id));
       const { platforms, isCustom } = await fetchCustomPlanPlatforms(
-        userId, config.amember.apiUrl, config.amember.apiKey
+        userId, config.amember.apiUrl, config.amember.apiKey, activeCustomPlanIds
       );
       if (isCustom) {
         platformAccess = platforms;

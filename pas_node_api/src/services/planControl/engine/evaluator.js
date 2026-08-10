@@ -81,6 +81,7 @@ function makeDecision(allowed, reasonCode, context = {}) {
     requestedNetworks: context.requestedNetworks || [],
     allowedNetworks: context.allowedNetworks || [],
     ...(context.networkMode ? { networkMode: context.networkMode } : {}),
+    ...(context.planStatus ? { planStatus: context.planStatus } : {}),
     limits: context.limits || {},
     policyVersion: context.policyVersion || null,
     showSubscriptionModal: shouldShowSubscriptionModal(reasonCode),
@@ -140,6 +141,63 @@ function evaluateEntitlement(input) {
   }
 
   // ── Check parent capability first (hierarchical deny) ─────────────────
+  // Custom plans are purchased by network in aMember. Their invoice/JWT is a
+  // runtime entitlement boundary and must not depend on whichever editable
+  // Custom-family policy happens to be present in a published revision.
+  // Globally disabled capabilities remain disabled above; every other product
+  // capability is available only within the networks actually purchased.
+  if (planIdentity.status === 'custom') {
+    const purchasedNetworks = Object.entries(user?.platformAccess || {})
+      .filter(([, value]) => value === 1 || value === true || String(value) === '1')
+      .map(([network]) => String(network).trim().toLowerCase())
+      .filter(Boolean);
+    const uniquePurchasedNetworks = [...new Set(purchasedNetworks)];
+    const supportedNetworks = Array.isArray(capDef.supportedNetworks)
+      ? capDef.supportedNetworks.map(network => String(network).trim().toLowerCase()).filter(Boolean)
+      : [];
+    const capabilityNetworks = capDef.networkAware && supportedNetworks.length > 0
+      ? uniquePurchasedNetworks.filter(network => supportedNetworks.includes(network))
+      : uniquePurchasedNetworks;
+    const effectiveNetworks = capDef.networkAware ? capabilityNetworks : uniquePurchasedNetworks;
+    const customContext = {
+      ...baseContext,
+      planStatus: 'custom',
+      networkMode: 'custom_invoice',
+      allowedNetworks: effectiveNetworks,
+      limits: {},
+    };
+
+    if (uniquePurchasedNetworks.length === 0) {
+      return makeDecision(false, CUSTOM_INVOICE_DENY, customContext);
+    }
+    // Buying one or more ad networks does not include the separate All
+    // Projects product. Custom invoices control network-backed Ads Library and
+    // intelligence surfaces only; project capabilities require their own plan.
+    if (capabilityId.startsWith('projects.')) {
+      return makeDecision(false, CUSTOM_INVOICE_DENY, customContext);
+    }
+    if (capDef.networkAware && effectiveNetworks.length === 0) {
+      return makeDecision(false, CUSTOM_INVOICE_DENY, customContext);
+    }
+
+    if (requestedNetworks.length > 0) {
+      const requestsAll = requestedNetworks.some(
+        network => String(network).trim().toLowerCase() === 'all'
+      );
+      const concreteRequestedNetworks = requestedNetworks
+        .map(network => String(network).trim().toLowerCase())
+        .filter(network => network && network !== 'all');
+      const deniedNetworks = concreteRequestedNetworks.filter(
+        network => !effectiveNetworks.includes(network)
+      );
+      if (deniedNetworks.length > 0 || (requestsAll && effectiveNetworks.length === 0)) {
+        return makeDecision(false, CUSTOM_INVOICE_DENY, customContext);
+      }
+    }
+
+    return makeDecision(true, ALLOWED, customContext);
+  }
+
   let parentDecision = null;
   if (capDef.parentCapability) {
     const parentCap = getParentCapability(capabilityId);
@@ -180,28 +238,6 @@ function evaluateEntitlement(input) {
     : familyCapabilityPolicy;
 
   // ── Priority 4: Custom invoice/JWT explicit denial ────────────────────
-  if (planIdentity.status === 'custom' && user?.platformAccess) {
-    // Custom plans use JWT platformAccess as a maximum boundary.
-    // If the capability is network-aware and the custom invoice denies all
-    // requested networks, deny with CUSTOM_INVOICE_DENY.
-    if (capDef.networkAware && requestedNetworks.length > 0) {
-      const pa = user.platformAccess;
-      const paLower = Object.fromEntries(
-        Object.entries(pa).map(([k, v]) => [k.toLowerCase(), v])
-      );
-      const jwtAllowed = requestedNetworks.filter((n) => {
-        const key = n.toLowerCase();
-        return !(key in paLower) || paLower[key] === 1;
-      });
-      if (jwtAllowed.length === 0) {
-        return makeDecision(false, CUSTOM_INVOICE_DENY, {
-          ...baseContext,
-          allowedNetworks: [],
-        });
-      }
-    }
-  }
-
   // ── Priority 5: Variant-specific explicit deny ────────────────────────
   if (variantCapabilityPolicy) {
     if (variantCapabilityPolicy.effect === 'deny') {

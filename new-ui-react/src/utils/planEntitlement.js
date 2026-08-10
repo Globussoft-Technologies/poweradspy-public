@@ -64,6 +64,11 @@ export function isPlanNetworkAllowed(allowedNetworks, network) {
   return allowedNetworks.some((allowed) => normalizePlanNetwork(allowed) === requested);
 }
 
+export function resolveCustomPlanDefaultNetwork(platformOptions, allowedNetworks) {
+  if (!Array.isArray(platformOptions) || !Array.isArray(allowedNetworks)) return null;
+  return platformOptions.find(network => isPlanNetworkAllowed(allowedNetworks, network)) || null;
+}
+
 export function isCapabilityAllowedOnNetwork(entitlements, capabilityId, network) {
   const decision = entitlements?.capabilities?.[capabilityId];
   if (!decision?.allowed) return false;

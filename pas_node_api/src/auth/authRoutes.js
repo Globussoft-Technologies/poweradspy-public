@@ -18,9 +18,7 @@ const config = require('../config');
 const logger = require('../logger');
 const planAccessService = require('../services/planAccess/planAccessService');
 const { overlayAiMetaLegacyDecision } = require('../services/planControl/legacyPlanAccessBridge');
-const { getLatestPolicy } = require('../services/planControl/storage/storage');
-const { evaluateEntitlement } = require('../services/planControl/engine/evaluator');
-const { resolvePlanIdentity } = require('../services/planControl/engine/planIdentityResolver');
+const { getCapabilityDecision } = require('../services/planControl/registries/routeClassification');
 const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
 
 const log = logger.createChild('auth');
@@ -154,6 +152,7 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
   // SQL users fall through to getAllowedPlatforms() from plan_config.
   let allowedPlatforms;
   let customPlatformRestriction = false;
+  let isCustomPlan = false;
 
   if (req.user?.platformAccess && !req.user?.plan_id) {
     const pa = req.user.platformAccess;
@@ -169,6 +168,7 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
     // intersecting would give wrong platforms. JWT platformAccess is the source of truth.
     const customCodes = new Set(config.amember?.plans?.custom || [33, 46, 70]);
     const isCustomPlanUser = customCodes.has(Number(planId));
+    isCustomPlan = isCustomPlanUser;
 
     if (isCustomPlanUser) {
       allowedPlatforms = ALL_PLATFORMS.filter(p => jwtAllowed.has(p));
@@ -188,16 +188,9 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
   // legacy platform_access document can lag behind a published policy and hide
   // valid tabs such as GDN/Native. Keep it only as an availability fallback.
   try {
-    const activePolicy = await getLatestPolicy();
-    const planIdentity = resolvePlanIdentity(planId, activePolicy);
-    if (activePolicy && planIdentity) {
-      const adsSearchDecision = evaluateEntitlement({
-        user: req.user,
-        planIdentity,
-        capabilityId: 'ads.search',
-        requestedNetworks: [],
-        policySnapshot: activePolicy,
-      });
+    const adsSearchDecision = await getCapabilityDecision(req, 'ads.search');
+    if (adsSearchDecision) {
+      if (adsSearchDecision.planStatus === 'custom') isCustomPlan = true;
       allowedPlatforms = adsSearchDecision.allowed
         ? [...new Set((adsSearchDecision.allowedNetworks || []).map((network) => String(network).toLowerCase()))]
         : [];
@@ -219,7 +212,15 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
   const planTier = planAccessService.resolvePlanTier(planId, config2);
   return res.json({
     code: 200,
-    data: { planId: Number(planId), planTier, allowedPlatforms, filters, competitorLimits, customPlatformRestriction },
+    data: {
+      planId: Number(planId),
+      planTier,
+      allowedPlatforms,
+      filters,
+      competitorLimits,
+      customPlatformRestriction,
+      isCustomPlan,
+    },
   });
 }));
 

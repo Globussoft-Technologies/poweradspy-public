@@ -73,6 +73,10 @@ describe("buildSearchPayload > network resolution", () => {
     const p = buildSearchPayload({ activePlatforms: ["Facebook", "Instagram"] });
     expect(p.network).toEqual(["facebook", "instagram"]);
   });
+  it("All tab sends all so the backend can apply the authenticated plan intersection", () => {
+    const p = buildSearchPayload({ activePlatforms: ["reddit"], activePlatform: "reddit", isAllTab: true });
+    expect(p.network).toBe("all");
+  });
   it("activePlatform fallback lowercased", () => {
     const p = buildSearchPayload({ activePlatform: "YouTube" });
     expect(p.network).toEqual(["youtube"]);

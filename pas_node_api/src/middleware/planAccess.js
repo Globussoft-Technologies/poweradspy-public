@@ -214,6 +214,7 @@ async function planAccessMiddleware(req, res, next) {
         competitorLimits,
         strippedFilters: [],
         customPlatformRestriction,
+        isCustomPlan: isCustomPlanUser,
       };
       return next();
     }

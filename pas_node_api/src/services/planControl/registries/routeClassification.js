@@ -64,8 +64,9 @@ function normalizeNetworks(value) {
 /**
  * Single reusable entry point for evaluating one capability on an HTTP request.
  * Feature modules should never import storage/resolver/evaluator separately.
- * Returns null only when no active Plan Control policy exists, allowing old
- * installations to use an explicit legacy fallback during migration.
+ * Returns null when no active Plan Control policy exists for a regular plan,
+ * allowing old installations to use an explicit legacy fallback during
+ * migration. Custom plans remain evaluable from their invoice/JWT boundary.
  */
 async function getCapabilityDecision(req, capabilityId, options = {}) {
   const networks = typeof options.network === 'function'
@@ -73,11 +74,12 @@ async function getCapabilityDecision(req, capabilityId, options = {}) {
     : normalizeNetworks(options.network);
   const { getLatestPolicy, resolvePlanIdentity, evaluateEntitlement } = runtime();
   const policy = await getLatestPolicy();
-  if (!policy) return null;
   const planId = req.user?.userSubscriptionType || req.user?.plan_id;
+  const planIdentity = resolvePlanIdentity(planId, policy || undefined);
+  if (!policy && planIdentity?.status !== 'custom') return null;
   const decision = evaluateEntitlement({
     user: req.user,
-    planIdentity: resolvePlanIdentity(planId, policy),
+    planIdentity,
     capabilityId,
     requestedNetworks: networks,
     action: typeof options.action === 'function' ? options.action(req) : options.action,
@@ -105,10 +107,15 @@ function requireCapability(capabilityId, options = {}) {
       }
       const planId = req.user?.userSubscriptionType || req.user?.plan_id;
       if (!decision.allowed && config.planControl?.enforcementMode === 'enforce') {
+        const isCustomPlan = decision.planStatus === 'custom';
+        const customMessage = (decision.allowedNetworks || []).length > 0
+          ? 'This feature or network is not included in your Custom plan. Upgrade to unlock it.'
+          : 'You have a Custom plan, but there are no valid platforms allowed. Please upgrade or update your Custom plan.';
         return res.status(403).json({
           code: 403,
-          message: options.message || 'Your current plan does not support this feature.',
+          message: isCustomPlan ? customMessage : (options.message || 'Your current plan does not support this feature.'),
           ...decision,
+          showSubscriptionModal: isCustomPlan,
         });
       }
       if (!decision.allowed) {
@@ -161,14 +168,14 @@ function requireSearchCapabilities(options = {}) {
     try {
       const { config, log, getLatestPolicy, resolvePlanIdentity, evaluateEntitlement } = runtime();
       const policy = await getLatestPolicy();
-      if (!policy) {
+      const planId = req.user?.userSubscriptionType || req.user?.plan_id;
+      const planIdentity = resolvePlanIdentity(planId, policy || undefined);
+      if (!policy && planIdentity?.status !== 'custom') {
         // /ads/search already passed planAccessMiddleware before this dynamic
         // capability layer. With no published v2 policy, preserve that legacy
         // decision instead of converting a valid request into a false 503.
         return next();
       }
-      const planId = req.user?.userSubscriptionType || req.user?.plan_id;
-      const planIdentity = resolvePlanIdentity(planId, policy);
       const decisions = capabilities.map((capabilityId) => evaluateEntitlement({
         user: req.user,
         planIdentity,
@@ -181,10 +188,15 @@ function requireSearchCapabilities(options = {}) {
       if (!denied) return next();
 
       if (config.planControl?.enforcementMode === 'enforce') {
+        const isCustomPlan = denied.planStatus === 'custom';
+        const customMessage = (denied.allowedNetworks || []).length > 0
+          ? 'The selected network is not included in your Custom plan. Upgrade to unlock it.'
+          : 'You have a Custom plan, but there are no valid platforms allowed. Please upgrade or update your Custom plan.';
         return res.status(403).json({
           code: 403,
-          message: options.message || 'Your current plan does not support the selected search option.',
+          message: isCustomPlan ? customMessage : (options.message || 'Your current plan does not support the selected search option.'),
           ...denied,
+          showSubscriptionModal: isCustomPlan,
         });
       }
       log.warn('plan-control-search-shadow-denial', {
