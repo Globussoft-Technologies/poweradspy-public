@@ -31,6 +31,39 @@ const PLATFORM_ICONS = {
   TikTok: tiktokIcon,
 };
 
+const formatUsd = (amount) => {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return '$0';
+  return `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
+};
+
+const PlanPrice = ({ plan, billingPeriod }) => {
+  const cycleKey = billingPeriod === 'annual' ? 'yearly' : 'monthly';
+  const cycle = plan.pricing?.[cycleKey];
+  const fallback = (billingPeriod === 'annual' ? plan.priceAnnual : plan.price)?.split('/')[0] || '$0';
+  const hasDiscount = Number(cycle?.discountPercent) > 0;
+  return (
+    <div className="flex flex-col items-center justify-center mb-4 mt-1 min-h-[50px]">
+      <div className="h-4 flex items-center gap-1.5 text-[9px]">
+        {hasDiscount && (
+          <>
+            <span className="text-theme-text-muted line-through">{formatUsd(cycle.baseAmount)}</span>
+            <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 font-bold text-emerald-400">
+              {cycle.discountPercent}% OFF
+            </span>
+          </>
+        )}
+      </div>
+      <span className="text-[#6b99ff] font-bold text-[20px] leading-tight">
+        {cycle ? formatUsd(cycle.finalAmount) : fallback}
+      </span>
+      <span className="text-[#6b99ff] text-[11px] font-medium opacity-80">
+        {billingPeriod === 'annual' ? '/Year' : '/Month'}
+      </span>
+    </div>
+  );
+};
+
 // currentPlanTier is a string from planAccess.planTier (e.g. "Basic", "Standard (2026)").
 // The plans/features shown are fetched from the backend (GET /api/v1/auth/plans-catalog),
 // controlled by config.pricing.activePlanGeneration — see docs/PLAN_ACCESS.md § 2026
@@ -189,14 +222,7 @@ const PricingModal = ({ isOpen, onClose, currentPlanTier }) => {
                     </div>
 
                     {/* Price — amount on one line, period smaller below */}
-                    <div className="flex flex-col items-center justify-center mb-4 mt-1">
-                      <span className="text-[#6b99ff] font-bold text-[20px] leading-tight">
-                        {(billingPeriod === 'annual' ? plan.priceAnnual : plan.price).split("/")[0]}
-                      </span>
-                      <span className="text-[#6b99ff] text-[11px] font-medium opacity-80">
-                        {billingPeriod === 'annual' ? '/Year' : '/Month'}
-                      </span>
-                    </div>
+                    <PlanPrice plan={plan} billingPeriod={billingPeriod} />
 
                     {/* Networks — min-h handles multi-row wrapping */}
                     <div className="min-h-[48px] mb-2 flex items-center justify-center gap-1.5 flex-wrap px-2">

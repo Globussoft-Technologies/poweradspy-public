@@ -459,6 +459,11 @@ const config = {
     legacyHeldPriceDurationMonths: getVal(fileConfig.pricing?.legacyHeldPriceDurationMonths, 'PRICING_LEGACY_HELD_PRICE_MONTHS', toInt) ?? null,
     // PRD FR-18 — annual price = monthly × this (10 = "2 months free"). Display only.
     annualPriceMultiplier: getVal(fileConfig.pricing?.annualPriceMultiplier, 'PRICING_ANNUAL_MULTIPLIER', toInt) || 10,
+    // Display-only monthly/yearly prices and optional per-cycle discounts for
+    // the upgrade modal. Kept separate from entitlement and billing data.
+    planPrices: fileConfig.pricing?.planPrices && typeof fileConfig.pricing.planPrices === 'object'
+      ? JSON.parse(JSON.stringify(fileConfig.pricing.planPrices))
+      : {},
     // The ONLY source of the 2026-restructure tiers' numeric plan IDs — see
     // restructure2026.js and config.json's planIds._description for why these must
     // never be hardcoded (dev/prod can have different free IDs).
@@ -647,6 +652,11 @@ config.reload = () => {
       }
       if (newFileConfig.pricing?.annualPriceMultiplier !== undefined) {
         config.pricing.annualPriceMultiplier = toInt(newFileConfig.pricing.annualPriceMultiplier);
+      }
+      if (newFileConfig.pricing?.planPrices !== undefined) {
+        config.pricing.planPrices = newFileConfig.pricing.planPrices && typeof newFileConfig.pricing.planPrices === 'object'
+          ? JSON.parse(JSON.stringify(newFileConfig.pricing.planPrices))
+          : {};
       }
       if (newFileConfig.pricing?.planIds !== undefined) {
         config.pricing.planIds = { ...newFileConfig.pricing.planIds };

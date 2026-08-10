@@ -149,6 +149,18 @@ describe("config/index > module load", () => {
     expect(c.dailyKeyword.newPlanUser).toEqual(["33"]);
   });
 
+  it("loads display-only plan prices and cycle discounts from config.json", () => {
+    configJsonExists = true;
+    const planPrices = {
+      "2026-restructure": {
+        basic: { monthly: { amount: 80, discountPercent: 25 } },
+      },
+    };
+    configJsonContent = JSON.stringify({ pricing: { planPrices } });
+    const c = freshSut();
+    expect(c.pricing.planPrices).toEqual(planPrices);
+  });
+
   it("transform applied (toBool) for booleans", () => {
     process.env.ADMIN_ENABLED = "true";
     const c = freshSut();
@@ -220,6 +232,20 @@ describe("config/index > reload()", () => {
     configJsonContent = "not-valid-json";
     expect(c.reload()).toBe(false);
     expect(console.error).toHaveBeenCalled();
+  });
+
+  it("hot-reloads display-only plan prices", () => {
+    configJsonExists = true;
+    configJsonContent = JSON.stringify({ pricing: { planPrices: {} } });
+    const c = freshSut();
+    const planPrices = {
+      "2026-restructure": {
+        platinum: { yearly: { amount: 3000, discountPercent: 5 } },
+      },
+    };
+    configJsonContent = JSON.stringify({ pricing: { planPrices } });
+    expect(c.reload()).toBe(true);
+    expect(c.pricing.planPrices).toEqual(planPrices);
   });
 
   it("reload with parent objects but missing sub-fields → each `!== undefined` falsy branch fires (lines 269-317)", () => {

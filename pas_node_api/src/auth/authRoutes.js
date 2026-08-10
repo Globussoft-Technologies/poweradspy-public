@@ -234,12 +234,35 @@ router.get('/plans-catalog', (req, res) => {
   const generation = config.pricing?.activePlanGeneration || '2026-restructure';
   const multiplier = config.pricing?.annualPriceMultiplier || 10;
   const catalog = getCatalog(generation);
-  // priceAnnual is computed here (not stored in planCatalog.js) so the discount
-  // multiplier stays a single config value (PRD FR-18 §8) rather than baked into
-  // hand-authored data for every plan.
+  const validAmount = (value, fallback) => {
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount > 0 ? amount : fallback;
+  };
+  const validDiscount = (value) => {
+    const discount = Number(value ?? 0);
+    return Number.isFinite(discount) && discount >= 0 && discount <= 100 ? discount : 0;
+  };
+  const roundMoney = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+  const formatMoney = (value) => Number.isInteger(value) ? String(value) : value.toFixed(2);
+  const cyclePrice = (cycle, fallbackAmount) => {
+    const baseAmount = validAmount(cycle?.amount, fallbackAmount);
+    const discountPercent = validDiscount(cycle?.discountPercent);
+    const finalAmount = roundMoney(baseAmount * (1 - discountPercent / 100));
+    return { currency: 'USD', baseAmount, discountPercent, finalAmount };
+  };
+  // Config amounts are authoritative for current plans. Catalog monthly price
+  // and the annual multiplier remain backward-compatible fallbacks.
   const plans = catalog.plans.map((p) => {
-    const monthlyAmount = parseInt(String(p.price).replace(/[^0-9]/g, ''), 10) || 0;
-    return { ...p, priceAnnual: `$${monthlyAmount * multiplier}/Year` };
+    const catalogMonthly = parseFloat(String(p.price).replace(/[^0-9.]/g, '')) || 0;
+    const configured = config.pricing?.planPrices?.[p.generation]?.[p.pricingKey] || {};
+    const monthly = cyclePrice(configured.monthly, catalogMonthly);
+    const yearly = cyclePrice(configured.yearly, monthly.baseAmount * multiplier);
+    return {
+      ...p,
+      price: `$${formatMoney(monthly.finalAmount)}/Month`,
+      priceAnnual: `$${formatMoney(yearly.finalAmount)}/Year`,
+      pricing: { monthly, yearly },
+    };
   });
   return res.json({ code: 200, data: { generation, annualPriceMultiplier: multiplier, features: catalog.features, plans } });
 });

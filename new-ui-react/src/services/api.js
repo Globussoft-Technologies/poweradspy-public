@@ -96,7 +96,8 @@ export const fetchEntitlements = async () => {
  * Fetch the display-only plan/pricing catalog for the upgrade modal (PricingModal).
  * Which generation (legacy / 2026-restructure / both) is returned is controlled
  * server-side by config.pricing.activePlanGeneration — public endpoint, no auth.
- * Returns { generation, features: string[], plans: [{ tier, generation, price, platforms, features }] } or null on failure.
+ * Returns display-only plan data with structured monthly/yearly pricing and
+ * independent cycle discounts resolved from config.json, or null on failure.
  */
 export const fetchPlansCatalog = async () => {
   try {

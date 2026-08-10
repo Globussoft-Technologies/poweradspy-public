@@ -217,6 +217,52 @@ describe("authRoutes > GET /plans-catalog", () => {
     expect(basic.priceAnnual).toBe("$828/Year"); // 69 * 12
   });
 
+  it("uses config prices and independent monthly/yearly discounts for new plans", () => {
+    configExports.pricing = {
+      activePlanGeneration: "2026-restructure",
+      annualPriceMultiplier: 12,
+      planPrices: {
+        "2026-restructure": {
+          basic: {
+            monthly: { amount: 80, discountPercent: 25 },
+            yearly: { amount: 900, discountPercent: 10 },
+          },
+        },
+      },
+    };
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    const basic = res.body.data.plans.find((p) => p.tier === "Basic (2026)");
+    expect(basic.price).toBe("$60/Month");
+    expect(basic.priceAnnual).toBe("$810/Year");
+    expect(basic.pricing).toEqual({
+      monthly: { currency: "USD", baseAmount: 80, discountPercent: 25, finalAmount: 60 },
+      yearly: { currency: "USD", baseAmount: 900, discountPercent: 10, finalAmount: 810 },
+    });
+  });
+
+  it("falls back safely when configured prices or discounts are invalid", () => {
+    configExports.pricing = {
+      activePlanGeneration: "2026-restructure",
+      annualPriceMultiplier: 12,
+      planPrices: {
+        "2026-restructure": {
+          basic: {
+            monthly: { amount: -1, discountPercent: 150 },
+          },
+        },
+      },
+    };
+    freshSut();
+    const res = mkRes();
+    getHandler("get", "/plans-catalog")({}, res);
+    const basic = res.body.data.plans.find((p) => p.tier === "Basic (2026)");
+    expect(basic.price).toBe("$69/Month");
+    expect(basic.priceAnnual).toBe("$828/Year");
+    expect(basic.pricing.monthly.discountPercent).toBe(0);
+  });
+
   it("defaults annualPriceMultiplier to 10 when unset", async () => {
     configExports.pricing = { activePlanGeneration: "2026-restructure" };
     freshSut();

@@ -105,22 +105,22 @@ const LEGACY_PLANS = [
 // collides with the identically-named legacy group — it is not user-facing).
 const RESTRUCTURE_2026_PLANS = [
   {
-    tier: 'Basic (2026)', label: 'Basic', generation: '2026-restructure', price: '$69/Month',
+    tier: 'Basic (2026)', label: 'Basic', pricingKey: 'basic', generation: '2026-restructure', price: '$69/Month',
     platforms: ['Facebook', 'Instagram'],
     features: [true, true, true, false, true, true, true, true, false, false, true, false, true, false, true, false, true, false, false, false, false, true, true, true, true],
   },
   {
-    tier: 'Standard (2026)', label: 'Standard', generation: '2026-restructure', price: '$129/Month',
+    tier: 'Standard (2026)', label: 'Standard', pricingKey: 'standard', generation: '2026-restructure', price: '$129/Month',
     platforms: ['Facebook', 'Instagram', 'Pinterest', 'GDN'],
     features: [true, true, true, false, true, true, true, true, true, true, true, true, true, true, true, false, true, false, false, false, false, true, true, true, true],
   },
   {
-    tier: 'Platinum (2026)', label: 'Platinum', generation: '2026-restructure', price: '$279/Month',
+    tier: 'Platinum (2026)', label: 'Platinum', pricingKey: 'platinum', generation: '2026-restructure', price: '$279/Month',
     platforms: ['Facebook', 'Instagram', 'Pinterest', 'GDN', 'YouTube', 'Native', 'Google'],
     features: Array(25).fill(true),
   },
   {
-    tier: 'Palladium (2026)', label: 'Palladium', generation: '2026-restructure', price: '$399/Month',
+    tier: 'Palladium (2026)', label: 'Palladium', pricingKey: 'palladium', generation: '2026-restructure', price: '$399/Month',
     platforms: ['Facebook', 'Instagram', 'Pinterest', 'GDN', 'YouTube', 'Native', 'Google', 'LinkedIn', 'TikTok', 'Quora', 'Reddit'],
     features: Array(25).fill(true),
   },
