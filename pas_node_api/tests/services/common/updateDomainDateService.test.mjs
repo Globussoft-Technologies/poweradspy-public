@@ -1,10 +1,21 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const { updateDomainDate, NETWORK_CONFIG, isValidYmd, ymdToEpochSeconds } =
+const {
+  updateDomainDate,
+  NETWORK_CONFIG,
+  isValidYmd,
+  ymdToEpochSeconds,
+  ES_SYNC_MAX_ADS,
+  SQL_QUERY_TIMEOUT_MS,
+  ES_REQUEST_TIMEOUT_MS,
+  ES_CHUNK_CONCURRENCY,
+  querySqlWithTimeout,
+} =
   require("../../../src/services/common/services/updateDomainDateService");
 const serviceRegistry = require("../../../src/services/ServiceRegistry");
+const config = require("../../../src/config");
 
 // Fake network service. Records SQL + ES calls.
 //   domainRows → what the domain SELECT returns (null/[] → not_found)
@@ -27,8 +38,8 @@ function mockNetwork(name, { domainRows = [], ads = [], noEs = false } = {}) {
     db.elastic = {
       indexName: `${name}_idx`,
       client: {
-        updateByQuery: async (args) => {
-          calls.es.push(args);
+        updateByQuery: async (args, transportOptions) => {
+          calls.es.push({ ...args, transportOptions });
           const terms = args.body.query.terms;
           const vals = Object.values(terms)[0]; // the single {field: [ids]} entry
           // wait_for_completion:false → background task (returns a task id); else sync (returns count)
@@ -47,6 +58,15 @@ afterEach(() => {
 });
 
 describe("updateDomainDateService > config & date validation", () => {
+  it("uses the performance controls resolved from config.json", () => {
+    expect({
+      esSyncMaxAds: ES_SYNC_MAX_ADS,
+      sqlQueryTimeoutMs: SQL_QUERY_TIMEOUT_MS,
+      esRequestTimeoutMs: ES_REQUEST_TIMEOUT_MS,
+      esChunkConcurrency: ES_CHUNK_CONCURRENCY,
+    }).toEqual(config.domainDateUpdate);
+  });
+
   it("covers all 10 networks; every network now has updated_date", () => {
     expect(Object.keys(NETWORK_CONFIG).sort()).toEqual([
       "facebook", "gdn", "google", "instagram", "linkedin",
@@ -143,6 +163,7 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     expect(g.conflicts).toBe("proceed");
     expect(g.refresh).toBe(false);
     expect(g.waitForCompletion).toBe(true); // synchronous for a small domain
+    expect(g.transportOptions).toEqual({ requestTimeout: ES_REQUEST_TIMEOUT_MS, maxRetries: 0 });
     expect(g.body.query.terms.ad_id).toEqual(["a1", "a2", "a3"]);
     expect(g.body.script.params).toEqual({ f: "domain_registered_date", v: "2026-07-09" });
     expect(out.data.results.google.es_mode).toBe("sync");
@@ -184,6 +205,212 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     expect(gCalls.es.every((c) => c.waitForCompletion === false)).toBe(true);
     expect(gCalls.es.every((c) => c.refresh === false && c.conflicts === "proceed")).toBe(true);
     expect(out.data.summary).toMatchObject({ es_matched_ads: 2500, es_async_networks: 1 });
+  });
+
+  it("starts all independent network lookups concurrently", async () => {
+    let started = 0;
+    let releaseLookups;
+    const lookupGate = new Promise((resolve) => { releaseLookups = resolve; });
+
+    for (const net of Object.keys(NETWORK_CONFIG)) {
+      serviceRegistry.services.set(net, {
+        db: {
+          sql: {
+            query: async () => {
+              started += 1;
+              await lookupGate;
+              return [];
+            },
+          },
+        },
+      });
+    }
+
+    const operation = updateDomainDate({ domain_name: "parallel.com", status: 2 }, null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toBe(Object.keys(NETWORK_CONFIG).length);
+
+    releaseLookups();
+    const out = await operation;
+    expect(out.code).toBe(200);
+    expect(out.data.summary.not_found).toBe(Object.keys(NETWORK_CONFIG).length);
+  });
+
+  it("uses a mysql2 command timeout without changing the shared SQL wrapper", async () => {
+    const execute = vi.fn(async () => [[{ id: 7 }], []]);
+    const rows = await querySqlWithTimeout(
+      { pool: { execute }, query: vi.fn() },
+      "SELECT id FROM domains WHERE domain = ?",
+      ["x.com"],
+    );
+
+    expect(rows).toEqual([{ id: 7 }]);
+    expect(execute).toHaveBeenCalledWith(
+      { sql: "SELECT id FROM domains WHERE domain = ?", timeout: SQL_QUERY_TIMEOUT_MS },
+      ["x.com"],
+    );
+  });
+
+  it("bounds SQL reads but keeps mutations on the existing adapter path", async () => {
+    const adapters = {};
+    for (const net of Object.keys(NETWORK_CONFIG)) {
+      const rows = net === "google"
+        ? [{ id: 7, domain_registered_date: null, status: 0 }]
+        : [];
+      const execute = vi.fn(async () => [rows, []]);
+      const query = vi.fn(async () => ({ affectedRows: rows.length }));
+      adapters[net] = { execute, query };
+      serviceRegistry.services.set(net, {
+        db: { sql: { pool: { execute }, query } },
+      });
+    }
+
+    const out = await updateDomainDate({ domain_name: "safe-write.com", status: 2 }, null);
+
+    expect(out.code).toBe(200);
+    expect(adapters.google.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sql: expect.stringMatching(/^SELECT /),
+        timeout: SQL_QUERY_TIMEOUT_MS,
+      }),
+      ["safe-write.com"],
+    );
+    expect(adapters.google.query).toHaveBeenCalledWith(
+      expect.stringMatching(/^UPDATE /),
+      [2, "safe-write.com"],
+    );
+    expect(adapters.google.execute.mock.calls.some(([options]) => options.sql.startsWith("UPDATE"))).toBe(false);
+  });
+
+  it("submits ES chunks concurrently but never above the configured bound", async () => {
+    const ads = Array.from({ length: 2500 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
+    mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
+    for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
+
+    let active = 0;
+    let maxActive = 0;
+    let task = 0;
+    serviceRegistry.getService("google").db.elastic.client.updateByQuery = async (_args, options) => {
+      expect(options).toEqual({ requestTimeout: ES_REQUEST_TIMEOUT_MS, maxRetries: 0 });
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      task += 1;
+      return { body: { task: `task_${task}` } };
+    };
+
+    const out = await updateDomainDate({ domain_name: "chunks.com", domain_date: "2026-07-09" }, null);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(ES_CHUNK_CONCURRENCY);
+    expect(out.data.results.google.es_tasks).toHaveLength(3);
+  });
+
+  it("reports a timed-out ES chunk with submitted-task and timing context", async () => {
+    const ads = Array.from({ length: 1500 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
+    mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
+    for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
+
+    let call = 0;
+    serviceRegistry.getService("google").db.elastic.client.updateByQuery = async () => {
+      call += 1;
+      if (call === 2) {
+        const error = new Error("Request timeout after 10000ms");
+        error.name = "TimeoutError";
+        throw error;
+      }
+      return { body: { task: `task_${call}` } };
+    };
+
+    const out = await updateDomainDate({ domain_name: "partial.com", domain_date: "2026-07-09" }, null);
+    expect(out.code).toBe(200);
+    expect(out.data.results.google).toMatchObject({
+      status: "updated",
+      es_mode: "async",
+      es_tasks: ["task_1"],
+      es_error: {
+        type: "elasticsearch_timeout_error",
+        stage: "submit_es_tasks",
+        network: "google",
+      },
+    });
+    expect(out.data.results.google.es_error.details).toMatchObject({
+      failed_chunks: [1],
+      submitted_tasks: 1,
+      request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+    });
+    expect(out.data.summary).toMatchObject({ es_errors: 1, timeouts: 1 });
+  });
+
+  it("does not start later ES chunks after a failed submission wave", async () => {
+    const ads = Array.from({ length: 5000 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
+    mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
+    for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
+
+    let calls = 0;
+    serviceRegistry.getService("google").db.elastic.client.updateByQuery = async () => {
+      calls += 1;
+      const error = new Error("Request timeout after 10000ms");
+      error.name = "TimeoutError";
+      throw error;
+    };
+
+    const out = await updateDomainDate({ domain_name: "fail-fast.com", domain_date: "2026-07-09" }, null);
+    const details = out.data.results.google.es_error.details;
+
+    expect(calls).toBeLessThan(5);
+    expect(calls).toBeLessThanOrEqual(ES_CHUNK_CONCURRENCY);
+    expect(details).toMatchObject({
+      chunks: 5,
+      attempted_chunks: calls,
+      skipped_chunks: 5 - calls,
+    });
+    expect(details.failed_chunks).toHaveLength(calls);
+  });
+
+  it("returns 504 with per-network timing details when every SQL lookup times out", async () => {
+    for (const net of Object.keys(NETWORK_CONFIG)) {
+      serviceRegistry.services.set(net, {
+        db: {
+          sql: {
+            query: async () => {
+              const error = new Error("Query inactivity timeout");
+              error.code = "PROTOCOL_SEQUENCE_TIMEOUT";
+              throw error;
+            },
+          },
+        },
+      });
+    }
+
+    const out = await updateDomainDate({ domain_name: "timeout.com", status: 2 }, null);
+    expect(out.code).toBe(504);
+    expect(out.error).toMatchObject({ type: "sql_timeout_error", stage: "fanout" });
+    expect(out.data.summary).toMatchObject({ errors: 10, timeouts: 10 });
+    expect(out.data.timings_ms.total).toEqual(expect.any(Number));
+    expect(out.data.results.facebook.timings_ms.select_rows).toEqual(expect.any(Number));
+  });
+
+  it("emits structured start, stage, completion, and warning logs", async () => {
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    mockNetwork("google", { domainRows: [{ id: 1, domain_registered_date: null, status: 0 }], ads: [], noEs: true });
+    for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
+
+    const out = await updateDomainDate({ domain_name: "logged.com", domain_date: "2026-07-09" }, log);
+    expect(out.code).toBe(200);
+    expect(log.info).toHaveBeenCalledWith("domain date update started", expect.objectContaining({
+      domain: "logged.com",
+      sql_timeout_ms: SQL_QUERY_TIMEOUT_MS,
+      es_request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+    }));
+    expect(log.info).toHaveBeenCalledWith("domain date network completed", expect.objectContaining({
+      network: "google",
+      timings_ms: expect.objectContaining({ total: expect.any(Number) }),
+    }));
+    expect(log.warn).toHaveBeenCalledWith("domain date update processed with warnings", expect.objectContaining({
+      summary: expect.objectContaining({ es_errors: 1 }),
+      network_durations_ms: expect.any(Object),
+    }));
   });
 
   it("status 2 → marks UNRESOLVABLE, NO date, NO ES write", async () => {

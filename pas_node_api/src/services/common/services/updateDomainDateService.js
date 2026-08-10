@@ -31,6 +31,9 @@
  */
 
 const serviceRegistry = require('../../ServiceRegistry');
+// Node resolves this directory import to src/config/index.js, the centralized
+// config.json loader. This service must never require the raw config.json file.
+const appConfig = require('../../../config');
 const { DOMAIN_TABLES } = require('../helpers/domainTables');
 const { buildErrorResponse, classifySqlError, classifyEsError } = require('../helpers/errorResponse');
 
@@ -51,11 +54,70 @@ const NETWORK_CONFIG = Object.fromEntries(
 const STATUS = { PENDING: 0, RESOLVED: 1, UNRESOLVABLE: 2 };
 
 const ES_TERMS_CHUNK = 1000; // cap match-ids per updateByQuery to bound the terms query
-// Above this many ads for a network, run the ES update as a background task
-// (wait_for_completion:false) so a big domain never blocks/times out the request. Tunable via
-// DOMAIN_ES_SYNC_MAX_ADS (0 = always async). Default 2000.
-const _envSyncMax = Number(process.env.DOMAIN_ES_SYNC_MAX_ADS);
-const ES_SYNC_MAX_ADS = Number.isFinite(_envSyncMax) && _envSyncMax >= 0 ? _envSyncMax : 2000;
+
+// Keep the request comfortably below the upstream 120-second gateway budget.
+// Small ES updates may remain synchronous for exact counts; larger updates are
+// submitted as background tasks. The resolved config object supplies defaults
+// when an older config file or an isolated test stub omits this new section.
+const domainDateConfig = appConfig.domainDateUpdate || {};
+const ES_SYNC_MAX_ADS = domainDateConfig.esSyncMaxAds ?? 100;
+const SQL_QUERY_TIMEOUT_MS = domainDateConfig.sqlQueryTimeoutMs ?? 10000;
+const ES_REQUEST_TIMEOUT_MS = domainDateConfig.esRequestTimeoutMs ?? 10000;
+const ES_CHUNK_CONCURRENCY = domainDateConfig.esChunkConcurrency ?? 4;
+
+function elapsedMs(startedAt) {
+  return Date.now() - startedAt;
+}
+
+function classifyDomainSqlError(err) {
+  const classified = classifySqlError(err);
+  const code = String(err?.code || '');
+  const isTimeout = code === 'PROTOCOL_SEQUENCE_TIMEOUT' || /query.*timed?\s*out/i.test(err?.message || '');
+  return isTimeout
+    ? { ...classified, httpCode: 504, type: 'sql_timeout_error', message: 'SQL query timed out' }
+    : classified;
+}
+
+function classifyDomainEsError(err) {
+  const classified = classifyEsError(err);
+  const isTimeout = err?.name === 'TimeoutError' ||
+    ['ETIMEDOUT', 'ESOCKETTIMEDOUT'].includes(String(err?.code || '')) ||
+    /timed?\s*out|timeout/i.test(err?.message || '');
+  return isTimeout
+    ? { ...classified, type: 'elasticsearch_timeout_error', message: 'Elasticsearch update timed out' }
+    : classified;
+}
+
+async function querySqlWithTimeout(sql, statement, params) {
+  // Production SQL adapters expose the underlying mysql2 promise pool. Scope
+  // the timeout to this endpoint rather than changing the shared query wrapper.
+  if (sql?.pool && typeof sql.pool.execute === 'function') {
+    const [rows] = await sql.pool.execute(
+      { sql: statement, timeout: SQL_QUERY_TIMEOUT_MS },
+      params
+    );
+    return rows;
+  }
+  return sql.query(statement, params);
+}
+
+async function mapWithConcurrency(items, concurrency, worker, shouldStop = () => false) {
+  if (items.length === 0) return [];
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  let stopped = false;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (!stopped && nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const result = await worker(items[index], index);
+      results[index] = result;
+      if (shouldStop(result)) stopped = true;
+    }
+  });
+  await Promise.all(runners);
+  return results.filter((result) => result !== undefined);
+}
 
 // Matches the PHP `date_format:Y-m-d` rule — a real calendar date in YYYY-MM-DD.
 function isValidYmd(value) {
@@ -98,10 +160,13 @@ function esTaskId(resp) {
  *
  * @returns {{ es_index, es_matched_ads, es_mode, es_updated?, es_tasks? } | { es_error }}
  */
-async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
+async function propagateDateToEs(service, cfg, domainRowIds, date, log, network) {
+  const startedAt = Date.now();
+  const timings = { resolve_ad_ids: 0, submit_es: 0, total: 0 };
   const es = service.db && service.db.elastic;
   if (!es || !es.client) {
     return {
+      es_timings_ms: { ...timings, total: elapsedMs(startedAt) },
       es_error: buildErrorResponse({
         code: 503,
         message: 'Elasticsearch client not available',
@@ -109,6 +174,7 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
         source: 'elasticsearch',
         operation: 'update-domain-date',
         stage: 'propagate_date',
+        network,
         table: cfg.table,
       }).error,
     };
@@ -116,6 +182,7 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
   const index = es.indexName;
   if (!index) {
     return {
+      es_timings_ms: { ...timings, total: elapsedMs(startedAt) },
       es_error: buildErrorResponse({
         code: 500,
         message: 'Elasticsearch index not configured',
@@ -123,72 +190,203 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
         source: 'elasticsearch',
         operation: 'update-domain-date',
         stage: 'propagate_date',
+        network,
         table: cfg.table,
       }).error,
     };
   }
-  if (!domainRowIds.length) return { es_index: index, es_matched_ads: 0, es_mode: 'sync', es_updated: 0 };
+  if (!domainRowIds.length) {
+    return {
+      es_index: index,
+      es_matched_ads: 0,
+      es_mode: 'sync',
+      es_updated: 0,
+      es_timings_ms: { ...timings, total: elapsedMs(startedAt) },
+    };
+  }
 
   // Resolve the ads for this domain from SQL (ES docs don't store the domain string; they are
   // located by an ad-id field that differs per index — see cfg.esMatchField/esMatchId).
   const placeholders = domainRowIds.map(() => '?').join(', ');
-  const adRows = await service.db.sql.query(
-    `SELECT id, ad_id FROM ${cfg.adTable} WHERE domain_id IN (${placeholders})`,
-    domainRowIds
-  );
-  const matchIds = (Array.isArray(adRows) ? adRows : [])
+  const adLookupStartedAt = Date.now();
+  let adRows;
+  try {
+    adRows = await querySqlWithTimeout(
+      service.db.sql,
+      `SELECT id, ad_id FROM ${cfg.adTable} WHERE domain_id IN (${placeholders})`,
+      domainRowIds
+    );
+    timings.resolve_ad_ids = elapsedMs(adLookupStartedAt);
+  } catch (err) {
+    timings.resolve_ad_ids = elapsedMs(adLookupStartedAt);
+    timings.total = elapsedMs(startedAt);
+    const sqlError = classifyDomainSqlError(err);
+    if (log && log.error) {
+      log.error('domain date ad-id lookup failed', {
+        network,
+        table: cfg.adTable,
+        stage: 'resolve_ad_ids',
+        duration_ms: timings.resolve_ad_ids,
+        timeout_ms: SQL_QUERY_TIMEOUT_MS,
+        error: err.message,
+        error_code: err.code,
+      });
+    }
+    return {
+      es_index: index,
+      es_timings_ms: timings,
+      es_error: buildErrorResponse({
+        code: sqlError.httpCode,
+        message: sqlError.message,
+        type: sqlError.type,
+        source: sqlError.source,
+        operation: 'update-domain-date',
+        stage: 'resolve_ad_ids',
+        network,
+        table: cfg.adTable,
+        details: { timeout_ms: SQL_QUERY_TIMEOUT_MS, ...sqlError.sql },
+      }).error,
+    };
+  }
+
+  const matchIds = [...new Set((Array.isArray(adRows) ? adRows : [])
     .map((r) => (cfg.esMatchId === 'public' ? r.ad_id : r.id))
-    .filter((v) => v !== null && v !== undefined && v !== '');
-  if (!matchIds.length) return { es_index: index, es_matched_ads: 0, es_mode: 'sync', es_updated: 0 };
+    .filter((v) => v !== null && v !== undefined && v !== ''))];
+  if (!matchIds.length) {
+    return {
+      es_index: index,
+      es_matched_ads: 0,
+      es_mode: 'sync',
+      es_updated: 0,
+      es_timings_ms: { ...timings, total: elapsedMs(startedAt) },
+    };
+  }
 
   const value = cfg.esDateFormat === 'epoch' ? ymdToEpochSeconds(date) : date;
-  const async = matchIds.length > ES_SYNC_MAX_ADS;
-
+  const async = ES_SYNC_MAX_ADS === 0 || matchIds.length > ES_SYNC_MAX_ADS;
   const script = {
     lang: 'painless',
     source: 'ctx._source[params.f] = params.v',
     params: { f: cfg.esDateField, v: value },
   };
+  const idChunks = chunk(matchIds, ES_TERMS_CHUNK);
 
-  let updated = 0;
-  const tasks = [];
-  for (const ids of chunk(matchIds, ES_TERMS_CHUNK)) {
-    try {
-      const resp = await es.client.updateByQuery({
+  if (log && log.info) {
+    log.info('domain date ES propagation started', {
+      network,
+      index,
+      matched_ads: matchIds.length,
+      chunks: idChunks.length,
+      chunk_concurrency: ES_CHUNK_CONCURRENCY,
+      mode: async ? 'async' : 'sync',
+      request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+    });
+  }
+
+  const submitStartedAt = Date.now();
+  const chunkResults = await mapWithConcurrency(
+    idChunks,
+    ES_CHUNK_CONCURRENCY,
+    async (ids, chunkIndex) => {
+      try {
+        const resp = await es.client.updateByQuery({
+          index,
+          conflicts: 'proceed',
+          refresh: false,
+          waitForCompletion: !async, // false submits a background task and returns its task id
+          body: { query: { terms: { [cfg.esMatchField]: ids } }, script },
+        }, {
+          requestTimeout: ES_REQUEST_TIMEOUT_MS,
+          maxRetries: 0,
+        });
+        return {
+          ok: true,
+          chunk: chunkIndex,
+          task: async ? esTaskId(resp) : null,
+          updated: async ? 0 : esUpdatedCount(resp),
+        };
+      } catch (error) {
+        return { ok: false, chunk: chunkIndex, error };
+      }
+    },
+    // Do not spend additional timeout waves submitting later chunks after ES
+    // has already failed. In-flight chunks finish and their task ids are kept.
+    (result) => !result.ok
+  );
+  timings.submit_es = elapsedMs(submitStartedAt);
+  timings.total = elapsedMs(startedAt);
+
+  const successful = chunkResults.filter((result) => result.ok);
+  const failed = chunkResults.filter((result) => !result.ok);
+  const tasks = successful.map((result) => result.task).filter(Boolean);
+  const updated = successful.reduce((total, result) => total + result.updated, 0);
+  const baseResult = {
+    es_index: index,
+    es_matched_ads: matchIds.length,
+    es_mode: async ? 'async' : 'sync',
+    ...(async ? { es_tasks: tasks } : { es_updated: updated }),
+    es_timings_ms: timings,
+  };
+
+  if (failed.length > 0) {
+    const classified = classifyDomainEsError(failed[0].error);
+    const skippedChunks = idChunks.length - chunkResults.length;
+    if (log && log.error) {
+      log.error('domain date ES propagation failed', {
+        network,
         index,
-        conflicts: 'proceed',
-        refresh: false,
-        waitForCompletion: !async, // wait_for_completion — false → background task, returns a task id
-        body: { query: { terms: { [cfg.esMatchField]: ids } }, script },
+        mode: async ? 'async' : 'sync',
+        matched_ads: matchIds.length,
+        chunks: idChunks.length,
+        attempted_chunks: chunkResults.length,
+        skipped_chunks: skippedChunks,
+        failed_chunks: failed.map((result) => result.chunk),
+        submitted_tasks: tasks.length,
+        updated,
+        timings_ms: timings,
+        request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+        error: failed[0].error.message,
+        error_code: failed[0].error.code,
       });
-      if (async) { const t = esTaskId(resp); if (t) tasks.push(t); }
-      else updated += esUpdatedCount(resp);
-    } catch (err) {
-      return {
-        es_error: buildErrorResponse({
-          code: 500,
-          message: classifyEsError(err).message,
-          type: classifyEsError(err).type,
-          source: classifyEsError(err).source,
-          operation: 'update-domain-date',
-          stage: 'propagate_date',
-          table: cfg.table,
-          details: {
-            index,
-            matched_ads: matchIds.length,
-            ...classifyEsError(err).details,
-          },
-        }).error,
-      };
     }
+    return {
+      ...baseResult,
+      es_error: buildErrorResponse({
+        code: classified.type === 'elasticsearch_timeout_error' ? 504 : 500,
+        message: classified.message,
+        type: classified.type,
+        source: classified.source,
+        operation: 'update-domain-date',
+        stage: async ? 'submit_es_tasks' : 'propagate_date',
+        network,
+        table: cfg.table,
+        details: {
+          index,
+          matched_ads: matchIds.length,
+          chunks: idChunks.length,
+          attempted_chunks: chunkResults.length,
+          skipped_chunks: skippedChunks,
+          failed_chunks: failed.map((result) => result.chunk),
+          submitted_tasks: tasks.length,
+          request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+          ...classified.details,
+        },
+      }).error,
+    };
   }
 
   if (log && log.info) {
-    log.info('domain date ES propagated', { index, matched_ads: matchIds.length, mode: async ? 'async' : 'sync', updated, tasks: tasks.length });
+    log.info('domain date ES propagated', {
+      network,
+      index,
+      matched_ads: matchIds.length,
+      mode: async ? 'async' : 'sync',
+      updated,
+      tasks: tasks.length,
+      timings_ms: timings,
+    });
   }
-  return async
-    ? { es_index: index, es_matched_ads: matchIds.length, es_mode: 'async', es_tasks: tasks }
-    : { es_index: index, es_matched_ads: matchIds.length, es_mode: 'sync', es_updated: updated };
+  return baseResult;
 }
 
 /**
@@ -196,9 +394,34 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log) {
  * @param {{ date: string|null, statusValue: number }} action  resolved change to apply
  */
 async function updateOneNetwork(network, cfg, domainName, action, log) {
+  const startedAt = Date.now();
+  const timings = { select_rows: 0, update_rows: 0, propagate_date: 0, total: 0 };
+  const finish = (result) => {
+    timings.total = elapsedMs(startedAt);
+    const completed = { ...result, timings_ms: timings };
+    if (log && log.info) {
+      log.info('domain date network completed', {
+        network,
+        table: cfg.table,
+        status: completed.status,
+        code: completed.code || 200,
+        matched_rows: completed.matched_rows || 0,
+        es_matched_ads: completed.es_matched_ads || 0,
+        es_mode: completed.es_mode,
+        has_es_error: !!completed.es_error,
+        timings_ms: timings,
+      });
+    }
+    return completed;
+  };
+
+  if (log && log.info) {
+    log.info('domain date network started', { network, table: cfg.table });
+  }
+
   const service = serviceRegistry.getService(network);
   if (!service || !service.db || !service.db.sql) {
-    return {
+    return finish({
       status: 'error',
       code: 503,
       message: 'SQL connection not available',
@@ -213,26 +436,38 @@ async function updateOneNetwork(network, cfg, domainName, action, log) {
         table: cfg.table,
         details: { dependency: 'sql' },
       }).error,
-    };
+    });
   }
   const sql = service.db.sql;
   const { table, hasUpdatedDate } = cfg;
   const { date, statusValue } = action;
 
   let rows;
+  const selectStartedAt = Date.now();
   try {
     // These domains tables have NO unique index on `domain`, so the same domain can appear in
     // MULTIPLE rows (some dated, some NULL). We update EVERY matching row — updating only one
     // left duplicate rows behind, so a follow-up "domains without registration date" fetch kept
     // returning the domain the caller had just updated.
-    rows = await sql.query(
+    rows = await querySqlWithTimeout(
+      sql,
       `SELECT id, domain_registered_date, status FROM ${table} WHERE domain = ?`,
       [domainName]
     );
+    timings.select_rows = elapsedMs(selectStartedAt);
   } catch (err) {
-    if (log && log.error) log.error('updateDomainDate network error', { network, table, stage: 'select_rows', error: err.message });
-    const sqlError = classifySqlError(err);
-    return {
+    timings.select_rows = elapsedMs(selectStartedAt);
+    if (log && log.error) log.error('updateDomainDate network error', {
+      network,
+      table,
+      stage: 'select_rows',
+      duration_ms: timings.select_rows,
+      timeout_ms: SQL_QUERY_TIMEOUT_MS,
+      error: err.message,
+      error_code: err.code,
+    });
+    const sqlError = classifyDomainSqlError(err);
+    return finish({
       status: 'error',
       code: sqlError.httpCode,
       message: sqlError.message,
@@ -245,12 +480,12 @@ async function updateOneNetwork(network, cfg, domainName, action, log) {
         stage: 'select_rows',
         network,
         table,
-        details: sqlError.sql,
+        details: { timeout_ms: SQL_QUERY_TIMEOUT_MS, ...sqlError.sql },
       }).error,
-    };
+    });
   }
 
-  if (!Array.isArray(rows) || rows.length === 0) return { status: 'not_found' };
+  if (!Array.isArray(rows) || rows.length === 0) return finish({ status: 'not_found' });
 
   const setParts = [];
   const params = [];
@@ -259,12 +494,25 @@ async function updateOneNetwork(network, cfg, domainName, action, log) {
   if (hasUpdatedDate) setParts.push('updated_date = NOW()');
   params.push(domainName);
 
+  const updateStartedAt = Date.now();
   try {
+    // Keep writes on the established adapter path. A mysql2 client timeout does
+    // not cancel a mutation on the server and could otherwise report a false
+    // failure while MySQL is still completing the UPDATE.
     await sql.query(`UPDATE ${table} SET ${setParts.join(', ')} WHERE domain = ?`, params);
+    timings.update_rows = elapsedMs(updateStartedAt);
   } catch (err) {
-    if (log && log.error) log.error('updateDomainDate network error', { network, table, stage: 'update_rows', error: err.message });
+    timings.update_rows = elapsedMs(updateStartedAt);
+    if (log && log.error) log.error('updateDomainDate network error', {
+      network,
+      table,
+      stage: 'update_rows',
+      duration_ms: timings.update_rows,
+      error: err.message,
+      error_code: err.code,
+    });
     const sqlError = classifySqlError(err);
-    return {
+    return finish({
       status: 'error',
       code: sqlError.httpCode,
       message: sqlError.message,
@@ -279,7 +527,7 @@ async function updateOneNetwork(network, cfg, domainName, action, log) {
         table,
         details: sqlError.sql,
       }).error,
-    };
+    });
   }
 
   const result = {
@@ -294,25 +542,36 @@ async function updateOneNetwork(network, cfg, domainName, action, log) {
 
   // Propagate to ES only when a real date was written (status path leaves the date untouched).
   if (date !== null) {
+    const propagationStartedAt = Date.now();
     try {
-      Object.assign(result, await propagateDateToEs(service, cfg, result.ids, date, log));
+      Object.assign(result, await propagateDateToEs(service, cfg, result.ids, date, log, network));
+      timings.propagate_date = elapsedMs(propagationStartedAt);
     } catch (esErr) {
-      if (log && log.error) log.error('updateDomainDate ES error', { network, error: esErr.message });
+      timings.propagate_date = elapsedMs(propagationStartedAt);
+      if (log && log.error) log.error('updateDomainDate ES error', {
+        network,
+        table,
+        stage: 'propagate_date',
+        duration_ms: timings.propagate_date,
+        error: esErr.message,
+        error_code: esErr.code,
+      });
+      const classified = classifyDomainEsError(esErr);
       result.es_error = buildErrorResponse({
-        code: 500,
-        message: classifyEsError(esErr).message,
-        type: classifyEsError(esErr).type,
-        source: classifyEsError(esErr).source,
+        code: classified.type === 'elasticsearch_timeout_error' ? 504 : 500,
+        message: classified.message,
+        type: classified.type,
+        source: classified.source,
         operation: 'update-domain-date',
         stage: 'propagate_date',
         network,
         table,
-        details: classifyEsError(esErr).details,
+        details: classified.details,
       }).error;
     }
   }
 
-  return result;
+  return finish(result);
 }
 
 /**
@@ -354,6 +613,7 @@ function resolveAction(body) {
  * @returns {{ code, message, error?, data? }}
  */
 async function updateDomainDate(body, log) {
+  const startedAt = Date.now();
   const domainName = body && body.domain_name != null ? String(body.domain_name).trim() : '';
   if (!domainName) {
     return { code: 400, error: 'The domain_name field is required.' };
@@ -363,19 +623,75 @@ async function updateDomainDate(body, log) {
   if (action.error) return { code: 400, error: action.error };
 
   const results = {};
-  const summary = { updated: 0, not_found: 0, errors: 0, es_matched_ads: 0, es_updated: 0, es_async_networks: 0, es_errors: 0 };
+  const summary = { updated: 0, not_found: 0, errors: 0, timeouts: 0, es_matched_ads: 0, es_updated: 0, es_async_networks: 0, es_errors: 0 };
 
-  for (const [network, cfg] of Object.entries(NETWORK_CONFIG)) {
-    const r = await updateOneNetwork(network, cfg, domainName, action, log);
+  if (log && log.info) {
+    log.info('domain date update started', {
+      domain: domainName,
+      domain_date: action.date,
+      status: action.statusValue,
+      networks: Object.keys(NETWORK_CONFIG),
+      sql_timeout_ms: SQL_QUERY_TIMEOUT_MS,
+      es_request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+      es_sync_max_ads: ES_SYNC_MAX_ADS,
+      es_chunk_concurrency: ES_CHUNK_CONCURRENCY,
+    });
+  }
+
+  // Each network owns independent SQL/ES connections, so serial fan-out only
+  // adds their latencies together. Run all networks concurrently and preserve
+  // deterministic response ordering when aggregating the completed results.
+  const entries = Object.entries(NETWORK_CONFIG);
+  const networkResults = await Promise.all(entries.map(async ([network, cfg]) => {
+    try {
+      return await updateOneNetwork(network, cfg, domainName, action, log);
+    } catch (err) {
+      if (log && log.error) {
+        log.error('domain date network failed unexpectedly', {
+          network,
+          table: cfg.table,
+          stage: 'network_fanout',
+          duration_ms: elapsedMs(startedAt),
+          error: err.message,
+          error_code: err.code,
+          stack: err.stack,
+        });
+      }
+      return {
+        status: 'error',
+        code: 500,
+        message: 'Unexpected network update failure',
+        timings_ms: { total: elapsedMs(startedAt) },
+        error: buildErrorResponse({
+          code: 500,
+          message: 'Unexpected network update failure',
+          type: 'internal_error',
+          source: 'api',
+          operation: 'update-domain-date',
+          stage: 'network_fanout',
+          network,
+          table: cfg.table,
+          details: { message: err.message, code: err.code },
+        }).error,
+      };
+    }
+  }));
+
+  entries.forEach(([network], index) => {
+    const r = networkResults[index];
     results[network] = r;
     if (r.status === 'updated') summary.updated += 1;
     else if (r.status === 'not_found') summary.not_found += 1;
     else summary.errors += 1;
+    if (r.error?.type?.includes('timeout') || r.es_error?.type?.includes('timeout')) summary.timeouts += 1;
     if (typeof r.es_matched_ads === 'number') summary.es_matched_ads += r.es_matched_ads;
     if (typeof r.es_updated === 'number') summary.es_updated += r.es_updated; // sync-confirmed only
     if (r.es_mode === 'async') summary.es_async_networks += 1;
     if (r.es_error) summary.es_errors += 1;
-  }
+  });
+
+  const totalDurationMs = elapsedMs(startedAt);
+  summary.duration_ms = totalDurationMs;
 
   const payload = {
     domain: domainName,
@@ -383,17 +699,53 @@ async function updateDomainDate(body, log) {
     status: action.statusValue,
     results,
     summary,
+    timings_ms: {
+      total: totalDurationMs,
+      networks: Object.fromEntries(
+        Object.entries(results).map(([network, result]) => [network, result.timings_ms || {}])
+      ),
+    },
   };
 
-  // Every network failed to even run a query (e.g. all SQL connections down) → server problem.
+  // If no network completed, distinguish unavailable connections, bounded
+  // timeouts, and query failures so operations can act on the real cause.
   if (summary.errors === Object.keys(NETWORK_CONFIG).length) {
+    const errorTypes = Object.values(results).map((result) => result.error?.type).filter(Boolean);
+    const allConnectionsUnavailable = errorTypes.length === entries.length &&
+      errorTypes.every((type) => type === 'sql_connection_error');
+    const timeoutCount = errorTypes.filter((type) => type === 'sql_timeout_error').length;
+    const hasTimeout = timeoutCount > 0;
+    const allTimedOut = timeoutCount === entries.length;
+    const code = hasTimeout ? 504 : (allConnectionsUnavailable ? 503 : 500);
+    const message = allTimedOut
+      ? 'All network SQL lookups timed out.'
+      : (hasTimeout
+        ? 'All network domain-date updates failed; one or more SQL lookups timed out.'
+      : (allConnectionsUnavailable
+        ? 'No network SQL connection was available.'
+        : 'All network domain-date updates failed.'));
+    const type = hasTimeout
+      ? 'sql_timeout_error'
+      : (allConnectionsUnavailable ? 'sql_connection_error' : 'sql_query_error');
+    if (log && log.error) {
+      log.error('domain date update fanout failed', {
+        domain: domainName,
+        status_code: code,
+        error_type: type,
+        duration_ms: totalDurationMs,
+        failed_networks: Object.keys(results),
+        network_errors: Object.fromEntries(
+          Object.entries(results).map(([network, result]) => [network, result.error])
+        ),
+      });
+    }
     return {
-      code: 503,
-      message: 'No network SQL connection was available.',
+      code,
+      message,
       error: buildErrorResponse({
-        code: 503,
-        message: 'No network SQL connection was available.',
-        type: 'sql_connection_error',
+        code,
+        message,
+        type,
         source: 'sql',
         operation: 'update-domain-date',
         stage: 'fanout',
@@ -409,10 +761,36 @@ async function updateDomainDate(body, log) {
   }
 
   if (log && log.info) {
-    log.info('domain date update processed', { domain: domainName, domain_date: action.date, status: action.statusValue, summary });
+    const logDetails = {
+      domain: domainName,
+      domain_date: action.date,
+      status: action.statusValue,
+      summary,
+      network_durations_ms: Object.fromEntries(
+        Object.entries(results).map(([network, result]) => [network, result.timings_ms?.total || 0])
+      ),
+    };
+    if ((summary.errors > 0 || summary.es_errors > 0 || totalDurationMs > 30000) && log.warn) {
+      log.warn('domain date update processed with warnings', logDetails);
+    } else {
+      log.info('domain date update processed', logDetails);
+    }
   }
 
   return { code: 200, message: 'Domain date update processed', data: payload };
 }
 
-module.exports = { updateDomainDate, resolveAction, propagateDateToEs, ymdToEpochSeconds, NETWORK_CONFIG, STATUS, isValidYmd };
+module.exports = {
+  updateDomainDate,
+  resolveAction,
+  propagateDateToEs,
+  ymdToEpochSeconds,
+  NETWORK_CONFIG,
+  STATUS,
+  isValidYmd,
+  ES_SYNC_MAX_ADS,
+  SQL_QUERY_TIMEOUT_MS,
+  ES_REQUEST_TIMEOUT_MS,
+  ES_CHUNK_CONCURRENCY,
+  querySqlWithTimeout,
+};

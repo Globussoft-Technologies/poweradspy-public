@@ -32,14 +32,36 @@ format differ per index family (all confirmed against live mappings):
 ES writes happen **only on the date path** (status 2/0 change no date, so no ES write). An ES failure
 is reported per network (`es_error`) but never fails the SQL update — SQL is the source of truth.
 
-**Scale (sync vs async).** A domain can have many ads. When a network has **≤ 2000** matching ads the
+**Scale (sync vs async).** A domain can have many ads. When a network has **<= 100** matching ads the
 ES update runs **synchronously** and the response carries an exact `es_updated` count. Above that it
 runs as an ES **background task** (`wait_for_completion: false`) so a large domain never blocks or
-times out the request — the response returns `es_mode: "async"` + `es_tasks` (ES task ids) and no
+times out the request - the response returns `es_mode: "async"` + `es_tasks` (ES task ids) and no
 `es_updated` (SQL is already committed; ES converges shortly after). The updates use
-`conflicts: proceed` and `refresh: false` (no forced per-chunk refresh — costly at scale; the date is
+`conflicts: proceed` and `refresh: false` (no forced per-chunk refresh - costly at scale; the date is
 not latency-critical, so it's visible within ES's normal refresh interval). Threshold is tunable via
-env `DOMAIN_ES_SYNC_MAX_ADS` (`0` = always async).
+`domainDateUpdate.esSyncMaxAds` in `config.json` (`0` = always async).
+
+**Bounded request work.** The 10 independent network operations are started concurrently instead
+of adding each network's latency serially. SQL reads used to locate domain/ad rows have a 10-second
+mysql2 inactivity timeout. The SQL `UPDATE` deliberately stays on the existing adapter path: a
+mysql2 client timeout cannot cancel a mutation already running on the MySQL server, so applying it
+to writes could report a false failure while the update still completes. Each ES request has a
+10-second timeout and `maxRetries: 0`, overriding this project's global 30-second / 3-retry ES
+policy for this endpoint. Terms-query chunks are submitted with bounded concurrency (default 4).
+After a chunk submission fails, no new chunks are started; already in-flight chunks finish and any
+successful task ids are retained in the response. This avoids repeated timeout waves during an ES
+outage.
+
+The service imports the resolved `src/config` module; it does not read `config.json` or environment
+variables directly. The performance controls can be tuned in `config.json` without code changes;
+restart the API process after editing them because the service resolves these values at startup.
+
+| `config.json` key | Default | Effect |
+|-------------------|---------|--------|
+| `domainDateUpdate.esSyncMaxAds` | `100` | Maximum unique matching ads updated synchronously per network; `0` makes all ES updates asynchronous. |
+| `domainDateUpdate.sqlQueryTimeoutMs` | `10000` | mysql2 inactivity timeout for domain and ad-id `SELECT` queries only. |
+| `domainDateUpdate.esRequestTimeoutMs` | `10000` | Client timeout for each ES `updateByQuery` request. |
+| `domainDateUpdate.esChunkConcurrency` | `4` | Maximum ES chunks submitted concurrently per network. |
 
 **Update-only:** rows are never inserted. A network whose table has no matching domain is reported
 as `not_found` and left untouched.
@@ -83,21 +105,31 @@ Body shape: `{ code, message?, error?, data? }`. `code` is also the HTTP status.
 | `domain_name` missing | **400** | 400 (`error` = message) |
 | neither `domain_date` nor `status`, bad `Y-m-d`, out-of-range/conflicting `status` | **400** | 400 |
 | No network SQL connection available at all | **503** | 503 |
+| Every network fails and one or more SQL reads time out | **504** | 504 |
+| Every network fails because of non-connection SQL/internal errors | **500** | 500 |
 
 - `error` is a structured object with `type`, `source`, `operation`, `stage`, `network`, `table`, and `details`.
 - Per-network failures are reported inside `data.results[network].error` with the same structure.
 - Elasticsearch failures are reported inside `data.results[network].es_error`.
-- SQL connection failures use `type: sql_connection_error`; SQL query failures use `type: sql_query_error`; ES failures use `type: elasticsearch_connection_error` or `type: elasticsearch_error`.
+- SQL connection failures use `type: sql_connection_error`; SQL query failures use `type: sql_query_error`; bounded SQL read timeouts use `type: sql_timeout_error`.
+- ES failures use `type: elasticsearch_connection_error` or `type: elasticsearch_error`; ES request timeouts use `type: elasticsearch_timeout_error`.
 
 `data.status` / `data.domain_date` echo the resolved action. `data.results` reports the outcome per
 network: `es_mode` (`sync`|`async`), `es_matched_ads`, and either `es_updated` (sync) or `es_tasks`
-(async ES task ids), plus structured `error` / `es_error` objects when a network fails. `data.summary`
-totals them: `es_matched_ads` (ads targeted across networks), `es_updated` (sync-confirmed updates),
-`es_async_networks`, `es_errors`.
+(async ES task ids), plus structured `error` / `es_error` objects when a network fails. A partial ES
+chunk failure can include both successfully submitted `es_tasks` and an `es_error` describing the
+failed chunk indexes. `data.summary` totals `es_matched_ads` (unique ads targeted across networks),
+`es_updated` (sync-confirmed updates), `es_async_networks`, `es_errors`, `timeouts`, and
+`duration_ms`.
+
+Each network result includes `timings_ms` for `select_rows`, `update_rows`, `propagate_date`, and
+`total`. ES propagation also includes `es_timings_ms` for `resolve_ad_ids`, `submit_es`, and `total`.
+The top-level `data.timings_ms` contains total request time and all per-network timings. These are
+additive response fields; the existing result/status fields are unchanged.
 
 ### Error examples
 
-#### 400 â€” invalid date format
+#### 400 - invalid date format
 
 ```json
 {
@@ -113,7 +145,7 @@ totals them: `es_matched_ads` (ads targeted across networks), `es_updated` (sync
 }
 ```
 
-#### 503 â€” all SQL networks unavailable
+#### 503 - all SQL networks unavailable
 
 ```json
 {
@@ -151,10 +183,12 @@ totals them: `es_matched_ads` (ads targeted across networks), `es_updated` (sync
       "updated": 0,
       "not_found": 0,
       "errors": 2,
+      "timeouts": 0,
       "es_matched_ads": 0,
       "es_updated": 0,
       "es_async_networks": 0,
-      "es_errors": 0
+      "es_errors": 0,
+      "duration_ms": 8
     }
   }
 }
@@ -227,7 +261,7 @@ Content-Type: application/json
       "reddit":    { "status": "not_found" },
       "quora":     { "status": "error", "message": "..." }
     },
-    "summary": { "updated": 2, "not_found": 7, "errors": 1, "es_matched_ads": 5203, "es_updated": 3, "es_async_networks": 1, "es_errors": 0 }
+    "summary": { "updated": 2, "not_found": 7, "errors": 1, "timeouts": 0, "es_matched_ads": 5203, "es_updated": 3, "es_async_networks": 1, "es_errors": 0, "duration_ms": 214 }
   }
 }
 ```
@@ -271,7 +305,29 @@ curl -s -X PUT -w "\n[HTTP %{http_code}]\n" \
 
 ---
 
-## 4. Implementation reference
+## 4. Operational logging
+
+The controller logs request receipt and completion with the request id, HTTP status, total duration,
+summary, and top-level error type/stage. The service logs each network's start and completion plus
+stage timings. Failures include the network, SQL table or ES index, stage, elapsed time, configured
+timeout, error code/message, and failed ES chunk indexes where applicable.
+
+Useful event names:
+
+- `insert-update-domain-date request received`
+- `insert-update-domain-date request completed`
+- `insert-update-domain-date request failed`
+- `domain date network completed`
+- `domain date ad-id lookup failed`
+- `domain date ES propagation failed`
+- `domain date update processed with warnings`
+- `domain date update fanout failed`
+
+The application's request-context middleware automatically adds `requestId` to service logs, so a
+single slow or failed call can be followed across controller, SQL, and ES stages. The API does not
+log request credentials or Elasticsearch script values.
+
+## 5. Implementation reference
 - Service (network config + per-network update): `src/services/common/services/updateDomainDateService.js`
 - Controller: `src/services/common/controllers/updateDomainDateController.js`
 - Route: `src/services/common/routes/commonRoutes.js` (`PUT /insert-update-domain-date`)

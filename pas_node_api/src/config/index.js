@@ -48,6 +48,11 @@ function getVal(jsonValue, envKey, transform) {
 
 const toInt = (v) => parseInt(v, 10);
 const toBool = (v) => v === true || v === 'true';
+const validatedInt = (value, fallback, allowZero = false) => {
+  const parsed = toInt(value);
+  const valid = Number.isFinite(parsed) && (allowZero ? parsed >= 0 : parsed > 0);
+  return valid ? parsed : fallback;
+};
 const toStringArray = (v) => {
   if (Array.isArray(v)) return v.map((item) => String(item).trim()).filter(Boolean);
   if (typeof v !== 'string') return [];
@@ -178,6 +183,15 @@ const config = {
 
   apiTimeouts: {
     networkSearchTimeoutMs: getVal(fileConfig.apiTimeouts?.networkSearchTimeoutMs, 'API_NETWORK_SEARCH_TIMEOUT_MS', toInt),
+  },
+
+  // Performance controls for PUT /common/insert-update-domain-date. These
+  // values intentionally come from config.json rather than environment vars.
+  domainDateUpdate: {
+    esSyncMaxAds: validatedInt(fileConfig.domainDateUpdate?.esSyncMaxAds, 100, true),
+    sqlQueryTimeoutMs: validatedInt(fileConfig.domainDateUpdate?.sqlQueryTimeoutMs, 10000),
+    esRequestTimeoutMs: validatedInt(fileConfig.domainDateUpdate?.esRequestTimeoutMs, 10000),
+    esChunkConcurrency: validatedInt(fileConfig.domainDateUpdate?.esChunkConcurrency, 4),
   },
 
   aiMeta: {

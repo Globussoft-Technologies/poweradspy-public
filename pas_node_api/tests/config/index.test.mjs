@@ -87,6 +87,12 @@ describe("config/index > module load", () => {
     const c = freshSut();
     expect(c).toBeDefined();
     expect(c.cors.methods).toEqual(["GET", "POST", "PUT", "DELETE", "OPTIONS"]);
+    expect(c.domainDateUpdate).toEqual({
+      esSyncMaxAds: 100,
+      sqlQueryTimeoutMs: 10000,
+      esRequestTimeoutMs: 10000,
+      esChunkConcurrency: 4,
+    });
     expect(c.isDev).toBe(true); // env undefined ≠ 'production'
   });
 
@@ -103,6 +109,55 @@ describe("config/index > module load", () => {
     expect(c.host).toBe("0.0.0.0");
     expect(c.isDev).toBe(false);
     expect(c.admin.enabled).toBe(true);
+  });
+
+  it("loads domain-date performance controls from config.json, not env", () => {
+    process.env.DOMAIN_ES_SYNC_MAX_ADS = "999";
+    process.env.DOMAIN_SQL_QUERY_TIMEOUT_MS = "999";
+    process.env.DOMAIN_ES_REQUEST_TIMEOUT_MS = "999";
+    process.env.DOMAIN_ES_CHUNK_CONCURRENCY = "999";
+    configJsonExists = true;
+    configJsonContent = JSON.stringify({
+      domainDateUpdate: {
+        esSyncMaxAds: 0,
+        sqlQueryTimeoutMs: 7000,
+        esRequestTimeoutMs: 8000,
+        esChunkConcurrency: 3,
+      },
+    });
+
+    try {
+      expect(freshSut().domainDateUpdate).toEqual({
+        esSyncMaxAds: 0,
+        sqlQueryTimeoutMs: 7000,
+        esRequestTimeoutMs: 8000,
+        esChunkConcurrency: 3,
+      });
+    } finally {
+      delete process.env.DOMAIN_ES_SYNC_MAX_ADS;
+      delete process.env.DOMAIN_SQL_QUERY_TIMEOUT_MS;
+      delete process.env.DOMAIN_ES_REQUEST_TIMEOUT_MS;
+      delete process.env.DOMAIN_ES_CHUNK_CONCURRENCY;
+    }
+  });
+
+  it("uses safe defaults for invalid domain-date config values", () => {
+    configJsonExists = true;
+    configJsonContent = JSON.stringify({
+      domainDateUpdate: {
+        esSyncMaxAds: -1,
+        sqlQueryTimeoutMs: 0,
+        esRequestTimeoutMs: "invalid",
+        esChunkConcurrency: -2,
+      },
+    });
+
+    expect(freshSut().domainDateUpdate).toEqual({
+      esSyncMaxAds: 100,
+      sqlQueryTimeoutMs: 10000,
+      esRequestTimeoutMs: 10000,
+      esChunkConcurrency: 4,
+    });
   });
 
   it("env var fallback when config.json missing", () => {
