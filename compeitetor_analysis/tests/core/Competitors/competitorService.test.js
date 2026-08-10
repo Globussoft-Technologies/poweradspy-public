@@ -831,6 +831,13 @@ describe("competitorService > updateUserDailyTokens / isDailyLimitExceeded", () 
     spies.userDailyTokensUpdateOneSpy.mockResolvedValueOnce({});
     spies.tokenSyncUpdateOneSpy.mockResolvedValueOnce({});
     await svc.updateUserDailyTokens("u1", "c1");
+    expect(spies.axiosGetSpy.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        headers: {
+          "X-API-Key": "cfg:COMPETITOR_PYTHON_API_KEY",
+        },
+      }),
+    );
     expect(spies.userDailyTokensUpdateOneSpy).toHaveBeenCalled();
     expect(spies.tokenSyncUpdateOneSpy).toHaveBeenCalled();
   });
@@ -883,6 +890,13 @@ describe("competitorService > fetchKeywordsBasedOnWebsite", () => {
     spies.axiosPostSpy.mockResolvedValueOnce({ data: { ok: true } });
     const res = mockRes();
     await svc.fetchKeywordsBasedOnWebsite({ body: { webSiteUrl: "x.com" } }, res);
+    expect(spies.axiosPostSpy.mock.calls[0][2]).toEqual(
+      expect.objectContaining({
+        headers: {
+          "X-API-Key": "cfg:COMPETITOR_PYTHON_API_KEY",
+        },
+      }),
+    );
     expect(res.json).toHaveBeenCalledWith({ ok: true });
   });
   it("400 catch", async () => {
@@ -934,12 +948,19 @@ describe("competitorService > checkCompetitorProcess", () => {
   });
   it("happy with new project + axios success", async () => {
     spies.userDailyTokensFindOneSpy.mockResolvedValueOnce(null);
-    spies.configGetSpy.mockImplementation(() => 20000);
+    spies.configGetSpy.mockImplementation((k) => k === "MAXIMUM_TOKEN_COUNt" ? 20000 : "cfg:" + k);
     spies.competitorsReqFindOneSpy.mockResolvedValueOnce(null);
     spies.competitorsReqCreateSpy.mockResolvedValueOnce({ _id: "p1" });
     spies.axiosPostSpy.mockResolvedValueOnce({ data: { data: { x: 1 } } });
     const res = mockRes();
     await svc.checkCompetitorProcess({ body: { user_id: "u1", advertiser: ["Acme"], content_ref_id: "c", keywords: [], limit: 5 } }, res);
+    expect(spies.axiosPostSpy.mock.calls[0][2]).toEqual(
+      expect.objectContaining({
+        headers: {
+          "X-API-Key": "cfg:COMPETITOR_PYTHON_API_KEY",
+        },
+      }),
+    );
     expect(res.json).toHaveBeenCalled();
   });
   it("502 when the DS /prepare call fails (non-timeout)", async () => {
@@ -2650,10 +2671,18 @@ describe("competitorService > getStoreProcessCompetitors", () => {
     spies.competitorsFindSpy.mockReturnValueOnce({
       sort: () => ({ lean: () => Promise.resolve([]) }),
     });
+    vi.spyOn(svc, "generateCompetitorsInBackground").mockResolvedValue(undefined);
     const res = mockRes();
     await svc.getStoreProcessCompetitors({
       body: { advertiser: "Acme", content_ref_id: "c", user_id: "u", target: 50 },
     }, res);
+    expect(spies.axiosGetSpy.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        headers: {
+          "X-API-Key": "cfg:COMPETITOR_PYTHON_API_KEY",
+        },
+      }),
+    );
     expect(res.send).toHaveBeenCalled();
   });
 
@@ -3004,12 +3033,26 @@ describe("competitorService > generateCompetitorsInBackground", () => {
 
   it("same-data + still-processing path: hits MAX_PROCESSING_RETRIES break", async () => {
     spies.userDailyTokensFindOneSpy.mockResolvedValue(null);
-    spies.configGetSpy.mockImplementation(() => 20000);
-    spies.axiosGetSpy.mockImplementation(async (url) => {
+    spies.configGetSpy.mockImplementation((k) => k === "MAXIMUM_TOKEN_COUNt" ? 20000 : "cfg:" + k);
+    spies.axiosGetSpy.mockImplementation(async (url, opts) => {
       if (url.includes("/v1/api/tokens/usage")) {
+        expect(opts).toEqual(
+          expect.objectContaining({
+            headers: {
+              "X-API-Key": "cfg:COMPETITOR_PYTHON_API_KEY",
+            },
+          }),
+        );
         return { data: { data: { token_usage: {} } } };
       }
       // Always returns same data with isStillProcessing true (completedItems < totalItems)
+      expect(opts).toEqual(
+        expect.objectContaining({
+          headers: {
+            "X-API-Key": "cfg:COMPETITOR_PYTHON_API_KEY",
+          },
+        }),
+      );
       return { data: { data: { competitors: [{ tool_name: "X" }], total_items: 100, completed_items: 1 } } };
     });
     spies.tokenSyncFindOneSpy.mockResolvedValue({});

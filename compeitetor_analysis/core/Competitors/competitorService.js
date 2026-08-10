@@ -117,6 +117,19 @@ export async function loadCurrentPlanLimits(req, storedPlanId = null) {
 // timeout in services/api.js (checkCompetitorProcess / getStoreProcessCompetitors).
 const DS_REQUEST_TIMEOUT_MS = 45000;
 
+// DS now requires `X-API-Key` on every request to the Python service. Keep the
+// auth header centralized so all competitor-analysis calls inherit the same
+// header and future DS endpoints do not accidentally miss it.
+function getCompetitorPythonRequestConfig({ params, timeout = DS_REQUEST_TIMEOUT_MS } = {}) {
+  return {
+    timeout,
+    headers: {
+      "X-API-Key": config.get("COMPETITOR_PYTHON_API_KEY"),
+    },
+    ...(params !== undefined ? { params } : {}),
+  };
+}
+
 // Loose domain-format check for the optional "Company Website URL" field on
 // manual-competitor add. Accepts a bare domain or one with a protocol/www/
 // path/query (e.g. "walmart.com", "www.walmart.com", "https://walmart.com/x")
@@ -2689,7 +2702,9 @@ async updateUserDailyTokens(userObjectId, content_ref_id) {
 
   const res = await axios.get(
     config.get("COMPETITOR_URL_PYTHON") + "/v1/api/tokens/usage",
-    { params: { content_ref_id }, timeout: DS_REQUEST_TIMEOUT_MS }
+    getCompetitorPythonRequestConfig({
+      params: { content_ref_id },
+    })
   );
 
   const usage = res.data.data.token_usage;
@@ -2842,12 +2857,13 @@ async isDailyLimitExceeded(userObjectId) {
         // hang here reproduces the exact same infinite-spinner bug even with
         // checkCompetitorProcess's own DS call already fixed.
         const response = await axios.get(keywordUrlC, {
-          timeout: DS_REQUEST_TIMEOUT_MS,
-          params: {
-            content_ref_id,
-            skip: 0,
-            limit: fetchLimit
-          }
+          ...getCompetitorPythonRequestConfig({
+            params: {
+              content_ref_id,
+              skip: 0,
+              limit: fetchLimit
+            }
+          })
         });
 
         competitors =
@@ -3042,12 +3058,13 @@ async generateCompetitorsInBackground({
       let response;
       try {
         response = await axios.get(keywordUrlC, {
-          timeout: DS_REQUEST_TIMEOUT_MS,
-          params: {
-            content_ref_id,
-            skip: 0,
-            limit: this.competitorOverfetchLimit(TARGET)
-          }
+          ...getCompetitorPythonRequestConfig({
+            params: {
+              content_ref_id,
+              skip: 0,
+              limit: this.competitorOverfetchLimit(TARGET)
+            }
+          })
         });
       } catch (err) {
         // Same reasoning as getStoreProcessCompetitors' /list catch: a 422 is
@@ -3692,8 +3709,9 @@ async checkDailyTokenLimit(req, res) {
 
       // weblink expects to be a query param
       const response = await axios.post(keywordUrl, null, {
-        params: { weblink: webSiteUrl },
-        timeout: DS_REQUEST_TIMEOUT_MS
+        ...getCompetitorPythonRequestConfig({
+          params: { weblink: webSiteUrl },
+        })
       });
       return res.json(response.data);
     } catch (err) {
@@ -3806,15 +3824,12 @@ async checkDailyTokenLimit(req, res) {
       let response;
       try {
         response = await axios.post(keywordUrl, formParams, {
-          params: {
-            content_ref_id: content_ref_id,
-            advertiser: advArray[0] || advArray
-          },
-          // Bound this call — without it, a slow/hung DS response holds this
-          // HTTP request (and the frontend's spinner) open indefinitely, while
-          // the project doc above has already been persisted with no
-          // competitors. See DS_REQUEST_TIMEOUT_MS comment for context.
-          timeout: DS_REQUEST_TIMEOUT_MS
+          ...getCompetitorPythonRequestConfig({
+            params: {
+              content_ref_id: content_ref_id,
+              advertiser: advArray[0] || advArray
+            }
+          })
         });
       } catch (dsErr) {
         // DS call failed or timed out. Don't leave a phantom empty brand behind
