@@ -19,7 +19,10 @@ function fixCountryIso(country, iso) {
   if (country === 'Russia') return 'RU';
   if (name.includes('congo') && (!iso || iso === 'null')) return 'CD';
   if (country === 'South Sudan') return 'SD';
-  if (country === 'South Korea') return 'KP';
+  // 'KR' (not 'KP', which is North Korea) — only used as a fallback when the DB
+  // lookup didn't already resolve a real iso, so a correctly-resolved value is
+  // never clobbered.
+  if (country === 'South Korea' && (!iso || iso === 'null')) return 'KR';
   if (country === 'Syria') return 'SY';
   if (country === 'Tanzania') return 'TZ';
   return iso;
@@ -207,41 +210,64 @@ async function aggregateCountryBuckets(db, buckets) {
 
   const isoMap = await batchCountryLookup(db, names);
 
-  const result = [];
+  // Merge buckets that resolve to the SAME real country — e.g. one ad stored
+  // country: "india" and another stored country: "in" (raw ISO code); those are
+  // two separate ES terms buckets but the same country, and without merging they
+  // surface as two duplicate rows ("India" / "In") with the total ad_count split
+  // between them instead of combined. Key = the resolved iso (canonical) when
+  // known, else the lower-cased country string, so still-unresolved buckets at
+  // least dedupe against exact repeats of themselves.
+  const merged = new Map();
   for (const b of buckets) {
     const name = b.key;
     if (!name) continue;
     const adCount = b.unique_ads?.value ?? b.doc_count ?? 0;
     if (!adCount) continue;
 
-    const lookup = isoMap.get(name);
+    const lookup = isoMap.get(String(name).toLowerCase());
     let country = lookup?.country || name;
     let iso = lookup?.iso || null;
 
     iso = fixCountryIso(country, iso);
     if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
 
-    result.push({ country, iso, ad_ids: [], ad_count: adCount });
+    const key = iso ? iso.toLowerCase() : country.toLowerCase();
+    const existing = merged.get(key);
+    if (existing) {
+      existing.ad_count += adCount;
+    } else {
+      merged.set(key, { country, iso, ad_ids: [], ad_count: adCount });
+    }
   }
 
-  // terms agg already orders by unique_ads desc, but re-sort defensively in
-  // case the lookup collapsed names.
+  const result = [...merged.values()];
+  // terms agg already orders by unique_ads desc, but re-sort defensively since
+  // merging can change the relative order.
   result.sort((a, b) => b.ad_count - a.ad_count);
   return result.length > 0 ? result : null;
 }
 
+// Looks up by EITHER `nicename` (full country name, e.g. "India") OR `iso` code
+// (e.g. "in") — the ES `country` field on advertiser docs isn't consistently
+// normalized: some ads store the full name, others the 2-letter ISO code, so the
+// same real country would otherwise resolve for one bucket ("india") and miss for
+// the other ("in"), leaving the raw code to fall through unresolved. Matching both
+// columns lets `aggregateCountryBuckets` merge them back into one canonical entry.
 async function batchCountryLookup(db, names) {
   if (!db.sql || !names || names.length === 0) return new Map();
   const uniqueNames = [...new Set(names)];
   const placeholders = uniqueNames.map(() => '?').join(',');
   try {
     const rows = await db.sql.query(
-      `SELECT nicename, name AS country, iso FROM country_data WHERE nicename IN (${placeholders})`,
-      uniqueNames
+      `SELECT nicename, name AS country, iso FROM country_data WHERE nicename IN (${placeholders}) OR iso IN (${placeholders})`,
+      [...uniqueNames, ...uniqueNames]
     );
     const map = new Map();
     if (rows) {
-      for (const row of rows) map.set(row.nicename, { country: row.country, iso: row.iso });
+      for (const row of rows) {
+        if (row.nicename) map.set(row.nicename.toLowerCase(), { country: row.country, iso: row.iso });
+        if (row.iso) map.set(row.iso.toLowerCase(), { country: row.country, iso: row.iso });
+      }
     }
     return map;
   } catch {
