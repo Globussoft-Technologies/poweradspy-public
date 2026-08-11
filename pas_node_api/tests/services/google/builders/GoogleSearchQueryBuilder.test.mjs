@@ -80,6 +80,20 @@ describe("Google builder > clause generators", () => {
     expect(b.build().body.query.bool.must?.length || 0).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(b.build())).toContain("foo");
   });
+  it("platform 18 keyword searches content OR advertiser", () => {
+    const query = new Builder()
+      .setKeyword("Nykaa")
+      .setTransparencyKeywordSearch(true)
+      .build().body.query;
+    const json = JSON.stringify(query);
+    expect(json).toContain("post_owner_name");
+    expect(json).toContain("minimum_should_match");
+    expect(json).toContain("Nykaa");
+  });
+  it("normal Google keyword does not search advertiser", () => {
+    const query = new Builder().setKeyword("Nykaa").build().body.query;
+    expect(JSON.stringify(query)).not.toContain("post_owner_name");
+  });
   it("keyword quoted", () => {
     b.setKeyword('"foo"');
     expect(JSON.stringify(b.build())).toContain("foo");

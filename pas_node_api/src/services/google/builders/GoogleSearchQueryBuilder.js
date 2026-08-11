@@ -111,6 +111,7 @@ class GoogleSearchQueryBuilder {
   setProfile(v) { this._profile = v; return this; }
 
   setKeyword(v) { this._params.keyword = v; return this; }
+  setTransparencyKeywordSearch(v) { this._params.transparencyKeywordSearch = !!v; return this; }
   // Frontend "Search Precisely" (payload `exact_search` 0/1). When true, keyword
   // and advertiser are matched as an exact consecutive phrase instead of AND.
   setExactSearch(v) { this._params.exactSearch = !!v; return this; }
@@ -170,12 +171,36 @@ class GoogleSearchQueryBuilder {
     const quoted = String(kw).includes('"');
     const clean = String(kw).replace(/"/g, "").trim();
     if (!clean) return null;
-    if (this._isExact() || quoted) {
-      return asFilter({ multi_match: { query: clean, type: "phrase", fields: CONTENT_FIELDS } });
+    const exact = this._isExact() || quoted;
+    const contentQuery = exact
+      ? { multi_match: { query: clean, type: "phrase", fields: CONTENT_FIELDS } }
+      : { multi_match: { query: clean, type: "cross_fields", operator: "and", fields: CONTENT_FIELDS } };
+
+    // Transparency creatives often have no title/text and expose the searched
+    // brand only through post_owner_name. For platform 18 only, make the keyword
+    // box search ad content OR advertiser with the same advertiser semantics.
+    if (this._params.transparencyKeywordSearch) {
+      return asFilter({
+        bool: {
+          should: [contentQuery, this._buildPostOwnerQuery(clean, exact)],
+          minimum_should_match: 1,
+        },
+      });
     }
-    return asFilter({
-      multi_match: { query: clean, type: "cross_fields", operator: "and", fields: CONTENT_FIELDS },
-    });
+    return asFilter(contentQuery);
+  }
+
+  _buildPostOwnerQuery(clean, exact) {
+    if (exact) return { match_phrase: { post_owner_name: clean } };
+    return {
+      bool: {
+        should: [
+          { match: { post_owner_name: { query: clean, operator: "and" } } },
+          { match_phrase_prefix: { post_owner_name: clean } },
+        ],
+        minimum_should_match: 1,
+      },
+    };
   }
 
   /**
@@ -189,18 +214,7 @@ class GoogleSearchQueryBuilder {
     const quoted = String(name).includes('"');
     const clean = String(name).replace(/"/g, "").trim();
     if (!clean) return null;
-    if (this._isExact() || quoted) {
-      return asFilter({ match_phrase: { post_owner_name: clean } });
-    }
-    return asFilter({
-      bool: {
-        should: [
-          { match: { post_owner_name: { query: clean, operator: "and" } } },
-          { match_phrase_prefix: { post_owner_name: clean } },
-        ],
-        minimum_should_match: 1,
-      },
-    });
+    return asFilter(this._buildPostOwnerQuery(clean, this._isExact() || quoted));
   }
 
   _getHtmlContentEnv() {

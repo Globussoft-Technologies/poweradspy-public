@@ -242,6 +242,11 @@ async function searchAds(req, db, logger) {
 
   const { size, from } = parsePagination(p);
   const sort = parseSort(p);
+  const transparencyOnly =
+    p.google_transparency_ads === true ||
+    p.google_transparency_ads === 1 ||
+    p.google_transparency_ads === 'true' ||
+    Number(p.platform) === 18;
 
   const builder = new GoogleSearchQueryBuilder(db.elastic?.indexName);
   builder.setFrom(from).setSize(size).setSortField(sort.field).setSortMethod(sort.order).setIpBasedCountry(p.ipBasedCountry || 'NA');
@@ -251,7 +256,10 @@ async function searchAds(req, db, logger) {
   // longer hits "Haier"). exact_search (frontend "Search Precisely") + quoted
   // input → phrase match; applies to keyword AND advertiser.
   builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true);
-  if (p.keyword)    builder.setKeyword(p.keyword);
+  if (p.keyword) {
+    builder.setKeyword(p.keyword);
+    if (transparencyOnly) builder.setTransparencyKeywordSearch(true);
+  }
   if (p.advertiser) builder.setPostOwnerName(p.advertiser);
   if (p.domain)     builder.setUrl(p.domain);
 
@@ -263,11 +271,6 @@ async function searchAds(req, db, logger) {
   if (p.state)          builder.setState(ensureArray(p.state));
   if (p.city)           builder.setCity(ensureArray(p.city));
   if (p.type)           builder.setAdType(ensureArray(p.type));
-  const transparencyOnly =
-    p.google_transparency_ads === true ||
-    p.google_transparency_ads === 1 ||
-    p.google_transparency_ads === 'true' ||
-    Number(p.platform) === 18;
   if (transparencyOnly) {
     builder.setPlatform([18]);
     const subnetwork = String(p.google_transparency_subnetwork || '').trim();

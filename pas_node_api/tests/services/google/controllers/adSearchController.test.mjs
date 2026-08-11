@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
-    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
+    "setKeyword","setTransparencyKeywordSearch","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
     "setState","setCity","setAdType","setPlatform","setSubnetwork","setTargetKeyword","setTags","setLangDetect","setAdPosition",
     "setAdSubPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate","setCountryDelivery",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -526,6 +526,20 @@ describe("services/google/controllers/adSearchController > regular searchAds", (
 
     expect(builderCalls[0].calls).toContainEqual(["setPlatform", [[18]]]);
     expect(builderCalls[0].calls).toContainEqual(["setSubnetwork", [["SEARCH"]]]);
+  });
+
+  it("expands keyword search to advertiser only for platform 18", async () => {
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) } };
+
+    await searchAds({
+      body: { user_id: "u", keyword: "Nykaa", google_transparency_ads: true },
+      query: {},
+    }, db, fakeLogger);
+    expect(builderCalls[0].calls).toContainEqual(["setTransparencyKeywordSearch", [true]]);
+
+    builderCalls.length = 0;
+    await searchAds({ body: { user_id: "u", keyword: "Nykaa" }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls.some(([name]) => name === "setTransparencyKeywordSearch")).toBe(false);
   });
 
   it("platform 18 All/NA sentinel applies platform without a fake subnetwork term", async () => {
