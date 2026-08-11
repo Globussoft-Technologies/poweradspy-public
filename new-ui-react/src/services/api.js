@@ -549,6 +549,7 @@ export const mapAdToCard = (raw) => {
   })();
   const card = {
     id: raw.ad_id || raw.sql_id || raw.id,
+    internalId: raw.id ?? raw.sql_id ?? null,
     advertiser: isAdmob ? (raw.post_owner ?? null) : (raw.post_owner || 'Unknown'),
     advertiserImage: raw.post_owner_image ? `${raw.post_owner_image}` : null,
     date: formatDate(raw.post_date),

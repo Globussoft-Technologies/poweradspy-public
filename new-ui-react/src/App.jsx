@@ -553,7 +553,7 @@ const App = () => {
       // (not /gdn/<id>), while the history state keeps the real network ('youtube')
       // so in-session back/forward still loads the insights from the right source.
       const urlNetwork = (network === 'youtube' && ad.badgeNetwork === 'gdn') ? 'youtube' : (ad.badgeNetwork || network);
-      const id = ad.adId || ad.id;
+      const id = ad.internalId ?? ad.adId ?? ad.id;
       window.history.pushState(
         { adModal: true, network, id },
         "",
@@ -2172,12 +2172,12 @@ const App = () => {
       _dashboardIndex: index,
     }));
     const selectedId =
-      selectedAdForAnalytics?.adId ?? selectedAdForAnalytics?.id;
+      selectedAdForAnalytics?.internalId ?? selectedAdForAnalytics?.adId ?? selectedAdForAnalytics?.id;
     const selectedNetwork = String(
       selectedAdForAnalytics?.network || "",
     ).toLowerCase();
     const fallbackIndex = indexedAds.findIndex((ad) => {
-      const sameId = String(ad.adId ?? ad.id) === String(selectedId);
+      const sameId = String(ad.internalId ?? ad.adId ?? ad.id) === String(selectedId);
       const adNetwork = String(ad.network || "").toLowerCase();
       return sameId && (!selectedNetwork || adNetwork === selectedNetwork);
     });
