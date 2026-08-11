@@ -357,6 +357,7 @@ const config = {
   keywordSearch: {
     enabled: getVal(fileConfig.keywordSearch?.enabled, 'KEYWORD_SEARCH_ENABLED', toBool) !== false,
     scrapeRequestUrl: getVal(fileConfig.keywordSearch?.scrapeRequestUrl, 'KEYWORD_SEARCH_SCRAPE_REQUEST_URL') || '',
+    scrapeMaxAds: getVal(fileConfig.keywordSearch?.scrapeMaxAds, 'KEYWORD_SEARCH_SCRAPE_MAX_ADS', toInt) || 10,
     mongoSlug: getVal(fileConfig.keywordSearch?.mongoSlug, 'KEYWORD_SEARCH_MONGO_SLUG') || 'facebook',
     database: getVal(fileConfig.keywordSearch?.database, 'KEYWORD_SEARCH_DATABASE') || '',
     collection: getVal(fileConfig.keywordSearch?.collection, 'KEYWORD_SEARCH_COLLECTION') || 'keyword_searches',

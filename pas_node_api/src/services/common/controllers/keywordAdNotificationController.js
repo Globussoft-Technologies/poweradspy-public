@@ -29,16 +29,29 @@ const log = logger.createChild('keyword-ad-notify');
 const TIMESTAMP_FIELD = {
   facebook: 'facebook_ad.last_seen',
   instagram: 'instagram_ad.last_seen',
-  google: 'google_ad.last_seen',
+  google: 'last_seen',
   gdn: 'gdn_ad.last_seen',
   youtube: 'last_seen',
-  linkedin: 'linkedin_ad.last_seen',
+  linkedin: 'last_seen',
   reddit: 'reddit_ad.last_seen',
   pinterest: 'pinterest_ad.last_seen',
   quora: 'quora_ad.last_seen',
   native: 'native_ad.last_seen',
   tiktok: 'last_seen',
 };
+
+// Google Transparency Ads share the SAME Elasticsearch index/schema as regular Google
+// Search ads (discriminated only by a `platform` id inside the doc — see
+// src/services/google/transparencyInsertion/pipeline.js). The scraper reports its
+// network as the literal string "google_transparency" on scrapping_status[].network,
+// which has no entry of its own in PLATFORM_FIELD_MAPPINGS / TIMESTAMP_FIELD / the ES
+// client registry — normalize it onto 'google' for every ES-side lookup below. The
+// notification doc itself still records the network AS SCRAPED ("google_transparency"),
+// only the lookup key is normalized.
+function normalizePlatformKey(net) {
+  const n = String(net || '').toLowerCase();
+  return n === 'google_transparency' ? 'google' : n;
+}
 
 // type → which PLATFORM_FIELD_MAPPINGS key to read.
 const TYPE_FIELD_KEY = { 1: 'keyword', 2: 'advertiser', 3: 'domain' };
@@ -182,12 +195,13 @@ async function runKeywordAdNotificationScan() {
 
     for (const net of networksScrapedToday(doc, today)) {
       try {
-        const query = buildQuery(net, type, value, dateScoped, today);
+        const lookupNet = normalizePlatformKey(net);
+        const query = buildQuery(lookupNet, type, value, dateScoped, today);
         if (!query) continue;
 
-        const es = dbManager.getElastic(net);
+        const es = dbManager.getElastic(lookupNet);
         if (!es) { log.debug('no ES client for network', { network: net }); continue; }
-        const index = es.indexName || config.networks?.[net]?.elastic?.index;
+        const index = es.indexName || config.networks?.[lookupNet]?.elastic?.index;
         if (!index) continue;
 
         const res = await es.count({ index, body: { query } });
@@ -303,12 +317,13 @@ async function runUserKeywordAdScan(user, source, notifyCol) {
       // Caller already dismissed this term+network today → skip before any ES work.
       if (isDismissedToday(doc, user, net, today)) continue;
       try {
-        const query = buildQuery(net, doc.type, doc.value, dateScoped, today);
+        const lookupNet = normalizePlatformKey(net);
+        const query = buildQuery(lookupNet, doc.type, doc.value, dateScoped, today);
         if (!query) continue;
 
-        const es = dbManager.getElastic(net);
+        const es = dbManager.getElastic(lookupNet);
         if (!es) continue;
-        const index = es.indexName || config.networks?.[net]?.elastic?.index;
+        const index = es.indexName || config.networks?.[lookupNet]?.elastic?.index;
         if (!index) continue;
 
         const res = await es.count({ index, body: { query } });

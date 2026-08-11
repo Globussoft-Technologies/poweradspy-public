@@ -60,19 +60,18 @@ const PLATFORM_FIELD_MAPPINGS = {
     domain: 'instagram_ad_meta_data.destination_url',
   },
   google: {
+    // Google's index (google_ads_data_v2) uses FLAT field names, not dotted
+    // <table>.<column> paths like the other networks — confirmed against
+    // src/services/google/controllers/adInsightsController.js's own field usage.
     keyword: [
-      'google_ad_variants.title',
-      'google_ad_variants.text',
-      'google_ad_variants.newsfeed_description',
-      'google_ad_variants.title_exactly',
-      'google_ad_variants.text_exactly',
-      'google_ad_variants.newsfeed_description_exactly',
+      'title',
+      'text',
     ],
     advertiser: [
-      'google_ad_post_owners.post_owner_name',
-      'google_ad_post_owners.post_owner_name_exactly',
+      'post_owner_name',
+      'post_owner_lower',
     ],
-    domain: 'google_ad_meta_data.destination_url',
+    domain: 'destination_url',
   },
   gdn: {
     keyword: [
@@ -101,13 +100,15 @@ const PLATFORM_FIELD_MAPPINGS = {
     domain: 'youtube_ad_meta_data.destination_url',
   },
   linkedin: {
+    // LinkedIn's index also uses FLAT field names (confirmed against
+    // src/services/linkedin/controllers/adInsightsController.js).
     keyword: [
       'ad_title',
       'ad_text',
       'newsfeed_description',
     ],
     advertiser: [
-      'linkedin_ad_post_owners.post_owner_name_exactly',
+      'post_owner',
     ],
     domain: 'destination_url',
   },
