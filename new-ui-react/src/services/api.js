@@ -3096,6 +3096,17 @@ export const fetchFreshTikTokVideoUrl = async (libraryUrl) => {
 // icon/label render without touching those components.
 const NOTIFY_TYPE_TO_UI = { 1: 0, 2: 1, 3: 2 };
 
+// Google Transparency ads are scraped/stored under the internal network key
+// "google_transparency" (see pas_node_api keywordAdNotificationController.js) — that key
+// exists only for the backend's own ES lookups and has no meaning to the frontend's
+// platform machinery (activePlatforms, plan-access allowedPlatforms, SDUI platform_applicability
+// all only know the real platform id "google"). Left un-normalized, clicking one of these
+// notifications sets activePlatforms to a value no plan's allowedPlatforms list ever contains,
+// so the search gets treated as fully unpermitted and the pricing modal opens even on a plan
+// that already has full Google access. Normalize it once here, at the API boundary.
+const normalizeNotificationNetwork = (network) =>
+  String(network || '').toLowerCase() === 'google_transparency' ? 'google' : network;
+
 /**
  * Fetch keyword→ad-count notifications for the current user.
  * GET /api/v1/common/keyword-ad-notifications — each call also runs a per-user scan
@@ -3120,7 +3131,7 @@ export const fetchNotifications = async () => {
       id: n._id,
       keyword: n.value,
       type: NOTIFY_TYPE_TO_UI[n.type] ?? 0,
-      network: n.network,
+      network: normalizeNotificationNetwork(n.network),
       adsCount: n.adsCount,
       created_at: n.createdAt || n.updatedAt,
     }));
