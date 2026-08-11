@@ -196,9 +196,49 @@ export function useSDUI() {
     const platformFilterMatrixRef = useRef(platformFilterMatrix);
     platformFilterMatrixRef.current = platformFilterMatrix;
 
+    // Platform-filtered SDUI responses are intentionally smaller than the
+    // full schema. Keep the last published Transparency document available so
+    // a reduced response cannot make its toggle disappear while Google is
+    // still selected.
+    const googleTransparencyDocRef = useRef(null);
+
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
-    const applyConfig = useCallback((cfg) => {
-        const frontendConfig = withoutDisabledPlatformConfig(cfg);
+    const applyConfig = useCallback((cfg, options = {}) => {
+        let frontendConfig = withoutDisabledPlatformConfig(cfg);
+        const sidebar = frontendConfig?.sidebar || [];
+        const transparencyIndex = sidebar.findIndex(
+            document => document?._id === 'google_transparency'
+        );
+
+        if (transparencyIndex >= 0) {
+            googleTransparencyDocRef.current = {
+                document: sidebar[transparencyIndex],
+                index: transparencyIndex,
+            };
+        } else if (
+            options.preserveGoogleTransparency === true &&
+            activePlatformsRef.current.some(
+                platform => String(platform).toLowerCase() === 'google'
+            ) &&
+            googleTransparencyDocRef.current
+        ) {
+            const nextSidebar = [...sidebar];
+            const insertionIndex = Math.min(
+                googleTransparencyDocRef.current.index,
+                nextSidebar.length
+            );
+            nextSidebar.splice(
+                insertionIndex,
+                0,
+                googleTransparencyDocRef.current.document
+            );
+            frontendConfig = { ...frontendConfig, sidebar: nextSidebar };
+        } else if (options.preserveGoogleTransparency !== true) {
+            // Initial loads and polling carry the authoritative full schema.
+            // If it is removed there, do not retain an obsolete document.
+            googleTransparencyDocRef.current = null;
+        }
+
         setConfig(frontendConfig);
         setError(null);
         setFilterValues(previous => sanitizeFilterValuesByConfig(previous, frontendConfig));
@@ -282,7 +322,9 @@ export function useSDUI() {
                     platforms: activePlatforms,
                 });
                 /* v8 ignore next -- cancelled-during-reload race (unmount mid-refetch) is a defensive guard */
-                if (!cancelled) applyConfig(cfg);
+                if (!cancelled) {
+                    applyConfig(cfg, { preserveGoogleTransparency: true });
+                }
             } catch (err) {
                 /* v8 ignore next -- cancelled-during-reload-error race is a defensive guard */
                 if (!cancelled) console.warn('Platform config re-fetch failed:', err.message);

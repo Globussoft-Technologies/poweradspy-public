@@ -10,13 +10,13 @@ vi.mock("lucide-react", async (importOriginal) => ({
 vi.mock("../../../src/services/api", () => {
   const tiers = ["Basic", "Standard", "Premium", "Platinum", "Titanium", "Palladium"];
   const catalog = {
-    features: ["Networks", "Keyword search", "Favourite and Hidden", "Export", "Analytics", "Projects"],
+    features: ["Networks", "Keyword search", "Favourite and Hidden", "Export", "Analytics", "Projects", "Market Trends", "Keyword Explorer"],
     plans: tiers.map((tier, index) => ({
       tier,
       label: tier,
       price: `$${index === 0 ? 69 : index === 5 ? 349 : 99 + (index * 40)}/Month`,
       platforms: ["Facebook", "Instagram", "YouTube", "Google", "GDN", "LinkedIn", "Native", "Reddit", "Quora", "Pinterest", "TikTok"],
-      features: [true, true, true, true, false],
+      features: [true, true, true, true, false, true, true],
     })),
   };
   return {
@@ -101,10 +101,12 @@ describe("PricingModal", () => {
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   });
   it("renders feature label list", () => {
-    const { getByText } = render(<PricingModal isOpen onClose={() => {}} />);
+    const { getByText, queryByText } = render(<PricingModal isOpen onClose={() => {}} />);
     expect(getByText("Networks")).toBeInTheDocument();
     expect(getByText("Keyword search")).toBeInTheDocument();
     expect(getByText("Favourite and Hidden")).toBeInTheDocument();
+    expect(queryByText("Market Trends")).toBeNull();
+    expect(queryByText("Keyword Explorer")).toBeNull();
   });
   it("renders platform icons via PLATFORM_ICONS map (TikTok has bg-white class)", () => {
     const { container } = render(<PricingModal isOpen onClose={() => {}} />);

@@ -100,6 +100,11 @@ const PricingModal = ({
 
   const plans = catalog?.plans || [];
   const features = catalog?.features || [];
+  const hiddenPricingFeatures = new Set(['market trends', 'keyword explorer']);
+  const visibleFeatureRows = features
+    .slice(1)
+    .map((label, planFeatureIndex) => ({ label, planFeatureIndex }))
+    .filter(({ label }) => !hiddenPricingFeatures.has(String(label).trim().toLowerCase()));
 
   // Ordered exactly as the active catalog returns them (lowest → highest tier).
   const planOrder = plans.map((p) => p.tier);
@@ -222,7 +227,7 @@ const PricingModal = ({
               </div>
 
               {/* Feature labels */}
-              {features.slice(1).map((f) => (
+              {visibleFeatureRows.map(({ label: f }) => (
                 <div
                   key={f}
                   className="flex items-center text-theme-text-secondary text-[12px] font-medium px-2 pl-8 h-8"
@@ -268,8 +273,8 @@ const PricingModal = ({
                   </div>
 
                   {/* Feature status */}
-                  {features.slice(1).map((f, idx) => {
-                    const enabled = plan.features[idx];
+                  {visibleFeatureRows.map(({ label: f, planFeatureIndex }) => {
+                    const enabled = plan.features[planFeatureIndex];
                     return (
                       <div
                         key={f}

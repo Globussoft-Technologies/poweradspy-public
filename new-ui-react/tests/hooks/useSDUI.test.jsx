@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 
 const { fetchSpy, pollingSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -767,6 +767,31 @@ describe("useSDUI > isDependencySatisfied", () => {
 });
 
 describe("useSDUI > platform re-fetch effect", () => {
+  it("keeps the Transparency document when a reduced Google config omits it", async () => {
+    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    localStorage.setItem("sdui.filterValues", JSON.stringify({
+      google_transparency_ads: true,
+    }));
+    const transparencyDoc = {
+      _id: "google_transparency",
+      filters: [{
+        _id: "google_transparency_ads",
+        type: "toggle",
+      }],
+    };
+    fetchSpy
+      .mockResolvedValueOnce(makeConfig({ sidebar: [transparencyDoc] }))
+      .mockResolvedValue(makeConfig({ sidebar: [] }));
+
+    const { result } = renderHook(() => useSDUI());
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      expect(result.current.config.sidebar).toContainEqual(transparencyDoc);
+    });
+    expect(result.current.filterValues.google_transparency_ads).toBe(true);
+  });
+
   it("changing activePlatforms triggers a fresh config fetch", async () => {
     localStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook", "instagram", "google"]));
     fetchSpy.mockResolvedValue(makeConfig());
