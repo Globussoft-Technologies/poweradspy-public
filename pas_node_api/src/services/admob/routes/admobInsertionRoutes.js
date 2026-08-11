@@ -7,6 +7,7 @@ const { insertionEnabled } = require('../../../middleware/insertionEnabled');
 const { authMiddleware } = require('../../../middleware/auth');
 const controller = require('../controllers/admobInsertionController');
 const { searchAds } = require('../controllers/adSearchController');
+const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
 
 function createAdmobRoutes(service) {
   const router = Router();
@@ -15,6 +16,30 @@ function createAdmobRoutes(service) {
     authMiddleware,
     asyncHandler(async (req, res) => {
       const result = await searchAds(req, service.db, service.log);
+      return res.status(result.code).json(result);
+    })
+  );
+  router.post(
+    '/ads/hide_ads',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await hideAds(req, service.db, service.log);
+      return res.status(result.code).json(result);
+    })
+  );
+  router.post(
+    '/ads/getHiddenPostOwners',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getHiddenPostOwners(req, service.db, service.log);
+      return res.status(result.code).json(result);
+    })
+  );
+  router.post(
+    '/ads/un-hide',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await unHide(req, service.db, service.log);
       return res.status(result.code).json(result);
     })
   );

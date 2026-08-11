@@ -5,6 +5,10 @@
 AdMob is an independent network named `admob`. It does not use the Google service,
 Google MySQL tables, or Google Elasticsearch index. Its only shared dependencies are
 the common insertion engine, insertion authentication, and NAS/media helpers.
+User-specific saved/hidden/favourite state for AdMob is stored separately in
+`pasdev_admob.mob_hidden_ads`. That state is not indexed into Elasticsearch; it is
+only used by the AdMob search routes to build Saved / Hidden views on top of the
+same `mob_search_mix` ad index.
 
 | Resource | Value |
 |---|---|
@@ -46,6 +50,9 @@ data loss caused by producer/consumer contract drift.
   appearance counts are maintained.
 - `(ad_id, system_id)` is a unique observation. Retrying the same event updates the
   ad safely but does not increase dimension or source-app counts.
+- Saved / hidden / favourite actions are stored separately in `mob_hidden_ads`
+  using `type=1` (hide advertiser), `type=2` (hide ad), and `type=3`
+  (favourite ad). Those actions do not change the ingestion row in `mob_ads`.
 
 All values are bound parameters. Ad row updates use `SELECT ... FOR UPDATE`, and the
 ad, dimensions, source app, observation, URL, and ES outbox writes share one transaction.
@@ -72,6 +79,10 @@ response and leaves retry state without inflating counters when the producer ret
 
 Apply the index definition from `scripts/admob/mob_search_mix.mapping.json` before
 enabling insertion. It uses strict mappings and nested analytics dimensions.
+
+Saved / hidden / favourite state is not part of the ES document. The AdMob search
+API reads `mob_hidden_ads` first for those views, then returns the matching ads from
+`mob_search_mix`.
 
 ## Configuration and Plan Control
 

@@ -135,6 +135,30 @@ CREATE TABLE IF NOT EXISTS `mob_ad_source_apps` (
   CONSTRAINT `fk_mob_ad_source_apps_app` FOREIGN KEY (`source_app_id`) REFERENCES `mob_source_apps` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS `mob_hidden_ads` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` BIGINT UNSIGNED NOT NULL,
+  `post_owner_id` BIGINT UNSIGNED NULL,
+  `ad_id` VARCHAR(191) NULL,
+  `ad_id_key` VARCHAR(191) GENERATED ALWAYS AS (
+    CASE
+      WHEN `ad_id` IS NULL OR TRIM(`ad_id`) = '' THEN NULL
+      ELSE LOWER(TRIM(`ad_id`))
+    END
+  ) STORED,
+  `type` TINYINT UNSIGNED NOT NULL,
+  `created_at` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_mob_hidden_ads_user_ad_type` (`user_id`, `ad_id_key`, `type`),
+  UNIQUE KEY `uq_mob_hidden_ads_user_owner_type` (`user_id`, `post_owner_id`, `type`),
+  KEY `idx_mob_hidden_ads_user_type` (`user_id`, `type`, `id`),
+  KEY `idx_mob_hidden_ads_owner` (`post_owner_id`, `type`, `id`),
+  KEY `idx_mob_hidden_ads_ad` (`ad_id_key`, `type`, `id`),
+  CONSTRAINT `fk_mob_hidden_ads_owner` FOREIGN KEY (`post_owner_id`) REFERENCES `mob_post_owners` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_mob_hidden_ads_ad` FOREIGN KEY (`ad_id`) REFERENCES `mob_ads` (`ad_id`) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS `mob_ad_observations` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `ad_id` BIGINT UNSIGNED NOT NULL,

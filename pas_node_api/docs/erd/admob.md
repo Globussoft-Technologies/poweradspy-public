@@ -28,6 +28,8 @@ erDiagram
     mob_source_apps ||--o{ mob_ad_source_apps : "app catalog"
     mob_ads ||--o{ mob_ad_observations : "observations"
     mob_ads ||--o| mob_es_outbox : "ES retry queue"
+    mob_post_owners ||--o{ mob_hidden_ads : "saved/hidden owner state"
+    mob_ads ||--o{ mob_hidden_ads : "saved/hidden ad state"
 
     mob_post_owners {
         bigint id PK
@@ -140,6 +142,16 @@ erDiagram
         timestamp created_at
         timestamp updated_at
     }
+    mob_hidden_ads {
+        bigint id PK
+        bigint user_id
+        bigint post_owner_id FK
+        string ad_id
+        string ad_id_key "GENERATED"
+        tinyint type
+        timestamp created_at
+        timestamp updated_at
+    }
 ```
 
 **Important constraints**
@@ -149,6 +161,11 @@ erDiagram
 - `mob_ad_observations` has a unique retry-safe observation key per `(ad_id, system_id)`.
 - `mob_source_apps` deduplicates global apps by `(source_app_key, source_app_pkg)`.
 - Per-ad dimensions use generated lowercase keys so matching is case-insensitive.
+- `mob_hidden_ads` stores per-user saved / hidden state for AdMob only. The table
+  is keyed by user, ad, and type, so the same ad can be hidden and favourited
+  independently for different users without touching the AdMob ingestion data.
+- `mob_hidden_ads` is not part of `mob_search_mix`; it is consulted only when the
+  frontend asks for Saved / Hidden AdMob views.
 
 ---
 
@@ -210,3 +227,18 @@ payload
 
 This makes MySQL the source of truth while `mob_es_outbox` guarantees Elasticsearch can catch up
 after transient indexing failures.
+
+---
+
+## Saved / Hidden state flow
+
+```text
+user action (hide / favourite)
+  -> insert or delete row in mob_hidden_ads
+  -> leave mob_ads untouched
+  -> AdMob Saved / Hidden search reads mob_hidden_ads first
+  -> matching ad documents are then fetched from mob_search_mix
+```
+
+This keeps saved/hidden actions separate from the ingestion pipeline and avoids
+reindexing the ad document when a user changes their personal state.

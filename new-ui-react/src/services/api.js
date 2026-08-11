@@ -832,6 +832,7 @@ const PLATFORM_ROUTE_MAP = {
   quora: 'quora',
   pinterest: 'pinterest',
   tiktok: 'tiktok',
+  admob: 'admob',
 };
 
 const HIDDEN_STATE_CACHE_MS = 30 * 1000;
