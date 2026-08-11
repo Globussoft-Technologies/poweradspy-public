@@ -70,6 +70,9 @@ const Sidebar = ({
 
   const { t } = useTranslation();
   const sidebarDocs = config?.sidebar || [];
+  const hasGooglePlatform = activePlatforms.some(
+    (platform) => String(platform).trim().toLowerCase() === "google",
+  );
   const aiSignalsDoc = useMemo(
     () => sidebarDocs.find((doc) => doc._id === "ai_meta") || null,
     [sidebarDocs],
@@ -248,6 +251,9 @@ const Sidebar = ({
                   sidebarDocs
                     .filter((doc) => {
                       if (!shouldShowPlanAwareFilter(doc)) return false;
+                      if (doc._id === "google_transparency" && !hasGooglePlatform) {
+                        return false;
+                      }
                       // Hide the category filter when not in keyword search mode
                       // if (searchIn !== "keyword") {
                       //   const isCategoryDoc =

@@ -940,6 +940,7 @@ const MasonryCard = ({
             <div
               title="Google Ads Transparency"
               className="absolute top-2 left-12 z-30 pointer-events-none flex items-center gap-1 rounded-full border border-blue-300/40 bg-blue-950/80 px-2 py-1 text-[9px] font-bold tracking-wide text-blue-100 shadow-lg backdrop-blur-md"
+              tooltip="Google Ads Transparency"
             >
               <ShieldCheck size={13} className="text-blue-300" />
               

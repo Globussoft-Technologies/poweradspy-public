@@ -666,6 +666,23 @@ describe("useSDUI > visibility helpers", () => {
     expect(result.current.shouldShowFilter({ platform_applicability: ["facebook"] })).toBe(true);
   });
 
+  it("matches platform applicability without casing differences", async () => {
+    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["Google"]));
+    fetchSpy.mockResolvedValue(makeConfig());
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.shouldShowFilter({
+      platform_applicability: ["google"],
+    })).toBe(true);
+    expect(result.current.shouldShowFilter({
+      filters: [{ platform_applicability: ["google"] }],
+    })).toBe(true);
+    expect(result.current.shouldShowOption({
+      platform_applicability: ["google"],
+    })).toBe(true);
+  });
+
   it("shouldShowFilter: PA doesn't match → false", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());

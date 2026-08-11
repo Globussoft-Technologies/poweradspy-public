@@ -210,6 +210,27 @@ describe("Sidebar > SDUI doc rendering", () => {
     // 1 sidebar divider before filters section + 2 between 3 docs = 3 total
     expect(getAllByTestId("divider").length).toBe(3);
   });
+
+  it("does not leave an empty divider slot for Transparency without Google", () => {
+    const sdui = {
+      ...baseSdui,
+      activePlatforms: ["facebook"],
+      config: {
+        sidebar: [
+          { _id: "category" },
+          { _id: "google_transparency" },
+          { _id: "country" },
+        ],
+      },
+    };
+    const { getAllByTestId, queryByTestId } = render(
+      <Sidebar {...build({ sdui })} />,
+    );
+
+    expect(queryByTestId("schema-google_transparency")).toBeNull();
+    // One divider starts the filter area and one separates the two visible docs.
+    expect(getAllByTestId("divider")).toHaveLength(2);
+  });
 });
 
 describe("Sidebar > AI Filter plan gating", () => {

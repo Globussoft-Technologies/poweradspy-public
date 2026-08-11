@@ -640,13 +640,13 @@ export function useSDUI() {
     // 2. Also checks platformFilterMatrix — if the active platform restricts
     //    to specific filter groups, only those groups are shown.
     const matchesPlatform = (pa, groupId) => {
-        const platforms = activePlatformsRef.current;
+        const platforms = activePlatformsRef.current.map(normalizeStoredValue);
         const matrix = platformFilterMatrixRef.current;
 
         // Check platform_applicability (string or array)
         if (pa && pa !== 'all') {
             if (!platforms.length) return true;
-            const list = Array.isArray(pa) ? pa : [pa];
+            const list = (Array.isArray(pa) ? pa : [pa]).map(normalizeStoredValue);
             if (!list.some(p => platforms.includes(p))) return false;
             // Explicit platform_applicability matched — skip matrix check.
             // platform_applicability is the more specific rule and takes priority.
@@ -678,8 +678,10 @@ export function useSDUI() {
             if (childPAs.length > 0) {
                 const platforms = activePlatformsRef.current;
                 const anyChildMatches = childPAs.some(pa => {
-                    const list = Array.isArray(pa) ? pa : [pa];
-                    return list.some(p => platforms.includes(p));
+                    const list = (Array.isArray(pa) ? pa : [pa]).map(normalizeStoredValue);
+                    return list.some(p =>
+                        platforms.some(platform => normalizeStoredValue(platform) === p)
+                    );
                 });
                 if (!anyChildMatches) return false;
                 // A child explicitly declared this platform — skip matrix check
