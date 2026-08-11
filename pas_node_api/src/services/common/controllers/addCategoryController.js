@@ -234,6 +234,21 @@ async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = A
 }
 
 /**
+ * Resolve the ad document for AI-meta/category read-write flows.
+ *
+ * Google is the only network where the UI-visible id can differ from the
+ * legacy write/read lookup key, so we try the configured lookup field first
+ * and then fall back to the display-id field when it is different.
+ */
+async function findAiMetaAdDoc(esForPlat, esIndex, cfg, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
+  let adHit = await findAdDoc(esForPlat, esIndex, cfg.idField, adId, requestTimeoutMs);
+  if (!adHit && cfg.descIdField && cfg.descIdField !== cfg.idField) {
+    adHit = await findAdDoc(esForPlat, esIndex, cfg.descIdField, adId, requestTimeoutMs);
+  }
+  return adHit;
+}
+
+/**
  * Write a validated `ai_meta` object onto the ad's ES doc under the resolved AI-Meta field
  * (see AI_META_API_PAYLOAD_SPEC.md 7 mapping).
  *
@@ -1123,7 +1138,7 @@ async function newCatInsertion(req, res) {
     try {
       gdnService.log?.info(`[newCatInsertion] searching index="${esIndex}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
 
-      const adHit = await findAdDoc(esForPlat, esIndex, platCfg.idField, ad_id);
+      const adHit = await findAiMetaAdDoc(esForPlat, esIndex, platCfg, ad_id);
       if (adHit) {
         adDocId = adHit._id;
         // Compare against the ad's current category to classify insert vs update vs no-op.
@@ -1281,7 +1296,7 @@ async function getAdCategory(req, res) {
 
   const esIndex = es.indexName || cfg.index;
   try {
-    const adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+    const adHit = await findAiMetaAdDoc(es, esIndex, cfg, adId);
     if (!adHit) {
       return res.status(404).json({ code: 404, message: `ad_id=${adId} not found in ${esIndex}`, ad_id: adId, platform });
     }
@@ -1366,7 +1381,7 @@ async function insertAiMeta(req, res) {
     const esSearchStartedAt = Date.now();
     let adHit;
     try {
-      adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+      adHit = await findAiMetaAdDoc(es, esIndex, cfg, adId);
     } finally {
       timings.es_search_ms = Date.now() - esSearchStartedAt;
     }

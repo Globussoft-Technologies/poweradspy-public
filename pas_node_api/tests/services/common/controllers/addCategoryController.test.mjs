@@ -577,6 +577,34 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     expect(indexedDoc.subcategory).toHaveLength(1);
   });
 
+  it("google write flow falls back to the display id when ad_id lookup misses", async () => {
+    let googleLookupCount = 0;
+    const search = vi.fn(async (params) => {
+      if (params.index === "category") return { hits: { hits: [] } };
+      if (params.index === "google_ads_data_v2") {
+        googleLookupCount += 1;
+        if (googleLookupCount === 1) return { hits: { hits: [] } };
+        return { hits: { hits: [{ _id: "google-es-1", _source: {} }] } };
+      }
+      return { hits: { hits: [] } };
+    });
+    const updateFn = vi.fn(async () => {});
+    const svc = mkService({
+      esSearch: search,
+      esIndex: vi.fn(async () => {}),
+      esUpdate: updateFn,
+      sql: { query: vi.fn(async () => []) },
+    });
+    serviceRegistry.getService.mockImplementation((name) => (name === "gdn" || name === "google") ? svc : null);
+    const res = mkRes();
+
+    await newCatInsertion(happyBody({ platform: "google", ad_id: "106757" }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(search.mock.calls.filter(([callParams]) => callParams.index === "google_ads_data_v2")).toHaveLength(2);
+    expect(updateFn).toHaveBeenCalled();
+  });
+
   it("500 when catId matches but name differs", async () => {
     setupES({ existHits: [{ _id: "d", _source: { cat_id: "1234", category: "DIFFERENT", platforms: [] } }], adHits: [] });
     const res = mkRes();
@@ -1103,6 +1131,33 @@ describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", (
       ai_meta: { ad_type: "promotional", offering_type: "product" },
     });
   });
+  it("200 for google falls back to the display id when ad_id lookup misses", async () => {
+    const search = vi
+      .fn()
+      .mockResolvedValueOnce({ hits: { hits: [] } })
+      .mockResolvedValueOnce({
+        hits: {
+          hits: [{
+            _id: "106757",
+            _source: {
+              ai: { ad_type: "promotional", offer_type: "percentage_discount" },
+            },
+          }],
+        },
+      });
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+
+    await getAdCategory({ query: { platform: "google", ad_id: "106757" }, body: {} }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(res.body).toMatchObject({
+      platform: "google",
+      ad_id: "106757",
+      ai_meta: { ad_type: "promotional", offer_type: "percentage_discount" },
+    });
+  });
 });
 
 describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)", () => {
@@ -1223,6 +1278,32 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     const adDocumentUpdates = update.mock.calls.map(([params]) => params);
     expect(adDocumentUpdates).toHaveLength(2);
     expect(adDocumentUpdates.every((params) => params.refresh === true)).toBe(true);
+  });
+
+  it("google AI-Meta writes also fall back to the display id when ad_id lookup misses", async () => {
+    let googleLookupCount = 0;
+    const search = vi.fn(async (params) => {
+      if (params.index === "google_ads_data_v2") {
+        googleLookupCount += 1;
+        if (googleLookupCount === 1) return { hits: { hits: [] } };
+        return { hits: { hits: [{ _id: "google-es-1", _source: {} }] } };
+      }
+      return { hits: { hits: [] } };
+    });
+    const update = vi.fn(async () => {});
+    const svc = mkService({
+      esSearch: search,
+      esUpdate: update,
+      sql: { query: vi.fn(async () => []) },
+    });
+    serviceRegistry.getService.mockImplementation((name) => (name === "google" || name === "gdn") ? svc : null);
+    const res = mkRes();
+
+    await insertAiMeta({ body: { ad_id: "106757", network: "google", ai_meta: VALID_AI_META } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(search.mock.calls.filter(([callParams]) => callParams.index === "google_ads_data_v2")).toHaveLength(2);
+    expect(update).toHaveBeenCalled();
   });
 
   it("TikTok ES 8 writes are typeless while retaining AI-Meta transport options", async () => {
