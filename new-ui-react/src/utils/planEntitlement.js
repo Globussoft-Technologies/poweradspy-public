@@ -3,6 +3,33 @@ export function isCapabilityAllowed(entitlements, capabilityId) {
 }
 
 /**
+ * Resolves Projects access without treating a partially migrated entitlement
+ * response as a denial. An explicit unified decision remains authoritative;
+ * otherwise the legacy project_access decision is used during migration.
+ */
+export function resolveProjectsAccess(entitlements, planAccess, planAccessResolved) {
+  if (!planAccessResolved) {
+    return { resolved: false, allowed: false, denied: false, unavailable: false };
+  }
+
+  const unifiedDecision = entitlements?.capabilities?.['projects.access'];
+  if (unifiedDecision) {
+    const allowed = unifiedDecision.allowed === true;
+    return { resolved: true, allowed, denied: !allowed, unavailable: false };
+  }
+
+  const legacyDecision = planAccess?.filters?.project_access;
+  if (legacyDecision) {
+    const allowed = legacyDecision.enabled === true;
+    return { resolved: true, allowed, denied: !allowed, unavailable: false };
+  }
+
+  // Missing Projects data is an access-resolution problem, not proof that the
+  // user's subscription should be upgraded.
+  return { resolved: true, allowed: false, denied: false, unavailable: true };
+}
+
+/**
  * The customer-facing Advanced Analytics modal is controlled only by its
  * dedicated capability. Competitive Intelligence is a separate product area
  * and must never unlock this modal when Advanced Analytics is disabled in the

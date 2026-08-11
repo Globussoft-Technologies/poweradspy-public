@@ -1,18 +1,18 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { persistStore, persistReducer } from 'redux-persist';
-import storage from 'redux-persist/lib/storage'; // defaults to localStorage for web
+import sessionStorage from 'redux-persist/lib/storage/session';
 import uiReducer from './uiSlice';
 
 // If opened via email link (?advertiser=...), wipe persisted activePage so it
 // doesn't override the ads page we're about to navigate to. Normal visits are unaffected.
 if (new URLSearchParams(window.location.search).get('advertiser')) {
   try {
-    const raw = localStorage.getItem('persist:root');
+    const raw = window.sessionStorage.getItem('persist:root');
     if (raw) {
       const parsed = JSON.parse(raw);
       parsed.activePage = '"ads"';
       parsed.showSavedAdsPage = 'false';
-      localStorage.setItem('persist:root', JSON.stringify(parsed));
+      window.sessionStorage.setItem('persist:root', JSON.stringify(parsed));
     }
   } catch {}
 }
@@ -21,7 +21,7 @@ if (new URLSearchParams(window.location.search).get('advertiser')) {
 // written by older builds. Clear every transient value before rehydration so a
 // stale pricing/subscription modal cannot reopen on a paid user's next login.
 try {
-  const raw = localStorage.getItem('persist:root');
+  const raw = window.sessionStorage.getItem('persist:root');
   if (raw) {
     const parsed = JSON.parse(raw);
     const transientKeys = [
@@ -41,14 +41,17 @@ try {
       }
     });
     if (changed) {
-      localStorage.setItem('persist:root', JSON.stringify(parsed));
+      window.sessionStorage.setItem('persist:root', JSON.stringify(parsed));
     }
   }
 } catch {}
 
 const persistConfig = {
   key: 'root',
-  storage,
+  // Every Redux UI/navigation value belongs to one tab. Keeping the complete
+  // slice in sessionStorage prevents activePage and navigation state in one tab
+  // from racing or overriding a second tab.
+  storage: sessionStorage,
   // Modal states must not be persisted — they should always start closed on fresh load
   blacklist: [
     'isAIAnalysisModalOpen',

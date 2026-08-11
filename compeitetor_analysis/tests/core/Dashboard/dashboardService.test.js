@@ -1008,6 +1008,43 @@ describe("dashboardService > getCompetitorsCount", () => {
 });
 
 describe("dashboardService > getCompetitorsCountNew", () => {
+  it("drops unsupported country buckets and keeps the country whitelist on the ES query", async () => {
+    const searchCalls = [];
+    Object.values(spies.esClient).forEach((c) => {
+      c.search.mockImplementation((req) => {
+        searchCalls.push(req);
+        return Promise.resolve({
+          hits: { total: { value: 12 } },
+          aggregations: {
+            impressions: { total_imp: { value: 100 }, imp_count: { value: 10 } },
+            popularity: { total_pop: { value: 50 }, pop_count: { value: 5 } },
+            budget: { sum_avg_budget: { value: 30 }, budget_count: { value: 3 } },
+            countries: {
+              buckets: [
+                { key: "india", doc_count: 3 },
+                { key: "turkiye", doc_count: 7 },
+              ],
+            },
+          },
+        });
+      });
+      c.count.mockResolvedValue({ count: 12 });
+    });
+
+    const res = mockRes();
+    await svc.getCompetitorsCountNew({ body: { competitors: ["Acme"] } }, res);
+
+    const data = res.send.mock.calls[0][0].body.data.Acme;
+    expect(data.uniqueCountries).toEqual(["india"]);
+
+    const countryAggCall = searchCalls.find((req) => req?.body?.aggs?.countries);
+    const filterTerms = (countryAggCall?.body?.query?.bool?.filter || [])
+      .flatMap((clause) => Object.values(clause.terms || {}))
+      .flat();
+    expect(filterTerms).toEqual(expect.arrayContaining(["india", "India"]));
+    expect(filterTerms).not.toContain("turkiye");
+  });
+
   it("country buckets with falsy keys: hits the `if (b.key)` skip branch (line 1834)", async () => {
     Object.values(spies.esClient).forEach((c) => {
       c.search.mockResolvedValue({
@@ -1558,5 +1595,31 @@ describe("dashboardService > remaining branch coverage", () => {
     });
     const r = await svc.getCompetitorsCountNewInternal(["Acme"]);
     expect(typeof r).toBe("object");
+  });
+
+  it("getCompetitorsCountNewInternal keeps raw country buckets for click-throughs", async () => {
+    Object.values(spies.esClient).forEach((c) => {
+      c.search.mockResolvedValue({
+        hits: { total: { value: 0 } },
+        aggregations: {
+          impressions: { total_imp: { value: 0 }, imp_count: { value: 0 } },
+          popularity: { total_pop: { value: 0 }, pop_count: { value: 0 } },
+          budget: { sum_avg_budget: { value: 0 }, budget_count: { value: 0 } },
+          countries: {
+            buckets: [
+              { key: "india", doc_count: 5 },
+              { key: "all", doc_count: 3 },
+              { key: "turkiye", doc_count: 2 },
+            ],
+          },
+        },
+      });
+      c.count.mockResolvedValue({ count: 0 });
+    });
+
+    const r = await svc.getCompetitorsCountNewInternal(["Acme"]);
+    const buckets = r.Acme.countryCounts || {};
+    expect(Object.keys(buckets)).toEqual(expect.arrayContaining(["india", "all"]));
+    expect(Object.keys(buckets)).not.toContain("turkiye");
   });
 });

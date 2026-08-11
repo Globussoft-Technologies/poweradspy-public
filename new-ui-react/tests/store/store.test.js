@@ -9,42 +9,43 @@ vi.mock("redux-persist", async () => {
   };
 });
 
-async function loadStoreWithLocation(url, lsContent) {
+async function loadStoreWithLocation(url, sessionContent) {
   vi.resetModules();
   Object.defineProperty(window, "location", {
     writable: true, configurable: true,
     value: { ...window.location, search: url, href: `http://x${url}` },
   });
-  if (lsContent !== undefined) localStorage.setItem("persist:root", lsContent);
+  if (sessionContent !== undefined) sessionStorage.setItem("persist:root", sessionContent);
   return await import("../../src/store/store.js");
 }
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe("store/store > URL-strip behavior at import time", () => {
-  it("no advertiser query → localStorage untouched", async () => {
+  it("no advertiser query → sessionStorage untouched", async () => {
     await loadStoreWithLocation("", JSON.stringify({ activePage: '"saved"' }));
-    expect(JSON.parse(localStorage.getItem("persist:root")).activePage).toBe('"saved"');
+    expect(JSON.parse(sessionStorage.getItem("persist:root")).activePage).toBe('"saved"');
   });
   it("advertiser query present → activePage reset to 'ads'", async () => {
     await loadStoreWithLocation(
       "?advertiser=AcmeBrand",
       JSON.stringify({ activePage: '"saved"', showSavedAdsPage: "true" }),
     );
-    const after = JSON.parse(localStorage.getItem("persist:root"));
+    const after = JSON.parse(sessionStorage.getItem("persist:root"));
     expect(after.activePage).toBe('"ads"');
     expect(after.showSavedAdsPage).toBe("false");
   });
   it("advertiser query but no persisted state → no-op (try/catch swallows)", async () => {
     await loadStoreWithLocation("?advertiser=Foo");
-    expect(localStorage.getItem("persist:root")).toBeNull();
+    expect(sessionStorage.getItem("persist:root")).toBeNull();
   });
   it("advertiser query + malformed persisted JSON → catch swallows", async () => {
     await loadStoreWithLocation("?advertiser=Foo", "not-valid-json");
     // No throw; the malformed value remains
-    expect(localStorage.getItem("persist:root")).toBe("not-valid-json");
+    expect(sessionStorage.getItem("persist:root")).toBe("not-valid-json");
   });
 });
 
@@ -59,7 +60,7 @@ describe("store/store > one-time activeTab cleanup at import time", () => {
         isOnboardingModalOpen: "true",
       }),
     );
-    const after = JSON.parse(localStorage.getItem("persist:root"));
+    const after = JSON.parse(sessionStorage.getItem("persist:root"));
     expect(after).toEqual({ activePage: '"ads"' });
   });
 
@@ -68,13 +69,13 @@ describe("store/store > one-time activeTab cleanup at import time", () => {
       "",
       JSON.stringify({ activeTab: '"Newest"', activePage: '"ads"' }),
     );
-    const after = JSON.parse(localStorage.getItem("persist:root"));
+    const after = JSON.parse(sessionStorage.getItem("persist:root"));
     expect("activeTab" in after).toBe(false);
     expect(after.activePage).toBe('"ads"');
   });
   it("no activeTab present → persist:root untouched (28 else)", async () => {
     await loadStoreWithLocation("", JSON.stringify({ activePage: '"ads"' }));
-    const after = JSON.parse(localStorage.getItem("persist:root"));
+    const after = JSON.parse(sessionStorage.getItem("persist:root"));
     expect(after).toEqual({ activePage: '"ads"' });
   });
 });

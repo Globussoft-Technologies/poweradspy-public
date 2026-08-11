@@ -11,6 +11,7 @@ import {
   isPlanNetworkAllowed,
   normalizePlanNetwork,
   resolveAdsSearchAllowedNetworks,
+  resolveProjectsAccess,
 } from "./utils/planEntitlement";
 import { getDashboardAdNavigation } from "./utils/dashboardAdNavigation";
 import { useTheme } from "./hooks/useTheme";
@@ -213,7 +214,7 @@ const AppWrapper = () => {
 };
 
 // Neutral placeholder shown ONLY for the brief window before an access check
-// (Market Trends / Keyword Explorer) has answered — avoids flashing
+// (Projects / Market Trends / Keyword Explorer) has answered — avoids flashing
 // LockedFeaturePreview (or the real page) before we actually know which one
 // is correct. `flex-1 h-full` matches LockedFeaturePreview's own centering fix
 // (this renders as a direct flex sibling of <Sidebar>, same layout gotcha).
@@ -1327,22 +1328,21 @@ const App = () => {
     return () => clearTimeout(t);
   }, [actionError]);
 
-  // project_access.enabled is the single gate — fully controlled via admin panel (plan_access_config)
-  // const canAccessProjects = planAccess
-  //   ? (planAccess.filters?.project_access?.enabled === true ||
-  //       (planAccess.competitorLimits?.brandLimit ?? 0) > 0)
-  //   : false;
-  const canAccessProjects = entitlements
-    ? canUseCapability('projects.access')
-    : (planAccess ? planAccess.filters?.project_access?.enabled === true : false);
+  const projectsAccess = resolveProjectsAccess(
+    entitlements,
+    planAccess,
+    planAccessResolved,
+  );
+  const canAccessProjects = projectsAccess.allowed;
 
-  // Guard: if user somehow lands on "projects" without plan access, redirect to ads and show pricing modal
+  // Only an explicit policy denial may open pricing. Loading, failed, or
+  // partially migrated access responses stay on a neutral Projects state.
   useEffect(() => {
-    if (ui.activePage === "projects" && (entitlements || planAccess) && !canAccessProjects) {
+    if (ui.activePage === "projects" && projectsAccess.denied) {
       dispatch(setActivePage("ads"));
       dispatch(openModal('isPricingModalOpen'));
     }
-  }, [ui.activePage, entitlements, planAccess, canAccessProjects, dispatch]);
+  }, [ui.activePage, projectsAccess.denied, dispatch]);
 
   // Guard: block analytics modal for plans without ad_analytics access.
   // Runs regardless of how selectedAdForAnalytics was set (button, URL init, popstate, etc.)
@@ -1911,7 +1911,7 @@ const App = () => {
 
   // Explicitly turning the AI toggle OFF abandons the AI search: clear the
   // AI-applied query + filters so nothing lingers on screen or gets restored on
-  // refresh (the committed search otherwise persists via localStorage + history
+  // refresh (the committed search otherwise persists via tab storage + history
   // snapshot, same as a manual search). This is distinct from merely flipping the
   // input mode, and from the auto-reset when the upstream goes unhealthy (which
   // keeps results — a failed health probe isn't a "leave AI search" intent).
@@ -2294,6 +2294,8 @@ const App = () => {
             dispatch(openModal('isPricingModalOpen'));
           }}
           canAccessProjects={canAccessProjects}
+          projectsAccessResolved={projectsAccess.resolved}
+          projectsAccessUnavailable={projectsAccess.unavailable}
           intelligenceEnabled={INTEL_ENV_ON}
           intelligenceStage={intelAccess.stage}
           keywordExplorerEnabled={GOOGLE_INTEL_ON}
@@ -2371,22 +2373,30 @@ const App = () => {
               onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
             />
           )
-        ) : ui.activePage === "projects" && canAccessProjects ? (
-          <AllProjects
-            onSearch={handleSearch}
-            onNavigateToAds={() => {
-              // Let the selected advertiser/platform state flush before the Ads
-              // Library mounts and issues its first request; otherwise the initial
-              // fetch can race the state update and briefly show an empty result.
-              dispatch(setShowSavedAdsPage(false));
-              coalesceNextHistoryWrite();
-              window.requestAnimationFrame(() => dispatch(setActivePage("ads")));
-            }}
-            onRecentActivityClick={handleRecentActivityClick}
-            onCountryClick={handleCountryClick}
-            setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}
-            onBrandLimitReached={() => dispatch(openModal('isPricingModalOpen'))}
-          />
+        ) : ui.activePage === "projects" ? (
+          !projectsAccess.resolved ? (
+            <PageAccessLoading />
+          ) : projectsAccess.unavailable ? (
+            <PageAccessError onRetry={() => window.location.reload()} />
+          ) : !canAccessProjects ? (
+            <PageAccessLoading />
+          ) : (
+            <AllProjects
+              onSearch={handleSearch}
+              onNavigateToAds={() => {
+                // Let the selected advertiser/platform state flush before the Ads
+                // Library mounts and issues its first request; otherwise the initial
+                // fetch can race the state update and briefly show an empty result.
+                dispatch(setShowSavedAdsPage(false));
+                coalesceNextHistoryWrite();
+                window.requestAnimationFrame(() => dispatch(setActivePage("ads")));
+              }}
+              onRecentActivityClick={handleRecentActivityClick}
+              onCountryClick={handleCountryClick}
+              setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}
+              onBrandLimitReached={() => dispatch(openModal('isPricingModalOpen'))}
+            />
+          )
         ) : ui.showSavedAdsPage ? (
           <SavedAdsPage
             sdui={sdui}

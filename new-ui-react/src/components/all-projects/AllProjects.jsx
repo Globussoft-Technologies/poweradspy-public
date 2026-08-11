@@ -78,7 +78,7 @@ export const getCountryInfo = (code) => {
   // untargeted with a blank Top Country cell despite genuinely having ads.
   // Flag it as global so callers render a globe icon + "Global Reach" label
   // instead of either a fake flag or nothing.
-  if (target === "all") {
+  if (target === "all" || target === "global reach" || target === "worldwide") {
     return { f: null, n: "Global Reach", isGlobal: true };
   }
 
@@ -194,6 +194,17 @@ const isPlaceholderCountryValue = (value) => {
   return !normalized || COUNTRY_PLACEHOLDER_VALUES.has(normalized);
 };
 
+const SUPPORTED_TOP_COUNTRY_CODES = new Set(
+  COUNTRIES.map((country) => country.code.toLowerCase()),
+);
+
+const isRenderableTopCountry = (value) => {
+  const info = getCountryInfo(value);
+  // Keep the explicit Global Reach state, but drop unresolved strings such as
+  // "Turkiye" that do not map back to one of our handled country entries.
+  return info.isGlobal || SUPPORTED_TOP_COUNTRY_CODES.has(String(info.f || "").toLowerCase());
+};
+
 // Real API responses can list the same country more than once under
 // different raw strings (e.g. "India" and "Republic of India" both resolve
 // to the same ISO code), and can also mix in the "all"/Global-reach artifact
@@ -201,11 +212,11 @@ const isPlaceholderCountryValue = (value) => {
 // country/flag, and only keep Global reach when it's the sole entry — once
 // there's at least one real country, Global reach adds no information the
 // real countries don't already convey.
-export const getDisplayCountries = (countries) => {
+const collectRenderableCountries = (countries, { hideGlobalReachWhenMixed = true } = {}) => {
   const list = (Array.isArray(countries) ? countries : [])
     .flatMap((country) =>
       Array.isArray(country) ? country : country != null && typeof country === "object"
-        ? ["country", "countries", "name", "label", "value", "code"]
+        ? ["country", "countries", "name", "label", "value", "code", "iso", "country_code", "countryCode"]
             .map((key) => country[key])
             .filter((entry) => entry != null && String(entry).trim() !== "")
         : [country],
@@ -214,11 +225,18 @@ export const getDisplayCountries = (countries) => {
     // Production payloads may contain fallback labels such as "not available".
     // Drop them here so the Top Country UI only exposes actual countries or
     // the intentional Global Reach state.
-    .filter((entry) => !isPlaceholderCountryValue(entry));
+    .filter((entry) => !isPlaceholderCountryValue(entry))
+    // Ignore country strings that do not resolve to one of the handled
+    // countries in src/utils/countries.js. This removes junk labels such as
+    // "Turkiye" instead of rendering them with the generic UN fallback flag.
+    .filter((entry) => isRenderableTopCountry(entry));
   const seen = new Set();
   const deduped = [];
   for (const c of list) {
     const info = getCountryInfo(c);
+    if (!info.isGlobal && !SUPPORTED_TOP_COUNTRY_CODES.has(String(info.f || "").toLowerCase())) {
+      continue;
+    }
     // info.f === "un" is the generic "couldn't resolve this" fallback, not a
     // real shared identity — two different unrecognized country strings both
     // get "un" but are NOT necessarily the same country, so they must not be
@@ -241,7 +259,24 @@ export const getDisplayCountries = (countries) => {
     deduped.push(c);
   }
   const realOnly = deduped.filter((c) => !getCountryInfo(c).isGlobal);
-  return realOnly.length > 0 ? realOnly : deduped;
+  return hideGlobalReachWhenMixed && realOnly.length > 0 ? realOnly : deduped;
+};
+
+export const getDisplayCountries = (countries) =>
+  collectRenderableCountries(countries, { hideGlobalReachWhenMixed: true });
+
+// The visible Top Country chips stay clean by hiding Global Reach when real
+// countries exist, but the "All Countries" click should still search the
+// complete country bucket list the backend counted. That way the click-through
+// can include hidden raw buckets without changing the displayed chips.
+export const getAllCountryClickCountries = (countries, rawCountryCounts = null) => {
+  const rawBuckets = Array.isArray(rawCountryCounts)
+    ? rawCountryCounts
+    : rawCountryCounts && typeof rawCountryCounts === "object"
+      ? Object.keys(rawCountryCounts)
+      : [];
+  const source = rawBuckets.length > 0 ? rawBuckets : countries;
+  return collectRenderableCountries(source, { hideGlobalReachWhenMixed: false });
 };
 
 const getInitials = (name) => {
@@ -1105,6 +1140,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 ? row.countries
                 : row.countries.split(",")
               : [],
+            countryCounts: row.countryCounts || {},
             platforms: row.platforms
               ? Array.isArray(row.platforms)
                 ? row.platforms
@@ -1550,6 +1586,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   ? `${initPopLabel} (${initPopFormatted}%)`
                   : "Low (0%)",
                 countries: stats.uniqueCountries || [],
+                countryCounts: stats.countryCounts || {},
                 platforms: (() => {
                   const p = [];
                   const pc = stats.platformCompetitorCount || {};
@@ -1706,6 +1743,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 impressions: "...",
                 popularity: "...",
                 countries: [],
+                countryCounts: {},
                 platforms: [],
                 budget: "...",
                 isMonitored: details.monitoring,
@@ -1772,6 +1810,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                           popularity: `${popLabel} (${formattedPop}%)`,
                           budget: budgetFmt,
                           countries: pData.uniqueCountries || [],
+                          countryCounts: pData.countryCounts || {},
                           platforms: platforms,
                           statsLoaded: true, // API answered — shimmer off
                         };
@@ -2092,6 +2131,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         impressions: "...",
         popularity: "...",
         countries: [],
+        countryCounts: {},
         platforms: [],
         budget: "...",
         isMonitored: false,
@@ -2174,6 +2214,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   popularity: `${popLabel} (${formattedPop}%)`,
                   budget: budgetFmt,
                   countries: pData.uniqueCountries || [],
+                  countryCounts: pData.countryCounts || {},
                   platforms,
                   statsLoaded: true, // API answered — shimmer off
                 };
@@ -3311,6 +3352,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                               <CellShimmer className="h-5 w-16" />
                             ) : (() => {
                               const displayCountries = getDisplayCountries(comp.countries);
+                              const allCountryClickCountries = getAllCountryClickCountries(comp.countries, comp.countryCounts);
                               return (
                             <div className="flex items-center gap-1.5 whitespace-nowrap relative">
                               <div
@@ -3384,20 +3426,20 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                           one (including the sole entry being "all"/
                                           Global reach), it's identical to that one
                                           entry below and just adds a redundant row. */}
-                                      {displayCountries.length > 1 && (
+                                      {allCountryClickCountries.length > 1 && (
                                         <button
                                           type="button"
-                                          title={`View ${comp.name} ads in all ${displayCountries.length} countries`}
+                                          title={`View ${comp.name} ads in all ${allCountryClickCountries.length} countries`}
                                           className="w-full px-4 py-2.5 border-b border-theme-border flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setOpenGeoId(null);
-                                            markReturnToAnalytics(); onCountryClick?.(comp.name, displayCountries, comp.platforms);
+                                            markReturnToAnalytics(); onCountryClick?.(comp.name, allCountryClickCountries, comp.platforms);
                                           }}
                                         >
                                           <Globe size={16} className="text-[#6b99ff] flex-shrink-0" />
                                           <span className="text-[#6b99ff] text-sm font-bold">
-                                            All Countries ({displayCountries.length})
+                                            All Countries ({allCountryClickCountries.length})
                                           </span>
                                         </button>
                                       )}

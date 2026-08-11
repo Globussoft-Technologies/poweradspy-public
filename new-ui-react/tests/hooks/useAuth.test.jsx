@@ -409,6 +409,23 @@ describe("useAuth > logout", () => {
 });
 
 describe("useAuth > cleanup helpers", () => {
+  it("markFiltersForExpiry clears current and legacy Ads Library storage", async () => {
+    const mod = await loadSut();
+    localStorage.setItem("persist:root", "legacy");
+    localStorage.setItem("sdui.filterValues", "legacy");
+    sessionStorage.setItem("persist:root", "tab");
+    sessionStorage.setItem("sdui.filterValues", "tab");
+    sessionStorage.setItem("sdui.activePlatforms", "tab");
+
+    mod.markFiltersForExpiry();
+
+    expect(localStorage.getItem("persist:root")).toBeNull();
+    expect(localStorage.getItem("sdui.filterValues")).toBeNull();
+    expect(sessionStorage.getItem("persist:root")).toBeNull();
+    expect(sessionStorage.getItem("sdui.filterValues")).toBeNull();
+    expect(sessionStorage.getItem("sdui.activePlatforms")).toBeNull();
+  });
+
   it("markFiltersForExpiry swallows sessionStorage errors", async () => {
     const mod = await loadSut();
     vi.spyOn(Storage.prototype, "removeItem").mockImplementation((k) => {
@@ -518,10 +535,89 @@ describe("useAuth > onboarding dismiss behavior", () => {
 });
 
 describe("useAuth > cross-tab sync", () => {
+  it("keeps resolved plan access when another tab rewrites authUser", async () => {
+    const token = makeJwt({ id: 5, name: "Original", exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", token);
+    fetchPlanAccessSpy.mockResolvedValueOnce({
+      filters: { project_access: { enabled: true } },
+    });
+    fetchEntitlementsSpy.mockResolvedValueOnce({
+      capabilities: { "projects.access": { allowed: true } },
+    });
+
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(result.current.planAccessResolved).toBe(true);
+    expect(result.current.planAccess?.filters?.project_access?.enabled).toBe(true);
+    expect(result.current.entitlements?.capabilities?.["projects.access"]?.allowed).toBe(true);
+
+    const previousUser = localStorage.getItem("authUser");
+    const nextUser = JSON.stringify({ id: 5, name: "Updated in another tab" });
+    act(() => {
+      localStorage.setItem("authUser", nextUser);
+      window.dispatchEvent(new StorageEvent("storage", {
+        key: "authUser",
+        oldValue: previousUser,
+        newValue: nextUser,
+        storageArea: localStorage,
+      }));
+    });
+
+    expect(result.current.user.name).toBe("Updated in another tab");
+    expect(result.current.planAccessResolved).toBe(true);
+    expect(result.current.planAccess?.filters?.project_access?.enabled).toBe(true);
+    expect(result.current.entitlements?.capabilities?.["projects.access"]?.allowed).toBe(true);
+    expect(fetchPlanAccessSpy).toHaveBeenCalledTimes(1);
+    expect(fetchEntitlementsSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches plan access when another tab changes the auth token", async () => {
+    const firstToken = makeJwt({ id: 5, exp: Math.floor(Date.now() / 1000) + 3600 });
+    const secondToken = makeJwt({ id: 6, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem("authToken", firstToken);
+    fetchPlanAccessSpy
+      .mockResolvedValueOnce({ filters: { project_access: { enabled: true } } })
+      .mockResolvedValueOnce({ filters: { project_access: { enabled: false } } });
+    fetchEntitlementsSpy
+      .mockResolvedValueOnce({ capabilities: { "projects.access": { allowed: true } } })
+      .mockResolvedValueOnce({ capabilities: { "projects.access": { allowed: false } } });
+
+    const mod = await loadSut();
+    const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
+    const { result } = renderHook(() => mod.useAuth(), { wrapper });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    act(() => {
+      localStorage.setItem("authToken", secondToken);
+      localStorage.setItem("authUser", JSON.stringify({ id: 6 }));
+      window.dispatchEvent(new StorageEvent("storage", {
+        key: "authToken",
+        oldValue: firstToken,
+        newValue: secondToken,
+        storageArea: localStorage,
+      }));
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(result.current.token).toBe(secondToken);
+    expect(result.current.user.id).toBe(6);
+    expect(result.current.planAccessResolved).toBe(true);
+    expect(result.current.planAccess?.filters?.project_access?.enabled).toBe(false);
+    expect(result.current.entitlements?.capabilities?.["projects.access"]?.allowed).toBe(false);
+    expect(fetchPlanAccessSpy).toHaveBeenCalledTimes(2);
+    expect(fetchEntitlementsSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("storage logout from another tab clears the current tab auth state", async () => {
     const token = makeJwt({ id: 5, exp: Math.floor(Date.now() / 1000) + 3600 });
     localStorage.setItem("authToken", token);
     localStorage.setItem("authUser", JSON.stringify({ id: 5 }));
+    sessionStorage.setItem("persist:root", "tab-ui");
+    sessionStorage.setItem("sdui.filterValues", "tab-filters");
+    sessionStorage.setItem("sdui.activePlatforms", "tab-platforms");
 
     const mod = await loadSut();
     const wrapper = ({ children }) => React.createElement(mod.AuthProvider, null, children);
@@ -543,5 +639,8 @@ describe("useAuth > cross-tab sync", () => {
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.token).toBeNull();
     expect(result.current.user).toBeNull();
+    expect(sessionStorage.getItem("persist:root")).toBeNull();
+    expect(sessionStorage.getItem("sdui.filterValues")).toBeNull();
+    expect(sessionStorage.getItem("sdui.activePlatforms")).toBeNull();
   });
 });

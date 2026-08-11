@@ -26,6 +26,8 @@ const Sidebar = ({
   filterHasPlanEntry,
   onRestricted,
   canAccessProjects = false,
+  projectsAccessResolved = true,
+  projectsAccessUnavailable = false,
   intelligenceEnabled = false,
   intelligenceStage = null,
   keywordExplorerEnabled = false,
@@ -179,7 +181,11 @@ const Sidebar = ({
               label={t("all_projects")}
               active={activePage === "projects"}
               onClick={() => {
-                if (!canAccessProjects) {
+                // Loading/missing access data is not a subscription denial.
+                // Navigate to the neutral Projects state and let App resolve it.
+                if (!projectsAccessResolved || projectsAccessUnavailable) {
+                  onPageChange?.("projects");
+                } else if (!canAccessProjects) {
                   onRestricted?.();
                 } else {
                   onPageChange?.("projects");

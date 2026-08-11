@@ -14,6 +14,7 @@ import { getAllCountries } from '../../models/countries.js';
 import { esClient,esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
+import { COUNTRIES as HANDLED_COUNTRIES } from "../../config/countries.js";
 import elasticsearch from "elasticsearch";
 import DashboardValidation from "./dashboardValidation.js";
 import moment from "moment";
@@ -83,6 +84,67 @@ const NETWORK_BY_INDEX = Object.freeze(
     Object.entries(NETWORK_INDEXES).map(([network, index]) => [index, network]),
   ),
 );
+
+// The competitor dashboard only counts countries from its backend-owned
+// product list. The list mirrors the frontend values without creating a
+// runtime dependency between separately deployed services.
+const GLOBAL_COUNTRY_TERMS = ["all", "global", "global reach", "worldwide"];
+const COUNTRY_FIELD_BY_INDEX = Object.freeze({
+  [NETWORK_INDEXES.facebook]: 'country_only.country',
+  [NETWORK_INDEXES.instagram]: 'instagram_country_only.country',
+  [NETWORK_INDEXES.google]: 'country',
+});
+
+function addCountryTermVariants(queryTerms, normalizedTerms, value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return;
+  queryTerms.add(raw);
+  queryTerms.add(raw.toLowerCase());
+  queryTerms.add(raw.toUpperCase());
+  normalizedTerms.add(raw.toLowerCase());
+}
+
+const SUPPORTED_COUNTRY_INFO = (() => {
+  const queryTerms = new Set();
+  const normalizedTerms = new Set();
+
+  for (const row of HANDLED_COUNTRIES) {
+    addCountryTermVariants(queryTerms, normalizedTerms, row.name);
+    addCountryTermVariants(queryTerms, normalizedTerms, row.code);
+  }
+  for (const globalTerm of GLOBAL_COUNTRY_TERMS) {
+    addCountryTermVariants(queryTerms, normalizedTerms, globalTerm);
+  }
+
+  return {
+    queryTerms: [...queryTerms],
+    normalizedTerms,
+  };
+})();
+
+const getSupportedCountryInfo = () => SUPPORTED_COUNTRY_INFO;
+
+function countryFieldForIndex(index, countryField) {
+  return index === NETWORK_INDEXES.google || countryField.endsWith('.keyword')
+    ? countryField
+    : `${countryField}.keyword`;
+}
+
+function buildCountryFilterClause(index, countryField, supportedCountryInfo) {
+  const terms = supportedCountryInfo?.queryTerms || [];
+  if (!terms.length) return null;
+  return {
+    terms: {
+      [countryFieldForIndex(index, countryField)]: terms,
+    },
+  };
+}
+
+function isSupportedCountryKey(rawKey, supportedCountryInfo) {
+  if (!supportedCountryInfo?.normalizedTerms?.size) return true;
+  const key = String(rawKey ?? "").trim().toLowerCase();
+  return Boolean(key) && supportedCountryInfo.normalizedTerms.has(key);
+}
 
 // Mirror the builder's multi-word advertiser logic without depending on the
 // search service internals. Facebook/Instagram/Google counts need the same
@@ -768,6 +830,7 @@ const getAdvertiserAdCount = async (advertiser) => {
         }
     
         competitor = Array.isArray(competitor) ? competitor[0] : competitor;
+        const supportedCountryInfo = await getSupportedCountryInfo();
         const advertiserIndexConfigs = [
           { index: NETWORK_INDEXES.facebook, field: 'facebook_ad_post_owners.post_owner_name' },
           { index: NETWORK_INDEXES.instagram, field: 'instagram_ad_post_owners.post_owner_name' },
@@ -856,11 +919,13 @@ const getAdvertiserAdCount = async (advertiser) => {
             const platform = index_to_platform[index] || 'undefined';
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
             const ownerClause = buildOwnerClause(index, competitor);
+            const countryClause = buildCountryFilterClause(index, COUNTRY_FIELD_BY_INDEX[index], supportedCountryInfo);
+            const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
             return {
               platform,
               promise: dedupCount(client, index, {
                 must: [ownerClause],
-                ...(filterClauses.length  && { filter:   filterClauses }),
+                ...(filter.length  && { filter }),
                 ...(mustNotClauses.length && { must_not: mustNotClauses }),
               }),
             };
@@ -881,11 +946,11 @@ const getAdvertiserAdCount = async (advertiser) => {
             // sub-field, so it needs the suffix. Append `.keyword` only when the
             // field isn't already keyword-aggregatable.
             const finalField =
-              index === NETWORK_INDEXES.google || countryField.endsWith('.keyword')
-                ? countryField
-                : `${countryField}.keyword`;
+              countryFieldForIndex(index, countryField);
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
             const ownerClause = buildOwnerClause(index, competitor);
+            const countryClause = buildCountryFilterClause(index, countryField, supportedCountryInfo);
+            const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
             return client.search({
               index,
               size: 0,
@@ -893,7 +958,7 @@ const getAdvertiserAdCount = async (advertiser) => {
                 query: {
                   bool: {
                     must: [ownerClause],
-                    ...(filterClauses.length  && { filter:   filterClauses }),
+                    ...(filter.length  && { filter }),
                     ...(mustNotClauses.length && { must_not: mustNotClauses }),
                   },
                 },
@@ -923,13 +988,15 @@ const getAdvertiserAdCount = async (advertiser) => {
 
               const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(idx);
               const ownerClause = buildOwnerClause(idx, competitor);
+              const countryClause = buildCountryFilterClause(idx, COUNTRY_FIELD_BY_INDEX[idx], supportedCountryInfo);
+              const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
               return dedupCount(client, idx, {
                 must: [
                   ownerClause,
                   { bool: { should: rangeQ, minimum_should_match: 1 } },
                   { bool: { should: existsQ, minimum_should_match: 1 } },
                 ],
-                ...(filterClauses.length  && { filter:   filterClauses }),
+                ...(filter.length  && { filter }),
                 ...(mustNotClauses.length && { must_not: mustNotClauses }),
               });
             });
@@ -952,11 +1019,13 @@ const getAdvertiserAdCount = async (advertiser) => {
         // proxy from the per-ad `averagebudget` field, not real ad spend) all
         // come from the shared helper so this stays identical to what
         // snapshotService persists for the same competitor.
-        const budgetStats = await this.getCompetitorBudgetStats(competitor);
+        const budgetStats = await this.getCompetitorBudgetStats(competitor, supportedCountryInfo);
 
         return res.send(Response.userSuccessResp("Counts fetched successfully", {
           ...totals,
-          countryCounts: undefined,
+          // Keep the raw per-country buckets so the UI can drive click-through
+          // searches with the same full country set that produced the counts.
+          countryCounts: totals.countryCounts,
           // Ranked by combined doc_count desc so "Top Country" reflects the true
           // leading bucket across platforms, not query/insertion order.
           uniqueCountries: Object.entries(totals.countryCounts)
@@ -985,7 +1054,8 @@ const getAdvertiserAdCount = async (advertiser) => {
     // Returns { averageImpression, averagePopularity, averageBudget, totalBudget,
     //   byPlatform: { facebook, instagram, google } } where each byPlatform
     //   entry is { averageImpression, averagePopularity, averageBudget, totalBudget }.
-    async getCompetitorBudgetStats(name) {
+    async getCompetitorBudgetStats(name, supportedCountryInfo = null) {
+      supportedCountryInfo = supportedCountryInfo || await getSupportedCountryInfo();
       const platformConfigs = [
         { index: NETWORK_INDEXES.facebook, impField: 'facebook_ad.impression', popField: 'facebook_ad.popularity', budField: 'facebook.averagebudget' },
         { index: NETWORK_INDEXES.instagram, impField: 'instagram_ad.impression', popField: 'instagram_ad.popularity', budField: 'instagram.averagebudget' },
@@ -995,6 +1065,8 @@ const getAdvertiserAdCount = async (advertiser) => {
       const fetchOne = async (client, { index, impField, popField, budField }) => {
         const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
         const ownerClause = buildOwnerClause(index, name);
+        const countryClause = buildCountryFilterClause(index, COUNTRY_FIELD_BY_INDEX[index], supportedCountryInfo);
+        const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
         const res = await client.search({
           index,
           size: 0,
@@ -1002,7 +1074,7 @@ const getAdvertiserAdCount = async (advertiser) => {
             query: {
               bool: {
                 must: [ownerClause],
-                ...(filterClauses.length  && { filter:   filterClauses }),
+                ...(filter.length  && { filter }),
                 ...(mustNotClauses.length && { must_not: mustNotClauses }),
               },
             },
@@ -1110,7 +1182,8 @@ const getAdvertiserAdCount = async (advertiser) => {
     // instagram) and three buckets: all-time, today and yesterday.
     // All ES queries for the name are fired in parallel.
     // Returns { allTime:{facebook,instagram,total}, today:{...}, yesterday:{...} }.
-    async getCompetitorAdStats(name) {
+    async getCompetitorAdStats(name, supportedCountryInfo = null) {
+      supportedCountryInfo = supportedCountryInfo || await getSupportedCountryInfo();
       // Mirror getCompetitorsCount: count facebook + instagram + google so the
       // all-time `ads` total here equals that API's `competitorsCount`.
       const indexPlatform = {
@@ -1154,9 +1227,11 @@ const getAdvertiserAdCount = async (advertiser) => {
           const field = dateField[idx];
           const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(idx);
           const ownerClause = buildOwnerClause(idx, name);
+          const countryClause = buildCountryFilterClause(idx, COUNTRY_FIELD_BY_INDEX[idx], supportedCountryInfo);
+          const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
           const buildQuery = (extraMust = []) => ({
             must: [ownerClause, ...extraMust],
-            ...(filterClauses.length  && { filter:   filterClauses }),
+            ...(filter.length  && { filter }),
             /* v8 ignore next -- search_mix/instagram_search_mix have must_not:[], so the non-empty spread branch is unreachable here */
             ...(mustNotClauses.length && { must_not: mustNotClauses }),
           });
@@ -1191,7 +1266,8 @@ const getAdvertiserAdCount = async (advertiser) => {
     // caller-supplied range — powers the per-brand "ads by competitor" chart's
     // date filter. gte/lte are "YYYY-MM-DD HH:mm:ss" strings; pass both as
     // null/empty for all-time (owner match only, no date filter).
-    async getCompetitorAdCountForRange(name, gte, lte) {
+    async getCompetitorAdCountForRange(name, gte, lte, supportedCountryInfo = null) {
+      supportedCountryInfo = supportedCountryInfo || await getSupportedCountryInfo();
       // Mirror getCompetitorsCount: include google so the chart's ad counts
       // match (facebook + instagram + google).
       const indexPlatform = { [NETWORK_INDEXES.facebook]: 'facebook', [NETWORK_INDEXES.instagram]: 'instagram', [NETWORK_INDEXES.google]: 'google' };
@@ -1206,13 +1282,15 @@ const getAdvertiserAdCount = async (advertiser) => {
           const field = dateField[idx];
           const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(idx);
           const ownerClause = buildOwnerClause(idx, name);
+          const countryClause = buildCountryFilterClause(idx, COUNTRY_FIELD_BY_INDEX[idx], supportedCountryInfo);
+          const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
           const must = [ownerClause];
           if (hasRange) must.push({ range: { [field]: { gte, lte } } }, { exists: { field } });
           jobs.push({
             platform: indexPlatform[idx],
             promise: dedupCount(client, idx, {
               must,
-              ...(filterClauses.length  && { filter:   filterClauses }),
+              ...(filter.length  && { filter }),
               /* v8 ignore next -- search_mix/instagram_search_mix have must_not:[], so the non-empty spread branch is unreachable here */
               ...(mustNotClauses.length && { must_not: mustNotClauses }),
             }),
@@ -2055,6 +2133,7 @@ async insertpaidSearch(req,res){
 
       const isArray = Array.isArray(input);
       const competitors = isArray ? input : [input];
+      const supportedCountryInfo = await getSupportedCountryInfo();
 
       const getRange = (duration) => {
         let start, end;
@@ -2127,13 +2206,15 @@ async insertpaidSearch(req,res){
         const fetchGlobalStats = async (client, index, ownerField, impField, popField, budField) => {
           const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
           const ownerClause = buildOwnerClause(index, competitor);
+          const countryClause = buildCountryFilterClause(index, COUNTRY_FIELD_BY_INDEX[index], supportedCountryInfo);
+          const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
           const r = await client.search({
             index, size: 0,
             body: {
               query: {
                 bool: {
                   must: [ownerClause],
-                  ...(filterClauses.length  && { filter:   filterClauses }),
+                  ...(filter.length  && { filter }),
                   /* v8 ignore next -- the processed indexes carry must_not:[], so the non-empty spread branch is unreachable here */
                   ...(mustNotClauses.length && { must_not: mustNotClauses }),
                 },
@@ -2194,9 +2275,11 @@ async insertpaidSearch(req,res){
             const platform = index_to_platform[index] || 'undefined';
             const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
             const ownerClause = buildOwnerClause(index, competitor);
+            const countryClause = buildCountryFilterClause(index, COUNTRY_FIELD_BY_INDEX[index], supportedCountryInfo);
+            const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
             const cnt = await dedupCount(client, index, {
               must: [ownerClause],
-              ...(filterClauses.length  && { filter:   filterClauses }),
+              ...(filter.length  && { filter }),
               /* v8 ignore next -- the processed indexes carry must_not:[], so the non-empty spread branch is unreachable here */
               ...(mustNotClauses.length && { must_not: mustNotClauses }),
             });
@@ -2212,16 +2295,16 @@ async insertpaidSearch(req,res){
             // sub-field); FB/IG `*_country_only.country` is text WITH a `.keyword`
             // sub-field. Append `.keyword` only when not already keyword-aggregatable.
             const finalField =
-              index === NETWORK_INDEXES.google || countryField.endsWith('.keyword')
-                ? countryField
-                : `${countryField}.keyword`;
+              countryFieldForIndex(index, countryField);
+            const countryClause = buildCountryFilterClause(index, countryField, supportedCountryInfo);
+            const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
             const r = await client.search({
               index, size: 0,
               body: {
                 query: {
                   bool: {
                     must: [ownerClause],
-                    ...(filterClauses.length  && { filter:   filterClauses }),
+                    ...(filter.length  && { filter }),
                     /* v8 ignore next -- the processed indexes carry must_not:[], so the non-empty spread branch is unreachable here */
                     ...(mustNotClauses.length && { must_not: mustNotClauses }),
                   },
@@ -2235,8 +2318,10 @@ async insertpaidSearch(req,res){
             (r?.aggregations?.countries?.buckets || []).forEach(b => {
               if (b.key) {
                 const key = b.key.toLowerCase();
-                totals.uniqueCountries.add(key);
-                totals.countryCounts[key] = (totals.countryCounts[key] || 0) + (b.doc_count || 0);
+                if (isSupportedCountryKey(key, supportedCountryInfo)) {
+                  totals.uniqueCountries.add(key);
+                  totals.countryCounts[key] = (totals.countryCounts[key] || 0) + (b.doc_count || 0);
+                }
               }
             });
           }
@@ -2248,13 +2333,15 @@ async insertpaidSearch(req,res){
               const existsQ = fields.map(f => ({ exists: { field: f } }));
               const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(idx);
               const ownerClause = buildOwnerClause(idx, competitor);
+              const countryClause = buildCountryFilterClause(idx, COUNTRY_FIELD_BY_INDEX[idx], supportedCountryInfo);
+              const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
               const cnt = await dedupCount(client, idx, {
                 must: [
                   ownerClause,
                   { bool: { should: rangeQ, minimum_should_match: 1 } },
                   { bool: { should: existsQ, minimum_should_match: 1 } },
                 ],
-                ...(filterClauses.length  && { filter:   filterClauses }),
+                ...(filter.length  && { filter }),
                 /* v8 ignore next -- the processed indexes carry must_not:[], so the non-empty spread branch is unreachable here */
                 ...(mustNotClauses.length && { must_not: mustNotClauses }),
               });
@@ -2286,6 +2373,9 @@ async insertpaidSearch(req,res){
           lastMonthAdsCount: totals.lastMonthAdsCount,
           lastYearAdsCount: totals.lastYearAdsCount,
           platformCompetitorCount: totals.platformCompetitorCount,
+          // Raw buckets stay available for click-throughs; uniqueCountries is
+          // still the trimmed display list used by the table UI.
+          countryCounts: totals.countryCounts,
           // Ranked by combined doc_count desc so the FE's `countries.slice(0,3)`
           // ("Top Country") shows the true leading countries across FB+IG+Google.
           uniqueCountries: Object.entries(totals.countryCounts)
@@ -2293,7 +2383,7 @@ async insertpaidSearch(req,res){
             .map(([name]) => name),
           averageImpression: getValidAverage(facebookStats.averageImpression, instagramStats.averageImpression),
           averagePopularity: getValidAverage(facebookStats.averagePopularity, instagramStats.averagePopularity),
-          averageBudget: getValidAverage(facebookStats.averageBudget, instagramStats.averageBudget),
+        averageBudget: getValidAverage(facebookStats.averageBudget, instagramStats.averageBudget),
           // totalBudget is a real cross-platform sum — drives the "Estimated Total Ad Budget" column.
           totalBudget: Number(
             ((facebookStats.totalBudget || 0) + (instagramStats.totalBudget || 0)).toFixed(2)

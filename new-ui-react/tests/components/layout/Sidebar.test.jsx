@@ -97,6 +97,32 @@ describe("Sidebar > nav items", () => {
 });
 
 describe("Sidebar > all_projects gating", () => {
+  it("unresolved access opens Projects without showing pricing", () => {
+    const onRestricted = vi.fn();
+    const onPageChange = vi.fn();
+    const { getByTestId } = render(<Sidebar {...build({
+      canAccessProjects: false,
+      projectsAccessResolved: false,
+      onRestricted,
+      onPageChange,
+    })} />);
+    fireEvent.click(getByTestId("nav-all_projects"));
+    expect(onPageChange).toHaveBeenCalledWith("projects");
+    expect(onRestricted).not.toHaveBeenCalled();
+  });
+  it("unavailable access data opens the Projects error state without pricing", () => {
+    const onRestricted = vi.fn();
+    const onPageChange = vi.fn();
+    const { getByTestId } = render(<Sidebar {...build({
+      canAccessProjects: false,
+      projectsAccessUnavailable: true,
+      onRestricted,
+      onPageChange,
+    })} />);
+    fireEvent.click(getByTestId("nav-all_projects"));
+    expect(onPageChange).toHaveBeenCalledWith("projects");
+    expect(onRestricted).not.toHaveBeenCalled();
+  });
   it("canAccessProjects=false → onRestricted fires", () => {
     const onRestricted = vi.fn();
     const onPageChange = vi.fn();

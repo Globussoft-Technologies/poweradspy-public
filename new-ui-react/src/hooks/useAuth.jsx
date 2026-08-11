@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { fetchPlanAccess, fetchEntitlements, fetchOnboardingStatus, trackEvent } from '../services/api';
 import { openModal } from '../store/uiSlice';
@@ -126,6 +126,9 @@ export function markFiltersForExpiry() {
     localStorage.removeItem(FILTER_LOGOUT_TS_KEY);
   } catch {}
   try {
+    // Ads Library state is tab-scoped, while these same keys may still exist in
+    // localStorage from an older build. Clear both copies on logout/auth expiry.
+    FILTER_STATE_KEYS.forEach(k => sessionStorage.removeItem(k));
     SESSION_STORAGE_KEYS.forEach(k => sessionStorage.removeItem(k));
   } catch {}
 }
@@ -322,6 +325,7 @@ export function AuthProvider({ children }) {
   const [planAccess, setPlanAccess] = useState(null);
   const [entitlements, setEntitlements] = useState(null);
   const [planAccessResolved, setPlanAccessResolved] = useState(!token);
+  const tokenRef = useRef(token);
   const dispatch = useDispatch();
 
   // Keep React state aligned with the shared browser storage. This lets a
@@ -334,6 +338,11 @@ export function AuthProvider({ children }) {
 
       const nextToken = localStorage.getItem('authToken');
       if (!nextToken) {
+        // sessionStorage belongs to each tab, so a logout in another tab cannot
+        // clear this tab's Ads Library state directly. Clear it when the shared
+        // authentication removal event arrives instead.
+        markFiltersForExpiry();
+        tokenRef.current = null;
         setToken(null);
         setUser(null);
         setPlanAccess(null);
@@ -345,12 +354,32 @@ export function AuthProvider({ children }) {
       try {
         const rawUser = localStorage.getItem('authUser');
         const nextUser = rawUser ? JSON.parse(rawUser) : JSON.parse(atob(nextToken.split('.')[1]));
+
+        // Opening another tab rewrites authUser during bootstrap even though the
+        // authenticated session did not change. Keep this tab's resolved plan
+        // access intact; otherwise token remains unchanged, its fetch effect does
+        // not rerun, and an already-open Projects page spins indefinitely.
+        if (event.key === 'authUser' || event.key === ENV_AUTH_FALLBACK_LOCK_KEY) {
+          setUser(nextUser);
+          return;
+        }
+
+        // A duplicate authToken event must also be harmless. Only a genuinely
+        // different token represents a new session that needs fresh access data.
+        if (nextToken === tokenRef.current) {
+          setUser(nextUser);
+          return;
+        }
+
+        tokenRef.current = nextToken;
         setToken(nextToken);
         setUser(nextUser);
         setPlanAccess(null);
         setEntitlements(null);
         setPlanAccessResolved(false);
       } catch {
+        markFiltersForExpiry();
+        tokenRef.current = null;
         setToken(null);
         setUser(null);
         setPlanAccess(null);

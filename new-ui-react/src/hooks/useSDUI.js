@@ -3,8 +3,8 @@ import { fetchSDUIConfig } from '../services/sduiService';
 import { useSDUIPolling } from './useSDUIPolling';
 import { ADMOB_FRONTEND_ENABLED } from '../constants';
 
-const LS_FILTERS_KEY = 'sdui.filterValues';
-const LS_PLATFORMS_KEY = 'sdui.activePlatforms';
+const FILTERS_STORAGE_KEY = 'sdui.filterValues';
+const PLATFORMS_STORAGE_KEY = 'sdui.activePlatforms';
 
 const withoutDisabledPlatforms = (platforms) => {
     const values = Array.isArray(platforms) ? platforms : [];
@@ -36,13 +36,13 @@ const withoutDisabledPlatformConfig = (cfg) => {
     };
 };
 
-const loadLS = (key, fallback) => {
+const loadTabState = (key, fallback) => {
     try {
-        const raw = localStorage.getItem(key);
+        const raw = sessionStorage.getItem(key);
         if (raw == null) return fallback;
         const parsed = JSON.parse(raw);
         // Strip internal-only keys that should never persist across sessions
-        if (key === LS_FILTERS_KEY && parsed && typeof parsed === 'object') {
+        if (key === FILTERS_STORAGE_KEY && parsed && typeof parsed === 'object') {
             delete parsed._autoSortField;
         }
         return parsed;
@@ -176,11 +176,11 @@ export function useSDUI() {
     const [error, setError] = useState(null);
 
     // ── Filter values — dynamic, keyed by filter._id ────────────────────────
-    const [filterValues, setFilterValues] = useState(() => loadLS(LS_FILTERS_KEY, {}));
+    const [filterValues, setFilterValues] = useState(() => loadTabState(FILTERS_STORAGE_KEY, {}));
 
     // ── Platform state ──────────────────────────────────────────────────────
     const [activePlatforms, setActivePlatformsState] = useState(() =>
-        withoutDisabledPlatforms(loadLS(LS_PLATFORMS_KEY, []))
+        withoutDisabledPlatforms(loadTabState(PLATFORMS_STORAGE_KEY, []))
     );
     const setActivePlatforms = useCallback((nextValue) => {
         setActivePlatformsState(previous => withoutDisabledPlatforms(
@@ -361,16 +361,16 @@ export function useSDUI() {
 
     useSDUIPolling(config?.config_version || 0, handleConfigChanged, activePlatforms);
 
-    // ── Persist filterValues + activePlatforms to localStorage ──────────────
+    // ── Persist filterValues + activePlatforms per browser tab ─────────────
     useEffect(() => {
         try {
             const { _autoSortField, ...toStore } = filterValues;
-            localStorage.setItem(LS_FILTERS_KEY, JSON.stringify(toStore));
+            sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(toStore));
         } catch {}
     }, [filterValues]);
 
     useEffect(() => {
-        try { localStorage.setItem(LS_PLATFORMS_KEY, JSON.stringify(activePlatforms)); } catch {}
+        try { sessionStorage.setItem(PLATFORMS_STORAGE_KEY, JSON.stringify(activePlatforms)); } catch {}
     }, [activePlatforms]);
 
     // Google Transparency controls exist whenever Google is selected.

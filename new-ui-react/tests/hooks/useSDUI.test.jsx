@@ -20,6 +20,7 @@ beforeEach(async () => {
   fetchSpy.mockReset();
   pollingSpy.mockReset();
   localStorage.clear();
+  sessionStorage.clear();
   vi.spyOn(console, "warn").mockImplementation(() => {});
   ({ useSDUI } = await import("../../src/hooks/useSDUI.js"));
 });
@@ -96,16 +97,16 @@ describe("useSDUI > initial load", () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it("loadLS: malformed JSON → fallback used", async () => {
-    localStorage.setItem("sdui.filterValues", "not-json");
+  it("loadTabState: malformed JSON → fallback used", async () => {
+    sessionStorage.setItem("sdui.filterValues", "not-json");
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     expect(result.current.filterValues).toEqual({});
   });
 
-  it("loadLS strips _autoSortField from filterValues", async () => {
-    localStorage.setItem("sdui.filterValues", JSON.stringify({ x: 1, _autoSortField: "y" }));
+  it("loadTabState strips _autoSortField from filterValues", async () => {
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({ x: 1, _autoSortField: "y" }));
     fetchSpy.mockResolvedValue(makeConfig({
       sidebar: [{ _id: "d", filters: [{ _id: "x" }] }],
     }));
@@ -116,7 +117,7 @@ describe("useSDUI > initial load", () => {
   });
 
   it("keeps label-stored geo selections after refresh", async () => {
-    localStorage.setItem("sdui.filterValues", JSON.stringify({
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
       country_filter: ["United Kingdom"],
     }));
     fetchSpy.mockResolvedValue(makeConfig({
@@ -146,7 +147,7 @@ describe("useSDUI > initial load", () => {
       ad_type: ["Image", "Video"],
       sorting: "popularity_score",
     };
-    localStorage.setItem("sdui.filterValues", JSON.stringify(storedToolbarFilters));
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify(storedToolbarFilters));
     fetchSpy.mockResolvedValue(makeConfig({
       navbar: [
         platformsDoc,
@@ -194,7 +195,7 @@ describe("useSDUI > initial load", () => {
     expect(result.current.filterValues).toEqual(storedToolbarFilters);
   });
 
-  it("loadLS missing key → fallback", async () => {
+  it("loadTabState missing key → fallback", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
@@ -202,8 +203,20 @@ describe("useSDUI > initial load", () => {
     expect(result.current.activePlatforms).toEqual(["facebook", "instagram"]);
   });
 
+  it("does not restore filters or platforms left in localStorage by another tab", async () => {
+    localStorage.setItem("sdui.filterValues", JSON.stringify({ country_filter: ["Thailand"] }));
+    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    fetchSpy.mockResolvedValue(makeConfig());
+
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.filterValues).toEqual({});
+    expect(result.current.activePlatforms).toEqual(["facebook", "instagram"]);
+  });
+
   it("does NOT override pre-existing activePlatforms from storage", async () => {
-    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["youtube"]));
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["youtube"]));
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
@@ -263,8 +276,8 @@ describe("useSDUI > setters + getters", () => {
   });
 
   it("clears hidden Transparency state after leaving the Google tab", async () => {
-    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
-    localStorage.setItem("sdui.filterValues", JSON.stringify({
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
       google_transparency_ads: true,
       google_transparency_subnetwork: "SHOPPING",
       country: ["India"],
@@ -297,8 +310,8 @@ describe("useSDUI > setters + getters", () => {
   });
 
   it("clears the dependent subnetwork when Transparency is disabled", async () => {
-    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
-    localStorage.setItem("sdui.filterValues", JSON.stringify({
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
       google_transparency_ads: true,
       google_transparency_subnetwork: "SEARCH",
     }));
@@ -314,8 +327,8 @@ describe("useSDUI > setters + getters", () => {
   });
 
   it("keeps Transparency state when Google remains in a mixed selection", async () => {
-    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
-    localStorage.setItem("sdui.filterValues", JSON.stringify({
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
       google_transparency_ads: true,
       google_transparency_subnetwork: "SHOPPING",
     }));
@@ -815,7 +828,7 @@ describe("useSDUI > platform re-fetch effect", () => {
   });
 
   it("changing activePlatforms triggers a fresh config fetch", async () => {
-    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook", "instagram", "google"]));
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook", "instagram", "google"]));
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
@@ -855,26 +868,26 @@ describe("useSDUI > platform re-fetch effect", () => {
 });
 
 describe("useSDUI > persistence side effects", () => {
-  it("writes filterValues to localStorage on change (excluding _autoSortField)", async () => {
+  it("writes filterValues to sessionStorage on change (excluding _autoSortField)", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     act(() => { result.current.setAllFilters({ x: 1, _autoSortField: "abc" }); });
     await act(async () => { await Promise.resolve(); });
-    const stored = JSON.parse(localStorage.getItem("sdui.filterValues"));
+    const stored = JSON.parse(sessionStorage.getItem("sdui.filterValues"));
     expect(stored).toEqual({ x: 1 });
   });
 
-  it("writes activePlatforms to localStorage", async () => {
+  it("writes activePlatforms to sessionStorage", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     act(() => { result.current.setActivePlatforms(["facebook"]); });
     await act(async () => { await Promise.resolve(); });
-    expect(JSON.parse(localStorage.getItem("sdui.activePlatforms"))).toEqual(["facebook"]);
+    expect(JSON.parse(sessionStorage.getItem("sdui.activePlatforms"))).toEqual(["facebook"]);
   });
 
-  it("localStorage quota errors swallowed", async () => {
+  it("sessionStorage quota errors swallowed", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });

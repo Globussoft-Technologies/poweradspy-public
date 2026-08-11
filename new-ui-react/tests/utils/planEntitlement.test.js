@@ -9,9 +9,41 @@ import {
   normalizePlanNetwork,
   resolveAdsSearchAllowedNetworks,
   resolveCustomPlanDefaultNetwork,
+  resolveProjectsAccess,
 } from "../../src/utils/planEntitlement.js";
 
 describe("plan entitlement decisions", () => {
+  it("keeps Projects unresolved until plan bootstrap completes", () => {
+    expect(resolveProjectsAccess(null, null, false)).toEqual({
+      resolved: false,
+      allowed: false,
+      denied: false,
+      unavailable: false,
+    });
+  });
+
+  it("uses an explicit unified Projects decision before legacy access", () => {
+    expect(resolveProjectsAccess({
+      capabilities: { "projects.access": { allowed: false } },
+    }, {
+      filters: { project_access: { enabled: true } },
+    }, true)).toMatchObject({ resolved: true, allowed: false, denied: true });
+  });
+
+  it("falls back to legacy Projects access when unified policy omits it", () => {
+    expect(resolveProjectsAccess({ capabilities: {} }, {
+      filters: { project_access: { enabled: true } },
+    }, true)).toMatchObject({ resolved: true, allowed: true, denied: false });
+  });
+
+  it("does not convert missing Projects access data into an upgrade denial", () => {
+    expect(resolveProjectsAccess({ capabilities: {} }, { filters: {} }, true)).toEqual({
+      resolved: true,
+      allowed: false,
+      denied: false,
+      unavailable: true,
+    });
+  });
   it("normalizes SDUI network values before comparing plan access", () => {
     expect(normalizePlanNetwork(" YouTube ")).toBe("youtube");
     expect(isPlanNetworkAllowed(["youtube", "GOOGLE", "Native"], "YOUTUBE")).toBe(true);
