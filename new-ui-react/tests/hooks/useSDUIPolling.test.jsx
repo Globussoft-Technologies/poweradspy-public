@@ -41,6 +41,20 @@ describe("hooks/useSDUIPolling", () => {
     expect(cb).toHaveBeenCalled();
   });
 
+  it("always fetches the full config when selected platforms are supplied", async () => {
+    fetchVersionSpy.mockResolvedValue({ config_version: 99 });
+    fetchConfigSpy.mockResolvedValue({ config_version: 99 });
+    const cb = vi.fn();
+    renderHook(() => useSDUIPolling(0, cb, ["google"]));
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+
+    expect(fetchConfigSpy).toHaveBeenCalledWith({ skipCache: true });
+    expect(fetchConfigSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ platforms: expect.anything() }),
+    );
+  });
+
   it("polling: version unchanged → no full fetch", async () => {
     fetchVersionSpy.mockResolvedValue({ config_version: 5 });
     const cb = vi.fn();

@@ -379,7 +379,7 @@ export function useSDUI() {
     // the UI's default "All" option.
     useEffect(() => {
         const hasGoogle = activePlatforms.some(
-            platform => String(platform).toLowerCase() === 'google'
+            platform => normalizeStoredValue(platform) === 'google'
         );
         setFilterValues(prev => {
             const shouldDeleteToggle =
