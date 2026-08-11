@@ -972,8 +972,10 @@ async function addScrapingHistory(req, res) {
     // scrapping_status entry → this is the SAME session reporting again (e.g. the
     // scraper calls this endpoint once per ad found, resending its own unchanged
     // startTime each time) — update that entry in place (endTime + status advance,
-    // adsCount bumps by exactly 1) instead of pushing a near-duplicate session.
+    // adsCount incremented by whatever ads_count THIS call sent) instead of pushing
+    // a near-duplicate session. No ads_count in the body → increments by 0 (no-op).
     const sessionMatch = { network, type, owner, startTime: sessionStart };
+    const adsCountDelta = body.ads_count != null ? Number(body.ads_count) || 0 : 0;
 
     let result = await col.findOneAndUpdate(
       { type, valueNorm, scrapping_status: { $elemMatch: sessionMatch } },
@@ -983,7 +985,7 @@ async function addScrapingHistory(req, res) {
           'scrapping_status.$[s].endTime': sessionEnd,
           'scrapping_status.$[s].status': finalStatus,
         },
-        $inc: { 'scrapping_status.$[s].adsCount': 1 },
+        $inc: { 'scrapping_status.$[s].adsCount': adsCountDelta },
       },
       {
         arrayFilters: [{ 's.network': network, 's.type': type, 's.owner': owner, 's.startTime': sessionStart }],
@@ -1000,7 +1002,7 @@ async function addScrapingHistory(req, res) {
         s.startTime instanceof Date && s.startTime.getTime() === sessionStart.getTime()
       );
       scrapeId = updatedSession?._id;
-      finalAdsCount = updatedSession?.adsCount ?? 1;
+      finalAdsCount = updatedSession?.adsCount ?? adsCountDelta;
 
       // lastScrape denorm must reflect the INCREMENTED count, not whatever ads_count
       // this particular call sent — so it's set from the updated session, separately.

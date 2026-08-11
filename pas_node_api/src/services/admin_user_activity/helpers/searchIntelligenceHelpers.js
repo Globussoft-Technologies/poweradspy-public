@@ -100,10 +100,10 @@ function convertToUnixSeconds(timestampStr) {
 const TIMESTAMP_FIELD_MAP = {
   facebook: 'facebook_ad.last_seen',
   instagram: 'instagram_ad.last_seen',
-  google: 'google_ad.last_seen',
+  google: 'last_seen',
   gdn: 'gdn_ad.last_seen',
   youtube: 'last_seen',
-  linkedin: 'linkedin_ad.last_seen',
+  linkedin: 'last_seen',
   reddit: 'reddit_ad.last_seen',
   pinterest: 'pinterest_ad.last_seen',
   quora: 'quora_ad.last_seen',

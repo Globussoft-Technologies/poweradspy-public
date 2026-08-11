@@ -284,6 +284,10 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
       }
       platformKeywordMap[platform].push({
         keyword: searchValue,
+        // The item's own type (1=keyword, 2=advertiser, 3=domain) — needed because
+        // `keywords` can be a genuine mix of types when the caller passed type='all'
+        // (docTypeNum falls back to the batch typeNum only when a doc has no type).
+        type: keyword_type || typeNum,
         scrappingHistory: history.map(h => ({
           startTime: h.startTime,
           endTime: h.endTime
@@ -294,10 +298,10 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
 
   // Step 2: Batch fetch using existing optimized function
   if (elastic && Object.keys(platformKeywordMap).length > 0) {
- 
+
     try {
       const t1 = Date.now();
-      const platformResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger);
+      const platformResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger, typeNum || 1);
       const t2 = Date.now();
 
       logger?.info?.('[enrichKeywordsWithAds] Fetch completed in', t2 - t1, 'ms');
@@ -530,7 +534,9 @@ async function getTotalAdsCount(req, elastic, logger, mongo) {
       logger?.info?.('[getTotalAdsCount] shouldFetchAdsCount:', shouldFetchAdsCount, 'elastic available:', !!elastic);
       logger?.info?.('[getTotalAdsCount] Fetching ads count from Elasticsearch...');
       const t1 = Date.now();
-      finalResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger);
+      // Every item here is already scoped to the single requested `typeNum` (1/2/3) —
+      // pass it as the default so keyword/advertiser/domain field selection is correct.
+      finalResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger, typeNum);
       const t2 = Date.now();
       logger?.info?.('[getTotalAdsCount] Elasticsearch ads count fetch completed in', t2 - t1, 'ms');
       logger?.info?.('[getTotalAdsCount] Final results sample:', JSON.stringify(finalResults['facebook']?.slice(0, 1)));

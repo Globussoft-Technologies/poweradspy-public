@@ -174,15 +174,60 @@ const PLATFORM_FIELD_MAPPINGS = {
   },
 };
 
+// Google Transparency Ads are written to the SAME Elasticsearch index/schema as
+// regular Google Search ads (see src/services/google/transparencyInsertion/pipeline.js
+// — both land in google_ads_data_v2, discriminated only by a `platform` id inside the
+// doc, not by a separate index). The scraper reports its network as the literal string
+// "google_transparency" (see scrapping_status[].network / the doc's `networks` array in
+// keyword_searches), which has no entry of its own in PLATFORM_INDEX_MAP /
+// PLATFORM_FIELD_MAPPINGS — normalize it onto the existing 'google' entry so ads-count
+// lookups don't silently no-op (hit the "Unknown platform" warning) for terms scraped via
+// Google Transparency.
+function normalizePlatformKey(platform) {
+  const p = String(platform || '').toLowerCase();
+  return p === 'google_transparency' ? 'google' : p;
+}
+
+// Build the type-aware ES search clause (1=keyword, 2=advertiser, 3=domain) for a
+// platform's field mapping. Shared so every ads-count helper resolves the SAME fields
+// for a given type instead of each one hardcoding `platformConfig.keyword` regardless
+// of what's actually being searched.
+function buildSearchClause(platformConfig, searchType, searchValue) {
+  const searchTypeStr = String(searchType);
+
+  if (searchTypeStr === '2') {
+    const advertiserFields = platformConfig?.advertiser;
+    if (!advertiserFields || advertiserFields.length === 0) return null;
+    return { multi_match: { query: searchValue, type: 'phrase', fields: advertiserFields } };
+  }
+
+  if (searchTypeStr === '3') {
+    const domainField = platformConfig?.domain;
+    if (!domainField) return null;
+    let domain;
+    try {
+      const parsed = new URL(searchValue.startsWith('http') ? searchValue : `http://${searchValue}`);
+      domain = parsed.hostname;
+    } catch {
+      domain = searchValue.split('/')[0];
+    }
+    return { wildcard: { [domainField]: `*${domain}*` } };
+  }
+
+  // Default / '1' = keyword search.
+  const keywordFields = platformConfig?.keyword;
+  if (!keywordFields || keywordFields.length === 0) return null;
+  return { multi_match: { query: searchValue, type: 'phrase', fields: keywordFields } };
+}
+
 // Fetch ads count from platform-specific indices
 // Supports keyword, advertiser, and domain searches with time range filtering
 async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue, searchType, logger, startTime = null, endTime = null) {
-  
   let totalCount = 0;
 
   for (const platform of platforms) {
     try {
-      const platformName = platform.toLowerCase();
+      const platformName = normalizePlatformKey(platform);
       const indexName = PLATFORM_INDEX_MAP[platformName] || 'search_mix';
       const platformConfig = PLATFORM_FIELD_MAPPINGS[platformName];
 
@@ -220,53 +265,10 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
           must: []
         }
       };
-  
-      const searchTypeStr = String(searchType);
-      
 
-      // Add search-specific filter
-      if (searchTypeStr === '1') {
-        // Keyword search
-        const keywordFields = platformConfig.keyword;
-        if (keywordFields && keywordFields.length > 0) {
-          baseQuery.bool.must.push({
-            multi_match: {
-              query: searchValue,
-              type: 'phrase',
-              fields: keywordFields
-            }
-          });
-        }
-      } else if (searchTypeStr === '2') {
-        // Advertiser search
-        const advertiserFields = platformConfig.advertiser;
-        if (advertiserFields && advertiserFields.length > 0) {
-          baseQuery.bool.must.push({
-            multi_match: {
-              query: searchValue,
-              type: 'phrase',
-              fields: advertiserFields
-            }
-          });
-        }
-      } else if (searchTypeStr === '3') {
-        // Domain search
-        const domainField = platformConfig.domain;
-        if (domainField) {
-          let domain;
-          try {
-            const parsed = new URL(searchValue.startsWith('http') ? searchValue : `http://${searchValue}`);
-            domain = parsed.hostname;
-          } catch {
-            domain = searchValue.split('/')[0];
-          }
-          baseQuery.bool.must.push({
-            wildcard: {
-              [domainField]: `*${domain}*`
-            }
-          });
-        }
-      }
+      // Add search-specific filter (keyword/advertiser/domain, per searchType)
+      const searchClause = buildSearchClause(platformConfig, searchType, searchValue);
+      if (searchClause) baseQuery.bool.must.push(searchClause);
 
       if (baseQuery.bool.must.length === 0) {
         logger?.warn?.('[fetchAdsCountByPlatform] No search clause for type:', searchType);
@@ -303,9 +305,12 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
 async function fetchAdsCountBatchByPlatform(elastic, platforms, searchValue, searchType, timeWindows, logger) {
   const resultsMap = {}; // { platform: { timeWindowKey: count } }
 
-  // Initialize structure for each platform
+  // Initialize structure for each platform. Must use the SAME normalized key as the
+  // lookup loop below (normalizePlatformKey), since the results are written back via
+  // resultsMap[metadata.platform] where metadata.platform is the normalized name —
+  // an unnormalized key here would mismatch and throw.
   for (const platform of platforms) {
-    resultsMap[platform.toLowerCase()] = {};
+    resultsMap[normalizePlatformKey(platform)] = {};
   }
 
   // Build promises for all platform × timeWindow combinations
@@ -313,7 +318,7 @@ async function fetchAdsCountBatchByPlatform(elastic, platforms, searchValue, sea
   const promiseMetadata = [];
 
   for (const platform of platforms) {
-    const platformName = platform.toLowerCase();
+    const platformName = normalizePlatformKey(platform);
     const indexName = PLATFORM_INDEX_MAP[platformName] || 'search_mix';
     const platformConfig = PLATFORM_FIELD_MAPPINGS[platformName];
 
@@ -409,7 +414,7 @@ async function fetchAdsCountBatchByPlatform(elastic, platforms, searchValue, sea
           query: baseQuery
         }
       };
-
+    
       // Store metadata for result mapping
       promiseMetadata.push({
         platform: platformName,
@@ -719,7 +724,12 @@ function buildAllSearchesQuery(params) {
   };
 }
 
-async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger) {
+// `defaultSearchType` (1=keyword, 2=advertiser, 3=domain) is used for any item that
+// doesn't carry its own `type` — pass it when every item in the batch is the same type
+// (e.g. getTotalAdsCount, already scoped to one type). Items CAN carry their own `type`
+// (e.g. enrichKeywordsWithAds under type=all, where docs are a genuine keyword/advertiser/
+// domain mix) — that per-item value always wins over the default.
+async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger, defaultSearchType = 1) {
   if (!elastic || !platformKeywordMap || Object.keys(platformKeywordMap).length === 0) {
     return {};
   }
@@ -730,7 +740,7 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
   const MAX_CONCURRENT_QUERIES = 5;
 
   for (const [platform, keywords] of Object.entries(platformKeywordMap)) {
-    const platformLower = platform.toLowerCase();
+    const platformLower = normalizePlatformKey(platform);
     const indexName = PLATFORM_INDEX_MAP[platformLower] || 'search_mix';
     const platformElastic = databaseManager.getElastic(platformLower) || elastic;
 
@@ -739,8 +749,11 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
       continue;
     }
 
+    // Per-item field selection (keyword/advertiser/domain) happens below via
+    // buildSearchClause — this is just a sanity check that the platform has ANY field
+    // mapping at all; a missing mapping for one specific type is handled per-item.
     const fieldMappings = PLATFORM_FIELD_MAPPINGS[platformLower];
-    if (!fieldMappings || !fieldMappings.keyword) {
+    if (!fieldMappings) {
       logger?.warn?.(`[fetchAdsCountForKeywordsByPlatform] No field mapping for platform: ${platform}`);
       continue;
     }
@@ -760,6 +773,9 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
             const batchPromises = concurrentBatch.map(async (keyword) => {
               const keywordText = keyword.keyword;
               const scrappingHistory = keyword.scrappingHistory || [];
+              // Per-item type wins (mixed keyword/advertiser/domain batches, e.g.
+              // enrichKeywordsWithAds under type=all); else the batch-level default.
+              const itemSearchType = keyword.type ?? defaultSearchType;
 
               if (scrappingHistory.length === 0) {
                 return {
@@ -770,8 +786,28 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
                 };
               }
 
+              const searchClause = buildSearchClause(fieldMappings, itemSearchType, keywordText);
+              if (!searchClause) {
+                logger?.warn?.(`[fetchAdsCountForKeywordsByPlatform] No field mapping for type ${itemSearchType} on platform: ${platform}`);
+                return {
+                  keyword: keywordText,
+                  scrappingHistory,
+                  total_ads_count: 0,
+                  history_with_counts: scrappingHistory.map(run => ({
+                    startTime: run.startTime,
+                    endTime: run.endTime,
+                    ads_count: 0
+                  }))
+                };
+              }
+
               try {
-                const timeWindowRanges = scrappingHistory.map(run => {
+                // One filter-aggregation PER time window — gives the REAL ad count
+                // matched inside each specific window, instead of a single combined
+                // count() mathematically split evenly across the runs. size:0 skips
+                // fetching hits entirely; only the aggregation buckets are needed.
+                const aggs = {};
+                scrappingHistory.forEach((run, index) => {
                   let startStr = formatTimestampString(JSON.stringify(run.startTime));
                   let endStr = formatTimestampString(JSON.stringify(run.endTime));
 
@@ -781,11 +817,13 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
                     endStr = convertToUnixSeconds(endStr);
                   }
 
-                  return {
-                    range: {
-                      [timestampField]: {
-                        gte: startStr,
-                        lte: endStr
+                  aggs[`tw_${index}`] = {
+                    filter: {
+                      range: {
+                        [timestampField]: {
+                          gte: startStr,
+                          lte: endStr
+                        }
                       }
                     }
                   };
@@ -794,46 +832,22 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
                 const esQuery = {
                   index: indexName,
                   body: {
-                    query: {
-                      bool: {
-                        filter: [
-                          {
-                            bool: {
-                              should: timeWindowRanges,
-                              minimum_should_match: 1
-                            }
-                          }
-                        ],
-                        must: [
-                          {
-                            multi_match: {
-                              query: keywordText,
-                              type: 'phrase',
-                              fields: fieldMappings.keyword
-                            }
-                          }
-                        ]
-                      }
-                    }
+                    size: 0,
+                    track_total_hits: false,
+                    query: { bool: { must: [searchClause] } },
+                    aggs
                   }
                 };
 
                 console.log(JSON.stringify(esQuery, null, 2));
 
-                const esResult = await platformElastic.count(esQuery);
-                const totalCount = esResult.count || esResult.body?.count || 0;
+                const esResult = await platformElastic.search(esQuery);
+                const resultAggs = esResult.aggregations || esResult.body?.aggregations || {};
 
+                let totalCount = 0;
                 const history_with_counts = scrappingHistory.map((run, index) => {
-                  let adsCount = 0;
-                  const historyLength = scrappingHistory.length;
-                  const baseCount = Math.floor(totalCount / historyLength);
-                  const remainder = totalCount % historyLength;
-
-                  if (index < remainder) {
-                    adsCount = baseCount + 1;
-                  } else {
-                    adsCount = baseCount;
-                  }
+                  const adsCount = resultAggs[`tw_${index}`]?.doc_count || 0;
+                  totalCount += adsCount;
 
                   return {
                     startTime: run.startTime,
@@ -902,7 +916,7 @@ async function fetchAdsCountForMultipleKeywordsFast(elastic, platformKeywordMap,
   const platformPromises = [];
 
   for (const [platform, keywords] of Object.entries(platformKeywordMap)) {
-    const platformLower = platform.toLowerCase();
+    const platformLower = normalizePlatformKey(platform);
     const indexName = PLATFORM_INDEX_MAP[platformLower] || 'search_mix';
     const platformElastic = databaseManager.getElastic(platformLower) || elastic;
 
