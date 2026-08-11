@@ -213,6 +213,18 @@ describe("AdFilterBar > ad type filter dropdown", () => {
     fireEvent.click(getByTestId("filter-ic").closest("button"));
     expect(getByText("Gif")).toBeInTheDocument();
   });
+  it("AdMob-only mode shows friendly labels instead of raw enum values", () => {
+    const { getByTestId, getByText, queryByText } = render(
+      <AdFilterBar
+        {...baseProps}
+        sdui={{ ...baseSdui, activePlatforms: ["admob"] }}
+      />,
+    );
+    fireEvent.click(getByTestId("filter-ic").closest("button"));
+    expect(getByText("Webview Banner")).toBeInTheDocument();
+    expect(getByText("Interstitial Or Native")).toBeInTheDocument();
+    expect(queryByText("WEBVIEW_BANNER")).toBeNull();
+  });
   it("matches ad_type_filter id", () => {
     const config = { navbar: [{ filters: [{ _id: "ad_type_filter", options: [{ label: "x", value: "x" }] }] }] };
     const { getByTestId, getByText } = render(

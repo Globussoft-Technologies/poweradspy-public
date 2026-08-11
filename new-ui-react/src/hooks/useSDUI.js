@@ -265,7 +265,7 @@ export function useSDUI() {
     }, [applyConfig]);
 
     // ── Re-fetch config when platforms change ─────────────────────────────
-    const lastConfigPlatformKeyRef = useRef(JSON.stringify(activePlatforms));
+    const lastConfigPlatformKeyRef = useRef(null);
     useEffect(() => {
         // The initial unfiltered fetch owns bootstrap. A ref keyed by the real
         // selection remains correct when StrictMode replays effect setup.
@@ -277,7 +277,10 @@ export function useSDUI() {
         let cancelled = false;
         const reload = async () => {
             try {
-                const cfg = await fetchSDUIConfig({ skipCache: true });
+                const cfg = await fetchSDUIConfig({
+                    skipCache: true,
+                    platforms: activePlatforms,
+                });
                 /* v8 ignore next -- cancelled-during-reload race (unmount mid-refetch) is a defensive guard */
                 if (!cancelled) applyConfig(cfg);
             } catch (err) {
@@ -297,7 +300,7 @@ export function useSDUI() {
         applyConfig(freshConfig);
     }, [applyConfig]);
 
-    useSDUIPolling(config?.config_version || 0, handleConfigChanged);
+    useSDUIPolling(config?.config_version || 0, handleConfigChanged, activePlatforms);
 
     // ── Persist filterValues + activePlatforms to localStorage ──────────────
     useEffect(() => {

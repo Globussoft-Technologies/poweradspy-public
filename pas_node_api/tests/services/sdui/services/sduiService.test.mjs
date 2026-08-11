@@ -20,6 +20,19 @@ require.cache[seedPath] = {
   exports: { buildSDUIDocuments: buildSDUIDocumentsSpy },
 };
 
+// Mock DatabaseManager so AdMob live-option hydration can be exercised without
+// hitting a real SQL/Elastic backend.
+const dbManagerPath = require.resolve("../../../../src/database/DatabaseManager");
+const getSQLSpy = vi.fn();
+const getElasticSpy = vi.fn();
+require.cache[dbManagerPath] = {
+  id: dbManagerPath, filename: dbManagerPath, loaded: true,
+  exports: {
+    getSQL: getSQLSpy,
+    getElastic: getElasticSpy,
+  },
+};
+
 function mockDB(docs) {
   return {
     collection() {
@@ -30,10 +43,47 @@ function mockDB(docs) {
   };
 }
 
+function mockAdmobSql() {
+  const query = vi.fn(async (sql) => {
+    if (sql.includes("FROM mob_source_apps")) {
+      return [
+        { value: "Cricket App", doc_count: 7 },
+        { value: "CREX", doc_count: 39 },
+      ];
+    }
+    if (sql.includes("FROM mob_ad_sub_networks")) {
+      return [{ value: "gdn", doc_count: 1 }];
+    }
+    if (sql.includes("SELECT MIN(source) AS value")) {
+      return [{ value: "android", doc_count: 2 }];
+    }
+    if (sql.includes("SELECT MIN(ad_position) AS value")) {
+      return [
+        { value: "middle", doc_count: 1 },
+        { value: "bottom", doc_count: 1 },
+      ];
+    }
+    if (sql.includes("SELECT MIN(ad_sub_position) AS value")) {
+      return [{ value: "bottom", doc_count: 1 }];
+    }
+    if (sql.includes("SELECT MIN(ad_image_size) AS value")) {
+      return [{ value: "300*250", doc_count: 1 }];
+    }
+    return [];
+  });
+
+  getSQLSpy.mockReturnValue({ query });
+  return query;
+}
+
 let svc;
 beforeEach(() => {
   getDBSpy.mockReset();
   buildSDUIDocumentsSpy.mockClear();
+  getSQLSpy.mockReset();
+  getElasticSpy.mockReset();
+  getSQLSpy.mockReturnValue(null);
+  getElasticSpy.mockReturnValue(null);
   const sutPath = require.resolve("../../../../src/services/sdui/services/sduiService");
   delete require.cache[sutPath];
   svc = require("../../../../src/services/sdui/services/sduiService");
@@ -87,14 +137,14 @@ describe("services/sdui/services/sduiService > getSDUIConfig", () => {
 });
 
 describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
-  it("returns config unchanged when platforms is empty/missing", () => {
+  it("returns config unchanged when platforms is empty/missing", async () => {
     const config = { searchbar: [{}], navbar: [{}], sidebar: [{}] };
-    expect(svc.filterConfigByPlatforms(config, [])).toBe(config);
-    expect(svc.filterConfigByPlatforms(config, null)).toBe(config);
-    expect(svc.filterConfigByPlatforms(config, undefined)).toBe(config);
+    expect(await svc.filterConfigByPlatforms(config, [])).toBe(config);
+    expect(await svc.filterConfigByPlatforms(config, null)).toBe(config);
+    expect(await svc.filterConfigByPlatforms(config, undefined)).toBe(config);
   });
 
-  it("uses platforms doc matrix to whitelist sidebar IDs", () => {
+  it("uses platforms doc matrix to whitelist sidebar IDs", async () => {
     const config = {
       navbar: [
         {
@@ -109,11 +159,12 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
         { _id: "sb4" }, // not whitelisted for facebook or youtube
       ],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook", "youtube"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook", "youtube"]);
     expect(out.sidebar.map(d => d._id).sort()).toEqual(["sb1", "sb2", "sb3"]);
   });
 
-  it("returns only the approved AdMob sidebar filters", () => {
+  it("returns only the approved AdMob sidebar filters", async () => {
+    mockAdmobSql();
     const makeFilter = (id, value) => ({
       _id: id,
       platform_applicability: ["google"],
@@ -135,7 +186,7 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
       ],
     };
 
-    const out = svc.filterConfigByPlatforms(config, ["AdMob"]);
+    const out = await svc.filterConfigByPlatforms(config, ["AdMob"]);
     expect(out.sidebar.map((doc) => doc._id)).toEqual([
       "country", "source", "ad_position", "ad_sub_position", "image_size", "source_app", "admob_network",
     ]);
@@ -147,16 +198,90 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
     expect(network.filters[0].options[0].value).toBe("gdn");
   });
 
-  it("when matrix is empty, sidebar docs pass through unchanged", () => {
+  it("hydrates AdMob sidebar data when admob is selected with another platform", async () => {
+    mockAdmobSql();
+    const config = {
+      navbar: [{
+        _id: "platforms",
+        filters: [{
+          platform_filter_matrix: {
+            facebook: ["fb_doc"],
+            admob: ["source_app"],
+          },
+        }],
+      }],
+      sidebar: [
+        { _id: "fb_doc" },
+        {
+          _id: "source_app",
+          title: "SOURCE APP",
+          filters: [{
+            _id: "source_app_filter",
+            options: [],
+          }],
+        },
+      ],
+    };
+
+    const out = await svc.filterConfigByPlatforms(config, ["facebook", "admob"]);
+    expect(out.sidebar.map((doc) => doc._id).sort()).toEqual([
+      "admob_network",
+      "fb_doc",
+      "source_app",
+    ]);
+
+    const sourceApp = out.sidebar.find((doc) => doc._id === "source_app");
+    expect(sourceApp.filters[0].options.length).toBeGreaterThan(0);
+  });
+
+  it("keeps shared ad_position options and adds AdMob live values without widening other platforms", async () => {
+    mockAdmobSql();
+    const config = {
+      navbar: [{
+        _id: "platforms",
+        filters: [{
+          platform_filter_matrix: {
+            facebook: ["fb_doc", "ad_position"],
+            admob: ["ad_position"],
+          },
+        }],
+      }],
+      sidebar: [
+        { _id: "fb_doc" },
+        {
+          _id: "ad_position",
+          title: "AD POSITION",
+          filters: [{
+            _id: "ad_position_filter",
+            options: [
+              { _id: "pos_feed", label: "News Feed", value: "FEED", platform_applicability: "all" },
+              { _id: "pos_side", label: "Side Column", value: "SIDE", platform_applicability: "all" },
+              { _id: "pos_video", label: "Video Feed", value: "VIDEOFEED", platform_applicability: ["facebook"] },
+            ],
+          }],
+        },
+      ],
+    };
+
+    const out = await svc.filterConfigByPlatforms(config, ["facebook", "admob"]);
+    const adPosition = out.sidebar.find((doc) => doc._id === "ad_position");
+    const values = adPosition.filters[0].options.map((option) => option.value);
+
+    expect(values).toEqual(expect.arrayContaining(["FEED", "SIDE", "VIDEOFEED", "middle", "bottom"]));
+    expect(values).not.toContain("instagram");
+    expect(adPosition.filters[0].options.find((option) => option.value === "FEED").platform_applicability).toBe("all");
+  });
+
+  it("when matrix is empty, sidebar docs pass through unchanged", async () => {
     const config = {
       navbar: [{ _id: "platforms", filters: [{}] }],
       sidebar: [{ _id: "sb1" }, { _id: "sb2" }],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.sidebar).toHaveLength(2);
   });
 
-  it("filters out filter entries whose platform_applicability doesn't match", () => {
+  it("filters out filter entries whose platform_applicability doesn't match", async () => {
     const config = {
       sidebar: [
         {
@@ -171,12 +296,12 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
         },
       ],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     const optionIds = out.sidebar[0].filters.flatMap(f => f.options.map(o => o.id));
     expect(optionIds).toEqual(["o1", "o3", "o4", "o5"]);
   });
 
-  it("filters options within a filter by platform_applicability", () => {
+  it("filters options within a filter by platform_applicability", async () => {
     const config = {
       sidebar: [
         {
@@ -192,11 +317,11 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
         },
       ],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.sidebar[0].filters[0].options.map(o => o.id)).toEqual(["o1", "o3"]);
   });
 
-  it("filters nested children by platform_applicability", () => {
+  it("filters nested children by platform_applicability", async () => {
     const config = {
       sidebar: [
         {
@@ -213,19 +338,19 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
         },
       ],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.sidebar[0].filters[0].options[0].children.map(c => c.id)).toEqual(["c1"]);
   });
 
-  it("filter with no options key passes through unchanged", () => {
+  it("filter with no options key passes through unchanged", async () => {
     const config = {
       sidebar: [{ _id: "s1", filters: [{ /* no options */ id: "f1" }] }],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.sidebar[0].filters[0].id).toBe("f1");
   });
 
-  it("option with no children passes through unchanged", () => {
+  it("option with no children passes through unchanged", async () => {
     const config = {
       sidebar: [{
         _id: "s1",
@@ -234,11 +359,11 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
         }],
       }],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.sidebar[0].filters[0].options[0].id).toBe("o1");
   });
 
-  it("drops filters whose options end up empty after filtering", () => {
+  it("drops filters whose options end up empty after filtering", async () => {
     const config = {
       sidebar: [{
         _id: "s1",
@@ -252,11 +377,11 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
         ],
       }],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.sidebar[0].filters).toHaveLength(1);
   });
 
-  it("drops docs whose filters end up empty after filtering", () => {
+  it("drops docs whose filters end up empty after filtering", async () => {
     const config = {
       sidebar: [
         {
@@ -268,11 +393,11 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
         { _id: "s2" /* no filters at all → kept */ },
       ],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.sidebar.map(d => d._id)).toEqual(["s2"]);
   });
 
-  it("docs in non-sidebar types skip the allowedSidebarIds check", () => {
+  it("docs in non-sidebar types skip the allowedSidebarIds check", async () => {
     const config = {
       navbar: [
         { _id: "platforms", filters: [{ platform_filter_matrix: { facebook: ["sb1"] } }] },
@@ -280,7 +405,7 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
       ],
       sidebar: [],
     };
-    const out = svc.filterConfigByPlatforms(config, ["facebook"]);
+    const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     expect(out.navbar.find(d => d._id === "other_navbar")).toBeDefined();
   });
 });

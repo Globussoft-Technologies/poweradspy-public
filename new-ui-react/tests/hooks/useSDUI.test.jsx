@@ -776,7 +776,10 @@ describe("useSDUI > platform re-fetch effect", () => {
     fetchSpy.mockResolvedValue(makeConfig());
     act(() => { result.current.setActivePlatforms(["facebook"]); });
     await act(async () => { await Promise.resolve(); });
-    expect(fetchSpy).toHaveBeenCalledWith({ skipCache: true });
+    expect(fetchSpy).toHaveBeenCalledWith({
+      skipCache: true,
+      platforms: ["facebook"],
+    });
   });
 
   it("re-fetch error → warn logged", async () => {
@@ -797,7 +800,10 @@ describe("useSDUI > platform re-fetch effect", () => {
     fetchSpy.mockResolvedValue(makeConfig());
     act(() => { result.current.setActivePlatforms(["facebook", "instagram", "google"]); });
     await act(async () => { await Promise.resolve(); });
-    expect(fetchSpy).toHaveBeenCalledWith({ skipCache: true });
+    expect(fetchSpy).toHaveBeenCalledWith({
+      skipCache: true,
+      platforms: ["facebook", "instagram", "google"],
+    });
   });
 });
 

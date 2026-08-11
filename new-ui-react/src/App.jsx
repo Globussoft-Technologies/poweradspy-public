@@ -1520,7 +1520,7 @@ const App = () => {
 
         // Fire daily keyword request only when triggered by an explicit search submit (ref set in handleSearch)
         if (page === 0 && lastDailyKeywordRef.current) {
-          const { query, si, userEmail, network, country } = lastDailyKeywordRef.current;
+          const { query, si, userEmail, network, country, GT } = lastDailyKeywordRef.current;
           lastDailyKeywordRef.current = null; // clear immediately so filter changes don't re-trigger
           const adsCount = data?.meta?.total?.facebook ?? data?.ads?.filter(a => a.network === 'facebook')?.length ?? 0;
           const adsFound = adsCount > 0;
@@ -1531,6 +1531,7 @@ const App = () => {
             email: userEmail,
             ads_count: adsCount,
             country,         // selected country code(s) or null
+            GT,              // true only when Google Transparency was ON for an all/google search
           }).then((res) => {
             if (res?.data?.status === 'skip') return;
             if (!adsFound) {
@@ -1799,7 +1800,16 @@ const App = () => {
       // combobox stores) to ISO 2-letter codes, stored with the term (null when none).
       const selCountries = sdui.selCountries || sdui.filterValues?.country_filter || [];
       const country = labelsToCountryCodes(selCountries, findCountryOptions(sdui.config));
-      lastDailyKeywordRef.current = { query, si, userEmail, network, country };
+      // Google Transparency: flagged only when the toggle is ON **and** the search actually
+      // covers Google — i.e. the "All" tab or an explicit network list containing google.
+      // Same loose truthiness as buildSearchPayload (true | 1 | 'true') since the toggle can
+      // come back from localStorage as a non-boolean.
+      const _gtRaw = sdui.filterValues?.google_transparency_ads;
+      const _gtOn = _gtRaw === true || _gtRaw === 1 || _gtRaw === 'true';
+      const coversGoogle = network === 'all' ||
+        (Array.isArray(network) && network.includes('google'));
+      const GT = _gtOn && coversGoogle;
+      lastDailyKeywordRef.current = { query, si, userEmail, network, country, GT };
     }
   }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute, showToast]);
 

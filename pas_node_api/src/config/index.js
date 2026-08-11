@@ -356,6 +356,7 @@ const config = {
   // ─── NEW keyword-search store (MongoDB) — additive, see docs/KEYWORD_SEARCH_REVAMP_MANIFEST.md ───
   keywordSearch: {
     enabled: getVal(fileConfig.keywordSearch?.enabled, 'KEYWORD_SEARCH_ENABLED', toBool) !== false,
+    scrapeRequestUrl: getVal(fileConfig.keywordSearch?.scrapeRequestUrl, 'KEYWORD_SEARCH_SCRAPE_REQUEST_URL') || '',
     mongoSlug: getVal(fileConfig.keywordSearch?.mongoSlug, 'KEYWORD_SEARCH_MONGO_SLUG') || 'facebook',
     database: getVal(fileConfig.keywordSearch?.database, 'KEYWORD_SEARCH_DATABASE') || '',
     collection: getVal(fileConfig.keywordSearch?.collection, 'KEYWORD_SEARCH_COLLECTION') || 'keyword_searches',

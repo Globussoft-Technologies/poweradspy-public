@@ -147,34 +147,94 @@ describe("services/linkedin/controllers/adInsightsController > getLinkedinAdCoun
   });
   it("503 when db.sql missing", async () => {
     expect(await getLinkedinAdCountry(
-      { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} }, { sql: null }, fakeLogger
-    )).toEqual({ code: 503, message: "SQL connection not available" });
+      { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} },
+      { sql: null, elastic: { search: vi.fn() } },
+      fakeLogger
+    )).toEqual({ code: 503, message: "SQL or Elastic connection not available" });
   });
-  it("400 when no rows", async () => {
-    const db = { sql: { query: vi.fn(async () => []) } };
+  it("503 when db.elastic missing", async () => {
+    expect(await getLinkedinAdCountry(
+      { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} },
+      { sql: { query: vi.fn() }, elastic: null },
+      fakeLogger
+    )).toEqual({ code: 503, message: "SQL or Elastic connection not available" });
+  });
+  it("400 when linkedin_ad_id is not numeric", async () => {
+    const db = {
+      sql: { query: vi.fn() },
+      elastic: { search: vi.fn() },
+    };
+    expect(await getLinkedinAdCountry(
+      { body: { linkedin_ad_id: "abc", user_id: "u" }, query: {} }, db, fakeLogger
+    )).toEqual({ code: 400, message: "Invalid linkedin_ad_id" });
+  });
+  it("400 when ES returns no hits", async () => {
+    const db = {
+      sql: { query: vi.fn() },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [] } })) },
+    };
     expect(await getLinkedinAdCountry(
       { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
-    )).toEqual({ code: 400, message: "No data found." });
+    )).toEqual({ code: 400, message: "No data found.", data: null });
   });
   it("200 with capitalized + iso fixup", async () => {
-    const db = { sql: { query: vi.fn(async () => [
-      { country: "germany", iso: "DE" },
-      { country: "Czechia", iso: null },
-      { country: "Russia", iso: "RU_OLD" },
-      { country: "Congo", iso: "null" },
-      { country: null, iso: null },
-    ])}};
+    const db = {
+      sql: {
+        query: vi.fn(async () => [
+          { nicename: "germany", iso: "DE" },
+          { nicename: "Czechia", iso: null },
+          { nicename: "Russia", iso: "RU_OLD" },
+          { nicename: "Congo", iso: "null" },
+          { nicename: null, iso: null },
+        ])
+      },
+      elastic: {
+        search: vi.fn(async () => ({ hits: { hits: [{ _source: { countries: ["germany", "Czechia", "Russia", "Congo", null] } }] } }))
+      },
+    };
     const out = await getLinkedinAdCountry(
       { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     );
+    expect(out.code).toBe(200);
     expect(out.data[0]).toEqual({ country: "Germany", iso: "DE" });
     expect(out.data[1].iso).toBe("CZ");
     expect(out.data[2].iso).toBe("RU");
-    expect(out.data[3].iso).toBe("CD");
+    expect(out.data[3].iso).toBe("CG");
     expect(out.data[4].country).toBeNull();
   });
+  it("200 when SQL lookup misses some countries", async () => {
+    const db = {
+      sql: {
+        query: vi.fn(async () => [
+          { nicename: "germany", iso: "DE" },
+        ])
+      },
+      elastic: {
+        search: vi.fn(async () => ({ hits: { hits: [{ _source: { countries: ["germany", "unknownland"] } }] } }))
+      },
+    };
+    const out = await getLinkedinAdCountry(
+      { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
+    );
+    expect(out.data).toEqual([
+      { country: "Germany", iso: "DE" },
+      { country: "Unknownland", iso: null },
+    ]);
+  });
+  it("500 on ES throw", async () => {
+    const db = {
+      sql: { query: vi.fn() },
+      elastic: { search: vi.fn(async () => { throw new Error("es"); }) },
+    };
+    expect((await getLinkedinAdCountry(
+      { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
+    )).code).toBe(500);
+  });
   it("500 on SQL throw", async () => {
-    const db = { sql: { query: vi.fn(async () => { throw new Error("db"); }) } };
+    const db = {
+      sql: { query: vi.fn(async () => { throw new Error("db"); }) },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: { countries: ["germany"] } }] } })) },
+    };
     expect((await getLinkedinAdCountry(
       { body: { linkedin_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
     )).code).toBe(500);

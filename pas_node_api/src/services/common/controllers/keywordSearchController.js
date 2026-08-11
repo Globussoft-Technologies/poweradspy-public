@@ -16,6 +16,7 @@
  */
 
 const fs = require('fs');
+const axios = require('axios');
 const { ObjectId } = require('mongodb');
 const dbManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
@@ -43,6 +44,15 @@ function normCountry(raw) {
     .map((c) => String(c).trim().toUpperCase())
     .filter((c) => c && c !== 'NA');
   return list.length ? [...new Set(list)] : null; // dedupe, preserve order
+}
+
+// Normalize the optional Google-Transparency flag attached to a search. The frontend sends
+// `GT: true` ONLY when the Google Transparency Ads filter was ON for a search covering google
+// ('all' or a network list containing google) — omitted (or falsy) otherwise. Sticky on the
+// doc (see the store pipeline): once a term has been searched with GT on, it stays true so a
+// later plain search never wipes the flag the Google scraper relies on.
+function normGT(raw) {
+  return raw === true || raw === 'true' || raw === 1 || raw === '1';
 }
 
 // Resolve a store request's network(s) → array of valid slugs.
@@ -208,6 +218,10 @@ async function storeKeywordSearch(req, res) {
     // treated as an empty set on both write (§store) and read (§work).
     const country = normCountry(body.country);
 
+    // Google Transparency flag — see normGT(). Only meaningful for a search covering
+    // google; still normalized here regardless so the doc pipeline can accumulate it.
+    const gt = normGT(body.GT);
+
     const valueNorm = value.toLowerCase();
     const now = new Date();
     const cap = config.keywordSearch.searchDatesCap;
@@ -259,6 +273,10 @@ async function storeKeywordSearch(req, res) {
                 in: { $cond: [{ $gt: [{ $size: '$$merged' }, 0] }, '$$merged', null] },
               },
             },
+            // Google Transparency flag — sticky OR onto the existing value (see normGT()):
+            // once true it never reverts, so the Google scraper can rely on it regardless of
+            // which later search (with or without the filter) touched this term.
+            GT: { $or: [{ $ifNull: ['$GT', false] }, { $literal: gt }] },
             ...netActiveSet, // networkState.<net>.isActive = true for each searched network
           },
         },
@@ -277,7 +295,36 @@ async function storeKeywordSearch(req, res) {
       catch (e) { log.warn('user cap enforcement failed', { error: e.message }); }
     }
 
-    return res.json({ code: 200, message: 'keyword search stored', data: { status, type, value, networks: netList } });
+    // Trigger the Google scrape request for keyword/advertiser/domain searches.
+    // Fires when the resolved network list contains google OR when the user
+    // explicitly asked for "all" networks. Awaited (up to the 5s timeout) so its
+    // response can be echoed on the store response below; a failure/timeout is
+    // logged and never fails the store itself — scrapeRequest stays null.
+    const isGoogleNetwork = netList.includes('google');
+    const isAllRequest = String(body.network || '').trim().toLowerCase() === 'all';
+    const scrapeRequestUrl = config.keywordSearch.scrapeRequestUrl;
+    let scrapeRequest = null;
+   
+    if ((isGoogleNetwork || isAllRequest) && type && scrapeRequestUrl) {
+      try {
+        const scrapeRes = await axios.post(scrapeRequestUrl, [
+          {
+            name: value,
+            max_ads: 10,
+            priority: true,
+            type,
+          },
+        ], {
+          timeout: 5000,
+          headers: { 'Content-Type': 'application/json' },
+        });
+        scrapeRequest = scrapeRes.data;
+      } catch (err) {
+        log.warn('scrape-request trigger failed', { value, type, error: err.message });
+      }
+    }
+
+    return res.json({ code: 200, message: 'keyword search stored', data: { status, type, value, networks: netList, GT: gt, scrapeRequest } });
   } catch (err) {
     log.error('storeKeywordSearch failed', { error: err.message });
     return res.status(500).json({ code: 500, message: err.message, data: null });
@@ -397,6 +444,9 @@ async function claimOne(col, { type, net, isPriority, owner, today, now, synthet
           // Country filter the term was searched with (array of codes) — NULL when none was
           // selected OR the doc predates this field (existing data never throws).
           country: doc.country ?? null,
+          // Google Transparency flag — true when this term was ever searched with the
+          // Transparency filter ON (see normGT()); false for docs that predate the field.
+          GT: doc.GT === true,
           users: Array.isArray(doc.userInfos) && doc.userInfos.length
             ? doc.userInfos
             : (doc.users || []).map(e => ({ id: null, username: '', email: e })),
@@ -840,10 +890,156 @@ async function insertSyntheticKeywords(req, res) {
   }
 }
 
+// ── POST /api/v1/common/keyword-search/scraping-history — append a completed
+// scraping session to an existing keyword document. No JWT (internal / scraper).
+// Body: {
+//   keyword  (or value)   string  required — the term as searched
+//   type                  string|number  required — keyword|advertiser|domain (or 1|2|3)
+//   network               string  required — concrete network slug (e.g. facebook)
+//   start_time            ISO     optional — defaults to now
+//   end_time              ISO     optional — defaults to now
+//   owner                 string  required — scraper/plugin name
+//   mode                  string  required — 'priority' | 'daily'
+//   status                string  optional — 'completed' | 'no_ads_found' | 'failed' (default completed)
+//   ads_count             number  optional
+// }
+async function addScrapingHistory(req, res) {
+  try {
+    if (!featureGuard(res)) return;
+    const col = getCollection();
+    if (!col) {
+      return res.status(503).json({
+        code: 503,
+        message: `Mongo unavailable for slug '${config.keywordSearch.mongoSlug}'`,
+        data: null,
+      });
+    }
+    await ensureIndexes(col);
+
+    const body = req.body || {};
+    const value = String(body.keyword || body.value || '').trim();
+    if (!value) {
+      return res.status(400).json({ code: 400, message: "'keyword' (or 'value') is required", data: null });
+    }
+
+    const type = normType(body.type);
+    if (!type) {
+      return res.status(400).json({
+        code: 400,
+        message: "'type' is invalid: use keyword|advertiser|domain (or 1|2|3)",
+        data: null,
+      });
+    }
+
+    const network = String(body.network || '').trim().toLowerCase();
+    if (!network) {
+      return res.status(400).json({ code: 400, message: "'network' is required", data: null });
+    }
+    // if (!config.keywordSearch.networks.includes(network)) {
+    //   return res.status(400).json({ code: 400, message: `unknown network '${network}'`, data: null });
+    // }
+
+    const owner = String(body.owner || '').trim();
+    if (!owner) {
+      return res.status(400).json({ code: 400, message: "'owner' is required", data: null });
+    }
+
+    const mode = String(body.mode || '').trim().toLowerCase();
+
+    const allowedStatuses = ['completed', 'no_ads_found', 'failed'];
+    const rawStatus = String(body.status || 'completed').trim().toLowerCase();
+    const finalStatus = allowedStatuses.includes(rawStatus) ? rawStatus : 'completed';
+
+    const startTime = body.start_time ? new Date(body.start_time) : null;
+    const endTime = body.end_time ? new Date(body.end_time) : null;
+    if (body.start_time && (!startTime || isNaN(startTime.getTime()))) {
+      return res.status(400).json({ code: 400, message: "invalid 'start_time'", data: null });
+    }
+    if (body.end_time && (!endTime || isNaN(endTime.getTime()))) {
+      return res.status(400).json({ code: 400, message: "invalid 'end_time'", data: null });
+    }
+
+    const now = new Date();
+    const sessionStart = startTime || now;
+    const sessionEnd = endTime || now;
+
+    const tz = config.notifications?.timezone || 'Asia/Kolkata';
+    const sessionDate = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(sessionEnd);
+
+    const valueNorm = value.toLowerCase();
+    const scrapeId = new ObjectId();
+
+    const session = {
+      _id: scrapeId,
+      network,
+      type,
+      mode,
+      owner,
+      date: sessionDate,
+      startTime: sessionStart,
+      endTime: sessionEnd,
+      status: finalStatus,
+    };
+    if (body.ads_count != null) session.adsCount = Number(body.ads_count);
+
+    const lastScrape = {
+      date: sessionDate,
+      status: finalStatus,
+      owner,
+    };
+    if (body.ads_count != null) lastScrape.adsCount = Number(body.ads_count);
+
+    const result = await col.findOneAndUpdate(
+      { type, valueNorm },
+      {
+        $set: {
+          updatedAt: now,
+          [`networkState.${network}.lastScrape`]: lastScrape,
+        },
+        $push: {
+          scrapping_status: {
+            $each: [session],
+            $slice: -config.keywordSearch.scrappingStatusRetention,
+          },
+        },
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      return res.status(404).json({
+        code: 404,
+        message: `keyword '${value}' (type:${type}) not found — store it first via /keyword-search or /keyword-search/synthetic`,
+        data: null,
+      });
+    }
+
+    return res.json({
+      code: 200,
+      message: 'scraping history added',
+      data: {
+        docId: result._id,
+        scrapeId,
+        type: result.type,
+        value: result.value,
+        network,
+        mode,
+        status: finalStatus,
+        startTime: sessionStart,
+        endTime: sessionEnd,
+      },
+    });
+  } catch (err) {
+    log.error('addScrapingHistory failed', { error: err.message });
+    return res.status(500).json({ code: 500, message: err.message, data: null });
+  }
+}
+
 module.exports = {
   storeKeywordSearch,
   scraperWork,
   insertSyntheticKeywords,
+  addScrapingHistory,
   enforceCap,
   recoverStaleClaims,
 };

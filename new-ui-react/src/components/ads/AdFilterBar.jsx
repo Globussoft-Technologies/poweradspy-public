@@ -35,19 +35,19 @@ const SORT_TO_PLAN_ACCESS_ID = {
   domain_reg: 'domain_reg_sort',
   domain_reg_sort: 'domain_reg_sort',
 };
-
+// added as fallback for the ad_types 
 const ADMOB_AD_TYPE_OPTIONS = [
-  "BANNER",
-  "WEBVIEW_BANNER",
-  "INTERSTITIAL_OR_NATIVE",
-  "INTERSTITIAL_WEBVIEW",
-  "NATIVE_OR_UNKNOWN",
-  "REWARDED_OR_VIDEO",
-  "PLAY_STORE_AD",
-  "VISUAL_BANNER",
-  "VISUAL_NATIVE_AD",
-  "UNKNOWN",
-].map((value) => ({ label: value, value }));
+  { label: "Banner", value: "BANNER" },
+  { label: "Webview Banner", value: "WEBVIEW_BANNER" },
+  { label: "Interstitial Or Native", value: "INTERSTITIAL_OR_NATIVE" },
+  { label: "Interstitial Webview", value: "INTERSTITIAL_WEBVIEW" },
+  { label: "Native Or Unknown", value: "NATIVE_OR_UNKNOWN" },
+  { label: "Rewarded Or Video", value: "REWARDED_OR_VIDEO" },
+  { label: "Play Store Ad", value: "PLAY_STORE_AD" },
+  { label: "Visual Banner", value: "VISUAL_BANNER" },
+  { label: "Visual Native Ad", value: "VISUAL_NATIVE_AD" },
+  { label: "Unknown", value: "UNKNOWN" },
+];
 
 export const resolveSortPlanAccessId = (label, value) => {
   const normalize = (input) => String(input ?? '').toLowerCase().trim().replace(/[\s-]+/g, '_');

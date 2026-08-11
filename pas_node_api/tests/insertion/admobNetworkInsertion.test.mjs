@@ -148,4 +148,22 @@ describe('isolated AdMob insertion contract', () => {
       ] } },
     ]));
   });
+
+  it('normalizes AdMob ad type filters to lowercase so BANNER matches the indexed keyword', async () => {
+    let searchBody;
+    const elastic = {
+      indexName: 'mob_search_mix',
+      search: async ({ body }) => {
+        searchBody = body;
+        return { body: { hits: { total: { value: 0 }, hits: [] } } };
+      },
+    };
+
+    const result = await searchAds({ body: { type: ['BANNER'] } }, { elastic }, { error() {} });
+
+    expect(result.code).toBe(200);
+    expect(searchBody.query.bool.filter).toEqual(expect.arrayContaining([
+      { terms: { type: ['banner'] } },
+    ]));
+  });
 });

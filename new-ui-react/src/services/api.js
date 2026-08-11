@@ -3027,7 +3027,10 @@ export const publicSearchAds = async (skip = 0, network = 'all') => {
 // network: 'all' or an array/comma-list of platform slugs.
 // `country`: the selected country-filter code(s) (string or array), or null/omitted when
 // no country filter is applied — the backend stores it on the term and echoes it to scrapers.
-export const saveKeywordSearch = async ({ value, type, network, email, ads_count, country }) => {
+// `GT`: true only when the Google Transparency filter was ON for a search that covers Google
+// ('all' or a network list containing google). Sent ONLY in that case — omitted otherwise, so
+// a non-transparency search carries no GT key at all.
+export const saveKeywordSearch = async ({ value, type, network, email, ads_count, country, GT }) => {
   const token = getPASToken();
   if (!token) return null; // authenticated users only
   const res = await fetch(`${PAS_API_BASE}/api/v1/common/keyword-search`, {
@@ -3036,7 +3039,15 @@ export const saveKeywordSearch = async ({ value, type, network, email, ads_count
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ value, type, network, email, ads_count, country: country ?? null }),
+    body: JSON.stringify({
+      value,
+      type,
+      network,
+      email,
+      ads_count,
+      country: country ?? null,
+      ...(GT === true ? { GT: true } : {}),
+    }),
   });
   await checkFor401(res);
   if (!res.ok) return null;

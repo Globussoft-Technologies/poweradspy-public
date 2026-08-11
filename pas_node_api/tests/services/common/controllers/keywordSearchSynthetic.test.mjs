@@ -98,12 +98,18 @@ function installMongo(col) {
 }
 
 let savedAutoRecover;
+let savedScrapeRequestUrl;
 beforeEach(() => {
   vi.restoreAllMocks();
   savedAutoRecover = config.keywordSearch.autoRecoverStale;
   config.keywordSearch.autoRecoverStale = false; // keep scraperWork tests focused on the claim
+  savedScrapeRequestUrl = config.keywordSearch.scrapeRequestUrl;
+  config.keywordSearch.scrapeRequestUrl = null; // do not hit real scrape API during tests
 });
-afterEach(() => { config.keywordSearch.autoRecoverStale = savedAutoRecover; });
+afterEach(() => {
+  config.keywordSearch.autoRecoverStale = savedAutoRecover;
+  config.keywordSearch.scrapeRequestUrl = savedScrapeRequestUrl;
+});
 
 // ── parser ───────────────────────────────────────────────────────────────────
 describe("keywordInput parser", () => {

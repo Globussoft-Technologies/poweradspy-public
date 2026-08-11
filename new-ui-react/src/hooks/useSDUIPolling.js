@@ -10,13 +10,24 @@ import { POLL_INTERVAL } from '../constants/sduiVersions';
  * Uses refs for callback and version to avoid re-creating the interval
  * on every render (which would cause cascading re-renders).
  */
-export function useSDUIPolling(currentConfigVersion, onConfigChanged) {
+export function useSDUIPolling(currentConfigVersion, onConfigChanged, platforms) {
     const versionRef = useRef(currentConfigVersion);
     const callbackRef = useRef(onConfigChanged);
+    const platformsRef = useRef(Array.isArray(platforms) ? platforms : []);
 
     // Keep refs up to date without re-creating the effect
     useEffect(() => { versionRef.current = currentConfigVersion; }, [currentConfigVersion]);
     useEffect(() => { callbackRef.current = onConfigChanged; }, [onConfigChanged]);
+    useEffect(() => { platformsRef.current = platforms; }, [platforms]);
+
+    const getPollConfigOptions = () => {
+        const selectedPlatforms = Array.isArray(platformsRef.current)
+            ? platformsRef.current.filter(Boolean).map((platform) => String(platform).toLowerCase())
+            : [];
+        return selectedPlatforms.length > 0
+            ? { skipCache: true, platforms: selectedPlatforms }
+            : { skipCache: true };
+    };
 
     useEffect(() => {
         const poll = async () => {
@@ -25,14 +36,14 @@ export function useSDUIPolling(currentConfigVersion, onConfigChanged) {
 
                 if (versionInfo && typeof versionInfo.config_version === 'number') {
                     if (versionInfo.config_version !== versionRef.current) {
-                        const freshConfig = await fetchSDUIConfig({ skipCache: true });
+                        const freshConfig = await fetchSDUIConfig(getPollConfigOptions());
                         if (freshConfig) callbackRef.current(freshConfig);
                     }
                     return;
                 }
 
                 // Fallback: version endpoint not available
-                const freshConfig = await fetchSDUIConfig({ skipCache: true });
+                const freshConfig = await fetchSDUIConfig(getPollConfigOptions());
                 if (freshConfig && freshConfig.config_version !== versionRef.current) {
                     callbackRef.current(freshConfig);
                 }

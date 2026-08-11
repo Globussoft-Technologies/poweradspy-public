@@ -26,7 +26,7 @@ const { syncCategory, syncAllCategories } = require('../controllers/categoryCont
 const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk } = require('../controllers/addCategoryController');
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
-const { storeKeywordSearch, scraperWork, insertSyntheticKeywords } = require('../controllers/keywordSearchController');
+const { storeKeywordSearch, scraperWork, insertSyntheticKeywords, addScrapingHistory } = require('../controllers/keywordSearchController');
 const { unscoredCreatives, storeCreativeScore, storeRunReport, getRunReports } = require('../controllers/creativeScoreController');
 const { getUserKeywordAdNotifications, markKeywordAdNotificationRead } = require('../controllers/keywordAdNotificationController');
 const { getNotifications, markNotificationsRead } = require('../controllers/notificationController');
@@ -348,6 +348,14 @@ router.post(
   '/keyword-search/synthetic',
   syntheticKwUploadMw,
   asyncHandler(insertSyntheticKeywords)
+);
+
+// API 4 — POST /api/v1/common/keyword-search/scraping-history — append a completed
+// scraping session to an existing keyword document. Body: { keyword, type, network,
+// start_time, end_time, owner, mode, status, ads_count? }. No JWT (internal/scraper).
+router.post(
+  '/keyword-search/scraping-history',
+  asyncHandler(addScrapingHistory)
 );
 
 // ─── AI creative scoring — internal/scorer endpoints (NO JWT, like keyword-search/work) ───

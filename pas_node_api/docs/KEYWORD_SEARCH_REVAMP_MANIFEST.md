@@ -130,6 +130,13 @@ A frontend search sends one of: `keyword`, `advertiser`, `domain` (plus `country
   // not have this field at all; readers treat missing as null.
   "country": ["US", "GB"],
 
+  // Google Transparency flag — true once ANY search for this term sent GT:true (the
+  // Google Transparency Ads filter was ON). Sticky: OR'd onto the existing value, so a
+  // later plain search never resets it back to false. Echoed on the /work response so the
+  // Google scraper knows to also pull from the Transparency Center for this term. Older
+  // docs may not have this field at all; readers treat missing as false.
+  "GT": false,
+
   // Which networks this term applies to (union of all networks it was searched for;
   // 'all' on POST expands to config.keywordSearch.networks). A scraper only ever
   // receives terms whose `networks` contains its network.

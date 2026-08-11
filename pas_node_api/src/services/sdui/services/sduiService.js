@@ -17,7 +17,7 @@ const ADMOB_PLATFORM_OPTION = {
   icon_type: 'url',
 };
 
-const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app'];
+const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app', 'ad_type'];
 const ADMOB_LIVE_FILTER_IDS = new Set([
   'source_filter',
   'admob_network_filter',
@@ -144,6 +144,65 @@ function formatAdmobOptionLabel(filterId, normalizedValue, rawLabel) {
 function canonicalAdmobOptionValue(filterId, normalizedValue) {
   if (filterId === 'image_size_filter') return normalizedValue.toLowerCase();
   return normalizedValue;
+}
+
+function mergeOptionPlatformApplicability(existing, incoming) {
+  const left = existing?.platform_applicability;
+  const right = incoming?.platform_applicability;
+
+  if (!left) return right;
+  if (left === 'all') return left;
+  if (!right || right === 'all') return left;
+
+  const normalized = [
+    ...(Array.isArray(left) ? left : [left]),
+    ...(Array.isArray(right) ? right : [right]),
+  ]
+    .map((value) => String(value).trim().toLowerCase())
+    .filter(Boolean);
+
+  return [...new Set(normalized)];
+}
+
+function mergeAdmobOptionLists(filterId, baseOptions = [], incomingOptions = []) {
+  const merged = [];
+  const indexByValue = new Map();
+
+  const upsert = (option, source) => {
+    const normalizedValue = normalizeAdmobFilterValue(filterId, option?.value ?? option?.label ?? option?._id);
+    if (!normalizedValue) return;
+
+    const existingIndex = indexByValue.get(normalizedValue);
+    const cloned = { ...option };
+
+    if (existingIndex !== undefined) {
+      const current = merged[existingIndex];
+      merged[existingIndex] = {
+        ...current,
+        ...cloned,
+        label: current.label ?? cloned.label,
+        value: current.value ?? cloned.value,
+        platform_applicability: mergeOptionPlatformApplicability(current, cloned),
+        selected_by_default: Boolean(current.selected_by_default || cloned.selected_by_default),
+      };
+      return;
+    }
+
+    indexByValue.set(normalizedValue, merged.length);
+    merged.push({
+      ...cloned,
+      rank: typeof cloned.rank === 'number' ? cloned.rank : merged.length + 1,
+      selected_by_default: Boolean(cloned.selected_by_default),
+    });
+  };
+
+  for (const option of baseOptions || []) upsert(option, 'base');
+  for (const option of incomingOptions || []) upsert(option, 'incoming');
+
+  return merged.map((option, index) => ({
+    ...option,
+    rank: typeof option.rank === 'number' ? option.rank : index + 1,
+  }));
 }
 
 function buildAdmobOptionsFromEntries(filterId, entries) {
@@ -412,10 +471,7 @@ async function getAdmobLiveFilterOptions() {
 }
 
 function mergeAdmobOptions(filter) {
-  const options = (filter.options || []).map((option) => ({
-    ...option,
-    platform_applicability: ['admob'],
-  }));
+  const options = (filter.options || []).map((option) => ({ ...option }));
   for (const [index, option] of (ADMOB_OPTION_DEFAULTS[filter._id] || []).entries()) {
     if (options.some((existing) => String(existing.value).toLowerCase() === option.value.toLowerCase())) continue;
     options.push({
@@ -444,9 +500,13 @@ function fallbackAdmobOptions(filter) {
 
 function resolveAdmobFilterOptions(filter, liveOptions) {
   const filterId = filter._id === 'admob_source_app_filter' ? 'source_app_filter' : filter._id;
+  const existingOptions = Array.isArray(filter.options) ? filter.options.map((option) => ({ ...option })) : [];
   const dynamicOptions = liveOptions?.optionsByFilter?.[filterId];
-  if (liveOptions?.available) return dynamicOptions || [];
-  return fallbackAdmobOptions(filter);
+  if (liveOptions?.available) {
+    const merged = mergeAdmobOptionLists(filterId, existingOptions, dynamicOptions || []);
+    return merged.length > 0 ? merged : existingOptions;
+  }
+  return existingOptions.length > 0 ? existingOptions : fallbackAdmobOptions(filter);
 }
 
 async function prepareAdmobSidebar(config) {
@@ -600,7 +660,8 @@ async function filterConfigByPlatforms(config, platforms) {
 
   const normalizedPlatforms = platforms.map((platform) => String(platform).toLowerCase());
   const isAdmobOnly = normalizedPlatforms.length === 1 && normalizedPlatforms[0] === 'admob';
-  const sourceConfig = normalizedPlatforms.length === 1 && normalizedPlatforms[0] === 'admob'
+  const hasAdmob = normalizedPlatforms.includes('admob');
+  const sourceConfig = hasAdmob
     ? await prepareAdmobSidebar(config)
     : config;
 

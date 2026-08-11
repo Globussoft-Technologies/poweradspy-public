@@ -12260,6 +12260,24 @@ paths:
                 ads_count:
                   type: integer
                   description: Used by the realTimeStore numeric threshold gate.
+                country:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items: { type: string }
+                  example: US
+                  description: >
+                    Optional country filter code(s) for this search. Accumulated (union) onto
+                    the stored term across every search — never wipes prior codes.
+                GT:
+                  type: boolean
+                  example: true
+                  description: >
+                    Optional. Send `true` only when the Google Transparency Ads filter was ON
+                    for a search covering google ('all' or a network list including google);
+                    omit otherwise. Stored as a sticky flag (OR'd onto the existing value) so
+                    the Google scraper knows to also pull from the Transparency Center for
+                    this term, and is forwarded on the real-time Google scrape trigger.
       responses:
         '200':
           description: Stored (or skipped by a gate). `data.status` = new | existing | skip.
@@ -12280,6 +12298,10 @@ paths:
                         type: array
                         items: { type: string }
                         example: [facebook, instagram]
+                      GT:
+                        type: boolean
+                        example: false
+                        description: Echoes whether this store call carried GT:true.
         '500':
           description: Server error
         '503':
@@ -12399,6 +12421,100 @@ paths:
                         mode: { type: string, example: daily }
         '400':
           description: Missing scraper header, or invalid `type` / `network`
+        '500':
+          description: Server error
+        '503':
+          description: Feature disabled or Mongo unavailable
+
+  /api/v1/common/keyword-search/scraping-history:
+    post:
+      tags:
+        - Keyword Search
+      summary: Append a scraping session to an existing keyword document
+      description: |
+        Directly records one completed scraping session in `scrapping_status[]` for an
+        existing keyword/advertiser/domain document. The term must already exist in the
+        `keyword_searches` collection — if not, store it first via
+        `POST /api/v1/common/keyword-search` (frontend) or
+        `POST /api/v1/common/keyword-search/synthetic` (bulk manual).
+
+        The session is pushed atomically and the per-network `lastScrape` denorm is
+        updated. The `scrapping_status` array stays bounded by the configured retention.
+
+        No JWT (internal / scraper-facing).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keyword, type, network, owner, mode]
+              properties:
+                keyword:
+                  type: string
+                  example: car
+                  description: The search term. `value` is accepted as an alias.
+                type:
+                  oneOf: [{ type: integer }, { type: string }]
+                  example: 1
+                  description: "1=keyword, 2=advertiser, 3=domain (numbers or words)."
+                network:
+                  type: string
+                  example: google_transparency
+                  description: Concrete network slug validated against config.keywordSearch.networks.
+                owner:
+                  type: string
+                  example: DS-01-meta-26
+                  description: Scraper/plugin name recorded as the session owner.
+                mode:
+                  type: string
+                  enum: [priority, daily]
+                  example: daily
+                status:
+                  type: string
+                  enum: [completed, no_ads_found, failed]
+                  example: completed
+                  default: completed
+                start_time:
+                  type: string
+                  format: date-time
+                  example: "2026-08-10T10:00:00Z"
+                  description: Defaults to now if omitted.
+                end_time:
+                  type: string
+                  format: date-time
+                  example: "2026-08-10T11:00:00Z"
+                  description: Defaults to now if omitted.
+                ads_count:
+                  type: integer
+                  example: 20
+                  description: Optional number of ads found; stored as `adsCount`.
+      responses:
+        '200':
+          description: Scraping history appended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: scraping history added }
+                  data:
+                    type: object
+                    properties:
+                      docId: { type: string, example: 665f1f77bcf86cd799439002 }
+                      scrapeId: { type: string, example: 665f200abcf86cd799439010 }
+                      type: { type: integer, example: 2 }
+                      value: { type: string, example: car }
+                      network: { type: string, example: facebook }
+                      mode: { type: string, example: daily }
+                      status: { type: string, example: completed }
+                      startTime: { type: string, format: date-time, example: "2026-08-10T10:00:00.000Z" }
+                      endTime: { type: string, format: date-time, example: "2026-08-10T11:00:00.000Z" }
+        '400':
+          description: Missing/invalid keyword, type, network, owner, or mode.
+        '404':
+          description: Keyword document not found — store it first.
         '500':
           description: Server error
         '503':

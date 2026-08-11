@@ -119,15 +119,51 @@ async function getLinkedinAdCountry(req, db, logger) {
   if (!p.linkedin_ad_id || !p.user_id) {
     return { code: 401, message: 'Missing parameters: linkedin_ad_id and user_id are required' };
   }
-  if (!db.sql) return { code: 503, message: 'SQL connection not available' };
+  if (!db.sql || !db.elastic) return { code: 503, message: 'SQL or Elastic connection not available' };
 
   try {
-    const rows = await db.sql.query(COUNTRY_SQL, [parseInt(p.linkedin_ad_id, 10)]);
-    if (!rows || rows.length === 0) return { code: 400, message: 'No data found.' };
+    const adId = parseInt(p.linkedin_ad_id, 10);
+    if (!Number.isFinite(adId)) {
+      return { code: 400, message: 'Invalid linkedin_ad_id' };
+    }
 
-    const resArray = rows.map(row => ({
-      country: row.country ? row.country.replace(/\b\w/g, c => c.toUpperCase()) : row.country,
-      iso: fixCountryIso(row.country, row.iso),
+    const esResult = await db.elastic.search({
+      index: 'linkedin_ads_data',
+      size: 1,
+      body: {
+        query: {
+          bool: {
+            filter: [
+              { term: { ad_id: adId } }
+            ]
+          }
+        },
+        _source: ['countries']
+      }
+    });
+
+    const hits = esResult.hits || esResult.body?.hits;
+    const src = hits?.hits?.[0]?._source;
+    const countryNames = src?.countries;
+
+    if (!Array.isArray(countryNames) || countryNames.length === 0) {
+      return { code: 400, message: 'No data found.', data: null };
+    }
+
+    const placeholders = countryNames.map(() => '?').join(',');
+    const rows = await db.sql.query(
+      `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`,
+      countryNames
+    );
+
+    const isoMap = {};
+    (rows || []).forEach(row => {
+      isoMap[row.nicename] = row.iso;
+    });
+
+    const resArray = countryNames.map(country => ({
+      country: country ? country.replace(/\b\w/g, c => c.toUpperCase()) : country,
+      iso: fixCountryIso(country, isoMap[country] || null),
     }));
 
     return { code: 200, message: 'Linkedin country data fetched.', data: resArray };
