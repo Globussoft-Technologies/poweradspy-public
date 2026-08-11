@@ -58,7 +58,7 @@ describe("services/google/helpers/paramParser > parsePagination", () => {
 
 describe("services/google/helpers/paramParser > parseSort", () => {
   it("sortMap entries fire (incl. asc normalization)", () => {
-    expect(mod.parseSort({ newest_sort: "desc" })).toEqual({ field: "id", order: "desc" });
+    expect(mod.parseSort({ newest_sort: "desc" })).toEqual({ field: "last_seen", order: "desc" });
     expect(mod.parseSort({ running_longest_sort: "asc" })).toEqual({ field: "days_running", order: "asc" });
     expect(mod.parseSort({ last_seen_sort: "desc" })).toEqual({ field: "last_seen", order: "desc" });
     expect(mod.parseSort({ likes_sort: "DESC" })).toEqual({ field: "likes", order: "desc" });

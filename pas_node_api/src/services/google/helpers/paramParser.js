@@ -33,7 +33,10 @@ function parsePagination(params) {
 
 function parseSort(params) {
   const sortMap = {
-    newest_sort:          'id',
+    // Product "Newest" means most recently seen, consistently with the
+    // common-search merge and frontend safety sort. Internal insertion IDs
+    // are not chronological for Transparency creatives.
+    newest_sort:          'last_seen',
     running_longest_sort: 'days_running',
     last_seen_sort:       'last_seen',
     likes_sort:           'likes',
