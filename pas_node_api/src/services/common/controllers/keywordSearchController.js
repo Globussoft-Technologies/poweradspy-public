@@ -310,7 +310,7 @@ async function storeKeywordSearch(req, res) {
         const scrapeRes = await axios.post(scrapeRequestUrl, [
           {
             name: value,
-            max_ads: config.keywordSearch.scrapeMaxAds,
+            max_ads: '',
             priority: true,
             type,
           },
