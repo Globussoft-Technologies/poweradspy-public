@@ -209,29 +209,46 @@ export function useSDUI() {
         const transparencyIndex = sidebar.findIndex(
             document => document?._id === 'google_transparency'
         );
-
-        if (transparencyIndex >= 0) {
-            googleTransparencyDocRef.current = {
-                document: sidebar[transparencyIndex],
-                index: transparencyIndex,
-            };
-        } else if (
+        const transparencyDocument = transparencyIndex >= 0
+            ? sidebar[transparencyIndex]
+            : null;
+        const transparencyFilterIds = new Set(
+            (transparencyDocument?.filters || []).map(filter => filter?._id)
+        );
+        const hasCompleteTransparencyDocument =
+            transparencyFilterIds.has('google_transparency_ads') &&
+            transparencyFilterIds.has('google_transparency_subnetwork');
+        const shouldPreserveTransparency =
             options.preserveGoogleTransparency === true &&
             activePlatformsRef.current.some(
-                platform => String(platform).toLowerCase() === 'google'
+                platform => normalizeStoredValue(platform) === 'google'
             ) &&
-            googleTransparencyDocRef.current
-        ) {
+            googleTransparencyDocRef.current;
+
+        if (hasCompleteTransparencyDocument) {
+            googleTransparencyDocRef.current = {
+                document: transparencyDocument,
+                index: transparencyIndex,
+            };
+        } else if (shouldPreserveTransparency) {
             const nextSidebar = [...sidebar];
-            const insertionIndex = Math.min(
-                googleTransparencyDocRef.current.index,
-                nextSidebar.length
-            );
-            nextSidebar.splice(
-                insertionIndex,
-                0,
-                googleTransparencyDocRef.current.document
-            );
+            if (transparencyIndex >= 0) {
+                // A platform-filtered response may retain the document shell
+                // while stripping its applicable children. Replace that empty
+                // shell instead of treating it as authoritative.
+                nextSidebar[transparencyIndex] =
+                    googleTransparencyDocRef.current.document;
+            } else {
+                const insertionIndex = Math.min(
+                    googleTransparencyDocRef.current.index,
+                    nextSidebar.length
+                );
+                nextSidebar.splice(
+                    insertionIndex,
+                    0,
+                    googleTransparencyDocRef.current.document
+                );
+            }
             frontendConfig = { ...frontendConfig, sidebar: nextSidebar };
         } else if (options.preserveGoogleTransparency !== true) {
             // Initial loads and polling carry the authoritative full schema.

@@ -198,10 +198,13 @@ async function loadSDUIConfig(options = {}) {
 
 export function fetchSDUIConfig(options = {}) {
     const platforms = Array.isArray(options.platforms)
-        ? [...options.platforms].map(String).sort()
+        ? [...options.platforms]
+            .map(platform => String(platform).trim().toLowerCase())
+            .filter(Boolean)
+            .sort()
         : [];
     const key = `sdui-config:${options.skipCache === true ? 'fresh' : 'cached'}:${platforms.join(',')}`;
-    return dedupeInFlight(key, () => loadSDUIConfig(options));
+    return dedupeInFlight(key, () => loadSDUIConfig({ ...options, platforms }));
 }
 
 function useFallback() {

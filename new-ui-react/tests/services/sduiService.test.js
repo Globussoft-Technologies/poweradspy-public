@@ -139,6 +139,16 @@ describe("sduiService > fetchSDUIConfig", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("?platforms=facebook,google");
   });
 
+  it("normalizes platform casing before requesting filtered config", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 200, headers: new Map(),
+      json: async () => ({ schema_version: "1.0.0", config_version: 1, searchbar: [] }),
+    });
+    const sut = await loadSut();
+    await sut.fetchSDUIConfig({ platforms: [" Google ", "FACEBOOK"] });
+    expect(fetchMock.mock.calls[0][0]).toContain("?platforms=facebook,google");
+  });
+
   it("304 Not Modified with memCache → returns memCache", async () => {
     const fresh = { schema_version: "1.0.0", config_version: 11, searchbar: [] };
     localStorage.setItem(LS_CONFIG_KEY, JSON.stringify(fresh));

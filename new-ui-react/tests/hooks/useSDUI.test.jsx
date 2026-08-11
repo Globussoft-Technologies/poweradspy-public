@@ -784,7 +784,7 @@ describe("useSDUI > isDependencySatisfied", () => {
 });
 
 describe("useSDUI > platform re-fetch effect", () => {
-  it("keeps the Transparency document when a reduced Google config omits it", async () => {
+  it("keeps the complete Transparency document when a reduced Google config strips its filters", async () => {
     localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
     localStorage.setItem("sdui.filterValues", JSON.stringify({
       google_transparency_ads: true,
@@ -794,11 +794,16 @@ describe("useSDUI > platform re-fetch effect", () => {
       filters: [{
         _id: "google_transparency_ads",
         type: "toggle",
+      }, {
+        _id: "google_transparency_subnetwork",
+        type: "dropdown",
       }],
     };
     fetchSpy
       .mockResolvedValueOnce(makeConfig({ sidebar: [transparencyDoc] }))
-      .mockResolvedValue(makeConfig({ sidebar: [] }));
+      .mockResolvedValue(makeConfig({
+        sidebar: [{ _id: "google_transparency", filters: [] }],
+      }));
 
     const { result } = renderHook(() => useSDUI());
 
