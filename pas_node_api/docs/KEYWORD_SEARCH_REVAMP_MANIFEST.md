@@ -497,3 +497,47 @@ Resolves §9 "one collection vs two" for now: **one collection**, bounded by the
 instead of a side table.
 
 See [KEYWORD_SEARCH_API.md](./KEYWORD_SEARCH_API.md) for the request/response contracts.
+
+---
+
+## 11. `POST /api/v1/common/keyword-search/scraping-history` (`addScrapingHistory`) — 2026-08 additions
+
+No JWT (internal/scraper). Appends a scraping-session report onto an **existing**
+keyword document (404 if the doc doesn't exist — store it first via §6 or the synthetic
+endpoint). Body: `keyword`/`value`, `type`, `network`, `owner` required; `start_time`,
+`end_time` default to now; `status` defaults to `completed`; `ads_count` optional;
+`mode` accepted as-is (no longer validated against `priority`/`daily` — the earlier
+allowlist was removed).
+
+### 11.1 Update-in-place vs. push (fixes duplicate-session growth)
+Originally every call unconditionally `$push`ed a new `scrapping_status` entry. In
+practice a single scraper session reports **repeatedly** (e.g. once per ad found) with
+the **same** `start_time` each time — that produced near-duplicate array entries
+differing only in `endTime`/`adsCount`, bloating `scrapping_status` instead of tracking
+one evolving session.
+
+Fixed by trying an **update-in-place** first, falling back to the original push:
+
+1. **Session identity** = `{ network, type, owner, startTime }` (keyword itself is
+   already scoped by the `{ type, valueNorm }` doc-match).
+2. **Attempt 1** — one atomic `findOneAndUpdate` with
+   `{ type, valueNorm, scrapping_status: { $elemMatch: sessionIdentity } }`: if a
+   matching array entry already exists, update it via `arrayFilters` — `endTime` and
+   `status` advance to the new call's values, `adsCount` is incremented by **exactly 1**
+   (`$inc`, always +1 regardless of whatever `ads_count` this call sent) — never
+   overwritten. A short follow-up `updateOne` syncs
+   `networkState.<network>.lastScrape.adsCount` to the post-increment value (has to be a
+   second write since `$inc`'s result isn't readable in the same `$set`).
+3. **Attempt 2 (fallback)** — if attempt 1 matched nothing (no existing session for that
+   identity, **or** the keyword doc doesn't exist at all), falls through to the
+   **original, unchanged** push logic: `{ type, valueNorm }` (no `$elemMatch`) upsert-free
+   `findOneAndUpdate` that `$push`es a brand-new session (capped by
+   `scrappingStatusRetention`) and sets `networkState.<network>.lastScrape` from the raw
+   `ads_count` sent. If the keyword doc truly doesn't exist, this second query also
+   returns `null` — the ambiguity from attempt 1 (missing doc vs. no matching session) is
+   resolved for free rather than needing a separate existence check.
+4. Response includes `adsCount` (the resolved count after either path) and
+   `updated: true|false` so callers can tell which branch fired; `message` is
+   `'scraping history updated'` vs `'scraping history added'` accordingly.
+
+Files: `keywordSearchController.js` (`addScrapingHistory`).

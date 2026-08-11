@@ -967,44 +967,86 @@ async function addScrapingHistory(req, res) {
     const sessionDate = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(sessionEnd);
 
     const valueNorm = value.toLowerCase();
-    const scrapeId = new ObjectId();
 
-    const session = {
-      _id: scrapeId,
-      network,
-      type,
-      mode,
-      owner,
-      date: sessionDate,
-      startTime: sessionStart,
-      endTime: sessionEnd,
-      status: finalStatus,
-    };
-    if (body.ads_count != null) session.adsCount = Number(body.ads_count);
+    // Same (keyword=type+valueNorm, network, type, owner, startTime) as an EXISTING
+    // scrapping_status entry → this is the SAME session reporting again (e.g. the
+    // scraper calls this endpoint once per ad found, resending its own unchanged
+    // startTime each time) — update that entry in place (endTime + status advance,
+    // adsCount bumps by exactly 1) instead of pushing a near-duplicate session.
+    const sessionMatch = { network, type, owner, startTime: sessionStart };
 
-    const lastScrape = {
-      date: sessionDate,
-      status: finalStatus,
-      owner,
-    };
-    if (body.ads_count != null) lastScrape.adsCount = Number(body.ads_count);
-
-    const result = await col.findOneAndUpdate(
-      { type, valueNorm },
+    let result = await col.findOneAndUpdate(
+      { type, valueNorm, scrapping_status: { $elemMatch: sessionMatch } },
       {
         $set: {
           updatedAt: now,
-          [`networkState.${network}.lastScrape`]: lastScrape,
+          'scrapping_status.$[s].endTime': sessionEnd,
+          'scrapping_status.$[s].status': finalStatus,
         },
-        $push: {
-          scrapping_status: {
-            $each: [session],
-            $slice: -config.keywordSearch.scrappingStatusRetention,
+        $inc: { 'scrapping_status.$[s].adsCount': 1 },
+      },
+      {
+        arrayFilters: [{ 's.network': network, 's.type': type, 's.owner': owner, 's.startTime': sessionStart }],
+        returnDocument: 'after',
+      }
+    );
+
+    const updatedExisting = !!result;
+    let scrapeId, finalAdsCount;
+
+    if (updatedExisting) {
+      const updatedSession = (result.scrapping_status || []).find((s) =>
+        s.network === network && s.type === type && s.owner === owner &&
+        s.startTime instanceof Date && s.startTime.getTime() === sessionStart.getTime()
+      );
+      scrapeId = updatedSession?._id;
+      finalAdsCount = updatedSession?.adsCount ?? 1;
+
+      // lastScrape denorm must reflect the INCREMENTED count, not whatever ads_count
+      // this particular call sent — so it's set from the updated session, separately.
+      await col.updateOne(
+        { _id: result._id },
+        { $set: { [`networkState.${network}.lastScrape`]: { date: sessionDate, status: finalStatus, owner, adsCount: finalAdsCount } } }
+      );
+    } else {
+      // No matching in-flight session found — original behaviour: push a brand-new one.
+      // (If the keyword doc itself doesn't exist, this query also matches nothing and
+      // `result` stays null, so the 404 below still fires exactly as before.)
+      scrapeId = new ObjectId();
+      const session = {
+        _id: scrapeId,
+        network,
+        type,
+        mode,
+        owner,
+        date: sessionDate,
+        startTime: sessionStart,
+        endTime: sessionEnd,
+        status: finalStatus,
+      };
+      if (body.ads_count != null) session.adsCount = Number(body.ads_count);
+      finalAdsCount = session.adsCount ?? null;
+
+      const lastScrape = { date: sessionDate, status: finalStatus, owner };
+      if (body.ads_count != null) lastScrape.adsCount = Number(body.ads_count);
+
+      result = await col.findOneAndUpdate(
+        { type, valueNorm },
+        {
+          $set: {
+            updatedAt: now,
+            [`networkState.${network}.lastScrape`]: lastScrape,
+          },
+          $push: {
+            scrapping_status: {
+              $each: [session],
+              $slice: -config.keywordSearch.scrappingStatusRetention,
+            },
           },
         },
-      },
-      { returnDocument: 'after' }
-    );
+        { returnDocument: 'after' }
+      );
+    }
 
     if (!result) {
       return res.status(404).json({
@@ -1016,7 +1058,7 @@ async function addScrapingHistory(req, res) {
 
     return res.json({
       code: 200,
-      message: 'scraping history added',
+      message: updatedExisting ? 'scraping history updated' : 'scraping history added',
       data: {
         docId: result._id,
         scrapeId,
@@ -1027,6 +1069,8 @@ async function addScrapingHistory(req, res) {
         status: finalStatus,
         startTime: sessionStart,
         endTime: sessionEnd,
+        adsCount: finalAdsCount,
+        updated: updatedExisting,
       },
     });
   } catch (err) {
