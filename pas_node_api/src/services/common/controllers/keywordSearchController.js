@@ -22,6 +22,7 @@ const dbManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
 const config = require('../../../config');
 const { parseJsonKeywords, parseCsvFile } = require('../helpers/keywordInput');
+const { enqueueFailedScrapeRequest } = require('../helpers/scrapeRequestQueue');
 
 const log = logger.createChild('keyword-search');
 
@@ -305,29 +306,26 @@ async function storeKeywordSearch(req, res) {
     // Trigger the Google scrape request for keyword/advertiser/domain searches.
     // Fires when the resolved network list contains google OR when the user
     // explicitly asked for "all" networks. Awaited (up to the 5s timeout) so its
-    // response can be echoed on the store response below; a failure/timeout is
-    // logged and never fails the store itself — scrapeRequest stays null.
+    // response can be echoed on the store response below; a failure/timeout never
+    // fails the store itself — scrapeRequest stays null — but the item is durably
+    // queued (on disk) instead of just logged and dropped, so scrapeRequestRetryCron
+    // can resend it once scrapeRequestUrl is reachable again, even across a restart.
     const isGoogleNetwork = netList.includes('google');
     const isAllRequest = String(body.network || '').trim().toLowerCase() === 'all';
     const scrapeRequestUrl = config.keywordSearch.scrapeRequestUrl;
     let scrapeRequest = null;
-   
+
     if ((isGoogleNetwork || isAllRequest) && type && scrapeRequestUrl) {
+      const scrapeItem = { name: value, max_ads: '', priority: true, type };
       try {
-        const scrapeRes = await axios.post(scrapeRequestUrl, [
-          {
-            name: value,
-            max_ads: '',
-            priority: true,
-            type,
-          },
-        ], {
+        const scrapeRes = await axios.post(scrapeRequestUrl, [scrapeItem], {
           timeout: 5000,
           headers: { 'Content-Type': 'application/json' },
         });
         scrapeRequest = scrapeRes.data;
       } catch (err) {
-        log.warn('scrape-request trigger failed', { value, type, error: err.message });
+        log.warn('scrape-request trigger failed — queued for retry', { value, type, error: err.message });
+        enqueueFailedScrapeRequest(scrapeItem);
       }
     }
 
