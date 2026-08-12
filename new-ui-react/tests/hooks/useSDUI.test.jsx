@@ -139,6 +139,27 @@ describe("useSDUI > initial load", () => {
     expect(result.current.filterValues.country_filter).toEqual(["United Kingdom"]);
   });
 
+  it("removes an invalid tab-restored option during startup validation", async () => {
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
+      country_filter: ["Atlantis"],
+    }));
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "country",
+        filters: [{
+          _id: "country_filter",
+          type: "combobox",
+          options: [{ value: "TH", label: "Thailand" }],
+        }],
+      }],
+    }));
+
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.filterValues).toEqual({});
+  });
+
   it("keeps date, ad-type, and sort toolbar selections after refresh", async () => {
     const storedToolbarFilters = {
       seen_btn_sort: [1786147199, 1785542400],
@@ -680,7 +701,7 @@ describe("useSDUI > visibility helpers", () => {
   });
 
   it("matches platform applicability without casing differences", async () => {
-    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["Google"]));
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["Google"]));
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
@@ -797,9 +818,43 @@ describe("useSDUI > isDependencySatisfied", () => {
 });
 
 describe("useSDUI > platform re-fetch effect", () => {
+  it("keeps active filters when a platform-specific response omits their controls", async () => {
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook"]));
+    let resolveReducedConfig;
+    fetchSpy
+      .mockResolvedValueOnce(makeConfig({
+        sidebar: [{
+          _id: "facebook_filters",
+          filters: [{
+            _id: "country_filter",
+            type: "combobox",
+            options: [{ value: "TH", label: "Thailand" }],
+          }],
+        }],
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveReducedConfig = resolve;
+      }));
+
+    const { result } = renderHook(() => useSDUI());
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    act(() => {
+      result.current.setAllFilters({ country_filter: ["Thailand"] });
+    });
+    await act(async () => {
+      resolveReducedConfig(makeConfig({ sidebar: [] }));
+      await Promise.resolve();
+    });
+
+    expect(result.current.config.sidebar).toEqual([]);
+    expect(result.current.filterValues).toEqual({
+      country_filter: ["Thailand"],
+    });
+  });
+
   it("keeps the complete Transparency document when a reduced Google config strips its filters", async () => {
-    localStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
-    localStorage.setItem("sdui.filterValues", JSON.stringify({
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
       google_transparency_ads: true,
     }));
     const transparencyDoc = {
@@ -915,6 +970,39 @@ describe("useSDUI > polling integration", () => {
     const cb = pollingSpy.mock.calls[pollingSpy.mock.calls.length - 1][1];
     act(() => { cb(makeConfig({ config_version: 99 })); });
     expect(result.current.config.config_version).toBe(99);
+  });
+
+  it("keeps active filters when the background poll refreshes the schema", async () => {
+    fetchSpy.mockResolvedValue(makeConfig({
+      config_version: 5,
+      sidebar: [{
+        _id: "country",
+        filters: [{
+          _id: "country_filter",
+          type: "combobox",
+          options: [{ value: "TH", label: "Thailand" }],
+        }],
+      }],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => {
+      result.current.setAllFilters({
+        country_filter: ["Thailand"],
+        ad_type: ["Video"],
+      });
+    });
+
+    const cb = pollingSpy.mock.calls[pollingSpy.mock.calls.length - 1][1];
+    act(() => {
+      cb(makeConfig({ config_version: 99, sidebar: [] }));
+    });
+
+    expect(result.current.config.config_version).toBe(99);
+    expect(result.current.filterValues).toEqual({
+      country_filter: ["Thailand"],
+      ad_type: ["Video"],
+    });
   });
 });
 

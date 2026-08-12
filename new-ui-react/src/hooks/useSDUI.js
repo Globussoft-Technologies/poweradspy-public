@@ -256,9 +256,23 @@ export function useSDUI() {
             googleTransparencyDocRef.current = null;
         }
 
-        setConfig(frontendConfig);
+        // Platform-filtered responses omit the full-schema version. Preserve the
+        // authoritative version learned by polling so an unchanged schema does
+        // not look new again on the next 30-second check.
+        setConfig(previousConfig => (
+            options.preserveConfigVersion === true &&
+            !frontendConfig?.config_version &&
+            previousConfig?.config_version
+                ? { ...frontendConfig, config_version: previousConfig.config_version }
+                : frontendConfig
+        ));
         setError(null);
-        setFilterValues(previous => sanitizeFilterValuesByConfig(previous, frontendConfig));
+        // Validate tab-restored values once against the full startup schema.
+        // Runtime schema refreshes control visibility only; they must never
+        // mutate filters the user has already applied.
+        if (options.sanitizeStoredFilters === true) {
+            setFilterValues(previous => sanitizeFilterValuesByConfig(previous, frontendConfig));
+        }
 
         // Extract platform filter matrix from the platforms navbar document
         const platformsDoc = frontendConfig?.navbar?.find(d => d._id === 'platforms');
@@ -309,7 +323,7 @@ export function useSDUI() {
                 setLoading(true);
                 const cfg = await fetchSDUIConfig();
                 if (cancelled) return;
-                applyConfig(cfg);
+                applyConfig(cfg, { sanitizeStoredFilters: true });
             } catch (err) {
                 /* v8 ignore next -- the cancelled-during-error race (unmount mid-fetch) is a defensive setState guard */
                 if (!cancelled) setError(err.message);
@@ -340,7 +354,10 @@ export function useSDUI() {
                 });
                 /* v8 ignore next -- cancelled-during-reload race (unmount mid-refetch) is a defensive guard */
                 if (!cancelled) {
-                    applyConfig(cfg, { preserveGoogleTransparency: true });
+                    applyConfig(cfg, {
+                        preserveGoogleTransparency: true,
+                        preserveConfigVersion: true,
+                    });
                 }
             } catch (err) {
                 /* v8 ignore next -- cancelled-during-reload-error race is a defensive guard */

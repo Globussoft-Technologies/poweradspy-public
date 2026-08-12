@@ -29,7 +29,18 @@ export function useSDUIPolling(currentConfigVersion, onConfigChanged) {
                         // A platform-filtered response can contain document
                         // shells without children and sanitize active values.
                         const freshConfig = await fetchSDUIConfig({ skipCache: true });
-                        if (freshConfig) callbackRef.current(freshConfig);
+                        if (freshConfig) {
+                            // The config endpoint returns only schema sections;
+                            // its normalized config_version is therefore 0. Carry
+                            // the hash from the version endpoint into React state
+                            // so this same schema is not reloaded every interval.
+                            const versionedConfig = {
+                                ...freshConfig,
+                                config_version: versionInfo.config_version,
+                            };
+                            versionRef.current = versionInfo.config_version;
+                            callbackRef.current(versionedConfig);
+                        }
                     }
                     return;
                 }

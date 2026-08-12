@@ -577,14 +577,11 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     expect(indexedDoc.subcategory).toHaveLength(1);
   });
 
-  it("google write flow falls back to the display id when ad_id lookup misses", async () => {
-    let googleLookupCount = 0;
+  it("google write flow stays strict and does not fall back to the display id", async () => {
     const search = vi.fn(async (params) => {
       if (params.index === "category") return { hits: { hits: [] } };
       if (params.index === "google_ads_data_v2") {
-        googleLookupCount += 1;
-        if (googleLookupCount === 1) return { hits: { hits: [] } };
-        return { hits: { hits: [{ _id: "google-es-1", _source: {} }] } };
+        return { hits: { hits: [] } };
       }
       return { hits: { hits: [] } };
     });
@@ -601,8 +598,9 @@ describe("addCategoryController > newCatInsertion > main flow", () => {
     await newCatInsertion(happyBody({ platform: "google", ad_id: "106757" }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(search.mock.calls.filter(([callParams]) => callParams.index === "google_ads_data_v2")).toHaveLength(2);
-    expect(updateFn).toHaveBeenCalled();
+    expect(res.body.ad_status).toBe("not_found");
+    expect(search.mock.calls.filter(([callParams]) => callParams.index === "google_ads_data_v2")).toHaveLength(1);
+    expect(updateFn).not.toHaveBeenCalled();
   });
 
   it("500 when catId matches but name differs", async () => {
@@ -1280,13 +1278,10 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     expect(adDocumentUpdates.every((params) => params.refresh === true)).toBe(true);
   });
 
-  it("google AI-Meta writes also fall back to the display id when ad_id lookup misses", async () => {
-    let googleLookupCount = 0;
+  it("google AI-Meta writes stay strict and return AD_NOT_FOUND for the display id", async () => {
     const search = vi.fn(async (params) => {
       if (params.index === "google_ads_data_v2") {
-        googleLookupCount += 1;
-        if (googleLookupCount === 1) return { hits: { hits: [] } };
-        return { hits: { hits: [{ _id: "google-es-1", _source: {} }] } };
+        return { hits: { hits: [] } };
       }
       return { hits: { hits: [] } };
     });
@@ -1301,9 +1296,11 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
 
     await insertAiMeta({ body: { ad_id: "106757", network: "google", ai_meta: VALID_AI_META } }, res);
 
-    expect(res.statusCode).toBe(200);
-    expect(search.mock.calls.filter(([callParams]) => callParams.index === "google_ads_data_v2")).toHaveLength(2);
-    expect(update).toHaveBeenCalled();
+    expect(res.statusCode).toBe(404);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe("AD_NOT_FOUND");
+    expect(search.mock.calls.filter(([callParams]) => callParams.index === "google_ads_data_v2")).toHaveLength(1);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("TikTok ES 8 writes are typeless while retaining AI-Meta transport options", async () => {

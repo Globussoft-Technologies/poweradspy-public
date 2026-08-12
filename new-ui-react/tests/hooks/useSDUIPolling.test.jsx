@@ -32,13 +32,31 @@ describe("hooks/useSDUIPolling", () => {
 
   it("polling: version changed → fetch full config + invoke callback", async () => {
     fetchVersionSpy.mockResolvedValue({ config_version: 99 });
-    fetchConfigSpy.mockResolvedValue({ schema_version: "1.0.0", config_version: 99 });
+    // The real config endpoint omits config_version; the lightweight version
+    // endpoint is the authoritative source for that hash.
+    fetchConfigSpy.mockResolvedValue({ schema_version: "1.0.0" });
     const cb = vi.fn();
     renderHook(() => useSDUIPolling(0, cb));
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetchVersionSpy).toHaveBeenCalled();
     expect(fetchConfigSpy).toHaveBeenCalledWith({ skipCache: true });
-    expect(cb).toHaveBeenCalled();
+    expect(cb).toHaveBeenCalledWith({
+      schema_version: "1.0.0",
+      config_version: 99,
+    });
+  });
+
+  it("does not reload the same server version on every polling interval", async () => {
+    fetchVersionSpy.mockResolvedValue({ config_version: 99 });
+    fetchConfigSpy.mockResolvedValue({ schema_version: "1.0.0" });
+    const cb = vi.fn();
+    renderHook(() => useSDUIPolling(0, cb));
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+
+    expect(fetchVersionSpy).toHaveBeenCalledTimes(2);
+    expect(fetchConfigSpy).toHaveBeenCalledTimes(1);
+    expect(cb).toHaveBeenCalledTimes(1);
   });
 
   it("always fetches the full config when selected platforms are supplied", async () => {

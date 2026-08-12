@@ -234,13 +234,14 @@ async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = A
 }
 
 /**
- * Resolve the ad document for AI-meta/category read-write flows.
+ * Read-side-only compatibility lookup for Google.
  *
- * Google is the only network where the UI-visible id can differ from the
- * legacy write/read lookup key, so we try the configured lookup field first
- * and then fall back to the display-id field when it is different.
+ * getAdCategory is used to verify what the UI sees after a write, so it is allowed
+ * to recover a Google read-back using the display id field when the primary lookup
+ * misses. Write paths stay strict and continue to use the documented public ad_id
+ * contract only.
  */
-async function findAiMetaAdDoc(esForPlat, esIndex, cfg, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
+async function findReadBackAdDoc(esForPlat, esIndex, cfg, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
   let adHit = await findAdDoc(esForPlat, esIndex, cfg.idField, adId, requestTimeoutMs);
   if (!adHit && cfg.descIdField && cfg.descIdField !== cfg.idField) {
     adHit = await findAdDoc(esForPlat, esIndex, cfg.descIdField, adId, requestTimeoutMs);
@@ -1138,7 +1139,7 @@ async function newCatInsertion(req, res) {
     try {
       gdnService.log?.info(`[newCatInsertion] searching index="${esIndex}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
 
-      const adHit = await findAiMetaAdDoc(esForPlat, esIndex, platCfg, ad_id);
+      const adHit = await findAdDoc(esForPlat, esIndex, platCfg.idField, ad_id);
       if (adHit) {
         adDocId = adHit._id;
         // Compare against the ad's current category to classify insert vs update vs no-op.
@@ -1296,7 +1297,7 @@ async function getAdCategory(req, res) {
 
   const esIndex = es.indexName || cfg.index;
   try {
-    const adHit = await findAiMetaAdDoc(es, esIndex, cfg, adId);
+    const adHit = await findReadBackAdDoc(es, esIndex, cfg, adId);
     if (!adHit) {
       return res.status(404).json({ code: 404, message: `ad_id=${adId} not found in ${esIndex}`, ad_id: adId, platform });
     }
@@ -1381,7 +1382,7 @@ async function insertAiMeta(req, res) {
     const esSearchStartedAt = Date.now();
     let adHit;
     try {
-      adHit = await findAiMetaAdDoc(es, esIndex, cfg, adId);
+      adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
     } finally {
       timings.es_search_ms = Date.now() - esSearchStartedAt;
     }
