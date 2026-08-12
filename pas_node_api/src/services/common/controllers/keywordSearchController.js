@@ -25,6 +25,13 @@ const { parseJsonKeywords, parseCsvFile } = require('../helpers/keywordInput');
 
 const log = logger.createChild('keyword-search');
 
+// Google Transparency scrapes fire far more often than other networks (realtime mode),
+// so its scrapping_status entries alone can dominate the shared scrappingStatusRetention
+// cap and crowd out other networks' history. Cap google_transparency to its own rolling
+// window of GOOGLE_TRANSPARENCY_HISTORY_CAP entries — oldest evicted first — independent
+// of the global retention slice below.
+const GOOGLE_TRANSPARENCY_HISTORY_CAP = 30;
+
 // type: 1=keyword, 2=advertiser, 3=domain (accepts numbers or words)
 const TYPE_MAP = { keyword: 1, advertiser: 2, domain: 3, '1': 1, '2': 2, '3': 3 };
 function normType(t) {
@@ -1048,6 +1055,26 @@ async function addScrapingHistory(req, res) {
         },
         { returnDocument: 'after' }
       );
+
+      // Enforce the google_transparency-only cap: only after a genuinely NEW session was
+      // pushed (this branch) does the array grow, so only here can it need trimming.
+      if (result && network === 'google_transparency') {
+        const gtEntries = (result.scrapping_status || [])
+          .filter((s) => s.network === 'google_transparency')
+          .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+        if (gtEntries.length > GOOGLE_TRANSPARENCY_HISTORY_CAP) {
+          const oldestIds = gtEntries
+            .slice(0, gtEntries.length - GOOGLE_TRANSPARENCY_HISTORY_CAP)
+            .map((s) => s._id);
+          await col.updateOne(
+            { _id: result._id },
+            { $pull: { scrapping_status: { _id: { $in: oldestIds } } } }
+          );
+          result.scrapping_status = (result.scrapping_status || [])
+            .filter((s) => !(s.network === 'google_transparency' && oldestIds.some((id) => id.equals(s._id))));
+        }
+      }
     }
 
     if (!result) {
