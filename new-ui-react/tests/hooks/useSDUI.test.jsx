@@ -139,10 +139,13 @@ describe("useSDUI > initial load", () => {
     expect(result.current.filterValues.country_filter).toEqual(["United Kingdom"]);
   });
 
-  it("removes an invalid tab-restored option during startup validation", async () => {
-    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
-      country_filter: ["Atlantis"],
-    }));
+  it("preserves tab-restored filters when the startup schema omits their values", async () => {
+    const restoredFilters = {
+      country_filter: ["Thailand"],
+      ad_type: ["Video"],
+      sorting: "popularity_score",
+    };
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify(restoredFilters));
     fetchSpy.mockResolvedValue(makeConfig({
       sidebar: [{
         _id: "country",
@@ -157,7 +160,8 @@ describe("useSDUI > initial load", () => {
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
 
-    expect(result.current.filterValues).toEqual({});
+    expect(result.current.filterValues).toEqual(restoredFilters);
+    expect(JSON.parse(sessionStorage.getItem("sdui.filterValues"))).toEqual(restoredFilters);
   });
 
   it("keeps date, ad-type, and sort toolbar selections after refresh", async () => {

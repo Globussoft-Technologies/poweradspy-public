@@ -67,8 +67,8 @@ const findConfigFilterForStateKey = (allFilters, stateKey) => {
     if (exact) return exact;
 
     // Toolbar controls use stable runtime keys while SDUI retains its original
-    // document/filter names. Resolve those aliases before sanitizing restored
-    // state so a config refresh does not delete a valid toolbar selection.
+    // document/filter names. Resolve those aliases for query construction and
+    // platform-support checks.
     if (stateKey === 'sorting') {
         return allFilters.find(filter =>
             filter._id === 'sort_by' ||
@@ -92,74 +92,6 @@ const findConfigFilterForStateKey = (allFilters, stateKey) => {
         );
     }
     return null;
-};
-
-const sanitizeFilterValuesByConfig = (values, cfg) => {
-    if (!values || typeof values !== 'object' || !cfg) return values;
-
-    const allFilters = [
-        ...(cfg.searchbar?.flatMap(doc => doc.filters || []) || []),
-        ...(cfg.navbar?.flatMap(doc => doc.filters || []) || []),
-        ...(cfg.sidebar?.flatMap(doc => doc.filters || []) || []),
-    ];
-    let changed = false;
-    const next = {};
-
-    for (const [key, value] of Object.entries(values)) {
-        if (key === '_autoSortField') {
-            next[key] = value;
-            continue;
-        }
-
-        const filter = findConfigFilterForStateKey(allFilters, key);
-        if (!filter) {
-            changed = true;
-            continue;
-        }
-
-        if (
-            filter.type === 'nested_select' ||
-            filter.type === 'nested_multiselect' ||
-            !Array.isArray(filter.options) ||
-            filter.options.length === 0
-        ) {
-            next[key] = value;
-            continue;
-        }
-
-        // Some SDUI controls persist their display label instead of the raw
-        // backend value (for example the geo comboboxes). Keep both forms here
-        // so a refresh does not discard a valid cached selection.
-        const allowedValues = new Set(
-            filter.options.flatMap(option => [
-                option?.value,
-                option?.label,
-                option?._id,
-            ].map(normalizeStoredValue).filter(Boolean))
-        );
-
-        if (Array.isArray(value)) {
-            const filtered = value.filter(item => allowedValues.has(normalizeStoredValue(item)));
-            if (filtered.length !== value.length) changed = true;
-            if (filtered.length > 0) next[key] = filtered;
-            else if (value.length > 0) changed = true;
-            continue;
-        }
-
-        if (
-            value !== null &&
-            value !== undefined &&
-            value !== '' &&
-            !allowedValues.has(normalizeStoredValue(value))
-        ) {
-            changed = true;
-            continue;
-        }
-
-        next[key] = value;
-    }
-
-    return changed ? next : values;
 };
 
 /**
@@ -267,12 +199,6 @@ export function useSDUI() {
                 : frontendConfig
         ));
         setError(null);
-        // Validate tab-restored values once against the full startup schema.
-        // Runtime schema refreshes control visibility only; they must never
-        // mutate filters the user has already applied.
-        if (options.sanitizeStoredFilters === true) {
-            setFilterValues(previous => sanitizeFilterValuesByConfig(previous, frontendConfig));
-        }
 
         // Extract platform filter matrix from the platforms navbar document
         const platformsDoc = frontendConfig?.navbar?.find(d => d._id === 'platforms');
@@ -323,7 +249,9 @@ export function useSDUI() {
                 setLoading(true);
                 const cfg = await fetchSDUIConfig();
                 if (cancelled) return;
-                applyConfig(cfg, { sanitizeStoredFilters: true });
+                // Config controls what is visible, not which persisted filters
+                // remain applied. Only explicit user/auth flows may clear them.
+                applyConfig(cfg);
             } catch (err) {
                 /* v8 ignore next -- the cancelled-during-error race (unmount mid-fetch) is a defensive setState guard */
                 if (!cancelled) setError(err.message);
