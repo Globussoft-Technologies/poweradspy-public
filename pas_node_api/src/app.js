@@ -278,6 +278,18 @@ async function createApp() {
     }
   }
 
+  // Scrape-request retry cron — resends Google scrape-request triggers that failed at
+  // store-time (config.keywordSearch.scrapeRequestUrl down/unreachable) from an on-disk
+  // queue once the endpoint recovers, surviving an API restart. Worker-1 only.
+  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+    try {
+      const { initScrapeRequestRetryCron } = require('./jobs/scrapeRequestRetryCron');
+      initScrapeRequestRetryCron();
+    } catch (error) {
+      log.error('Failed to initialize scrape-request retry cron', { error: error.message });
+    }
+  }
+
   return app;
 }
 
