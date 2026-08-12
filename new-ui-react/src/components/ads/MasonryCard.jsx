@@ -475,18 +475,23 @@ const MasonryCard = ({
     : hasCarousel
     ? carouselImages[activeIndex]
     : ad.thumbnail || "";
+  const currentIsPrimary = activeIndex === 0;
+  const currentPreviewIsDirectVideo = isVideoMediaUrl(currentImg);
+  const currentSlideEmbedUrl = getVideoEmbedUrl(currentImg);
   const currentMediaIsVideo =
     isGoogleTransparency &&
-    (
-      (isVideo && transparencyVideoPrimary && currentImg === transparencyVideoPrimary) ||
-      isVideoMediaUrl(currentImg)
-    );
-  const currentPreviewIsDirectVideo = isVideoMediaUrl(currentImg);
+    ((isVideo && currentIsPrimary) || currentPreviewIsDirectVideo || !!currentSlideEmbedUrl);
   const cardShowsVideo =
     isGoogleTransparency && carouselImages.length > 0
       ? currentMediaIsVideo
       : isVideo;
-  const currentVideoUrl = currentMediaIsVideo ? currentImg : effectiveVideoUrl;
+  // The first GT VIDEO carousel item is its poster, not the video bytes. Keep
+  // that image visible and play the canonical direct/original source instead.
+  // Only a slide that is itself a direct media file is passed to <video>.
+  const currentVideoUrl = currentPreviewIsDirectVideo
+    ? currentImg
+    : (currentIsPrimary ? effectiveVideoUrl : null);
+  const currentEmbedUrl = currentSlideEmbedUrl || (currentIsPrimary ? embedUrl : null);
   // Quora video whose thumbnail 404'd: show a frame from the actual video instead of a
   // dead "Preview unavailable". Needs a direct (playable) video URL to grab a frame from.
   const quoraPlayableVideo = isQuora && cardShowsVideo && !!currentVideoUrl;
@@ -765,7 +770,7 @@ const MasonryCard = ({
             </div>
           ) : (
             <div className="relative w-full h-full min-h-[220px]">
-              {isPlaying && cardShowsVideo && (currentVideoUrl || embedUrl) ? (
+              {isPlaying && cardShowsVideo && (currentVideoUrl || currentEmbedUrl) ? (
                 <>
                   {currentVideoUrl ? (
                     <video
@@ -782,8 +787,8 @@ const MasonryCard = ({
                     />
                   ) : (
                     <iframe
-                      key={embedUrl}
-                      src={embedUrl}
+                      key={currentEmbedUrl}
+                      src={currentEmbedUrl}
                       title={currentTitle || "Video ad"}
                       className="relative z-20 w-full bg-black border-0"
                       style={{ height: lockedHeight || 220 }}
@@ -891,7 +896,7 @@ const MasonryCard = ({
                       // Nothing playable (no direct media URL and no
                       // YouTube/Facebook watch URL in ad_url). Hide the play
                       // affordance and let the thumbnail stand on its own.
-                      if (!currentVideoUrl && !embedUrl) {
+                      if (!currentVideoUrl && !currentEmbedUrl) {
                         setVideoUnavailable(true);
                         return;
                       }

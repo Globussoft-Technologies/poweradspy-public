@@ -608,13 +608,14 @@ const AdDetailModal = ({
     ? carouselImages[activeIndex]
     : ad.thumbnail || "";
   const currentIsPrimary = activeIndex === 0;
+  const slideEmbedUrl = getVideoEmbedUrl(currentImg);
   const currentMediaIsVideo = isGoogleTransparency
-    ? ((currentIsPrimary && isVideo) || isVideoMediaUrl(currentImg))
+    ? ((currentIsPrimary && isVideo) || isVideoMediaUrl(currentImg) || !!slideEmbedUrl)
     : isVideo;
   const currentVideoUrl = currentMediaIsVideo && isVideoMediaUrl(currentImg)
     ? currentImg
     : (currentIsPrimary ? (resolvedVideoUrl || ad.videoUrl) : null);
-  const currentEmbedUrl = currentIsPrimary ? embedUrl : null;
+  const currentEmbedUrl = slideEmbedUrl || (currentIsPrimary ? embedUrl : null);
   const currentPoster = currentMediaIsVideo && currentIsPrimary
     ? (ad.thumbnail || ad.imageOriginalUrl || "")
     : "";

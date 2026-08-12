@@ -119,6 +119,29 @@ describe("MasonryCard Google Transparency media", () => {
       .not.toBeNull();
   });
 
+  it("plays a YouTube othermultimedia carousel slide", () => {
+    const { container } = renderCard({
+      id: 20,
+      network: "google",
+      platform: 18,
+      isGoogleTransparency: true,
+      adType: "video",
+      renderType: "video",
+      thumbnail: "https://media.example/poster.jpeg",
+      videoOriginalUrl: "https://www.youtube.com/watch?v=eFNNSbCr_MU",
+      carouselMedia: [
+        "https://media.example/other.jpg",
+        "https://www.youtube.com/watch?v=xconjdiGFLs",
+      ],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Next media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    expect(container.querySelector('iframe[src*="youtube.com/embed/xconjdiGFLs"]'))
+      .not.toBeNull();
+  });
+
   it("renders a text-only Transparency ad's real copy instead of a generic label", () => {
     renderCard({
       id: 179630,
