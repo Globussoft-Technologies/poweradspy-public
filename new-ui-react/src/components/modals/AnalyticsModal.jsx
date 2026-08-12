@@ -451,6 +451,16 @@ const formatLanguage = (raw) => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
+// Format ad position for display (e.g. SEARCHFEED_DISCOVERY → Searchfeed Discovery),
+// matching how AdCard/AdDetailModal render this field.
+const formatPosition = (pos) => {
+  if (!pos) return "";
+  return String(pos)
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
 // Render multi-value source fields (e.g. ["android","desktop"]) as a readable,
 // comma-separated list instead of React's default concatenation ("androiddesktop").
 const formatSource = (v) => {
@@ -1819,7 +1829,7 @@ const AnalyticsModal = ({
             return platformName ? String(platformName).toUpperCase() : "--";
           }
           const pos = d.ad_position || ad?.adPosition || ad?.position || "";
-          return pos ? pos.toUpperCase() : "—";
+          return pos ? formatPosition(pos) : "—";
         })(),
         icon: MapPin,
         color: "text-yellow-400",
@@ -2469,7 +2479,10 @@ const AnalyticsModal = ({
             ].includes(ctx.platform) && (
               <LanderDetails
                 screenshotUrl={
-                  adDetailsData?.white_ad_screenshot || ad?.white_ad_screenshot
+                  adDetailsData?.screenshot_url ||
+                  ad?.screenshot_url ||
+                  adDetailsData?.white_ad_screenshot ||
+                  ad?.white_ad_screenshot
                 }
               />
             )}

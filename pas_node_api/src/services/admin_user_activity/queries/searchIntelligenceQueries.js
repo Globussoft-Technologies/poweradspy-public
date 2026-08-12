@@ -75,6 +75,21 @@ const PLATFORM_FIELD_MAPPINGS = {
     ],
     domain: 'destination_url',
   },
+  google_transparency: {
+    keyword: [
+      'title',
+      'text',
+      'post_owner_name',
+      'post_owner_lower',
+    ],
+    advertiser: [
+      'title',
+      'text',
+      'post_owner_name',
+      'post_owner_lower',
+    ],
+    domain: 'destination_url',
+  },
   gdn: {
     keyword: [
       'gdn_ad_variants.title',
@@ -179,13 +194,23 @@ const PLATFORM_FIELD_MAPPINGS = {
 // — both land in google_ads_data_v2, discriminated only by a `platform` id inside the
 // doc, not by a separate index). The scraper reports its network as the literal string
 // "google_transparency" (see scrapping_status[].network / the doc's `networks` array in
-// keyword_searches), which has no entry of its own in PLATFORM_INDEX_MAP /
-// PLATFORM_FIELD_MAPPINGS — normalize it onto the existing 'google' entry so ads-count
-// lookups don't silently no-op (hit the "Unknown platform" warning) for terms scraped via
-// Google Transparency.
+// keyword_searches), which has no entry of its own in config/networks.js — so the ES
+// CLIENT and INDEX it queries always resolve through the existing 'google' entry.
 function normalizePlatformKey(platform) {
   const p = String(platform || '').toLowerCase();
   return p === 'google_transparency' ? 'google' : p;
+}
+
+// Which FIELDS to search, though, can differ from plain Google — PLATFORM_FIELD_MAPPINGS
+// now carries a dedicated 'google_transparency' entry (broader: it also matches on
+// post_owner_name/post_owner_lower for keyword searches, not just title/text). Resolve
+// straight off the RAW platform key when a mapping of its own exists, falling back to the
+// shared-infra normalized key otherwise — kept separate from normalizePlatformKey (used
+// for client/index/timestamp-field, which genuinely are shared) so only the field
+// selection changes.
+function resolveFieldMappingKey(platform) {
+  const raw = String(platform || '').toLowerCase();
+  return PLATFORM_FIELD_MAPPINGS[raw] ? raw : normalizePlatformKey(platform);
 }
 
 // Build the type-aware ES search clause (1=keyword, 2=advertiser, 3=domain) for a
@@ -229,7 +254,7 @@ async function fetchAdsCountByPlatform(elastic, platforms, dateStr, searchValue,
     try {
       const platformName = normalizePlatformKey(platform);
       const indexName = PLATFORM_INDEX_MAP[platformName] || 'search_mix';
-      const platformConfig = PLATFORM_FIELD_MAPPINGS[platformName];
+      const platformConfig = PLATFORM_FIELD_MAPPINGS[resolveFieldMappingKey(platform)];
 
       if (!platformConfig) {
         logger?.warn?.('[fetchAdsCountByPlatform] Unknown platform:', platform);
@@ -320,7 +345,7 @@ async function fetchAdsCountBatchByPlatform(elastic, platforms, searchValue, sea
   for (const platform of platforms) {
     const platformName = normalizePlatformKey(platform);
     const indexName = PLATFORM_INDEX_MAP[platformName] || 'search_mix';
-    const platformConfig = PLATFORM_FIELD_MAPPINGS[platformName];
+    const platformConfig = PLATFORM_FIELD_MAPPINGS[resolveFieldMappingKey(platform)];
 
     if (!platformConfig) {
       logger?.warn?.('[fetchAdsCountBatchByPlatform] Unknown platform:', platform);
@@ -752,7 +777,7 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
     // Per-item field selection (keyword/advertiser/domain) happens below via
     // buildSearchClause — this is just a sanity check that the platform has ANY field
     // mapping at all; a missing mapping for one specific type is handled per-item.
-    const fieldMappings = PLATFORM_FIELD_MAPPINGS[platformLower];
+    const fieldMappings = PLATFORM_FIELD_MAPPINGS[resolveFieldMappingKey(platform)];
     if (!fieldMappings) {
       logger?.warn?.(`[fetchAdsCountForKeywordsByPlatform] No field mapping for platform: ${platform}`);
       continue;
@@ -925,7 +950,7 @@ async function fetchAdsCountForMultipleKeywordsFast(elastic, platformKeywordMap,
       continue;
     }
 
-    const fieldMappings = PLATFORM_FIELD_MAPPINGS[platformLower];
+    const fieldMappings = PLATFORM_FIELD_MAPPINGS[resolveFieldMappingKey(platform)];
     if (!fieldMappings || !fieldMappings.keyword) {
       logger?.warn?.(`[fetchAdsCountForMultipleKeywordsFast] No field mapping for platform: ${platform}`);
       continue;

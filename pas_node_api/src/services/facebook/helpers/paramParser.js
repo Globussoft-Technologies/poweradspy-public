@@ -185,5 +185,6 @@ module.exports = {
   ensureArray,
   parsePagination,
   parseSort,
-  cleanAdsData
+  cleanAdsData,
+  withCdn
 };

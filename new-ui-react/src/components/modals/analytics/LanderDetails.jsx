@@ -1,16 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ExternalLink, ShieldCheck, Monitor } from "lucide-react"; // Monitor kept for section header
 import { useTheme } from "../../../hooks/useTheme";
-
-const NAS_BASE_URL = import.meta.env.VITE_NAS_BASE_URL;
-//  const NAS_BASE_URL = 'https://content-dev.poweradspy.com';
-
 
 function parseScreenshotUrl(raw) {
   if (!raw) return null;
   let url = raw;
-  // API may return a JSON array string like '["//path/to/img.png"]'
-  if (typeof url === "string" && url.startsWith("[")) {
+  // white_ad_screenshot arrives already parsed into a real array (the backend
+  // JSON-parses any DB string that looks like an array before responding).
+  if (Array.isArray(url)) {
+    url = url.find(Boolean) || null;
+  } else if (typeof url === "string" && url.startsWith("[")) {
+    // Some endpoints still send the raw JSON-array string, e.g. '["//path/to/img.png"]'.
     try {
       const arr = JSON.parse(url);
       if (Array.isArray(arr) && arr.length > 0) url = arr[0];
@@ -19,16 +19,9 @@ function parseScreenshotUrl(raw) {
     }
   }
   if (typeof url !== "string" || !url) return null;
-  // Clean double slashes (but not the protocol ://)
-  url = url.replace(/([^:])\/\//g, "$1/");
-  // If it's a relative path, prepend NAS base URL
-  if (url.startsWith("/") && !url.startsWith("//")) {
-    return NAS_BASE_URL + url;
-  }
-  if (!url.startsWith("http")) {
-    return NAS_BASE_URL + "/" + url;
-  }
-  return url;
+  // Clean double slashes (but not the protocol ://) — the backend always sends
+  // a fully-qualified URL, so no base-URL prepending is needed here.
+  return url.replace(/([^:])\/\//g, "$1/");
 }
 
 const LanderDetails = ({ screenshotUrl }) => {
@@ -36,21 +29,20 @@ const LanderDetails = ({ screenshotUrl }) => {
   const isLight = theme === "light";
   const resolvedUrl = parseScreenshotUrl(screenshotUrl);
   const [hasError, setHasError] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const settledRef = useRef(false); // set by onLoad/onError once the image resolves
 
-  // Set timeout to hide if image doesn't load within 5 seconds
+  // Set timeout to hide if image doesn't load within 15 seconds. A cold CDN
+  // cache (cf-cache-status: MISS on first fetch) can take a few seconds past
+  // the old 5s budget, so this only needs to catch genuinely dead URLs.
   useEffect(() => {
-    if (!resolvedUrl) {
-      setIsLoading(false);
-      return;
-    }
+    setHasError(false);
+    settledRef.current = false;
+    if (!resolvedUrl) return;
     const timer = setTimeout(() => {
-      if (isLoading) {
-        setHasError(true);
-      }
-    }, 5000);
+      if (!settledRef.current) setHasError(true);
+    }, 15000);
     return () => clearTimeout(timer);
-  }, [resolvedUrl, isLoading]);
+  }, [resolvedUrl]);
 
   // processing.gif or null/empty means screenshot not ready
   const isProcessing =
@@ -112,8 +104,13 @@ const LanderDetails = ({ screenshotUrl }) => {
             alt="Lander Screenshot"
             className="w-full opacity-90 group-hover:opacity-100 transition-opacity duration-300"
             style={{ display: "block" }}
-            onError={() => setHasError(true)}
-            onLoad={() => setIsLoading(false)}
+            onError={() => {
+              settledRef.current = true;
+              setHasError(true);
+            }}
+            onLoad={() => {
+              settledRef.current = true;
+            }}
           />
         </div>
       </div>
