@@ -47,6 +47,7 @@ import { CompetitorAPI, CompetitorFetchTimeoutError, trackProjectEvent } from ".
 import CompetitorComparison from "./CompetitorComparison";
 import MembersManager from "./MembersManager";
 import { COUNTRIES, COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
+import { trackProductEvent } from "../../utils/googleAnalytics";
 
 // Target Countries picker (Configure Analysis) is gated by a build-time env
 // flag, same pattern as VITE_ENABLE_KEYWORD_EXPLORER/VITE_ENABLE_INTELLIGENCE_FEATURE
@@ -1534,6 +1535,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       // 3. Socket competitor-batch events will REPLACE rows as more arrive
       const exceeded = res?.data?.exceeded || res?.exceeded;
       if (!exceeded) {
+        trackProductEvent('competitors_generated', {
+          generate_competitors: 'success',
+          entry_point: 'projects',
+          feature_name: 'competitor_generation',
+          request_context: 'project',
+        });
+      }
+      if (!exceeded) {
         try {
           const storeResp = await CompetitorAPI.getStoreProcessCompetitors(
             websiteLink,
@@ -1897,6 +1906,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
           advertiser:         competitor.name,
           monitoring_status:  newStatus === "0" ? "on" : "off",
         });
+        trackProductEvent('monitoring_status_changed', {
+          monitoring_status: newStatus === "0" ? "enabled" : "disabled",
+          entry_point: 'projects',
+          feature_name: 'competitor_monitoring',
+          request_context: 'project',
+        });
         setProjects((prev) =>
           prev.map((p) => {
             if (p.id !== project.id) return p;
@@ -2163,6 +2178,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       } else {
         showToast("Competitor added successfully.");
       }
+      if (!added.already_existed) {
+        trackProductEvent('competitor_added', {
+          add_competitor: 'success',
+          entry_point: 'projects',
+          feature_name: 'competitor_monitoring',
+          request_context: 'project',
+        });
+      }
       trackProjectEvent('Competitor-comparison', { project_name: activeProject?.advertiser ?? 'NA', advertiser: name });
 
       setShowAddCompetitorModal(false);
@@ -2312,6 +2335,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       trackProjectEvent("Delete-competitor", {
         project_name: advertiser ?? "NA",
         advertiser: competitor.name,
+      });
+      trackProductEvent('competitor_deleted', {
+        delete_competitors: 'success',
+        entry_point: 'projects',
+        feature_name: 'competitor_management',
+        request_context: 'project',
       });
       setCompetitorToDelete(null);
     } catch (err) {
@@ -3021,6 +3050,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     a.download = `${activeProject?.advertiser || "competitors"}_analytics.csv`;
                     a.click();
                     URL.revokeObjectURL(url);
+                    trackProductEvent('competitors_exported', {
+                      export_competitors: 'success',
+                      entry_point: 'projects',
+                      feature_name: 'competitor_export',
+                      request_context: 'export',
+                    });
                     trackProjectEvent("export_competitors", {
                       brand: activeProject?.advertiser || "Unknown",
                       exported_Competitors: comps.map((c) => c.name),
@@ -3516,6 +3551,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                         );
                                         setCompareCompetitor(comp);
                                         setViewState(5);
+                                        trackProductEvent('competitors_compared', {
+                                          compare_competetiors: 'success',
+                                          entry_point: 'projects',
+                                          feature_name: 'competitor_comparison',
+                                          request_context: 'project',
+                                        });
                                       }
                                     }}
                                     title={

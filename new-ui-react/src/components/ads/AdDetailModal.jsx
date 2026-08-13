@@ -40,6 +40,7 @@ import { createShareLink, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 import { ctaHref, parseAdCtas } from "../../utils/cta";
+import { classifyError, trackAdAction, trackProductEvent } from "../../utils/googleAnalytics";
 
 import fbIcon from "../../assets/fb.png";
 import igIcon from "../../assets/ig.png";
@@ -640,10 +641,12 @@ const AdDetailModal = ({
       const result = await createShareLink({ adId, network });
       const url = `${window.location.origin}/share/${result.token}`;
       await navigator.clipboard.writeText(url);
+      trackAdAction('copied', { entry_point: 'ad_detail_modal', feature_name: 'ad_link', network: String(network).toLowerCase(), network_scope: 'single', platform: String(network).toLowerCase(), request_context: 'ad_open' });
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       trackEvent('copyAd', { ad_id: adId, network, landing_page_url: url });
     } catch (err) {
+      trackProductEvent('feature_error', { entry_point: 'ad_detail_modal', error_type: classifyError(err), feature_name: 'ad_link', network: String(platform || ad.network || 'facebook').toLowerCase(), network_scope: 'single', request_context: 'ad_open' });
       console.error("Failed to create share link:", err);
     } finally {
       setCopyLoading(false);
@@ -1018,7 +1021,11 @@ const AdDetailModal = ({
             {/* Original Preview toggle button — bottom center */}
             <button
               onClick={() => {
-                if (!showOriginal) trackEvent('showOriginal', { ad_id: ad.adId ?? ad.id, network: platform ?? ad.network ?? 'facebook' });
+                if (!showOriginal) {
+                  const network = String(platform || ad.network || 'facebook').toLowerCase();
+                  trackEvent('showOriginal', { ad_id: ad.adId ?? ad.id, network });
+                  trackAdAction('show_original', { entry_point: 'ad_detail_modal', feature_name: 'original_ad', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
+                }
                 setShowOriginal(!showOriginal);
               }}
               className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-[3] flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all backdrop-blur-md border ${
@@ -1137,7 +1144,12 @@ const AdDetailModal = ({
                   engagement + budget + tech-stack + links). Same generator as
                   the MasonryCard hover Download button — see services/adPdf.js. */}
               <button
-                onClick={() => { downloadAdAsPdf(ad); trackEvent('downloadAd', { ad_id: ad.adId ?? ad.id, network: ad.network ?? platform ?? 'NA' }); }}
+                onClick={async () => {
+                  await downloadAdAsPdf(ad);
+                  const network = String(ad.network || platform || 'unknown').toLowerCase();
+                  trackAdAction('download_ad', { entry_point: 'ad_detail_modal', feature_name: 'ad_download', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
+                  trackEvent('downloadAd', { ad_id: ad.adId ?? ad.id, network });
+                }}
                 title="Download ad report (PDF)"
                 className="p-2 rounded-lg transition-colors hover:bg-white/5"
               >
@@ -1966,7 +1978,11 @@ const AdDetailModal = ({
                   href={ad.adUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={() => trackEvent('viewOriginal', { ad_id: ad.adId ?? ad.id, network: platform ?? ad.network ?? 'facebook' })}
+                  onClick={() => {
+                    const network = String(platform || ad.network || 'facebook').toLowerCase();
+                    trackEvent('viewOriginal', { ad_id: ad.adId ?? ad.id, network });
+                    trackAdAction('show_original', { entry_point: 'ad_detail_modal', feature_name: 'original_ad', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
+                  }}
                   className="px-4 py-2 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5"
                   style={{
                     backgroundColor: "var(--color-surface)",

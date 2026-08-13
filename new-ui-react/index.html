@@ -5,6 +5,37 @@
     <link rel="icon" type="image/png" href="/src/assets/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PowerAdSpy</title>
+
+    <!-- Google tag (gtag.js), loaded only for the configured rollout environment. -->
+    <script>
+      (function initializeGoogleAnalytics() {
+        const rollout = '%GOOGLE_GA4_ENABLED%'.trim().toLowerCase();
+        const hostname = window.location.hostname.toLowerCase();
+        const isLocal = ['localhost', '127.0.0.1', '::1'].includes(hostname);
+        const isDevelopment = !isLocal && ['dev', 'staging', 'test', 'qa']
+          .some((marker) => hostname.includes(marker));
+        const runtimeEnvironment = isLocal ? 'local' : (isDevelopment ? 'dev' : 'prod');
+        // "prod" is the explicit kill switch: GA4 must not load or send data.
+        const enabled = (rollout === 'dev' && runtimeEnvironment !== 'prod')
+          || (rollout === 'local' && runtimeEnvironment === 'local');
+
+        window.__POWERADSPY_GA4_ENABLED__ = enabled;
+        if (!enabled) return;
+
+        const tagId = '%GOOGLE_TAG_ID%'.trim();
+        if (!tagId) return;
+
+        window.dataLayer = window.dataLayer || [];
+        window.gtag = function gtag(){window.dataLayer.push(arguments);};
+        window.gtag('js', new Date());
+        window.gtag('config', tagId);
+
+        const script = document.createElement('script');
+        script.async = true;
+        script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(tagId)}`;
+        document.head.appendChild(script);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

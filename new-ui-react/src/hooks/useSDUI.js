@@ -2,9 +2,54 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchSDUIConfig } from '../services/sduiService';
 import { useSDUIPolling } from './useSDUIPolling';
 import { ADMOB_FRONTEND_ENABLED } from '../constants';
+import { getNetworkContext, trackProductEvent } from '../utils/googleAnalytics';
 
 const FILTERS_STORAGE_KEY = 'sdui.filterValues';
 const PLATFORMS_STORAGE_KEY = 'sdui.activePlatforms';
+
+const FILTER_PLATFORM_LABELS = {
+    facebook: 'fb', instagram: 'ig', youtube: 'yt', google: 'google',
+    gdn: 'gdn', native: 'native', linkedin: 'linkedin', reddit: 'reddit',
+    quora: 'quora', pinterest: 'pinterest', tiktok: 'tiktok', admob: 'admob',
+};
+
+const FILTER_GROUP_LABELS = {
+    category: 'categories', categories: 'categories', adcategory: 'categories',
+    subcategory: 'categories', engagement: 'engagements', engagements: 'engagements',
+};
+
+const hasAnalyticsFilterValue = (value) => {
+    if (value == null || value === false || value === '' || value === 'NA') return false;
+    if (Array.isArray(value)) return value.some(hasAnalyticsFilterValue);
+    if (typeof value === 'object') return Object.values(value).some(hasAnalyticsFilterValue);
+    return true;
+};
+
+const normalizeFilterLabel = (value) => String(value || 'unknown_filter')
+    .trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+export const resolveAnalyticsFilterLabel = (config, filterId) => {
+    const documents = [
+        ...(config?.searchbar || []),
+        ...(config?.navbar || []),
+        ...(config?.sidebar || []),
+    ];
+    let matchedFilter = null;
+    let matchedDocument = null;
+    for (const document of documents) {
+        const direct = (document?.filters || []).find((filter) => filter?._id === filterId);
+        if (direct) {
+            matchedFilter = direct;
+            matchedDocument = document;
+            break;
+        }
+    }
+    const group = matchedFilter?.group_id || matchedDocument?._id || filterId;
+    const normalizedGroup = normalizeFilterLabel(group);
+    return FILTER_GROUP_LABELS[normalizedGroup]
+        || normalizeFilterLabel(matchedDocument?.title || matchedFilter?.label || normalizedGroup)
+            .replace(/_filter$|_range$|_btn_sort$/g, '');
+};
 
 const withoutDisabledPlatforms = (platforms) => {
     const values = Array.isArray(platforms) ? platforms : [];
@@ -109,6 +154,8 @@ export function useSDUI() {
 
     // ── Filter values — dynamic, keyed by filter._id ────────────────────────
     const [filterValues, setFilterValues] = useState(() => loadTabState(FILTERS_STORAGE_KEY, {}));
+    const filterValuesRef = useRef(filterValues);
+    filterValuesRef.current = filterValues;
 
     // ── Platform state ──────────────────────────────────────────────────────
     const [activePlatforms, setActivePlatformsState] = useState(() =>
@@ -133,6 +180,8 @@ export function useSDUI() {
     // a reduced response cannot make its toggle disappear while Google is
     // still selected.
     const googleTransparencyDocRef = useRef(null);
+    const configRef = useRef(config);
+    configRef.current = config;
 
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
     const applyConfig = useCallback((cfg, options = {}) => {
@@ -351,6 +400,22 @@ export function useSDUI() {
 
     // ── Filter setters — stable references ──────────────────────────────────
     const setFilter = useCallback((filterId, value) => {
+        const previousValue = filterValuesRef.current?.[filterId];
+        const changed = JSON.stringify(previousValue) !== JSON.stringify(value);
+        if (filterId !== '_autoSortField' && changed && hasAnalyticsFilterValue(value)) {
+            const platforms = activePlatformsRef.current || [];
+            const networkContext = getNetworkContext(platforms);
+            const platformLabel = platforms.length === 1
+                ? (FILTER_PLATFORM_LABELS[String(platforms[0]).toLowerCase()] || normalizeFilterLabel(platforms[0]))
+                : networkContext.network.replace(/,/g, '_');
+            trackProductEvent('filter_applied', {
+                filter_name: `${platformLabel}_${resolveAnalyticsFilterLabel(configRef.current, filterId)}`,
+                entry_point: 'sidebar',
+                feature_name: 'ad_filters',
+                ...networkContext,
+                request_context: 'search',
+            });
+        }
         setFilterValues(prev => {
             const next = { ...prev, [filterId]: value };
             if (filterId === '_autoSortField') return next;
@@ -363,6 +428,7 @@ export function useSDUI() {
                 // This slider was cleared — remove the auto-sort hint
                 delete next._autoSortField;
             }
+            filterValuesRef.current = next;
             return next;
         });
     }, []);

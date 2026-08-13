@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback } from "react";
 import { fetchFreshTikTokVideoUrl } from "../../services/api";
 import { ctaLabelText } from "../../utils/cta";
+import { trackAdAction } from "../../utils/googleAnalytics";
 import {
   Play,
   ThumbsUp,
@@ -480,7 +481,7 @@ const AdCard = ({
                   </div>
                   <div className="relative group/fav">
                     <button
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
                         onToggleFavourite?.(ad);
                       }}
@@ -714,7 +715,8 @@ const AdCard = ({
                         ).toLowerCase();
                         const adId = ad.adId || ad.id || "";
                         const url = `${shareUrl}/${networkRoute}/landing/ad_id/${adId}`;
-                        navigator.clipboard.writeText(url);
+                        await navigator.clipboard.writeText(url);
+                        trackAdAction('copied', { entry_point: 'ad_card', feature_name: 'ad_link', network: networkRoute, network_scope: 'single', platform: networkRoute, request_context: 'ad_open' });
                         setCopied(true);
                         setShowMenu(false);
                         setTimeout(() => setCopied(false), 2000);

@@ -32,6 +32,7 @@ import whatsappLogo from "../../assets/whatsapp.png";
 import PlatformTab from "../shared/PlatformTab";
 import AdFilterBar from "../ads/AdFilterBar";
 import { useNotifications } from "../../hooks/useNotifications";
+import { getNetworkContext, trackAdAction } from "../../utils/googleAnalytics";
 import NotificationPopup from "./NotificationPopup";
 import { PLATFORMS } from "../../constants";
 import { AnimatedThemeToggler } from "../ui/animated-theme-toggler";
@@ -332,6 +333,14 @@ const Header = ({
       const result = await createDashboardShare({ uiState, searchPayload });
       const url = `${window.location.origin}/guest/${result.token}`;
       await navigator.clipboard.writeText(url);
+      const networkContext = getNetworkContext(specificPlatforms || []);
+      trackAdAction('share_option', {
+        entry_point: 'header',
+        feature_name: 'dashboard_sharing',
+        ...networkContext,
+        platform: networkContext.network,
+        request_context: 'ad_open',
+      });
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
       trackEvent('shareAd', {

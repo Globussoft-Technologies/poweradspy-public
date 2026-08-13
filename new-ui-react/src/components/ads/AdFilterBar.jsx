@@ -5,6 +5,7 @@ import PlatformTab from "../shared/PlatformTab";
 import AdDateDropdown from "./AdDateDropdown";
 import { PLATFORMS } from "../../constants";
 import { trackEvent } from "../../services/api";
+import { getNetworkContext, trackAdAction } from "../../utils/googleAnalytics";
 
 // Maps SDUI sort labels/values to the stable Plan Control/legacy access ID.
 const SORT_TO_PLAN_ACCESS_ID = {
@@ -541,6 +542,16 @@ const AdFilterBar = ({
           onClick={() => {
             const network = activePlatforms?.length === 1 ? activePlatforms[0] : 'All';
             trackEvent('showOriginal', { network, show_original: previewMode ? 'false' : 'true' });
+            if (!previewMode) {
+              const networkContext = getNetworkContext(activePlatforms || []);
+              trackAdAction('show_original', {
+                entry_point: 'filter_bar',
+                feature_name: 'original_ad',
+                ...networkContext,
+                platform: networkContext.network,
+                request_context: 'ad_open',
+              });
+            }
             setPreviewMode(!previewMode);
           }}
           className={`items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${

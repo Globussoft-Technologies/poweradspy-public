@@ -14,6 +14,7 @@ import {
   resolveProjectsAccess,
 } from "./utils/planEntitlement";
 import { getDashboardAdNavigation } from "./utils/dashboardAdNavigation";
+import { classifyError, getFilterCountBucket, getNetworkContext, trackAdAction, trackAnalyticsPageView, trackProductEvent } from "./utils/googleAnalytics";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import {
@@ -77,6 +78,7 @@ const INTEL_ENV_ON = import.meta.env.VITE_ENABLE_INTELLIGENCE_FEATURE === "true"
 // APIs stay inert too. Default OFF (opt-in).
 const KEYWORD_EXPLORER_ON = import.meta.env.VITE_ENABLE_KEYWORD_EXPLORER === "true";
 const GOOGLE_INTEL_ON = KEYWORD_EXPLORER_ON;
+
 import ChatbotWidget from "./components/shared/ChatbotWidget";
 import NotificationPermissionPrompt from "./components/layout/NotificationPermissionPrompt";
 import UnsubscribePage from "./components/UnsubscribePage";
@@ -545,6 +547,15 @@ const App = () => {
       ? canUseCapabilityOnNetwork('intelligence.competitive', adNetwork)
       : hasAdAnalyticsAccess;
     if (ad && (guest?.isRestricted || ((entitlements || planAccess) && !analyticsAllowed))) {
+      const network = String(ad.network || ad.platform || 'all').toLowerCase();
+      trackProductEvent('feature_blocked', {
+        blocked_reason: guest?.isRestricted ? 'login_required' : 'plan_restricted',
+        entry_point: location.pathname === '/saved' ? 'saved_ads' : 'ad_card',
+        feature_name: 'ad_analytics',
+        network,
+        network_scope: network === 'all' ? 'all' : 'single',
+        request_context: 'analytics',
+      });
       dispatch(openModal('isPricingModalOpen'));
       return;
     }
@@ -560,6 +571,15 @@ const App = () => {
         "",
         `/${urlNetwork}/${id}`,
       );
+      trackAnalyticsPageView(urlNetwork);
+      trackAdAction('ad_analytics', {
+        entry_point: location.pathname === '/saved' ? 'saved_ads' : 'ad_card',
+        feature_name: 'ad_analytics',
+        network: String(network).toLowerCase(),
+        network_scope: 'single',
+        platform: String(network).toLowerCase(),
+        request_context: 'analytics',
+      });
       trackEvent('showAnalytics', { ad_id: id, network });
     }
     setAnalyticsNavigationContext(navigationContext);
@@ -985,21 +1005,29 @@ const App = () => {
   ]);
 
   const handleAllClick = () => {
-    if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", {})) return;
+    if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", {})) {
+      trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'network_tab', feature_name: 'network_selection', network: 'all', network_scope: 'all', request_context: 'network_tab' });
+      return;
+    }
     dispatch(setSpecificPlatforms([]));
     const permitted = Array.isArray(planAllowedPlatforms)
       ? allPlatformValues.filter((network) => isCurrentPlanNetworkAllowed(network))
       : allPlatformValues;
     sdui.setActivePlatforms(permitted);
+    trackProductEvent('network_selected', { entry_point: 'network_tab', feature_name: 'network_selection', network: 'all', network_scope: 'all', request_context: 'network_tab' });
   };
 
   const handlePlatformClick = (platformValue) => {
-    if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", { platform: platformValue })) return;
+    if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", { platform: platformValue })) {
+      trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'network_tab', feature_name: 'network_selection', network: String(platformValue).toLowerCase(), network_scope: 'single', request_context: 'network_tab' });
+      return;
+    }
     const normalizedPlatform = normalizePlanNetwork(platformValue);
     if (
       Array.isArray(planAllowedPlatforms) &&
       !isCurrentPlanNetworkAllowed(normalizedPlatform)
     ) {
+      trackProductEvent('feature_blocked', { blocked_reason: 'plan_restricted', entry_point: 'network_tab', feature_name: 'network_selection', network: normalizedPlatform, network_scope: 'single', request_context: 'network_tab' });
       dispatch(openModal('isPricingModalOpen'));
       return;
     }
@@ -1021,6 +1049,7 @@ const App = () => {
       dispatch(setSpecificPlatforms(newSpecific));
       sdui.setActivePlatforms(newSpecific);
     }
+    trackProductEvent('network_selected', { entry_point: 'network_tab', feature_name: 'network_selection', ...getNetworkContext(newSpecific), request_context: 'network_tab' });
   };
 
   
@@ -1164,8 +1193,10 @@ const App = () => {
         return next;
       });
       showToast("Ad hidden successfully", "success");
+      trackAdAction('hide_ad', { entry_point: 'ad_card', feature_name: 'ad_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', platform: String(ad.network || 'unknown').toLowerCase(), request_context: 'ad_open' });
       trackEvent('favAds', { ad_id: ad.adId, network: ad.network, hidetype: 2, post_owner_id: ad.postOwnerId ?? 'NA' });
     } catch (err) {
+      trackProductEvent('feature_error', { entry_point: 'ad_card', error_type: classifyError(err), feature_name: 'ad_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', request_context: 'ad_open' });
       setActionError("Failed to hide ad. Please try again.");
     }
   }, [showToast]);
@@ -1197,8 +1228,10 @@ const App = () => {
         });
         showToast("Ad unhidden successfully", "success");
       }
+      trackAdAction(type === 1 ? 'unhide_advertiser' : 'unhide_ad', { entry_point: 'saved_ads', feature_name: type === 1 ? 'advertiser_hiding' : 'ad_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', platform: String(ad.network || 'unknown').toLowerCase(), request_context: 'ad_open' });
       trackEvent('unHide', { ad_id: ad.adId, network: ad.network, unhidetype: type, post_owner_id: postOwnerId ?? 'NA' });
     } catch (err) {
+      trackProductEvent('feature_error', { entry_point: 'saved_ads', error_type: classifyError(err), feature_name: 'ad_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', request_context: 'ad_open' });
       showToast("Failed to unhide. Please try again.", "error");
       throw err;
     }
@@ -1230,8 +1263,10 @@ const App = () => {
         return next;
       });
       showToast("Advertiser hidden successfully", "success");
+      trackAdAction('hide_advertiser', { entry_point: 'ad_card', feature_name: 'advertiser_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', platform: String(ad.network || 'unknown').toLowerCase(), request_context: 'ad_open' });
       trackEvent('favAds', { ad_id: ad.adId, network: ad.network, hidetype: 1, post_owner_id: ad.postOwnerId ?? 'NA' });
     } catch (err) {
+      trackProductEvent('feature_error', { entry_point: 'ad_card', error_type: classifyError(err), feature_name: 'advertiser_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', request_context: 'ad_open' });
       setActionError("Failed to hide advertiser. Please try again.");
     }
   }, [showToast, ads]);
@@ -1255,6 +1290,7 @@ const App = () => {
           return next;
         });
         showToast("Removed from Saved", "success");
+        trackAdAction('favorite_removed', { entry_point: location.pathname === '/saved' ? 'saved_ads' : 'ad_card', feature_name: 'saved_ads', network: platform, network_scope: 'single', platform, request_context: 'ad_open' });
         trackEvent('unHide', { ad_id: ad.adId, network: ad.network, unhidetype: 3, post_owner_id: ad.postOwnerId ?? 'NA' });
       } else {
         await hideAds({
@@ -1269,9 +1305,11 @@ const App = () => {
           return next;
         });
         showToast("Added to Saved", "success");
+        trackAdAction('favorite_added', { entry_point: 'ad_card', feature_name: 'saved_ads', network: platform, network_scope: 'single', platform, request_context: 'ad_open' });
         trackEvent('favAds', { ad_id: ad.adId, network: ad.network, hidetype: 3, post_owner_id: ad.postOwnerId ?? 'NA' });
       }
     } catch (err) {
+      trackProductEvent('feature_error', { entry_point: location.pathname === '/saved' ? 'saved_ads' : 'ad_card', error_type: classifyError(err), feature_name: 'saved_ads', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', request_context: 'ad_open' });
       setActionError("Failed to update saved ad. Please try again.");
     }
   }, [favouriteAdIds, showToast]);
@@ -1752,10 +1790,14 @@ const App = () => {
 
   const handleSearch = useCallback((query, type, platform, options = {}) => {
     if (guest?.isPublicLanding && guest?.isRestricted) {
+      trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'header', feature_name: 'ad_search', ...getNetworkContext(platform ? [platform] : ui.specificPlatforms), request_context: 'search', search_mode: 'standard', search_type: String(type || ui.searchIn || 'keyword').toLowerCase() });
       guest.showGuestWarning("Please login to search");
       return;
     }
-    if (guestGuard("Please login to search", { searchQuery: query, searchIn: type || ui.searchIn })) return;
+    if (guestGuard("Please login to search", { searchQuery: query, searchIn: type || ui.searchIn })) {
+      trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'header', feature_name: 'ad_search', ...getNetworkContext(platform ? [platform] : ui.specificPlatforms), request_context: 'search', search_mode: 'standard', search_type: String(type || ui.searchIn || 'keyword').toLowerCase() });
+      return;
+    }
     const trimmedQuery = String(query || "").trim();
     if (trimmedQuery && options.showScraperToast) {
       const searchType = String(type || ui.searchIn || "keyword").toLowerCase();
@@ -1788,6 +1830,15 @@ const App = () => {
     // early could let the first fetch race a half-updated state and land on the
     // wrong network set for competitor drill-downs.
     setSearchTrigger(prev => prev + 1);
+    trackProductEvent('search_submitted', {
+      entry_point: 'header',
+      feature_name: 'ad_search',
+      filter_count_bucket: getFilterCountBucket(options.resetFilters ? {} : sdui.filterValues),
+      ...getNetworkContext(platform ? [platform] : ui.specificPlatforms),
+      request_context: 'search',
+      search_mode: 'standard',
+      search_type: String(type || ui.searchIn || 'keyword').toLowerCase(),
+    });
 
     // Keyword-search store — only on explicit search submit, AUTHENTICATED users only
     // (never guest / public). Stores the searched network(s): 'all' or the selected slugs.
@@ -1860,6 +1911,15 @@ const App = () => {
       if (mapped.searchIn) dispatch(setSearchIn(mapped.searchIn));
       dispatch(setSearchQuery(mapped.searchQuery || ''));
       setSearchTrigger((prev) => prev + 1);
+      trackProductEvent('search_submitted', {
+        entry_point: 'header',
+        feature_name: 'ad_search',
+        filter_count_bucket: getFilterCountBucket(mapped.filterValues),
+        ...getNetworkContext(mapped.activePlatforms),
+        request_context: 'search',
+        search_mode: 'ai',
+        search_type: String(mapped.searchIn || 'keyword').toLowerCase(),
+      });
     };
 
     try {
@@ -1899,6 +1959,7 @@ const App = () => {
         console.debug('[ai-search] dropped unmapped filters:', matchedMapped.unmapped);
       }
     } catch (err) {
+      trackProductEvent('feature_error', { entry_point: 'header', error_type: classifyError(err), feature_name: 'ad_search', ...getNetworkContext(sdui.activePlatforms), request_context: 'search', search_mode: 'ai', search_type: 'keyword' });
       if (runId !== aiRunIdRef.current) return;
       const msg = /unauthor/i.test(err?.message || '')
         ? 'Please login to search'
@@ -2118,8 +2179,11 @@ const App = () => {
       trackEvent('ExportAds', {
         network: isAllActive ? 'All' : (exportPlatforms.length === 1 ? exportPlatforms[0] : exportPlatforms.join(',')),
       });
-      return await fetchAdsForExport({ ...sdui.filterValues, activePlatforms: exportPlatforms, activePlatform, searchQuery: ui.searchQuery, searchIn: ui.searchIn, exactSearch: ui.exactSearch, selCategories: sdui.selCategories, selCountries: sdui.selCountries, sortBy: sdui.sortBy });
-    } catch {
+      const result = await fetchAdsForExport({ ...sdui.filterValues, activePlatforms: exportPlatforms, activePlatform, searchQuery: ui.searchQuery, searchIn: ui.searchIn, exactSearch: ui.exactSearch, selCategories: sdui.selCategories, selCountries: sdui.selCountries, sortBy: sdui.sortBy });
+      trackProductEvent('feature_completed', { entry_point: 'dashboard', feature_name: 'ad_export', filter_count_bucket: getFilterCountBucket(sdui.filterValues), ...getNetworkContext(isAllActive ? [] : exportPlatforms), request_context: 'export', search_mode: 'standard', search_type: String(ui.searchIn || 'keyword').toLowerCase() });
+      return result;
+    } catch (err) {
+      trackProductEvent('feature_error', { entry_point: 'dashboard', error_type: classifyError(err), feature_name: 'ad_export', ...getNetworkContext(sdui.effectivePlatforms), request_context: 'export' });
       return [];
     }
   }, [isCustomPlan, planAllowedPlatforms, sdui, ui]);

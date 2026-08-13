@@ -43,6 +43,7 @@ import { downloadAdAsPdf } from "../../services/adPdf";
 import { useTheme } from "../../hooks/useTheme";
 import { iconColorClass } from "../../utils/iconColors";
 import { normalizeEcommercePlatformKey } from "../../utils/helper";
+import { classifyError, trackAdAction, trackProductEvent } from "../../utils/googleAnalytics";
 import { getAffiliateNetworkLogo } from "../../utils/affiliateLogos";
 import PlatformBadgesRow from "../shared/PlatformBadgesRow";
 
@@ -324,10 +325,12 @@ const MasonryCard = ({
       const result = await createShareLink({ adId, network });
       const url = `${window.location.origin}/share/${result.token}`;
       await navigator.clipboard.writeText(url);
+      trackAdAction('copied', { entry_point: 'ad_card', feature_name: 'ad_link', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       trackEvent('copyAd', { ad_id: adId, network, landing_page_url: url });
-    } catch {
+    } catch (err) {
+      trackProductEvent('feature_error', { entry_point: 'ad_card', error_type: classifyError(err), feature_name: 'ad_link', network: String(ad.network || 'facebook').toLowerCase(), network_scope: 'single', request_context: 'ad_open' });
       // silently fail
     } finally {
       setCopyLoading(false);
@@ -335,13 +338,15 @@ const MasonryCard = ({
   };
 
   // Download styled PDF report. Shared with AdDetailModal — see services/adPdf.js.
-  const handleDownload = (e) => {
+  const handleDownload = async (e) => {
     e.stopPropagation();
     if (guest?.isRestricted || guest?.isPublicLanding) {
       guest?.showGuestWarning?.("Please login to download ads");
       return;
     }
-    downloadAdAsPdf(ad);
+    await downloadAdAsPdf(ad);
+    const network = String(ad.network || 'unknown').toLowerCase();
+    trackAdAction('download_ad', { entry_point: 'ad_card', feature_name: 'ad_download', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
     trackEvent('downloadAd', { ad_id: ad.adId ?? ad.id, network: ad.network ?? 'NA' });
   };
 
