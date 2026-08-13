@@ -110,7 +110,25 @@ function buildQuery(net, type, value, dateScoped, today) {
     } catch {
       domain = String(value).split('/')[0];
     }
-    must.push({ wildcard: { [domainField]: `*${domain}*` } });
+    domain = String(domain || '').replace(/^www\./i, '').toLowerCase().trim();
+    if (!domain) return null;
+
+    // Prefer the clean keyword field (term/prefix) over a leading-wildcard scan
+    // of the raw URL field — see platformSearchFields.js for the measured cost.
+    const keywordField = mapping.domainKeywordField;
+    if (keywordField) {
+      must.push({
+        bool: {
+          should: [
+            { term: { [keywordField]: domain } },
+            { prefix: { [keywordField]: domain } },
+          ],
+          minimum_should_match: 1,
+        },
+      });
+    } else {
+      must.push({ wildcard: { [domainField]: `*${domain}*` } });
+    }
   } else {
     const fields = mapping[fieldKey];
     if (!fields || fields.length === 0) return null;

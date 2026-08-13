@@ -72,6 +72,11 @@ const PLATFORM_FIELD_MAPPINGS = {
       'post_owner_lower',
     ],
     domain: 'destination_url',
+    // Clean, low-cardinality keyword field — prefer term/prefix here over a
+    // leading-wildcard scan of `domain` (destination_url), which pinned the ES
+    // node's search thread pool on every notification-scan run (2026-08-13 incident,
+    // same root cause fixed in admin_user_activity/queries/searchIntelligenceQueries.js).
+    domainKeywordField: 'domain',
   },
   gdn: {
     keyword: [

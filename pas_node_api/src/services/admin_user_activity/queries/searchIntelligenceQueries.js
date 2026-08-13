@@ -74,6 +74,11 @@ const PLATFORM_FIELD_MAPPINGS = {
       'post_owner_lower',
     ],
     domain: 'destination_url',
+    // Clean, low-cardinality keyword field (see GoogleSearchQueryBuilder._getUrlEnv) —
+    // when present, buildSearchClause() prefers term+prefix here over a leading-wildcard
+    // scan of `domain` (destination_url), which measured ~1.1s vs ~40ms on 197M docs and
+    // pinned the ES node's search thread pool for every concurrent caller (2026-08-13 incident).
+    domainKeywordField: 'domain',
   },
   google_transparency: {
     keyword: [
@@ -89,6 +94,8 @@ const PLATFORM_FIELD_MAPPINGS = {
       'post_owner_lower',
     ],
     domain: 'destination_url',
+    // Same index/mapping as `google` (see normalizePlatformKey) — same guard applies.
+    domainKeywordField: 'domain',
   },
   gdn: {
     keyword: [
@@ -236,6 +243,26 @@ function buildSearchClause(platformConfig, searchType, searchValue) {
     } catch {
       domain = searchValue.split('/')[0];
     }
+    domain = String(domain || '').replace(/^www\./i, '').toLowerCase().trim();
+    if (!domain) return null;
+
+    // Prefer the clean keyword field (term/prefix — sorted term dictionary,
+    // no full scan) over a leading-wildcard scan of the raw URL field, which
+    // measured ~1.1s vs ~40ms on 197M docs and pins the ES search thread pool
+    // for every concurrent caller. See GoogleSearchQueryBuilder._getUrlEnv.
+    const keywordField = platformConfig?.domainKeywordField;
+    if (keywordField) {
+      return {
+        bool: {
+          should: [
+            { term: { [keywordField]: domain } },
+            { prefix: { [keywordField]: domain } },
+          ],
+          minimum_should_match: 1,
+        },
+      };
+    }
+
     return { wildcard: { [domainField]: `*${domain}*` } };
   }
 
@@ -384,49 +411,14 @@ async function fetchAdsCountBatchByPlatform(elastic, platforms, searchValue, sea
         }
       };
 
-      // Add search-specific filter based on type
-      if (searchTypeStr === '1') {
-        // Keyword search
-        const keywordFields = platformConfig.keyword;
-        if (keywordFields && keywordFields.length > 0) {
-          baseQuery.bool.must.push({
-            multi_match: {
-              query: searchValue,
-              type: 'phrase',
-              fields: keywordFields
-            }
-          });
-        }
-      } else if (searchTypeStr === '2') {
-        // Advertiser search
-        const advertiserFields = platformConfig.advertiser;
-        if (advertiserFields && advertiserFields.length > 0) {
-          baseQuery.bool.must.push({
-            multi_match: {
-              query: searchValue,
-              type: 'phrase',
-              fields: advertiserFields
-            }
-          });
-        }
-      } else if (searchTypeStr === '3') {
-        // Domain search
-        const domainField = platformConfig.domain;
-        if (domainField) {
-          let domain;
-          try {
-            const parsed = new URL(searchValue.startsWith('http') ? searchValue : `http://${searchValue}`);
-            domain = parsed.hostname;
-          } catch {
-            domain = searchValue.split('/')[0];
-          }
-          baseQuery.bool.must.push({
-            wildcard: {
-              [domainField]: `*${domain}*`
-            }
-          });
-        }
-      }
+      // Add search-specific filter based on type — reuse buildSearchClause() so this
+      // batch/multi-time-window path gets the SAME domainKeywordField guard as the
+      // single-query path (this duplicate inline copy used to bypass it entirely,
+      // firing an unguarded leading-wildcard `destination_url` scan once per time
+      // window — the actual driver of the 2026-08-13 recurring ES CPU pin, since a
+      // single domain search here fans out into one wildcard query PER time window).
+      const searchClause = buildSearchClause(platformConfig, searchTypeStr, searchValue);
+      if (searchClause) baseQuery.bool.must.push(searchClause);
 
       if (baseQuery.bool.must.length === 0) {
         logger?.warn?.('[fetchAdsCountBatchByPlatform] No search clause for type:', searchType);
