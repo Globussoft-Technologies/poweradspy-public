@@ -54,7 +54,7 @@ const fs = require('fs');
 
 const { getDB, closeDB } = require('../sdui/db');
 const { planBillingMetadata, DEFAULT_PLAN_GROUPS } = require('./planAccessSeed');
-const { getContributionDocs, getPlanIds, getPlanGroups } = require('./restructure2026');
+const { getContributionDocs, getPlanIdLists, getPlanGroups } = require('./restructure2026');
 
 const CONFIG_PATH = path.join(__dirname, 'plan_config.json');
 const APPLY = process.argv.includes('--apply');
@@ -69,7 +69,7 @@ const LEGACY_PAID_GROUPS = ['Basic', 'Standard', 'Premium', 'Platinum', 'Titaniu
  */
 function getOpenBetaPlanIds() {
   const legacyIds = LEGACY_PAID_GROUPS.flatMap((group) => DEFAULT_PLAN_GROUPS?.groups?.[group]?.plans || []);
-  const currentIds = Object.values(getPlanIds()).filter((id) => Number.isFinite(id));
+  const currentIds = Object.values(getPlanIdLists()).flat();
   return [...new Set([...legacyIds, ...currentIds].map(Number).filter((id) => Number.isFinite(id) && id > 0))];
 }
 

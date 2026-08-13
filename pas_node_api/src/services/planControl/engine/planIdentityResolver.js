@@ -10,7 +10,7 @@
  * See docs/PLAN_CONTROL_REVAMP_PLAN.md §5 — Plan identity resolver.
  */
 
-const { getPlanFamilies } = require('./planFamilies');
+const { getPlanFamilies, withConfiguredPlanVariants } = require('./planFamilies');
 
 // ─── Lookup cache (rebuilt when plan families change) ───────────────────────
 
@@ -41,7 +41,7 @@ function normalizeSnapshot(policy) {
 function getFamilies(policy) {
   const snapshot = normalizeSnapshot(policy);
   return Array.isArray(snapshot.planFamilies) && snapshot.planFamilies.length
-    ? snapshot.planFamilies
+    ? withConfiguredPlanVariants(snapshot.planFamilies)
     : getPlanFamilies();
 }
 

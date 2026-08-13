@@ -53,19 +53,33 @@ const ALL_TIER_FILTERS = [
 ];
 
 /**
- * Reads config.pricing.planIds and returns { basic, basicYearly, standard, ... }.
- * Returns null for any slot that isn't configured (caller must handle gracefully —
- * an unconfigured slot means that tier/period simply isn't live in this environment).
+ * Each config slot accepts either one numeric ID or an array of numeric IDs.
+ * Arrays let multiple aMember products (for example normal monthly, free-trial,
+ * and one-month-trial products) share one plan family and entitlement policy.
  */
-function getPlanIds() {
+function normalizePlanIdList(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values
+    .map(Number)
+    .filter((id) => Number.isInteger(id) && id > 0))];
+}
+
+function getPlanIdLists() {
   const raw = config.pricing?.planIds || {};
   const ids = {};
   for (const tier of TIERS) {
-    ids[tier] = Number.isFinite(raw[tier]) ? raw[tier] : null;
+    ids[tier] = normalizePlanIdList(raw[tier]);
     const yearlyKey = `${tier}Yearly`;
-    ids[yearlyKey] = Number.isFinite(raw[yearlyKey]) ? raw[yearlyKey] : null;
+    ids[yearlyKey] = normalizePlanIdList(raw[yearlyKey]);
   }
   return ids;
+}
+
+// Backward-compatible primary-ID view for older callers. New entitlement and
+// Admin UI builders use getPlanIdLists() so no configured variant is omitted.
+function getPlanIds() {
+  const lists = getPlanIdLists();
+  return Object.fromEntries(Object.entries(lists).map(([key, values]) => [key, values[0] ?? null]));
 }
 
 function billingEntry(tier, isYearly) {
@@ -88,8 +102,8 @@ function billingEntry(tier, isYearly) {
  * a tier/period this environment hasn't assigned a plan ID to yet.
  */
 function getContributionDocs() {
-  const ids = getPlanIds();
-  const allConfiguredIds = TIERS.flatMap((t) => [ids[t], ids[`${t}Yearly`]]).filter((id) => id !== null);
+  const ids = getPlanIdLists();
+  const allConfiguredIds = TIERS.flatMap((t) => [...ids[t], ...ids[`${t}Yearly`]]);
   if (allConfiguredIds.length === 0) return [];
 
   const docs = [];
@@ -99,8 +113,7 @@ function getContributionDocs() {
   for (const tier of TIERS) {
     for (const platform of TIER_PLATFORMS[tier]) {
       platformPlans[platform] = platformPlans[platform] || [];
-      if (ids[tier] !== null) platformPlans[platform].push(ids[tier]);
-      if (ids[`${tier}Yearly`] !== null) platformPlans[platform].push(ids[`${tier}Yearly`]);
+      platformPlans[platform].push(...ids[tier], ...ids[`${tier}Yearly`]);
     }
   }
   docs.push({ _id: 'platform_access', platform_plans: platformPlans });
@@ -108,16 +121,17 @@ function getContributionDocs() {
   // ── competitor_limits ─────────────────────────────────────────────────────
   const planLimits = {};
   for (const tier of TIERS) {
-    if (ids[tier] !== null) planLimits[ids[tier]] = TIER_COMPETITOR_LIMITS[tier];
-    if (ids[`${tier}Yearly`] !== null) planLimits[ids[`${tier}Yearly`]] = TIER_COMPETITOR_LIMITS[tier];
+    for (const planId of [...ids[tier], ...ids[`${tier}Yearly`]]) {
+      planLimits[planId] = TIER_COMPETITOR_LIMITS[tier];
+    }
   }
   docs.push({ _id: 'competitor_limits', plan_limits: planLimits });
 
   // ── plan_billing_metadata ────────────────────────────────────────────────
   const planInfo = {};
   for (const tier of TIERS) {
-    if (ids[tier] !== null) planInfo[ids[tier]] = billingEntry(tier, false);
-    if (ids[`${tier}Yearly`] !== null) planInfo[ids[`${tier}Yearly`]] = billingEntry(tier, true);
+    for (const planId of ids[tier]) planInfo[planId] = billingEntry(tier, false);
+    for (const planId of ids[`${tier}Yearly`]) planInfo[planId] = billingEntry(tier, true);
   }
   docs.push({ _id: 'plan_billing_metadata', plan_info: planInfo });
 
@@ -125,8 +139,7 @@ function getContributionDocs() {
   function idsForTiers(tiers) {
     const out = [];
     for (const tier of tiers) {
-      if (ids[tier] !== null) out.push(ids[tier]);
-      if (ids[`${tier}Yearly`] !== null) out.push(ids[`${tier}Yearly`]);
+      out.push(...ids[tier], ...ids[`${tier}Yearly`]);
     }
     return out;
   }
@@ -156,11 +169,11 @@ function getContributionDocs() {
  * so an admin can tell the two generations apart) should show `label`, not the key.
  */
 function getPlanGroups() {
-  const ids = getPlanIds();
+  const ids = getPlanIdLists();
   const colors = { basic: '#4f46e5', standard: '#2563eb', platinum: '#dc2626', palladium: '#059669' };
   const groups = {};
   for (const tier of TIERS) {
-    const plans = [ids[tier], ids[`${tier}Yearly`]].filter((id) => id !== null);
+    const plans = [...ids[tier], ...ids[`${tier}Yearly`]];
     if (plans.length === 0) continue;
     groups[`${TIER_LABEL[tier]} (2026)`] = {
       color: colors[tier],
@@ -221,7 +234,9 @@ function mergeContributions(baseDocs) {
 }
 
 module.exports = {
+  normalizePlanIdList,
   getPlanIds,
+  getPlanIdLists,
   getContributionDocs,
   getPlanGroups,
   mergeContributions,

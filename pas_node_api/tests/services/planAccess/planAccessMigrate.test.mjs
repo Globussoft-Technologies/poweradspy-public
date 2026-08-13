@@ -49,9 +49,10 @@ const restructurePath = require.resolve("../../../src/services/planAccess/restru
 const mergeContributions = vi.fn((docs) => docs);
 const getContributionDocs = vi.fn(() => []);
 const getPlanIds = vi.fn(() => ({}));
+const getPlanIdLists = vi.fn(() => ({}));
 require.cache[restructurePath] = {
   id: restructurePath, filename: restructurePath, loaded: true,
-  exports: { mergeContributions, getContributionDocs, getPlanIds, getPlanGroups: vi.fn(() => ({})) },
+  exports: { mergeContributions, getContributionDocs, getPlanIds, getPlanIdLists, getPlanGroups: vi.fn(() => ({})) },
 };
 
 let logSpy, errSpy, exitSpy;
@@ -67,6 +68,7 @@ beforeEach(() => {
   mergeContributions.mockReset().mockImplementation((docs) => docs);
   getContributionDocs.mockReset().mockReturnValue([]);
   getPlanIds.mockReset().mockReturnValue({});
+  getPlanIdLists.mockReset().mockReturnValue({});
   logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {});
@@ -181,7 +183,7 @@ describe("services/planAccess/planAccessMigrate (config.json-driven, additive-on
       { _id: "market_trends", stage: "beta", allowed_plan_ids: null },
       { _id: "keyword_explorer", stage: "beta", allowed_plan_ids: null },
     ]));
-    getPlanIds.mockReturnValue({ basic: 72, basicYearly: 76 });
+    getPlanIdLists.mockReturnValue({ basic: [72], basicYearly: [76] });
     fakeFindOne.mockImplementation(async ({ _id }) => {
       if (_id === "market_trends" || _id === "keyword_explorer") return { _id, allowed_plan_ids: [999] };
       if (_id === "plan_billing_metadata") return { _id, plan_info: { "999": { tier: "Legacy" } } };
@@ -225,7 +227,7 @@ describe("services/planAccess/planAccessMigrate (config.json-driven, additive-on
     fsReadFileSyncSpy.mockReturnValueOnce(JSON.stringify([
       { _id: "market_trends", stage: "beta", allowed_plan_ids: null },
     ]));
-    getPlanIds.mockReturnValue({ basic: 72, basicYearly: 76 });
+    getPlanIdLists.mockReturnValue({ basic: [72], basicYearly: [76] });
     fakeFindOne.mockImplementation(async ({ _id }) => {
       if (_id === "market_trends") {
         return { _id, allowed_plan_ids: [36, 57, 76], migration_versions: ["open_beta_paid_plans_v1"] };

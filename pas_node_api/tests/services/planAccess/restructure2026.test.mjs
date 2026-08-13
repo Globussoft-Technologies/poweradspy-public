@@ -36,6 +36,27 @@ describe("restructure2026 — config.pricing.planIds is the only source of these
     expect(getPlanIds().standard).toBeNull();
   });
 
+  it("accepts multiple IDs per billing slot while preserving the primary-ID compatibility view", () => {
+    configExports = { pricing: { planIds: {
+      basic: [101, 106, "107", 106],
+      basicYearly: [105, 108],
+    } } };
+    const { getPlanIds, getPlanIdLists, getPlanGroups, getContributionDocs } = freshSut();
+
+    expect(getPlanIds()).toMatchObject({ basic: 101, basicYearly: 105 });
+    expect(getPlanIdLists()).toMatchObject({
+      basic: [101, 106, 107],
+      basicYearly: [105, 108],
+    });
+    expect(getPlanGroups()["Basic (2026)"].plans).toEqual([101, 106, 107, 105, 108]);
+
+    const docs = getContributionDocs();
+    expect(docs.find((doc) => doc._id === "platform_access").platform_plans.facebook)
+      .toEqual([101, 106, 107, 105, 108]);
+    expect(Object.keys(docs.find((doc) => doc._id === "competitor_limits").plan_limits).map(Number))
+      .toEqual(expect.arrayContaining([101, 105, 106, 107, 108]));
+  });
+
   it("platform_access contribution is cumulative per tier and uses only configured IDs", () => {
     const { getContributionDocs } = freshSut();
     const docs = getContributionDocs();

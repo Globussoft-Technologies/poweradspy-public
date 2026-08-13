@@ -19,7 +19,7 @@ const {
   getChildCapabilities,
 } = require('../registries/capabilityRegistry');
 const { getAllActiveNetworks } = require('../registries/networkRegistry');
-const { GENERATIONS, getPlanFamilies } = require('../engine/planFamilies');
+const { GENERATIONS, getPlanFamilies, withConfiguredPlanVariants } = require('../engine/planFamilies');
 const { resolvePlanIdentity } = require('../engine/planIdentityResolver');
 const { evaluateEntitlement } = require('../engine/evaluator');
 const { validateSnapshot, diffSnapshots } = require('../engine/policyValidation');
@@ -80,8 +80,12 @@ function bootstrapSnapshot() {
 async function readablePolicySource() {
   const active = await getLatestPolicy();
   if (active?.snapshot) {
+    const snapshot = {
+      ...active.snapshot,
+      planFamilies: withConfiguredPlanVariants(active.snapshot.planFamilies),
+    };
     return {
-      snapshot: active.snapshot,
+      snapshot,
       active,
       source: 'live_policy',
       storage: {

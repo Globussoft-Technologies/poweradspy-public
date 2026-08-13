@@ -72,15 +72,19 @@ const GENERATIONS = [
  */
 function get2026PlanIds() {
   const raw = config.pricing?.planIds || {};
+  const list = (value) => {
+    const values = Array.isArray(value) ? value : [value];
+    return [...new Set(values.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  };
   return {
-    basic: Number.isFinite(raw.basic) ? raw.basic : null,
-    basicYearly: Number.isFinite(raw.basicYearly) ? raw.basicYearly : null,
-    standard: Number.isFinite(raw.standard) ? raw.standard : null,
-    standardYearly: Number.isFinite(raw.standardYearly) ? raw.standardYearly : null,
-    platinum: Number.isFinite(raw.platinum) ? raw.platinum : null,
-    platinumYearly: Number.isFinite(raw.platinumYearly) ? raw.platinumYearly : null,
-    palladium: Number.isFinite(raw.palladium) ? raw.palladium : null,
-    palladiumYearly: Number.isFinite(raw.palladiumYearly) ? raw.palladiumYearly : null,
+    basic: list(raw.basic),
+    basicYearly: list(raw.basicYearly),
+    standard: list(raw.standard),
+    standardYearly: list(raw.standardYearly),
+    platinum: list(raw.platinum),
+    platinumYearly: list(raw.platinumYearly),
+    palladium: list(raw.palladium),
+    palladiumYearly: list(raw.palladiumYearly),
   };
 }
 
@@ -260,10 +264,11 @@ function buildPlanFamilies() {
   function add2026Family(key, label, tierRank) {
     const monthly = ids2026[key];
     const yearly = ids2026[`${key}Yearly`];
-    if (monthly === null && yearly === null) return; // Not configured in this env
-    const variants = [];
-    if (monthly !== null) variants.push({ planId: monthly, billingCycle: 'monthly', billingProvider: 'amember' });
-    if (yearly !== null) variants.push({ planId: yearly, billingCycle: 'yearly', billingProvider: 'amember' });
+    if (monthly.length === 0 && yearly.length === 0) return; // Not configured in this env
+    const variants = [
+      ...monthly.map((planId) => ({ planId, billingCycle: 'monthly', billingProvider: 'amember' })),
+      ...yearly.map((planId) => ({ planId, billingCycle: 'yearly', billingProvider: 'amember' })),
+    ];
     families.push({
       familyId: `${key}-2026`,
       label,
@@ -287,13 +292,18 @@ function buildPlanFamilies() {
 // ─── Cached instance ────────────────────────────────────────────────────────
 
 let _families = null;
+let _planIdsSignature = null;
 
 /**
  * Get all plan families (cached after first call).
  * @returns {PlanFamily[]}
  */
 function getPlanFamilies() {
-  if (!_families) _families = buildPlanFamilies();
+  const signature = JSON.stringify(config.pricing?.planIds || {});
+  if (!_families || _planIdsSignature !== signature) {
+    _families = buildPlanFamilies();
+    _planIdsSignature = signature;
+  }
   return _families;
 }
 
@@ -302,6 +312,47 @@ function getPlanFamilies() {
  */
 function invalidatePlanFamilies() {
   _families = null;
+  _planIdsSignature = null;
+}
+
+/**
+ * Overlay config-defined 2026 billing variants onto a stored policy snapshot's
+ * families without changing any policy, network, feature, or limit setting.
+ * This lets a newly configured aMember product ID immediately resolve to the
+ * existing family policy and appear in Admin UI; publishing remains explicit.
+ */
+function withConfiguredPlanVariants(planFamilies) {
+  const source = Array.isArray(planFamilies) ? planFamilies : [];
+  const configured = getPlanFamilies().filter((family) => family.generation === '2026-restructure');
+  const configuredIds = new Set(configured.flatMap((family) => (
+    family.variants || []
+  )).map((variant) => Number(variant.planId)));
+
+  const result = source.map((family) => ({
+    ...family,
+    variants: (family.variants || []).filter(
+      (variant) => !configuredIds.has(Number(variant.planId))
+    ).map((variant) => ({ ...variant })),
+  }));
+
+  for (const expected of configured) {
+    const index = result.findIndex((family) => family.familyId === expected.familyId);
+    if (index < 0) {
+      result.push({
+        ...expected,
+        variants: expected.variants.map((variant) => ({ ...variant, verified: true })),
+      });
+      continue;
+    }
+    result[index] = {
+      ...result[index],
+      variants: [
+        ...result[index].variants,
+        ...expected.variants.map((variant) => ({ ...variant, verified: true })),
+      ],
+    };
+  }
+  return result;
 }
 
 /**
@@ -328,6 +379,7 @@ module.exports = {
   buildPlanFamilies,
   getPlanFamilies,
   invalidatePlanFamilies,
+  withConfiguredPlanVariants,
   getFamilyById,
   getFamiliesByGeneration,
 };
