@@ -722,7 +722,7 @@ function buildAllSearchesQuery(params) {
       'dateTime', 'date',
       'user.id', 'user.email', 'user.username', 'user.language', 'user.language_name', 'user.current_country',
       'search.keyword', 'search.advertiser', 'search.domain',
-      'network', 'filterType', 'adsCountOnSerach',
+      'network', 'filterType', 'adsCountOnSerach', 'search_error_detail',
       'dashboard.*',
       'filter.*',
       'filter.native_network',

@@ -63,14 +63,18 @@ function transformAdCountry(raw) {
         results.push(map[iso]);
       }
       map[iso].count += 1;
-    } else if (nameUpper) {
-      // Unknown region with no ISO (e.g. DACH) — use name as id
+    } else if (nameUpper && REGION_ISO_MAP[nameUpper]) {
+      // Known named region with no single ISO (e.g. DACH) — use name as id
       if (!map[nameUpper]) {
         map[nameUpper] = { id: nameUpper, name, count: 0 };
         results.push(map[nameUpper]);
       }
       map[nameUpper].count += 1;
     }
+    // Anything else — a country name we couldn't resolve to an ISO code
+    // (typically the source recorded it in a non-English language/script,
+    // e.g. "美国", "СШа", "États Unis" — untranslated duplicates of an
+    // already-listed country) — is dropped rather than shown as its own row.
   }
   return results.length > 0 ? results : null;
 }
@@ -104,10 +108,14 @@ function transformAdvertiserCountry(raw) {
       results.push({ id: 'ALL', name: 'Worldwide', count });
     } else if (iso) {
       results.push({ id: iso, name, count });
-    } else {
-      // Unknown region with no ISO (e.g. DACH) — use name as id, won't highlight on map but shows in list
+    } else if (countryUpper && REGION_ISO_MAP[countryUpper]) {
+      // Known named region with no single ISO (e.g. DACH) — use name as id, won't highlight on map but shows in list
       results.push({ id: countryUpper, name: item.country, count });
     }
+    // Anything else — a country name we couldn't resolve to an ISO code
+    // (typically the source recorded it in a non-English language/script,
+    // e.g. "美国", "СШа", "États Unis" — untranslated duplicates of an
+    // already-listed country) — is dropped rather than shown as its own row.
   }
   return results.length > 0 ? results : null;
 }

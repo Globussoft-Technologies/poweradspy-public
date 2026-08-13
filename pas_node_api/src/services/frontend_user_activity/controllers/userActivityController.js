@@ -61,6 +61,18 @@ function toBoolStr(val) {
   return (val === 1 || val === '1' || val === true || val === 'true') ? 'true' : 'NA';
 }
 
+// The frontend sends this over a urlencoded form body, so an array like
+// [{"network":"tiktok","message":"..."}] arrives here JSON-stringified into
+// a plain string. Parse it back so it's indexed as real JSON, not escaped
+// text. Deliberately {network, message} pairs rather than {[network]:
+// message} — keying by network name would mint a new Elasticsearch
+// sub-field per platform the first time it errors.
+function parseErrorObject(val) {
+  if (!val || val === 'NA' || val === '') return 'NA';
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return val; }
+}
+
 function buildGetAdsInsertData(data, network) {
   // Normalize order_column → sort fields for platforms that send order_column instead of *_sort
   const orderCol = data.order_column;
@@ -105,6 +117,12 @@ function buildGetAdsInsertData(data, network) {
     'filter.ad_categories':    data.adcategory,
     'filter.ad_subCategories': data.subCategory,
     adsCountOnSerach:          data.adsCountOnSerach,
+    // Field name intentionally differs from the frontend's earlier field
+    // (search_error_message, now abandoned) — that name's ES mapping got
+    // locked to `text` before this parsing existed, so an object can never
+    // be written there again. This name has never been indexed, so ES will
+    // dynamically map it as an object on first write.
+    search_error_detail:       parseErrorObject(data.search_error_detail),
     'dashboard.favourite':     data.favorite === 'true' ? 'favourite' : 'NA',
     'dashboard.hidden':        data.hidden   === 'true' ? 'hidden'    : 'NA',
     project_name:               data.project_name              ?? 'NA',

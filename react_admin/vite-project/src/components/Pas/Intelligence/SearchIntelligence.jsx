@@ -550,7 +550,7 @@ async function exportAllSearchesPDF(data) {
               .join("; ");
           }
         } catch { /* keep raw errPart */ }
-        adCountText = `${numPart} · ${errMsg}`;
+        adCountText = `${numPart} | ${errMsg}`;
       } else {
         const n = Number(s);
         adCountText = Number.isNaN(n) ? s : String(n);

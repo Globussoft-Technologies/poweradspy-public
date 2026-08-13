@@ -1665,9 +1665,23 @@ async function trackUserActivity(payload, meta) {
     user_keyword:         payload.userkeyword          ?? false,
     ipBasedCountry:       payload.ipBasedCountry       ?? 'NA',
     method:               'getAds',
-    adsCountOnSerach:     (payload.error_message && payload.error_message !== 'NA')
-                            ? `${total} | ${payload.error_message}`
-                            : total,
+    // adsCountOnSerach is mapped as `long` in Elasticsearch, so it must stay
+    // numeric — concatenating payload.error_message onto it (e.g.
+    // '0 | {"google":"Timeout"}') turns it into a string and trips a
+    // mapper_parsing_exception (500). The error message gets its own field.
+    adsCountOnSerach:          total,
+    // NOTE: field name is intentionally new (not search_error_message) — an
+    // earlier version of this code sent a string here, which locked that
+    // field's Elasticsearch mapping to `text`. Objects can never be written
+    // to a `text`-mapped field, so a fresh, never-before-used field name is
+    // required to get a fresh (object) dynamic mapping.
+    // Stringified here (rather than left as an array) because the form-body
+    // serializer below treats bare arrays as flat scalar lists (`key[]=item`)
+    // — it would mangle an array of {network, message} objects. The backend
+    // JSON.parses this back into the array before indexing it.
+    search_error_detail:       Array.isArray(payload.error_message)
+                                  ? JSON.stringify(payload.error_message)
+                                  : (payload.error_message ?? 'NA'),
     project_name:              payload.project_name              ?? 'NA',
     competitor_name:           payload.competitor_name           ?? 'NA',
     competitor_platform:       payload.competitor_platform       ?? 'NA',
@@ -2090,7 +2104,14 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
       competitor_name:          filters.competitor_name     ?? 'NA',
       competitor_platform:      filters.competitor_platform ?? 'NA',
       competitor_platform_click: filters.competitor_platform ?? 'NA',
-      error_message:            (json.errors && Object.keys(json.errors).length) ? JSON.stringify(json.errors) : 'NA',
+      // Array of {network, message} rather than {[network]: message} — keying
+      // by network name means every new platform that errors mints its own
+      // dedicated Elasticsearch sub-field (search_error_detail.<network>).
+      // A fixed {network, message} shape keeps the mapping the same no
+      // matter which or how many platforms fail.
+      error_message:            (json.errors && Object.keys(json.errors).length)
+                                   ? Object.entries(json.errors).map(([network, message]) => ({ network, message }))
+                                   : 'NA',
     }, sanitizedMeta);
   }
 

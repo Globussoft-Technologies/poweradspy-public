@@ -306,6 +306,25 @@ async function getAllSearches(req, elastic, logger) {
       const allPlatforms = platformsArray.length > 0 ? platformsArray : (network ? [network] : []);
       const platformStr = allPlatforms.join(',');
 
+      // Ad count + search errors: search_error_detail is stored as an array of
+      // { network, message } pairs (see buildGetAdsInsertData/parseErrorObject in
+      // frontend_user_activity/controllers/userActivityController.js). The UI
+      // (AllSearches.jsx / SearchIntelligence.jsx) expects ads_count as
+      // "<count> | { "<network>": "<message>", ... }" when errors are present.
+      const rawAdsCount = s['adsCountOnSerach'] ?? 0;
+      const errDetail = s['search_error_detail'] ?? s?.search_error_detail;
+      let adsCount = rawAdsCount;
+      if (errDetail && errDetail !== 'NA') {
+        const errArr = Array.isArray(errDetail) ? errDetail : [errDetail];
+        const errMap = {};
+        for (const e of errArr) {
+          if (e && typeof e === 'object' && e.network) errMap[e.network] = e.message ?? '';
+        }
+        if (Object.keys(errMap).length > 0) {
+          adsCount = `${rawAdsCount} | ${JSON.stringify(errMap)}`;
+        }
+      }
+
       return {
         _id:             h._id,
         timestamp:       dateStr,
@@ -318,7 +337,7 @@ async function getAllSearches(req, elastic, logger) {
         platform:        platformStr,
         country,
         filter_type:     s['filterType'] ?? null,
-        ads_count:       s['adsCountOnSerach'] ?? 0,
+        ads_count:       adsCount,
         filters_applied: [...new Set(filterPills)],
         other_activity,
       };

@@ -1,5 +1,29 @@
-import { Heart, Zap, Copy, Users, Info } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Heart, Zap, Copy, Check, Users, Info } from 'lucide-react';
 import { useTheme } from '../../../hooks/useTheme';
+
+// Copy button for a single interest/behaviour chip — swaps to a green
+// checkmark for 2s after copying, same feedback as the Basic Info URL copy.
+const ChipCopyBtn = ({ text, isLight }) => {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef(null);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={`p-0.5 rounded transition-colors shrink-0 ${copied ? (isLight ? 'text-green-500' : 'text-green-400') : isLight ? 'text-gray-400 hover:text-gray-500 hover:bg-gray-100' : 'text-white/20 hover:text-white/60 hover:bg-white/10'}`}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+};
 
 const AudienceSection = ({ interests = [], behaviours = [], confidenceScore = null, loading = false }) => {
   const { theme } = useTheme();
@@ -65,12 +89,7 @@ const AudienceSection = ({ interests = [], behaviours = [], confidenceScore = nu
                  {audience[key].map((item, i) => (
                    <span key={i} className={`inline-flex items-center gap-1.5 text-[13px] rounded-lg px-2.5 py-1 leading-snug ${isLight ? 'text-gray-800 bg-white border border-gray-200' : 'text-white/80 bg-white/[0.04] border border-white/5'}`}>
                      {item}
-                     <button
-                       onClick={() => navigator.clipboard.writeText(item)}
-                       className={`p-0.5 rounded transition-colors shrink-0 ${isLight ? 'text-gray-400 hover:text-gray-500 hover:bg-gray-100' : 'text-white/20 hover:text-white/60 hover:bg-white/10'}`}
-                     >
-                       <Copy size={12} />
-                     </button>
+                     <ChipCopyBtn text={item} isLight={isLight} />
                    </span>
                  ))}
               </div>

@@ -997,7 +997,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                     title={tooltip}
                     style={{ display: "inline-block", maxWidth: "100%", background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5", padding: "3px 6px", borderRadius: "4px", fontSize: "10px", fontWeight: 500, lineHeight: 1.35, overflowWrap: "break-word", wordBreak: "normal" }}
                   >
-                    {count != null ? `${count.toLocaleString()} · ` : ""}{messages.join("; ")}
+                    {count != null ? `${count.toLocaleString()} | ` : ""}{messages.join("; ")}
                   </span>
                 );
               }

@@ -1004,6 +1004,26 @@ const App = () => {
     sdui.setActivePlatforms,
   ]);
 
+  // Re-arms the keyword/advertiser/domain-search tracking ref (consumed by
+  // loadAds → saveKeywordSearch) so that switching platforms while a search
+  // term is already active reports the search against the newly selected
+  // network(s), not just the network it was originally submitted against.
+  // No-op when there's no active search term, or for guest/public sessions
+  // (keyword-search storage is authenticated-users-only).
+  const armKeywordSearchTrack = (query, si, selectedPlatforms) => {
+    if (!query || !isAuthenticated || guest?.isGuest || _isPublicRoute) return;
+    const userEmail = user?.email || '';
+    const selected = selectedPlatforms || [];
+    const network = selected.length === 0 ? 'all' : selected.map((p) => String(p).toLowerCase());
+    const selCountries = sdui.selCountries || sdui.filterValues?.country_filter || [];
+    const country = labelsToCountryCodes(selCountries, findCountryOptions(sdui.config));
+    const _gtRaw = sdui.filterValues?.google_transparency_ads;
+    const _gtOn = _gtRaw === true || _gtRaw === 1 || _gtRaw === 'true';
+    const coversGoogle = network === 'all' || (Array.isArray(network) && network.includes('google'));
+    const GT = _gtOn && coversGoogle;
+    lastDailyKeywordRef.current = { query: query, si, userEmail, network, country, GT };
+  };
+
   const handleAllClick = () => {
     if (!guest?.isPublicLanding && guestGuard("Please login to change platforms", {})) {
       trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'network_tab', feature_name: 'network_selection', network: 'all', network_scope: 'all', request_context: 'network_tab' });
@@ -1015,6 +1035,7 @@ const App = () => {
       : allPlatformValues;
     sdui.setActivePlatforms(permitted);
     trackProductEvent('network_selected', { entry_point: 'network_tab', feature_name: 'network_selection', network: 'all', network_scope: 'all', request_context: 'network_tab' });
+    armKeywordSearchTrack(ui.searchQuery, ui.searchIn, []);
   };
 
   const handlePlatformClick = (platformValue) => {
@@ -1043,11 +1064,13 @@ const App = () => {
         ? allPlatformValues.filter((network) => isCurrentPlanNetworkAllowed(network))
         : allPlatformValues;
       sdui.setActivePlatforms(permitted);
+      armKeywordSearchTrack(ui.searchQuery, ui.searchIn, []);
     } else {
       // Network switches affect SDUI visibility, not selected filter state.
       // Retained unsupported filters intentionally allow an empty result set.
       dispatch(setSpecificPlatforms(newSpecific));
       sdui.setActivePlatforms(newSpecific);
+      armKeywordSearchTrack(ui.searchQuery, ui.searchIn, newSpecific);
     }
     trackProductEvent('network_selected', { entry_point: 'network_tab', feature_name: 'network_selection', ...getNetworkContext(newSpecific), request_context: 'network_tab' });
   };
@@ -1842,26 +1865,9 @@ const App = () => {
 
     // Keyword-search store — only on explicit search submit, AUTHENTICATED users only
     // (never guest / public). Stores the searched network(s): 'all' or the selected slugs.
-    if (query && isAuthenticated && !guest?.isGuest && !_isPublicRoute) {
-      const si = type || ui.searchIn || 'keyword';
-      const userEmail = user?.email || '';
-      const selected = (platform ? [platform] : ui.specificPlatforms) || [];
-      const network = selected.length === 0 ? 'all' : selected.map((p) => String(p).toLowerCase());
-      // Selected country filter at search time → mapped from display labels (what the
-      // combobox stores) to ISO 2-letter codes, stored with the term (null when none).
-      const selCountries = sdui.selCountries || sdui.filterValues?.country_filter || [];
-      const country = labelsToCountryCodes(selCountries, findCountryOptions(sdui.config));
-      // Google Transparency: flagged only when the toggle is ON **and** the search actually
-      // covers Google — i.e. the "All" tab or an explicit network list containing google.
-      // Same loose truthiness as buildSearchPayload (true | 1 | 'true') since the toggle can
-      // come back from localStorage as a non-boolean.
-      const _gtRaw = sdui.filterValues?.google_transparency_ads;
-      const _gtOn = _gtRaw === true || _gtRaw === 1 || _gtRaw === 'true';
-      const coversGoogle = network === 'all' ||
-        (Array.isArray(network) && network.includes('google'));
-      const GT = _gtOn && coversGoogle;
-      lastDailyKeywordRef.current = { query, si, userEmail, network, country, GT };
-    }
+    const si = type || ui.searchIn || 'keyword';
+    const selected = (platform ? [platform] : ui.specificPlatforms) || [];
+    armKeywordSearchTrack(query, si, selected);
   }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute, showToast]);
 
   // Orchestrates AI search: prompt → DS plan → try each fallback payload
