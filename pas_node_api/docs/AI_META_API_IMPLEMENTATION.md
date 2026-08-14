@@ -150,6 +150,10 @@ Pure/synchronous, fully unit-tested. Enforces the entire 3 contract:
 - **Offers compatibility:** legacy `offers` arrays are accepted only when `offer_type` is absent.
 - **Offer type:** `offer_type` is a scalar string-or-null field; it is validated against the 13-value enum
  and stored as `null` when no offer is identified.
+- **Production ES compatibility:** production received `offer_type` before the explicit mapping ran, so
+ Elasticsearch dynamically created it as `text` with an `offer_type.keyword` multi-field. Production
+ exact-match filters use that keyword sub-field; staging/development use the intended keyword base field.
+ Writes keep the same `offer_type` JSON shape in every environment.
 - **Text:** `offering`/`caption` 200 (no newlines/control chars, empty omitted); `roa` sub-fields
  (`intent`/`hook`/`offering_type`/`offering`) each 200, empties dropped, whole object omitted if all empty.
 - **Category group (v1.6):** `category` (5) `category_id` (exactly 4) travel together; `sub_category`
@@ -364,7 +368,7 @@ All `tests/services/common` suites green (615 tests).
 
 1. **ES mapping (spec 7):** apply the explicit AI-Meta mapping to each network's index **before** first
  write. The code writes the data regardless, but without the mapping ES 6.8 dynamic-maps sub-fields
- (e.g. `ai_meta.colors` as text+keyword, `ai_meta.offer_type` as `keyword`) and a later type change would
+ (e.g. `ai_meta.colors` and `ai_meta.offer_type` as text+keyword) and a later type change would
  require a reindex. **Step-by-step runbook (per-network index list, ES 6.8 vs TikTok 8.x PUT forms,
  curl/Kibana/Node-script methods, verification, reindex fallback): [`AI_META_ES_MAPPING_RUNBOOK.md`](./AI_META_ES_MAPPING_RUNBOOK.md).**
 2. **CDN base:** `getDescriptionDetails` image resolution needs `config.cdn.baseUrl` (or

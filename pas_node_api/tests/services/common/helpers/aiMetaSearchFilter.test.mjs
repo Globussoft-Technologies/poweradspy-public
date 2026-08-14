@@ -7,6 +7,7 @@ const {
   applyAiMetaFilters,
   getAiMetaFilterClauses,
   getAiMetaEsField,
+  getAiMetaOfferTypeEsField,
 } = require('../../../../src/services/common/helpers/aiMetaSearchFilter');
 const originalEnv = config.env;
 
@@ -22,6 +23,16 @@ describe('aiMetaSearchFilter', () => {
 
     config.env = 'development';
     expect(getAiMetaEsField('facebook')).toBe('ai');
+  });
+
+  it('uses the dynamically-created offer_type keyword sub-field only in production', () => {
+    config.env = 'production';
+    expect(getAiMetaOfferTypeEsField('facebook')).toBe('ai_meta.offer_type.keyword');
+    expect(getAiMetaOfferTypeEsField('instagram')).toBe('ai.offer_type.keyword');
+
+    config.env = 'staging';
+    expect(getAiMetaOfferTypeEsField('facebook')).toBe('ai.offer_type');
+    expect(getAiMetaOfferTypeEsField('instagram')).toBe('ai.offer_type');
   });
 
   it('adds all four required AI-Meta fields as an AND filter', () => {
@@ -45,6 +56,7 @@ describe('aiMetaSearchFilter', () => {
   });
 
   it('maps fixed contract fields and offer_type to the resolved ES object', () => {
+    config.env = 'development';
     const clauses = getAiMetaFilterClauses('google', {
       ai_ad_type: ['promotional', 'demonstration'],
       ai_intent: 'conversion,lead_generation',
@@ -61,6 +73,20 @@ describe('aiMetaSearchFilter', () => {
       ], minimum_should_match: 1 } },
       { terms: { 'ai.category_id': ['1038'] } },
     ]));
+  });
+
+  it('queries production offer_type through its keyword multi-field', () => {
+    config.env = 'production';
+    const clauses = getAiMetaFilterClauses('facebook', {
+      ai_offer_type: ['percentage_discount'],
+    });
+
+    expect(clauses).toEqual([
+      { bool: { should: [
+        { terms: { 'ai_meta.offer_type.keyword': ['percentage_discount'] } },
+        { terms: { 'ai_meta.offers.type': ['percentage_discount'] } },
+      ], minimum_should_match: 1 } },
+    ]);
   });
 
   it('expands offering_type product/service filters to include both', () => {

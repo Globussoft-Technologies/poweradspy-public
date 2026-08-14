@@ -32,6 +32,7 @@ import {
   Smartphone,
   Download,
   Bookmark,
+  Sparkles,
 } from "lucide-react";
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import OriginalPreview from "./OriginalPreview";
@@ -41,6 +42,7 @@ import { downloadAdAsPdf } from "../../services/adPdf";
 import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 import { ctaHref, parseAdCtas } from "../../utils/cta";
 import { classifyError, trackAdAction, trackProductEvent } from "../../utils/googleAnalytics";
+import { useTheme } from "../../hooks/useTheme";
 
 import fbIcon from "../../assets/fb.png";
 import igIcon from "../../assets/ig.png";
@@ -249,6 +251,7 @@ const EngagementStat = ({ icon, color, label, value, tooltip }) => {
  */
 const AdDetailModal = ({
   ad,
+  isAiFilteredResult = false,
   onClose,
   isFavourite,
   onToggleFavourite,
@@ -266,6 +269,8 @@ const AdDetailModal = ({
   onUnHideAd,
   guest,
 }) => {
+  const theme = useTheme()?.theme ?? "light";
+  const isLightTheme = theme === "light";
   const [isExpanded, setIsExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [advTooltipPos, setAdvTooltipPos] = useState(null);
@@ -1042,7 +1047,23 @@ const AdDetailModal = ({
           </div>
 
           {/* Right: Details - Added pt-12 to prevent cross overlap with heart button */}
-          <div className="md:w-1/2 overflow-y-auto overflow-x-hidden p-5 pt-12 space-y-4">
+          <div className="md:w-1/2 relative overflow-y-auto overflow-x-hidden p-5 pt-10 space-y-4">
+            {/* Keep the search-context badge inside the details column so it
+                never overlays or competes with the ad creative. */}
+            {isAiFilteredResult && (
+              <div
+                className={`absolute left-5 top-3 z-10 flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[8px] font-extrabold uppercase tracking-[0.14em] transition-colors ${
+                  isLightTheme
+                    ? "border-indigo-200 bg-indigo-50 text-indigo-600 shadow-sm"
+                    : "border-amber-400/35 bg-amber-400/10 text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+                }`}
+                title="This result was refined using AI Filters"
+              >
+                <Sparkles size={9} strokeWidth={2.5} aria-hidden="true" />
+                AI Refined
+              </div>
+            )}
+
             {/* Advertiser header */}
             <div className="flex items-center gap-1 pr-0">
               {/* <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]' : 'bg-white/20'}`} /> */}

@@ -48,11 +48,18 @@ Once a field is dynamically mapped, you **cannot** change its type in place — 
 
 ---
 
+> **Production compatibility:** production received `offer_type` before this explicit mapping ran.
+> Elasticsearch therefore created `offer_type` as `text` with a `.keyword` multi-field, an immutable
+> mapping that the canonical script now preserves for both existing and newly added production network
+> indices. Runtime exact filters use `.offer_type.keyword` in production;
+> staging/development retain and query the intended keyword base field.
+
 ## 2. The mapping payload (v1.6)
 
-One field block, identical across every network apart from the field name. Use `properties.ai` for dev and
-normal environments; use `properties.ai_meta` only for production Facebook. The enclosing `PUT …/_mapping`
-differs per ES version — see §3.
+The intended field block below applies to staging/development. Production keeps the same logical fields,
+but its `offer_type` mapping remains `text` + `.keyword`; the canonical Node script emits that compatible
+shape automatically for every production network. Use `properties.ai` normally and `properties.ai_meta`
+only for production Facebook. The enclosing `PUT …/_mapping` differs per ES version — see §3.
 
 ```json
 {
@@ -338,7 +345,8 @@ GET search_mix/_mapping/field/ai.*        # ES 6.8 (Kibana)  — or curl GET <ho
 
 **a) Mapping is present and correctly typed:**
 ```
-GET gdn_search_mix_v2/_mapping/field/ai.offer_type         # → "type":"keyword"
+GET gdn_search_mix_v2/_mapping/field/ai.offer_type         # staging/dev → "type":"keyword"
+GET gdn_search_mix_v2/_mapping/field/ai.offer_type.keyword # production → "type":"keyword"
 GET gdn_search_mix_v2/_mapping/field/ai.colors            # → "type":"keyword"
 GET gdn_search_mix_v2/_mapping/field/ai.category_id       # → "type":"keyword"  (v1.6)
 ```

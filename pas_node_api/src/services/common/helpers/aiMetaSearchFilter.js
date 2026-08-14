@@ -30,6 +30,16 @@ function getAiMetaEsField(network) {
     : 'ai';
 }
 
+/**
+ * Production received offer_type values before its explicit mapping was
+ * deployed, so Elasticsearch created a text field with a keyword multi-field.
+ * Other environments were mapped explicitly and query the keyword base field.
+ */
+function getAiMetaOfferTypeEsField(network) {
+  const field = `${getAiMetaEsField(network)}.offer_type`;
+  return config.env === 'production' ? `${field}.keyword` : field;
+}
+
 function isEnabled(value) {
   return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
 }
@@ -63,13 +73,13 @@ function expandOfferingTypeSelection(selected) {
   return [...new Set(normalized)];
 }
 
-function buildOfferTypeClause(field, selected) {
+function buildOfferTypeClause(network, field, selected) {
   // Keep the new scalar contract and older nested JSON payloads both searchable
-  // while the index catches up with the offer_type shape change.
+  // while honoring the production mapping created by dynamic field detection.
   return {
     bool: {
       should: [
-        { terms: { [`${field}.offer_type`]: selected } },
+        { terms: { [getAiMetaOfferTypeEsField(network)]: selected } },
         { terms: { [`${field}.offers.type`]: selected } },
       ],
       minimum_should_match: 1,
@@ -110,7 +120,7 @@ function getAiMetaFilterClauses(network, params = {}) {
     clauses.push(suffix === 'offering_type'
       ? buildOfferingTypeClause(field, selected)
       : suffix === 'offer_type'
-      ? buildOfferTypeClause(field, selected)
+      ? buildOfferTypeClause(network, field, selected)
       : { terms: { [`${field}.${suffix}`]: selected } });
   }
 
@@ -178,6 +188,7 @@ module.exports = {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   getAiMetaEsField,
+  getAiMetaOfferTypeEsField,
   getAiMetaFilterClauses,
   getHasAiMetaFilter,
   readAiMetaVisibleCount,

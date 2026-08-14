@@ -19,6 +19,7 @@ import ChipCluster from "../filters/ChipCluster";
 import { getAiColorLabel } from "../../utils/aiColorPalette";
 import { COUNTRY_NAMES } from "../../utils/countries";
 import { getDashboardAdNavigation } from "../../utils/dashboardAdNavigation";
+import { hasActiveAiFilters } from "../../utils/aiQuickFilterPresets";
 
 // Env kill-switch for the "Total Ads: X" count shown next to the filter chips
 // on every search. Set VITE_SHOW_TOTAL_ADS_COUNT=false to hide it; any other
@@ -127,6 +128,12 @@ const AdGrid = ({
         (doc) => doc._id === "ai_meta" && doc.visible !== false,
       ) || null,
     [config],
+  );
+  // This describes the current result context, not a permanent property of an
+  // ad. Derive it from the same SDUI document used by the popup/quick filters.
+  const isAiFilteredResult = useMemo(
+    () => hasActiveAiFilters(filterValues, aiFiltersDoc),
+    [filterValues, aiFiltersDoc],
   );
 
   // "Total Ads" = the ES match total from the backend (`adsMeta` is per-network
@@ -1419,6 +1426,7 @@ const AdGrid = ({
         {/* Ad Detail Modal — shown on card click */}
         <AdDetailModal
           ad={selectedAd}
+          isAiFilteredResult={isAiFilteredResult}
           onClose={() => setSelectedAd(null)}
           isFavourite={
             selectedAd

@@ -48,6 +48,30 @@ const transparencyVideoAd = {
 };
 
 describe("Google Transparency detail media", () => {
+  it("shows the AI-filtered result indicator only for AI-filtered searches", () => {
+    const { rerender } = render(
+      <AdDetailModal
+        ad={transparencyTextAd}
+        isAiFilteredResult
+        onClose={vi.fn()}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    expect(screen.getByText("AI Refined")).toBeInTheDocument();
+
+    rerender(
+      <AdDetailModal
+        ad={transparencyTextAd}
+        isAiFilteredResult={false}
+        onClose={vi.fn()}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    expect(screen.queryByText("AI Refined")).not.toBeInTheDocument();
+  });
+
   it("disables Advanced Analytics without invoking its navigation callback", () => {
     const onAnalytics = vi.fn();
     render(

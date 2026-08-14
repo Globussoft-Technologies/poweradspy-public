@@ -30,14 +30,24 @@ const config = require('../../src/config');
 const databaseManager = require('../../src/database/DatabaseManager');
 const networksConfig = require('../../src/config/networks');
 
-// Shared AI-Meta field properties. Only the top-level field name varies by
-// environment/platform; the sub-field mapping stays identical.
+// Production indexed offer_type before this mapping was deployed, so ES
+// dynamically created text + keyword. Preserve that immutable production
+// shape for existing and newly added network indices; explicitly mapped
+// staging/development environments keep the intended keyword base field.
+function offerTypeMapping() {
+  return config.env === 'production'
+    ? { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } }
+    : { type: 'keyword' };
+}
+
+// Shared AI-Meta field properties. The top-level field and the production
+// offer_type compatibility mapping vary by environment/platform.
 const AI_PROPS = {
   ad_type:       { type: 'keyword' },
   intent:        { type: 'keyword' },
   hook:          { type: 'keyword' },
   offering_type: { type: 'keyword' },
-  offer_type:    { type: 'keyword' },
+  offer_type:    offerTypeMapping(),
   offers:        { properties: { type: { type: 'keyword' }, value: { type: 'float' } } },
   colors:        { type: 'keyword' },
   offering:      { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 }, suggest: { type: 'completion', max_input_length: 200 } } },
