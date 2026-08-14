@@ -1,11 +1,19 @@
 # Keywords Explorer (Google) — Manifest
 
-> **Status: IMPLEMENTED, smoke-tested against dev DB/ES over real HTTP, and
-> scale-validated against production ES/MySQL read-only credentials (§7) —
-> the rollup job's cost was re-tuned after production-scale testing surfaced
-> two crash/perf issues invisible at dev scale (§6, items 3-4).**
-> Ships with the `keywordStatsRefresh` cron **disabled by default** in
-> `config.json` — flip it on only after you've dry-run the job yourself (§5).
+> **Status: IMPLEMENTED and running in production.** As of 2026-08-14, the
+> rollup was redesigned from a per-country-variant table (`keyword_stats`) to
+> a deduplicated one-row-per-keyword table (`keyword_stats_unique`) after a
+> production incident where the old design's required `GROUP BY` on every
+> single Explorer request took **~20-38s per query** (~88s total per page
+> load) against a 1M+ row table. **See §9 for the full incident, root cause,
+> and migration** — read it before touching any google keyword-stats code.
+>
+> The rollup is kept fresh in production by **`scripts/refresh-keyword-stats-safe.js`**
+> (adaptive batch size, SQL/ES load-aware throttling, resumable via a state
+> table) — this is the job that actually runs in production, not the
+> `keywordStatsRefresh` cron entry described in §5 (that cron path still
+> exists and is wired to the same `keyword_stats_unique` table, but is
+> **disabled by default** in `config.json`).
 >
 > **Related docs:**
 > [`GOOGLE_COMPETITIVE_INTEL_FEATURE.md`](../../GOOGLE_COMPETITIVE_INTEL_FEATURE.md) /
@@ -29,7 +37,7 @@ search volume or backlink-based Keyword Difficulty:
 | Column shown to the user | What it actually is | Source |
 |---|---|---|
 | **Ad Volume** | Distinct ads bidding this keyword | ES `cardinality(id)` |
-| **Competition** (0–100 badge) | Percentile rank of distinct-advertiser count across the whole `keyword_stats` table | `cardinality(post_owner_lower)` + a JS percentile pass, not SQL window functions |
+| **Competition** (0–100 badge) | Percentile rank of distinct-advertiser count across the whole `keyword_stats_unique` table | `cardinality(post_owner_lower)` + a JS percentile pass, not SQL window functions |
 | **Growth %** | Ad-count change, trailing 30d vs. prior 30d | ES `filter` aggs on `last_seen` |
 | **Parent Topic** | The already-crawled `category` field (majority vote) | ES `category`/`subCategory` |
 | CPC | **Not shown.** No bid/cost data is crawled — showing a number would be fabricated | — |
@@ -43,25 +51,30 @@ build-vs-buy decision, not something to fake with a placeholder number.
 ## 1. Architecture at a glance
 
 ```
-                    ┌─────────────────────────────┐
- nightly cron ────▶ │ refreshKeywordStats.js       │  (ES composite sweep,
- (disabled by       │ jobs/refreshKeywordStats.js  │   same pattern as
-  default)          └───────────────┬─────────────┘   backfillKeywordAggregates.js)
-                                     │ writes
-                                     ▼
-                          ┌─────────────────────┐
-                          │   keyword_stats      │  ◀── SQL, per-keyword rollup
-                          │   (SQL table)         │
-                          └──────────┬───────────┘
-                                     │ read by
-                     ┌───────────────┼────────────────────┐
-                     ▼               ▼                    ▼
-         /keywords/explorer  /keywords/ideas   /keywords/lists/*, /keywords/import
-         (paginated table)   (related terms)   (user-curated saved lists)
-                     │
-                     ▼ row click
-         existing /keywords/insight (live ES) → KeywordExplorerModal
-         (Tier-1, unchanged — this is the drill-down)
+                    ┌───────────────────────────────────┐
+ production ─────▶  │ scripts/refresh-keyword-stats-safe.js │  (MySQL-driven, adaptive
+ (live job,         │  builds keyword_ad from google_text_ad│   batch/throttle vs SQL
+  --loop or          │  + google_text_ad_variants, then       thread load & ES cpu/queue,
+  scheduled)         │  aggregates keyword_ad → stats)         resumable via state table)
+                    └───────────────┬────────────────────┘
+                                    │ writes
+ cron (disabled  ──▶ refreshKeywordStats.js  ─────────────┤  (ES composite sweep,
+  by default)        jobs/refreshKeywordStats.js          │   alternate/CLI path,
+                     writes the SAME table                │   same target table)
+                                    ▼
+                     ┌───────────────────────────┐
+                     │   keyword_stats_unique      │  ◀── SQL, ONE row per keyword
+                     │   (SQL table, PK=keyword)    │      TEXT (deduplicated at
+                     └──────────────┬───────────────┘      write time — see §9)
+                                    │ read by (joined via keyword TEXT, not keyword_id)
+        ┌───────────────┬──────────┼──────────────┬───────────────────┐
+        ▼               ▼          ▼              ▼                   ▼
+/keywords/explorer /keywords/ideas  /keywords/lists/*  /keywords/import
+(paginated table)  (related terms)  (saved lists)      (CSV/paste upload)
+        │
+        ▼ row click
+/keywords/insight (live ES) → KeywordExplorerModal
+(Tier-1, unchanged — this is the drill-down)
 ```
 
 **Why a rollup table instead of live ES aggregation?** The `google_ads_data_v2`
@@ -71,6 +84,14 @@ of keywords" — that needs a pre-computed, indexed SQL table. This mirrors
 exactly why `keyword_advertiser`/`keyword_domain` (Tier 2) exist as
 batch-populated tables rather than live queries.
 
+**Why `keyword_stats_unique` and not `keyword_stats`?** See §9 — the original
+`keyword_stats` stored one row *per country-variant* of a keyword, which
+required every read query to `GROUP BY` the joined result to dedupe. That
+forced a full-table materialize+filesort on every single request regardless
+of filters, measured at ~20-38s/query in production. `keyword_stats_unique`
+is deduplicated at write time instead (one row per keyword TEXT), so reads
+need no JOIN and no GROUP BY at all. `keyword_stats` has been dropped.
+
 ---
 
 ## 2. Files
@@ -79,17 +100,23 @@ batch-populated tables rather than live queries.
 
 | File | What it does |
 |---|---|
-| `services/google/jobs/refreshKeywordStats.js` | The rollup job. Paginated ES **composite aggregation** on `target_keyword` (single field, not a pair like Tier 2), sub-aggs for ads/advertisers/domains cardinality, 30d/prior-30d windows, majority-vote category/type/position. Second pass computes `competition_score` (0-100 percentile rank) in JS, grouped into ≤101 `UPDATE` statements. Same dry-run/`--commit`/`--truncate`/`--batch`/`--limit` CLI contract as `backfillKeywordAggregates.js`. Exports `runKeywordStatsRefresh(opts)` for the cron; the CLI-only bits (`connectAll`/`disconnectAll`/`process.exit`) are gated behind `require.main === module`. |
-| `services/google/helpers/aggregations.js` | Extended with `last2WindowAggs()`, `majorityTermsAgg()`, `majorityBucketKey()` — reused by the job, alongside the existing `buildBaseQuery`/`termsByUniqueAds`/`AGG_FIELD`. |
-| `services/google/controllers/keywordsExplorerController.js` | `POST /keywords/explorer` — paginated/filterable/sortable SQL query over `keyword_stats`. |
-| `services/google/controllers/keywordIdeasController.js` | `POST /keywords/ideas` — substring + shared-category related terms. |
-| `services/google/controllers/keywordListsController.js` | Full CRUD for user-curated named keyword lists. |
-| `services/google/controllers/keywordImportController.js` | `POST /keywords/import` — CSV/TXT upload or pasted text, reuses `services/common/helpers/keywordInput.js`'s `parseCsvFile`/`parseJsonKeywords` (already built for the unrelated keyword-search synthetic-upload feature — don't reinvent CSV parsing here). |
+| `services/google/jobs/refreshKeywordStats.js` | Alternate/CLI rollup path. Paginated ES **composite aggregation** on `target_keyword` (single field, not a pair like Tier 2), sub-aggs for ads/advertisers/domains cardinality, 30d/prior-30d windows, majority-vote category/type/position. Writes `keyword_stats_unique` (one row per keyword TEXT, deduplicated at write time — see §9). Second pass computes `competition_score` (0-100 percentile rank) via a single SQL window-function `UPDATE`, falling back to chunked JS batches. Same dry-run/`--commit`/`--truncate`/`--batch`/`--limit` CLI contract as `backfillKeywordAggregates.js`. Exports `runKeywordStatsRefresh(opts)` for the cron; the CLI-only bits (`connectAll`/`disconnectAll`/`process.exit`) are gated behind `require.main === module`. |
+| `scripts/refresh-keyword-stats-safe.js` | **The job that actually runs in production.** MySQL-driven (not ES): builds a `keyword_ad` mapping table from `google_text_ad`/`google_text_ad_variants`, then aggregates that into `keyword_stats_unique`. Adaptive — checks SQL `Threads_running`/pool queueing and ES cpu/thread-pool/queue every ~10s and scales its batch size/sleep down automatically under load. Resumable across restarts via a `keyword_stats_refresh_state` table + a MySQL `GET_LOCK` so two instances can't run concurrently. No dry-run mode — every run writes. `--loop` to cycle continuously, `--max-batches=N` to bound a single run (useful for a quick manual top-up). |
+| `services/google/helpers/aggregations.js` | Extended with `last2WindowAggs()`, `majorityTermsAgg()`, `majorityBucketKey()` — reused by `refreshKeywordStats.js`, alongside the existing `buildBaseQuery`/`termsByUniqueAds`/`AGG_FIELD`. |
+| `services/google/controllers/keywordsExplorerController.js` | `POST /keywords/explorer` — paginated/filterable/sortable SQL query over `keyword_stats_unique`, no JOIN, no GROUP BY (see §9). Also caches the count/stats aggregate for a filter-set in an in-process `Map` for 2 minutes. |
+| `services/google/controllers/keywordIdeasController.js` | `POST /keywords/ideas` — substring + shared-category related terms. Reads `keyword_stats_unique`, LEFT JOINed to `google_text_keywords` by normalized keyword text (not `keyword_id`). |
+| `services/google/controllers/keywordListsController.js` | Full CRUD for user-curated named keyword lists. Item stats also read `keyword_stats_unique` by keyword text. |
+| `services/google/controllers/keywordImportController.js` | `POST /keywords/import` — CSV/TXT upload or pasted text, reuses `services/common/helpers/keywordInput.js`'s `parseCsvFile`/`parseJsonKeywords` (already built for the unrelated keyword-search synthetic-upload feature — don't reinvent CSV parsing here). Matches against `keyword_stats_unique` by keyword text. |
 | `services/google/routes/googleRoutes.js` | Wires all of the above + the 3 pre-existing Tier-1 routes behind a shared `intelGate` middleware array. |
 | `middleware/planAccess.js` | **New:** `requireIntelAccess` — server-side mirror of the frontend's `canAccessIntel()`. See §4, this closes a real gap. |
-| `jobs/cronManager.js` | Registers `keywordStatsRefresh` in the generic `REGISTRY`. |
-| `scripts/keyword_stats_schema.sql` | Plain SQL DDL for `keyword_stats`/`keyword_lists`/`keyword_list_items`. **Not a Laravel migration** — this Node service has no migration framework, so schema ships as a checked-in `.sql` artifact (same convention as `scripts/google_ads_data_v2.mapping.json`). |
-| `scripts/apply-keyword-stats-schema.js` | Applies the `.sql` file using the SAME `google` network DB connection the server already uses — run this instead of hunting for a `mysql` CLI install. |
+| `jobs/cronManager.js` | Registers `keywordStatsRefresh` in the generic `REGISTRY` (disabled by default — production relies on `refresh-keyword-stats-safe.js` instead, run out-of-band). |
+| `scripts/keyword_stats_schema.sql` | Plain SQL DDL for `keyword_lists`/`keyword_list_items` (still live) and the now-dropped legacy `keyword_stats` table, kept for historical/rollback reference. **Not a Laravel migration** — this Node service has no migration framework, so schema ships as a checked-in `.sql` artifact (same convention as `scripts/google_ads_data_v2.mapping.json`). |
+| `scripts/keyword_stats_unique_schema.sql` | DDL for `keyword_stats_unique` — the live rollup table. See §9 for why it's shaped this way (PK on `keyword` text, `countries` JSON array, `sample_keyword_id` for display joins). |
+| `scripts/apply-keyword-stats-schema.js` | Applies **both** `.sql` files above using the SAME `google` network DB connection the server already uses, then backfills `keyword_stats_unique` in one shot from any existing `keyword_stats` data (skips the backfill if `keyword_stats_unique` already has rows). Run this instead of hunting for a `mysql` CLI install. |
+| `scripts/drop-legacy-keyword-stats.js` | One-time cleanup — drops the legacy `keyword_stats` table once `keyword_stats_unique` is verified. Dry-run by default; refuses to drop if `keyword_stats_unique` looks empty. |
+| `scripts/diagnose-keywords-explorer.js` | EXPLAINs + times the Explorer's actual queries against `keyword_stats_unique` — run this first if the Explorer feels slow again. |
+| `scripts/diagnose-google-load.js` | Broader google MySQL+ES health snapshot (slow queries, ES thread pool/tasks/hot-threads, verdict) — for "google is slow" reports not specific to the Explorer. |
+| `scripts/cancel-google-es-tasks.js` | Lists (dry-run) or cancels (`--confirm`) long-running ES search tasks on the google cluster. |
 
 ### Frontend (`new-ui-react/src/`)
 
@@ -110,12 +137,15 @@ batch-populated tables rather than live queries.
 ## 3. Data model
 
 ```sql
--- Per-keyword rollup, refreshed by refreshKeywordStats.js. One row per
--- google_text_keywords.id (which is per-country — the same bidding keyword
--- in two countries gets two rows, mirroring how Tier-2 keyword_advertiser
--- handles the same string→multiple-ids mapping).
-keyword_stats (
-  keyword_id            PK, FK -> google_text_keywords.id
+-- Per-keyword rollup, refreshed by refresh-keyword-stats-safe.js (production)
+-- or refreshKeywordStats.js (ES-driven alternate/CLI path). ONE row per
+-- keyword TEXT (deduplicated at write time — see §9), not per
+-- google_text_keywords.id. sample_keyword_id is a representative id (any
+-- country-variant — they all carry identical stats) for display joins.
+keyword_stats_unique (
+  keyword                PK, VARCHAR(500)
+  sample_keyword_id      FK -> google_text_keywords.id
+  countries              JSON NULL      -- ["US","IN","GB"] — which countries this keyword is tracked in
   ads_total, advertisers_total, domains_total   BIGINT
   ads_30d, ads_prior_30d                        BIGINT
   growth_pct                                    DECIMAL(10,2) NULL
@@ -128,13 +158,19 @@ keyword_stats (
   updated_at                                    TIMESTAMP
 )
 
--- User-curated named lists — independent of the rollup, just points at keyword_ids.
+-- User-curated named lists — independent of the rollup, points at
+-- google_text_keywords.id directly; stats are looked up by joining that
+-- row's keyword TEXT into keyword_stats_unique.
 keyword_lists (id PK, user_id, name, country, created_at, updated_at)
 keyword_list_items (id PK, list_id FK, keyword_id FK, added_at, UNIQUE(list_id, keyword_id))
 ```
 
 Apply with: `node scripts/apply-keyword-stats-schema.js` (idempotent —
-`CREATE TABLE IF NOT EXISTS`).
+`CREATE TABLE IF NOT EXISTS` for both schema files, plus a one-time backfill
+of `keyword_stats_unique` from any existing legacy data).
+
+The legacy `keyword_stats` table (one row per country-variant `keyword_id`)
+is dropped once `keyword_stats_unique` is verified — see §9.
 
 ---
 
@@ -163,6 +199,27 @@ to **all** Tier-1 routes and every new Keywords Explorer route.
 ---
 
 ## 5. Running the rollup job
+
+**Production uses `scripts/refresh-keyword-stats-safe.js`, not the cron below.**
+It has no dry-run mode (every run writes) but is safe to run repeatedly —
+resumable, self-throttling under SQL/ES load, and lock-guarded against
+concurrent runs:
+
+```bash
+# Run a bounded number of batches (useful for a manual top-up / testing):
+node scripts/refresh-keyword-stats-safe.js --max-batches=20
+
+# Run continuously, cycling through the whole google_text_ad table on repeat:
+node scripts/refresh-keyword-stats-safe.js --loop
+
+# Flags: --batch=N (start size, adaptive), --sleep-ms=N, --no-adaptive,
+# --sql-threads-max=N, --es-cpu-max=N (% before throttling down), --reset-state
+```
+
+The ES-driven `refreshKeywordStats.js` job below is an alternate/CLI path to
+the same `keyword_stats_unique` table — useful for a from-scratch rebuild via
+`--full --truncate`, or when ES aggregation is preferred over the MySQL-driven
+approach, but it is **not** what runs in production day-to-day.
 
 ```bash
 # Dry-run first — computes and logs, writes nothing.
@@ -292,3 +349,128 @@ production scale.
   a real, separately-scoped gap; not touched by this feature.
 - **Usage analytics** on the new entry points — still an open item carried
   over from the Tier-1 PRD (`GOOGLE_COMPETITIVE_INTEL_PRD.md` §7/§8).
+
+---
+
+## 9. The `keyword_stats` → `keyword_stats_unique` redesign (2026-08-14 incident)
+
+### What happened
+
+`/api/v1/google/keywords/explorer` was taking **20+ seconds, sometimes up to
+a minute**, in production. Diagnosed with `scripts/diagnose-keywords-explorer.js`
+(EXPLAIN + real timing against production):
+
+| Query | Time | EXPLAIN |
+|---|---|---|
+| `COUNT(DISTINCT keyword)` | 19.8s | full index scan, 1,066,833 rows |
+| Stats aggregate (avg/sum) | 30.2s | `type=ALL key=NONE` — **no index used at all** |
+| Paginated/sorted rows | 38.1s | `Using temporary; Using filesort` — index on the sort column present but defeated |
+
+**~88 seconds total** for a single page load, three queries run sequentially
+(first fix: run them in parallel — cut wall time to the slowest single query,
+not the sum, but the underlying per-query cost was still the real problem).
+
+### Root cause
+
+`keyword_stats` had **one row per `google_text_keywords.id`** — a keyword
+tracked in 3 countries had 3 identical-valued rows. Every single Explorer
+request (count, stats, and the page of rows) had to `GROUP BY gtk.keyword`
+to dedupe before it could return anything, which forced MySQL to
+materialize + filesort the **entire joined table** on every request,
+regardless of any filters applied. No index can satisfy a `GROUP BY` on a
+string column joined in from another table — this is a structural cost, not
+a missing-index problem.
+
+### Fix: deduplicate at write time, not read time
+
+`keyword_stats_unique` (schema: §3, `scripts/keyword_stats_unique_schema.sql`)
+stores **one row per keyword TEXT** instead. Both refresh jobs
+(`refresh-keyword-stats-safe.js` and `refreshKeywordStats.js`) write one
+upsert per keyword text — the country-variant fan-out that used to produce
+duplicate `keyword_stats` rows is now merged before the write, not deduped on
+every read. `keywordsExplorerController.js`, `keywordImportController.js`,
+`keywordListsController.js`, and `keywordIdeasController.js` were all
+repointed to read `keyword_stats_unique`, joined to `google_text_keywords` by
+normalized keyword TEXT (not `keyword_id`) where a display join is still
+needed. **No query in any of these paths does a GROUP BY over the whole
+table anymore.**
+
+Result: MySQL can walk an index in `ORDER BY` order and stop after
+`page_size` rows instead of scanning + sorting everything — 20-40s queries
+dropped to low milliseconds (confirmed via `diagnose-keywords-explorer.js`).
+
+### Migration mechanics (if you need to redo this on another environment)
+
+```bash
+# 1. Create keyword_stats_unique AND one-time backfill it from the existing
+#    keyword_stats data (skips the backfill if already populated):
+node scripts/apply-keyword-stats-schema.js
+
+# 2. Deploy the updated controllers/jobs.
+
+# 3. Top up with live data (safe to re-run):
+node scripts/refresh-keyword-stats-safe.js --max-batches=20
+
+# 4. Verify:
+node scripts/diagnose-keywords-explorer.js
+curl -X POST http://<host>/api/v1/google/keywords/explorer -d '{}'
+#   also smoke-test /keywords/import, /keywords/lists/*, /keywords/ideas
+
+# 5. Once verified, drop the legacy table (dry-run by default):
+node scripts/drop-legacy-keyword-stats.js
+node scripts/drop-legacy-keyword-stats.js --confirm
+```
+
+### Gotchas specific to this migration
+
+- **`JSON_ARRAYAGG(DISTINCT ...)` is not valid MySQL syntax** — MySQL's
+  `JSON_ARRAYAGG` does not support `DISTINCT`. Not needed anyway: each
+  `google_text_keywords` row is a unique `(keyword, country)` pair (confirmed
+  via `SHOW INDEX`), so countries aggregated within one keyword's `GROUP BY`
+  group are already naturally distinct.
+- **`keyword` needed `VARCHAR(500)`, not `VARCHAR(191)`.** The initial
+  schema used 191 (a common safe default for utf8mb4 PKs under the old
+  767-byte InnoDB index-prefix limit) but the backfill hit
+  `ER_DATA_TOO_LONG` on real data — some crawled "keywords" are longer than
+  191 chars. MySQL 8's default `DYNAMIC` row format + `innodb_large_prefix`
+  supports a full-length utf8mb4 index up to 768 chars (3072 bytes ÷ 4), so
+  500 is safely within range. The backfill's `SELECT` also wraps the source
+  in `LEFT(gtk.keyword, 500)` as a safety net.
+- **A second, independent write path was easy to miss.**
+  `scripts/refresh-keyword-stats-safe.js` is a completely separate
+  implementation from `refreshKeywordStats.js` (MySQL-driven vs ES-driven,
+  no shared code) that turned out to be the one actually running in
+  production. It also had **two separate** `competition_score`
+  recomputation functions (an optimized SQL-window-function path and a
+  chunked-JS fallback) that both needed retargeting to
+  `keyword_stats_unique` — grep for `FROM keyword_stats\b` (excluding
+  `keyword_stats_unique`/`keyword_stats_schema`/`keyword_stats_refresh_state`)
+  across `src/` and `scripts/` to confirm nothing was missed before dropping
+  the legacy table.
+- **A separate, unrelated wildcard-query bug was found and fixed in the same
+  incident window** — an admin "Search Intelligence" domain-search feature
+  and a scheduled keyword-alert notification job were both building
+  unbounded `{"wildcard": {"destination_url": "*x*"}}` ES queries (full
+  term-dictionary scan on a high-cardinality field, ~25s/query, pinned the
+  ES search thread pool). Fixed in
+  `src/services/admin_user_activity/queries/searchIntelligenceQueries.js` and
+  `src/services/common/helpers/platformSearchFields.js` /
+  `src/services/common/controllers/keywordAdNotificationController.js` by
+  preferring the existing low-cardinality `domain` keyword field
+  (`term`/`prefix`) over a wildcard scan on the raw URL — same pattern
+  `GoogleSearchQueryBuilder.js` already used. Unrelated to the MySQL
+  redesign above, but discovered while diagnosing the same "google is slow"
+  report — worth knowing both existed simultaneously.
+- **A single-node Elasticsearch cluster has no capacity headroom.** Even
+  with the wildcard bug fixed, ~10 concurrent *normal* searches were enough
+  to push the cluster to 99% CPU / a 167-deep search queue. Also fixed as
+  part of this incident: the keyword-search box's `multi_match` used
+  `type: "cross_fields"` (the most CPU-expensive multi-field match type,
+  builds a blended per-field term-frequency model) — switched to
+  `type: "best_fields"` in `GoogleSearchQueryBuilder.js`, which scores each
+  field independently and is materially cheaper for the same "all words
+  present" (`operator: and`) guarantee. This reduces per-query cost but
+  **does not remove the underlying capacity ceiling** — the cluster still
+  has zero replica/failover headroom and a hard scaling limit. Adding a
+  second ES data node is the actual fix for that; not done as part of this
+  incident (infra decision, outside this repo's scope).

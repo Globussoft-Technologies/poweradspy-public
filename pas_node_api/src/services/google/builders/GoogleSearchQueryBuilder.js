@@ -17,7 +17,7 @@ require("dotenv").config();
  * Query design (FAST):
  *   - Everything goes in `filter` context (no scoring, cacheable) because the
  *     product sorts by recency (last_seen), not relevance.
- *   - Keyword: match cross_fields AND (default) / match_phrase (Search Precisely).
+ *   - Keyword: match best_fields AND (default) / match_phrase (Search Precisely).
  *   - Advertiser: match AND + phrase-prefix (typeahead) / match_phrase (precise).
  *   - Domain: term + wildcard on the clean `domain` field.
  *   - No collapse, no cardinality agg → hits.total is exact (ids are unique).
@@ -162,8 +162,22 @@ class GoogleSearchQueryBuilder {
 
   /**
    * Keyword box. content_analyzer fields → whole-word matching.
-   *   - default          : cross_fields AND (every word present across fields)
+   *   - default          : best_fields AND (every word present within the
+   *                        single best-matching field)
    *   - exact / "…"      : match_phrase (consecutive words, in order)
+   *
+   * Was `cross_fields` — measured as the dominant CPU cost (BitSet.or /
+   * TermInSetQuery in hot-threads) during a normal concurrent-traffic burst
+   * that saturated the single-node ES cluster (2026-08-14). cross_fields
+   * builds a blended per-field term-frequency model across all of
+   * CONTENT_FIELDS on every query — the most expensive multi_match type.
+   * best_fields scores each field independently and takes the best match —
+   * materially cheaper, same "all words must appear" guarantee via `operator:
+   * and`, just evaluated within one field instead of blended across four.
+   * Trade-off: a query whose words are split across two different fields
+   * (e.g. one word only in `title`, another only in `text`) may score lower
+   * or not match under `and` — an edge case for the typical 1-3 word
+   * brand/product searches this box is used for.
    */
   _getKeywordEnv() {
     const kw = this._params.keyword;
@@ -174,7 +188,7 @@ class GoogleSearchQueryBuilder {
     const exact = this._isExact() || quoted;
     const contentQuery = exact
       ? { multi_match: { query: clean, type: "phrase", fields: CONTENT_FIELDS } }
-      : { multi_match: { query: clean, type: "cross_fields", operator: "and", fields: CONTENT_FIELDS } };
+      : { multi_match: { query: clean, type: "best_fields", operator: "and", fields: CONTENT_FIELDS } };
 
     // Transparency creatives often have no title/text and expose the searched
     // brand only through post_owner_name. For platform 18 only, make the keyword
