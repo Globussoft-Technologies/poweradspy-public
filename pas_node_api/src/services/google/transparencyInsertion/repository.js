@@ -118,18 +118,24 @@ async function ensureCountry(exec, name) {
   return { countryId: country.id, countryOnlyId: countryOnly.id };
 }
 
-async function ensureDomain(exec, domain) {
+async function ensureDomainRecord(exec, domain) {
   if (!domain) return null;
-  let row = first(await exec.query('SELECT id FROM google_text_ad_domains WHERE domain = ? LIMIT 1', [domain]));
-  if (row) return row.id;
+  const selectDomain = `SELECT id,
+      DATE_FORMAT(domain_registered_date, '%Y-%m-%d') AS domain_registered_date
+    FROM google_text_ad_domains WHERE domain = ? LIMIT 1`;
+  let row = first(await exec.query(selectDomain, [domain]));
+  if (row) return row;
   try {
     const inserted = await exec.query('INSERT INTO google_text_ad_domains (domain) VALUES (?)', [domain]);
-    return inserted.insertId;
+    return { id: inserted.insertId, domain_registered_date: null };
   } catch (error) {
     if (error.code !== 'ER_DUP_ENTRY') throw error;
-    row = first(await exec.query('SELECT id FROM google_text_ad_domains WHERE domain = ? LIMIT 1', [domain]));
-    return row.id;
+    return first(await exec.query(selectDomain, [domain]));
   }
+}
+
+async function ensureDomain(exec, domain) {
+  return (await ensureDomainRecord(exec, domain))?.id || null;
 }
 
 async function insertAd(exec, data) {
@@ -368,7 +374,8 @@ async function mergeCountryDelivery(exec, adId, details, countries, fallbackLast
 }
 
 module.exports = {
-  withTransaction, getAd, ensurePostOwner, getPostOwnerImage, ensureLanguage, ensureCountry, ensureDomain,
+  withTransaction, getAd, ensurePostOwner, getPostOwnerImage, ensureLanguage, ensureCountry,
+  ensureDomain, ensureDomainRecord,
   insertAd, updateAd, upsertVariant, setVariantNasImage, setPostOwnerImage, upsertTranslation, upsertMeta,
   upsertAdCountry, upsertTransparency, getCountryDelivery, mergeCountryDelivery,
 };

@@ -191,7 +191,18 @@ const config = {
     esSyncMaxAds: validatedInt(fileConfig.domainDateUpdate?.esSyncMaxAds, 100, true),
     sqlQueryTimeoutMs: validatedInt(fileConfig.domainDateUpdate?.sqlQueryTimeoutMs, 10000),
     esRequestTimeoutMs: validatedInt(fileConfig.domainDateUpdate?.esRequestTimeoutMs, 10000),
-    esChunkConcurrency: validatedInt(fileConfig.domainDateUpdate?.esChunkConcurrency, 4),
+    // Large updates are queued and drained sequentially per network. Chunk size
+    // bounds the terms query; request rate bounds the resulting ES write load.
+    esTermsChunkSize: validatedInt(fileConfig.domainDateUpdate?.esTermsChunkSize, 10000),
+    esRequestsPerSecond: validatedInt(fileConfig.domainDateUpdate?.esRequestsPerSecond, 250),
+    esTaskPollIntervalMs: validatedInt(fileConfig.domainDateUpdate?.esTaskPollIntervalMs, 5000),
+    esQueueSweepIntervalMs: validatedInt(fileConfig.domainDateUpdate?.esQueueSweepIntervalMs, 5000),
+    // Bound outage behavior so deferred ES work cannot exhaust host disk or
+    // resubmit a permanently failing task forever.
+    esQueueMaxPendingJobs: validatedInt(fileConfig.domainDateUpdate?.esQueueMaxPendingJobs, 5000),
+    esQueueMaxSizeMb: validatedInt(fileConfig.domainDateUpdate?.esQueueMaxSizeMb, 512),
+    esQueueMinFreeDiskMb: validatedInt(fileConfig.domainDateUpdate?.esQueueMinFreeDiskMb, 2048, true),
+    esQueueMaxAttempts: validatedInt(fileConfig.domainDateUpdate?.esQueueMaxAttempts, 10),
   },
 
   aiMeta: {

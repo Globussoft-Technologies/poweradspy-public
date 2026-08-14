@@ -13,7 +13,10 @@ const repo = {
   withTransaction: vi.fn(async (_sql, fn) => fn({})),
   getAd: vi.fn(),
   ensurePostOwner: vi.fn(async () => 11),
-  ensureDomain: vi.fn(async () => 12),
+  ensureDomainRecord: vi.fn(async () => ({
+    id: 12,
+    domain_registered_date: '2004-06-04',
+  })),
   ensureCountry: vi.fn(async () => ({ countryId: 13, countryOnlyId: 14 })),
   getPostOwnerImage: vi.fn(async () => null),
   ensureLanguage: vi.fn(async () => 7),
@@ -86,7 +89,10 @@ beforeEach(() => {
   for (const fn of Object.values(repo)) if (typeof fn?.mockClear === 'function') fn.mockClear();
   repo.withTransaction.mockImplementation(async (_sql, fn) => fn({}));
   repo.ensurePostOwner.mockResolvedValue(11);
-  repo.ensureDomain.mockResolvedValue(12);
+  repo.ensureDomainRecord.mockResolvedValue({
+    id: 12,
+    domain_registered_date: '2004-06-04',
+  });
   repo.ensureCountry.mockResolvedValue({ countryId: 13, countryOnlyId: 14 });
   repo.getPostOwnerImage.mockResolvedValue(null);
   repo.ensureLanguage.mockResolvedValue(7);
@@ -127,7 +133,8 @@ describe('Google Transparency pipeline', () => {
   it('writes shared and transparency rows, then indexes by canonical SQL id', async () => {
     repo.getAd.mockResolvedValue(null);
     const elastic = { indexName: 'google_ads_data_v2', index: vi.fn(async () => ({})) };
-    const out = await processTransparencyAd(payload(), { db: { sql: {}, elastic }, log });
+    const testPayload = payload({ destination_url: 'https://example.com/landing' });
+    const out = await processTransparencyAd(testPayload, { db: { sql: {}, elastic }, log });
     expect(out).toMatchObject({ code: 200, data: { id: 42 } });
     expect(repo.insertAd).toHaveBeenCalledOnce();
     expect(repo.upsertVariant).toHaveBeenCalledOnce();
@@ -147,10 +154,81 @@ describe('Google Transparency pipeline', () => {
         language_id: 7,
         lang_detect: 'de',
         ad_text: 'Übersetzter Text',
+        domain_registered_date: '2004-06-04',
         last_shown: '2025-12-22 00:00:00',
       }),
     }));
+    expect(repo.ensureDomainRecord).toHaveBeenCalledWith(expect.anything(), 'example.com');
     expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it('keeps a pending SQL domain date null in a new Transparency ES document', async () => {
+    repo.getAd.mockResolvedValue(null);
+    repo.ensureDomainRecord.mockResolvedValue({ id: 12, domain_registered_date: null });
+    const elastic = { indexName: 'google_ads_data_v2', index: vi.fn(async () => ({})) };
+
+    await processTransparencyAd(payload({
+      destination_url: 'https://pending.example/landing',
+    }), { db: { sql: {}, elastic }, log });
+
+    expect(repo.ensureDomainRecord).toHaveBeenCalledWith(expect.anything(), 'pending.example');
+    expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        domain: 'pending.example',
+        domain_registered_date: null,
+      }),
+    }));
+  });
+
+  it('refreshes an existing ES document with the current SQL domain date', async () => {
+    repo.getAd.mockResolvedValue({ id: 99, post_owner_id: 11 });
+    repo.ensureDomainRecord.mockResolvedValue({
+      id: 12,
+      domain_registered_date: '2011-02-03',
+    });
+    const elastic = {
+      indexName: 'google_ads_data_v2',
+      get: vi.fn(async () => ({
+        body: { _source: { domain_registered_date: '1999-01-01' } },
+      })),
+      index: vi.fn(async () => ({})),
+    };
+
+    await processTransparencyAd(payload({
+      destination_url: 'https://updated.example/landing',
+    }), { db: { sql: {}, elastic }, log });
+
+    expect(repo.updateAd).toHaveBeenCalledWith(expect.anything(), 99, expect.objectContaining({
+      domainId: 12,
+    }));
+    expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
+      id: '99',
+      body: expect.objectContaining({
+        domain: 'updated.example',
+        domain_registered_date: '2011-02-03',
+      }),
+    }));
+  });
+
+  it('keeps SQL and ES domain fields null when no destination domain exists', async () => {
+    repo.getAd.mockResolvedValue(null);
+    repo.ensureDomainRecord.mockResolvedValue(null);
+    const elastic = { indexName: 'google_ads_data_v2', index: vi.fn(async () => ({})) };
+
+    await processTransparencyAd(payload({ destination_url: null }), {
+      db: { sql: {}, elastic }, log,
+    });
+
+    expect(repo.ensureDomainRecord).toHaveBeenCalledWith(expect.anything(), null);
+    expect(repo.insertAd).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      domainId: null,
+    }));
+    expect(elastic.index).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        domain: null,
+        domain_registered_date: null,
+      }),
+    }));
   });
 
   it('preserves a non-ASCII post owner without translating it or changing creative language', async () => {

@@ -29,28 +29,41 @@ format differ per index family (all confirmed against live mappings):
 | google | `google_ads_data` | `domain_registered_date` | `yyyy-MM-dd` | public `ad_id` |
 | linkedin, youtube | `*_ads_data` | `domain_registration_date` | **epoch seconds** | internal id on `ad_id` |
 
-ES writes happen **only on the date path** (status 2/0 change no date, so no ES write). An ES failure
-is reported per network (`es_error`) but never fails the SQL update — SQL is the source of truth.
+ES writes happen **only on the date path** (status 2/0 change no date, so no ES write). SQL remains
+the source of truth. A synchronous ES failure or partial response is moved to the durable queue. If
+that retry cannot be persisted, the API returns retryable HTTP `503` even though SQL is already set.
 
 **Scale (sync vs async).** A domain can have many ads. When a network has **<= 100** matching ads the
-ES update runs **synchronously** and the response carries an exact `es_updated` count. Above that it
-runs as an ES **background task** (`wait_for_completion: false`) so a large domain never blocks or
-times out the request - the response returns `es_mode: "async"` + `es_tasks` (ES task ids) and no
-`es_updated` (SQL is already committed; ES converges shortly after). The updates use
-`conflicts: proceed` and `refresh: false` (no forced per-chunk refresh - costly at scale; the date is
-not latency-critical, so it's visible within ES's normal refresh interval). Threshold is tunable via
-`domainDateUpdate.esSyncMaxAds` in `config.json` (`0` = always async).
+ES update runs **synchronously** and the response carries an exact `es_updated` count. Above that,
+the request durably writes a job under `data/domain-date-es-pending` and returns `es_mode: "async"`,
+`es_queued: true`, and `es_queue_id`; no ES task is submitted by the request. The background worker
+drains one job at a time per network, submits at most one ES task, polls it to completion, and only
+then advances to the next chunk or domain. A MySQL `GET_LOCK` advisory lock enforces the same limit
+across API processes and fails closed when SQL coordination is unavailable. Active networks do not
+block later queue scans, so newly queued work for another idle network can start independently. Jobs
+survive API restarts and retain an active ES task id for recovery.
 
-**Bounded request work.** The 10 independent network operations are started concurrently instead
-of adding each network's latency serially. SQL reads used to locate domain/ad rows have a 10-second
-mysql2 inactivity timeout. The SQL `UPDATE` deliberately stays on the existing adapter path: a
-mysql2 client timeout cannot cancel a mutation already running on the MySQL server, so applying it
-to writes could report a false failure while the update still completes. Each ES request has a
-10-second timeout and `maxRetries: 0`, overriding this project's global 30-second / 3-retry ES
-policy for this endpoint. Terms-query chunks are submitted with bounded concurrency (default 4).
-After a chunk submission fails, no new chunks are started; already in-flight chunks finish and any
-successful task ids are retained in the response. This avoids repeated timeout waves during an ES
-outage.
+Queued writes use at most 10,000 terms per task and default to 250 updates/second. This changes a
+16,431-ad domain from 17 simultaneous unthrottled tasks into two throttled sequential tasks. Updates
+use `conflicts: proceed`, `refresh: false`, and an idempotent script that no-ops when the date is
+already correct. Before each new chunk, the worker verifies that the queued date is still current in
+SQL; superseded jobs are discarded instead of overwriting a newer correction. The sync threshold
+remains tunable through `domainDateUpdate.esSyncMaxAds`.
+
+A completed response is accepted only when it is well formed, did not time out, has zero version
+conflicts, and contains no bulk/search failures. Partial queued results retry the same chunk with
+bounded backoff. Partial or failed synchronous writes are persisted to the same queue. Repeated API
+requests reuse an equivalent pending job when found, avoiding unnecessary duplicate work.
+
+**Bounded request work.** The 10 independent network SQL operations are started concurrently
+instead of adding each network's latency serially. SQL reads used to locate domain/ad rows have a
+10-second mysql2 inactivity timeout. The SQL `UPDATE` deliberately stays on the existing adapter
+path: a mysql2 client timeout cannot cancel a mutation already running on the MySQL server, so
+applying it to writes could report a false failure while the update still completes. Small sync
+writes and queued task submissions/polls use a 10-second ES client timeout and `maxRetries: 0`.
+Queue failures are persisted with increasing capped backoff instead of creating another submission
+wave. Submission and completed-task failures move to `failed` after 10 unsuccessful attempts; a
+polling failure retains its active task id so a possibly running task is never abandoned or duplicated.
 
 The service imports the resolved `src/config` module; it does not read `config.json` or environment
 variables directly. The performance controls can be tuned in `config.json` without code changes;
@@ -61,7 +74,20 @@ restart the API process after editing them because the service resolves these va
 | `domainDateUpdate.esSyncMaxAds` | `100` | Maximum unique matching ads updated synchronously per network; `0` makes all ES updates asynchronous. |
 | `domainDateUpdate.sqlQueryTimeoutMs` | `10000` | mysql2 inactivity timeout for domain and ad-id `SELECT` queries only. |
 | `domainDateUpdate.esRequestTimeoutMs` | `10000` | Client timeout for each ES `updateByQuery` request. |
-| `domainDateUpdate.esChunkConcurrency` | `4` | Maximum ES chunks submitted concurrently per network. |
+| `domainDateUpdate.esTermsChunkSize` | `10000` | Maximum ad ids in one queued ES terms query. Chunks run sequentially. |
+| `domainDateUpdate.esRequestsPerSecond` | `250` | Per-task `update_by_query` throttle used by both queued and small sync writes. |
+| `domainDateUpdate.esTaskPollIntervalMs` | `5000` | Delay between checks of an active queued ES task. |
+| `domainDateUpdate.esQueueSweepIntervalMs` | `5000` | Delay between durable queue scans. |
+| `domainDateUpdate.esQueueMaxPendingJobs` | `5000` | Maximum pending jobs accepted before enqueue fails safely. |
+| `domainDateUpdate.esQueueMaxSizeMb` | `512` | Maximum combined size of pending and failed queue files. |
+| `domainDateUpdate.esQueueMinFreeDiskMb` | `2048` | Free disk reserve preserved by queue admission; `0` disables the reserve check. |
+| `domainDateUpdate.esQueueMaxAttempts` | `10` | Bounded submission/completed-task failures before a job moves to `failed`. |
+
+**Deployment prerequisites.** The API process must have persistent write access to its configured
+`localCache.dir`, the MySQL account must be able to call `GET_LOCK` / `RELEASE_LOCK`, and the ES
+account must be able to read `GET /_tasks/{taskId}`. Completed `.tasks` result documents are deleted
+best-effort for successful and failed tasks; cleanup permission is recommended but a cleanup denial
+does not block queue progress. Operators must alert on queue admission failures and files in `failed`.
 
 **Update-only:** rows are never inserted. A network whose table has no matching domain is reported
 as `not_found` and left untouched.
@@ -105,6 +131,7 @@ Body shape: `{ code, message?, error?, data? }`. `code` is also the HTTP status.
 | `domain_name` missing | **400** | 400 (`error` = message) |
 | neither `domain_date` nor `status`, bad `Y-m-d`, out-of-range/conflicting `status` | **400** | 400 |
 | No network SQL connection available at all | **503** | 503 |
+| SQL updated but required ES retry could not be durably queued | **503** | 503, `Retry-After: 5` |
 | Every network fails and one or more SQL reads time out | **504** | 504 |
 | Every network fails because of non-connection SQL/internal errors | **500** | 500 |
 
@@ -112,15 +139,17 @@ Body shape: `{ code, message?, error?, data? }`. `code` is also the HTTP status.
 - Per-network failures are reported inside `data.results[network].error` with the same structure.
 - Elasticsearch failures are reported inside `data.results[network].es_error`.
 - SQL connection failures use `type: sql_connection_error`; SQL query failures use `type: sql_query_error`; bounded SQL read timeouts use `type: sql_timeout_error`.
-- ES failures use `type: elasticsearch_connection_error` or `type: elasticsearch_error`; ES request timeouts use `type: elasticsearch_timeout_error`.
+- ES failures use `type: elasticsearch_connection_error` or `type: elasticsearch_error`; incomplete results use `type: elasticsearch_incomplete_error` and are queued for retry.
+- Queue-admission failures use `type: elasticsearch_queue_error`, are retryable, and return HTTP `503` with `Retry-After`.
 
 `data.status` / `data.domain_date` echo the resolved action. `data.results` reports the outcome per
-network: `es_mode` (`sync`|`async`), `es_matched_ads`, and either `es_updated` (sync) or `es_tasks`
-(async ES task ids), plus structured `error` / `es_error` objects when a network fails. A partial ES
-chunk failure can include both successfully submitted `es_tasks` and an `es_error` describing the
-failed chunk indexes. `data.summary` totals `es_matched_ads` (unique ads targeted across networks),
-`es_updated` (sync-confirmed updates), `es_async_networks`, `es_errors`, `timeouts`, and
-`duration_ms`.
+network: `es_mode` (`sync`|`async`), `es_matched_ads`, and either `es_updated` (sync) or
+`es_queued`, `es_queue_id`, `es_chunks`, and `es_requests_per_second` (async). `es_tasks` is empty in
+the immediate response because the queue worker has not submitted work yet. Structured `error` /
+`es_error` objects report request-time failures. `data.summary` totals `es_matched_ads`,
+`es_updated`, `es_async_networks`, `es_queued_networks`, `es_errors`, `timeouts`, and `duration_ms`.
+When a small synchronous write is deferred, the network result also contains
+`es_deferred_after_sync_failure: true` and `es_retry_reason`.
 
 Each network result includes `timings_ms` for `select_rows`, `update_rows`, `propagate_date`, and
 `total`. ES propagation also includes `es_timings_ms` for `resolve_ad_ids`, `submit_es`, and `total`.
@@ -187,6 +216,7 @@ additive response fields; the existing result/status fields are unchanged.
       "es_matched_ads": 0,
       "es_updated": 0,
       "es_async_networks": 0,
+      "es_queued_networks": 0,
       "es_errors": 0,
       "duration_ms": 8
     }
@@ -233,6 +263,7 @@ additive response fields; the existing result/status fields are unchanged.
       "es_matched_ads": 3,
       "es_updated": 0,
       "es_async_networks": 0,
+      "es_queued_networks": 0,
       "es_errors": 1
     }
   }
@@ -257,11 +288,11 @@ Content-Type: application/json
     "status": 1,
     "results": {
       "facebook":  { "status": "updated", "matched_rows": 1, "ids": [22], "new_status": 1, "updated_date_touched": true, "es_index": "search_mix", "es_mode": "sync", "es_matched_ads": 3, "es_updated": 3 },
-      "google":    { "status": "updated", "matched_rows": 2, "ids": [11, 12], "new_status": 1, "updated_date_touched": true, "es_index": "google_ads_data", "es_mode": "async", "es_matched_ads": 5200, "es_tasks": ["nodeId:41713760", "nodeId:41713763"] },
+      "google":    { "status": "updated", "matched_rows": 2, "ids": [11, 12], "new_status": 1, "updated_date_touched": true, "es_index": "google_ads_data", "es_mode": "async", "es_matched_ads": 5200, "es_tasks": [], "es_queued": true, "es_queue_id": "24130_1786515312000_1", "es_chunks": 1, "es_requests_per_second": 250 },
       "reddit":    { "status": "not_found" },
       "quora":     { "status": "error", "message": "..." }
     },
-    "summary": { "updated": 2, "not_found": 7, "errors": 1, "timeouts": 0, "es_matched_ads": 5203, "es_updated": 3, "es_async_networks": 1, "es_errors": 0, "duration_ms": 214 }
+    "summary": { "updated": 2, "not_found": 7, "errors": 1, "timeouts": 0, "es_matched_ads": 5203, "es_updated": 3, "es_async_networks": 1, "es_queued_networks": 1, "es_errors": 0, "duration_ms": 214 }
   }
 }
 ```
@@ -309,8 +340,8 @@ curl -s -X PUT -w "\n[HTTP %{http_code}]\n" \
 
 The controller logs request receipt and completion with the request id, HTTP status, total duration,
 summary, and top-level error type/stage. The service logs each network's start and completion plus
-stage timings. Failures include the network, SQL table or ES index, stage, elapsed time, configured
-timeout, error code/message, and failed ES chunk indexes where applicable.
+stage timings. Queue logs include the queue id, network, ES task id, chunk position, configured
+throttle, retries, and completion totals. Request and worker failures retain their stage and timing.
 
 Useful event names:
 
@@ -320,6 +351,14 @@ Useful event names:
 - `domain date network completed`
 - `domain date ad-id lookup failed`
 - `domain date ES propagation failed`
+- `domain date ES sync update deferred to queue`
+- `domain date ES update queued`
+- `domain date ES enqueue reused pending job`
+- `domain date ES task submitted`
+- `domain date ES queue job completed`
+- `domain date ES queue job deferred`
+- `domain date ES queue job superseded`
+- `domain date ES queue job moved to failed after retry limit`
 - `domain date update processed with warnings`
 - `domain date update fanout failed`
 
@@ -329,8 +368,10 @@ log request credentials or Elasticsearch script values.
 
 ## 5. Implementation reference
 - Service (network config + per-network update): `src/services/common/services/updateDomainDateService.js`
+- Durable ES queue + worker: `src/services/common/helpers/domainDateEsQueue.js`
 - Controller: `src/services/common/controllers/updateDomainDateController.js`
 - Route: `src/services/common/routes/commonRoutes.js` (`PUT /insert-update-domain-date`)
 - Tests: `tests/services/common/updateDomainDateService.test.mjs`
+- Queue tests: `tests/services/common/domainDateEsQueue.test.mjs`
 - Migration (adds `updated_date` to facebook/linkedin domains tables and backfills resolved rows): `scripts/domain-migrations/add-facebook-linkedin-updated-date.js` (dry-run by default; `--commit` to run; env-driven for dev/prod)
 - PHP original: `poweradspy/api/app/Modules/User/Controllers/SupportScrapper.php` → `putDomainDate`

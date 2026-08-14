@@ -171,7 +171,6 @@ async function processTransparencyAd(payload, ctx) {
   const translationForSql = translationResult.ok
     ? (translation || { title: '', text: '', newsfeed_description: '' })
     : null;
-  const postOwnerNameForSearch = data.post_owner || (!existing ? data.advertiser_id : null);
   const translationEvent = translation
     ? 'TRANSLATION_API_SUCCEEDED'
     : translationResult.ok
@@ -186,7 +185,7 @@ async function processTransparencyAd(payload, ctx) {
     translated_title: translation?.title ?? null,
     translated_text: translation?.text ?? null,
     translated_newsfeed_description: translation?.newsfeed_description ?? null,
-    post_owner: postOwnerNameForSearch,
+    post_owner: data.post_owner || data.advertiser_id || null,
     error: translationResult.ok ? null : translationResult.error,
   });
   try {
@@ -205,11 +204,15 @@ async function processTransparencyAd(payload, ctx) {
         found: Boolean(existing),
         internal_id: existing?.id || null,
       });
+      const postOwnerNameForSearch = data.post_owner || (!existing ? data.advertiser_id : null);
       const postOwnerName = postOwnerNameForSearch || (!existing ? data.advertiser_id : null);
       const postOwnerId = postOwnerName
         ? await repo.ensurePostOwner(tx, postOwnerName, !existing)
         : existing?.post_owner_id;
-      const domainId = await repo.ensureDomain(tx, data.domain);
+      // Resolve the registration date in the same indexed domain lookup so every
+      // newly indexed Transparency ad reflects SQL without a separate query.
+      const domainRecord = await repo.ensureDomainRecord(tx, data.domain);
+      const domainId = domainRecord?.id || null;
       const languageId = translation?.detected_language
         ? await repo.ensureLanguage(tx, translation.detected_language, translation.language_name)
         : languageShouldUpdate ? 0 : existing?.language_id || 0;
@@ -355,6 +358,7 @@ async function processTransparencyAd(payload, ctx) {
           ? String(translation.detected_language).slice(0, 2).toLowerCase()
           : null,
         postOwnerNameForSearch,
+        domainRegisteredDate: domainRecord?.domain_registered_date ?? null,
         countryDetails: deliveryRowsToContract(deliveryRows),
       };
     });
@@ -608,6 +612,7 @@ async function processTransparencyAd(payload, ctx) {
       const document = buildTransparencyDoc(
         {
           ...data,
+          domain_registered_date: saved.domainRegisteredDate,
           post_owner: saved.postOwnerNameForSearch,
           post_owner_image: postOwnerImage,
           postDateEs: saved.postDateEs,

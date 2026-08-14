@@ -143,6 +143,23 @@ require.cache[sduiRoutesPath] = { id: sduiRoutesPath, filename: sduiRoutesPath, 
 const commonRoutesPath = require.resolve("../src/services/common/routes/commonRoutes");
 require.cache[commonRoutesPath] = { id: commonRoutesPath, filename: commonRoutesPath, loaded: true, exports: "common-router" };
 
+const emailRoutesPath = require.resolve("../src/services/email/routes/emailRoutes");
+require.cache[emailRoutesPath] = {
+  id: emailRoutesPath,
+  filename: emailRoutesPath,
+  loaded: true,
+  exports: "email-router",
+};
+
+const domainDateQueuePath = require.resolve("../src/services/common/helpers/domainDateEsQueue");
+const domainDateQueue = { initDomainDateEsQueueWorker: vi.fn() };
+require.cache[domainDateQueuePath] = {
+  id: domainDateQueuePath,
+  filename: domainDateQueuePath,
+  loaded: true,
+  exports: domainDateQueue,
+};
+
 // ── Pre-cache pushNotificationCron (lazy required) ──────────────
 const cronJobsPath = require.resolve("../src/jobs/pushNotificationCron");
 const cronInits = {
@@ -174,6 +191,7 @@ beforeEach(() => {
   HealthCheck.register.mockClear();
   mountSwagger.mockClear();
   Object.values(cronInits).forEach(fn => fn.mockClear());
+  domainDateQueue.initDomainDateEsQueueWorker.mockClear();
   Object.values(childLog).forEach(fn => fn.mockClear());
   delete process.env.WORKER_ID;
 });
@@ -188,6 +206,7 @@ describe("app > createApp", () => {
     expect(HealthCheck.register).toHaveBeenCalledWith(app);
     expect(serviceRegistry.registerRoutes).toHaveBeenCalledWith(app);
     expect(mountSwagger).toHaveBeenCalledWith(app);
+    expect(domainDateQueue.initDomainDateEsQueueWorker).toHaveBeenCalled();
     expect(app._settings["trust proxy"]).toBe(1);
   });
 
@@ -282,6 +301,7 @@ describe("app > createApp", () => {
     process.env.WORKER_ID = "2";
     await createApp();
     expect(cronInits.initPushNotificationCron).not.toHaveBeenCalled();
+    expect(domainDateQueue.initDomainDateEsQueueWorker).not.toHaveBeenCalled();
   });
 
   it("notifications.enabled=false → cron jobs NOT init", async () => {

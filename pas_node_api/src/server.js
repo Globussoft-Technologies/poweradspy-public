@@ -3,6 +3,7 @@
 const cluster = require('cluster');
 const os = require('os');
 const config = require('./config');
+const { forkLogicalWorker, getLogicalWorkerId } = require('./clusterWorkerIdentity');
 
 // ═══════════════════════════════════════════════════════════
 // CLUSTER MANAGER
@@ -34,14 +35,14 @@ if (cluster.isPrimary && config.cluster.enabled) {
 
   // Fork workers
   for (let i = 0; i < numWorkers; i++) {
-    const worker = cluster.fork({ WORKER_ID: i + 1 });
-    log.info(`Worker ${worker.id} spawned (PID: ${worker.process.pid})`);
+    const worker = forkLogicalWorker(cluster, i + 1);
+    log.info(`Worker ${worker.logicalWorkerId} spawned (PID: ${worker.process.pid}, cluster ID: ${worker.id})`);
   }
 
   // Handle worker exit
   cluster.on('exit', (worker, code, signal) => {
-    const workerId = worker.id;
-    log.warn(`Worker ${workerId} (PID: ${worker.process.pid}) exited`, {
+    const workerId = getLogicalWorkerId(worker);
+    log.warn(`Worker ${workerId} (PID: ${worker.process.pid}, cluster ID: ${worker.id}) exited`, {
       code,
       signal,
       killed: worker.exitedAfterDisconnect,
@@ -69,8 +70,8 @@ if (cluster.isPrimary && config.cluster.enabled) {
     log.info(`Restarting worker ${workerId} in ${delay}ms (restart #${recentRestarts.length})`);
 
     setTimeout(() => {
-      const newWorker = cluster.fork({ WORKER_ID: workerId });
-      log.info(`Worker ${workerId} restarted (new PID: ${newWorker.process.pid})`);
+      const newWorker = forkLogicalWorker(cluster, workerId);
+      log.info(`Worker ${workerId} restarted (new PID: ${newWorker.process.pid}, cluster ID: ${newWorker.id})`);
     }, delay);
   });
 

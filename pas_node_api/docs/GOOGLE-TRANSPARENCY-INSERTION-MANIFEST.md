@@ -331,6 +331,12 @@ language_id, lang_detect,
 ad_title, ad_text, news_feed_description
 ```
 
+`domain_registered_date` is copied from `google_text_ad_domains` during every
+Transparency insert/reindex. The domain lookup returns its ID and the date in
+one indexed SQL query, formatted as `YYYY-MM-DD`; unresolved domains are
+indexed with `null`. This keeps ads inserted after DS resolves a domain
+immediately searchable without waiting for a later domain-date backfill.
+
 The additions are declared in `scripts/google_ads_data_v2.mapping.json`.
 `lang_detect` is the normalized two-letter detected-language value used by the
 existing language filter. `ad_title`, `ad_text`, and

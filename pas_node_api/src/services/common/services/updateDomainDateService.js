@@ -36,6 +36,12 @@ const serviceRegistry = require('../../ServiceRegistry');
 const appConfig = require('../../../config');
 const { DOMAIN_TABLES } = require('../helpers/domainTables');
 const { buildErrorResponse, classifySqlError, classifyEsError } = require('../helpers/errorResponse');
+const {
+  enqueueDomainDateEsUpdate,
+  assertEsUpdateComplete,
+  ES_TERMS_CHUNK,
+  ES_REQUESTS_PER_SECOND,
+} = require('../helpers/domainDateEsQueue');
 
 // Derived from the shared domainTables config (single source of truth).
 const NETWORK_CONFIG = Object.fromEntries(
@@ -53,17 +59,14 @@ const NETWORK_CONFIG = Object.fromEntries(
 // Status codes stored in the `status` column (see the migration + module header).
 const STATUS = { PENDING: 0, RESOLVED: 1, UNRESOLVABLE: 2 };
 
-const ES_TERMS_CHUNK = 1000; // cap match-ids per updateByQuery to bound the terms query
-
 // Keep the request comfortably below the upstream 120-second gateway budget.
 // Small ES updates may remain synchronous for exact counts; larger updates are
-// submitted as background tasks. The resolved config object supplies defaults
-// when an older config file or an isolated test stub omits this new section.
+// persisted for the load-shedding worker. The resolved config object supplies
+// defaults when an older config file or an isolated test stub omits this section.
 const domainDateConfig = appConfig.domainDateUpdate || {};
 const ES_SYNC_MAX_ADS = domainDateConfig.esSyncMaxAds ?? 100;
 const SQL_QUERY_TIMEOUT_MS = domainDateConfig.sqlQueryTimeoutMs ?? 10000;
 const ES_REQUEST_TIMEOUT_MS = domainDateConfig.esRequestTimeoutMs ?? 10000;
-const ES_CHUNK_CONCURRENCY = domainDateConfig.esChunkConcurrency ?? 4;
 
 function elapsedMs(startedAt) {
   return Date.now() - startedAt;
@@ -80,6 +83,14 @@ function classifyDomainSqlError(err) {
 
 function classifyDomainEsError(err) {
   const classified = classifyEsError(err);
+  if (err?.code === 'ES_UPDATE_INCOMPLETE') {
+    return {
+      ...classified,
+      type: 'elasticsearch_incomplete_error',
+      message: 'Elasticsearch update completed partially',
+      details: err.details,
+    };
+  }
   const isTimeout = err?.name === 'TimeoutError' ||
     ['ETIMEDOUT', 'ESOCKETTIMEDOUT'].includes(String(err?.code || '')) ||
     /timed?\s*out|timeout/i.test(err?.message || '');
@@ -101,24 +112,6 @@ async function querySqlWithTimeout(sql, statement, params) {
   return sql.query(statement, params);
 }
 
-async function mapWithConcurrency(items, concurrency, worker, shouldStop = () => false) {
-  if (items.length === 0) return [];
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  let stopped = false;
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (!stopped && nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      const result = await worker(items[index], index);
-      results[index] = result;
-      if (shouldStop(result)) stopped = true;
-    }
-  });
-  await Promise.all(runners);
-  return results.filter((result) => result !== undefined);
-}
-
 // Matches the PHP `date_format:Y-m-d` rule — a real calendar date in YYYY-MM-DD.
 function isValidYmd(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -133,32 +126,22 @@ function ymdToEpochSeconds(date) {
   return Math.floor(Date.parse(`${date}T00:00:00Z`) / 1000);
 }
 
-function chunk(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 function esUpdatedCount(resp) {
   const body = resp && resp.body ? resp.body : resp;
   return (body && typeof body.updated === 'number') ? body.updated : 0;
-}
-function esTaskId(resp) {
-  const body = resp && resp.body ? resp.body : resp;
-  return body && body.task != null ? body.task : null;
 }
 
 /**
  * Propagate the resolved registration date onto every associated ad's ES doc for one network.
  *
  * Prod-safety: the number of ads per domain can be large. When it exceeds ES_SYNC_MAX_ADS the
- * updateByQuery runs as a background task (wait_for_completion:false) so the request returns
- * immediately instead of blocking/timing out — SQL is already committed (source of truth) and ES
- * converges shortly after. Small domains run synchronously so the response carries an exact count.
+ * update is persisted for a background worker, so the request returns after the SQL source of
+ * truth is committed. The worker throttles writes and waits for each task before starting the next
+ * chunk or domain. Small domains remain synchronous so the response has an exact count.
  * `refresh:false` everywhere (a forced per-chunk refresh is the costliest part at scale; the date
  * is not latency-critical). `conflicts:proceed` tolerates concurrent crawler writes.
  *
- * @returns {{ es_index, es_matched_ads, es_mode, es_updated?, es_tasks? } | { es_error }}
+ * @returns {{ es_index, es_matched_ads, es_mode, es_updated?, es_queued?, es_queue_id? } | { es_error }}
  */
 async function propagateDateToEs(service, cfg, domainRowIds, date, log, network) {
   const startedAt = Date.now();
@@ -262,131 +245,180 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log, network)
     };
   }
 
-  const value = cfg.esDateFormat === 'epoch' ? ymdToEpochSeconds(date) : date;
   const async = ES_SYNC_MAX_ADS === 0 || matchIds.length > ES_SYNC_MAX_ADS;
+  const value = cfg.esDateFormat === 'epoch' ? ymdToEpochSeconds(date) : date;
   const script = {
     lang: 'painless',
-    source: 'ctx._source[params.f] = params.v',
+    source: "if (ctx._source[params.f] == params.v) { ctx.op = 'noop' } else { ctx._source[params.f] = params.v }",
     params: { f: cfg.esDateField, v: value },
   };
-  const idChunks = chunk(matchIds, ES_TERMS_CHUNK);
 
   if (log && log.info) {
     log.info('domain date ES propagation started', {
       network,
       index,
       matched_ads: matchIds.length,
-      chunks: idChunks.length,
-      chunk_concurrency: ES_CHUNK_CONCURRENCY,
+      chunks: async ? Math.ceil(matchIds.length / ES_TERMS_CHUNK) : 1,
       mode: async ? 'async' : 'sync',
       request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+      requests_per_second: ES_REQUESTS_PER_SECOND,
     });
   }
 
   const submitStartedAt = Date.now();
-  const chunkResults = await mapWithConcurrency(
-    idChunks,
-    ES_CHUNK_CONCURRENCY,
-    async (ids, chunkIndex) => {
-      try {
-        const resp = await es.client.updateByQuery({
-          index,
-          conflicts: 'proceed',
-          refresh: false,
-          waitForCompletion: !async, // false submits a background task and returns its task id
-          body: { query: { terms: { [cfg.esMatchField]: ids } }, script },
-        }, {
-          requestTimeout: ES_REQUEST_TIMEOUT_MS,
-          maxRetries: 0,
-        });
-        return {
-          ok: true,
-          chunk: chunkIndex,
-          task: async ? esTaskId(resp) : null,
-          updated: async ? 0 : esUpdatedCount(resp),
-        };
-      } catch (error) {
-        return { ok: false, chunk: chunkIndex, error };
-      }
-    },
-    // Do not spend additional timeout waves submitting later chunks after ES
-    // has already failed. In-flight chunks finish and their task ids are kept.
-    (result) => !result.ok
-  );
-  timings.submit_es = elapsedMs(submitStartedAt);
-  timings.total = elapsedMs(startedAt);
+  if (async) {
+    const queued = enqueueDomainDateEsUpdate({ network, date, matchIds, domainRowIds });
+    timings.submit_es = elapsedMs(submitStartedAt);
+    timings.total = elapsedMs(startedAt);
+    if (!queued) {
+      return {
+        es_index: index,
+        es_matched_ads: matchIds.length,
+        es_mode: 'async',
+        es_tasks: [],
+        es_timings_ms: timings,
+        es_error: buildErrorResponse({
+          code: 503,
+          message: 'Elasticsearch update could not be queued',
+          type: 'elasticsearch_queue_error',
+          source: 'api',
+          operation: 'update-domain-date',
+          stage: 'queue_es_update',
+          network,
+          table: cfg.table,
+          details: { index, matched_ads: matchIds.length },
+        }).error,
+      };
+    }
 
-  const successful = chunkResults.filter((result) => result.ok);
-  const failed = chunkResults.filter((result) => !result.ok);
-  const tasks = successful.map((result) => result.task).filter(Boolean);
-  const updated = successful.reduce((total, result) => total + result.updated, 0);
-  const baseResult = {
-    es_index: index,
-    es_matched_ads: matchIds.length,
-    es_mode: async ? 'async' : 'sync',
-    ...(async ? { es_tasks: tasks } : { es_updated: updated }),
-    es_timings_ms: timings,
-  };
+    const queuedResult = {
+      es_index: index,
+      es_matched_ads: matchIds.length,
+      es_mode: 'async',
+      es_tasks: [],
+      es_queued: true,
+      es_queue_id: queued.id,
+      es_chunks: Math.ceil(matchIds.length / ES_TERMS_CHUNK),
+      es_requests_per_second: ES_REQUESTS_PER_SECOND,
+      es_timings_ms: timings,
+    };
+    if (log && log.info) {
+      log.info('domain date ES update queued', {
+        network,
+        index,
+        queue_id: queued.id,
+        matched_ads: matchIds.length,
+        chunks: queuedResult.es_chunks,
+        requests_per_second: ES_REQUESTS_PER_SECOND,
+        timings_ms: timings,
+      });
+    }
+    return queuedResult;
+  }
 
-  if (failed.length > 0) {
-    const classified = classifyDomainEsError(failed[0].error);
-    const skippedChunks = idChunks.length - chunkResults.length;
+  try {
+    const response = await es.client.updateByQuery({
+      index,
+      conflicts: 'proceed',
+      refresh: false,
+      waitForCompletion: true,
+      requestsPerSecond: ES_REQUESTS_PER_SECOND,
+      body: { query: { terms: { [cfg.esMatchField]: matchIds } }, script },
+    }, {
+      requestTimeout: ES_REQUEST_TIMEOUT_MS,
+      maxRetries: 0,
+    });
+    timings.submit_es = elapsedMs(submitStartedAt);
+    timings.total = elapsedMs(startedAt);
+    const completedResponse = assertEsUpdateComplete(response?.body || response || {});
+    const updated = esUpdatedCount(completedResponse);
+    if (log && log.info) {
+      log.info('domain date ES propagated', {
+        network,
+        index,
+        matched_ads: matchIds.length,
+        mode: 'sync',
+        updated,
+        timings_ms: timings,
+      });
+    }
+    return {
+      es_index: index,
+      es_matched_ads: matchIds.length,
+      es_mode: 'sync',
+      es_updated: updated,
+      es_timings_ms: timings,
+    };
+  } catch (error) {
+    timings.submit_es = elapsedMs(submitStartedAt);
+    timings.total = elapsedMs(startedAt);
+    const classified = classifyDomainEsError(error);
     if (log && log.error) {
       log.error('domain date ES propagation failed', {
         network,
         index,
-        mode: async ? 'async' : 'sync',
+        mode: 'sync',
         matched_ads: matchIds.length,
-        chunks: idChunks.length,
-        attempted_chunks: chunkResults.length,
-        skipped_chunks: skippedChunks,
-        failed_chunks: failed.map((result) => result.chunk),
-        submitted_tasks: tasks.length,
-        updated,
         timings_ms: timings,
         request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
-        error: failed[0].error.message,
-        error_code: failed[0].error.code,
+        error: error.message,
+        error_code: error.code,
       });
     }
+    // SQL is already committed. Persist a retry instead of allowing a transient
+    // synchronous ES failure or partial result to leave the index stale forever.
+    const queued = enqueueDomainDateEsUpdate({ network, date, matchIds, domainRowIds });
+    timings.total = elapsedMs(startedAt);
+    if (queued) {
+      if (log && log.warn) {
+        log.warn('domain date ES sync update deferred to queue', {
+          network,
+          index,
+          queue_id: queued.id,
+          matched_ads: matchIds.length,
+          reason: classified.type,
+        });
+      }
+      return {
+        es_index: index,
+        es_matched_ads: matchIds.length,
+        es_mode: 'async',
+        es_tasks: [],
+        es_queued: true,
+        es_queue_id: queued.id,
+        es_chunks: Math.ceil(matchIds.length / ES_TERMS_CHUNK),
+        es_requests_per_second: ES_REQUESTS_PER_SECOND,
+        es_deferred_after_sync_failure: true,
+        es_retry_reason: classified.type,
+        es_timings_ms: timings,
+      };
+    }
+
     return {
-      ...baseResult,
+      es_index: index,
+      es_matched_ads: matchIds.length,
+      es_mode: 'async',
+      es_updated: 0,
+      es_timings_ms: timings,
       es_error: buildErrorResponse({
-        code: classified.type === 'elasticsearch_timeout_error' ? 504 : 500,
-        message: classified.message,
-        type: classified.type,
-        source: classified.source,
+        code: 503,
+        message: 'Elasticsearch update failed and could not be queued for retry',
+        type: 'elasticsearch_queue_error',
+        source: 'api',
         operation: 'update-domain-date',
-        stage: async ? 'submit_es_tasks' : 'propagate_date',
+        stage: 'queue_es_update',
         network,
         table: cfg.table,
         details: {
           index,
           matched_ads: matchIds.length,
-          chunks: idChunks.length,
-          attempted_chunks: chunkResults.length,
-          skipped_chunks: skippedChunks,
-          failed_chunks: failed.map((result) => result.chunk),
-          submitted_tasks: tasks.length,
           request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
-          ...classified.details,
+          initial_error_type: classified.type,
+          initial_error: classified.details,
         },
       }).error,
     };
   }
-
-  if (log && log.info) {
-    log.info('domain date ES propagated', {
-      network,
-      index,
-      matched_ads: matchIds.length,
-      mode: async ? 'async' : 'sync',
-      updated,
-      tasks: tasks.length,
-      timings_ms: timings,
-    });
-  }
-  return baseResult;
 }
 
 /**
@@ -623,7 +655,7 @@ async function updateDomainDate(body, log) {
   if (action.error) return { code: 400, error: action.error };
 
   const results = {};
-  const summary = { updated: 0, not_found: 0, errors: 0, timeouts: 0, es_matched_ads: 0, es_updated: 0, es_async_networks: 0, es_errors: 0 };
+  const summary = { updated: 0, not_found: 0, errors: 0, timeouts: 0, es_matched_ads: 0, es_updated: 0, es_async_networks: 0, es_queued_networks: 0, es_errors: 0 };
 
   if (log && log.info) {
     log.info('domain date update started', {
@@ -634,7 +666,8 @@ async function updateDomainDate(body, log) {
       sql_timeout_ms: SQL_QUERY_TIMEOUT_MS,
       es_request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
       es_sync_max_ads: ES_SYNC_MAX_ADS,
-      es_chunk_concurrency: ES_CHUNK_CONCURRENCY,
+      es_terms_chunk_size: ES_TERMS_CHUNK,
+      es_requests_per_second: ES_REQUESTS_PER_SECOND,
     });
   }
 
@@ -687,6 +720,7 @@ async function updateDomainDate(body, log) {
     if (typeof r.es_matched_ads === 'number') summary.es_matched_ads += r.es_matched_ads;
     if (typeof r.es_updated === 'number') summary.es_updated += r.es_updated; // sync-confirmed only
     if (r.es_mode === 'async') summary.es_async_networks += 1;
+    if (r.es_queued) summary.es_queued_networks += 1;
     if (r.es_error) summary.es_errors += 1;
   });
 
@@ -777,6 +811,32 @@ async function updateDomainDate(body, log) {
     }
   }
 
+  const queueFailureNetworks = Object.entries(results)
+    .filter(([, result]) => result.es_error?.type === 'elasticsearch_queue_error')
+    .map(([network]) => network);
+  if (queueFailureNetworks.length > 0) {
+    const code = 503;
+    const message = 'SQL was updated, but one or more Elasticsearch updates could not be queued. Retry this request.';
+    return {
+      code,
+      message,
+      error: buildErrorResponse({
+        code,
+        message,
+        type: 'elasticsearch_queue_error',
+        source: 'api',
+        operation: 'update-domain-date',
+        stage: 'queue_es_update',
+        details: {
+          retryable: true,
+          retry_after_seconds: 5,
+          failed_networks: queueFailureNetworks,
+        },
+      }).error,
+      data: payload,
+    };
+  }
+
   return { code: 200, message: 'Domain date update processed', data: payload };
 }
 
@@ -791,6 +851,7 @@ module.exports = {
   ES_SYNC_MAX_ADS,
   SQL_QUERY_TIMEOUT_MS,
   ES_REQUEST_TIMEOUT_MS,
-  ES_CHUNK_CONCURRENCY,
+  ES_TERMS_CHUNK,
+  ES_REQUESTS_PER_SECOND,
   querySqlWithTimeout,
 };

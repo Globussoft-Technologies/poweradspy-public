@@ -39,6 +39,7 @@ function buildTransparencyDoc(data, internalId, nasImageUrl) {
     url: data.destination_url,
     redirect_url: data.redirect_url,
     domain: data.domain,
+    domain_registered_date: data.domain_registered_date ?? null,
     country: data.country,
     country_details: countryDetails,
     region_code: data.region_code,

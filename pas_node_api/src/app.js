@@ -188,6 +188,17 @@ async function createApp() {
     adminPanel: config.admin.enabled !== false ? '/admin' : 'disabled',
   });
 
+  // Large domain-date ES updates are persisted by the request handler and drained
+  // by one worker per machine. A MySQL advisory lock provides cross-process safety.
+  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+    try {
+      const { initDomainDateEsQueueWorker } = require('./services/common/helpers/domainDateEsQueue');
+      initDomainDateEsQueueWorker();
+    } catch (error) {
+      log.error('Failed to initialize domain-date ES queue worker', { error: error.message });
+    }
+  }
+
   // Initialize push notification cron jobs (only on one worker to avoid duplicate jobs).
   // These crons (push + daily mail + keyword status) ARE the notification mechanism —
   // they poll and send directly in-process, so no separate notificationService is needed.

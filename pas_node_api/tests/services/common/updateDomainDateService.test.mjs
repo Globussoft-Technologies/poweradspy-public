@@ -2,6 +2,33 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
+const enqueueDomainDateEsUpdate = vi.fn(() => ({ id: "queue_1", queuedAt: Date.now() }));
+const assertEsUpdateComplete = (result) => {
+  if (typeof result.updated !== "number" || result.timed_out === true || Number(result.version_conflicts || 0) > 0 ||
+      (result.failures || []).length > 0 || (result.search_failures || []).length > 0) {
+    const error = new Error("Elasticsearch domain-date update completed partially");
+    error.code = "ES_UPDATE_INCOMPLETE";
+    error.details = {
+      timed_out: result.timed_out === true,
+      version_conflicts: Number(result.version_conflicts || 0),
+    };
+    throw error;
+  }
+  return result;
+};
+const queuePath = require.resolve("../../../src/services/common/helpers/domainDateEsQueue");
+require.cache[queuePath] = {
+  id: queuePath,
+  filename: queuePath,
+  loaded: true,
+  exports: {
+    enqueueDomainDateEsUpdate,
+    assertEsUpdateComplete,
+    ES_TERMS_CHUNK: 10000,
+    ES_REQUESTS_PER_SECOND: 250,
+  },
+};
+
 const {
   updateDomainDate,
   NETWORK_CONFIG,
@@ -10,7 +37,8 @@ const {
   ES_SYNC_MAX_ADS,
   SQL_QUERY_TIMEOUT_MS,
   ES_REQUEST_TIMEOUT_MS,
-  ES_CHUNK_CONCURRENCY,
+  ES_TERMS_CHUNK,
+  ES_REQUESTS_PER_SECOND,
   querySqlWithTimeout,
 } =
   require("../../../src/services/common/services/updateDomainDateService");
@@ -21,7 +49,7 @@ const config = require("../../../src/config");
 //   domainRows → what the domain SELECT returns (null/[] → not_found)
 //   ads        → [{id, ad_id}] rows returned by `SELECT id, ad_id ...` (drive the ES updateByQuery)
 //   noEs       → omit the elastic client (simulate ES unavailable)
-function mockNetwork(name, { domainRows = [], ads = [], noEs = false } = {}) {
+function mockNetwork(name, { domainRows = [], ads = [], noEs = false, esResult = null } = {}) {
   const calls = { sql: [], es: [] };
   const db = {
     sql: {
@@ -44,7 +72,7 @@ function mockNetwork(name, { domainRows = [], ads = [], noEs = false } = {}) {
           const vals = Object.values(terms)[0]; // the single {field: [ids]} entry
           // wait_for_completion:false → background task (returns a task id); else sync (returns count)
           if (args.waitForCompletion === false) return { body: { task: `task_${calls.es.length}` } };
-          return { body: { updated: vals.length } };
+          return { body: esResult || { updated: vals.length } };
         },
       },
     };
@@ -55,6 +83,8 @@ function mockNetwork(name, { domainRows = [], ads = [], noEs = false } = {}) {
 
 afterEach(() => {
   for (const net of Object.keys(NETWORK_CONFIG)) serviceRegistry.services.delete(net);
+  enqueueDomainDateEsUpdate.mockClear();
+  enqueueDomainDateEsUpdate.mockImplementation(() => ({ id: "queue_1", queuedAt: Date.now() }));
 });
 
 describe("updateDomainDateService > config & date validation", () => {
@@ -63,7 +93,14 @@ describe("updateDomainDateService > config & date validation", () => {
       esSyncMaxAds: ES_SYNC_MAX_ADS,
       sqlQueryTimeoutMs: SQL_QUERY_TIMEOUT_MS,
       esRequestTimeoutMs: ES_REQUEST_TIMEOUT_MS,
-      esChunkConcurrency: ES_CHUNK_CONCURRENCY,
+      esTermsChunkSize: ES_TERMS_CHUNK,
+      esRequestsPerSecond: ES_REQUESTS_PER_SECOND,
+      esTaskPollIntervalMs: 5000,
+      esQueueSweepIntervalMs: 5000,
+      esQueueMaxPendingJobs: 5000,
+      esQueueMaxSizeMb: 512,
+      esQueueMinFreeDiskMb: 2048,
+      esQueueMaxAttempts: 10,
     }).toEqual(config.domainDateUpdate);
   });
 
@@ -189,8 +226,7 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     expect(typeof p.v).toBe("number");
   });
 
-  it("large domain (> sync threshold) runs ES as background tasks and does not block", async () => {
-    // default threshold is 2000; 2500 ads → async, chunked by 1000 → 3 background tasks.
+  it("large domain is durably queued without submitting ES work in the request", async () => {
     const ads = Array.from({ length: 2500 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
     const gCalls = mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
     for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
@@ -200,11 +236,26 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     const r = out.data.results.google;
     expect(r.es_mode).toBe("async");
     expect(r.es_matched_ads).toBe(2500);
-    expect(r.es_updated).toBeUndefined();        // no synchronous count on the async path
-    expect(r.es_tasks).toHaveLength(3);          // 1000 + 1000 + 500
-    expect(gCalls.es.every((c) => c.waitForCompletion === false)).toBe(true);
-    expect(gCalls.es.every((c) => c.refresh === false && c.conflicts === "proceed")).toBe(true);
-    expect(out.data.summary).toMatchObject({ es_matched_ads: 2500, es_async_networks: 1 });
+    expect(r).toMatchObject({
+      es_queued: true,
+      es_queue_id: "queue_1",
+      es_tasks: [],
+      es_chunks: 1,
+      es_requests_per_second: 250,
+    });
+    expect(r.es_updated).toBeUndefined();
+    expect(gCalls.es).toHaveLength(0);
+    expect(enqueueDomainDateEsUpdate).toHaveBeenCalledWith({
+      network: "google",
+      date: "2026-07-09",
+      matchIds: ads.map((ad) => ad.ad_id),
+      domainRowIds: [9],
+    });
+    expect(out.data.summary).toMatchObject({
+      es_matched_ads: 2500,
+      es_async_networks: 1,
+      es_queued_networks: 1,
+    });
   });
 
   it("starts all independent network lookups concurrently", async () => {
@@ -282,90 +333,58 @@ describe("updateDomainDateService > cross-network update + ES propagation", () =
     expect(adapters.google.execute.mock.calls.some(([options]) => options.sql.startsWith("UPDATE"))).toBe(false);
   });
 
-  it("submits ES chunks concurrently but never above the configured bound", async () => {
-    const ads = Array.from({ length: 2500 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
-    mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
+  it("reports a durable-queue failure without falling back to an ES task burst", async () => {
+    const ads = Array.from({ length: 500 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
+    const gCalls = mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
     for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
+    enqueueDomainDateEsUpdate.mockReturnValueOnce(null);
 
-    let active = 0;
-    let maxActive = 0;
-    let task = 0;
-    serviceRegistry.getService("google").db.elastic.client.updateByQuery = async (_args, options) => {
-      expect(options).toEqual({ requestTimeout: ES_REQUEST_TIMEOUT_MS, maxRetries: 0 });
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      active -= 1;
-      task += 1;
-      return { body: { task: `task_${task}` } };
-    };
+    const out = await updateDomainDate({ domain_name: "queue-fail.com", domain_date: "2026-07-09" }, null);
 
-    const out = await updateDomainDate({ domain_name: "chunks.com", domain_date: "2026-07-09" }, null);
-    expect(maxActive).toBeGreaterThan(1);
-    expect(maxActive).toBeLessThanOrEqual(ES_CHUNK_CONCURRENCY);
-    expect(out.data.results.google.es_tasks).toHaveLength(3);
+    expect(out.code).toBe(503);
+    expect(out.error).toMatchObject({
+      type: "elasticsearch_queue_error",
+      stage: "queue_es_update",
+      details: { retryable: true, retry_after_seconds: 5, failed_networks: ["google"] },
+    });
+    expect(gCalls.es).toHaveLength(0);
+    expect(out.data.results.google.es_error).toMatchObject({
+      type: "elasticsearch_queue_error",
+      stage: "queue_es_update",
+      network: "google",
+    });
+    expect(out.data.summary.es_errors).toBe(1);
   });
 
-  it("reports a timed-out ES chunk with submitted-task and timing context", async () => {
-    const ads = Array.from({ length: 1500 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
-    mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
+  it.each([
+    ["timed out", { updated: 1, timed_out: true, version_conflicts: 0 }],
+    ["had version conflicts", { updated: 1, timed_out: false, version_conflicts: 1 }],
+    ["was malformed", { timed_out: false, version_conflicts: 0 }],
+  ])("defers a synchronous ES result that %s to the durable queue", async (_label, esResult) => {
+    const ads = [{ id: 1, ad_id: "a1" }, { id: 2, ad_id: "a2" }];
+    mockNetwork("google", {
+      domainRows: [{ id: 9, domain_registered_date: null, status: 0 }],
+      ads,
+      esResult,
+    });
     for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
-
-    let call = 0;
-    serviceRegistry.getService("google").db.elastic.client.updateByQuery = async () => {
-      call += 1;
-      if (call === 2) {
-        const error = new Error("Request timeout after 10000ms");
-        error.name = "TimeoutError";
-        throw error;
-      }
-      return { body: { task: `task_${call}` } };
-    };
 
     const out = await updateDomainDate({ domain_name: "partial.com", domain_date: "2026-07-09" }, null);
+
     expect(out.code).toBe(200);
     expect(out.data.results.google).toMatchObject({
-      status: "updated",
       es_mode: "async",
-      es_tasks: ["task_1"],
-      es_error: {
-        type: "elasticsearch_timeout_error",
-        stage: "submit_es_tasks",
-        network: "google",
-      },
+      es_queued: true,
+      es_queue_id: "queue_1",
+      es_deferred_after_sync_failure: true,
+      es_retry_reason: "elasticsearch_incomplete_error",
     });
-    expect(out.data.results.google.es_error.details).toMatchObject({
-      failed_chunks: [1],
-      submitted_tasks: 1,
-      request_timeout_ms: ES_REQUEST_TIMEOUT_MS,
+    expect(enqueueDomainDateEsUpdate).toHaveBeenCalledWith({
+      network: "google",
+      date: "2026-07-09",
+      matchIds: ["a1", "a2"],
+      domainRowIds: [9],
     });
-    expect(out.data.summary).toMatchObject({ es_errors: 1, timeouts: 1 });
-  });
-
-  it("does not start later ES chunks after a failed submission wave", async () => {
-    const ads = Array.from({ length: 5000 }, (_, i) => ({ id: i + 1, ad_id: `a${i}` }));
-    mockNetwork("google", { domainRows: [{ id: 9, domain_registered_date: null, status: 0 }], ads });
-    for (const net of Object.keys(NETWORK_CONFIG)) if (net !== "google") mockNetwork(net, { domainRows: [] });
-
-    let calls = 0;
-    serviceRegistry.getService("google").db.elastic.client.updateByQuery = async () => {
-      calls += 1;
-      const error = new Error("Request timeout after 10000ms");
-      error.name = "TimeoutError";
-      throw error;
-    };
-
-    const out = await updateDomainDate({ domain_name: "fail-fast.com", domain_date: "2026-07-09" }, null);
-    const details = out.data.results.google.es_error.details;
-
-    expect(calls).toBeLessThan(5);
-    expect(calls).toBeLessThanOrEqual(ES_CHUNK_CONCURRENCY);
-    expect(details).toMatchObject({
-      chunks: 5,
-      attempted_chunks: calls,
-      skipped_chunks: 5 - calls,
-    });
-    expect(details.failed_chunks).toHaveLength(calls);
   });
 
   it("returns 504 with per-network timing details when every SQL lookup times out", async () => {

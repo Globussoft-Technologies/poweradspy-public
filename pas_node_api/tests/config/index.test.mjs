@@ -91,7 +91,14 @@ describe("config/index > module load", () => {
       esSyncMaxAds: 100,
       sqlQueryTimeoutMs: 10000,
       esRequestTimeoutMs: 10000,
-      esChunkConcurrency: 4,
+      esTermsChunkSize: 10000,
+      esRequestsPerSecond: 250,
+      esTaskPollIntervalMs: 5000,
+      esQueueSweepIntervalMs: 5000,
+      esQueueMaxPendingJobs: 5000,
+      esQueueMaxSizeMb: 512,
+      esQueueMinFreeDiskMb: 2048,
+      esQueueMaxAttempts: 10,
     });
     expect(c.isDev).toBe(true); // env undefined ≠ 'production'
   });
@@ -115,14 +122,22 @@ describe("config/index > module load", () => {
     process.env.DOMAIN_ES_SYNC_MAX_ADS = "999";
     process.env.DOMAIN_SQL_QUERY_TIMEOUT_MS = "999";
     process.env.DOMAIN_ES_REQUEST_TIMEOUT_MS = "999";
-    process.env.DOMAIN_ES_CHUNK_CONCURRENCY = "999";
+    process.env.DOMAIN_ES_TERMS_CHUNK_SIZE = "999";
+    process.env.DOMAIN_ES_REQUESTS_PER_SECOND = "999";
     configJsonExists = true;
     configJsonContent = JSON.stringify({
       domainDateUpdate: {
         esSyncMaxAds: 0,
         sqlQueryTimeoutMs: 7000,
         esRequestTimeoutMs: 8000,
-        esChunkConcurrency: 3,
+        esTermsChunkSize: 12000,
+        esRequestsPerSecond: 300,
+        esTaskPollIntervalMs: 2000,
+        esQueueSweepIntervalMs: 3000,
+        esQueueMaxPendingJobs: 400,
+        esQueueMaxSizeMb: 256,
+        esQueueMinFreeDiskMb: 0,
+        esQueueMaxAttempts: 6,
       },
     });
 
@@ -131,13 +146,21 @@ describe("config/index > module load", () => {
         esSyncMaxAds: 0,
         sqlQueryTimeoutMs: 7000,
         esRequestTimeoutMs: 8000,
-        esChunkConcurrency: 3,
+        esTermsChunkSize: 12000,
+        esRequestsPerSecond: 300,
+        esTaskPollIntervalMs: 2000,
+        esQueueSweepIntervalMs: 3000,
+        esQueueMaxPendingJobs: 400,
+        esQueueMaxSizeMb: 256,
+        esQueueMinFreeDiskMb: 0,
+        esQueueMaxAttempts: 6,
       });
     } finally {
       delete process.env.DOMAIN_ES_SYNC_MAX_ADS;
       delete process.env.DOMAIN_SQL_QUERY_TIMEOUT_MS;
       delete process.env.DOMAIN_ES_REQUEST_TIMEOUT_MS;
-      delete process.env.DOMAIN_ES_CHUNK_CONCURRENCY;
+      delete process.env.DOMAIN_ES_TERMS_CHUNK_SIZE;
+      delete process.env.DOMAIN_ES_REQUESTS_PER_SECOND;
     }
   });
 
@@ -148,7 +171,14 @@ describe("config/index > module load", () => {
         esSyncMaxAds: -1,
         sqlQueryTimeoutMs: 0,
         esRequestTimeoutMs: "invalid",
-        esChunkConcurrency: -2,
+        esTermsChunkSize: -2,
+        esRequestsPerSecond: 0,
+        esTaskPollIntervalMs: -1,
+        esQueueSweepIntervalMs: "invalid",
+        esQueueMaxPendingJobs: 0,
+        esQueueMaxSizeMb: -1,
+        esQueueMinFreeDiskMb: -1,
+        esQueueMaxAttempts: 0,
       },
     });
 
@@ -156,7 +186,14 @@ describe("config/index > module load", () => {
       esSyncMaxAds: 100,
       sqlQueryTimeoutMs: 10000,
       esRequestTimeoutMs: 10000,
-      esChunkConcurrency: 4,
+      esTermsChunkSize: 10000,
+      esRequestsPerSecond: 250,
+      esTaskPollIntervalMs: 5000,
+      esQueueSweepIntervalMs: 5000,
+      esQueueMaxPendingJobs: 5000,
+      esQueueMaxSizeMb: 512,
+      esQueueMinFreeDiskMb: 2048,
+      esQueueMaxAttempts: 10,
     });
   });
 

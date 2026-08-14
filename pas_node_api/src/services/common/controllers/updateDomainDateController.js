@@ -39,6 +39,9 @@ async function putDomainDate(req, res) {
     if (result.code >= 500) log.error('insert-update-domain-date request failed', completion);
     else if (result.code >= 400) log.warn('insert-update-domain-date request rejected', completion);
     else log.info('insert-update-domain-date request completed', completion);
+    if (result.error?.type === 'elasticsearch_queue_error') {
+      res.set('Retry-After', String(result.error.details?.retry_after_seconds || 5));
+    }
     return res.status(result.code).json(result);
   } catch (error) {
     log.error('insert-update-domain-date request crashed', {

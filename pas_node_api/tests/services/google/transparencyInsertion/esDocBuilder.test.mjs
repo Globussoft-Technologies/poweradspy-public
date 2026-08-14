@@ -12,7 +12,8 @@ describe('Google Transparency ES document', () => {
       othermultimediaNasPaths: [
         '/pas-dev/stream/gt/otherMultiMedia/202607/42_0.jpg',
       ],
-      destination_url: null, redirect_url: null, domain: null, country: ['India'],
+      destination_url: null, redirect_url: null, domain: 'example.com',
+      domain_registered_date: '2004-06-04', country: ['India'],
       country_details: [], countryDetailsSql: [{
         country: 'India', country_code: 'IN',
         first_seen: '2025-12-12T00:00:00Z', last_seen: '2025-12-21T00:00:00Z',
@@ -32,6 +33,7 @@ describe('Google Transparency ES document', () => {
       id: 42, ad_id: 'CR1', advertiser_id: 'AR1', platform: 18,
       title: 'Title', ad_title: 'Titel', ad_text: 'Text übersetzt',
       language_id: 7, lang_detect: 'de',
+      domain: 'example.com', domain_registered_date: '2004-06-04',
       impressions_max: 1000, country: ['India'],
       last_seen: '2026-01-02 00:00:00',
       last_shown: '2026-01-03 00:00:00',
@@ -67,6 +69,7 @@ describe('Google Transparency ES document', () => {
       image_url: '/pas-dev/stream/gt/thumbnail/202607/43.jpg',
       image_video_url: null,
       video_url_original: 'https://cdn.example/video.mp4',
+      domain_registered_date: null,
     });
     expect(doc).not.toHaveProperty('thumbnail_url_original');
   });
