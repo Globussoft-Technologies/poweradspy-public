@@ -25,7 +25,12 @@ function clampInt(v, def, min, max) {
 }
 
 const STATS_COLUMNS = `gtk.id AS keyword_id, gtk.keyword, gtk.country,
-  ks.ads_total, ks.advertisers_total, ks.competition_score, ks.growth_pct, ks.category`;
+  ksu.ads_total, ksu.advertisers_total, ksu.competition_score, ksu.growth_pct, ksu.category`;
+
+// keyword_stats_unique stores `keyword` deduped/lowercased — join by normalized
+// text instead of keyword_id (see keyword_stats_unique_schema.sql).
+const STATS_JOIN = `LEFT JOIN keyword_stats_unique ksu
+  ON ksu.keyword = LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci`;
 
 async function getKeywordIdeas(req, db, logger) {
   const p = normalizeParams({ ...req.body, ...req.query });
@@ -42,17 +47,15 @@ async function getKeywordIdeas(req, db, logger) {
     const matchingTerms = await db.sql.query(
       `SELECT ${STATS_COLUMNS}
        FROM google_text_keywords gtk
-       LEFT JOIN keyword_stats ks ON ks.keyword_id = gtk.id
+       ${STATS_JOIN}
        WHERE LOWER(gtk.keyword) LIKE ? AND LOWER(gtk.keyword) != ?
-       ORDER BY ks.ads_total DESC
+       ORDER BY ksu.ads_total DESC
        LIMIT ${topN}`,
       [`%${seed}%`, seed]
     );
 
     const [seedStats] = await db.sql.query(
-      `SELECT ks.category FROM google_text_keywords gtk
-       JOIN keyword_stats ks ON ks.keyword_id = gtk.id
-       WHERE LOWER(gtk.keyword) = ? AND ks.category IS NOT NULL LIMIT 1`,
+      `SELECT category FROM keyword_stats_unique WHERE keyword = ? AND category IS NOT NULL LIMIT 1`,
       [seed]
     );
 
@@ -61,9 +64,9 @@ async function getKeywordIdeas(req, db, logger) {
       relatedTerms = await db.sql.query(
         `SELECT ${STATS_COLUMNS}
          FROM google_text_keywords gtk
-         JOIN keyword_stats ks ON ks.keyword_id = gtk.id
-         WHERE ks.category = ? AND LOWER(gtk.keyword) != ?
-         ORDER BY ks.ads_total DESC
+         ${STATS_JOIN}
+         WHERE ksu.category = ? AND LOWER(gtk.keyword) != ?
+         ORDER BY ksu.ads_total DESC
          LIMIT ${topN}`,
         [seedStats.category, seed]
       );

@@ -120,12 +120,13 @@ async function getKeywordListItems(req, db, logger) {
 
     const keywords = await db.sql.query(
       `SELECT gtk.id AS keyword_id, gtk.keyword, gtk.country,
-              ks.ads_total, ks.advertisers_total, ks.domains_total,
-              ks.growth_pct, ks.competition_score, ks.category,
-              ks.first_seen, ks.last_seen, kli.added_at
+              ksu.ads_total, ksu.advertisers_total, ksu.domains_total,
+              ksu.growth_pct, ksu.competition_score, ksu.category,
+              ksu.first_seen, ksu.last_seen, kli.added_at
        FROM keyword_list_items kli
        JOIN google_text_keywords gtk ON gtk.id = kli.keyword_id
-       LEFT JOIN keyword_stats ks ON ks.keyword_id = gtk.id
+       LEFT JOIN keyword_stats_unique ksu
+         ON ksu.keyword = LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci
        WHERE kli.list_id = ?
        ORDER BY kli.added_at DESC`,
       [listId]

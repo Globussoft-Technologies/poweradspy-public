@@ -175,16 +175,20 @@ async function resolveKeywordIds(sql, keywords) {
   const lowered = [...new Set(keywords.map((k) => String(k || '').trim().toLowerCase()).filter(Boolean))];
   if (!lowered.length) return new Map();
   const placeholders = lowered.map(() => '?').join(', ');
+  // `country` is pulled alongside id so the unique-rollup writer (below) can
+  // record which countries a keyword is tracked in, replacing the "one row
+  // per country" signal that keyword_stats used to encode via row duplication.
   const rows = await sql.query(
-    `SELECT id, LOWER(keyword) AS k FROM google_text_keywords WHERE keyword IN (${placeholders})`,
+    `SELECT id, LOWER(keyword) AS k, country FROM google_text_keywords WHERE keyword IN (${placeholders})`,
     lowered
   );
   const map = new Map();
   for (const r of rows) {
     if (!r.k) continue;
-    const arr = map.get(r.k);
-    if (arr) arr.push(r.id);
-    else map.set(r.k, [r.id]);
+    let entry = map.get(r.k);
+    if (!entry) { entry = { ids: [], countries: [] }; map.set(r.k, entry); }
+    entry.ids.push(r.id);
+    if (r.country && !entry.countries.includes(r.country)) entry.countries.push(r.country);
   }
   return map;
 }
@@ -199,13 +203,18 @@ function growthPct(ads30, adsPrior30) {
   return Math.round(((ads30 - adsPrior30) / adsPrior30) * 10000) / 100;
 }
 
-// Buffered upsert writer for keyword_stats — bulk INSERT ... ON DUPLICATE KEY
-// UPDATE so re-running the job (e.g. nightly) refreshes existing rows in place.
-function makeStatsWriter(sql, commit) {
+// Buffered upsert writer for keyword_stats_unique — ONE row per keyword TEXT
+// (not per keyword_id), so keywordsExplorerController.js's browse/count/stats
+// queries never need GROUP BY gtk.keyword. See keyword_stats_unique_schema.sql
+// for why this table exists (2026-08-13 incident: that GROUP BY forced MySQL to
+// materialize + filesort the whole keyword_stats table on every request, ~20-38s
+// per query). All google keyword-stats read paths now use this table exclusively
+// (the old per-keyword_id `keyword_stats` table is no longer written or read).
+function makeUniqueStatsWriter(sql, commit) {
   const cols = [
-    'keyword_id', 'ads_total', 'advertisers_total', 'domains_total',
-    'ads_30d', 'ads_prior_30d', 'growth_pct', 'category', 'sub_category',
-    'top_country', 'type_mix', 'position_top_pct', 'first_seen', 'last_seen',
+    'keyword', 'sample_keyword_id', 'countries', 'ads_total', 'advertisers_total',
+    'domains_total', 'ads_30d', 'ads_prior_30d', 'growth_pct', 'category',
+    'sub_category', 'top_country', 'type_mix', 'position_top_pct', 'first_seen', 'last_seen',
   ];
   let buffer = [];
   let written = 0;
@@ -215,9 +224,9 @@ function makeStatsWriter(sql, commit) {
       const placeholders = buffer.map(() => `(${cols.map(() => '?').join(', ')}, NOW())`).join(', ');
       const params = [];
       for (const row of buffer) for (const c of cols) params.push(row[c] ?? null);
-      const updateCols = cols.filter((c) => c !== 'keyword_id').map((c) => `${c} = VALUES(${c})`).join(', ');
+      const updateCols = cols.filter((c) => c !== 'keyword').map((c) => `${c} = VALUES(${c})`).join(', ');
       await sql.query(
-        `INSERT INTO keyword_stats (${cols.join(', ')}, updated_at) VALUES ${placeholders}
+        `INSERT INTO keyword_stats_unique (${cols.join(', ')}, updated_at) VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE ${updateCols}, updated_at = VALUES(updated_at)`,
         params
       );
@@ -285,9 +294,11 @@ async function sweep(elastic, index, query, pageSize, limit, precision, sql, onB
       const adsPrior30 = b.ads_prior_30d?.ads?.value ?? 0;
       const typeBuckets = (b.type_terms?.buckets || []).map((tb) => String(tb.key).toUpperCase());
 
+      const resolved = kwIdMap.get(String(b.key.kw || '').trim().toLowerCase());
       await onBucket({
         kw: b.key.kw,
-        kwIds: kwIdMap.get(String(b.key.kw || '').trim().toLowerCase()) || null,
+        kwIds: resolved?.ids || null,
+        countries: resolved?.countries || [],
         ads_total: b.ads?.value ?? 0,
         advertisers_total: b.advertisers?.value ?? 0,
         domains_total: b.domains?.value ?? 0,
@@ -325,25 +336,25 @@ async function sweep(elastic, index, query, pageSize, limit, precision, sql, onB
 // DB can handle it), and fall back to the older chunked JS updater if the DB
 // does not support the SQL path or if the optimized SQL path fails.
 async function computeCompetitionScoresSql(sql, commit) {
-  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');
+  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats_unique');
   if (!totalRows) return 0;
   if (!commit) return totalRows;
 
   await sql.query(`
-    UPDATE keyword_stats ks
+    UPDATE keyword_stats_unique ks
     JOIN (
-      SELECT keyword_id,
+      SELECT keyword,
              CASE
                WHEN total_rows = 1 THEN 100
                ELSE ROUND(((row_num - 1) / (total_rows - 1)) * 100)
              END AS score
       FROM (
-        SELECT keyword_id,
-               ROW_NUMBER() OVER (ORDER BY advertisers_total ASC, keyword_id ASC) AS row_num,
+        SELECT keyword,
+               ROW_NUMBER() OVER (ORDER BY advertisers_total ASC, keyword ASC) AS row_num,
                COUNT(*) OVER () AS total_rows
-        FROM keyword_stats
+        FROM keyword_stats_unique
       ) ranked
-    ) scores ON scores.keyword_id = ks.keyword_id
+    ) scores ON scores.keyword = ks.keyword
     SET ks.competition_score = scores.score
   `);
 
@@ -351,7 +362,7 @@ async function computeCompetitionScoresSql(sql, commit) {
 }
 
 async function computeCompetitionScoresJs(sql, commit, opts = {}) {
-  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');
+  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats_unique');
   if (!totalRows) return 0;
   if (!commit) return totalRows;
 
@@ -359,22 +370,22 @@ async function computeCompetitionScoresJs(sql, commit, opts = {}) {
   // gets progressively more expensive as the table grows.
   let processed = 0;
   let lastAdvertisersTotal = null;
-  let lastKeywordId = null;
+  let lastKeyword = null;
   while (processed < totalRows) {
     maybeAbortForHeap(opts, `competition score batch offset ${processed}`);
     const rows = await sql.query(
       lastAdvertisersTotal === null
-        ? `SELECT keyword_id, advertisers_total
-           FROM keyword_stats
-           ORDER BY advertisers_total ASC, keyword_id ASC
+        ? `SELECT keyword, advertisers_total
+           FROM keyword_stats_unique
+           ORDER BY advertisers_total ASC, keyword ASC
            LIMIT ${COMPETITION_SCORE_BATCH}`
-        : `SELECT keyword_id, advertisers_total
-           FROM keyword_stats
+        : `SELECT keyword, advertisers_total
+           FROM keyword_stats_unique
            WHERE (advertisers_total > ?)
-              OR (advertisers_total = ? AND keyword_id > ?)
-           ORDER BY advertisers_total ASC, keyword_id ASC
+              OR (advertisers_total = ? AND keyword > ?)
+           ORDER BY advertisers_total ASC, keyword ASC
            LIMIT ${COMPETITION_SCORE_BATCH}`,
-      lastAdvertisersTotal === null ? [] : [lastAdvertisersTotal, lastAdvertisersTotal, lastKeywordId]
+      lastAdvertisersTotal === null ? [] : [lastAdvertisersTotal, lastAdvertisersTotal, lastKeyword]
     );
     if (!rows.length) break;
 
@@ -383,18 +394,18 @@ async function computeCompetitionScoresJs(sql, commit, opts = {}) {
       const absoluteIndex = processed + idx;
       const rank = totalRows === 1 ? 100 : Math.round((absoluteIndex / (totalRows - 1)) * 100);
       if (!byScore.has(rank)) byScore.set(rank, []);
-      byScore.get(rank).push(r.keyword_id);
+      byScore.get(rank).push(r.keyword);
     });
 
-    for (const [score, ids] of byScore) {
-      const placeholders = ids.map(() => '?').join(', ');
-      await sql.query(`UPDATE keyword_stats SET competition_score = ? WHERE keyword_id IN (${placeholders})`, [score, ...ids]);
+    for (const [score, keywords] of byScore) {
+      const placeholders = keywords.map(() => '?').join(', ');
+      await sql.query(`UPDATE keyword_stats_unique SET competition_score = ? WHERE keyword IN (${placeholders})`, [score, ...keywords]);
     }
 
     processed += rows.length;
     const lastRow = rows[rows.length - 1];
     lastAdvertisersTotal = lastRow.advertisers_total;
-    lastKeywordId = lastRow.keyword_id;
+    lastKeyword = lastRow.keyword;
     if (processed % (COMPETITION_SCORE_BATCH * 5) === 0 || processed >= totalRows) {
       log(`  …competition_score ${processed}/${totalRows} rows processed heap=${currentHeapMb()}MB`);
     }
@@ -403,7 +414,7 @@ async function computeCompetitionScoresJs(sql, commit, opts = {}) {
 }
 
 async function computeCompetitionScores(sql, commit, opts = {}) {
-  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');
+  const [{ c: totalRows }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats_unique');
   if (!totalRows) return 0;
   if (!commit) return totalRows;
 
@@ -413,8 +424,8 @@ async function computeCompetitionScores(sql, commit, opts = {}) {
   }
 
   const indexRows = await sql.query(`
-    SHOW INDEX FROM keyword_stats
-    WHERE Key_name = 'idx_keyword_stats_competition_order'
+    SHOW INDEX FROM keyword_stats_unique
+    WHERE Key_name = 'idx_ksu_competition_order'
   `);
 
   if (indexRows.length) {
@@ -425,7 +436,7 @@ async function computeCompetitionScores(sql, commit, opts = {}) {
       log(`optimized competition_score SQL path failed (${err.message}); falling back to chunked batches`);
     }
   } else {
-    log('competition_score optimized SQL path skipped (missing idx_keyword_stats_competition_order); using chunked fallback');
+    log('competition_score optimized SQL path skipped (missing idx_ksu_competition_order); using chunked fallback');
   }
 
   return computeCompetitionScoresJs(sql, commit, opts);
@@ -463,12 +474,12 @@ async function runKeywordStatsRefresh(args = {}) {
   const index = elastic.indexName || process.env.GOOG_ELASTIC_INDEX || 'google_ads_data_v2';
 
   if (opts.commit) {
-    const [{ c: existing }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats');
-    if (existing > 0 && !opts.truncate) {
-      log(`no --truncate: refreshing ${existing} existing rows in place via upsert (rows for keywords outside this run's scope are left untouched — pass --truncate for a clean rebuild).`);
-    } else if (existing > 0 && opts.truncate) {
-      log(`TRUNCATE keyword_stats (${existing} rows)`);
-      await sql.query('TRUNCATE TABLE keyword_stats');
+    const [{ c: existingUnique }] = await sql.query('SELECT COUNT(*) AS c FROM keyword_stats_unique');
+    if (existingUnique > 0 && !opts.truncate) {
+      log(`no --truncate: refreshing ${existingUnique} existing rows in place via upsert (rows for keywords outside this run's scope are left untouched — pass --truncate for a clean rebuild).`);
+    } else if (existingUnique > 0 && opts.truncate) {
+      log(`TRUNCATE keyword_stats_unique (${existingUnique} rows)`);
+      await sql.query('TRUNCATE TABLE keyword_stats_unique');
     }
   }
 
@@ -476,24 +487,39 @@ async function runKeywordStatsRefresh(args = {}) {
 
   const stats = { keywords: 0, rows: 0, unmapped: 0 };
   const sampleRows = [];
-  const writer = makeStatsWriter(sql, opts.commit);
+  const uniqueWriter = makeUniqueStatsWriter(sql, opts.commit);
 
   await sweep(elastic, index, query, effectiveBatch, opts.limit, effectivePrecision, sql, async (row) => {
     stats.keywords++;
     if (!row.kwIds) { stats.unmapped++; return; }
-    for (const keyword_id of row.kwIds) {
-      stats.rows++;
-      const record = { keyword_id, ...row };
-      delete record.kw;
-      delete record.kwIds;
-      if (sampleRows.length < 8) sampleRows.push({ kw: row.kw, keyword_id, ads_total: row.ads_total, advertisers_total: row.advertisers_total, growth_pct: row.growth_pct });
-      await writer.add(record);
-    }
+    stats.rows += row.kwIds.length;
+    if (sampleRows.length < 8) sampleRows.push({ kw: row.kw, keyword_id: row.kwIds[0], ads_total: row.ads_total, advertisers_total: row.advertisers_total, growth_pct: row.growth_pct });
+    // One row per keyword TEXT for the Explorer's deduplicated read path —
+    // sample_keyword_id is just a representative id for display joins (any
+    // country-variant works, they all carry the same stats).
+    await uniqueWriter.add({
+      keyword: row.kw,
+      sample_keyword_id: Math.min(...row.kwIds),
+      countries: JSON.stringify(row.countries || []),
+      ads_total: row.ads_total,
+      advertisers_total: row.advertisers_total,
+      domains_total: row.domains_total,
+      ads_30d: row.ads_30d,
+      ads_prior_30d: row.ads_prior_30d,
+      growth_pct: row.growth_pct,
+      category: row.category,
+      sub_category: row.sub_category,
+      top_country: row.top_country,
+      type_mix: row.type_mix,
+      position_top_pct: row.position_top_pct,
+      first_seen: row.first_seen,
+      last_seen: row.last_seen,
+    });
   }, opts);
 
-  const written = await writer.done();
+  const writtenUnique = await uniqueWriter.done();
   log(`keywords=${stats.keywords} → rows=${stats.rows} (skipped: ${stats.unmapped} unmapped-keyword)`);
-  log(`${opts.commit ? 'UPSERTED' : 'WOULD UPSERT'} ${written} rows into keyword_stats`);
+  log(`${opts.commit ? 'UPSERTED' : 'WOULD UPSERT'} ${writtenUnique} rows into keyword_stats_unique`);
   log('sample:', JSON.stringify(sampleRows.slice(0, 5)));
 
   let scored = 0;
@@ -505,7 +531,7 @@ async function runKeywordStatsRefresh(args = {}) {
     log('competition_score percentile backfill skipped for this run (recomputeScores=false)');
   }
 
-  return { ...stats, written, scored };
+  return { ...stats, writtenUnique, scored };
 }
 
 // CLI entrypoint — owns the connect/disconnect lifecycle; not used by the cron.

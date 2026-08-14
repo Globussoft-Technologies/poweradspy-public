@@ -123,23 +123,26 @@ async function importKeywordsFile(req, db, logger) {
   try {
     const placeholders = wanted.map(() => '?').join(', ');
     const matched = await db.sql.query(
-      `SELECT MIN(gtk.id) AS keyword_id, gtk.keyword, ANY_VALUE(gtk.country) AS country,
-              MAX(ks.ads_total) AS ads_total, MAX(ks.advertisers_total) AS advertisers_total,
-              MAX(ks.domains_total) AS domains_total, MAX(ks.growth_pct) AS growth_pct,
-              MAX(ks.competition_score) AS competition_score, ANY_VALUE(ks.category) AS category,
-              MIN(ks.first_seen) AS first_seen, MAX(ks.last_seen) AS last_seen
+      `SELECT gtk.keyword, ANY_VALUE(gtk.country) AS country,
+              ANY_VALUE(ksu.sample_keyword_id) AS keyword_id,
+              MAX(ksu.ads_total) AS ads_total, MAX(ksu.advertisers_total) AS advertisers_total,
+              MAX(ksu.domains_total) AS domains_total, MAX(ksu.growth_pct) AS growth_pct,
+              MAX(ksu.competition_score) AS competition_score, ANY_VALUE(ksu.category) AS category,
+              MIN(ksu.first_seen) AS first_seen, MAX(ksu.last_seen) AS last_seen
        FROM google_text_keywords gtk
-       LEFT JOIN keyword_stats ks ON ks.keyword_id = gtk.id
        -- gtk.keyword is utf8mb3 but the bound params arrive as utf8mb4; MySQL can't
        -- coerce a utf8mb4 param (e.g. an emoji/accented char in an uploaded file)
        -- into the utf8mb3 column collation ("Conversion from utf8mb4_unicode_ci into
        -- utf8mb3_unicode_ci impossible for parameter" → 500). Convert the column up
        -- to utf8mb4 (a lossless superset) and pin the comparison collation to the
        -- params' so both sides match — a non-matching keyword just falls to not_found.
+       -- keyword_stats_unique already stores keyword text deduped/lowercased, so it's
+       -- joined by normalized text instead of keyword_id (see keyword_stats_unique_schema.sql).
+       LEFT JOIN keyword_stats_unique ksu
+         ON ksu.keyword = LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci
        WHERE LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci IN (${placeholders})
        -- A keyword string can map to several google_text_keywords rows (one per
-       -- country) with identical keyword-string-level stats; dedupe by keyword text
-       -- so a searched/imported keyword shows once (same fix as the browse list).
+       -- country); dedupe by keyword text so a searched/imported keyword shows once.
        GROUP BY gtk.keyword`,
       wanted
     );
