@@ -1156,6 +1156,69 @@ describe("addCategoryController > getAdCategory (Issue 1 read-back endpoint)", (
       ai_meta: { ad_type: "promotional", offer_type: "percentage_discount" },
     });
   });
+  it("200 for google resolves internal_id only against the internal id field", async () => {
+    const search = vi.fn(async () => ({
+      hits: {
+        hits: [{
+          _id: "212008",
+          _source: {
+            id: 212008,
+            ad_id: "-1716958232",
+            ai: { ad_type: "promotional", offer_type: "no_explicit_offer" },
+          },
+        }],
+      },
+    }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+
+    await getAdCategory({ query: { platform: "google", internal_id: "212008" }, body: {} }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(search.mock.calls[0][0].body.query.bool.should).toEqual(expect.arrayContaining([
+      { term: { id: "212008" } },
+      { term: { id: 212008 } },
+    ]));
+    expect(res.body).toMatchObject({
+      platform: "google",
+      internal_id: "212008",
+      ad_id: "-1716958232",
+      ai_meta: { ad_type: "promotional", offer_type: "no_explicit_offer" },
+    });
+  });
+  it("does not fall through to Google ad_id when an explicit internal_id misses", async () => {
+    const search = vi.fn(async () => ({ hits: { hits: [] } }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search }));
+    const res = mkRes();
+
+    await getAdCategory({ query: { platform: "google", internal_id: "212008" }, body: {} }, res);
+
+    expect(res.statusCode).toBe(404);
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(search.mock.calls[0][0].body.query.bool.should).toEqual(expect.arrayContaining([
+      { term: { id: "212008" } },
+    ]));
+  });
+  it("400 when both ad_id and internal_id are supplied", async () => {
+    const res = mkRes();
+
+    await getAdCategory({
+      query: { platform: "google", ad_id: "-1716958232", internal_id: "212008" },
+      body: {},
+    }, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toMatch(/either ad_id or internal_id/);
+  });
+  it("400 when internal_id is supplied for a non-Google platform", async () => {
+    const res = mkRes();
+
+    await getAdCategory({ query: { platform: "facebook", internal_id: "212008" }, body: {} }, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toMatch(/only for Google/);
+  });
 });
 
 describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)", () => {

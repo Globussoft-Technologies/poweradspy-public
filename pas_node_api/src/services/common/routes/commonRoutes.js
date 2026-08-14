@@ -442,6 +442,7 @@ router.post(
 );
 
 // GET /api/v1/common/getAdCategory?platform=facebook&ad_id=13011
+// Google Analytics UI may use ?platform=google&internal_id=<internal ES/SQL id>.
 // Single-ad read-back — returns the ad's currently-stored category/sub_category so the
 // classifier can verify a newCatInsertion write attached. No auth — internal only.
 router.get(

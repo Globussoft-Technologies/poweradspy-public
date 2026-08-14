@@ -29,6 +29,25 @@ describe("buildSearchPayload > AI-Meta", () => {
     expect(payload.has_ai_meta).toBe(false);
   });
 
+  it("does not keep AI filtering active after the last AI chip is removed", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook", "admob"],
+      country_filter: ["US"],
+      ai_ad_type: [],
+      ai_intent: [],
+      ai_category_id: [],
+      ai_subcategory_id: [],
+    });
+
+    expect(payload.has_ai_meta).toBe(false);
+    expect(payload).not.toHaveProperty("ai_ad_type");
+    expect(payload).not.toHaveProperty("ai_intent");
+    expect(payload).not.toHaveProperty("ai_category_id");
+    expect(payload).not.toHaveProperty("ai_subcategory_id");
+    expect(payload.network).toEqual(["facebook", "admob"]);
+    expect(payload.country).toEqual(["US", "United States"]);
+  });
+
   it("forwards selected contract filters without embedding their options", () => {
     const payload = buildSearchPayload({
       activePlatforms: ["facebook"],

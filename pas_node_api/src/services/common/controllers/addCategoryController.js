@@ -241,9 +241,19 @@ async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = A
  * misses. Write paths stay strict and continue to use the documented public ad_id
  * contract only.
  */
-async function findReadBackAdDoc(esForPlat, esIndex, cfg, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
-  let adHit = await findAdDoc(esForPlat, esIndex, cfg.idField, adId, requestTimeoutMs);
-  if (!adHit && cfg.descIdField && cfg.descIdField !== cfg.idField) {
+async function findReadBackAdDoc(
+  esForPlat,
+  esIndex,
+  cfg,
+  adId,
+  requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS,
+  exactIdField = null,
+) {
+  const primaryIdField = exactIdField || cfg.idField;
+  let adHit = await findAdDoc(esForPlat, esIndex, primaryIdField, adId, requestTimeoutMs);
+  // An explicit identifier must never fall through to another field: the same
+  // number can be one Google ad's internal id and another ad's public ad_id.
+  if (!exactIdField && !adHit && cfg.descIdField && cfg.descIdField !== cfg.idField) {
     adHit = await findAdDoc(esForPlat, esIndex, cfg.descIdField, adId, requestTimeoutMs);
   }
   return adHit;
@@ -1268,6 +1278,7 @@ async function newCatInsertion(req, res) {
 
 /**
  * GET /getAdCategory?platform=<net>&ad_id=<id>
+ * GET /getAdCategory?platform=google&internal_id=<id>
  *
  * Lightweight single-ad read-back so the classifier can verify a newCatInsertion
  * write attached without paging the whole getDescriptionDetails feed (Issue 1).
@@ -1277,6 +1288,9 @@ async function newCatInsertion(req, res) {
 async function getAdCategory(req, res) {
   const platform = (req.query.platform || req.body?.platform || '').toLowerCase().trim();
   const adId     = req.query.ad_id ?? req.body?.ad_id;
+  const internalId = req.query.internal_id ?? req.body?.internal_id;
+  const hasAdId = adId !== undefined && adId !== null && adId !== '';
+  const hasInternalId = internalId !== undefined && internalId !== null && internalId !== '';
 
   const cfg = PLATFORM_CONFIG[platform];
   if (!cfg) {
@@ -1285,8 +1299,14 @@ async function getAdCategory(req, res) {
       message: `Unsupported platform: ${platform}. Valid: ${Object.keys(PLATFORM_CONFIG).join(', ')}`,
     });
   }
-  if (adId === undefined || adId === null || adId === '') {
-    return res.status(400).json({ code: 400, message: 'ad_id is required' });
+  if (!hasAdId && !hasInternalId) {
+    return res.status(400).json({ code: 400, message: 'ad_id is required (or internal_id for Google)' });
+  }
+  if (hasAdId && hasInternalId) {
+    return res.status(400).json({ code: 400, message: 'Provide either ad_id or internal_id, not both' });
+  }
+  if (hasInternalId && platform !== 'google') {
+    return res.status(400).json({ code: 400, message: 'internal_id is supported only for Google' });
   }
 
   const service = serviceRegistry.getService(cfg.service);
@@ -1296,16 +1316,25 @@ async function getAdCategory(req, res) {
   }
 
   const esIndex = es.indexName || cfg.index;
+  const lookupId = hasInternalId ? internalId : adId;
+  const exactIdField = hasInternalId ? cfg.descIdField : null;
   try {
-    const adHit = await findReadBackAdDoc(es, esIndex, cfg, adId);
+    const adHit = await findReadBackAdDoc(es, esIndex, cfg, lookupId, AI_META_OPERATION_TIMEOUT_MS, exactIdField);
     if (!adHit) {
-      return res.status(404).json({ code: 404, message: `ad_id=${adId} not found in ${esIndex}`, ad_id: adId, platform });
+      const lookupName = hasInternalId ? 'internal_id' : 'ad_id';
+      return res.status(404).json({
+        code: 404,
+        message: `${lookupName}=${lookupId} not found in ${esIndex}`,
+        [lookupName]: lookupId,
+        platform,
+      });
     }
     const src = adHit._source || {};
     return res.status(200).json({
       code:            200,
       platform,
-      ad_id:           adId,
+      ad_id:           hasInternalId ? (src[cfg.adIdField] ?? src[cfg.idField] ?? null) : adId,
+      ...(hasInternalId ? { internal_id: internalId } : {}),
       category:        src[`${platform}.category`]    ?? null,
       sub_category:    src[`${platform}.subCategory`] ?? null,
       category_id:     src.category_id    ?? null,
@@ -1314,7 +1343,8 @@ async function getAdCategory(req, res) {
       ai_meta:         readAiMetaFromSource(src, platform),
     });
   } catch (err) {
-    service.log?.error(`[getAdCategory] platform=${platform} ad_id=${adId} error: ${err.message}`);
+    const lookupName = hasInternalId ? 'internal_id' : 'ad_id';
+    service.log?.error(`[getAdCategory] platform=${platform} ${lookupName}=${lookupId} error: ${err.message}`);
     return res.status(500).json({ code: 500, message: 'Some Error Occured', error: err.message });
   }
 }

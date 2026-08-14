@@ -94,6 +94,18 @@ Verifies one ad without paging the whole feed. Matched on the same per-platform 
 ```http
 GET /api/v1/common/getAdCategory?platform=facebook&ad_id=13011
 ```
+
+Google has distinct internal `id` and public `ad_id` values. Analytics callers that hold
+the internal result-row identifier must make that intent explicit:
+
+```http
+GET /api/v1/common/getAdCategory?platform=google&internal_id=212008
+```
+
+`internal_id` is Google-only and queries the ES `id` field directly. Supplying both
+`ad_id` and `internal_id` returns `400`; this prevents collisions where one ad's internal
+`id` equals another ad's public `ad_id`. Existing `ad_id` callers remain unchanged.
+
 ```json
 {
  "code": 200, "platform": "facebook", "ad_id": "13011",
@@ -103,7 +115,7 @@ GET /api/v1/common/getAdCategory?platform=facebook&ad_id=13011
  "ai_meta": { "ad_type": "promotional", "offering_type": "product", "...": "..." }
 }
 ```
-Responses: `200` (found), `400` (bad/missing platform or ad_id), `404` (ad not found), `503` (ES down).
+Responses: `200` (found), `400` (bad/missing platform or identifier), `404` (ad not found), `503` (ES down).
 
 ---
 

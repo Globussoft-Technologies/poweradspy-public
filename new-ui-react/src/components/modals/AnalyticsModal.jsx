@@ -1286,7 +1286,15 @@ const AnalyticsModal = ({
 }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
-  const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(ad?.id, ad?.network, 281, 'en', ad?.postOwnerId, true);
+  const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(
+    ad?.id,
+    ad?.network,
+    281,
+    'en',
+    ad?.postOwnerId,
+    true,
+    ad?.internalId,
+  );
   const adDetailsData = insights.adDetails?.[0] || insights.adDetails || null;
   const tiktokAnalytics = insights.analytics || null;
   const isTransparency =

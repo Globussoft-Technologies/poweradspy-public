@@ -24,7 +24,15 @@ const NETWORK_AD_ID_FIELD = {
  * Sends the ad's network in the payload so the backend routes to the correct handler.
  * Returns progressively loaded data as each event arrives.
  */
-export function useAdInsights(adId, network = 'facebook', userId = 281, language = 'en', postOwnerId = null, includeAiMeta = false) {
+export function useAdInsights(
+  adId,
+  network = 'facebook',
+  userId = 281,
+  language = 'en',
+  postOwnerId = null,
+  includeAiMeta = false,
+  aiMetaInternalId = null,
+) {
   const [insights, setInsights] = useState({
     adDetails: null,
     analytics: null,
@@ -93,8 +101,15 @@ export function useAdInsights(adId, network = 'facebook', userId = 281, language
         if (includeAiMeta) {
           // AI-Meta is ES-only. Start this optional read after the main stream
           // request so it cannot delay or alter the analytics request itself.
+          const normalizedNetwork = (network || 'facebook').toLowerCase();
+          // Google has separate internal `id` and public `ad_id` fields. Identifying
+          // the internal field explicitly prevents cross-field numeric collisions.
+          const hasAiMetaInternalId = aiMetaInternalId != null && String(aiMetaInternalId).trim() !== '';
+          const aiMetaIdParam = normalizedNetwork === 'google' && hasAiMetaInternalId
+            ? `internal_id=${encodeURIComponent(aiMetaInternalId)}`
+            : `ad_id=${encodeURIComponent(adId)}`;
           Promise.resolve(fetch(
-            `${PAS_API_BASE}/api/v1/common/getAdCategory?platform=${encodeURIComponent((network || 'facebook').toLowerCase())}&ad_id=${encodeURIComponent(adId)}`,
+            `${PAS_API_BASE}/api/v1/common/getAdCategory?platform=${encodeURIComponent(normalizedNetwork)}&${aiMetaIdParam}`,
             {
               headers: { 'Authorization': `Bearer ${PAS_API_TOKEN}` },
               signal: controller.signal,
@@ -178,7 +193,7 @@ export function useAdInsights(adId, network = 'facebook', userId = 281, language
     return () => {
       controller.abort();
     };
-  }, [adId, network, userId, language, includeAiMeta]);
+  }, [adId, network, userId, language, includeAiMeta, aiMetaInternalId]);
 
   return { insights, loading, notFound, notFoundForId, errors };
 }

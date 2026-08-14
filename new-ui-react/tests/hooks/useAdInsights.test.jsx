@@ -84,6 +84,34 @@ describe("useAdInsights > happy path streaming", () => {
     expect(result.current.insights.aiMeta).toEqual({ offering: "printer parts" });
   });
 
+  it("uses Google's explicit internal id for the optional AI-Meta read", async () => {
+    globalThis.fetch
+      .mockResolvedValueOnce(makeSseResponse(['event: done\ndata: {}\n\n']))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ai_meta: { ad_type: "promotional" } }) });
+
+    renderHook(() => useAdInsights("-1716958232", "google", 281, "en", null, true, 212008));
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+
+    const aiMetaUrl = globalThis.fetch.mock.calls[1][0];
+    expect(aiMetaUrl).toContain("platform=google");
+    expect(aiMetaUrl).toContain("internal_id=212008");
+    expect(aiMetaUrl).not.toContain("ad_id=");
+  });
+
+  it("keeps using ad_id for non-Google AI-Meta reads", async () => {
+    globalThis.fetch
+      .mockResolvedValueOnce(makeSseResponse(['event: done\ndata: {}\n\n']))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ai_meta: { ad_type: "promotional" } }) });
+
+    renderHook(() => useAdInsights("13011", "facebook", 281, "en", null, true, 999));
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+
+    const aiMetaUrl = globalThis.fetch.mock.calls[1][0];
+    expect(aiMetaUrl).toContain("platform=facebook");
+    expect(aiMetaUrl).toContain("ad_id=13011");
+    expect(aiMetaUrl).not.toContain("internal_id=");
+  });
+
   it("done event → loading=false", async () => {
     globalThis.fetch.mockResolvedValueOnce(makeSseResponse([
       'event: done\ndata: {}\n\n',

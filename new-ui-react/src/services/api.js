@@ -1048,6 +1048,14 @@ const AI_META_FILTER_KEYS = [
   'ai_subcategory_id',
 ];
 
+// Chip removal intentionally leaves an empty array in SDUI state. Treat that
+// as inactive at the API boundary so a removed AI filter cannot keep
+// `has_ai_meta` enabled behind an otherwise unrelated filter selection.
+const hasActiveFilterValue = (value) => {
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== undefined && value !== null && value !== '' && value !== false;
+};
+
 // Returns true if at least one platform in `nets` supports the named filter field.
 // Accepts an optional dynamic map (from config) that overrides the hardcoded fallback.
 const platformSupports = (nets, field, dynamicMap) => {
@@ -1194,7 +1202,7 @@ export const buildSearchPayload = (filters = {}) => {
   const hasAiMetaRequested = hasAiMeta === true || hasAiMeta === 1 || hasAiMeta === '1' || hasAiMeta === 'true';
   const aiMetaFilterPayload = Object.fromEntries(
     AI_META_FILTER_KEYS
-      .filter((key) => filters[key] !== undefined && filters[key] !== null && filters[key] !== '')
+      .filter((key) => hasActiveFilterValue(filters[key]))
       .map((key) => [key, filters[key]]),
   );
   const hasActiveAiMetaFilters = Object.keys(aiMetaFilterPayload).length > 0;
