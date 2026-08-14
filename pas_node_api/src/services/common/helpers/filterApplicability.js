@@ -57,6 +57,8 @@ const BODY_TO_SDUI_FILTER_IDS = {
   ad_image_size:  ['image_size_filter', 'image_size'],
   sub_network:    ['admob_network_filter', 'sub_network_filter', 'sub_network'],
   source_app:     ['source_app_filter', 'admob_source_app_filter', 'source_app'],
+  admobPosterSort:['admob_poster_rank_filter'],
+  admob_poster_sort:['admob_poster_rank_filter'],
   verified:       ['verified_filter', 'verified'],
   popularity:     ['popularity_range_filter', 'popularity'],
   likes:          ['likes_range_filter', 'likes'],
@@ -100,6 +102,8 @@ const STATIC_FILTER_NETWORKS = {
   // These fields belong to the isolated AdMob index even if SDUI is unavailable.
   sub_network: ['admob'],
   source_app: ['admob'],
+  admobPosterSort: ['admob'],
+  admob_poster_sort: ['admob'],
 };
 
 // AdMob should not participate in AI/category-driven searches. These filters
@@ -114,11 +118,14 @@ const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 /**
  * Build an index: { bodyKey: [networks...] } from the live SDUI config.
  * Walks every filter document and reads `platform_applicability`.
- * Also builds _optionIndex: { bodyKey: { optionValue: [networks] } } for option-level PA.
+ * Also builds _optionIndex: { bodyKey: { optionValue: [networks] } } for
+ * option-level applicability, so shared groups like `ad_position` can still
+ * narrow to the correct network for the selected sub-option.
  */
 async function _buildIndex() {
   const config = await getSDUIConfig();
   const index = {}; // bodyKey -> Set<network>
+  const optionIndex = {}; // bodyKey -> { normalizedValue -> Set<network> }
   const matrixNetworksByDocument = new Map();
 
   // The platform matrix is the source of truth for sidebar availability.
@@ -179,6 +186,31 @@ async function _buildIndex() {
             networks.forEach(n => index[bk].add(n));
           }
         }
+
+        const optionNetworksFallback = networks || ALL_NETWORKS;
+        for (const option of (f.options || [])) {
+          const rawOptionValue = option?.value ?? option?._id ?? option?.label;
+          const normalizedOptionValue = String(rawOptionValue ?? '').trim().toLowerCase();
+          if (!normalizedOptionValue) continue;
+
+          let optionNetworks = optionNetworksFallback;
+          const optionApplicability = option?.platform_applicability;
+          if (Array.isArray(optionApplicability) && optionApplicability.length > 0) {
+            optionNetworks = optionApplicability.map((network) => String(network).toLowerCase());
+          } else if (
+            optionApplicability &&
+            optionApplicability !== 'all' &&
+            typeof optionApplicability === 'string'
+          ) {
+            optionNetworks = [String(optionApplicability).toLowerCase()];
+          }
+
+          for (const bk of matchingBodyKeys) {
+            optionIndex[bk] ||= {};
+            optionIndex[bk][normalizedOptionValue] ||= new Set();
+            optionNetworks.forEach((network) => optionIndex[bk][normalizedOptionValue].add(network));
+          }
+        }
       }
     }
   }
@@ -186,6 +218,13 @@ async function _buildIndex() {
   // Convert sets → arrays
   const out = {};
   for (const [k, v] of Object.entries(index)) out[k] = Array.from(v);
+  out._optionIndex = {};
+  for (const [bodyKey, values] of Object.entries(optionIndex)) {
+    out._optionIndex[bodyKey] = {};
+    for (const [optionValue, networks] of Object.entries(values)) {
+      out._optionIndex[bodyKey][optionValue] = Array.from(networks);
+    }
+  }
   return out;
 }
 
@@ -224,6 +263,16 @@ function isActiveValue(v) {
   return true;
 }
 
+function getActiveValues(value) {
+  if (!isActiveValue(value)) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry ?? '').trim().toLowerCase())
+      .filter((entry) => entry && entry !== 'na');
+  }
+  return [String(value ?? '').trim().toLowerCase()].filter((entry) => entry && entry !== 'na');
+}
+
 /**
  * Given a request body, return the list of networks where ALL active filters apply.
  * Returns `null` if no filter restricts applicability (= search every network).
@@ -241,13 +290,26 @@ async function getApplicableNetworks(reqBody) {
   if (!reqBody || typeof reqBody !== 'object') return null;
 
   const index = await _getIndex();
+  const optionIndex = index._optionIndex || {};
   let intersection = null;
 
   for (const [key, value] of Object.entries(reqBody)) {
     if (NON_FILTER_BODY_KEYS.has(key)) continue;
     if (!isActiveValue(value)) continue;
 
-    const allowed = STATIC_FILTER_NETWORKS[key] || index[key];
+    let allowed = STATIC_FILTER_NETWORKS[key] || index[key];
+    const selectedValues = getActiveValues(value);
+    const optionAllowed = [];
+    for (const selectedValue of selectedValues) {
+      const matched = optionIndex[key]?.[selectedValue];
+      if (Array.isArray(matched) && matched.length > 0) {
+        optionAllowed.push(...matched);
+      }
+    }
+    if (optionAllowed.length > 0) {
+      allowed = [...new Set(optionAllowed)];
+    }
+
     if (!allowed) continue; // unknown filter — don't restrict
 
     // Skip "all networks" applicability — it doesn't narrow anything

@@ -26,7 +26,7 @@ The insert API accepts one object, a bare array, or `{ "ads": [...] }`.
 ## Contract
 
 Required fields are `ad_id`, `country`, `last_seen`, `network`, `platform`,
-`source`, `system_id`, `type`, `version`, and `source_app`.
+`source`, `session_id`, `system_id`, `type`, `version`, and `source_app`.
 
 There is no `sub_type` field. `type` directly stores one of:
 
@@ -41,15 +41,19 @@ data loss caused by producer/consumer contract drift.
 ## Update rules
 
 - `ad_id` is the public immutable identity and has a unique index.
-- `last_seen` is required and only moves forward through `GREATEST`.
-- `first_seen` is optional and keeps the earliest known non-null value.
+- `first_seen` is owned by PAS. When the crawler does not send it, PAS stamps
+  the first insert time as the ad's `first_seen`.
+- `last_seen` is still accepted by the payload and is used as the observation
+  timestamp for the ingestion flow.
 - `post_date` is immutable after its first non-null value (`COALESCE` update).
 - Country values must be unique within a payload. Country, state, and sub-network
   are stored as case-insensitive per-ad dimensions with appearance counts.
 - Source app and package form a case-insensitive identity. Global and per-ad
   appearance counts are maintained.
-- `(ad_id, system_id)` is a unique observation. Retrying the same event updates the
+- `(ad_id, session_id)` is a unique observation. Retrying the same event updates the
   ad safely but does not increase dimension or source-app counts.
+- AdMob search documents also expose `occurrence_count`, `days_running`, and
+  `lead_score` so the dashboard can rank long-running, frequently seen posters.
 - Saved / hidden / favourite actions are stored separately in `mob_hidden_ads`
   using `type=1` (hide advertiser), `type=2` (hide ad), and `type=3`
   (favourite ad). Those actions do not change the ingestion row in `mob_ads`.
@@ -124,6 +128,11 @@ hand-maintained static list.
 - When the selected platform is only `admob`, the sidebar is narrowed to AdMob
   sections only: `country`, `source`, `network`, `ad position`, `ad sub position`,
   `image size`, and `source app`.
+- Dashboard ranking controls can map to:
+  - `Top Ranked` -> `lead_score`
+  - `Most Seen` -> `occurrence_count`
+  - `Active Days` -> `days_running`
+  - `Scan Run` -> `session_id`
 - The generic `All` traffic-source option is not shown for AdMob; only live AdMob
   source values are surfaced.
 - AI quick filters and AI-meta searches are not applicable to AdMob. When any

@@ -102,6 +102,14 @@ const NETWORK_DEFINITIONS = [
     aliases: ['native_ads'],
     supportsGeneralAccess: true,
   },
+  {
+    id: 'admob',
+    label: 'AdMob',
+    status: 'active',
+    aliases: [],
+    supportsGeneralAccess: true,
+    defaultPlanAccess: true,
+  },
 ];
 
 // ─── Derived lookups (built once at module load) ────────────────────────────

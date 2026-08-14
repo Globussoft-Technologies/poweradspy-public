@@ -6,6 +6,14 @@ function iso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function daysRunning(firstSeen, lastSeen) {
+  if (!firstSeen || !lastSeen) return null;
+  const start = Date.parse(firstSeen);
+  const end = Date.parse(lastSeen);
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.max(1, Math.ceil((end - start) / 86400000) + 1);
+}
+
 function details(rows) {
   return rows.map((row) => ({
     name: row.name,
@@ -23,6 +31,8 @@ function buildAdmobDocument(ad) {
     first_seen: iso(row.first_seen),
     last_seen: iso(row.last_seen),
   }));
+  const runningDays = daysRunning(ad.first_seen, ad.last_seen);
+  const occurrenceCount = Number(ad.occurrence_count || 0);
   return {
     id: Number(ad.id),
     ad_id: ad.ad_id,
@@ -44,6 +54,9 @@ function buildAdmobDocument(ad) {
     ip_address: ad.ip_address,
     first_seen: iso(ad.first_seen),
     last_seen: iso(ad.last_seen),
+    days_running: runningDays,
+    occurrence_count: occurrenceCount,
+    lead_score: occurrenceCount * (runningDays || 0),
     post_date: iso(ad.post_date),
     system_id: ad.system_id,
     version: ad.version,

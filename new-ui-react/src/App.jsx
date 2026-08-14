@@ -393,7 +393,7 @@ const App = () => {
   // bounce to '/', and a returning '/' session (activePage='projects' persisted)
   // to bounce to /projects.
   const didInitialNavSyncRef = useRef(false);
-  const _VALID_NETWORKS = ["facebook","instagram","youtube","google","gdn","native","linkedin","reddit","quora","pinterest","tiktok"];
+  const _VALID_NETWORKS = ["facebook","instagram","youtube","google","gdn","native","linkedin","reddit","quora","pinterest","tiktok","admob"];
   const _isAdAnalyticsUrl = (() => {
     const parts = location.pathname.split("/").filter(Boolean);
     return parts.length === 2 && _VALID_NETWORKS.includes(parts[0].toLowerCase()) && !!parts[1];
@@ -505,6 +505,7 @@ const App = () => {
       "quora",
       "pinterest",
       "tiktok",
+      "admob",
     ];
 
     // Pattern: /{network}/landing/ad_id/{adId} — landing page ad viewer only
@@ -526,6 +527,7 @@ const App = () => {
     const validNetworks = [
       "facebook", "instagram", "youtube", "google", "gdn", "native",
       "linkedin", "reddit", "quora", "pinterest", "tiktok",
+      "admob",
     ];
     if (pathParts.length === 2) {
       const [network, adId] = pathParts;
@@ -667,6 +669,7 @@ const App = () => {
         "quora",
         "pinterest",
         "tiktok",
+        "admob",
       ];
 
       // Pattern 1: /{network}/{adId}
@@ -1444,7 +1447,6 @@ const App = () => {
       if (page === 0) setError(null);
       try {
         const isLanding = landingAd?._fromUrl;
-        // Filter out platforms not allowed by the current plan before querying.
         // Use activePlatforms (user's selection) not effectivePlatforms — each filter's
         // per-platform field gating is handled inside buildSearchPayload via platformSupports,
         // so all selected platforms are always queried and unsupported filter fields are sent as 'NA'.

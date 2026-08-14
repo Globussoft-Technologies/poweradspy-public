@@ -47,7 +47,7 @@ const PLATINUM_PLUS_BUDGET = [20,22,23,24,28,30,32,34,36,43,45,55,57,61,63,67,69
 
 // ─── Helper to build platform_support objects ─────────────────────────────────
 
-const ALL_PLATFORMS = ['facebook','instagram','youtube','google','gdn','linkedin','reddit','quora','pinterest','tiktok','native'];
+const ALL_PLATFORMS = ['facebook','instagram','youtube','google','gdn','linkedin','reddit','quora','pinterest','tiktok','native','admob'];
 
 function platformSupport(supported) {
   const obj = {};

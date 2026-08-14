@@ -46,9 +46,25 @@ function normalizeNumericId(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function normalizeSessionId(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
 function buildCommonClauses(input) {
   const must = [];
   const filter = [{ term: { status: 1 } }];
+
+  const internalId = normalizeNumericId(input.id ?? input.internal_id);
+  const publicAdId = normalizeAdId(
+    input.ad_id ?? input.adId ?? (internalId === null ? input.id : null)
+  );
+  if (internalId !== null && Number.isInteger(internalId) && internalId > 0) {
+    filter.push({ term: { id: internalId } });
+  } else if (publicAdId) {
+    filter.push({ term: { ad_id: publicAdId } });
+  }
 
   const keyword = [input.keyword, input.advertiser, input.domain]
     .find((value) => active(value) && String(value).trim());
@@ -71,6 +87,17 @@ function buildCommonClauses(input) {
   const adPosition = values(input.ad_position ?? input.ad_position_filter).map((value) => value.toLowerCase());
   const adSubPosition = values(input.ad_sub_position).map((value) => value.toLowerCase());
   const imageSize = imageSizeValues(input.ad_image_size ?? input.size);
+  // `order_column` is the shared frontend transport field. Keep the
+  // AdMob-specific aliases supported for direct API callers as well.
+  const sortInput = String(
+    input.admobPosterSort ??
+    input.admob_poster_sort ??
+    input.sort_by ??
+    input.rank_by ??
+    input.sort ??
+    input.order_column ??
+    ''
+  ).trim().toLowerCase();
 
   if (type.length) filter.push({ terms: { type } });
   if (country.length) filter.push({ terms: { country } });
@@ -82,11 +109,55 @@ function buildCommonClauses(input) {
   if (adSubPosition.length) filter.push({ terms: { ad_sub_position: adSubPosition } });
   if (imageSize.length) filter.push({ terms: { ad_image_size: imageSize } });
 
-  const sortField = input.running_longest_sort === 'running_longest_sort' ? 'first_seen' : 'last_seen';
+  let sortField = 'last_seen';
+  if (sortInput === 'lead_score' || sortInput === 'top_ranked') sortField = 'lead_score';
+  else if (sortInput === 'occurrence_count' || sortInput === 'most_seen') sortField = 'occurrence_count';
+  else if (sortInput === 'days_running' || sortInput === 'active_days' || input.running_longest_sort === 'running_longest_sort') sortField = 'days_running';
+  else if (sortInput === 'first_seen') sortField = 'first_seen';
   const size = Math.min(Math.max(parseInt(input.take || input.page_size, 10) || 20, 1), 100);
   const page = Math.max(parseInt(input.skip || input.page, 10) || 0, 0);
 
   return { must, filter, sortField, size, page };
+}
+
+async function resolveSessionScope(db, sessionId) {
+  const normalized = normalizeSessionId(sessionId);
+  if (!normalized) return { sessionId: null, adIds: null, summary: null };
+  if (!db.sql) {
+    return { error: { code: 503, status: 'server_error', message: 'SQL connection not available for session filtering.', data: [], total: 0 } };
+  }
+
+  const [adRows, summaryRows] = await Promise.all([
+    db.sql.query(
+      `SELECT DISTINCT a.id
+       FROM mob_ad_observations o
+       INNER JOIN mob_ads a ON a.id = o.ad_id
+       WHERE o.session_id = ?`,
+      [normalized]
+    ),
+    db.sql.query(
+      `SELECT COUNT(DISTINCT a.id) AS ad_count,
+              COUNT(DISTINCT a.post_owner_id) AS post_owner_count
+       FROM mob_ad_observations o
+       INNER JOIN mob_ads a ON a.id = o.ad_id
+       WHERE o.session_id = ?`,
+      [normalized]
+    ),
+  ]);
+
+  const adIds = [...new Set((adRows || [])
+    .map((row) => normalizeNumericId(row.id))
+    .filter((value) => value !== null))];
+  const summaryRow = summaryRows?.[0] || {};
+  return {
+    sessionId: normalized,
+    adIds,
+    summary: {
+      session_id: normalized,
+      ad_count: Number(summaryRow.ad_count || 0),
+      post_owner_count: Number(summaryRow.post_owner_count || 0),
+    },
+  };
 }
 
 async function runElasticSearch(db, { must, filter, sortField, page, size }) {
@@ -154,6 +225,7 @@ function attachHiddenMeta(ad, hiddenMeta) {
 function toCardRow(hit) {
   const source = hit._source || {};
   const imageUrl = resolveMediaUrl(source.image_url);
+  const daysRunningValue = source.days_running ?? daysRunning(source.first_seen, source.last_seen);
   return {
     ...source,
     id: source.id ?? Number(hit._id),
@@ -164,7 +236,9 @@ function toCardRow(hit) {
     post_date: source.post_date,
     first_seen: source.first_seen,
     last_seen: source.last_seen,
-    days_running: daysRunning(source.first_seen, source.last_seen),
+    days_running: daysRunningValue,
+    occurrence_count: Number(source.occurrence_count || 0),
+    lead_score: Number(source.lead_score || 0),
     image_url: imageUrl,
     image_video_url: imageUrl,
     image_url_original: source.image_url_original,
@@ -183,10 +257,25 @@ async function searchAds(req, db, logger) {
   const input = { ...(req.query || {}), ...(req.body || {}) };
   const favoriteRequested = input.favorite === 'true' || input.favorite === true || input.favorite === 1 || input.favorite === '1';
   const hiddenRequested = input.hidden === 'true' || input.hidden === true || input.hidden === 1 || input.hidden === '1';
-  if (favoriteRequested) return searchFavoriteAds(input, db, logger);
-  if (hiddenRequested) return searchHiddenAds(input, db, logger);
+  const sessionScope = await resolveSessionScope(db, input.session_id);
+  if (sessionScope.error) return sessionScope.error;
+  if (favoriteRequested) return searchFavoriteAds(input, db, logger, sessionScope);
+  if (hiddenRequested) return searchHiddenAds(input, db, logger, sessionScope);
 
   const { must, filter, sortField, page, size } = buildCommonClauses(input);
+  if (sessionScope.adIds) {
+    if (sessionScope.adIds.length === 0) {
+      return {
+        code: 200,
+        status: 'ok',
+        message: 'AdMob ads fetched successfully.',
+        data: [],
+        total: 0,
+        session_summary: sessionScope.summary,
+      };
+    }
+    filter.push({ terms: { id: sessionScope.adIds } });
+  }
 
   try {
     const result = await runElasticSearch(db, { must, filter, sortField, page, size });
@@ -197,6 +286,7 @@ async function searchAds(req, db, logger) {
       message: 'AdMob ads fetched successfully.',
       data: hits.map(toCardRow),
       total: totalHits(result.hits?.total),
+      session_summary: sessionScope.summary,
     };
   } catch (error) {
     logger.error('AdMob search failed', { error: error.message });
@@ -204,7 +294,7 @@ async function searchAds(req, db, logger) {
   }
 }
 
-async function searchFavoriteAds(input, db, logger) {
+async function searchFavoriteAds(input, db, logger, sessionScope = { adIds: null, summary: null }) {
   try {
     if (!db.sql) return { code: 503, status: 'server_error', message: 'SQL connection not available.', data: [], total: 0 };
     if (!db.elastic) return { code: 503, status: 'server_error', message: 'AdMob Elasticsearch connection is unavailable.', data: [], total: 0 };
@@ -218,11 +308,17 @@ async function searchFavoriteAds(input, db, logger) {
       .map((row) => normalizeAdId(row.ad_id))
       .filter(Boolean))];
     if (adIds.length === 0) {
-      return { code: 200, status: 'ok', message: 'No favorite ads found', data: [], total: 0 };
+      return { code: 200, status: 'ok', message: 'No favorite ads found', data: [], total: 0, session_summary: sessionScope.summary };
     }
 
     const { must, filter, sortField, page, size } = buildCommonClauses(input);
     filter.push({ terms: { ad_id: adIds } });
+    if (sessionScope.adIds) {
+      if (sessionScope.adIds.length === 0) {
+        return { code: 200, status: 'ok', message: 'No favorite ads found', data: [], total: 0, session_summary: sessionScope.summary };
+      }
+      filter.push({ terms: { id: sessionScope.adIds } });
+    }
 
     const result = await runElasticSearch(db, { must, filter, sortField, page, size });
     const hits = result.hits?.hits || [];
@@ -232,6 +328,7 @@ async function searchFavoriteAds(input, db, logger) {
       message: 'Favorite ads fetched successfully.',
       data: hits.map(toCardRow),
       total: totalHits(result.hits?.total),
+      session_summary: sessionScope.summary,
     };
   } catch (error) {
     logger.error('AdMob favorite search failed', { error: error.message });
@@ -239,7 +336,7 @@ async function searchFavoriteAds(input, db, logger) {
   }
 }
 
-async function searchHiddenAds(input, db, logger) {
+async function searchHiddenAds(input, db, logger, sessionScope = { adIds: null, summary: null }) {
   try {
     if (!db.sql) return { code: 503, status: 'server_error', message: 'SQL connection not available.', data: [], total: 0 };
     if (!db.elastic) return { code: 503, status: 'server_error', message: 'AdMob Elasticsearch connection is unavailable.', data: [], total: 0 };
@@ -255,7 +352,7 @@ async function searchHiddenAds(input, db, logger) {
     const hiddenAdIds = [...hiddenMeta.hiddenAds.keys()];
 
     if (hiddenOwnerIds.length === 0 && hiddenAdIds.length === 0) {
-      return { code: 200, status: 'ok', message: 'No hidden ads found', data: [], total: 0 };
+      return { code: 200, status: 'ok', message: 'No hidden ads found', data: [], total: 0, session_summary: sessionScope.summary };
     }
 
     const { must, filter, sortField, page, size } = buildCommonClauses(input);
@@ -270,6 +367,12 @@ async function searchHiddenAds(input, db, logger) {
         },
       });
     }
+    if (sessionScope.adIds) {
+      if (sessionScope.adIds.length === 0) {
+        return { code: 200, status: 'ok', message: 'No hidden ads found', data: [], total: 0, session_summary: sessionScope.summary };
+      }
+      filter.push({ terms: { id: sessionScope.adIds } });
+    }
 
     const result = await runElasticSearch(db, { must, filter, sortField, page, size });
     const hits = result.hits?.hits || [];
@@ -279,6 +382,7 @@ async function searchHiddenAds(input, db, logger) {
       message: 'Hidden ads fetched successfully.',
       data: hits.map(toCardRow).map((ad) => attachHiddenMeta(ad, hiddenMeta)),
       total: totalHits(result.hits?.total),
+      session_summary: sessionScope.summary,
     };
   } catch (error) {
     logger.error('AdMob hidden search failed', { error: error.message });

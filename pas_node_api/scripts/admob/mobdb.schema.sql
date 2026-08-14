@@ -162,12 +162,14 @@ CREATE TABLE IF NOT EXISTS `mob_hidden_ads` (
 CREATE TABLE IF NOT EXISTS `mob_ad_observations` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `ad_id` BIGINT UNSIGNED NOT NULL,
+  `session_id` VARCHAR(191) NOT NULL,
   `system_id` VARCHAR(191) NOT NULL,
   `payload_hash` BINARY(32) NOT NULL,
   `observed_at` DATETIME(3) NOT NULL,
   `created_at` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_mob_observation_retry` (`ad_id`, `system_id`),
+  UNIQUE KEY `uq_mob_observation_session` (`ad_id`, `session_id`),
+  KEY `idx_mob_observations_session` (`session_id`, `observed_at`, `ad_id`),
   KEY `idx_mob_observations_observed` (`observed_at`, `ad_id`),
   CONSTRAINT `fk_mob_observations_ad` FOREIGN KEY (`ad_id`) REFERENCES `mob_ads` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB;

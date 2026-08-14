@@ -17,7 +17,18 @@ const ADMOB_PLATFORM_OPTION = {
   icon_type: 'url',
 };
 
-const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app', 'ad_type'];
+const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app', 'ad_type', 'admob_poster_intelligence'];
+const ADMOB_FILTER_ID_ALIASES = {
+  source_filter: 'source_filter',
+  admob_network_filter: 'admob_network_filter',
+  sub_network_filter: 'admob_network_filter',
+  sub_network: 'admob_network_filter',
+  ad_position_filter: 'ad_position_filter',
+  ad_sub_position_filter: 'ad_sub_position_filter',
+  image_size_filter: 'image_size_filter',
+  source_app_filter: 'source_app_filter',
+  admob_source_app_filter: 'source_app_filter',
+};
 const ADMOB_LIVE_FILTER_IDS = new Set([
   'source_filter',
   'admob_network_filter',
@@ -25,7 +36,6 @@ const ADMOB_LIVE_FILTER_IDS = new Set([
   'ad_sub_position_filter',
   'image_size_filter',
   'source_app_filter',
-  'admob_source_app_filter',
 ]);
 const ADMOB_NETWORK_FILTER = {
   _id: 'admob_network_filter',
@@ -103,6 +113,10 @@ let admobLiveFilterCacheAt = 0;
 
 const ADMOB_OPTION_DEFAULTS = {};
 
+function getCanonicalAdmobFilterId(filterId) {
+  return ADMOB_FILTER_ID_ALIASES[filterId] || filterId;
+}
+
 function slugifyOptionValue(value) {
   return String(value)
     .toLowerCase()
@@ -162,6 +176,18 @@ function mergeOptionPlatformApplicability(existing, incoming) {
     .filter(Boolean);
 
   return [...new Set(normalized)];
+}
+
+function mergeFilterPlatformApplicability(applicability, platform) {
+  if (!applicability || applicability === 'all') return applicability;
+
+  const normalized = (Array.isArray(applicability) ? applicability : [applicability])
+    .map((value) => String(value).trim().toLowerCase())
+    .filter(Boolean);
+
+  if (normalized.length === 0) return [platform];
+  if (normalized.includes(platform)) return normalized;
+  return [...normalized, platform];
 }
 
 function mergeAdmobOptionLists(filterId, baseOptions = [], incomingOptions = []) {
@@ -472,7 +498,8 @@ async function getAdmobLiveFilterOptions() {
 
 function mergeAdmobOptions(filter) {
   const options = (filter.options || []).map((option) => ({ ...option }));
-  for (const [index, option] of (ADMOB_OPTION_DEFAULTS[filter._id] || []).entries()) {
+  const canonicalFilterId = getCanonicalAdmobFilterId(filter._id);
+  for (const [index, option] of (ADMOB_OPTION_DEFAULTS[canonicalFilterId] || []).entries()) {
     if (options.some((existing) => String(existing.value).toLowerCase() === option.value.toLowerCase())) continue;
     options.push({
       _id: `admob_${filter._id}_${index + 1}`,
@@ -487,7 +514,8 @@ function mergeAdmobOptions(filter) {
 }
 
 function fallbackAdmobOptions(filter) {
-  return (ADMOB_OPTION_DEFAULTS[filter._id] || []).map((option, index) => ({
+  const canonicalFilterId = getCanonicalAdmobFilterId(filter._id);
+  return (ADMOB_OPTION_DEFAULTS[canonicalFilterId] || []).map((option, index) => ({
     _id: `admob_${filter._id}_${index + 1}`,
     filter_id: filter._id,
     label: option.label,
@@ -499,7 +527,7 @@ function fallbackAdmobOptions(filter) {
 }
 
 function resolveAdmobFilterOptions(filter, liveOptions) {
-  const filterId = filter._id === 'admob_source_app_filter' ? 'source_app_filter' : filter._id;
+  const filterId = getCanonicalAdmobFilterId(filter._id);
   const existingOptions = Array.isArray(filter.options) ? filter.options.map((option) => ({ ...option })) : [];
   const dynamicOptions = liveOptions?.optionsByFilter?.[filterId];
   if (liveOptions?.available) {
@@ -531,8 +559,11 @@ async function prepareAdmobSidebar(config) {
 
       const filters = (doc.filters || []).map((filter) => ({
         ...filter,
-        platform_applicability: ['admob'],
-        options: ADMOB_LIVE_FILTER_IDS.has(filter._id)
+        platform_applicability: mergeFilterPlatformApplicability(
+          filter.platform_applicability,
+          'admob'
+        ),
+        options: ADMOB_LIVE_FILTER_IDS.has(getCanonicalAdmobFilterId(filter._id))
           ? resolveAdmobFilterOptions(filter, liveOptions)
           : mergeAdmobOptions(filter),
       }));

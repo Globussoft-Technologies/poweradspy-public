@@ -179,7 +179,6 @@ async function searchAllNetworks(req, res) {
   // Google falls back to the original (un-augmented) req — same as the
   // /api/v1/google/ads/search route.
   const googleSearchReq = req;
-
   // Hard restriction: ad budget data only exists on Facebook, Instagram, YouTube.
   // Apply directly here so it works regardless of SDUI config or cache state.
   const _body = req.body || {};
@@ -206,11 +205,15 @@ async function searchAllNetworks(req, res) {
 
   const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
   const isCustomPlan = req.planAccess?.isCustomPlan === true;
+  const hasPlanControlSearchDecision = Array.isArray(req.planControlDecisions) &&
+    req.planControlDecisions.some((decision) => decision?.capabilityId === 'ads.search');
   const isAllowed = (net) =>
     // AdMob remains available by default for regular plans. Custom plans are
     // invoice-selected, so every network (including AdMob) must be explicitly
-    // present in their authenticated allowedPlatforms intersection.
-    ((net === 'admob' && !isCustomPlan) || !allowedPlatforms || allowedPlatforms.includes(net)) &&
+    // present in their authenticated allowedPlatforms intersection. Once a
+    // Plan Control policy is active, its ads.search decision is authoritative.
+    ((net === 'admob' && !isCustomPlan && !hasPlanControlSearchDecision) ||
+      !allowedPlatforms || allowedPlatforms.includes(net)) &&
     (!sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&
     (!_popularitySortActive || _POPULARITY_NETWORKS.has(net)) &&
@@ -224,7 +227,7 @@ async function searchAllNetworks(req, res) {
   if (igService  && isAllowed('instagram'))
     allTasks.push(withTimeout(igSearchAds(searchReq, igService.db, igService.log), ms, 'instagram'));
   if (ytService  && isAllowed('youtube'))
-    allTasks.push(withTimeout(ytSearchAds(searchReq,  ytService.db,  ytService.log),  ms, 'youtube'));
+    allTasks.push(withTimeout(ytSearchAds(searchReq, ytService.db, ytService.log), ms, 'youtube'));
   if (gdnService && isAllowed('gdn'))
     allTasks.push(withTimeout(gdnSearchAds(searchReq, gdnService.db, gdnService.log), ms, 'gdn'));
 
@@ -305,8 +308,27 @@ async function searchAllNetworks(req, res) {
   // network's results are already sorted by ES; running a second sort here
   // wasted CPU on every single-network search.
   let data = merged;
-  if (merged.length > 1 && requestedArrays.length > 1) {
-    const b = req.body || {};
+  const b = req.body || {};
+  const admobPosterSortActive = (() => {
+    const raw = String(
+      b.admobPosterSort ||
+      b.admob_poster_sort ||
+      ''
+    ).trim().toLowerCase();
+    return raw === 'lead_score' ||
+      raw === 'top_ranked' ||
+      raw === 'occurrence_count' ||
+      raw === 'most_seen' ||
+      raw === 'days_running' ||
+      raw === 'active_days';
+  })();
+
+  // AdMob Poster Intelligence is intentionally network-scoped: in mixed/all
+  // searches the AdMob controller sorts only AdMob rows, while every other
+  // network should keep its own native order. A second global re-sort here
+  // would flatten that network-local ordering and make the AdMob-only ranking
+  // appear to affect other platforms.
+  if (merged.length > 1 && requestedArrays.length > 1 && !admobPosterSortActive) {
 
     // Determine sort field from the request flags the frontend sends.
     // Default (and "newest") sorts by last_seen — mirrors what every individual

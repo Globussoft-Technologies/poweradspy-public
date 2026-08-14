@@ -209,6 +209,15 @@ const SDUI_TO_PLAN_ACCESS = {
   newest_sort:              'newest_sort',
   ad_running_days_sort:     'ad_running_days_sort',
   domain_reg_sort:          'domain_reg_sort',
+  // AdMob Poster Intelligence is temporarily free for every plan. Keep the
+  // document and its child sort values on one stable entitlement ID so the
+  // SDUI renderer does not treat an unseeded child as restricted.
+  admob_poster_intelligence: 'admob_poster_intelligence',
+  admob_poster_rank_filter:  'admob_poster_intelligence',
+  lead_score:                'admob_poster_intelligence',
+  occurrence_count:          'admob_poster_intelligence',
+  days_running:              'admob_poster_intelligence',
+  sortBy:                   'admob_poster_intelligence',
   // Dates
   post_date:            'post_date',
   last_seen:            'last_seen',

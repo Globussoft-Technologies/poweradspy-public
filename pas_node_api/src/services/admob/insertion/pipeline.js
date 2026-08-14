@@ -101,14 +101,14 @@ async function processAdmobAd(payload, ctx) {
   } catch (error) {
     await repo.failEs(db.sql, saved.internalId, error.message).catch(() => {});
     log.error('AdMob Elasticsearch indexing failed', { ad_id: data.ad_id, id: saved.internalId, error: error.message });
-    return {
-      code: 503,
-      status: 'server_error',
-      message: 'The AdMob ad was saved in pasdev_admob, but Elasticsearch indexing is pending.',
-      hint: 'Do not change the payload. Retry safely with the same ad_id and system_id; duplicate counters will not increase.',
-      data: { id: saved.internalId, mysql_saved: true, elastic_indexed: false },
-      error: error.message,
-    };
+      return {
+        code: 503,
+        status: 'server_error',
+        message: 'The AdMob ad was saved in pasdev_admob, but Elasticsearch indexing is pending.',
+        hint: 'Do not change the payload. Retry safely with the same ad_id and session_id; duplicate counters will not increase.',
+        data: { id: saved.internalId, mysql_saved: true, elastic_indexed: false },
+        error: error.message,
+      };
   }
 
   return saved.inserted

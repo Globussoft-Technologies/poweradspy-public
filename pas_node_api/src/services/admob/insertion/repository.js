@@ -43,11 +43,11 @@ async function insertAd(tx, data, ownerId) {
        newsfeed_description, ad_image_size, ad_number_position, ad_position,
        ad_sub_position, city, ip_address, first_seen, last_seen, post_date,
        system_id, version)
-     VALUES (?, ?, ?, 19, 'mob-network', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, 19, 'mob-network', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), ?, ?, ?, ?)`,
     [data.ad_id, ownerId, data.type, data.source, data.ad_title, data.ad_text,
       data.newsfeed_description, data.ad_image_size, data.ad_number_position,
       data.ad_position, data.ad_sub_position, data.city, data.ip_address,
-      data.first_seen, data.last_seen, data.post_date, data.system_id, data.version]
+      data.last_seen, data.post_date, data.system_id, data.version]
   );
   return result.insertId;
 }
@@ -63,11 +63,7 @@ async function updateAd(tx, id, data, ownerId) {
        ad_position = COALESCE(?, ad_position),
        ad_sub_position = COALESCE(?, ad_sub_position), city = COALESCE(?, city),
        ip_address = COALESCE(?, ip_address),
-       first_seen = CASE
-         WHEN first_seen IS NULL THEN ?
-         WHEN ? IS NULL THEN first_seen
-         ELSE LEAST(first_seen, ?)
-       END,
+       first_seen = COALESCE(first_seen, created_at, NOW(3)),
        last_seen = GREATEST(last_seen, ?),
        post_date = COALESCE(post_date, ?), system_id = ?,
        version = COALESCE(?, version)
@@ -75,8 +71,7 @@ async function updateAd(tx, id, data, ownerId) {
     [ownerId, data.type, data.source, data.ad_title, data.ad_text,
       data.newsfeed_description, data.ad_image_size, data.ad_number_position,
       data.ad_position, data.ad_sub_position, data.city, data.ip_address,
-      data.first_seen, data.first_seen, data.first_seen, data.last_seen,
-      data.post_date, data.system_id, data.version, id]
+      data.last_seen, data.post_date, data.system_id, data.version, id]
   );
 }
 
@@ -118,9 +113,9 @@ async function setNasImage(sql, id, originalUrl, nasPath) {
 
 async function insertObservation(tx, id, data, payloadHash) {
   const result = await tx.query(
-    `INSERT IGNORE INTO mob_ad_observations (ad_id, system_id, payload_hash, observed_at)
-     VALUES (?, ?, UNHEX(?), ?)`,
-    [id, data.system_id, payloadHash, data.last_seen]
+    `INSERT IGNORE INTO mob_ad_observations (ad_id, session_id, system_id, payload_hash, observed_at)
+     VALUES (?, ?, ?, UNHEX(?), ?)`,
+    [id, data.session_id, data.system_id, payloadHash, data.last_seen]
   );
   return result.affectedRows === 1;
 }
@@ -238,7 +233,18 @@ async function getCompleteAd(sql, publicAdId) {
        FROM mob_ad_source_apps x JOIN mob_source_apps s ON s.id = x.source_app_id
        WHERE x.ad_id = ? ORDER BY s.source_app_key, s.source_app_pkg`, [ad.id]),
   ]);
-  return { ...ad, countries, states, sub_networks: subNetworks, source_apps: sourceApps };
+  const observationRows = await sql.query(
+    'SELECT COUNT(*) AS occurrence_count FROM mob_ad_observations WHERE ad_id = ?',
+    [ad.id]
+  );
+  return {
+    ...ad,
+    occurrence_count: Number(observationRows[0]?.occurrence_count || 0),
+    countries,
+    states,
+    sub_networks: subNetworks,
+    source_apps: sourceApps,
+  };
 }
 
 module.exports = {

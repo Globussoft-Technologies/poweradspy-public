@@ -34,6 +34,7 @@ const ADMOB_ADS_RULES = {
   post_owner_image: 'url|nullable',
   redirect_url: 'url|nullable',
   source: 'required|string|in:Desktop,Android,Ios',
+  session_id: 'required|string',
   state: 'string|nullable',
   system_id: 'required|string',
   target_site: 'url|nullable',

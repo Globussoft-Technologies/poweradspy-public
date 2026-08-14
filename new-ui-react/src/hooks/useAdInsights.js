@@ -81,6 +81,33 @@ export function useAdInsights(
 
     (async () => {
       try {
+        const normalizedNetwork = (network || 'facebook').toLowerCase();
+
+        // AdMob details are served by its existing search endpoint rather than
+        // the common-network SSE endpoint. The URL uses mob_ads.id.
+        if (normalizedNetwork === 'admob') {
+          const res = await fetch(`${PAS_API_BASE}/api/v1/admob/ads/search`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': `Bearer ${PAS_API_TOKEN}`,
+            },
+            body: JSON.stringify({ id: adId, take: 1 }),
+            signal: controller.signal,
+          });
+          const payload = await res.json().catch(() => null);
+          const detail = payload?.data?.[0] || null;
+          if (detail) {
+            setInsights((previous) => ({ ...previous, adDetails: detail }));
+          } else {
+            setNotFound(true);
+            setNotFoundForId(adId);
+          }
+          setLoading(false);
+          return;
+        }
+
         const res = await fetch(`${PAS_API_BASE}/api/v1/common/ads/getAdInsights`, {
           method: 'POST',
           headers: {
@@ -89,8 +116,8 @@ export function useAdInsights(
             'Authorization': `Bearer ${PAS_API_TOKEN}`,
           },
           body: JSON.stringify({
-            network: (network || 'facebook').toLowerCase(),
-            [NETWORK_AD_ID_FIELD[(network || 'facebook').toLowerCase()] || 'facebook_ad_id']: adId,
+            network: normalizedNetwork,
+            [NETWORK_AD_ID_FIELD[normalizedNetwork] || 'facebook_ad_id']: adId,
             user_id: userId,
             language,
             // ...(postOwnerId ? { post_owner_id: postOwnerId } : {}),

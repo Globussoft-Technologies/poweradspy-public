@@ -47,6 +47,7 @@ function normalizeAdmobPayload(payload) {
     post_owner_image: nullable(payload.post_owner_image),
     redirect_url: nullable(payload.redirect_url),
     source: String(payload.source).trim().toLowerCase(),
+    session_id: String(payload.session_id || '').trim(),
     state: nullable(payload.state),
     system_id: String(payload.system_id).trim(),
     target_site: nullable(payload.target_site),

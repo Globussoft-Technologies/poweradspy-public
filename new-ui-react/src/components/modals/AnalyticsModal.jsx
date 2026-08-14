@@ -1286,8 +1286,11 @@ const AnalyticsModal = ({
 }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
+const isAdmob =
+  normalizePlatformSlug(ad?.network || ad?.platform) === "admob";
+const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
   const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(
-    ad?.id,
+    insightAdId,
     ad?.network,
     281,
     'en',
@@ -1303,9 +1306,6 @@ const AnalyticsModal = ({
     Number(adDetailsData?.platform) === 18;
   const isTikTok =
     normalizePlatformSlug(ad?.network || ad?.platform) === "tiktok";
-  const isAdmob =
-    normalizePlatformSlug(ad?.network || ad?.platform) === "admob";
-
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => {
@@ -1652,6 +1652,17 @@ const AnalyticsModal = ({
       ad?.firstSeen,
     ),
   });
+  const analyticsActiveDays = d.days_running
+    ?? d.runningDays
+    ?? processedAd?.days_running
+    ?? processedAd?.runningDays
+    ?? ad?.days_running
+    ?? ad?.runningDays
+    ?? analyticsRunningDays;
+  const analyticsOccurrenceCount = d.occurrence_count ?? processedAd?.occurrence_count ?? ad?.occurrence_count
+    ?? processedAd?.occurrenceCount ?? ad?.occurrenceCount;
+  const analyticsLeadScore = d.lead_score ?? processedAd?.lead_score ?? ad?.lead_score
+    ?? processedAd?.leadScore ?? ad?.leadScore;
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
   const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
 
@@ -1810,11 +1821,27 @@ const AnalyticsModal = ({
         color: "text-purple-400",
       }]),
       ...(ctx.platform === 'quora' ? [] : [{
-        label: "RUNNING DAYS",
-        value: analyticsRunningDays ? `${analyticsRunningDays} days` : "—",
+        label: isAdmob ? "ACTIVE DAYS" : "RUNNING DAYS",
+        value: (isAdmob ? analyticsActiveDays : analyticsRunningDays) != null
+          ? `${isAdmob ? analyticsActiveDays : analyticsRunningDays} days`
+          : "—",
         icon: Clock,
         color: "text-orange-400",
       }]),
+      ...(isAdmob ? [
+        ...(Number(analyticsOccurrenceCount) > 0 ? [{
+          label: "OCCURRENCE COUNT",
+          value: String(analyticsOccurrenceCount),
+          icon: Activity,
+          color: "text-cyan-400",
+        }] : []),
+        ...(Number(analyticsLeadScore) > 0 ? [{
+          label: "LEAD SCORE",
+          value: String(analyticsLeadScore),
+          icon: TrendingUp,
+          color: "text-violet-400",
+        }] : []),
+      ] : []),
       {
         label: "AD LANGUAGE",
         value: isTransparency && !(d.language || d.lang || d.adLanguage || d.ad_language)

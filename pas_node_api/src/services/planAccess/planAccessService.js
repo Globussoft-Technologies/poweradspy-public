@@ -31,6 +31,11 @@ const TEMPORARILY_UNRESTRICTED_FILTER_IDS = new Set([
   'admob_network',
   'admob_source_app',
   'source_app',
+  'admob_poster_intelligence',
+  'admob_poster_rank_filter',
+  'lead_score',
+  'occurrence_count',
+  'days_running',
 ]);
 
 /**

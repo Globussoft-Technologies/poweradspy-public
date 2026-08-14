@@ -129,6 +129,7 @@ erDiagram
     mob_ad_observations {
         bigint id PK
         bigint ad_id FK
+        string session_id
         string system_id
         binary payload_hash
         datetime observed_at
@@ -166,6 +167,8 @@ erDiagram
   independently for different users without touching the AdMob ingestion data.
 - `mob_hidden_ads` is not part of `mob_search_mix`; it is consulted only when the
   frontend asks for Saved / Hidden AdMob views.
+- `mob_ad_observations` records one AdMob sighting per `(ad_id, session_id)` so
+  the backend can count scan-run occurrences and session-level post-owner totals.
 
 ---
 
@@ -180,6 +183,7 @@ Document = one ad, flat top-level keys plus nested dimension detail arrays. `_id
 | Creative | `ad_title`, `ad_text`, `newsfeed_description`, `ad_image_size`, `ad_number_position`, `ad_position`, `ad_sub_position` |
 | Owner | `post_owner_id`, `post_owner`, `post_owner_image` |
 | Dates | `first_seen`, `last_seen`, `post_date`, `indexed_at` |
+| Ranking | `occurrence_count`, `days_running`, `lead_score` |
 | URL / lander | `ad_url`, `destination_url`, `redirect_url`, `placement_url`, `target_site`, `destination_host` |
 | Media | `image_url_original`, `image_url` |
 | Geo / dimension arrays | `country`, `state`, `sub_network`, `source_app`, `source_app_pkg` |
@@ -192,6 +196,9 @@ Document = one ad, flat top-level keys plus nested dimension detail arrays. `_id
 - `state_details[]` -> `name`, `appearance_count`, `first_seen`, `last_seen`
 - `sub_network_details[]` -> `name`, `appearance_count`, `first_seen`, `last_seen`
 - `source_app_details[]` -> `name`, `package`, `appearance_count`, `first_seen`, `last_seen`
+- `occurrence_count` -> number of session sightings stored for the poster
+- `days_running` -> derived from `last_seen - first_seen + 1`
+- `lead_score` -> derived ranking score used for Top Ranked sorting
 
 **Mapping notes**
 

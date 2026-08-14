@@ -739,6 +739,8 @@ export const mapAdToCard = (raw) => {
       postDate: raw.post_date,
       firstSeen: raw.first_seen,
     }),
+    occurrenceCount: raw.occurrence_count == null ? null : Number(raw.occurrence_count),
+    leadScore: raw.lead_score == null ? null : Number(raw.lead_score),
     cta: raw.call_to_action || '',
     keywords: raw.tags || raw.keyword || '',
     aspectRatio: isTikTok ? '9:16' : deriveAspectRatio(raw),
@@ -806,7 +808,9 @@ export const mapAdToCard = (raw) => {
     imageOriginalUrl: raw.image_url_original ?? null,
     postOwnerId: raw.post_owner_id ?? null,
     status: raw.status ?? null,
-    runningDays: raw.days_running ?? null,
+    // Keep the indexed value when present; otherwise preserve the calculated
+    // first_seen/last_seen fallback from the shared card mapping.
+    runningDays: raw.days_running ?? card.runningDays ?? null,
     cta: null,
     keywords: null,
     aspectRatio: raw.ad_image_size ?? null,
@@ -1025,11 +1029,15 @@ export const FILTER_PLATFORM_SUPPORT = {
   verified:       ['facebook', 'instagram', 'youtube', 'linkedin'],
   verified_filter:['facebook', 'instagram', 'youtube', 'linkedin'],
   meta_ads_lib:   ['facebook', 'instagram'],
-  ad_position:    ['facebook', 'youtube'],
-  ad_sub_position:['google'],
-  image_size:     ['gdn'],
+  ad_position:    ['facebook', 'youtube', 'admob'],
+  ad_sub_position:['google', 'admob'],
+  image_size:     ['gdn', 'admob'],
   admob_network_filter: ['admob'],
+  sub_network_filter: ['admob'],
+  sub_network: ['admob'],
   admob_source_app_filter: ['admob'],
+  source_app_filter: ['admob'],
+  source_app: ['admob'],
   native_network: ['native'],
   has_ai_meta:    ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'google', 'tiktok'],
   language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google'],
@@ -1111,6 +1119,39 @@ export const buildSearchPayload = (filters = {}) => {
   const popularityRange = pick('popularity', 'popularity_score', 'popularity_range');
   const adBudgetRange = pick('adBudget', 'ad_budget', 'avg_ad_budget');
   const ctrRange = pick('ctr', 'ctr_filter', 'ctr_range');
+  const selectedPlatforms = [
+    ...(Array.isArray(activePlatforms) ? activePlatforms : []),
+    ...(activePlatform && !Array.isArray(activePlatform) ? [activePlatform] : []),
+  ]
+    .map((platform) => String(platform || '').trim().toLowerCase())
+    .filter(Boolean);
+  const admobSelected =
+    filters.isAllTab === true ||
+    selectedPlatforms.includes('all') ||
+    selectedPlatforms.includes('admob');
+  const ADMOB_POSTER_SORT_MAP = {
+    lead_score: 'lead_score',
+    top_ranked: 'lead_score',
+    occurrence_count: 'occurrence_count',
+    most_seen: 'occurrence_count',
+    active_days: 'days_running',
+    days_running: 'days_running',
+  };
+  const explicitAdmobPosterSort = String(
+    pick('admobPosterSort', 'admob_poster_sort', 'admob_poster_rank_filter') ?? ''
+  ).trim();
+  const implicitAdmobPosterSort = (() => {
+    if (!admobSelected || explicitAdmobPosterSort) return '';
+    const raw = String(sortBy ?? '').trim().toLowerCase();
+    if (raw === 'lead_score' || raw === 'top_ranked') return 'lead_score';
+    if (raw === 'occurrence_count' || raw === 'most_seen') return 'occurrence_count';
+    if (raw === 'active_days') return 'days_running';
+    return '';
+  })();
+  const admobPosterSort = (() => {
+    const raw = String(explicitAdmobPosterSort || implicitAdmobPosterSort).trim().toLowerCase();
+    return raw ? (ADMOB_POSTER_SORT_MAP[raw] || raw) : '';
+  })();
   // TikTok categorical budget — scan all filterValues keys for any array containing Low/Medium/High
   const tiktokBudget = (() => {
     const CATEGORICAL = new Set(['low', 'medium', 'high']);
@@ -1171,7 +1212,7 @@ export const buildSearchPayload = (filters = {}) => {
   const industryFilter = pick('industry', 'industry_filter');
   const ecommerce = pick('ecommerce_platform_filter', 'ecommerce', 'ecommerce_filter', 'ecommerce_platform');
   const source = pick('source', 'source_filter');
-  const admobNetwork = pick('admob_network_filter', 'sub_network', 'subNetwork');
+  const admobNetwork = pick('admob_network_filter', 'sub_network_filter', 'sub_network', 'subNetwork');
   const admobSourceApp = pick('admob_source_app_filter', 'source_app_filter', 'source_app', 'sourceApp');
   const funnel = pick('funnel_filter', 'funnel');
   const affiliate = pick('affiliate_network_filter', 'affiliate', 'affiliate_filter', 'affiliate_network', 'affiliates');
@@ -1318,6 +1359,10 @@ export const buildSearchPayload = (filters = {}) => {
     running_longest: 'days_running', days_running: 'days_running', longest_running: 'days_running',
     running_days: 'days_running', '-running_days': 'days_running', 'ad running days': 'days_running', 'ad_running_days': 'days_running',
     'Ad Running Days': 'days_running', 'Ad running days': 'days_running', 'Running Longest': 'days_running',
+    // AdMob Poster Intelligence ranking
+    lead_score: 'lead_score', top_ranked: 'lead_score',
+    occurrence_count: 'occurrence_count', most_seen: 'occurrence_count',
+    active_days: 'days_running',
     // likes / engagement
     likes: 'likes', like: 'likes', likes_sort: 'likes', sort_likes: 'likes',
     '-engagement_score': 'likes',
@@ -1340,9 +1385,10 @@ export const buildSearchPayload = (filters = {}) => {
     // ad budget
     ad_budget: 'ad_budget', adbudget: 'ad_budget', budget: 'ad_budget', avg_ad_budget: 'ad_budget',
   };
-  const rawSort = (sortBy || filters.sorting || '').toLowerCase();
-  let order_column = SORT_MAP[rawSort] || SORT_MAP[sortBy] || 'post_date';
-  
+  const globalSortInput = admobPosterSort ? (filters.sorting || '') : (sortBy || filters.sorting || '');
+  const rawSort = String(globalSortInput || '').toLowerCase();
+  let order_column = SORT_MAP[rawSort] || SORT_MAP[globalSortInput] || 'post_date';
+
   // Extra aggressive mapping for common sort variants
   if (rawSort.includes('domain')) order_column = 'domain_date';
   if (rawSort.includes('running') || rawSort.includes('days')) order_column = 'days_running';
@@ -1380,6 +1426,7 @@ export const buildSearchPayload = (filters = {}) => {
     // for platform-specific filter shaping. Google Transparency is an explicit
     // Google-only mode, so it retains its narrowed request.
     network: filters.isAllTab === true && !googleTransparencyEnabled ? 'all' : resolvedNetworks,
+    admobPosterSort: admobPosterSort || 'NA',
     youtube_display_ads,
     // user_id: 281,
     advertiser,
@@ -2025,6 +2072,9 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     shares: 'share', share: 'share',
     running_days: 'days_running', running_longest: 'days_running',
     days_running: 'days_running', longest_running: 'days_running',
+    lead_score: 'lead_score', top_ranked: 'lead_score',
+    occurrence_count: 'occurrence_count', most_seen: 'occurrence_count',
+    active_days: 'days_running',
     ad_budget: 'ad_budget', adbudget: 'ad_budget', budget: 'ad_budget',
     avg_ad_budget: 'ad_budget',
   };
@@ -2055,6 +2105,8 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   const MAPPED_NUMERIC_FIELDS = {
     popularity: 'popularity',
     days_running: 'runningDays',
+    occurrence_count: 'occurrenceCount',
+    lead_score: 'leadScore',
   };
   const RAW_NUMERIC_FIELDS = new Set(['likes', 'comment', 'share', 'impression', 'ad_budget']);
   // null/missing scores sink to the end regardless of direction
@@ -2077,11 +2129,22 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     return isNaN(n) ? null : n;
   };
 
+  const admobPosterSortActive =
+    typeof payload.admobPosterSort === 'string' &&
+    payload.admobPosterSort.trim() !== '' &&
+    payload.admobPosterSort !== 'NA';
+
   // Map first, then sort using the cleaned-up `popularity` (or `runningDays`)
   // value — guarantees the order matches what the cards actually display.
   const mappedAds = rawAds.map(mapAdToCard);
   let sortedAds;
-  if (mappedAds.length <= 1) {
+  if (admobPosterSortActive) {
+    // AdMob Poster Intelligence is backend-scoped: the server already ranks
+    // only AdMob rows and preserves every other network's native order.
+    // Re-sorting the merged response here would make that AdMob-only ranking
+    // appear to affect Facebook/Google/etc in mixed or All-platform views.
+    sortedAds = mappedAds;
+  } else if (mappedAds.length <= 1) {
     sortedAds = mappedAds;
   } else if (MAPPED_NUMERIC_FIELDS[sortField]) {
     const mappedKey = MAPPED_NUMERIC_FIELDS[sortField];
