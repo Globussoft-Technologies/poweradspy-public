@@ -87,7 +87,14 @@ async function hasMarketTrendsAccess(req) {
 
 async function getMarketTrendsPolicyDecision(req) {
   try {
-    return getCapabilityDecision(req, 'intelligence.market_trends', {
+    // Missing `await` here previously made this try/catch a no-op for a
+    // rejected getCapabilityDecision() — the promise was returned uncaught,
+    // propagating up through hasMarketTrendsAccess → accessGuard, which (not
+    // wrapped in asyncHandler) turns an async rejection into a request that
+    // never responds at all, no error, no timeout (2026-08-14 Market Trends
+    // incident). await makes the catch below actually catch it, matching the
+    // comment's original intent: fall back to the legacy plan-tier gate.
+    return await getCapabilityDecision(req, 'intelligence.market_trends', {
       network: (request) => request.query?.network || request.body?.network,
     });
   } catch (_error) {
@@ -239,7 +246,7 @@ function getCoalescedDateMax(es, field) {
     index,
     request_cache: true,
     body: { size: 0, aggs: { a: { max: { field } } } },
-  }).then((r) => esBody(r).aggregations?.a || null);
+  }, { requestTimeout: NET_REQUEST_TIMEOUT_MS }).then((r) => esBody(r).aggregations?.a || null);
   entries.set(key, promise);
   promise.then(
     () => { if (entries.get(key) === promise) entries.delete(key); },
@@ -264,7 +271,7 @@ async function aggWithFallback(es, buildBody, candidates) {
   let last = null;
   for (const f of candidates) {
     try {
-      const r = await es.search({ index, request_cache: true, body: buildBody(f) });
+      const r = await es.search({ index, request_cache: true, body: buildBody(f) }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
       return { ok: true, field: f, aggs: esBody(r).aggregations || {} };
     } catch (e) { last = e; }
   }
@@ -272,6 +279,25 @@ async function aggWithFallback(es, buildBody, candidates) {
 }
 
 // ─── Aggregation query bodies ────────────────────────────────────────────────
+// A dashboard load fans EVERY panel out to up to 11 networks in parallel, each
+// usually its own ES cluster (Promise.all waits for the slowest). The client's
+// default requestTimeout is 30s (DatabaseManager.js) — one degraded/unreachable
+// network's cluster then stalls the ENTIRE panel for 30s, not just that
+// network's data (confirmed 2026-08-14: instagram_search_mix timed out
+// completely while the other 10 networks answered in under 4s). Capping every
+// Market Trends ES call at a much shorter timeout means one bad cluster fails
+// fast and gets silently dropped (all call sites already catch/return
+// empty/null on error) instead of holding up everyone else's data.
+//
+// Raised 5000→9000ms (2026-08-14): after fixing target_keyword's global
+// ordinals (see NET_KEYWORD.google below), google's keyword aggregation is a
+// genuinely-working, ~3s query — but measured END-TO-END through the app
+// (anchor-date lookup + the aggregation + auth/policy middleware overhead)
+// it landed at ~5.2s, right past the old 5000ms per-ES-call cap. That caused
+// the query to be aborted, cached as an empty [] result for
+// RESPONSE_CACHE_TTL_MS, and the UI showed "No keyword data" even though the
+// query was actually fine — just needed a bit more margin than a hard 5s.
+const NET_REQUEST_TIMEOUT_MS = 9000;
 const DATE_FMT = "yyyy-MM-dd HH:mm:ss";
 // Placeholder/default media the UI hides — excluded from every count.
 const PLACEHOLDER = ['*pasvideo*', '*pasimage*', '*bydefault*', '*DefaultImage*'];
@@ -632,7 +658,7 @@ async function dailySeries(net, startMs, endMs, country, resolvedDate) {
         query: { bool: { filter: [{ range: { [f]: { gte: fmt(startMs), lte: fmt(endMs), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must_not: placeholderMustNot() } },
         aggs: { d: { date_histogram: { field: f, [intervalKey]: 'day', format: 'yyyy-MM-dd' } } },
       },
-    });
+    }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
     const buckets = esBody(r).aggregations?.d?.buckets || [];
     const map = {};
     for (const b of buckets) map[b.key_as_string] = b.doc_count;
@@ -746,7 +772,7 @@ async function regionsForNet(net, days, advertiser, custom) {
         query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(ac ? [ac] : [])] } },
         aggs: { c: { terms: { field: cf, size: 80 } } },
       },
-    });
+    }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
     const out = {};
     for (const b of (esBody(r).aggregations?.c?.buckets || [])) {
       const name = normCountry(b.key);
@@ -810,7 +836,7 @@ async function searchDaily(net, q, days, country, custom) {
         query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must: [{ match: { [advField]: q } }] } },
         aggs: { dd: { date_histogram: { field: d.field, interval: 'day', format: 'yyyy-MM-dd' } } },
       },
-    });
+    }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
     const map = {};
     for (const b of (esBody(r).aggregations?.dd?.buckets || [])) map[b.key_as_string] = b.doc_count;
     return map;
@@ -846,27 +872,51 @@ async function getSearch(req, res) {
 
 // ── Top keywords ─────────────────────────────────────────────────────────────
 // Search-keyword networks expose a `target_keyword` term (Google search ads).
+// `fields` is a candidate LIST (tried in order via aggWithFallback).
+//
+// CORRECTED 2026-08-14: confirmed directly against the live mapping
+// (GET google_ads_data/_mapping) — `target_keyword` IS already
+// `{"type":"keyword","normalizer":"lowercase_normalizer"}` on the live index,
+// not text. There is no `.keyword`/`.kw` subfield (an earlier fix guessed
+// there was, based on the field being unqualified `text` under the OLD
+// pre-v2 assumption — that assumption was wrong for this field specifically;
+// `.keyword`/`.kw` don't exist on it, so that fix silently always fell
+// through to empty results instead of fixing anything).
+//
+// The 20-21s/shard slowness seen in production's slow log on this exact
+// query is therefore NOT a wrong-field-type bug — the field is correctly
+// keyword-typed with doc_values, which a terms agg should use cheaply. Two
+// remaining explanations, both consistent with everything else found this
+// incident: (1) genuinely high cardinality — global ordinals for a
+// high-cardinality keyword field are (re)built on first use after every
+// index refresh (this index refreshes every 30s per the mapping's
+// settings), and that rebuild is exactly the kind of expensive, bursty CPU
+// cost that shows up as "fielddata-shaped" in hot threads without the field
+// actually being mistyped — ask DevOps whether `eager_global_ordinals: true`
+// is set on `target_keyword` (a mapping-only change, no reindex needed) to
+// move that cost out of the request path; (2) the single-node cluster was
+// simply under load from something else at that moment (see the "query
+// optimization has a limit" note elsewhere in this conversation).
 const NET_KEYWORD = {
-  google: { date: 'last_seen', field: 'target_keyword' },
-  pinterest: { date: 'pinterest_ad.last_seen', field: 'pinterest_ad.target_keyword.keyword' },
+  google: { date: 'last_seen', fields: ['target_keyword'] },
+  pinterest: { date: 'pinterest_ad.last_seen', fields: ['pinterest_ad.target_keyword.keyword'] },
 };
 async function keywordsForNet(net, cfg, days, size, country, advertiser, custom) {
   const es = getEs(net);
   if (!es) return [];
-  try {
-    const anchor = (await getCoalescedDateMax(es, cfg.date))?.value;
-    if (!anchor) return [];
-    const start = custom ? custom.fromMs : anchor - days * 86400000;
-    const end = custom ? custom.toMs : anchor;
-    const extra = extraFilters(net, country, advertiser);
-    const r = await es.search({
-      index: es.indexName,
-      request_cache: true,
-      body: { size: 0, query: { bool: { filter: [{ range: { [cfg.date]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...extra] } }, aggs: { items: { terms: { field: cfg.field, size } } } },
-    });
-    return (esBody(r).aggregations?.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
-      .map((b) => ({ key: String(b.key), count: b.doc_count, net }));
-  } catch { return []; }
+  const anchor = (await getCoalescedDateMax(es, cfg.date).catch(() => null))?.value;
+  if (!anchor) return [];
+  const start = custom ? custom.fromMs : anchor - days * 86400000;
+  const end = custom ? custom.toMs : anchor;
+  const extra = extraFilters(net, country, advertiser);
+  const buildBody = (field) => ({
+    size: 0,
+    query: { bool: { filter: [{ range: { [cfg.date]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...extra] } },
+    aggs: { items: { terms: { field, size } } },
+  });
+  const { aggs } = await aggWithFallback(es, buildBody, cfg.fields);
+  return (aggs.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
+    .map((b) => ({ key: String(b.key), count: b.doc_count, net }));
 }
 async function getKeywords(req, res) {
   const raw = { ...req.query, ...req.body };
@@ -886,6 +936,45 @@ async function getKeywords(req, res) {
   const items = Object.values(merged).sort((a, b) => b.count - a.count).slice(0, size);
   const supported = nets.length > 0;
   return res.status(200).json({ code: 200, data: { days, items }, message: 'Top keywords', ...(supported ? {} : { meta: { unsupported: true } }) });
+}
+
+// ─── In-process response cache (2026-08-14) ──────────────────────────────────
+// Every panel previously re-ran its full multi-network ES fan-out on every
+// single request, even for identical filters seconds apart (two users viewing
+// the same default window, or one user flipping tabs and back). Short TTL —
+// long enough to absorb bursts of identical requests, short enough that fresh
+// ad data and admin-configured plan/network changes still show up quickly.
+// Node in-process Map, not Redis — same choice already made for
+// keywordsExplorerController.js's stats cache. Keyed off the RESOLVED query
+// params (read after restrictNetworkToPlan has already clamped `network` to
+// the caller's plan), not the raw request URL — two users with different
+// plan-based network restrictions must never share a cache entry.
+const RESPONSE_CACHE_TTL_MS = 60 * 1000;
+const RESPONSE_CACHE_MAX_ENTRIES = 500;
+const RESPONSE_CACHE_KEY_PARAMS = ['network', 'days', 'size', 'type', 'country', 'advertiser', 'from', 'to', 'q'];
+const responseCache = new Map(); // key -> { expiresAt, body }
+function responseCacheKey(req) {
+  const q = { ...req.query, ...req.body };
+  const parts = RESPONSE_CACHE_KEY_PARAMS.map((k) => `${k}=${q[k] ?? ''}`);
+  return `${req.path}?${parts.join('&')}`;
+}
+function withResponseCache(handler) {
+  return async function cachedMarketTrendsHandler(req, res) {
+    const key = responseCacheKey(req);
+    const hit = responseCache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return res.status(200).json(hit.body);
+    if (hit) responseCache.delete(key);
+
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode === 200) {
+        if (responseCache.size >= RESPONSE_CACHE_MAX_ENTRIES) responseCache.delete(responseCache.keys().next().value);
+        responseCache.set(key, { expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS, body });
+      }
+      return originalJson(body);
+    };
+    return handler(req, res);
+  };
 }
 
 // ─── Router ──────────────────────────────────────────────────────────────────
@@ -922,11 +1011,11 @@ router.get('/access', authMiddleware, asyncHandler(async (req, res) => {
     },
   });
 }));
-router.get('/trends/overview', authMiddleware, accessGuard, marketSectionGate('overview'), restrictNetworkToPlan, asyncHandler(getOverview));
-router.get('/trends/categories', authMiddleware, accessGuard, marketSectionGate('categories'), restrictNetworkToPlan, asyncHandler(getCategories));
-router.get('/trends/top', authMiddleware, accessGuard, marketSectionGate('top_movers'), restrictNetworkToPlan, asyncHandler(getTop));
-router.get('/trends/regions', authMiddleware, accessGuard, marketSectionGate('regions'), restrictNetworkToPlan, asyncHandler(getRegions));
-router.get('/trends/keywords', authMiddleware, accessGuard, marketSectionGate('keywords'), restrictNetworkToPlan, asyncHandler(getKeywords));
-router.get('/trends/search', authMiddleware, accessGuard, marketSectionGate('compare'), restrictNetworkToPlan, asyncHandler(getSearch));
+router.get('/trends/overview', authMiddleware, accessGuard, marketSectionGate('overview'), restrictNetworkToPlan, asyncHandler(withResponseCache(getOverview)));
+router.get('/trends/categories', authMiddleware, accessGuard, marketSectionGate('categories'), restrictNetworkToPlan, asyncHandler(withResponseCache(getCategories)));
+router.get('/trends/top', authMiddleware, accessGuard, marketSectionGate('top_movers'), restrictNetworkToPlan, asyncHandler(withResponseCache(getTop)));
+router.get('/trends/regions', authMiddleware, accessGuard, marketSectionGate('regions'), restrictNetworkToPlan, asyncHandler(withResponseCache(getRegions)));
+router.get('/trends/keywords', authMiddleware, accessGuard, marketSectionGate('keywords'), restrictNetworkToPlan, asyncHandler(withResponseCache(getKeywords)));
+router.get('/trends/search', authMiddleware, accessGuard, marketSectionGate('compare'), restrictNetworkToPlan, asyncHandler(withResponseCache(getSearch)));
 
 module.exports = router;
