@@ -2,7 +2,7 @@
 
 const { getAggs } = require('../helpers/searchIntelligenceHelpers');
 const databaseManager = require('../../../database/DatabaseManager');
-const { fetchAdsCountByPlatform,fetchAdsCountForKeywordsByPlatform } = require('../queries/searchIntelligenceQueries');
+const { fetchAdsCountForKeywordsByPlatform } = require('../queries/searchIntelligenceQueries');
 
 // Resolve a shared Mongo connection for the keyword_searches collection.
 // If the caller passed one in, use it; otherwise borrow the user_activity pool.
@@ -277,8 +277,21 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
       docTypeNum: doc.type || typeNum
     };
 
-    // Map platform -> list of keywords for batch query
-    for (const platform of uniquePlatforms) {
+    // Map platform -> list of keywords for batch query. MUST be scoped to each run's OWN
+    // `network` — `uniquePlatforms` (doc.networks) is every network this TERM was ever
+    // SEARCHED under, which is not the same set as the networks it was actually SCRAPED
+    // on (doc.scrapping_status). Looping over uniquePlatforms and handing every platform
+    // the doc's WHOLE `history` used to falsely credit e.g. Facebook/YouTube with a time
+    // window only Google Transparency actually ran in — and since the merge below matches
+    // purely by startTime/endTime, the last platform processed silently overwrote the real
+    // per-run count. Group by the run's own network instead, so each platform only ever
+    // sees the windows it genuinely scraped in.
+    const historyByNetwork = {};
+    for (const h of history) {
+      if (!h.network) continue;
+      (historyByNetwork[h.network] ||= []).push(h);
+    }
+    for (const [platform, platformHistory] of Object.entries(historyByNetwork)) {
       if (!platformKeywordMap[platform]) {
         platformKeywordMap[platform] = [];
       }
@@ -288,7 +301,7 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
         // `keywords` can be a genuine mix of types when the caller passed type='all'
         // (docTypeNum falls back to the batch typeNum only when a doc has no type).
         type: keyword_type || typeNum,
-        scrappingHistory: history.map(h => ({
+        scrappingHistory: platformHistory.map(h => ({
           startTime: h.startTime,
           endTime: h.endTime
         }))
@@ -315,6 +328,10 @@ async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logg
           if (kwDoc) {
             for (let i = 0; i < kwDoc.history.length; i++) {
               const historyRun = kwDoc.history[i];
+              // Network is now part of the match (not just startTime/endTime) — belt-and-
+              // suspenders against two different networks' runs ever sharing an identical
+              // window, now that platformKeywordMap is itself scoped per-network above.
+              if (historyRun.network !== platform) continue;
               const matchedHistory = kwResult.history_with_counts?.find(h =>
                 h.startTime === historyRun.startTime && h.endTime === historyRun.endTime
               );

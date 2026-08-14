@@ -10,7 +10,7 @@ const {
   getCache,
   setCache,
 } = require('../helpers/searchIntelligenceHelpers');
-const { buildAllSearchesQuery, fetchAdsCountByPlatform, queryKeywordScrapingHistory } = require('../queries/searchIntelligenceQueries');
+const { buildAllSearchesQuery, fetchAdsCountForKeywordsByPlatform, queryKeywordScrapingHistory } = require('../queries/searchIntelligenceQueries');
 
 async function getIntelligenceStats(req, elastic, logger) {
   try {
@@ -754,28 +754,49 @@ async function getKeywordScrapingHistory(req, elastic, logger, mongo) {
     const platforms = matchedEntry.networks || matchedEntry.platform || matchedEntry.scrapping_status?.map(s => s.network).filter(Boolean) || [];
     const uniquePlatforms = [...new Set(platforms)];
 
+    // Every run starts at 0 — only runs that actually get queried below (have a network +
+    // startTime) have a chance to be overwritten with a real count.
+    for (const run of history) run.adsCount = 0;
 
     if (elastic && uniquePlatforms.length > 0) {
-      for (let i = 0; i < history.length; i++) {
-        const run = history[i];
+      // Batch ALL of this term's runs into fetchAdsCountForKeywordsByPlatform — same
+      // one-query-per-platform-with-a-filter-agg-per-run strategy it already uses for the
+      // keyword-trends list. The old code called fetchAdsCountByPlatform once PER run
+      // (a full ES round trip each time), so a term with e.g. 200 runs meant 200 sequential
+      // queries; this turns it into one aggregation query per DISTINCT network instead.
+      // Grouped by the run's OWN network (not `uniquePlatforms`, which is every network this
+      // term was ever searched under) — same reasoning as enrichKeywordsWithAds — so a run
+      // only ever gets counted against the network it actually executed on.
+      const platformKeywordMap = {};
+      const runsByNetwork = {}; // network -> run refs, index-aligned with its scrappingHistory
+      for (const run of history) {
+        if (!run.network || !run.startTime) continue; // no completed window to count against
+        const endTime = run.endTime || (new Date().toISOString().split('T')[0] + 'T23:59:59.000Z');
+        if (!platformKeywordMap[run.network]) {
+          platformKeywordMap[run.network] = [{ keyword: searchValue, type: searchType, scrappingHistory: [] }];
+          runsByNetwork[run.network] = [];
+        }
+        platformKeywordMap[run.network][0].scrappingHistory.push({ startTime: run.startTime, endTime });
+        runsByNetwork[run.network].push(run);
+      }
+
+      if (Object.keys(platformKeywordMap).length > 0) {
         try {
+          const platformResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger, searchType);
 
-          // Use only the current run's platform(s) for this query
-          const runPlatforms = run.network ? [run.network] : uniquePlatforms;
+          for (const [network, keywordsWithCounts] of Object.entries(platformResults)) {
+            const historyWithCounts = keywordsWithCounts[0]?.history_with_counts || [];
+            const runs = runsByNetwork[network] || [];
+            // Index-aligned: fetchAdsCountForKeywordsByPlatform maps history_with_counts off
+            // the SAME scrappingHistory array (same order) we built it from above.
+            historyWithCounts.forEach((hc, idx) => {
+              if (runs[idx]) runs[idx].adsCount = hc.ads_count || 0;
+            });
+          }
 
-          let startTimeLocalMs = run.startTime;
-          let endtime = run.endTime
-            ? new Date(run.endTime).toISOString()
-            : new Date().toISOString().split('T')[0] + 'T23:59:59.000Z';
-          const adsCount = await fetchAdsCountByPlatform(elastic, runPlatforms, null, searchValue, searchType, logger, startTimeLocalMs, endtime);
-
- 
-          run.adsCount = adsCount;
-
-          logger?.info?.('[getKeywordScrapingHistory] Fetched ads count for', { startTime: run.startTime, endTime: run.endTime || 'now', adsCount, searchValue, searchType });
+          logger?.info?.('[getKeywordScrapingHistory] Fetched ads counts (batched)', { searchValue, searchType, runs: history.length, networks: Object.keys(platformKeywordMap).length });
         } catch (err) {
-          
-          logger?.warn?.('[getKeywordScrapingHistory] Failed to fetch ads count for time range:', run.startTime, '-', run.endTime, err.message);
+          logger?.warn?.('[getKeywordScrapingHistory] Failed to fetch ads counts (batched):', err.message);
         }
       }
     } else {
