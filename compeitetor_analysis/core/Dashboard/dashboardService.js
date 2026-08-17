@@ -2351,7 +2351,11 @@ async insertpaidSearch(req,res){
           end = nowIST().subtract(1, "day").endOf("day");
         } else if (duration === "today") {
           start = nowIST().startOf("day");
-          end = nowIST();
+          // endOf("day"), not now() — a range ending "now" changes every
+          // second, so ES's request cache (keyed on the exact query body)
+          // never gets a hit. Future ads aren't matched until indexed, so
+          // this doesn't pull in anything that hasn't happened yet.
+          end = nowIST().endOf("day");
         } else if (duration === "week") {
           start = nowIST().subtract(7, "days").startOf("day");
           end = nowIST().subtract(1, "day").endOf("day");
@@ -2434,6 +2438,14 @@ async insertpaidSearch(req,res){
       const cardinality = (field) => ({
         cardinality: { field, precision_threshold: 40000 },
       });
+      // Date-range buckets (yesterday/today/week/month/year) run once PER
+      // range PER competitor PER network — 5 sketches vs. the all-time
+      // count's 1. Each date bucket's real cardinality is far smaller than
+      // the all-time total, so it doesn't need the same high precision;
+      // dropping to ES's own default (3000) here is what actually removed
+      // the multi-hundred-ms cost measured in production Kibana profiling.
+      const dateCardinality = (field) => ({ cardinality: { field } });
+      const COUNTRY_BUCKET_SIZE = 50; // was 1000 — top buckets by doc_count already surface the real leaders
 
       const buildSearchBody = (cfg, competitor) => {
         const { filter: mediaFilters, mustNot } = nasClausesFor(cfg.index);
@@ -2455,7 +2467,7 @@ async insertpaidSearch(req,res){
                   ],
                 },
               },
-              aggs: { unique_ads: cardinality(AD_ID_FIELD_BY_INDEX[cfg.index]) },
+              aggs: { unique_ads: dateCardinality(AD_ID_FIELD_BY_INDEX[cfg.index]) },
             },
           ]),
         );
@@ -2498,7 +2510,7 @@ async insertpaidSearch(req,res){
             countries: {
               terms: {
                 field: countryFieldForIndex(cfg.index, cfg.countryField),
-                size: 1000,
+                size: COUNTRY_BUCKET_SIZE,
               },
             },
             ...dateAggregations,
@@ -2589,12 +2601,17 @@ async insertpaidSearch(req,res){
           batches += 1;
 
           try {
-            const result = await client.msearch({
+            // Same per-server key/limit as _getCompetitorsCountForServer above,
+            // so this endpoint and the single-competitor one share one real
+            // concurrency budget against each ES server instead of each
+            // silently assuming it owns the whole cluster.
+            const result = await withLimit(serverName, () => client.msearch({
               index: cfg.index,
               maxConcurrentSearches: COMPETITOR_MSEARCH_MAX_CONCURRENT_SEARCHES,
               maxConcurrentShardRequests: COMPETITOR_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS,
+              request_cache: true,
               body,
-            });
+            }), 2);
             const responses = result?.responses || [];
 
             chunk.forEach((competitor, index) => {
@@ -2829,6 +2846,15 @@ async insertpaidSearch(req,res){
         };
 
         for (const [serverName, serverData] of Object.entries(this.esServers)) {
+          // Same per-server key/limit as getCompetitorsCount's
+          // _getCompetitorsCountForServer (2026-08-17). This function
+          // previously ran every competitor's full per-server ES work
+          // unbounded in parallel via the outer Promise.all below — a
+          // 20-competitor request could put ~20 competitors' worth of
+          // simultaneous ES calls on the cluster with zero cap or queue.
+          // Queuing each server's work through the same shared semaphore
+          // used elsewhere fixes that without changing any query or result.
+          await withLimit(serverName, async () => {
           const client = this.esClient[serverName];
           const index_to_platform = { [NETWORK_INDEXES.facebook]: 'facebook', [NETWORK_INDEXES.instagram]: 'instagram' };
 
@@ -2919,6 +2945,7 @@ async insertpaidSearch(req,res){
           if (serverData.indexes.includes(NETWORK_INDEXES.instagram)) {
             instagramStats = await fetchGlobalStats(client, NETWORK_INDEXES.instagram, 'instagram_ad_post_owners.post_owner_name', 'instagram_ad.impression', 'instagram_ad.popularity', 'instagram.averagebudget');
           }
+          }, 2);
         }
 
         const getValidAverage = (fbVal, igVal) => {
