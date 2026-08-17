@@ -304,6 +304,19 @@ describe("SliderFilter > exponential scale + value sync", () => {
     expect(parseFloat(lowRange.value)).toBe(0);
     expect(parseFloat(highRange.value)).toBe(100);
   });
+  it("value populated after mount synchronizes thumbs immediately", () => {
+    const { container, rerender } = render(
+      <SliderFilter pinMode="double" min={0} max={100} sliderScale="linear"
+        value={undefined} onChange={() => {}} />,
+    );
+    rerender(
+      <SliderFilter pinMode="double" min={0} max={100} sliderScale="linear"
+        value={[20, 80]} onChange={() => {}} />,
+    );
+    const [lowRange, highRange] = container.querySelectorAll('input[type="range"]');
+    expect(parseFloat(lowRange.value)).toBeCloseTo(20, 0);
+    expect(parseFloat(highRange.value)).toBeCloseTo(80, 0);
+  });
   it("value=null also resets", () => {
     const { container, rerender } = render(
       <SliderFilter pinMode="double" min={0} max={100} sliderScale="linear"

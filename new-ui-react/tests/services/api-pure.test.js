@@ -542,6 +542,14 @@ describe("api > mapAdToCard", () => {
     expect(mapAdToCard({ image_url_original: "http://x/2.jpg" }).thumbnail).toBe("http://x/2.jpg");
     expect(mapAdToCard({ image_url: "http://x/3.jpg" }).thumbnail).toBe("http://x/3.jpg");
   });
+  it("normalizes TikTok categorical budgets and defaults missing sentinels to Medium", () => {
+    expect(mapAdToCard({ network: "tiktok", budget: "low" }).budget).toBe("Low");
+    expect(mapAdToCard({ network: "tiktok", budget: "HIGH" }).budget).toBe("High");
+    expect(mapAdToCard({ network: "tiktok", budget: "Medium" }).budget).toBe("Medium");
+    expect(mapAdToCard({ network: "tiktok", budget: "None" }).budget).toBe("Medium");
+    expect(mapAdToCard({ network: "tiktok", budget: null }).budget).toBe("Medium");
+    expect(mapAdToCard({ network: "facebook", budget: "None" }).budget).toBe("None");
+  });
   it("lowerBudget/upperBudget coerced when present", () => {
     expect(mapAdToCard({ lowerBudget: "100", upperBudget: "500" })).toMatchObject({
       lowerBudget: 100, upperBudget: 500,

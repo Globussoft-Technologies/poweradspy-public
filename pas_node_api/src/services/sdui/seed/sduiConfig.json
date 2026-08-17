@@ -1087,8 +1087,8 @@
         "max": 100,
         "step": 1,
         "default_min": 0,
-        "default_max": 103,
-        "slider_scale": "exponential",
+        "default_max": 100,
+        "slider_scale": "linear",
         "pin_mode": "double",
         "loose_ends": "none"
       },

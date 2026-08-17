@@ -764,7 +764,15 @@ export const mapAdToCard = (raw) => {
       const s = String(c).trim();
       return s && s.toLowerCase() !== 'default' ? s : '';
     })(),
-    budget: raw.budget ?? null,
+    budget: (() => {
+      if (!isTikTok) return raw.budget ?? null;
+      const normalized = String(raw.budget ?? '').trim().toLowerCase();
+      if (normalized === 'low') return 'Low';
+      if (normalized === 'high') return 'High';
+      // TikTok's legacy UI and budget taxonomy use Medium as the fallback for
+      // records whose enrichment value is missing or stored as "None"/"NA".
+      return 'Medium';
+    })(),
     ctr: raw.ctr ?? null,
     hideType: raw.ad_type ?? raw.hideType ?? null,
     builtWith: raw.built_with || null,

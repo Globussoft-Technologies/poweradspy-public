@@ -63,6 +63,17 @@ describe("filterApplicability > getApplicableNetworks (input shape)", () => {
 });
 
 describe("filterApplicability > static filter networks (no SDUI required)", () => {
+  it("country is universally applicable even when published SDUI metadata omits TikTok", async () => {
+    getSDUIConfig.mockResolvedValue({
+      sidebar: [{ filters: [{
+        _id: "country_filter",
+        query_param: "country",
+        platform_applicability: ["Facebook", "Instagram", "YouTube"],
+      }] }],
+    });
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({ country: ["Australia", "AU"] })).toBeNull();
+  });
   it("budget restricts to tiktok only", async () => {
     getSDUIConfig.mockResolvedValue({});
     const { getApplicableNetworks } = freshSut();
@@ -114,6 +125,30 @@ describe("filterApplicability > SDUI-derived index", () => {
     expect(await getApplicableNetworks({ gender: "m" })).toEqual(["facebook"]);
   });
 
+  it("VIDEO ad type always keeps TikTok eligible when published SDUI metadata is stale", async () => {
+    getSDUIConfig.mockResolvedValue({
+      navbar: [
+        { filters: [
+          { _id: "ad_types", query_param: "ad_type", platform_applicability: ["Facebook", "Instagram", "YouTube"] },
+        ]},
+      ],
+    });
+    const { getApplicableNetworks } = freshSut();
+    const out = await getApplicableNetworks({ type: ["VIDEO"] });
+    expect(out).toEqual(expect.arrayContaining(["facebook", "instagram", "youtube", "tiktok"]));
+  });
+
+  it("non-video ad types do not gain TikTok support implicitly", async () => {
+    getSDUIConfig.mockResolvedValue({
+      navbar: [
+        { filters: [
+          { _id: "ad_types", query_param: "ad_type", platform_applicability: ["Facebook", "Instagram"] },
+        ]},
+      ],
+    });
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({ type: ["CAROUSEL"] })).not.toContain("tiktok");
+  });
   it("filter via query_param directly (not in BODY_TO_SDUI_FILTER_IDS)", async () => {
     getSDUIConfig.mockResolvedValue({
       sidebar: [

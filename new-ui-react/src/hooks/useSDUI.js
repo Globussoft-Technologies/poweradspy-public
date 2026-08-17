@@ -180,12 +180,18 @@ export function useSDUI() {
     // a reduced response cannot make its toggle disappear while Google is
     // still selected.
     const googleTransparencyDocRef = useRef(null);
+    // Keep the authoritative full schema available while platform-specific
+    // refreshes replace the visible config with reduced documents.
+    const fullConfigRef = useRef(null);
     const configRef = useRef(config);
     configRef.current = config;
 
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
     const applyConfig = useCallback((cfg, options = {}) => {
         let frontendConfig = withoutDisabledPlatformConfig(cfg);
+        if (options.platformFiltered !== true) {
+            fullConfigRef.current = frontendConfig;
+        }
         const sidebar = frontendConfig?.sidebar || [];
         const transparencyIndex = sidebar.findIndex(
             document => document?._id === 'google_transparency'
@@ -322,6 +328,18 @@ export function useSDUI() {
         if (lastConfigPlatformKeyRef.current === platformKey) return;
         lastConfigPlatformKeyRef.current = platformKey;
 
+        // Platform-filtered responses intentionally omit inapplicable controls.
+        // Restore the already-loaded full schema synchronously so newly selected
+        // platform controls (notably TikTok CTR) render without waiting for the
+        // network round trip. The fresh reduced response still replaces it below.
+        if (fullConfigRef.current) {
+            applyConfig(fullConfigRef.current, {
+                preserveGoogleTransparency: true,
+                preserveConfigVersion: true,
+                platformFiltered: true,
+            });
+        }
+
         let cancelled = false;
         const reload = async () => {
             try {
@@ -334,6 +352,7 @@ export function useSDUI() {
                     applyConfig(cfg, {
                         preserveGoogleTransparency: true,
                         preserveConfigVersion: true,
+                        platformFiltered: true,
                     });
                 }
             } catch (err) {

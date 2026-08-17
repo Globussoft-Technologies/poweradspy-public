@@ -856,6 +856,39 @@ describe("useSDUI > platform re-fetch effect", () => {
     });
   });
 
+  it("restores TikTok-only filters before the platform request resolves", async () => {
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["facebook"]));
+    const ctrDoc = {
+      _id: "engagement",
+      filters: [{
+        _id: "ctr_range",
+        type: "range_slider",
+        platform_applicability: ["tiktok"],
+      }],
+    };
+    let resolveTikTokConfig;
+    fetchSpy
+      .mockResolvedValueOnce(makeConfig({ sidebar: [ctrDoc] }))
+      .mockResolvedValueOnce(makeConfig({ sidebar: [] }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveTikTokConfig = resolve;
+      }));
+
+    const { result } = renderHook(() => useSDUI());
+    await waitFor(() => expect(result.current.config.sidebar).toEqual([]));
+
+    act(() => {
+      result.current.setActivePlatforms(["tiktok"]);
+    });
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
+
+    expect(result.current.config.sidebar).toContainEqual(ctrDoc);
+
+    await act(async () => {
+      resolveTikTokConfig(makeConfig({ sidebar: [ctrDoc] }));
+      await Promise.resolve();
+    });
+  });
   it("keeps the complete Transparency document when a reduced Google config strips its filters", async () => {
     sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["google"]));
     sessionStorage.setItem("sdui.filterValues", JSON.stringify({

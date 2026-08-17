@@ -89,6 +89,10 @@ const NON_FILTER_BODY_KEYS = new Set([
 // Static network restrictions for filters not driven by SDUI platform_applicability.
 // Keys here are body param names; values are the networks that support the filter.
 const STATIC_FILTER_NETWORKS = {
+  // Country is a core targeting field supported by every search controller.
+  // Treat it as universal so stale SDUI platform metadata cannot skip a
+  // network that has matching country data (notably TikTok `countries: ["AU"]`).
+  country: ALL_NETWORKS,
   domain_date_btn_sort: ['facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native', 'reddit', 'quora', 'pinterest', 'google'],
   // Numeric budget (fb/ig/yt) and categorical budget (tiktok) both supported
   adBudget: ['facebook', 'instagram', 'youtube'],
@@ -306,11 +310,27 @@ async function getApplicableNetworks(reqBody) {
         optionAllowed.push(...matched);
       }
     }
-    if (optionAllowed.length > 0) {
+    // Static declarations are authoritative. Option-level SDUI metadata only
+    // refines dynamically-derived applicability; otherwise stale options could
+    // override core support such as Country being available on TikTok.
+    if (!STATIC_FILTER_NETWORKS[key] && optionAllowed.length > 0) {
       allowed = [...new Set(optionAllowed)];
     }
-
     if (!allowed) continue; // unknown filter — don't restrict
+
+    // TikTok inventory is video-native. Some older/published SDUI documents do
+    // not include TikTok in the Ad Type filter's platform applicability, which
+    // caused the common controller to skip TikTok entirely for type=VIDEO even
+    // though the TikTok controller would return its normal video inventory.
+    // Keep the dynamic applicability for every other ad type, but make VIDEO's
+    // intrinsic TikTok support authoritative over stale SDUI metadata.
+    if (key === 'type') {
+      const selectedTypes = (Array.isArray(value) ? value : [value])
+        .map(type => String(type).trim().replace(/-/g, '_').toUpperCase());
+      if (selectedTypes.includes('VIDEO') && !allowed.includes('tiktok')) {
+        allowed = [...allowed, 'tiktok'];
+      }
+    }
 
     // Skip "all networks" applicability — it doesn't narrow anything
     if (allowed.length >= ALL_NETWORKS.length) continue;

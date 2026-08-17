@@ -241,9 +241,12 @@ async function aggregateLCSData(db, hits) {
 
   const monthlyIds = {};
   for (const hit of hits) {
-    const src = hit._source;
-    const adId = src['reddit_ad.id'];
-    const rawPostDate = src['reddit_ad.last_seen'];
+    const src = hit._source || {};
+    // Elasticsearch can materialise dotted `_source` fields either as
+    // flattened keys or as their original nested object. Accept both shapes;
+    // otherwise valid advertiser hits are silently discarded here.
+    const adId = src['reddit_ad.id'] ?? src.reddit_ad?.id;
+    const rawPostDate = src['reddit_ad.last_seen'] ?? src.reddit_ad?.last_seen;
     if (!adId || !rawPostDate) continue;
 
     const dt = parseESDate(rawPostDate);

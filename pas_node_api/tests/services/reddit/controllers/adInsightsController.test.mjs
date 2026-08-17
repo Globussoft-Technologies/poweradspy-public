@@ -292,6 +292,30 @@ describe("services/reddit/controllers/adInsightsController > getAdvertiserLCSDat
     expect(out.data.feb_2024.likes).toBe(10); // only ad 1 has analytics
     expect(out.data.mar_2024.likes).toBe(5);
   });
+  it("aggregates nested Elasticsearch _source fields", async () => {
+    const db = mkDb({
+      metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-02-01" },
+      esHits: [
+        { _source: { reddit_ad: { id: 7, last_seen: "2024-02-10" } } },
+      ],
+      analyticsRows: [
+        { reddit_ad_id: 7, total_likes: 4, total_comments: 2, total_shares: 1 },
+      ],
+    });
+
+    const out = await getAdvertiserLCSData(
+      { body: { reddit_ad_id: "7" }, query: {} }, db, fakeLogger
+    );
+
+    expect(out.code).toBe(200);
+    expect(out.data.feb_2024).toMatchObject({
+      ad_ids: [7],
+      total_ads: 1,
+      likes: 4,
+      comments: 2,
+      shares: 1,
+    });
+  });
   it("ms timestamp branch in parseESDate", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "B", post_owner_id: 5, last_seen: "2024-01-01" },

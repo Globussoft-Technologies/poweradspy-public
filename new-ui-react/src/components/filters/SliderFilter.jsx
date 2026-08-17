@@ -62,8 +62,10 @@ const SliderFilter = ({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  // Reset thumbs when value is cleared externally (e.g. "Clear all filters",
-  // or removing the chip — `removeChip` sets the value to `false`).
+  // Keep thumbs in sync with values that arrive after mount (for example when
+  // a platform-specific filter becomes applicable). Previously only cleared
+  // values were handled, so TikTok's CTR range briefly rendered its fallback
+  // state before catching up with the hydrated filter value.
   useEffect(() => {
     if (
       value === undefined ||
@@ -73,8 +75,15 @@ const SliderFilter = ({
     ) {
       setLowPct(0);
       setHighPct(100);
+      return;
     }
-  }, [value]);
+
+    if (Array.isArray(value) && value.length >= 2) {
+      const [nextLow, nextHigh] = initFromValue(value);
+      setLowPct(nextLow);
+      setHighPct(nextHigh);
+    }
+  }, [value, safeMin, safeMax, isLinear]);
 
   // ── Value mapping ───────────────────────────────────────────────────
   const pctToValue = (pct) => {
