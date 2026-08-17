@@ -447,9 +447,44 @@
               <label style="display:flex;gap:6px;align-items:center">SQL load % threshold
                 <input type="number" id="lw-sql-threshold" class="input-sm" min="1" max="100" style="width:70px">
               </label>
+              <label style="display:flex;gap:6px;align-items:center">
+                <input type="checkbox" id="lw-telegram-enabled">Telegram spike alerts
+              </label>
               <button class="btn btn-primary btn-sm hidden" id="lw-save-threshold-btn">Save Thresholds</button>
               <span class="muted" style="font-size:12px">A snapshot is captured only when a value crosses its threshold — nothing is stored continuously, and history auto-recycles after 24h.</span>
             </div>
+
+            <div style="display:flex;gap:16px;align-items:center;margin:16px 0;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border,#333)">
+              <label style="display:flex;gap:6px;align-items:center">
+                <input type="checkbox" id="lw-guard-enabled">Query Guard (auto-kill)
+              </label>
+              <label style="display:flex;gap:6px;align-items:center">Max running seconds
+                <input type="number" id="lw-guard-max-sec" class="input-sm" min="5" max="300" style="width:70px">
+              </label>
+              <button class="btn btn-primary btn-sm hidden" id="lw-save-guard-btn">Save Guard Settings</button>
+              <span class="muted" style="font-size:12px">When enabled, any ES task or SQL query still running past this limit is automatically cancelled/killed. Off by default — turn on only after confirming normal query times on this cluster.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Last Hour — CPU &amp; RAM</h3></div>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+              <div>
+                <div class="metric-label" style="margin-bottom:6px">ES CPU %</div>
+                <canvas id="lw-chart-es-cpu" height="70"></canvas>
+              </div>
+              <div>
+                <div class="metric-label" style="margin-bottom:6px">ES Heap (RAM) %</div>
+                <canvas id="lw-chart-es-heap" height="70"></canvas>
+              </div>
+              <div>
+                <div class="metric-label" style="margin-bottom:6px">SQL Load %</div>
+                <canvas id="lw-chart-sql-load" height="70"></canvas>
+              </div>
+            </div>
+            <p class="muted" style="font-size:12px;margin-top:8px">ES doesn't expose per-query CPU/RAM usage — these are cluster-level readings, sampled every ~8s, kept for the last hour only.</p>
           </div>
         </div>
 
@@ -474,6 +509,26 @@
         </div>
 
         <div class="card glass">
+          <div class="card-header"><h3>Recent Queries — Elasticsearch (last 15 seen)</h3></div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead><tr><th>Seen</th><th>Ran For</th><th>Description</th><th>Node</th><th></th></tr></thead>
+              <tbody id="lw-es-recent"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Recent Queries — MySQL (last 15 seen)</h3></div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead><tr><th>Seen</th><th>Id</th><th>DB</th><th>State</th><th>Query</th><th></th></tr></thead>
+              <tbody id="lw-sql-recent"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card glass">
           <div class="card-header"><h3>Spike History (last 24h)</h3></div>
           <div class="card-body">
             <table class="data-table">
@@ -483,6 +538,19 @@
           </div>
         </div>
       </section>
+
+      <!-- Live Watcher: full-query detail modal -->
+      <div id="lw-query-modal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width:800px">
+          <div class="modal-header">
+            <h3>Full Query</h3>
+            <button type="button" class="btn btn-ghost btn-sm" id="lw-query-modal-close">✕</button>
+          </div>
+          <div class="modal-body">
+            <pre id="lw-query-modal-text" style="white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:60vh;overflow:auto"></pre>
+          </div>
+        </div>
+      </div>
 
       <!-- SDUI Config Tab -->
       <section id="tab-sdui" class="tab-content">

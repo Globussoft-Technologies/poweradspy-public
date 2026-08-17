@@ -80,8 +80,19 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('lw-refresh-btn').addEventListener('click', () => {
     loadLiveWatcherNow();
     loadLiveWatcherHistory();
+    loadLiveWatcherRecent();
+    loadLiveWatcherChart();
   });
   document.getElementById('lw-save-threshold-btn').addEventListener('click', saveLiveWatcherThresholds);
+  document.getElementById('lw-save-guard-btn').addEventListener('click', saveLiveWatcherGuard);
+  document.getElementById('lw-query-modal-close').addEventListener('click', () => {
+    document.getElementById('lw-query-modal').classList.add('hidden');
+  });
+  document.getElementById('lw-query-modal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('lw-query-modal')) {
+      document.getElementById('lw-query-modal').classList.add('hidden');
+    }
+  });
 
   // SDUI Config
   document.getElementById('sdui-refresh-btn').addEventListener('click', loadSdui);
@@ -1068,23 +1079,44 @@ async function loadLiveWatcherConfig() {
     const { data } = await res.json();
     document.getElementById('lw-es-threshold').value = data.esCpuThresholdPct;
     document.getElementById('lw-sql-threshold').value = data.sqlLoadThresholdPct;
+    document.getElementById('lw-telegram-enabled').checked = !!data.telegramAlertsEnabled;
+    document.getElementById('lw-guard-enabled').checked = !!data.queryGuardEnabled;
+    document.getElementById('lw-guard-max-sec').value = data.queryGuardMaxRunningSec;
   } catch (e) { /* silent */ }
 }
 
 async function saveLiveWatcherThresholds() {
   const esCpuThresholdPct = Number(document.getElementById('lw-es-threshold').value);
   const sqlLoadThresholdPct = Number(document.getElementById('lw-sql-threshold').value);
+  const telegramAlertsEnabled = document.getElementById('lw-telegram-enabled').checked;
   try {
     const res = await fetch(`${API}/live-watcher/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ esCpuThresholdPct, sqlLoadThresholdPct }),
+      body: JSON.stringify({ esCpuThresholdPct, sqlLoadThresholdPct, telegramAlertsEnabled }),
     });
     if (!res.ok) throw new Error((await res.json()).message || 'save failed');
     showToast('Thresholds saved', 'success');
   } catch (e) {
     showToast(`Failed to save thresholds: ${e.message}`, 'error');
+  }
+}
+
+async function saveLiveWatcherGuard() {
+  const queryGuardEnabled = document.getElementById('lw-guard-enabled').checked;
+  const queryGuardMaxRunningSec = Number(document.getElementById('lw-guard-max-sec').value);
+  try {
+    const res = await fetch(`${API}/live-watcher/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ queryGuardEnabled, queryGuardMaxRunningSec }),
+    });
+    if (!res.ok) throw new Error((await res.json()).message || 'save failed');
+    showToast(queryGuardEnabled ? 'Query Guard enabled' : 'Query Guard disabled', 'success');
+  } catch (e) {
+    showToast(`Failed to save Query Guard settings: ${e.message}`, 'error');
   }
 }
 
@@ -1205,6 +1237,96 @@ async function loadLiveWatcherHistory() {
   } catch (e) { /* silent */ }
 }
 
+// Last-fetched recent-query arrays, kept around so "View full" buttons can
+// look a row up by index instead of embedding raw query text (which often
+// contains quotes/braces) into an inline onclick attribute.
+let lwRecentEs = [];
+let lwRecentSql = [];
+
+async function loadLiveWatcherRecent() {
+  if (!lwCurrentNetwork) return;
+  try {
+    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/recent`, { credentials: 'include' });
+    const { data } = await res.json();
+    lwRecentEs = data.es || [];
+    lwRecentSql = data.sql || [];
+
+    document.getElementById('lw-es-recent').innerHTML = lwRecentEs.map((t, i) => `
+      <tr>
+        <td>${formatDate(new Date(t.capturedAt).toISOString())}</td>
+        <td>${lwFmtSec(t.runningSec)}</td>
+        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</td>
+        <td>${escapeHtml(String(t.nodeId || '').slice(0, 8))}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="lwShowFullQuery('es', ${i})">View full</button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
+
+    document.getElementById('lw-sql-recent').innerHTML = lwRecentSql.map((q, i) => `
+      <tr>
+        <td>${formatDate(new Date(q.capturedAt).toISOString())}</td>
+        <td>${q.id}</td>
+        <td>${escapeHtml(q.db || '')}</td>
+        <td>${escapeHtml(q.state || '')}</td>
+        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info)}">${escapeHtml(q.info)}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="lwShowFullQuery('sql', ${i})">View full</button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="6" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
+  } catch (e) { /* silent */ }
+}
+
+function lwShowFullQuery(kind, index) {
+  const item = kind === 'es' ? lwRecentEs[index] : lwRecentSql[index];
+  const text = item ? (item.description || item.info || '') : '(not found)';
+  document.getElementById('lw-query-modal-text').textContent = text;
+  document.getElementById('lw-query-modal').classList.remove('hidden');
+}
+
+// Small dependency-free canvas sparkline — last-hour CPU/heap/SQL-load. No
+// charting library: this is a self-hosted admin page under a strict CSP, and
+// a single, cheap line-plot doesn't need one.
+function lwDrawSparkline(canvasId, points, valueKey, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const parentWidth = canvas.parentElement ? canvas.parentElement.clientWidth : 300;
+  canvas.width = Math.max(100, parentWidth);
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  if (!points.length) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('No data yet', 8, h / 2);
+    return;
+  }
+  const values = points.map((p) => Number(p[valueKey]) || 0);
+  const max = Math.max(100, ...values); // percentages — scale to at least 100
+  const stepX = values.length > 1 ? w / (values.length - 1) : 0;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  values.forEach((v, i) => {
+    const x = values.length > 1 ? i * stepX : w / 2;
+    const y = h - (v / max) * (h - 6) - 3;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  const last = values[values.length - 1];
+  ctx.fillStyle = color;
+  ctx.font = '11px sans-serif';
+  ctx.fillText(`${last.toFixed(0)}%`, Math.max(0, w - 34), 12);
+}
+
+async function loadLiveWatcherChart() {
+  if (!lwCurrentNetwork) return;
+  try {
+    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/metrics-history?minutes=60`, { credentials: 'include' });
+    const { data } = await res.json();
+    lwDrawSparkline('lw-chart-es-cpu', data.es || [], 'cpuPct', '#f87171');
+    lwDrawSparkline('lw-chart-es-heap', data.es || [], 'heapUsedPct', '#60a5fa');
+    lwDrawSparkline('lw-chart-sql-load', data.sql || [], 'loadPct', '#34d399');
+  } catch (e) { /* silent */ }
+}
+
 function stopLwPolling() {
   if (lwPollTimer) { clearInterval(lwPollTimer); lwPollTimer = null; }
 }
@@ -1213,10 +1335,15 @@ function startLwPolling() {
   stopLwPolling();
   loadLiveWatcherNow();
   loadLiveWatcherHistory();
+  loadLiveWatcherRecent();
+  loadLiveWatcherChart();
   // 5s cadence is only client-side polling of a cheap metadata read — the
   // server-side background collector runs independently every 8s regardless.
   lwPollTimer = setInterval(() => {
-    if (currentTab === 'live-watcher') loadLiveWatcherNow();
+    if (currentTab !== 'live-watcher') return;
+    loadLiveWatcherNow();
+    loadLiveWatcherRecent();
+    loadLiveWatcherChart();
   }, 5000);
 }
 
@@ -1226,6 +1353,7 @@ async function loadLiveWatcher() {
   badge.textContent = isEditor ? 'Viewing as: Editor' : 'Viewing as: Viewer';
   badge.style.color = isEditor ? 'var(--success)' : 'var(--text-muted)';
   document.getElementById('lw-save-threshold-btn').classList.toggle('hidden', !isEditor);
+  document.getElementById('lw-save-guard-btn').classList.toggle('hidden', !isEditor);
 
   await loadLiveWatcherNetworks();
   await loadLiveWatcherConfig();

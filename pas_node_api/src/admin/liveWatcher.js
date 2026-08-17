@@ -36,6 +36,7 @@ const express = require('express');
 const config = require('../config');
 const databaseManager = require('../database/DatabaseManager');
 const { requireEditorRole } = require('./adminAuth');
+const { sendTelegramAlert } = require('../utils/telegram');
 const logger = require('../logger');
 
 const log = logger.createChild('admin-live-watcher');
@@ -46,13 +47,26 @@ const HISTORY_FILE = path.join(DIR, 'live-watcher-spikes.json');
 
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // "recycle" — only last 1 day is ever kept
 const MAX_HISTORY_EVENTS = 500; // defensive cap in case of flapping
-const POLL_INTERVAL_MS = 8000; // background collector cadence — cheap checks only
+// Lowered 8000 -> 3000 (2026-08-17): real dashboard searches complete in
+// 0.1-0.3s, so an 8s poll was missing almost everything between ticks. Still
+// metadata-only calls (tasks.list / SHOW FULL PROCESSLIST) — same cost class
+// already proven safe, just sampled more often so "recent queries" actually
+// has something to show.
+const POLL_INTERVAL_MS = 3000;
 const ES_TIMEOUT_MS = 4000;
+const GUARD_COOLDOWN_MS = 30000; // don't re-attempt cancel/kill on the same id every tick
 
 const DEFAULT_CONFIG = {
   esCpuThresholdPct: 80,
   sqlLoadThresholdPct: 80,
+  telegramAlertsEnabled: false,
+  queryGuardEnabled: false,
+  queryGuardMaxRunningSec: 20,
 };
+
+function escapeTg(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 // ─── tiny atomic JSON read/write (same pattern as nasStorageHistory.js) ───
 
@@ -89,6 +103,15 @@ function setConfig(partial) {
   }
   if (Number.isFinite(partial.sqlLoadThresholdPct)) {
     next.sqlLoadThresholdPct = Math.min(100, Math.max(1, partial.sqlLoadThresholdPct));
+  }
+  if (typeof partial.telegramAlertsEnabled === 'boolean') {
+    next.telegramAlertsEnabled = partial.telegramAlertsEnabled;
+  }
+  if (typeof partial.queryGuardEnabled === 'boolean') {
+    next.queryGuardEnabled = partial.queryGuardEnabled;
+  }
+  if (Number.isFinite(partial.queryGuardMaxRunningSec)) {
+    next.queryGuardMaxRunningSec = Math.max(5, Math.min(300, partial.queryGuardMaxRunningSec));
   }
   writeJson(CONFIG_FILE, next);
   return next;
@@ -129,17 +152,28 @@ async function esCall(client, fnPath, params, opts) {
 }
 
 async function getEsLoad(client) {
-  const stats = await esCall(client, 'nodes.stats', { metric: ['os'] }, { requestTimeout: ES_TIMEOUT_MS });
+  // os + jvm in one call (not two) — jvm.mem.heap_used_percent is the closest
+  // thing ES exposes to "RAM used" per node; there's no per-node resident-set
+  // metric here worth a second round trip for.
+  const stats = await esCall(client, 'nodes.stats', { metric: ['os', 'jvm'] }, { requestTimeout: ES_TIMEOUT_MS });
   let maxCpu = 0;
   let maxLoad = 0;
+  let maxHeapPct = 0;
   for (const node of Object.values(stats.nodes || {})) {
     const cpu = node.os?.cpu?.percent;
     const load = node.os?.cpu?.load_average?.['1m'];
+    const heapPct = node.jvm?.mem?.heap_used_percent;
     if (Number.isFinite(cpu)) maxCpu = Math.max(maxCpu, cpu);
     if (Number.isFinite(load)) maxLoad = Math.max(maxLoad, load);
+    if (Number.isFinite(heapPct)) maxHeapPct = Math.max(maxHeapPct, heapPct);
   }
-  return { cpuPct: maxCpu, load1m: maxLoad };
+  return { cpuPct: maxCpu, load1m: maxLoad, heapUsedPct: maxHeapPct };
 }
+
+// Description cap is generous (not the old 300 chars) so "view full query"
+// in the UI actually shows the real query — ES itself already caps a task's
+// own description internally, this just avoids ALSO truncating it further.
+const DESCRIPTION_CAP = 8000;
 
 async function getEsLiveTasks(client) {
   const tasksResp = await esCall(
@@ -156,7 +190,7 @@ async function getEsLiveTasks(client) {
         taskId,
         nodeId,
         runningSec: Math.round((task.running_time_in_nanos || 0) / 1e8) / 10,
-        description: String(task.description || '').slice(0, 300),
+        description: String(task.description || '').slice(0, DESCRIPTION_CAP),
       });
     }
   }
@@ -174,15 +208,6 @@ async function getEsThreadPool(client) {
     }
   }
   return pools;
-}
-
-async function captureEsDetail(client) {
-  const [tasks, threadPool] = await Promise.all([
-    getEsLiveTasks(client).catch((e) => ({ error: e.message })),
-    getEsThreadPool(client).catch((e) => ({ error: e.message })),
-  ]);
-  const topTasks = Array.isArray(tasks) ? tasks.slice(0, 10) : tasks;
-  return { topTasks, threadPool };
 }
 
 // ─── SQL helpers ────────────────────────────────────────────────────────
@@ -210,21 +235,60 @@ async function getSqlLiveQueries(sql) {
       command: r.Command,
       timeSec: r.Time,
       state: r.State,
-      info: String(r.Info || '').slice(0, 300),
+      info: String(r.Info || '').slice(0, DESCRIPTION_CAP),
     }))
     .sort((a, b) => b.timeSec - a.timeSec);
 }
 
-async function captureSqlDetail(sql) {
-  const rows = await getSqlLiveQueries(sql).catch((e) => ({ error: e.message }));
-  return { topQueries: Array.isArray(rows) ? rows.slice(0, 10) : rows };
+// ─── recent-queries history (2026-08-17) ───────────────────────────────────
+// "Running Now" only ever shows what's active at the exact instant someone
+// looks — queries routinely finish between one 8s tick and the next, so the
+// panel reads "nothing running" almost all the time even on a busy cluster.
+// This keeps the last RECENT_MAX queries the collector has actually SEEN
+// (captured every tick, not just on a threshold-cross), per network, so the
+// admin always has real recent activity to look at — not just empty-handed
+// "no tasks right now" between polls. Same tasks.list/processlist calls
+// already proven safe/cheap; just recorded every tick instead of discarded.
+const RECENT_MAX = 15;
+const recentEsQueries = new Map(); // slug -> array (most recent first)
+const recentSqlQueries = new Map(); // slug -> array (most recent first)
+
+function pushRecent(map, slug, items, idKey) {
+  if (!items.length) return;
+  const existing = map.get(slug) || [];
+  const byId = new Map(existing.map((e) => [e[idKey], e]));
+  for (const item of items) byId.set(item[idKey], item); // refresh if still running, add if new
+  const merged = [...byId.values()].sort((a, b) => b.capturedAt - a.capturedAt);
+  map.set(slug, merged.slice(0, RECENT_MAX));
+}
+
+// ─── CPU/RAM metrics history (last 1h, 2026-08-17) ─────────────────────────
+// One point per collector tick per network — enough for a simple "last hour"
+// sparkline without storing anything long-term or hitting disk.
+const METRICS_HISTORY_MAX = Math.ceil((60 * 60 * 1000) / POLL_INTERVAL_MS); // ~450 @ 8s
+const metricsHistory = new Map(); // slug -> { es: [{ts,cpuPct,heapUsedPct,load1m}], sql: [{ts,loadPct,threadsRunning}] }
+
+function pushMetricPoint(slug, type, point) {
+  const entry = metricsHistory.get(slug) || { es: [], sql: [] };
+  entry[type].push(point);
+  if (entry[type].length > METRICS_HISTORY_MAX) entry[type].splice(0, entry[type].length - METRICS_HISTORY_MAX);
+  metricsHistory.set(slug, entry);
+}
+
+function getMetricsHistory(slug, minutes) {
+  const entry = metricsHistory.get(slug) || { es: [], sql: [] };
+  const cutoff = Date.now() - Math.min(60, Math.max(1, minutes || 60)) * 60 * 1000;
+  return {
+    es: entry.es.filter((p) => p.ts >= cutoff),
+    sql: entry.sql.filter((p) => p.ts >= cutoff),
+  };
 }
 
 // ─── background collector — cheap checks every tick, heavy capture only on threshold-cross ───
 
 const spikeState = new Map(); // key `${slug}:${type}` -> { startedAt, peak, detail }
 
-async function updateSpikeState(slug, type, value, threshold, captureDetailFn) {
+async function updateSpikeState(slug, type, value, threshold, captureDetailFn, cfg) {
   const key = `${slug}:${type}`;
   const existing = spikeState.get(key);
   const now = Date.now();
@@ -239,29 +303,118 @@ async function updateSpikeState(slug, type, value, threshold, captureDetailFn) {
       }
       spikeState.set(key, { startedAt: now, peak: value, detail });
       log.warn(`[live-watcher] spike start: ${key} value=${value.toFixed(1)} threshold=${threshold}`);
+      if (cfg && cfg.telegramAlertsEnabled) {
+        sendTelegramAlert(
+          `⚠️ <b>Live Watcher Spike</b>\n\nNetwork: <b>${escapeTg(slug)}</b>\nType: ${escapeTg(type.toUpperCase())}\nValue: ${value.toFixed(1)}% (threshold ${threshold}%)\nStarted: ${new Date(now).toISOString()}`,
+        );
+      }
     } else if (value > existing.peak) {
       existing.peak = value;
     }
   } else if (existing) {
+    const durationMs = now - existing.startedAt;
     recordSpikeEvent({
       network: slug,
       type,
       startedAt: existing.startedAt,
       endedAt: now,
-      durationMs: now - existing.startedAt,
+      durationMs,
       peak: existing.peak,
       threshold,
       detail: existing.detail,
     });
     spikeState.delete(key);
-    log.info(`[live-watcher] spike end: ${key} peak=${existing.peak.toFixed(1)} durationMs=${now - existing.startedAt}`);
+    log.info(`[live-watcher] spike end: ${key} peak=${existing.peak.toFixed(1)} durationMs=${durationMs}`);
+    if (cfg && cfg.telegramAlertsEnabled) {
+      sendTelegramAlert(
+        `✅ <b>Live Watcher Spike Resolved</b>\n\nNetwork: <b>${escapeTg(slug)}</b>\nType: ${escapeTg(type.toUpperCase())}\nPeak: ${existing.peak.toFixed(1)}%\nDuration: ${Math.round(durationMs / 1000)}s`,
+      );
+    }
+  }
+}
+
+// ─── Query Guard (opt-in, 2026-08-17) ──────────────────────────────────────
+// Auto-cancels/kills anything still running past queryGuardMaxRunningSec.
+// Off by default — an admin must explicitly turn it on. Normal queries on
+// this cluster complete in 0.1-0.3s (confirmed via profile:true this
+// session), so anything past even 20s is already far outside normal
+// behavior, not a false-positive risk for real traffic. A per-id cooldown
+// stops it from re-issuing cancel/kill on the same id every tick while ES/
+// MySQL are still acting on the previous request.
+const guardCooldown = new Map(); // `${slug}:${type}:${id}` -> last attempt ts
+
+function guardShouldAttempt(slug, type, id) {
+  const key = `${slug}:${type}:${id}`;
+  const last = guardCooldown.get(key) || 0;
+  if (Date.now() - last < GUARD_COOLDOWN_MS) return false;
+  guardCooldown.set(key, Date.now());
+  return true;
+}
+
+async function runQueryGuardEs(slug, elastic, tasks, cfg) {
+  if (!cfg.queryGuardEnabled) return;
+  const maxSec = cfg.queryGuardMaxRunningSec;
+  for (const t of tasks) {
+    if (t.runningSec < maxSec) continue;
+    if (!guardShouldAttempt(slug, 'es', t.taskId)) continue;
+    try {
+      await esCall(elastic.client, 'tasks.cancel', { taskId: t.taskId }, { requestTimeout: ES_TIMEOUT_MS });
+      log.warn('[live-watcher] Query Guard auto-cancelled ES task', { network: slug, taskId: t.taskId, runningSec: t.runningSec });
+      if (cfg.telegramAlertsEnabled) {
+        sendTelegramAlert(
+          `🛡️ <b>Query Guard — auto-cancelled</b>\n\nNetwork: <b>${escapeTg(slug)}</b> (Elasticsearch)\nRunning: ${t.runningSec}s (limit ${maxSec}s)\nTask: <code>${escapeTg(t.taskId)}</code>\nQuery: <code>${escapeTg(t.description.slice(0, 300))}</code>`,
+        );
+      }
+    } catch (e) {
+      log.debug(`[live-watcher] Query Guard ES cancel failed: ${e.message}`);
+    }
+  }
+}
+
+async function runQueryGuardSql(slug, sql, queries, cfg) {
+  if (!cfg.queryGuardEnabled) return;
+  const maxSec = cfg.queryGuardMaxRunningSec;
+  for (const q of queries) {
+    if (q.timeSec < maxSec) continue;
+    const processId = Number(q.id);
+    if (!Number.isInteger(processId) || processId <= 0) continue;
+    if (!guardShouldAttempt(slug, 'sql', processId)) continue;
+    try {
+      // Literal, not bound — see the manual /sql/kill route's comment; safe
+      // here because processId is validated as a strictly positive integer.
+      await sql.query(`KILL QUERY ${processId}`);
+      log.warn('[live-watcher] Query Guard auto-killed SQL query', { network: slug, id: processId, timeSec: q.timeSec });
+      if (cfg.telegramAlertsEnabled) {
+        sendTelegramAlert(
+          `🛡️ <b>Query Guard — auto-killed</b>\n\nNetwork: <b>${escapeTg(slug)}</b> (MySQL)\nRunning: ${q.timeSec}s (limit ${maxSec}s)\nId: ${processId}\nQuery: <code>${escapeTg(q.info.slice(0, 300))}</code>`,
+        );
+      }
+    } catch (e) {
+      log.debug(`[live-watcher] Query Guard SQL kill failed: ${e.message}`);
+    }
   }
 }
 
 async function checkNetworkEs(slug, elastic, cfg) {
   try {
-    const { cpuPct } = await getEsLoad(elastic.client);
-    await updateSpikeState(slug, 'es', cpuPct, cfg.esCpuThresholdPct, () => captureEsDetail(elastic.client));
+    const now = Date.now();
+    const [{ cpuPct, load1m, heapUsedPct }, tasks] = await Promise.all([
+      getEsLoad(elastic.client),
+      getEsLiveTasks(elastic.client).catch(() => []),
+    ]);
+    // cpuAtCapture: not a per-query metric (ES doesn't expose one) — it's the
+    // cluster-wide CPU reading at the same instant this query was seen, so
+    // the "recent queries" view can at least show what the cluster looked
+    // like when each entry was captured.
+    pushRecent(recentEsQueries, slug, tasks.map((t) => ({ ...t, capturedAt: now, cpuAtCapture: cpuPct })), 'taskId');
+    pushMetricPoint(slug, 'es', { ts: now, cpuPct, load1m, heapUsedPct });
+    await runQueryGuardEs(slug, elastic, tasks, cfg);
+    // Reuses the SAME tasks.list result for spike detail instead of a second
+    // call — a spike-start only needs to add the (cheap) thread-pool stats.
+    await updateSpikeState(slug, 'es', cpuPct, cfg.esCpuThresholdPct, async () => {
+      const threadPool = await getEsThreadPool(elastic.client).catch((e) => ({ error: e.message }));
+      return { topTasks: tasks.slice(0, 10), threadPool };
+    }, cfg);
   } catch (e) {
     // Never let a monitoring failure surface as an app error — this is best-effort observability.
     log.debug(`[live-watcher] es check failed for ${slug}: ${e.message}`);
@@ -270,8 +423,15 @@ async function checkNetworkEs(slug, elastic, cfg) {
 
 async function checkNetworkSql(slug, sql, cfg) {
   try {
-    const { loadPct } = await getSqlLoad(sql);
-    await updateSpikeState(slug, 'sql', loadPct, cfg.sqlLoadThresholdPct, () => captureSqlDetail(sql));
+    const now = Date.now();
+    const [{ loadPct, threadsRunning, maxConnections }, queries] = await Promise.all([
+      getSqlLoad(sql),
+      getSqlLiveQueries(sql).catch(() => []),
+    ]);
+    pushRecent(recentSqlQueries, slug, queries.map((q) => ({ ...q, capturedAt: now, loadAtCapture: loadPct })), 'id');
+    pushMetricPoint(slug, 'sql', { ts: now, loadPct, threadsRunning, maxConnections });
+    await runQueryGuardSql(slug, sql, queries, cfg);
+    await updateSpikeState(slug, 'sql', loadPct, cfg.sqlLoadThresholdPct, async () => ({ topQueries: queries.slice(0, 10) }), cfg);
   } catch (e) {
     log.debug(`[live-watcher] sql check failed for ${slug}: ${e.message}`);
   }
@@ -337,6 +497,27 @@ router.get('/history', (req, res) => {
   const hours = parseInt(req.query.hours, 10) || 24;
   const events = getSpikeHistory({ network, type, hours });
   res.json({ code: 200, data: events });
+});
+
+// Last RECENT_MAX queries the collector has actually observed for this
+// network (ES + SQL), refreshed every collector tick — not just whatever
+// happens to be running at the exact moment this endpoint is called.
+router.get('/:network/recent', (req, res) => {
+  const { network } = req.params;
+  res.json({
+    code: 200,
+    data: {
+      es: recentEsQueries.get(network) || [],
+      sql: recentSqlQueries.get(network) || [],
+    },
+  });
+});
+
+// Last-hour CPU/heap(RAM)/SQL-load time series for the sparkline charts.
+router.get('/:network/metrics-history', (req, res) => {
+  const { network } = req.params;
+  const minutes = parseInt(req.query.minutes, 10) || 60;
+  res.json({ code: 200, data: getMetricsHistory(network, minutes) });
 });
 
 router.get('/:network/now', async (req, res) => {
