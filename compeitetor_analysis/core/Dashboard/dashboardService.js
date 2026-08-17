@@ -16,6 +16,7 @@ import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
 import { COUNTRIES as HANDLED_COUNTRIES } from "../../config/countries.js";
 import elasticsearch from "elasticsearch";
+import { withLimit } from "../../utils/esLoadGuard.js";
 import DashboardValidation from "./dashboardValidation.js";
 import moment from "moment";
 import mongoose from "mongoose";
@@ -68,6 +69,17 @@ const OWNER_FIELDS_BY_INDEX = {
   [NETWORK_INDEXES.google]: {
     fields: ['post_owner_name'],
     prefixField: 'post_owner_name',
+    // Verified against pas_node_api/scripts/google_ads_data_v2.mapping.json:
+    // post_owner_lower is a genuine `keyword` field (single normalized token
+    // per doc), not a guess. buildOwnerClause() below prefers this for the
+    // `prefix` clause instead of the analyzed post_owner_name text field —
+    // same "starts with" result, far cheaper. Confirmed against production
+    // hot-threads (2026-08-17): this exact prefix-on-analyzed-field pattern
+    // was still showing as the dominant TermInSetQuery/BitSet.or CPU cost on
+    // get-competitor-count even after the same fix was applied in
+    // Competitors/monitorService.js — this file has its own separate,
+    // previously-unfixed copy of the same query shape.
+    prefixFieldKeyword: 'post_owner_lower',
   },
 };
 
@@ -171,12 +183,43 @@ function buildOwnerClause(index, competitor) {
   if (!cfg) {
     return { match_phrase: { post_owner_name: competitor } };
   }
+  // Google-only (2026-08-17): single advertiser field, so "every word must
+  // appear somewhere in this field" collapses to one `match operator:and`
+  // instead of N per-word phrase clauses ANDed together — identical result
+  // (both require every analyzed term present, order-independent), far fewer
+  // clauses for Lucene to build/score. Facebook/Instagram check the same word
+  // across up to 6 OR'd fields, which doesn't collapse the same way, so they
+  // keep phraseAcrossFieldsLikeBuilder untouched. See the matching fix in
+  // Competitors/monitorService.js.
+  let phraseClause;
+  if (index === NETWORK_INDEXES.google && cfg.fields.length === 1) {
+    const cleaned = String(competitor || '').replace(/"/g, '').trim();
+    phraseClause = cleaned ? { match: { [cfg.fields[0]]: { query: cleaned, operator: 'and' } } } : null;
+  } else {
+    phraseClause = phraseAcrossFieldsLikeBuilder(cfg.fields, competitor);
+  }
+  // Google-only: skip the prefix fallback entirely for very short names.
+  // Confirmed via a live `profile:true` query (2026-08-17): for a specific
+  // name like "lululemon athletica" the prefix clause is cheap and never
+  // needs Lucene's TermInSetQuery rewrite. But a 2-3 letter prefix ("hp",
+  // "dhl", "mg") against 197M docs' worth of distinct advertiser names
+  // matches far more terms, which IS what forces that expensive rewrite
+  // (confirmed dominating hot-threads for exactly these short names). Below
+  // this length the prefix fallback also adds little value — a 2-letter
+  // prefix returns mostly unrelated brands anyway — so it's dropped rather
+  // than made cheaper, and the exact/AND match clause alone still applies.
+  const GOOGLE_PREFIX_MIN_LENGTH = 4;
+  const skipPrefix = index === NETWORK_INDEXES.google
+    && String(competitor || '').trim().length < GOOGLE_PREFIX_MIN_LENGTH;
+  const prefixClause = skipPrefix
+    ? null
+    // prefix runs against prefixFieldKeyword (*_lower, a normalized
+    // keyword field) when available, not the analyzed prefixField —
+    // same "starts with" result, far cheaper (see OWNER_FIELDS_BY_INDEX).
+    : { prefix: { [cfg.prefixFieldKeyword || cfg.prefixField]: String(competitor).toLowerCase() } };
   return {
     bool: {
-      should: [
-        phraseAcrossFieldsLikeBuilder(cfg.fields, competitor),
-        { prefix: { [cfg.prefixField]: String(competitor).toLowerCase() } },
-      ],
+      should: [phraseClause, prefixClause].filter(Boolean),
       minimum_should_match: 1,
     },
   };
@@ -186,6 +229,35 @@ function nasClausesFor(index) {
   const network = NETWORK_BY_INDEX[index];
   const filter = network ? getDisplayableMediaFilter(network) : null;
   return { filter: Array.isArray(filter) ? filter : [], mustNot: [] };
+}
+
+// ─── In-process response cache for getCompetitorsCount (2026-08-17) ──────────
+// get-competitor-count is called once PER COMPETITOR from the frontend list
+// view, and the SAME competitor is frequently re-requested (list re-renders,
+// multiple users/lists overlapping, navigating back). A cache hit returns
+// instantly with ZERO ES load; only a genuine miss (new/expired competitor)
+// ever touches ES at all — this is the highest-leverage way to keep this
+// endpoint fast and never time out, since the fastest query is the one that
+// never runs. 3 min TTL: long enough to absorb realistic repeat-request
+// bursts, short enough that counts still track real ad activity closely.
+// Node in-process Map, not Redis — same choice already made throughout this
+// project (esLoadGuard.js) and in pas_node_api this session.
+const COMPETITOR_COUNT_CACHE_TTL_MS = 3 * 60 * 1000;
+const COMPETITOR_COUNT_CACHE_MAX_ENTRIES = 2000;
+const competitorCountCache = new Map(); // normalizedName -> { expiresAt, body }
+
+function getCachedCompetitorCount(key) {
+  const hit = competitorCountCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) { competitorCountCache.delete(key); return null; }
+  return hit.body;
+}
+
+function setCachedCompetitorCount(key, body) {
+  if (competitorCountCache.size >= COMPETITOR_COUNT_CACHE_MAX_ENTRIES) {
+    competitorCountCache.delete(competitorCountCache.keys().next().value); // evict oldest
+  }
+  competitorCountCache.set(key, { expiresAt: Date.now() + COMPETITOR_COUNT_CACHE_TTL_MS, body });
 }
 
 // Returns the deduped (collapsed-by-ad-id) count of docs matching `boolQuery`.
@@ -822,6 +894,164 @@ const getAdvertiserAdCount = async (advertiser) => {
     }
 
 
+    // Per-server work for getCompetitorsCount, extracted so it can be QUEUED
+    // through withLimit() (see the caller) instead of every server firing at
+    // once across every concurrent competitor request the frontend sends.
+    // Queuing only ever DELAYS a request's turn — it never skips, times out,
+    // or returns empty data; every competitor still gets its full, correct
+    // numbers, just resolved one/few-at-a-time instead of all simultaneously.
+    // Mutates `totals` (one shared accumulator per getCompetitorsCount call).
+    async _getCompetitorsCountForServer({
+      serverName, serverData, competitor, supportedCountryInfo, ranges, totals,
+      advertiserIndexConfigs, dateFieldMap, countryIndexConfigs,
+    }) {
+      const client = this.esClient[serverName];
+
+      const relevantAdv = advertiserIndexConfigs.filter(c => serverData.indexes.includes(c.index));
+      const relevantDate = Object.entries(dateFieldMap).filter(([i]) => serverData.indexes.includes(i));
+      const relevantCntry = countryIndexConfigs.filter(c => serverData.indexes.includes(c.index));
+
+      const index_to_platform = {
+        [NETWORK_INDEXES.facebook]: 'facebook',
+        [NETWORK_INDEXES.instagram]: 'instagram',
+        [NETWORK_INDEXES.google]: 'google'
+      };
+
+      const countPromises = relevantAdv.map(({index}) => {
+        /* v8 ignore next -- advertiserIndexConfigs only yields mapped platforms, so the `undefined` fallback is unreachable */
+        const platform = index_to_platform[index] || 'undefined';
+        const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
+        const ownerClause = buildOwnerClause(index, competitor);
+        const countryClause = buildCountryFilterClause(index, COUNTRY_FIELD_BY_INDEX[index], supportedCountryInfo);
+        const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
+        return {
+          platform,
+          promise: dedupCount(client, index, {
+            must: [ownerClause],
+            ...(filter.length  && { filter }),
+            ...(mustNotClauses.length && { must_not: mustNotClauses }),
+          }),
+        };
+      });
+
+      const countResults = await Promise.all(countPromises.map(p => p.promise));
+      countResults.forEach((cnt, i) => {
+        const plat = countPromises[i].platform;
+        totals.platformCompetitorCount[plat] += cnt;
+        totals.competitorsCount += cnt;
+      });
+
+      const countryPromises = relevantCntry.map(({index, countryField}) => {
+        // google_ads_data_v2.country is keyword-typed directly (no `.keyword`
+        // sub-field), so `country.keyword` returns empty buckets. Facebook/
+        // Instagram `*_country_only.country` is text WITH a `.keyword`
+        // sub-field, so it needs the suffix. Append `.keyword` only when the
+        // field isn't already keyword-aggregatable.
+        const finalField = countryFieldForIndex(index, countryField);
+        const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
+        const ownerClause = buildOwnerClause(index, competitor);
+        const countryClause = buildCountryFilterClause(index, countryField, supportedCountryInfo);
+        const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
+        return client.search({
+          index,
+          size: 0,
+          body: {
+            query: {
+              bool: {
+                must: [ownerClause],
+                ...(filter.length  && { filter }),
+                ...(mustNotClauses.length && { must_not: mustNotClauses }),
+              },
+            },
+            aggs: {
+              countries: { terms: { field: finalField, size: 1000 } }
+            }
+          }
+        });
+      });
+
+      const countryRes = await Promise.all(countryPromises);
+      countryRes.forEach(r => {
+        (r?.aggregations?.countries?.buckets || []).forEach(b => {
+          if (b.key) {
+            const key = b.key.toLowerCase();
+            totals.uniqueCountries.add(key);
+            totals.countryCounts[key] = (totals.countryCounts[key] || 0) + (b.doc_count || 0);
+          }
+        });
+      });
+
+      /* ────── Date-range Counts — ONE query per index instead of 5 ──────
+       * Collapsed 2026-08-17: the SAME 5 cardinality results (yesterday/
+       * today/lastWeek/lastMonth/lastYear) computed as 5 `filter` sub-
+       * aggregations inside ONE search instead of 5 separate round trips —
+       * identical numbers, 1/5th the ES calls. This function already runs
+       * once per competitor per server, so every query removed here is N
+       * fewer real ES calls whenever the frontend asks for N competitors.
+       * Falls back to the original per-label dedupCount loop on any error,
+       * so a malformed agg response can never silently zero out real data. */
+      for (const [idx, fields] of relevantDate) {
+        const idField = AD_ID_FIELD_BY_INDEX[idx];
+        const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(idx);
+        const ownerClause = buildOwnerClause(idx, competitor);
+        const countryClause = buildCountryFilterClause(idx, COUNTRY_FIELD_BY_INDEX[idx], supportedCountryInfo);
+        const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
+
+        const rangeAggs = {};
+        for (const [label, { isoStart, isoEnd }] of Object.entries(ranges)) {
+          const rangeQ = fields.map(f => ({ range: { [f]: { gte: isoStart, lte: isoEnd } } }));
+          const existsQ = fields.map(f => ({ exists: { field: f } }));
+          rangeAggs[label] = {
+            filter: {
+              bool: {
+                must: [
+                  { bool: { should: rangeQ, minimum_should_match: 1 } },
+                  { bool: { should: existsQ, minimum_should_match: 1 } },
+                ],
+              },
+            },
+            aggs: { unique_ads: { cardinality: { field: idField, precision_threshold: 40000 } } },
+          };
+        }
+
+        try {
+          const r = await client.search({
+            index: idx,
+            size: 0,
+            body: {
+              query: {
+                bool: {
+                  must: [ownerClause],
+                  ...(filter.length && { filter }),
+                  ...(mustNotClauses.length && { must_not: mustNotClauses }),
+                },
+              },
+              aggs: rangeAggs,
+            },
+          });
+          for (const label of Object.keys(ranges)) {
+            totals[`${label}AdsCount`] += r?.aggregations?.[label]?.unique_ads?.value || 0;
+          }
+        } catch (aggErr) {
+          logger.error(`[getCompetitorsCount] combined date-range agg failed for ${idx}, falling back to per-range queries: ${aggErr.message}`);
+          for (const [label, { isoStart, isoEnd }] of Object.entries(ranges)) {
+            const rangeQ = fields.map(f => ({ range: { [f]: { gte: isoStart, lte: isoEnd } } }));
+            const existsQ = fields.map(f => ({ exists: { field: f } }));
+            const cnt = await dedupCount(client, idx, {
+              must: [
+                ownerClause,
+                { bool: { should: rangeQ, minimum_should_match: 1 } },
+                { bool: { should: existsQ, minimum_should_match: 1 } },
+              ],
+              ...(filter.length && { filter }),
+              ...(mustNotClauses.length && { must_not: mustNotClauses }),
+            });
+            totals[`${label}AdsCount`] += cnt;
+          }
+        }
+      }
+    }
+
     async getCompetitorsCount(req, res) {
       try {
         let competitor = (req?.body?.competitors || "");
@@ -830,6 +1060,13 @@ const getAdvertiserAdCount = async (advertiser) => {
         }
     
         competitor = Array.isArray(competitor) ? competitor[0] : competitor;
+
+        const cacheKey = String(competitor).trim().toLowerCase();
+        const cachedBody = getCachedCompetitorCount(cacheKey);
+        if (cachedBody) {
+          return res.send(Response.userSuccessResp("Counts fetched successfully", cachedBody));
+        }
+
         const supportedCountryInfo = await getSupportedCountryInfo();
         const advertiserIndexConfigs = [
           { index: NETWORK_INDEXES.facebook, field: 'facebook_ad_post_owners.post_owner_name' },
@@ -902,109 +1139,17 @@ const getAdvertiserAdCount = async (advertiser) => {
         // re-deriving them here).
         for (const [serverName, serverData] of Object.entries(this.esServers)) {
          try {
-          const client = this.esClient[serverName];
-
-          const relevantAdv = advertiserIndexConfigs.filter(c => serverData.indexes.includes(c.index));
-          const relevantDate = Object.entries(dateFieldMap).filter(([i]) => serverData.indexes.includes(i));
-          const relevantCntry = countryIndexConfigs.filter(c => serverData.indexes.includes(c.index));
-    
-          const index_to_platform = {
-            [NETWORK_INDEXES.facebook]: 'facebook',
-            [NETWORK_INDEXES.instagram]: 'instagram',
-            [NETWORK_INDEXES.google]: 'google'
-          };
-
-          const countPromises = relevantAdv.map(({index}) => {
-            /* v8 ignore next -- advertiserIndexConfigs only yields mapped platforms, so the `undefined` fallback is unreachable */
-            const platform = index_to_platform[index] || 'undefined';
-            const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
-            const ownerClause = buildOwnerClause(index, competitor);
-            const countryClause = buildCountryFilterClause(index, COUNTRY_FIELD_BY_INDEX[index], supportedCountryInfo);
-            const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
-            return {
-              platform,
-              promise: dedupCount(client, index, {
-                must: [ownerClause],
-                ...(filter.length  && { filter }),
-                ...(mustNotClauses.length && { must_not: mustNotClauses }),
-              }),
-            };
-          });
-
-          const countResults = await Promise.all(countPromises.map(p => p.promise));
-          countResults.forEach((cnt, i) => {
-            const plat = countPromises[i].platform;
-            totals.platformCompetitorCount[plat] += cnt;
-            totals.competitorsCount += cnt;
-          });
-
-
-          const countryPromises = relevantCntry.map(({index, countryField}) => {
-            // google_ads_data_v2.country is keyword-typed directly (no `.keyword`
-            // sub-field), so `country.keyword` returns empty buckets. Facebook/
-            // Instagram `*_country_only.country` is text WITH a `.keyword`
-            // sub-field, so it needs the suffix. Append `.keyword` only when the
-            // field isn't already keyword-aggregatable.
-            const finalField =
-              countryFieldForIndex(index, countryField);
-            const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(index);
-            const ownerClause = buildOwnerClause(index, competitor);
-            const countryClause = buildCountryFilterClause(index, countryField, supportedCountryInfo);
-            const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
-            return client.search({
-              index,
-              size: 0,
-              body: {
-                query: {
-                  bool: {
-                    must: [ownerClause],
-                    ...(filter.length  && { filter }),
-                    ...(mustNotClauses.length && { must_not: mustNotClauses }),
-                  },
-                },
-                aggs: {
-                  countries: { terms: { field: finalField, size: 1000 } }
-                }
-              }
-            });
-          });
-    
-          const countryRes = await Promise.all(countryPromises);
-          countryRes.forEach(r => {
-            (r?.aggregations?.countries?.buckets || []).forEach(b => {
-              if (b.key) {
-                const key = b.key.toLowerCase();
-                totals.uniqueCountries.add(key);
-                totals.countryCounts[key] = (totals.countryCounts[key] || 0) + (b.doc_count || 0);
-              }
-            });
-          });
-    
-          /* ────── Date-range Counts ────── */
-          for (const [label, {isoStart, isoEnd}] of Object.entries(ranges)) {
-            const datePromises = relevantDate.map(([idx, fields]) => {
-              const rangeQ = fields.map(f => ({ range: { [f]: { gte: isoStart, lte: isoEnd } } }));
-              const existsQ = fields.map(f => ({ exists: { field: f } }));
-
-              const { filter: filterClauses, mustNot: mustNotClauses } = nasClausesFor(idx);
-              const ownerClause = buildOwnerClause(idx, competitor);
-              const countryClause = buildCountryFilterClause(idx, COUNTRY_FIELD_BY_INDEX[idx], supportedCountryInfo);
-              const filter = countryClause ? [...filterClauses, countryClause] : filterClauses;
-              return dedupCount(client, idx, {
-                must: [
-                  ownerClause,
-                  { bool: { should: rangeQ, minimum_should_match: 1 } },
-                  { bool: { should: existsQ, minimum_should_match: 1 } },
-                ],
-                ...(filter.length  && { filter }),
-                ...(mustNotClauses.length && { must_not: mustNotClauses }),
-              });
-            });
-
-            const counts = await Promise.all(datePromises);
-            totals[`${label}AdsCount`] += counts.reduce((a,b)=>a+b,0);
-          }
-    
+          // withLimit QUEUES concurrent calls to the same ES server instead of
+          // dropping/skipping them (2026-08-17) — this endpoint is called once
+          // PER COMPETITOR from the frontend list view, so N competitors means
+          // N concurrent invocations of this whole function. Every one of them
+          // still gets its real, correct data — this only paces how many are
+          // actively querying a given server's ES at once, so a 15-competitor
+          // list doesn't throw ~45 simultaneous requests at one cluster.
+          await withLimit(serverName, () => this._getCompetitorsCountForServer({
+            serverName, serverData, competitor, supportedCountryInfo, ranges, totals,
+            advertiserIndexConfigs, dateFieldMap, countryIndexConfigs,
+          }), 2);
          } catch (serverErr) {
             // One ES cluster (network) is down/slow → skip it and keep the data
             // from the others. Better partial counts than a failed request.
@@ -1021,7 +1166,7 @@ const getAdvertiserAdCount = async (advertiser) => {
         // snapshotService persists for the same competitor.
         const budgetStats = await this.getCompetitorBudgetStats(competitor, supportedCountryInfo);
 
-        return res.send(Response.userSuccessResp("Counts fetched successfully", {
+        const responseBody = {
           ...totals,
           // Keep the raw per-country buckets so the UI can drive click-through
           // searches with the same full country set that produced the counts.
@@ -1035,7 +1180,9 @@ const getAdvertiserAdCount = async (advertiser) => {
           averagePopularity: budgetStats.averagePopularity,
           averageBudget: budgetStats.averageBudget,
           totalBudget: budgetStats.totalBudget,
-        }));
+        };
+        setCachedCompetitorCount(cacheKey, responseBody);
+        return res.send(Response.userSuccessResp("Counts fetched successfully", responseBody));
     
       } catch (error) {
         console.error("Error fetching from Elasticsearch:", error);

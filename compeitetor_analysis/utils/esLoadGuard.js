@@ -18,8 +18,19 @@ import { esClient } from "./Elasticsearch.js";
  *     actually saturated, instead of blindly adding to it.
  */
 
-const STRESS_CHECK_CACHE_MS = 3000;
-const STRESS_QUEUE_THRESHOLD = 15;
+// Tightened 2026-08-17: this process's own in-process cap (withLimit, below)
+// can only ever bound ITS OWN concurrency — if compeitetor_analysis runs as
+// more than one process/instance, each one independently thinks "I'm only
+// sending 1-2", while the ACTUAL cluster sees the sum of all of them at once.
+// isEsUnderStress() is the only signal here that's inherently correct
+// regardless of process count, because it reads the cluster's real,
+// already-shared thread-pool state — so it's tuned aggressively: check often
+// (1s cache, still cheap — metadata-only call) and back off well BEFORE the
+// pool is fully saturated (60%), not only once it's already maxed out and
+// queuing, by which point a burst has already landed.
+const STRESS_CHECK_CACHE_MS = 1000;
+const STRESS_QUEUE_THRESHOLD = 5;
+const POOL_SATURATION_RATIO = 0.6;
 const stressCache = new Map(); // serverKey -> { stressed, expiresAt }
 const poolSizeByServer = new Map(); // serverKey -> configured search thread_pool size (static)
 const lastRejectedByServer = new Map(); // serverKey -> last-seen cumulative `rejected` count
@@ -40,7 +51,7 @@ async function getSearchPoolSize(serverKey, client) {
   }
 }
 
-/** Is this ES server's search thread pool already saturated right now? */
+/** Is this ES server's search thread pool already under real load right now? */
 export async function isEsUnderStress(serverKey) {
   const cached = stressCache.get(serverKey);
   if (cached && Date.now() < cached.expiresAt) return cached.stressed;
@@ -57,8 +68,8 @@ export async function isEsUnderStress(serverKey) {
         const prevRejected = lastRejectedByServer.get(serverKey) ?? search.rejected;
         const newRejections = search.rejected - prevRejected;
         lastRejectedByServer.set(serverKey, search.rejected);
-        const poolSaturated = poolSize != null && search.active >= poolSize;
-        if (poolSaturated || search.queue > STRESS_QUEUE_THRESHOLD || newRejections > 0) stressed = true;
+        const poolBusy = poolSize != null && search.active >= poolSize * POOL_SATURATION_RATIO;
+        if (poolBusy || search.queue > STRESS_QUEUE_THRESHOLD || newRejections > 0) stressed = true;
       }
     }
   } catch (e) {
@@ -87,7 +98,7 @@ function release(key) {
   const next = s.waiters.shift();
   if (next) { s.active++; next(); }
 }
-export async function withLimit(key, fn, max = 2) {
+export async function withLimit(key, fn, max = 1) {
   await acquire(key, max);
   try { return await fn(); } finally { release(key); }
 }

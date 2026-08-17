@@ -20,9 +20,13 @@ import { isEsUnderStress, withLimit } from "../../utils/esLoadGuard.js";
 
 // Confirmed 2026-08-17: 8 concurrent competitors x 9 ES calls each (see
 // activeCompetitorContacts) could put up to 72 concurrent queries on a
-// single-node cluster shared with pas_node_api. Kept low — isEsUnderStress()
-// below (reads the cluster's own live state) is the real backpressure signal.
-const ES_MAX_CONCURRENT = 2;
+// single-node cluster shared with pas_node_api. Tightened from 2 to 1 after
+// still seeing 6+ simultaneous count queries in production with the cap at 2
+// — this process's own cap can only bound ITS OWN concurrency, not the total
+// across however many instances are actually running, so it's kept as tight
+// as useful; isEsUnderStress() (reads the cluster's own live, shared state)
+// is the backpressure signal that's correct regardless of process count.
+const ES_MAX_CONCURRENT = 1;
 
 // Diagnostic logging gate — flip MAIL_DEBUG_LOG in config (e.g. true in
 // localDev.json, false in default.json/production). When the flag is off
@@ -427,15 +431,34 @@ class  MonitorService{
     // dictionary directly — same "starts with" result, far cheaper.
     const cleaned = String(competitorName || "").replace(/"/g, "").trim();
     const words = cleaned.split(/\s+/).filter(Boolean);
-    const phraseEachWord = words.length === 1
-      ? { multi_match: { query: words[0], type: "phrase", fields: cfg.fields } }
-      : { bool: { must: words.map((w) => ({ multi_match: { query: w, type: "phrase", fields: cfg.fields } })) } };
+    // Google-only (2026-08-17): google has exactly ONE advertiser field
+    // (post_owner_name), so "every word must appear somewhere in this field"
+    // collapses to a single `match` with operator:"and" — identical result to
+    // ANDing N separate single-word phrase clauses (both require every
+    // analyzed term present, order-independent), but ONE query clause for
+    // Lucene to build/score instead of N. Facebook/Instagram check the SAME
+    // word across up to 6 OR'd fields each, which doesn't collapse the same
+    // way, so they keep the original per-word clauses untouched.
+    const phraseEachWord = (platform === 'google' && cfg.fields.length === 1)
+      ? { match: { [cfg.fields[0]]: { query: cleaned, operator: "and" } } }
+      : words.length === 1
+        ? { multi_match: { query: words[0], type: "phrase", fields: cfg.fields } }
+        : { bool: { must: words.map((w) => ({ multi_match: { query: w, type: "phrase", fields: cfg.fields } })) } };
+    // Google-only: skip the prefix fallback for very short names — see the
+    // matching comment in Dashboard/dashboardService.js's buildOwnerClause
+    // for the profile:true evidence behind this (short prefixes are what
+    // force Lucene's expensive TermInSetQuery rewrite; below this length the
+    // fallback also adds little precision anyway).
+    const GOOGLE_PREFIX_MIN_LENGTH = 4;
+    const skipPrefix = platform === 'google' && cleaned.length < GOOGLE_PREFIX_MIN_LENGTH;
     const advertiserClause = {
       bool: {
-        should: [
-          phraseEachWord,
-          { prefix: { [cfg.primaryFieldKeyword || cfg.primaryField]: cleaned.toLowerCase() } },
-        ],
+        should: skipPrefix
+          ? [phraseEachWord]
+          : [
+              phraseEachWord,
+              { prefix: { [cfg.primaryFieldKeyword || cfg.primaryField]: cleaned.toLowerCase() } },
+            ],
         minimum_should_match: 1,
       },
     };
@@ -539,18 +562,29 @@ class  MonitorService{
     // NAS media filter so placeholder/no-media ads are excluded from the total.
     const cleaned = String(competitorName || "").replace(/"/g, "").trim();
     const words = cleaned.split(/\s+/).filter(Boolean);
-    const phraseEachWord = words.length === 1
-      ? { multi_match: { query: words[0], type: "phrase", fields: cfg.fields } }
-      : { bool: { must: words.map((w) => ({ multi_match: { query: w, type: "phrase", fields: cfg.fields } })) } };
+    // Google-only word-AND collapse — see the matching comment in
+    // countAdsLastDayIST above for why this is safe/equivalent and why it's
+    // scoped to google (single advertiser field) only.
+    const phraseEachWord = (platform === 'google' && cfg.fields.length === 1)
+      ? { match: { [cfg.fields[0]]: { query: cleaned, operator: "and" } } }
+      : words.length === 1
+        ? { multi_match: { query: words[0], type: "phrase", fields: cfg.fields } }
+        : { bool: { must: words.map((w) => ({ multi_match: { query: w, type: "phrase", fields: cfg.fields } })) } };
     // prefix runs against primaryFieldKeyword (*_lower, a single keyword
     // token/doc) not primaryField (analyzed text) — see the matching comment
     // in countAdsLastDayIST above for why this is cheaper for the same result.
+    // Google-only: skip prefix for very short names — see the matching
+    // comment + profile:true evidence in countAdsLastDayIST above.
+    const GOOGLE_PREFIX_MIN_LENGTH = 4;
+    const skipPrefix = platform === 'google' && cleaned.length < GOOGLE_PREFIX_MIN_LENGTH;
     const advertiserClause = {
       bool: {
-        should: [
-          phraseEachWord,
-          { prefix: { [cfg.primaryFieldKeyword || cfg.primaryField]: cleaned.toLowerCase() } },
-        ],
+        should: skipPrefix
+          ? [phraseEachWord]
+          : [
+              phraseEachWord,
+              { prefix: { [cfg.primaryFieldKeyword || cfg.primaryField]: cleaned.toLowerCase() } },
+            ],
         minimum_should_match: 1,
       },
     };
@@ -708,7 +742,11 @@ class  MonitorService{
         end = moment().endOf("day").format("YYYY-MM-DD HH:mm:ss");
         }
 
-        const limit = pLimit(10);
+        // Lowered 10 → 3 (2026-08-17) — same reasoning as activeCompetitorContacts:
+        // a smaller outer batch means esLoadGuard's stress-check sees smaller
+        // waves and can actually react between them instead of one big burst
+        // landing before it refreshes.
+        const limit = pLimit(3);
 
         const searchPromises = competitors.map((comp) =>
         limit(async () => {
@@ -851,11 +889,19 @@ class  MonitorService{
 
           // ----- Pre-fetch every competitor's count + ad-preview ONCE, in
           // parallel. This way (a) we don't redo the same advertiser when
-          // it appears in multiple projects, and (b) up to 8 competitors
-          // run concurrently instead of strictly sequential.
+          // it appears in multiple projects, and (b) competitors run with
+          // some concurrency instead of strictly sequential.
+          //
+          // Lowered 8 → 3 (2026-08-17): each competitor fires 9 ES calls at
+          // once (see below), so 8-way outer concurrency could throw up to
+          // 72 requests at the ES-side gate (esLoadGuard.js) in one instant —
+          // too large a burst for its 1s stress-check refresh to react to
+          // before most of them are already past it. A smaller outer batch
+          // means the gate sees smaller waves and can actually back off
+          // between them.
           const competitorDataCache = new Map(); // _id (string) → built brand-card payload
           const tFetchStart = Date.now();
-          const CONCURRENCY = 8;
+          const CONCURRENCY = 3;
           const fetchLimit = pLimit(CONCURRENCY);
 
           await Promise.all(activeCompetitors.map((comp) => fetchLimit(async () => {
