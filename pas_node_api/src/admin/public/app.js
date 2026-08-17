@@ -75,7 +75,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Live Watcher
   document.getElementById('lw-network-select').addEventListener('change', (e) => {
     lwCurrentNetwork = e.target.value;
+    // Switching networks previously only refreshed "Running Now" — Recent
+    // Queries and the CPU/RAM charts kept showing the OLD network's last-
+    // fetched data until the next 5s poll tick happened to catch up, so the
+    // panel looked "mixed" right after a switch. Refresh everything now,
+    // same as the manual refresh button.
     loadLiveWatcherNow();
+    loadLiveWatcherHistory();
+    loadLiveWatcherRecent();
+    loadLiveWatcherChart();
   });
   document.getElementById('lw-refresh-btn').addEventListener('click', () => {
     loadLiveWatcherNow();
@@ -1257,9 +1265,10 @@ async function loadLiveWatcherRecent() {
         <td>${lwFmtSec(t.runningSec)}</td>
         <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</td>
         <td>${escapeHtml(String(t.nodeId || '').slice(0, 8))}</td>
+        <td>${t.cpuAtCapture != null ? t.cpuAtCapture.toFixed(1) + '%' : '—'}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="lwShowFullQuery('es', ${i})">View full</button></td>
       </tr>
-    `).join('') || '<tr><td colspan="5" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
+    `).join('') || '<tr><td colspan="6" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
 
     document.getElementById('lw-sql-recent').innerHTML = lwRecentSql.map((q, i) => `
       <tr>
@@ -1268,9 +1277,10 @@ async function loadLiveWatcherRecent() {
         <td>${escapeHtml(q.db || '')}</td>
         <td>${escapeHtml(q.state || '')}</td>
         <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info)}">${escapeHtml(q.info)}</td>
+        <td>${q.loadAtCapture != null ? q.loadAtCapture.toFixed(1) + '%' : '—'}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="lwShowFullQuery('sql', ${i})">View full</button></td>
       </tr>
-    `).join('') || '<tr><td colspan="6" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
+    `).join('') || '<tr><td colspan="7" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
   } catch (e) { /* silent */ }
 }
 

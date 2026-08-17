@@ -512,8 +512,8 @@
           <div class="card-header"><h3>Recent Queries — Elasticsearch (last 15 seen)</h3></div>
           <div class="card-body">
             <table class="data-table">
-              <thead><tr><th>Seen</th><th>Ran For</th><th>Description</th><th>Node</th><th></th></tr></thead>
-              <tbody id="lw-es-recent"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+              <thead><tr><th>Seen</th><th>Ran For</th><th>Description</th><th>Node</th><th title="Cluster-wide ES CPU % at the instant this query was captured — ES has no true per-query cost metric, this is the closest available signal">Cluster CPU %</th><th></th></tr></thead>
+              <tbody id="lw-es-recent"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -522,8 +522,8 @@
           <div class="card-header"><h3>Recent Queries — MySQL (last 15 seen)</h3></div>
           <div class="card-body">
             <table class="data-table">
-              <thead><tr><th>Seen</th><th>Id</th><th>DB</th><th>State</th><th>Query</th><th></th></tr></thead>
-              <tbody id="lw-sql-recent"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+              <thead><tr><th>Seen</th><th>Id</th><th>DB</th><th>State</th><th>Query</th><th title="MySQL load % (Threads_running / max_connections) at the instant this query was captured — MySQL has no true per-query cost metric, this is the closest available signal">SQL Load %</th><th></th></tr></thead>
+              <tbody id="lw-sql-recent"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>

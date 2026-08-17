@@ -44,6 +44,8 @@ const log = logger.createChild('admin-live-watcher');
 const DIR = path.join(process.cwd(), (config.localCache && config.localCache.dir) || 'data');
 const CONFIG_FILE = path.join(DIR, 'live-watcher-config.json');
 const HISTORY_FILE = path.join(DIR, 'live-watcher-spikes.json');
+const RECENT_FILE = path.join(DIR, 'live-watcher-recent.json');
+const METRICS_FILE = path.join(DIR, 'live-watcher-metrics.json');
 
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // "recycle" — only last 1 day is ever kept
 const MAX_HISTORY_EVENTS = 500; // defensive cap in case of flapping
@@ -146,8 +148,17 @@ function getSpikeHistory({ network, type, hours } = {}) {
 // ─── ES helpers ─────────────────────────────────────────────────────────
 
 async function esCall(client, fnPath, params, opts) {
-  const fn = fnPath.split('.').reduce((o, k) => o[k], client);
-  const resp = await fn.call(client, params, opts);
+  // Resolve the method's actual parent (e.g. client.nodes for 'nodes.stats')
+  // and call it bound to THAT, not to the root client — matching how
+  // scripts/watch-google-es-spikes.js calls these directly (client.nodes.stats(...),
+  // client.tasks.list(...)) and confirmed working. Binding to the wrong
+  // receiver (the earlier `fn.call(client, ...)`) silently broke every ES
+  // call this file makes, which is why Live Watcher stopped showing ES data.
+  const parts = fnPath.split('.');
+  const methodName = parts.pop();
+  const receiver = parts.reduce((o, k) => o[k], client);
+  const fn = receiver[methodName];
+  const resp = await fn.call(receiver, params, opts);
   return resp.body || resp;
 }
 
@@ -253,6 +264,21 @@ const RECENT_MAX = 15;
 const recentEsQueries = new Map(); // slug -> array (most recent first)
 const recentSqlQueries = new Map(); // slug -> array (most recent first)
 
+// Persisted to RECENT_FILE (2026-08-17) — under PM2/cluster mode only ONE
+// worker runs the collector (see startCollector's WORKER_ID guard below),
+// but every worker serves the admin UI's HTTP requests. An in-memory-only
+// Map is invisible to every worker except the one that happens to be
+// collecting, so the panel looked like it randomly emptied out depending on
+// which worker answered the request. Writing the full map to disk on every
+// push and reading it fresh on every GET makes every worker see the same
+// data regardless of who's actually polling ES/SQL.
+function persistRecent() {
+  writeJson(RECENT_FILE, {
+    es: Object.fromEntries(recentEsQueries),
+    sql: Object.fromEntries(recentSqlQueries),
+  });
+}
+
 function pushRecent(map, slug, items, idKey) {
   if (!items.length) return;
   const existing = map.get(slug) || [];
@@ -260,6 +286,7 @@ function pushRecent(map, slug, items, idKey) {
   for (const item of items) byId.set(item[idKey], item); // refresh if still running, add if new
   const merged = [...byId.values()].sort((a, b) => b.capturedAt - a.capturedAt);
   map.set(slug, merged.slice(0, RECENT_MAX));
+  persistRecent();
 }
 
 // ─── CPU/RAM metrics history (last 1h, 2026-08-17) ─────────────────────────
@@ -273,14 +300,17 @@ function pushMetricPoint(slug, type, point) {
   entry[type].push(point);
   if (entry[type].length > METRICS_HISTORY_MAX) entry[type].splice(0, entry[type].length - METRICS_HISTORY_MAX);
   metricsHistory.set(slug, entry);
+  // Same cross-worker visibility reason as persistRecent() above.
+  writeJson(METRICS_FILE, Object.fromEntries(metricsHistory));
 }
 
 function getMetricsHistory(slug, minutes) {
-  const entry = metricsHistory.get(slug) || { es: [], sql: [] };
+  const stored = readJson(METRICS_FILE, {});
+  const entry = stored[slug] || { es: [], sql: [] };
   const cutoff = Date.now() - Math.min(60, Math.max(1, minutes || 60)) * 60 * 1000;
   return {
-    es: entry.es.filter((p) => p.ts >= cutoff),
-    sql: entry.sql.filter((p) => p.ts >= cutoff),
+    es: (entry.es || []).filter((p) => p.ts >= cutoff),
+    sql: (entry.sql || []).filter((p) => p.ts >= cutoff),
   };
 }
 
@@ -464,6 +494,17 @@ async function tick() {
 
 function startCollector() {
   if (collectorTimer) return;
+  // Same convention as app.js's other worker-1-only startup blocks
+  // (keyword ad-notify cron, etc.) — under PM2/cluster mode this file loads
+  // in EVERY worker, so without this guard N workers would each poll ES/SQL
+  // independently every POLL_INTERVAL_MS, multiplying the exact load this
+  // feature was built to never add. Only the logical worker 1 actually
+  // collects; every worker still serves the HTTP routes, which now read the
+  // shared files worker 1 writes (see persistRecent / METRICS_FILE above).
+  if (process.env.WORKER_ID && process.env.WORKER_ID !== '1') {
+    log.info(`[live-watcher] background collector skipped on worker ${process.env.WORKER_ID} (worker 1 only)`);
+    return;
+  }
   collectorTimer = setInterval(tick, POLL_INTERVAL_MS);
   if (collectorTimer.unref) collectorTimer.unref(); // never keep the process alive on its own
   log.info(`[live-watcher] background collector started (every ${POLL_INTERVAL_MS}ms)`);
@@ -504,11 +545,15 @@ router.get('/history', (req, res) => {
 // happens to be running at the exact moment this endpoint is called.
 router.get('/:network/recent', (req, res) => {
   const { network } = req.params;
+  // Read from disk, not the in-memory Map — this route runs on whichever
+  // cluster worker the load balancer picks, but only WORKER_ID=1 actually
+  // collects (see startCollector). The file is the one copy every worker agrees on.
+  const stored = readJson(RECENT_FILE, { es: {}, sql: {} });
   res.json({
     code: 200,
     data: {
-      es: recentEsQueries.get(network) || [],
-      sql: recentSqlQueries.get(network) || [],
+      es: stored.es?.[network] || [],
+      sql: stored.sql?.[network] || [],
     },
   });
 });
