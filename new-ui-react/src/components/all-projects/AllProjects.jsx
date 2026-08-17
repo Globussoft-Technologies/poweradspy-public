@@ -1670,6 +1670,42 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     }
   };
 
+  // Build the canonical competitor row payload from the ES stats response so
+  // the batch and fallback hydration paths stay in sync.
+  const buildCompetitorStatsRow = (competitor, stats = {}) => {
+    const platforms = [];
+    const pc = stats.platformCompetitorCount || {};
+    if (pc.facebook > 0) platforms.push("Facebook");
+    if (pc.instagram > 0) platforms.push("Instagram");
+    if (pc.google > 0) platforms.push("Google");
+
+    const popVal = Number(stats.averagePopularity) || 0;
+    let popLabel = "Low";
+    if (popVal > 66) popLabel = "High";
+    else if (popVal > 33) popLabel = "Medium";
+
+    const formattedPop = popVal ? popVal.toFixed(2) : "0";
+    const budgetFmt = stats.totalBudget
+      ? `$${Number(stats.totalBudget).toLocaleString()}`
+      : "$0";
+
+    return {
+      ...competitor,
+      totalAds: stats.competitorsCount || 0,
+      todayAds: stats.todayAdsCount || 0,
+      yesterdayAds: stats.yesterdayAdsCount || 0,
+      lastWeekAds: stats.lastWeekAdsCount || 0,
+      lastMonthAds: stats.lastMonthAdsCount || 0,
+      impressions: formatNumber(stats.averageImpression || 0),
+      popularity: `${popLabel} (${formattedPop}%)`,
+      budget: budgetFmt,
+      countries: stats.uniqueCountries || [],
+      countryCounts: stats.countryCounts || {},
+      platforms,
+      statsLoaded: true,
+    };
+  };
+
   const openProject = async (id, advertiserName, { switchView = true } = {}) => {
     // Switching to another project ends any in-progress generate buffer.
     setIsPreparingCompetitors(false);
@@ -1774,9 +1810,57 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
             competitors: remoteCompetitors.map((c) => c.name),
           });
 
-          // 2. Fire independent async API calls to get analytics for each competitor
-          remoteCompetitors.forEach((comp) => {
-            CompetitorAPI.getCompetitorCount(comp.name)
+          let useBatchHydration = false;
+          const competitorNames = remoteCompetitors
+            .map((comp) => comp.name)
+            .filter(Boolean);
+
+          const applyCompetitorStats = (statsByName = {}) => {
+            const enrichedCompetitors = remoteCompetitors.map((comp) =>
+              buildCompetitorStatsRow(comp, statsByName?.[comp.name] || {})
+            );
+
+            setProjects((prev) =>
+              prev.map((p) =>
+                p.id === id ? { ...p, competitors: enrichedCompetitors } : p,
+              ),
+            );
+          };
+
+          // Prefer one batched stats request so opening a project does not fan
+          // out into one HTTP round-trip per competitor row. If the batch path
+          // fails, the legacy row-by-row fallback below still runs. Do not put a
+          // client timeout on this request: aborting fetch does not cancel the
+          // server's ES work, so a timeout followed by fallback would duplicate
+          // the expensive queries while the first request is still executing.
+          try {
+            const statsRes = await CompetitorAPI.getCompetitorCountNew(competitorNames);
+            const statsByName = statsRes?.body?.data || statsRes?.data || {};
+
+            const isSuccessfulResponse =
+              statsRes?.statusCode === 200 &&
+              statsRes?.body?.status === "success";
+            const hasEveryCompetitor = competitorNames.every((name) =>
+              Object.prototype.hasOwnProperty.call(statsByName, name),
+            );
+
+            if (!isSuccessfulResponse || !hasEveryCompetitor) {
+              throw new Error("Batched competitor stats response was incomplete.");
+            }
+
+            applyCompetitorStats(statsByName);
+            useBatchHydration = true;
+          } catch (batchErr) {
+            console.warn(
+              "Batched competitor stats lookup failed; falling back to per-competitor requests.",
+              batchErr,
+            );
+          }
+
+          if (!useBatchHydration) {
+            // 2. Fire independent async API calls to get analytics for each competitor
+            remoteCompetitors.forEach((comp) => {
+              CompetitorAPI.getCompetitorCount(comp.name)
               .then((statsResp) => {
                 const pData = statsResp?.body?.data || statsResp?.data; // Check response structure
                 if (pData) {
@@ -1836,7 +1920,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 console.error("Could not fetch stats for", comp.name, e);
                 markCompetitorStatsLoaded(id, comp.id);
               });
-          });
+            });
+          }
         }
       } catch (err) {
         console.error("Failed to load competitors", err);
