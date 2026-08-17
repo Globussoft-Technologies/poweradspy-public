@@ -16,6 +16,13 @@ import moment from "moment";
 import pLimit from "p-limit";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
+import { isEsUnderStress, withLimit } from "../../utils/esLoadGuard.js";
+
+// Confirmed 2026-08-17: 8 concurrent competitors x 9 ES calls each (see
+// activeCompetitorContacts) could put up to 72 concurrent queries on a
+// single-node cluster shared with pas_node_api. Kept low — isEsUnderStress()
+// below (reads the cluster's own live state) is the real backpressure signal.
+const ES_MAX_CONCURRENT = 2;
 
 // Diagnostic logging gate — flip MAIL_DEBUG_LOG in config (e.g. true in
 // localDev.json, false in default.json/production). When the flag is off
@@ -261,7 +268,11 @@ class  MonitorService{
 
     const tEsStart = Date.now();
     try {
-      const result = await client.search({ index: cfg.index, body: esQueryBody });
+      if (await isEsUnderStress(serverKey)) {
+        dlog(`${tag} skipped — ES already under stress this cycle`);
+        return null;
+      }
+      const result = await withLimit(serverKey, () => client.search({ index: cfg.index, body: esQueryBody }), ES_MAX_CONCURRENT);
       const esMs = Date.now() - tEsStart;
 
       const hit = result?.hits?.hits?.[0]?._source;
@@ -371,6 +382,11 @@ class  MonitorService{
         index: NETWORK_INDEXES.google,
         fields: ["post_owner_name"],
         primaryField: "post_owner_name",
+        // Verified against pas_node_api/scripts/google_ads_data_v2.mapping.json:
+        // post_owner_lower is a genuine `keyword` field (not a guess) — the
+        // prefix clause below uses it instead of the analyzed `post_owner_name`
+        // text field, same "starts with" result, far cheaper for short names.
+        primaryFieldKeyword: "post_owner_lower",
         lastSeen: "last_seen",
         // Google index also contains organic-search results, which are NOT
         // paid ads. Exclude them so the count reflects only actual ads.
@@ -400,6 +416,15 @@ class  MonitorService{
     //   1. Phrase-match each word, AND'd together → "Google Ai" must match
     //      both tokens as phrases in some field on the same doc.
     //   2. Plus a `prefix` match on the primary field as a tolerant fallback.
+    //
+    // The prefix runs against `primaryFieldKeyword` (the *_lower field —
+    // single normalized keyword token per doc), NOT `primaryField` (analyzed
+    // text). Confirmed against production hot-threads (2026-08-17): a prefix
+    // on the analyzed field for a SHORT name ("hp", "mg", "big") matches
+    // thousands of unrelated tokenized terms, forcing Lucene to rewrite it
+    // into a large TermInSetQuery/boolean-OR (BitSet.or / DocIdSetBuilder.add
+    // dominating CPU). A keyword field's prefix uses the sorted term
+    // dictionary directly — same "starts with" result, far cheaper.
     const cleaned = String(competitorName || "").replace(/"/g, "").trim();
     const words = cleaned.split(/\s+/).filter(Boolean);
     const phraseEachWord = words.length === 1
@@ -409,7 +434,7 @@ class  MonitorService{
       bool: {
         should: [
           phraseEachWord,
-          { prefix: { [cfg.primaryField]: cleaned.toLowerCase() } },
+          { prefix: { [cfg.primaryFieldKeyword || cfg.primaryField]: cleaned.toLowerCase() } },
         ],
         minimum_should_match: 1,
       },
@@ -428,10 +453,14 @@ class  MonitorService{
 
     const tStart = Date.now();
     try {
-      const res = await client.count({
+      if (await isEsUnderStress(serverKey)) {
+        dlog(`[esCount ${platform}/${competitorName}] skipped — ES already under stress this cycle`);
+        return 0;
+      }
+      const res = await withLimit(serverKey, () => client.count({
         index: cfg.index,
         body: { query: { bool: { must, ...(must_not.length ? { must_not } : {}) } } },
-      });
+      }), ES_MAX_CONCURRENT);
       const count = res?.count ?? res?.body?.count ?? 0;
       dlog(`[esCount ${platform}/${competitorName}] = ${count} (window ${since} → ${until} IST, ${Date.now() - tStart}ms)`);
       return count;
@@ -491,6 +520,7 @@ class  MonitorService{
         index: NETWORK_INDEXES.google,
         fields: ["post_owner_name"],
         primaryField: "post_owner_name",
+        primaryFieldKeyword: "post_owner_lower", // verified keyword field — see countAdsLastDayIST's comment
         mediaFilter: getDisplayableMediaFilter("google"),
       },
     };
@@ -512,11 +542,14 @@ class  MonitorService{
     const phraseEachWord = words.length === 1
       ? { multi_match: { query: words[0], type: "phrase", fields: cfg.fields } }
       : { bool: { must: words.map((w) => ({ multi_match: { query: w, type: "phrase", fields: cfg.fields } })) } };
+    // prefix runs against primaryFieldKeyword (*_lower, a single keyword
+    // token/doc) not primaryField (analyzed text) — see the matching comment
+    // in countAdsLastDayIST above for why this is cheaper for the same result.
     const advertiserClause = {
       bool: {
         should: [
           phraseEachWord,
-          { prefix: { [cfg.primaryField]: cleaned.toLowerCase() } },
+          { prefix: { [cfg.primaryFieldKeyword || cfg.primaryField]: cleaned.toLowerCase() } },
         ],
         minimum_should_match: 1,
       },
@@ -534,10 +567,14 @@ class  MonitorService{
 
     const tStart = Date.now();
     try {
-      const res = await client.count({
+      if (await isEsUnderStress(serverKey)) {
+        dlog(`[esCount ${platform}/${competitorName}/all-time] skipped — ES already under stress this cycle`);
+        return 0;
+      }
+      const res = await withLimit(serverKey, () => client.count({
         index: cfg.index,
         body: { query: { bool: { must, ...(must_not.length ? { must_not } : {}) } } },
-      });
+      }), ES_MAX_CONCURRENT);
       const count = res?.count ?? res?.body?.count ?? 0;
       dlog(`[esCount ${platform}/${competitorName}/all-time] = ${count} (${Date.now() - tStart}ms)`);
       return count;
@@ -706,7 +743,11 @@ class  MonitorService{
             };
 
             try {
-            const esRes = await client.search(esQuery);
+            if (await isEsUnderStress(serverKey)) {
+                dlog(`[updateCompetitorsStatus ${platform}/${compName}] skipped — ES already under stress this cycle`);
+                return null;
+            }
+            const esRes = await withLimit(serverKey, () => client.search(esQuery), ES_MAX_CONCURRENT);
             if (esRes.hits.hits.length > 0) {
                 return compName;
             }

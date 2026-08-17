@@ -3,6 +3,17 @@
 const networks = require('../../../config/networks');
 const databaseManager = require('../../../database/DatabaseManager');
 const { formatTimestampString, convertToUnixSeconds, getTimestampField } = require('../helpers/searchIntelligenceHelpers');
+const { withLimit, isEsUnderStress } = require('../../common/helpers/esConcurrency');
+
+// Shares its per-network budget with keywordAdNotificationController.js's count() calls
+// (both key on the plain network slug) — see esConcurrency.js. Without this, a burst of
+// concurrent Keyword Explorer / Trend Project requests could pile on top of the
+// notification poll's own load with nothing capping the combined total against one
+// cluster (root cause of the 2026-08-14 "Google unusable" incident). This cap is PER PM2
+// WORKER PROCESS, not global (production runs multiple workers) — kept low because
+// isEsUnderStress() below, which reads the cluster's own real thread-pool state, is the
+// actual cross-process guard.
+const ES_MAX_CONCURRENT_PER_NETWORK = 2;
 
 // Platform-specific index mapping for Elasticsearch — sourced from config/networks.js
 // so index names are never hard-coded in this file. Every network keeps its ES config
@@ -615,7 +626,15 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
                 };
 
 
-                const esResult = await platformElastic.search(esQuery);
+                // Cross-process safety net (see esConcurrency.js) — if the cluster is
+                // already saturated (from ANY worker's combined traffic), back off this
+                // one keyword rather than piling on; it falls into the catch below and
+                // comes back as a graceful 0-count instead of adding to the overload.
+                if (await isEsUnderStress(platformLower)) {
+                  throw new Error('ES cluster under stress — skipped this cycle');
+                }
+
+                const esResult = await withLimit(platformLower, () => platformElastic.search(esQuery), ES_MAX_CONCURRENT_PER_NETWORK);
                 const resultAggs = esResult.aggregations || esResult.body?.aggregations || {};
 
                 let totalCount = 0;

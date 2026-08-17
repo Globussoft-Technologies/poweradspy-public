@@ -61,6 +61,9 @@
         <a href="javascript:void(0)" class="nav-item" data-tab="nas">
           <span class="nav-icon">💾</span> NAS Storage
         </a>
+        <a href="javascript:void(0)" class="nav-item" data-tab="live-watcher">
+          <span class="nav-icon">🔴</span> Live Watcher
+        </a>
         <a href="javascript:void(0)" class="nav-item" data-tab="sdui">
           <span class="nav-icon">🎛️</span> SDUI Config
         </a>
@@ -397,6 +400,85 @@
                 <tr><th>Date (UTC)</th><th>Used</th><th>Free</th><th>Stored that day</th></tr>
               </thead>
               <tbody id="nas-daily-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live Watcher Tab -->
+      <section id="tab-live-watcher" class="tab-content">
+        <div class="card glass">
+          <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <h3>ES &amp; SQL Live Watcher</h3>
+            <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+              <select id="lw-network-select" class="select-sm"></select>
+              <span class="status-badge" id="lw-role-badge" style="color:var(--text-muted)">Viewing as: Viewer</span>
+              <button class="btn btn-ghost btn-sm" id="lw-refresh-btn" data-tip="Refresh now">🔄 Refresh</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="metrics-grid">
+              <div class="metric-card glass">
+                <div class="metric-label">Elasticsearch CPU</div>
+                <div class="metric-value" id="lw-es-cpu">—</div>
+                <div class="metric-sub" id="lw-es-load1m">—</div>
+              </div>
+              <div class="metric-card glass">
+                <div class="metric-label">ES Search Queue / Rejected</div>
+                <div class="metric-value" id="lw-es-queue">—</div>
+                <div class="metric-sub" id="lw-es-active">—</div>
+              </div>
+              <div class="metric-card glass">
+                <div class="metric-label">SQL Load</div>
+                <div class="metric-value" id="lw-sql-load">—</div>
+                <div class="metric-sub" id="lw-sql-threads">—</div>
+              </div>
+              <div class="metric-card glass">
+                <div class="metric-label">Status</div>
+                <div class="metric-value" id="lw-spike-status">—</div>
+                <div class="metric-sub" id="lw-updated-at">—</div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:16px;align-items:center;margin:16px 0;flex-wrap:wrap">
+              <label style="display:flex;gap:6px;align-items:center">ES CPU % threshold
+                <input type="number" id="lw-es-threshold" class="input-sm" min="1" max="100" style="width:70px">
+              </label>
+              <label style="display:flex;gap:6px;align-items:center">SQL load % threshold
+                <input type="number" id="lw-sql-threshold" class="input-sm" min="1" max="100" style="width:70px">
+              </label>
+              <button class="btn btn-primary btn-sm hidden" id="lw-save-threshold-btn">Save Thresholds</button>
+              <span class="muted" style="font-size:12px">A snapshot is captured only when a value crosses its threshold — nothing is stored continuously, and history auto-recycles after 24h.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Running Now — Elasticsearch</h3></div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead><tr><th>Running</th><th>Description</th><th>Node</th><th>Action</th></tr></thead>
+              <tbody id="lw-es-tasks"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Running Now — MySQL</h3></div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead><tr><th>Id</th><th>Time</th><th>DB</th><th>State</th><th>Query</th><th>Action</th></tr></thead>
+              <tbody id="lw-sql-queries"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header"><h3>Spike History (last 24h)</h3></div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead><tr><th>Network</th><th>Type</th><th>Started</th><th>Duration</th><th>Peak</th><th>Details</th></tr></thead>
+              <tbody id="lw-history"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>

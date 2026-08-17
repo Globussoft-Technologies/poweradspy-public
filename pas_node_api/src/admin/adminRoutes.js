@@ -198,6 +198,9 @@ router.get('/api/db-status', (req, res) => {
   res.json({ code: 200, data: { health, poolStats } });
 });
 
+// ─── ES & SQL Live Watcher (real-time per-network query view + cancel/kill) ───
+router.use('/api/live-watcher', require('./liveWatcher').router);
+
 // ─── Logs ─────────────────────────────────────────────────
 router.get('/api/logs', (req, res) => {
   try {

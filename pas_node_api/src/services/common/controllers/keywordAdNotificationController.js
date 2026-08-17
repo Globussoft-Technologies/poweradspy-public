@@ -21,8 +21,57 @@ const dbManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
 const config = require('../../../config');
 const { PLATFORM_FIELD_MAPPINGS } = require('../helpers/platformSearchFields');
+const { withLimit, isEsUnderStress } = require('../helpers/esConcurrency');
 
 const log = logger.createChild('keyword-ad-notify');
+
+// Both scan functions below call this once per (term, network) they check. With many
+// users active at once, the SAME popular term (e.g. "myntra", "flipkart") is very
+// commonly checked by several different users within the same minute — this cache
+// collapses those into one ES hit. 5 min is safe: a threshold-crossing notification
+// doesn't need sub-minute freshness. ES_MAX_CONCURRENT bounds how many of these count()
+// calls can be in flight AT ONCE per network, PER PM2 WORKER PROCESS — kept low (not a
+// real global budget) because isEsUnderStress() (checked first, below) is the actual
+// cross-process guard. See esConcurrency.js's top comment for the full reasoning.
+const COUNT_CACHE_TTL_MS = 5 * 60 * 1000;
+const ES_MAX_CONCURRENT_PER_NETWORK = 2;
+const countCache = new Map(); // cacheKey -> { count, expiresAt }
+
+function countCacheGet(key) {
+  const hit = countCache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() > hit.expiresAt) { countCache.delete(key); return undefined; }
+  return hit.count;
+}
+
+function countCacheSet(key, count) {
+  if (countCache.size > 5000) countCache.delete(countCache.keys().next().value); // defensive cap
+  countCache.set(key, { count, expiresAt: Date.now() + COUNT_CACHE_TTL_MS });
+}
+
+// Cached + concurrency-limited + stress-aware replacement for a bare `es.count()` —
+// every caller of buildQuery() below goes through this instead of hitting ES directly.
+// Returns `null` (never cached) when the cluster is already under real stress right
+// now, so this purely-discretionary background scan backs off for a cycle instead of
+// adding to it — the next poll (or the 15-min cron) simply tries that term again.
+async function getAdsCountCached(lookupNet, index, query, cacheKey) {
+  const cached = countCacheGet(cacheKey);
+  if (cached !== undefined) return cached;
+
+  if (await isEsUnderStress(lookupNet)) {
+    log.debug('keyword ad-scan: skipping — ES already under stress this cycle', { network: lookupNet });
+    return null;
+  }
+
+  const es = dbManager.getElastic(lookupNet);
+  if (!es) return null;
+  const count = await withLimit(lookupNet, async () => {
+    const res = await es.count({ index, body: { query } });
+    return readCount(res);
+  }, ES_MAX_CONCURRENT_PER_NETWORK);
+  countCacheSet(cacheKey, count);
+  return count;
+}
 
 // Per-network ES timestamp field used to scope the count to "today" (companion to the
 // per-network search fields in helpers/platformSearchFields.js).
@@ -222,8 +271,9 @@ async function runKeywordAdNotificationScan() {
         const index = es.indexName || config.networks?.[lookupNet]?.elastic?.index;
         if (!index) continue;
 
-        const res = await es.count({ index, body: { query } });
-        const adsCount = readCount(res);
+        const cacheKey = `${lookupNet}:${type}:${doc.valueNorm}:${today}`;
+        const adsCount = await getAdsCountCached(lookupNet, index, query, cacheKey);
+        if (adsCount == null) continue; // skipped this cycle (cache miss + cluster stressed) — retried next run
         if (adsCount < threshold) continue;
         matched++;
 
@@ -344,8 +394,9 @@ async function runUserKeywordAdScan(user, source, notifyCol) {
         const index = es.indexName || config.networks?.[lookupNet]?.elastic?.index;
         if (!index) continue;
 
-        const res = await es.count({ index, body: { query } });
-        const adsCount = readCount(res);
+        const cacheKey = `${lookupNet}:${doc.type}:${doc.valueNorm}:${today}`;
+        const adsCount = await getAdsCountCached(lookupNet, index, query, cacheKey);
+        if (adsCount == null) continue; // skipped this cycle (cache miss + cluster stressed) — retried next run
         if (adsCount < threshold) continue;
         matched++;
 

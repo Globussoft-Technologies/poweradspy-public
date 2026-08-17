@@ -874,33 +874,50 @@ async function getSearch(req, res) {
 // Search-keyword networks expose a `target_keyword` term (Google search ads).
 // `fields` is a candidate LIST (tried in order via aggWithFallback).
 //
-// CORRECTED 2026-08-14: confirmed directly against the live mapping
-// (GET google_ads_data/_mapping) — `target_keyword` IS already
-// `{"type":"keyword","normalizer":"lowercase_normalizer"}` on the live index,
-// not text. There is no `.keyword`/`.kw` subfield (an earlier fix guessed
-// there was, based on the field being unqualified `text` under the OLD
-// pre-v2 assumption — that assumption was wrong for this field specifically;
-// `.keyword`/`.kw` don't exist on it, so that fix silently always fell
-// through to empty results instead of fixing anything).
-//
-// The 20-21s/shard slowness seen in production's slow log on this exact
-// query is therefore NOT a wrong-field-type bug — the field is correctly
-// keyword-typed with doc_values, which a terms agg should use cheaply. Two
-// remaining explanations, both consistent with everything else found this
-// incident: (1) genuinely high cardinality — global ordinals for a
-// high-cardinality keyword field are (re)built on first use after every
-// index refresh (this index refreshes every 30s per the mapping's
-// settings), and that rebuild is exactly the kind of expensive, bursty CPU
-// cost that shows up as "fielddata-shaped" in hot threads without the field
-// actually being mistyped — ask DevOps whether `eager_global_ordinals: true`
-// is set on `target_keyword` (a mapping-only change, no reindex needed) to
-// move that cost out of the request path; (2) the single-node cluster was
-// simply under load from something else at that moment (see the "query
-// optimization has a limit" note elsewhere in this conversation).
+// GOOGLE MOVED OFF THIS ES PATH (2026-08-17): a `target_keyword` terms agg was
+// eventually confirmed genuinely correct (keyword-typed, not mistyped — see git
+// history for the full 2026-08-14 investigation) and fast once
+// `eager_global_ordinals` was set, but it was still a live ES aggregation on
+// every request. Google already has a purpose-built, lightweight SQL rollup
+// for exactly this question ("top keywords by ad volume") —
+// `keyword_stats_unique`, one row per keyword TEXT, refreshed periodically by
+// jobs/refreshKeywordStats.js and already serving the Keyword Explorer page
+// (keywordsExplorerController.js). Reusing it here (see
+// keywordsForGoogleSql below) means zero extra ES load AND the exact same
+// numbers a user already sees in Keyword Explorer, instead of two different
+// "top keywords" answers for the same keyword depending which panel they're
+// looking at. Pinterest has no such SQL rollup, so it stays on the ES path.
 const NET_KEYWORD = {
-  google: { date: 'last_seen', fields: ['target_keyword'] },
   pinterest: { date: 'pinterest_ad.last_seen', fields: ['pinterest_ad.target_keyword.keyword'] },
 };
+
+// keyword_stats_unique has no per-day window and no advertiser column (it's a
+// keyword-level rollup across the whole corpus, not scoped to a date range or
+// a specific advertiser) — `days`/`advertiser` are accepted by the route for
+// the other (ES) networks but intentionally have no effect on Google's result
+// here. `country` maps onto the same `countries` JSON-array column Keyword
+// Explorer already filters on, so it still works.
+async function keywordsForGoogleSql(size, country) {
+  const sql = databaseManager.getSQL('google');
+  if (!sql) return [];
+  const where = [];
+  const params = [];
+  if (country) { where.push('JSON_CONTAINS(countries, JSON_QUOTE(?))'); params.push(country); }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  // LIMIT inlined, not bound as `?` — mysql2's execute() (prepared statements)
+  // rejects a bound LIMIT on this MySQL setup; size is clampInt()-validated
+  // (1-50) upstream in getKeywords, so inlining it is safe (same pattern as
+  // keywordsExplorerController.js).
+  try {
+    const rows = await sql.query(
+      `SELECT keyword, ads_total AS count FROM keyword_stats_unique ${whereSql} ORDER BY ads_total DESC LIMIT ${Number(size) || 15}`,
+      params
+    );
+    return rows.map((r) => ({ key: String(r.keyword), count: Number(r.count) || 0, net: 'google' }));
+  } catch (e) {
+    return [];
+  }
+}
 async function keywordsForNet(net, cfg, days, size, country, advertiser, custom) {
   const es = getEs(net);
   if (!es) return [];
@@ -926,15 +943,19 @@ async function getKeywords(req, res) {
   const advertiser = String(raw.advertiser || '').trim();
   const custom = parseRange(raw);
   const list = parseNetList(raw.network);
-  const nets = (list ? list.filter((n) => NET_KEYWORD[n]) : Object.keys(NET_KEYWORD));
+  const esNets = (list ? list.filter((n) => NET_KEYWORD[n]) : Object.keys(NET_KEYWORD));
+  const wantsGoogle = !list || list.includes('google');
   const merged = {};
-  const parts = await Promise.all(nets.map((n) => keywordsForNet(n, NET_KEYWORD[n], days, size, country, advertiser, custom)));
-  for (const listx of parts) for (const b of listx) {
+  const [esParts, googleItems] = await Promise.all([
+    Promise.all(esNets.map((n) => keywordsForNet(n, NET_KEYWORD[n], days, size, country, advertiser, custom))),
+    wantsGoogle ? keywordsForGoogleSql(size, country) : Promise.resolve([]),
+  ]);
+  for (const listx of [...esParts, googleItems]) for (const b of listx) {
     if (!merged[b.key]) merged[b.key] = { keyword: b.key, count: 0, net: b.net };
     merged[b.key].count += b.count;
   }
   const items = Object.values(merged).sort((a, b) => b.count - a.count).slice(0, size);
-  const supported = nets.length > 0;
+  const supported = esNets.length > 0 || wantsGoogle;
   return res.status(200).json({ code: 200, data: { days, items }, message: 'Top keywords', ...(supported ? {} : { meta: { unsupported: true } }) });
 }
 

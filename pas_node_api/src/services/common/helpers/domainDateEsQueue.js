@@ -20,7 +20,7 @@ const { DOMAIN_TABLES } = require('./domainTables');
 const log = logger.createChild('domain-date-es-queue');
 const queueConfig = config.domainDateUpdate || {};
 
-const ES_TERMS_CHUNK = queueConfig.esTermsChunkSize ?? 10000;
+const ES_TERMS_CHUNK = queueConfig.esTermsChunkSize ?? 500; // see src/config/index.js's esTermsChunkSize comment
 const ES_REQUESTS_PER_SECOND = queueConfig.esRequestsPerSecond ?? 250;
 const ES_REQUEST_TIMEOUT_MS = queueConfig.esRequestTimeoutMs ?? 10000;
 const ES_TASK_POLL_INTERVAL_MS = queueConfig.esTaskPollIntervalMs ?? 5000;

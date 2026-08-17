@@ -72,6 +72,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('apply-filter-btn').addEventListener('click', applyDateFilter);
   document.getElementById('clear-filter-btn').addEventListener('click', clearDateFilter);
 
+  // Live Watcher
+  document.getElementById('lw-network-select').addEventListener('change', (e) => {
+    lwCurrentNetwork = e.target.value;
+    loadLiveWatcherNow();
+  });
+  document.getElementById('lw-refresh-btn').addEventListener('click', () => {
+    loadLiveWatcherNow();
+    loadLiveWatcherHistory();
+  });
+  document.getElementById('lw-save-threshold-btn').addEventListener('click', saveLiveWatcherThresholds);
+
   // SDUI Config
   document.getElementById('sdui-refresh-btn').addEventListener('click', loadSdui);
   document.getElementById('sdui-modal-close').addEventListener('click', closeSduiModal);
@@ -259,6 +270,7 @@ async function handleLogout() {
   } catch (e) {}
   
   clearInterval(refreshInterval);
+  stopLwPolling();
   document.getElementById('dashboard').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
 }
@@ -346,6 +358,11 @@ function paDismissReviewStrip() {
 }
 
 function switchTab(tab) {
+  // The Live Watcher tab polls on a short interval only while it's the visible
+  // tab — stop it the moment we navigate away so it never keeps hitting ES/SQL
+  // in the background.
+  if (currentTab === 'live-watcher' && tab !== 'live-watcher') stopLwPolling();
+
   currentTab = tab;
   localStorage.setItem('pas_admin_tab', tab);
 
@@ -365,6 +382,7 @@ function switchTab(tab) {
     ips: 'IP Manager',
     database: 'Database Status',
     nas: 'NAS Storage',
+    'live-watcher': 'ES & SQL Live Watcher',
     sdui: 'SDUI Config',
     'plan-access': 'Plan Validation',
   };
@@ -387,6 +405,9 @@ function switchTab(tab) {
   if (!tabLoaded.has(tab)) {
     tabLoaded.add(tab);
     refreshCurrentTab();
+  } else if (tab === 'live-watcher') {
+    // Real-time tab: restart polling every time it's re-opened, not just on first visit.
+    startLwPolling();
   }
 }
 
@@ -398,6 +419,7 @@ function refreshCurrentTab() {
     case 'ips': loadIps(); break;
     case 'database': loadDbStatus(); break;
     case 'nas': loadNasStorage(); break;
+    case 'live-watcher': loadLiveWatcher(); break;
     case 'sdui': loadSdui(); break;
     case 'plan-access': pvLoadInit(); break;
   }
@@ -1016,6 +1038,198 @@ function renderNasGrowthChart(containerId, series) {
       </div>
     `;
   }).join('');
+}
+
+// ─── ES & SQL Live Watcher ──────────────────────────────────
+let lwPollTimer = null;
+let lwCurrentNetwork = null;
+
+function lwFmtSec(s) {
+  if (s == null || isNaN(s)) return '—';
+  return s >= 60 ? `${(s / 60).toFixed(1)}m` : `${s}s`;
+}
+
+async function loadLiveWatcherNetworks() {
+  try {
+    const res = await fetch(`${API}/live-watcher/networks`, { credentials: 'include' });
+    const { data } = await res.json();
+    const networks = data || [];
+    const sel = document.getElementById('lw-network-select');
+    const prev = lwCurrentNetwork || sel.value;
+    sel.innerHTML = networks.map((n) => `<option value="${n.slug}">${n.slug}${n.hasElastic ? '' : ' (no ES)'}${n.hasSql ? '' : ' (no SQL)'}</option>`).join('');
+    lwCurrentNetwork = networks.find((n) => n.slug === prev) ? prev : (networks[0]?.slug || null);
+    if (lwCurrentNetwork) sel.value = lwCurrentNetwork;
+  } catch (e) { /* silent — keep whatever was there */ }
+}
+
+async function loadLiveWatcherConfig() {
+  try {
+    const res = await fetch(`${API}/live-watcher/config`, { credentials: 'include' });
+    const { data } = await res.json();
+    document.getElementById('lw-es-threshold').value = data.esCpuThresholdPct;
+    document.getElementById('lw-sql-threshold').value = data.sqlLoadThresholdPct;
+  } catch (e) { /* silent */ }
+}
+
+async function saveLiveWatcherThresholds() {
+  const esCpuThresholdPct = Number(document.getElementById('lw-es-threshold').value);
+  const sqlLoadThresholdPct = Number(document.getElementById('lw-sql-threshold').value);
+  try {
+    const res = await fetch(`${API}/live-watcher/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ esCpuThresholdPct, sqlLoadThresholdPct }),
+    });
+    if (!res.ok) throw new Error((await res.json()).message || 'save failed');
+    showToast('Thresholds saved', 'success');
+  } catch (e) {
+    showToast(`Failed to save thresholds: ${e.message}`, 'error');
+  }
+}
+
+async function loadLiveWatcherNow() {
+  if (!lwCurrentNetwork) return;
+  try {
+    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/now`, { credentials: 'include' });
+    const { data } = await res.json();
+    renderLiveWatcherNow(data);
+  } catch (e) { /* silent — this polls every few seconds, don't spam toasts on a blip */ }
+}
+
+function renderLiveWatcherNow(data) {
+  const es = data.es;
+  const sql = data.sql;
+  const isEditor = currentRole === 'editor';
+
+  if (es && !es.error) {
+    setText('lw-es-cpu', `${es.cpuPct}%`);
+    setText('lw-es-load1m', `load1m: ${es.load1m}`);
+    const searchPools = (es.threadPool || []).filter((p) => p.pool === 'search');
+    const queue = searchPools.reduce((a, p) => a + (p.queue || 0), 0);
+    const rejected = searchPools.reduce((a, p) => a + (p.rejected || 0), 0);
+    const active = searchPools.reduce((a, p) => a + (p.active || 0), 0);
+    setText('lw-es-queue', `${queue} / ${rejected}`);
+    setText('lw-es-active', `active: ${active}`);
+    document.getElementById('lw-es-tasks').innerHTML = (es.liveTasks || []).map((t) => `
+      <tr>
+        <td>${lwFmtSec(t.runningSec)}</td>
+        <td style="max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</td>
+        <td>${escapeHtml(String(t.nodeId || '').slice(0, 8))}</td>
+        <td>${isEditor ? `<button class="btn btn-danger btn-sm" onclick="lwCancelEsTask('${t.taskId}')">Cancel</button>` : '<span class="muted">read-only</span>'}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="4" class="muted">No search tasks running right now</td></tr>';
+  } else {
+    setText('lw-es-cpu', es?.error ? 'error' : 'n/a');
+    setText('lw-es-load1m', '—');
+    document.getElementById('lw-es-tasks').innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(es?.error || 'No Elasticsearch connection for this network')}</td></tr>`;
+  }
+
+  if (sql && !sql.error) {
+    setText('lw-sql-load', `${sql.loadPct.toFixed(1)}%`);
+    setText('lw-sql-threads', `${sql.threadsRunning} / ${sql.maxConnections} threads`);
+    document.getElementById('lw-sql-queries').innerHTML = (sql.liveQueries || []).map((q) => `
+      <tr>
+        <td>${q.id}</td>
+        <td>${q.timeSec}s</td>
+        <td>${escapeHtml(q.db || '')}</td>
+        <td>${escapeHtml(q.state || '')}</td>
+        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info)}">${escapeHtml(q.info)}</td>
+        <td>${isEditor ? `<button class="btn btn-danger btn-sm" onclick="lwKillSqlQuery(${q.id})">Kill</button>` : '<span class="muted">read-only</span>'}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="6" class="muted">No active queries right now</td></tr>';
+  } else {
+    setText('lw-sql-load', sql?.error ? 'error' : 'n/a');
+    setText('lw-sql-threads', '—');
+    document.getElementById('lw-sql-queries').innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(sql?.error || 'No SQL connection for this network')}</td></tr>`;
+  }
+
+  const inSpike = data.inSpike?.es || data.inSpike?.sql;
+  setText('lw-spike-status', inSpike ? '⚠ Spike' : '✓ Normal');
+  setText('lw-updated-at', `updated ${new Date().toLocaleTimeString()}`);
+}
+
+async function lwCancelEsTask(taskId) {
+  if (!confirm(`Cancel this Elasticsearch search task?\n${taskId}`)) return;
+  try {
+    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/es/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ taskId }),
+    });
+    if (!res.ok) throw new Error((await res.json()).message || 'failed');
+    showToast('Task cancelled', 'success');
+    loadLiveWatcherNow();
+  } catch (e) {
+    showToast(`Failed to cancel task: ${e.message}`, 'error');
+  }
+}
+
+async function lwKillSqlQuery(id) {
+  if (!confirm(`Kill SQL query id ${id}?`)) return;
+  try {
+    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/sql/kill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ id }),
+    });
+    if (!res.ok) throw new Error((await res.json()).message || 'failed');
+    showToast('Query killed', 'success');
+    loadLiveWatcherNow();
+  } catch (e) {
+    showToast(`Failed to kill query: ${e.message}`, 'error');
+  }
+}
+
+async function loadLiveWatcherHistory() {
+  try {
+    const res = await fetch(`${API}/live-watcher/history?hours=24`, { credentials: 'include' });
+    const { data } = await res.json();
+    document.getElementById('lw-history').innerHTML = (data || []).map((e) => {
+      const detailId = `lw-hist-${e.network}-${e.type}-${e.startedAt}`;
+      return `
+      <tr>
+        <td>${escapeHtml(e.network)}</td>
+        <td>${e.type.toUpperCase()}</td>
+        <td>${formatDate(new Date(e.startedAt).toISOString())}</td>
+        <td>${lwFmtSec(Math.round(e.durationMs / 1000))}</td>
+        <td>${e.peak.toFixed(1)}%</td>
+        <td>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">View</button>
+          <pre id="${detailId}" class="hidden" style="max-width:520px;white-space:pre-wrap;font-size:11px;margin-top:6px">${escapeHtml(JSON.stringify(e.detail || {}, null, 2))}</pre>
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="6" class="muted">No spikes in the last 24h</td></tr>';
+  } catch (e) { /* silent */ }
+}
+
+function stopLwPolling() {
+  if (lwPollTimer) { clearInterval(lwPollTimer); lwPollTimer = null; }
+}
+
+function startLwPolling() {
+  stopLwPolling();
+  loadLiveWatcherNow();
+  loadLiveWatcherHistory();
+  // 5s cadence is only client-side polling of a cheap metadata read — the
+  // server-side background collector runs independently every 8s regardless.
+  lwPollTimer = setInterval(() => {
+    if (currentTab === 'live-watcher') loadLiveWatcherNow();
+  }, 5000);
+}
+
+async function loadLiveWatcher() {
+  const isEditor = currentRole === 'editor';
+  const badge = document.getElementById('lw-role-badge');
+  badge.textContent = isEditor ? 'Viewing as: Editor' : 'Viewing as: Viewer';
+  badge.style.color = isEditor ? 'var(--success)' : 'var(--text-muted)';
+  document.getElementById('lw-save-threshold-btn').classList.toggle('hidden', !isEditor);
+
+  await loadLiveWatcherNetworks();
+  await loadLiveWatcherConfig();
+  startLwPolling();
 }
 
 // ─── Helpers ──────────────────────────────────────────────

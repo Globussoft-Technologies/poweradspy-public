@@ -193,7 +193,14 @@ const config = {
     esRequestTimeoutMs: validatedInt(fileConfig.domainDateUpdate?.esRequestTimeoutMs, 10000),
     // Large updates are queued and drained sequentially per network. Chunk size
     // bounds the terms query; request rate bounds the resulting ES write load.
-    esTermsChunkSize: validatedInt(fileConfig.domainDateUpdate?.esTermsChunkSize, 10000),
+    // Was 10000 — on a single-node cluster, a single updateByQuery with a 10k-term
+    // `terms` clause makes every shard match against all 10k values, which measured
+    // 20-28s per chunk in production slow logs (2026-08-17) even though the write
+    // side was already throttled via esRequestsPerSecond (that only bounds re-index
+    // rate, not the search/matching cost of the terms clause itself). 500 keeps each
+    // chunk cheap; the queue already drains chunks sequentially per network, so this
+    // only means more (much cheaper) round trips, not less total throughput.
+    esTermsChunkSize: validatedInt(fileConfig.domainDateUpdate?.esTermsChunkSize, 500),
     esRequestsPerSecond: validatedInt(fileConfig.domainDateUpdate?.esRequestsPerSecond, 250),
     esTaskPollIntervalMs: validatedInt(fileConfig.domainDateUpdate?.esTaskPollIntervalMs, 5000),
     esQueueSweepIntervalMs: validatedInt(fileConfig.domainDateUpdate?.esQueueSweepIntervalMs, 5000),
