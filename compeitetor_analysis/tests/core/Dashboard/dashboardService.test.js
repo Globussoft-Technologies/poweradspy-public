@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const spies = vi.hoisted(() => {
   const esClient = {
-    server1: { search: vi.fn(), count: vi.fn() },
-    server2: { search: vi.fn(), count: vi.fn() },
-    server3: { search: vi.fn(), count: vi.fn() },
-    server4: { search: vi.fn(), count: vi.fn() },
+    server1: { search: vi.fn(), count: vi.fn(), msearch: vi.fn() },
+    server2: { search: vi.fn(), count: vi.fn(), msearch: vi.fn() },
+    server3: { search: vi.fn(), count: vi.fn(), msearch: vi.fn() },
+    server4: { search: vi.fn(), count: vi.fn(), msearch: vi.fn() },
   };
   // Plain ObjectId stub that just stores the string id.
   function ObjectIdStub(id) { return { _id: id, toString: () => id }; }
@@ -162,6 +162,7 @@ beforeEach(async () => {
   Object.values(spies.esClient).forEach((c) => {
     c.search.mockReset();
     c.count.mockReset();
+    c.msearch.mockReset();
   });
   spies.configGetSpy.mockImplementation((k) => `cfg:${k}`);
   spies.isValidObjectIdSpy.mockReturnValue(true);
@@ -173,6 +174,34 @@ beforeEach(async () => {
 
 function mockRes() {
   return { send: vi.fn(), json: vi.fn() };
+}
+
+function makeCombinedAggregations(overrides = {}) {
+  return {
+    unique_ads: { value: 0 },
+    yesterdayAds: { unique_ads: { value: 0 } },
+    todayAds: { unique_ads: { value: 0 } },
+    lastWeekAds: { unique_ads: { value: 0 } },
+    lastMonthAds: { unique_ads: { value: 0 } },
+    lastYearAds: { unique_ads: { value: 0 } },
+    countries: { buckets: [] },
+    impressions: { total_imp: { value: 0 }, imp_count: { value: 0 } },
+    popularity: { total_pop: { value: 0 }, pop_count: { value: 0 } },
+    budget: { sum_avg_budget: { value: 0 }, budget_count: { value: 0 } },
+    ...overrides,
+  };
+}
+
+function mockMsearchForAllClients(responseFactory = () => makeCombinedAggregations()) {
+  Object.values(spies.esClient).forEach((client) => {
+    client.msearch.mockImplementation(async (request) => ({
+      responses: request.body
+        .filter((_, index) => index % 2 === 1)
+        .map((query, index) => ({
+          aggregations: responseFactory({ request, query, index }),
+        })),
+    }));
+  });
 }
 
 describe("dashboardService > getCountry", () => {
@@ -1009,27 +1038,14 @@ describe("dashboardService > getCompetitorsCount", () => {
 
 describe("dashboardService > getCompetitorsCountNew", () => {
   it("drops unsupported country buckets and keeps the country whitelist on the ES query", async () => {
-    const searchCalls = [];
-    Object.values(spies.esClient).forEach((c) => {
-      c.search.mockImplementation((req) => {
-        searchCalls.push(req);
-        return Promise.resolve({
-          hits: { total: { value: 12 } },
-          aggregations: {
-            impressions: { total_imp: { value: 100 }, imp_count: { value: 10 } },
-            popularity: { total_pop: { value: 50 }, pop_count: { value: 5 } },
-            budget: { sum_avg_budget: { value: 30 }, budget_count: { value: 3 } },
-            countries: {
-              buckets: [
-                { key: "india", doc_count: 3 },
-                { key: "turkiye", doc_count: 7 },
-              ],
-            },
-          },
-        });
-      });
-      c.count.mockResolvedValue({ count: 12 });
-    });
+    mockMsearchForAllClients(() => makeCombinedAggregations({
+      countries: {
+        buckets: [
+          { key: "india", doc_count: 3 },
+          { key: "turkiye", doc_count: 7 },
+        ],
+      },
+    }));
 
     const res = mockRes();
     await svc.getCompetitorsCountNew({ body: { competitors: ["Acme"] } }, res);
@@ -1037,8 +1053,9 @@ describe("dashboardService > getCompetitorsCountNew", () => {
     const data = res.send.mock.calls[0][0].body.data.Acme;
     expect(data.uniqueCountries).toEqual(["india"]);
 
-    const countryAggCall = searchCalls.find((req) => req?.body?.aggs?.countries);
-    const filterTerms = (countryAggCall?.body?.query?.bool?.filter || [])
+    const facebookRequest = spies.esClient.server1.msearch.mock.calls[0][0];
+    const combinedQuery = facebookRequest.body[1];
+    const filterTerms = (combinedQuery?.query?.bool?.filter || [])
       .flatMap((clause) => Object.values(clause.terms || {}))
       .flat();
     expect(filterTerms).toEqual(expect.arrayContaining(["india", "India"]));
@@ -1145,31 +1162,120 @@ describe("dashboardService > getCompetitorsCountNew", () => {
     expect(res.send).toHaveBeenCalled();
   });
 
-  it("uses the builder-style per-word advertiser matcher for multi-word competitors", async () => {
-    const searchCalls = [];
-    const esResponse = {
-      hits: { total: { value: 1 } },
-      aggregations: {
-        unique_ads: { value: 1 },
-        countries: { buckets: [] },
-        impressions: { total_imp: { value: 0 }, imp_count: { value: 0 } },
-        popularity: { total_pop: { value: 0 }, pop_count: { value: 0 } },
-        budget: { sum_avg_budget: { value: 0 }, budget_count: { value: 0 } },
-      },
+  it("combines supported metrics and includes Google counts without unsupported metric fields", async () => {
+    const byIndex = {
+      search_mix: { count: 2, today: 1, impressionTotal: 100, impressionCount: 2, popularityTotal: 80, popularityCount: 2, budgetTotal: 20, budgetCount: 2 },
+      instagram_search_mix: { count: 3, today: 2, impressionTotal: 180, impressionCount: 3, popularityTotal: 150, popularityCount: 3, budgetTotal: 60, budgetCount: 3 },
+      google_ads_data_v2: { count: 4, today: 3, impressionTotal: 280, impressionCount: 4, popularityTotal: 240, popularityCount: 4, budgetTotal: 120, budgetCount: 4 },
     };
-    Object.values(spies.esClient).forEach((c) => {
-      c.search.mockImplementation((req) => {
-        searchCalls.push(req);
-        return Promise.resolve(esResponse);
+    mockMsearchForAllClients(({ request, query }) => {
+      const values = byIndex[request.index];
+      const metricAggregations = query.aggs.impressions ? {
+        impressions: {
+          total_imp: { value: values.impressionTotal },
+          imp_count: { value: values.impressionCount },
+        },
+        popularity: {
+          total_pop: { value: values.popularityTotal },
+          pop_count: { value: values.popularityCount },
+        },
+        budget: {
+          sum_avg_budget: { value: values.budgetTotal },
+          budget_count: { value: values.budgetCount },
+        },
+      } : {
+        impressions: undefined,
+        popularity: undefined,
+        budget: undefined,
+      };
+      return makeCombinedAggregations({
+        unique_ads: { value: values.count },
+        todayAds: { unique_ads: { value: values.today } },
+        countries: { buckets: [{ key: "india", doc_count: values.count }] },
+        ...metricAggregations,
       });
-      c.count.mockResolvedValue({ count: 1 });
     });
+
+    const res = mockRes();
+    await svc.getCompetitorsCountNew({ body: { competitors: ["Acme"] } }, res);
+
+    const data = res.send.mock.calls[0][0].body.data.Acme;
+    expect(data.competitorsCount).toBe(9);
+    expect(data.todayAdsCount).toBe(6);
+    expect(data.platformCompetitorCount).toEqual({ facebook: 2, instagram: 3, google: 4 });
+    expect(data.countryCounts.india).toBe(9);
+    expect(data.averageImpression).toBe(55);
+    expect(data.averagePopularity).toBe(45);
+    expect(data.averageBudget).toBe(15);
+    expect(data.totalBudget).toBe(80);
+
+    for (const client of [spies.esClient.server1, spies.esClient.server2]) {
+      const request = client.msearch.mock.calls[0][0];
+      expect(request.body).toHaveLength(2);
+      expect(request.maxConcurrentSearches).toBe(4);
+      expect(request.maxConcurrentShardRequests).toBe(2);
+      expect(request.body[1].aggs).toEqual(expect.objectContaining({
+        unique_ads: expect.any(Object),
+        countries: expect.any(Object),
+        todayAds: expect.any(Object),
+        impressions: expect.any(Object),
+        popularity: expect.any(Object),
+        budget: expect.any(Object),
+      }));
+    }
+
+    const googleAggregations = spies.esClient.server3.msearch.mock.calls[0][0].body[1].aggs;
+    expect(googleAggregations).toEqual(expect.objectContaining({
+      unique_ads: expect.any(Object),
+      countries: expect.any(Object),
+      todayAds: expect.any(Object),
+    }));
+    expect(googleAggregations).not.toHaveProperty("impressions");
+    expect(googleAggregations).not.toHaveProperty("popularity");
+    expect(googleAggregations).not.toHaveProperty("budget");
+  });
+
+  it("chunks large competitor lists without exceeding the configured ES 6.8 batch size", async () => {
+    mockMsearchForAllClients();
+    const competitors = Array.from({ length: 26 }, (_, index) => `Competitor ${index}`);
+
+    const res = mockRes();
+    await svc.getCompetitorsCountNew({ body: { competitors } }, res);
+
+    expect(spies.esClient.server1.msearch).toHaveBeenCalledTimes(2);
+    expect(spies.esClient.server1.msearch.mock.calls[0][0].body).toHaveLength(50);
+    expect(spies.esClient.server1.msearch.mock.calls[1][0].body).toHaveLength(2);
+    expect(Object.keys(res.send.mock.calls[0][0].body.data)).toHaveLength(26);
+  });
+
+  it("uses the legacy implementation only when the restart-time rollback switch is disabled", async () => {
+    spies.configGetSpy.mockImplementation((key) =>
+      key === "COMPETITOR_STATS_USE_MSEARCH" ? false : undefined,
+    );
+    vi.resetModules();
+    ({ default: svc } = await import("../../../core/Dashboard/dashboardService.js"));
+
+    Object.values(spies.esClient).forEach((client) => {
+      client.search.mockResolvedValue({ aggregations: {} });
+      client.count.mockResolvedValue({ count: 0 });
+    });
+
+    const res = mockRes();
+    await svc.getCompetitorsCountNew({ body: { competitors: ["Acme"] } }, res);
+
+    expect(spies.esClient.server1.msearch).not.toHaveBeenCalled();
+    expect(spies.esClient.server1.search).toHaveBeenCalled();
+    expect(res.send.mock.calls[0][0].body.status).toBe("success");
+  });
+
+  it("uses the builder-style per-word advertiser matcher for multi-word competitors", async () => {
+    mockMsearchForAllClients();
 
     const res = mockRes();
     await svc.getCompetitorsCountNew({ body: { competitors: ["Cotton On"] } }, res);
 
-    expect(searchCalls.length).toBeGreaterThan(0);
-    const firstOwnerClause = searchCalls[0]?.body?.query?.bool?.must?.[0];
+    const facebookRequest = spies.esClient.server1.msearch.mock.calls[0][0];
+    const firstOwnerClause = facebookRequest.body[1]?.query?.bool?.must?.[0];
     const phraseBranch = firstOwnerClause?.bool?.should?.[0];
 
     expect(phraseBranch?.bool?.must?.length).toBe(2);
@@ -1189,42 +1295,34 @@ describe("dashboardService > getCompetitorsCountNew", () => {
     expect(res.send).toHaveBeenCalled();
   });
 
-  it("dedupCount catch fallback fires when cardinality search rejects but count succeeds (lines 183-184)", async () => {
-    // Only reject the search calls that target dedupCount (unique_ads aggregation).
-    // Other search calls (countries terms aggregation) still resolve so the outer
-    // try/catch doesn't swallow the request.
-    Object.values(spies.esClient).forEach((c) => {
-      c.search.mockImplementation((req) => {
-        const aggs = req?.body?.aggs;
-        if (aggs?.unique_ads) {
-          return Promise.reject(new Error("cardinality-down"));
-        }
-        return Promise.resolve({ hits: { total: { value: 0 } }, aggregations: { countries: { buckets: [] } } });
-      });
-      c.count.mockResolvedValue({ count: 7 });
+  it("keeps healthy networks when one msearch subsearch fails", async () => {
+    mockMsearchForAllClients(() => makeCombinedAggregations({
+      unique_ads: { value: 7 },
+    }));
+    spies.esClient.server2.msearch.mockResolvedValueOnce({
+      responses: [{ error: { type: "search_phase_execution_exception" } }],
     });
+
     const res = mockRes();
     await svc.getCompetitorsCountNew({ body: { competitors: ["Acme"] } }, res);
-    // count was used as the dedupCount fallback for the per-platform counts
-    expect(Object.values(spies.esClient).some((c) => c.count.mock.calls.length > 0)).toBe(true);
-    expect(res.send).toHaveBeenCalled();
+
+    const data = res.send.mock.calls[0][0].body.data.Acme;
+    expect(data.platformCompetitorCount).toEqual({ facebook: 7, instagram: 0, google: 7 });
+    expect(data.competitorsCount).toBe(14);
   });
 
-  it("dedupCount fallback: count() returns {} → `r?.count || 0` falsy fires (line 184)", async () => {
-    // Search rejects → catch block. count() returns object without `count` key
-    // so `r?.count` is undefined → `|| 0` fallback hits the right operand.
-    Object.values(spies.esClient).forEach((c) => {
-      c.search.mockImplementation((req) => {
-        if (req?.body?.aggs?.unique_ads) {
-          return Promise.reject(new Error("cardinality-down"));
-        }
-        return Promise.resolve({ hits: { total: { value: 0 } }, aggregations: { countries: { buckets: [] } } });
-      });
-      c.count.mockResolvedValue({ /* no count key → r.count = undefined */ });
-    });
+  it("keeps healthy networks when one whole msearch batch rejects", async () => {
+    mockMsearchForAllClients(() => makeCombinedAggregations({
+      unique_ads: { value: 5 },
+    }));
+    spies.esClient.server3.msearch.mockRejectedValueOnce(new Error("google-down"));
+
     const res = mockRes();
     await svc.getCompetitorsCountNew({ body: { competitors: ["Acme"] } }, res);
-    expect(res.send).toHaveBeenCalled();
+
+    const data = res.send.mock.calls[0][0].body.data.Acme;
+    expect(data.platformCompetitorCount).toEqual({ facebook: 5, instagram: 5, google: 0 });
+    expect(data.competitorsCount).toBe(10);
   });
 });
 
@@ -1598,24 +1696,15 @@ describe("dashboardService > remaining branch coverage", () => {
   });
 
   it("getCompetitorsCountNewInternal keeps raw country buckets for click-throughs", async () => {
-    Object.values(spies.esClient).forEach((c) => {
-      c.search.mockResolvedValue({
-        hits: { total: { value: 0 } },
-        aggregations: {
-          impressions: { total_imp: { value: 0 }, imp_count: { value: 0 } },
-          popularity: { total_pop: { value: 0 }, pop_count: { value: 0 } },
-          budget: { sum_avg_budget: { value: 0 }, budget_count: { value: 0 } },
-          countries: {
-            buckets: [
-              { key: "india", doc_count: 5 },
-              { key: "all", doc_count: 3 },
-              { key: "turkiye", doc_count: 2 },
-            ],
-          },
-        },
-      });
-      c.count.mockResolvedValue({ count: 0 });
-    });
+    mockMsearchForAllClients(() => makeCombinedAggregations({
+      countries: {
+        buckets: [
+          { key: "india", doc_count: 5 },
+          { key: "all", doc_count: 3 },
+          { key: "turkiye", doc_count: 2 },
+        ],
+      },
+    }));
 
     const r = await svc.getCompetitorsCountNewInternal(["Acme"]);
     const buckets = r.Acme.countryCounts || {};

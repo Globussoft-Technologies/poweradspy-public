@@ -136,6 +136,50 @@ const SUPPORTED_COUNTRY_INFO = (() => {
 
 const getSupportedCountryInfo = () => SUPPORTED_COUNTRY_INFO;
 
+// Elasticsearch 6.8 supports these _msearch controls. Keep conservative
+// defaults so one large project cannot flood a cluster's search thread pool;
+// deployments can tune them in config/localDev.json after observing timings.
+function getPositiveIntegerConfig(key, fallback, max) {
+  try {
+    const value = Number(config.get(key));
+    if (Number.isInteger(value) && value > 0) return Math.min(value, max);
+  } catch (_) {
+    // node-config throws when an optional key is absent; use the safe default.
+  }
+  return fallback;
+}
+
+function getBooleanConfig(key, fallback) {
+  try {
+    const value = config.get(key);
+    if (value === true || value === "true") return true;
+    if (value === false || value === "false") return false;
+  } catch (_) {
+    // node-config throws when an optional key is absent; use the safe default.
+  }
+  return fallback;
+}
+
+const COMPETITOR_MSEARCH_BATCH_SIZE = getPositiveIntegerConfig(
+  "COMPETITOR_STATS_MSEARCH_BATCH_SIZE",
+  25,
+  100,
+);
+const COMPETITOR_MSEARCH_MAX_CONCURRENT_SEARCHES = getPositiveIntegerConfig(
+  "COMPETITOR_STATS_MSEARCH_MAX_CONCURRENT_SEARCHES",
+  4,
+  20,
+);
+const COMPETITOR_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS = getPositiveIntegerConfig(
+  "COMPETITOR_STATS_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS",
+  2,
+  20,
+);
+const COMPETITOR_STATS_USE_MSEARCH = getBooleanConfig(
+  "COMPETITOR_STATS_USE_MSEARCH",
+  true,
+);
+
 function countryFieldForIndex(index, countryField) {
   return index === NETWORK_INDEXES.google || countryField.endsWith('.keyword')
     ? countryField
@@ -2272,6 +2316,378 @@ async insertpaidSearch(req,res){
     }
 
   async getCompetitorsCountNew(req, res) {
+    if (!COMPETITOR_STATS_USE_MSEARCH) {
+      return this.getCompetitorsCountNewLegacy(req, res);
+    }
+    return this.getCompetitorsCountNewMsearch(req, res);
+  }
+
+  /**
+   * Elasticsearch 6.8 optimized competitor hydration.
+   *
+   * One subsearch scans each competitor/network combination once and computes
+   * counts, date buckets, countries and numeric metrics together. Subsearches
+   * are transported in bounded _msearch chunks, reducing the old endpoint's
+   * repeated ES round trips while retaining per-network partial results.
+   */
+  async getCompetitorsCountNewMsearch(req, res) {
+    const startedAt = Date.now();
+    try {
+      const input = req?.body?.competitors;
+      if (!input) {
+        return res.send(Response.validationFailResp("Missing competitors in request body", ""));
+      }
+
+      const isArray = Array.isArray(input);
+      const competitors = isArray ? input : [input];
+      const uniqueCompetitors = [...new Set(competitors.map((name) => String(name)))];
+      const supportedCountryInfo = await getSupportedCountryInfo();
+
+      const getRange = (duration) => {
+        let start;
+        let end;
+        if (duration === "yesterday") {
+          start = nowIST().subtract(1, "day").startOf("day");
+          end = nowIST().subtract(1, "day").endOf("day");
+        } else if (duration === "today") {
+          start = nowIST().startOf("day");
+          end = nowIST();
+        } else if (duration === "week") {
+          start = nowIST().subtract(7, "days").startOf("day");
+          end = nowIST().subtract(1, "day").endOf("day");
+        } else {
+          start = nowIST().subtract(1, duration).startOf(duration);
+          end = nowIST().subtract(1, duration).endOf(duration);
+        }
+        return {
+          isoStart: start.format("YYYY-MM-DD HH:mm:ss"),
+          isoEnd: end.format("YYYY-MM-DD HH:mm:ss"),
+        };
+      };
+
+      const ranges = {
+        yesterday: getRange("yesterday"),
+        today: getRange("today"),
+        lastWeek: getRange("week"),
+        lastMonth: getRange("month"),
+        lastYear: getRange("year"),
+      };
+
+      const networkConfigs = [
+        {
+          network: "facebook",
+          index: NETWORK_INDEXES.facebook,
+          countryField: COUNTRY_FIELD_BY_INDEX[NETWORK_INDEXES.facebook],
+          dateField: "facebook_ad.last_seen",
+          impressionField: "facebook_ad.impression",
+          popularityField: "facebook_ad.popularity.current",
+          budgetField: "facebook.averagebudget",
+        },
+        {
+          network: "instagram",
+          index: NETWORK_INDEXES.instagram,
+          countryField: COUNTRY_FIELD_BY_INDEX[NETWORK_INDEXES.instagram],
+          dateField: "instagram_ad.last_seen",
+          impressionField: "instagram_ad.impression",
+          popularityField: "instagram_ad.popularity.current",
+          budgetField: "instagram.averagebudget",
+        },
+        {
+          network: "google",
+          index: NETWORK_INDEXES.google,
+          countryField: COUNTRY_FIELD_BY_INDEX[NETWORK_INDEXES.google],
+          dateField: "last_seen",
+          // Google ads do not provide the FB/IG-derived engagement and budget
+          // fields. Omitting those aggregations also prevents a mapping drift
+          // from failing an otherwise valid Google count/date/country search.
+          supportsMetrics: false,
+        },
+      ];
+
+      const blankPlatformStats = () => ({
+        averageImpression: 0,
+        averagePopularity: 0,
+        averageBudget: 0,
+        totalBudget: 0,
+      });
+      const makeAccumulator = () => ({
+        totals: {
+          competitorsCount: 0,
+          yesterdayAdsCount: 0,
+          todayAdsCount: 0,
+          lastWeekAdsCount: 0,
+          lastMonthAdsCount: 0,
+          lastYearAdsCount: 0,
+          platformCompetitorCount: { facebook: 0, instagram: 0, google: 0 },
+          countryCounts: {},
+        },
+        byPlatform: {
+          facebook: blankPlatformStats(),
+          instagram: blankPlatformStats(),
+          google: blankPlatformStats(),
+        },
+      });
+      const accumulators = Object.fromEntries(
+        uniqueCompetitors.map((competitor) => [competitor, makeAccumulator()]),
+      );
+
+      const cardinality = (field) => ({
+        cardinality: { field, precision_threshold: 40000 },
+      });
+
+      const buildSearchBody = (cfg, competitor) => {
+        const { filter: mediaFilters, mustNot } = nasClausesFor(cfg.index);
+        const countryClause = buildCountryFilterClause(
+          cfg.index,
+          cfg.countryField,
+          supportedCountryInfo,
+        );
+        const filter = countryClause ? [...mediaFilters, countryClause] : mediaFilters;
+        const dateAggregations = Object.fromEntries(
+          Object.entries(ranges).map(([label, { isoStart, isoEnd }]) => [
+            `${label}Ads`,
+            {
+              filter: {
+                bool: {
+                  must: [
+                    { range: { [cfg.dateField]: { gte: isoStart, lte: isoEnd } } },
+                    { exists: { field: cfg.dateField } },
+                  ],
+                },
+              },
+              aggs: { unique_ads: cardinality(AD_ID_FIELD_BY_INDEX[cfg.index]) },
+            },
+          ]),
+        );
+        const metricAggregations = cfg.supportsMetrics === false ? {} : {
+          impressions: {
+            filter: { exists: { field: cfg.impressionField } },
+            aggs: {
+              total_imp: { sum: { field: cfg.impressionField } },
+              imp_count: { value_count: { field: cfg.impressionField } },
+            },
+          },
+          popularity: {
+            filter: { exists: { field: cfg.popularityField } },
+            aggs: {
+              total_pop: { sum: { field: cfg.popularityField, missing: 0 } },
+              pop_count: { value_count: { field: cfg.popularityField } },
+            },
+          },
+          budget: {
+            filter: { exists: { field: cfg.budgetField } },
+            aggs: {
+              // Budget is a calculated proxy: sum the per-ad averagebudget.
+              sum_avg_budget: { sum: { field: cfg.budgetField } },
+              budget_count: { value_count: { field: cfg.budgetField } },
+            },
+          },
+        };
+
+        return {
+          size: 0,
+          query: {
+            bool: {
+              must: [buildOwnerClause(cfg.index, competitor)],
+              ...(filter.length && { filter }),
+              ...(mustNot.length && { must_not: mustNot }),
+            },
+          },
+          aggs: {
+            unique_ads: cardinality(AD_ID_FIELD_BY_INDEX[cfg.index]),
+            countries: {
+              terms: {
+                field: countryFieldForIndex(cfg.index, cfg.countryField),
+                size: 1000,
+              },
+            },
+            ...dateAggregations,
+            ...metricAggregations,
+          },
+        };
+      };
+
+      const mergeNetworkResponse = (cfg, competitor, response) => {
+        const accumulator = accumulators[competitor];
+        const aggregations = response?.aggregations || {};
+        const count = aggregations.unique_ads?.value || 0;
+        accumulator.totals.platformCompetitorCount[cfg.network] += count;
+        accumulator.totals.competitorsCount += count;
+
+        for (const label of Object.keys(ranges)) {
+          accumulator.totals[`${label}AdsCount`] +=
+            aggregations[`${label}Ads`]?.unique_ads?.value || 0;
+        }
+
+        for (const bucket of aggregations.countries?.buckets || []) {
+          if (!bucket?.key) continue;
+          const key = String(bucket.key).toLowerCase();
+          if (!isSupportedCountryKey(key, supportedCountryInfo)) continue;
+          accumulator.totals.countryCounts[key] =
+            (accumulator.totals.countryCounts[key] || 0) + (bucket.doc_count || 0);
+        }
+
+        const impressions = aggregations.impressions || {};
+        const popularity = aggregations.popularity || {};
+        const budget = aggregations.budget || {};
+        const impressionCount = impressions.imp_count?.value || 0;
+        const popularityCount = popularity.pop_count?.value || 0;
+        const budgetCount = budget.budget_count?.value || 0;
+        const totalBudget = budget.sum_avg_budget?.value || 0;
+
+        accumulator.byPlatform[cfg.network] = {
+          averageImpression: impressionCount > 0
+            ? (impressions.total_imp?.value || 0) / impressionCount
+            : 0,
+          averagePopularity: popularityCount > 0
+            ? (popularity.total_pop?.value || 0) / popularityCount
+            : 0,
+          averageBudget: budgetCount > 0 ? totalBudget / budgetCount : 0,
+          totalBudget,
+        };
+      };
+
+      const networkTimings = {};
+      let failedSubsearches = 0;
+
+      // Networks live on independent clusters. Run one bounded job per network;
+      // chunks inside a network stay sequential to cap request and response size.
+      await Promise.all(networkConfigs.map(async (cfg) => {
+        const serverEntry = Object.entries(this.esServers)
+          .find(([, serverData]) => serverData.indexes.includes(cfg.index));
+        const networkStartedAt = Date.now();
+
+        if (!serverEntry) {
+          failedSubsearches += uniqueCompetitors.length;
+          networkTimings[cfg.network] = {
+            ms: 0,
+            batches: 0,
+            failed: uniqueCompetitors.length,
+          };
+          logger.error(`[getCompetitorsCountNew] no ES server configured for ${cfg.network}`);
+          return;
+        }
+
+        const [serverName] = serverEntry;
+        const client = this.esClient[serverName];
+        let batches = 0;
+        let networkFailures = 0;
+
+        for (
+          let offset = 0;
+          offset < uniqueCompetitors.length;
+          offset += COMPETITOR_MSEARCH_BATCH_SIZE
+        ) {
+          const chunk = uniqueCompetitors.slice(
+            offset,
+            offset + COMPETITOR_MSEARCH_BATCH_SIZE,
+          );
+          const body = chunk.flatMap((competitor) => [
+            {},
+            buildSearchBody(cfg, competitor),
+          ]);
+          batches += 1;
+
+          try {
+            const result = await client.msearch({
+              index: cfg.index,
+              maxConcurrentSearches: COMPETITOR_MSEARCH_MAX_CONCURRENT_SEARCHES,
+              maxConcurrentShardRequests: COMPETITOR_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS,
+              body,
+            });
+            const responses = result?.responses || [];
+
+            chunk.forEach((competitor, index) => {
+              const response = responses[index];
+              if (!response || response.error) {
+                failedSubsearches += 1;
+                networkFailures += 1;
+                logger.error(
+                  `[getCompetitorsCountNew] ${cfg.network} subsearch failed for one competitor`,
+                  response?.error || "missing msearch response",
+                );
+                return;
+              }
+              mergeNetworkResponse(cfg, competitor, response);
+            });
+          } catch (error) {
+            failedSubsearches += chunk.length;
+            networkFailures += chunk.length;
+            logger.error(
+              `[getCompetitorsCountNew] ${cfg.network} msearch batch failed; returning partial data`,
+              error,
+            );
+          }
+        }
+
+        networkTimings[cfg.network] = {
+          ms: Date.now() - networkStartedAt,
+          batches,
+          failed: networkFailures,
+        };
+      }));
+
+      const getValidAverage = (values) => {
+        const positiveValues = values.filter((value) => value > 0);
+        return positiveValues.length
+          ? Number(
+            (positiveValues.reduce((sum, value) => sum + value, 0) /
+              positiveValues.length).toFixed(2),
+          )
+          : 0;
+      };
+
+      const finalResults = Object.fromEntries(uniqueCompetitors.map((competitor) => {
+        const { totals, byPlatform } = accumulators[competitor];
+        const platformStats = Object.values(byPlatform);
+        return [competitor, {
+          ...totals,
+          uniqueCountries: Object.entries(totals.countryCounts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name]) => name),
+          averageImpression: getValidAverage(
+            platformStats.map((stats) => stats.averageImpression),
+          ),
+          averagePopularity: getValidAverage(
+            platformStats.map((stats) => stats.averagePopularity),
+          ),
+          averageBudget: getValidAverage(
+            platformStats.map((stats) => stats.averageBudget),
+          ),
+          totalBudget: Number(
+            platformStats
+              .reduce((sum, stats) => sum + (stats.totalBudget || 0), 0)
+              .toFixed(2),
+          ),
+        }];
+      }));
+
+      logger.info("[getCompetitorsCountNew] ES 6.8 msearch completed", {
+        competitors: uniqueCompetitors.length,
+        totalMs: Date.now() - startedAt,
+        failedSubsearches,
+        batchSize: COMPETITOR_MSEARCH_BATCH_SIZE,
+        maxConcurrentSearches: COMPETITOR_MSEARCH_MAX_CONCURRENT_SEARCHES,
+        maxConcurrentShardRequests: COMPETITOR_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS,
+        networks: networkTimings,
+      });
+
+      return res.send(
+        Response.userSuccessResp(
+          "Counts fetched successfully",
+          isArray ? finalResults : finalResults[String(input)],
+        ),
+      );
+    } catch (error) {
+      logger.error("[getCompetitorsCountNew] ES 6.8 msearch failed:", error);
+      return res.send(Response.userFailResp("Internal server error", error));
+    }
+  }
+
+  // Retained as an explicit config-controlled rollback path for production.
+  // It must not run after a failed msearch request, because that would duplicate
+  // expensive ES work; switching strategies requires a service restart.
+  async getCompetitorsCountNewLegacy(req, res) {
     try {
       const input = req?.body?.competitors;
       if (!input) {
