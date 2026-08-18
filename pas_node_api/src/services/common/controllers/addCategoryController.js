@@ -34,16 +34,17 @@ const RECENT_ADS_SETTLE_SECONDS = Number.isSafeInteger(parsedRecentSettleSeconds
 
 // SQL is the insertion-time source of truth. Several platform ES mappings do not
 // index created_date (Instagram intentionally omits it), so last_seen/first_seen
-// must not be substituted for the actual database insertion time.
+// must not be substituted for the actual database insertion time. LinkedIn is the
+// one exception here: its row insertion timestamp is stored as created_at.
 const RECENT_SQL_CONFIG = {
-  facebook:  { table: 'facebook_ad' },
-  instagram: { table: 'instagram_ad' },
-  youtube:   { table: 'youtube_ad' },
-  google:    { table: 'google_text_ad' },
-  native:    { table: 'native_ad' },
-  linkedin:  { table: 'linkedin_ad' },
-  reddit:    { table: 'reddit_ad' },
-  pinterest: { table: 'pinterest_ad' },
+  facebook:  { table: 'facebook_ad',  timeField: 'created_date' },
+  instagram: { table: 'instagram_ad', timeField: 'created_date' },
+  youtube:   { table: 'youtube_ad',   timeField: 'created_date' },
+  google:    { table: 'google_text_ad', timeField: 'created_date' },
+  native:    { table: 'native_ad',    timeField: 'created_date' },
+  linkedin:  { table: 'linkedin_ad',  timeField: 'created_at' },
+  reddit:    { table: 'reddit_ad',    timeField: 'created_date' },
+  pinterest: { table: 'pinterest_ad', timeField: 'created_date' },
 };
 
 // Keep the validator aligned with the SQL table map so adding a network only
@@ -1182,7 +1183,7 @@ async function getRecentAdsForAiMeta(req, res) {
   if (body.checkpoint === null) {
     const startFrom = parseUtcTimestamp(body.start_from);
     if (!startFrom) return recentFeedError(res, 400, 'INVALID_START_FROM', 'start_from must be a valid ISO-8601 UTC timestamp on the first request', requestId);
-    // Legacy created_date columns commonly have one-second precision. Round the
+    // Legacy SQL timestamp columns commonly have one-second precision. Round the
     // first watermark down so a DS timestamp such as .482Z cannot skip inserts
     // stored as the same second; the conservative replay is safe for DS dedupe.
     const inclusiveStart = new Date(Math.floor(Date.parse(startFrom) / 1000) * 1000).toISOString();
@@ -1204,6 +1205,7 @@ async function getRecentAdsForAiMeta(req, res) {
   }
 
   const sqlConfig = RECENT_SQL_CONFIG[platform];
+  const sqlTimeField = sqlConfig.timeField || 'created_date';
   const pageField = cfg.descIdField || cfg.idField;
   const esIndex = cfg.service === 'native' && service.db.elastic.indexName ? service.db.elastic.indexName : cfg.index;
   const wanted = body.limit + 1;
@@ -1231,10 +1233,10 @@ async function getRecentAdsForAiMeta(req, res) {
       // "Incorrect arguments to mysqld_stmt_execute", so inline this
       // validated scan size just like the other pagination controllers.
       const sqlRows = await service.db.sql.query(
-        `SELECT id, DATE_FORMAT(created_date, '%Y-%m-%d %H:%i:%s.%f') AS inserted_at FROM ${sqlConfig.table}
-         WHERE created_date <= ?
-           AND (created_date > ? OR (created_date = ? AND id > ?))
-         ORDER BY created_date ASC, id ASC
+        `SELECT id, DATE_FORMAT(${sqlTimeField}, '%Y-%m-%d %H:%i:%s.%f') AS inserted_at FROM ${sqlConfig.table}
+         WHERE ${sqlTimeField} <= ?
+           AND (${sqlTimeField} > ? OR (${sqlTimeField} = ? AND id > ?))
+         ORDER BY ${sqlTimeField} ASC, id ASC
          LIMIT ${scanSize}`,
         [mysqlUtcTimestamp(availableThrough), mysqlUtcTimestamp(scanCursor.insertedAt), mysqlUtcTimestamp(scanCursor.insertedAt), scanCursor.id],
       );
@@ -1245,7 +1247,7 @@ async function getRecentAdsForAiMeta(req, res) {
       const positions = new Map();
       for (const sqlRow of sqlRows) {
         const insertedAt = canonicalSqlTimestamp(sqlRow.inserted_at);
-        if (!insertedAt) throw new Error(`Invalid created_date for ${platform} id=${sqlRow.id}`);
+        if (!insertedAt) throw new Error(`Invalid ${sqlTimeField} for ${platform} id=${sqlRow.id}`);
         positions.set(String(sqlRow.id), { insertedAt, id: String(sqlRow.id) });
       }
       const lastSqlRow = sqlRows[sqlRows.length - 1];

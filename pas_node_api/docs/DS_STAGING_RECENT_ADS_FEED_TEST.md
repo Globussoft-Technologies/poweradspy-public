@@ -64,6 +64,9 @@ Platform-specific checks:
 
 - **Google:** `id` is the numeric/internal cursor and `ad_id` is the public Google
   identifier accepted by the AI-Meta POST API. Report both values.
+- **LinkedIn:** the recent-feed SQL cursor comes from `linkedin_ad.created_at`
+  (not `created_date`); report the returned `id`, `ad_id`, and `inserted_at`
+  exactly as the backend emits them.
 - **Native:** report `native_creative_type`, `image_url_original`, and `ad_image`.
   For IMAGE or TEXT ads with no NAS image, confirm the existing original-image
   fallback is preserved. If no image exists, usable ad text or a clear

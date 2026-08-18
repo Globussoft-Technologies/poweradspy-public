@@ -607,12 +607,12 @@ describe("addCategoryController > getRecentAdsForAiMeta", () => {
   });
 
   it.each([
-    ["linkedin", "linkedin_ad"],
-    ["reddit", "reddit_ad"],
-  ])("accepts %s and queries %s", async (platform, table) => {
+    ["linkedin", "linkedin_ad", "created_at"],
+    ["reddit", "reddit_ad", "created_date"],
+  ])("accepts %s and queries %s", async (platform, table, timeField) => {
     const sqlQuery = vi.fn(async (query, params) => {
       expect(query).toContain(`FROM ${table}`);
-      expect(query).toContain("created_date <= ?");
+      expect(query).toContain(`${timeField} <= ?`);
       expect(query).toMatch(/LIMIT\s+\d+/);
       expect(params).toHaveLength(4);
       return [];

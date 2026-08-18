@@ -7,26 +7,29 @@ manage DS workers.
 
 ## Cursor and insertion source
 
-Every platform uses the `created_date` column and immutable `id` primary key from
-its SQL ad table. The tables are `facebook_ad`, `instagram_ad`, `youtube_ad`,
+Every platform uses its SQL insertion timestamp and immutable `id` primary key
+from the ad table. Most tables use `created_date`, while LinkedIn uses
+`created_at`. The tables are `facebook_ad`, `instagram_ad`, `youtube_ad`,
 `google_text_ad`, `native_ad`, `linkedin_ad`, `reddit_ad`, and `pinterest_ad`.
-SQL is necessary because not every search index carries `created_date`.
+SQL is necessary because not every search index carries the insertion timestamp.
 Elasticsearch then applies the shared `getDisplayableMediaFilter` dashboard
 rules and the same response-normalization and SQL-fallback helpers as
 `getDescriptionDetails`.
 
 The checkpoint is an opaque Base64URL payload plus HMAC-SHA256 signature. It is
-bound to a platform and stores `(created_date, id)`, token version, and issue
-time. Tokens are accepted for seven days. Set `RECENT_ADS_CHECKPOINT_SECRET` to a
-stable secret shared by all API instances; the configured JWT secret is used as
-a deployment fallback. Rotating that secret invalidates outstanding checkpoints.
+bound to a platform and stores `(insertion_timestamp, id)`, token version, and
+issue time. Tokens are accepted for seven days. Set `RECENT_ADS_CHECKPOINT_SECRET`
+to a stable secret shared by all API instances; the configured JWT secret is
+used as a deployment fallback. Rotating that secret invalidates outstanding
+checkpoints.
 
 Production `EXPLAIN FORMAT=JSON` checks on the originally validated platforms
-confirmed that the existing `created_date` keyset plan is already effective:
-`range` access through the secondary index, primary-key `id` ordering supplied
-by InnoDB, and no filesort. LinkedIn and Reddit now use the same feed path and
-should be re-EXPLAINed in staging or production if you want a fresh index check
-for those two newly enabled networks.
+confirmed that the existing `created_date` keyset plan is already effective on
+the `created_date` networks: `range` access through the secondary index,
+primary-key `id` ordering supplied by InnoDB, and no filesort. LinkedIn now
+uses the same feed logic with `created_at`, and Reddit uses `created_date`; if
+you want a fresh production-style validation, re-run the network-specific
+`EXPLAIN` for those two enabled networks.
 
 ## Request example
 
@@ -44,14 +47,14 @@ On later requests, send the durably committed `next_checkpoint`; `start_from` is
 ignored. `wait_seconds` is validated in the `0-15` range, but this initial backend
 implementation returns immediately rather than holding a long poll.
 The first watermark is conservatively rounded down to the start of its UTC second
-because legacy `created_date` columns may not retain milliseconds; DS may receive
-a harmless same-second replay but cannot lose an ad at rollout.
+because legacy insertion-timestamp columns may not retain milliseconds; DS may
+receive a harmless same-second replay but cannot lose an ad at rollout.
 
-By default, rows become feed candidates 60 seconds after `created_date`. This
-settling interval prevents a committed SQL row from being skipped while its ES
-document is still indexing or awaiting refresh. Configure it with
-`RECENT_ADS_SETTLE_SECONDS`; reducing it to zero is not recommended until production
-SQL-to-ES visibility latency has been measured.
+By default, rows become feed candidates 60 seconds after the platform's SQL
+insertion timestamp. This settling interval prevents a committed SQL row from
+being skipped while its ES document is still indexing or awaiting refresh.
+Configure it with `RECENT_ADS_SETTLE_SECONDS`; reducing it to zero is not
+recommended until production SQL-to-ES visibility latency has been measured.
 
 Each request scans at most 2,000 SQL candidates by default (`RECENT_ADS_MAX_SCAN_ROWS`,
 minimum 500). This caps one call at four 500-ID eligibility lookups. Eligibility
