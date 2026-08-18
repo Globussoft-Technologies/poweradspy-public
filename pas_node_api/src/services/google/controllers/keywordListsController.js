@@ -154,9 +154,27 @@ async function addKeywordsToList(req, db, logger) {
     const wanted = [...new Set(keywords.map((k) => String(k).trim().toLowerCase()).filter(Boolean))];
     if (!wanted.length) return { code: 400, message: 'No valid keywords provided' };
 
-    const placeholders = wanted.map(() => '?').join(', ');
+    // Bare column in WHERE — same fix as keywordImportController.js's
+    // identical query: wrapping the indexed `keyword` column in
+    // LOWER(TRIM(...)) defeats its index, forcing a full ~42M-row scan
+    // (this exact pattern measured at 80.7s elsewhere in this codebase —
+    // see KEYWORDS_EXPLORER_MANIFEST.md §6 gotcha 4). `wanted` is already
+    // trim()+toLowerCase()'d in JS above, and the column's own collation
+    // (utf8mb3_unicode_ci) is already case-insensitive, so no wrap is
+    // needed on either side to match correctly. The SELECT's own
+    // LOWER(TRIM(keyword)) is unaffected — that only runs on the already-
+    // matched result rows, not the whole table.
+    //
+    // CONVERT(? USING utf8mb3) COLLATE utf8mb3_unicode_ci on the param side —
+    // gtk.keyword is utf8mb3 but a bound JS string arrives on the connection's
+    // own charset (typically utf8mb4); comparing them bare can throw "Illegal
+    // mix of collations" (the same real incident keywordImportController.js's
+    // comment documents). CONVERT alone isn't enough either — it applies
+    // utf8mb3's DEFAULT collation (utf8mb3_general_ci), not the column's
+    // actual utf8mb3_unicode_ci, so the explicit COLLATE is required too.
+    const placeholders = wanted.map(() => 'CONVERT(? USING utf8mb3) COLLATE utf8mb3_unicode_ci').join(', ');
     const matched = await db.sql.query(
-      `SELECT id, LOWER(TRIM(keyword)) AS k FROM google_text_keywords WHERE LOWER(TRIM(keyword)) IN (${placeholders})`,
+      `SELECT id, LOWER(TRIM(keyword)) AS k FROM google_text_keywords WHERE keyword IN (${placeholders})`,
       wanted
     );
     const foundSet = new Set(matched.map((m) => m.k));

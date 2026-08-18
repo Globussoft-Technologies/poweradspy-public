@@ -113,6 +113,26 @@ async function getKeywordsExplorer(req, db, logger) {
   if (p.country) { where.push('JSON_CONTAINS(ksu.countries, JSON_QUOTE(?))'); params.push(p.country); }
   if (p.include) { where.push('ksu.keyword LIKE ?'); params.push(`%${p.include}%`); }
   if (p.exclude) { where.push('ksu.keyword NOT LIKE ?'); params.push(`%${p.exclude}%`); }
+
+  // Always-on garbage filter — not a user-facing filter, a data-quality floor.
+  // Two junk patterns observed in production: (1) mojibake — a keyword that's
+  // mostly literal '?' characters (an upstream charset/encoding conversion
+  // failure replaced real characters with '?', e.g. "?????? ?????????"), and
+  // (2) mangled URL/domain fragments starting with a literal '.' (e.g.
+  // ".business.site roof north carolina") — never a real search term a human
+  // typed. Both patterns only ever showed ads_total:1 with every other column
+  // empty — single stray crawl artifacts, not real keywords. Conservative on
+  // purpose: only excludes keyword text no legitimate search term could ever
+  // take, never touches volume/recency, so it can't hide a real low-volume
+  // keyword.
+  where.push("ksu.keyword NOT LIKE '.%'");
+  where.push("(LENGTH(ksu.keyword) - LENGTH(REPLACE(ksu.keyword, '?', ''))) < LENGTH(REPLACE(ksu.keyword, ' ', '')) * 0.5");
+  // Some keywords have first_seen populated, some don't (varies per row, not
+  // tied to keyword-text quality — e.g. "verisure"/"top mba college" are real
+  // keywords but only some rows carry a date) — a row with no first_seen is
+  // an incomplete rollup entry, not a useful browse result. Hide it rather
+  // than showing a blank date.
+  where.push('ksu.first_seen IS NOT NULL');
   if (p.first_seen_after) { where.push('ksu.first_seen >= ?'); params.push(p.first_seen_after); }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

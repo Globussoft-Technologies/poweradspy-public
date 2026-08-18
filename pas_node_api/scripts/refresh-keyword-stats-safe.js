@@ -1132,4 +1132,17 @@ module.exports = {
   run,
   growthPct,
   pct,
+  // Exposed for jobs/competitionScoreCron.js — competition_score is a
+  // percentile rank over the WHOLE keyword_stats_unique table (a row's
+  // score depends on every other row), so it can't be computed per-row
+  // incrementally; recomputeCompetitionScores() itself is a fast, cheap
+  // set-based operation on this table (~500k-1M rows — the small per-
+  // keyword-TEXT rollup, NOT the 42M-row ad corpus). The reason it was
+  // previously stuck at effectively-never-runs wasn't its own cost — it's
+  // that run()/finalizeCycle() above only call it once a FULL ad-corpus
+  // sweep cycle completes, and that sweep can take a very long time against
+  // production's real row counts. Decoupling it onto its own frequent,
+  // independent schedule (see the cron) fixes that without touching this
+  // script's own batch-sweep cadence at all.
+  recomputeCompetitionScores,
 };

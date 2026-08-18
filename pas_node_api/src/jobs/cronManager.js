@@ -17,6 +17,7 @@ const logger = require('../logger');
 const { parseSchedule } = require('./parseSchedule');
 const { runActiveCountSnapshot } = require('./activeCountSnapshotJob');
 const { runKeywordStatsRefresh } = require('../services/google/jobs/refreshKeywordStats');
+const { runCompetitionScoreRefresh } = require('../services/google/jobs/competitionScoreCron');
 const { runAdmobEsOutbox } = require('../services/admob/jobs/admobEsOutboxJob');
 
 const log = logger.createChild('cron-manager');
@@ -37,6 +38,13 @@ const REGISTRY = {
       recomputeScores: jobCfg.recomputeScores !== false,
     }),
   admobEsOutbox: (jobCfg) => runAdmobEsOutbox(jobCfg),
+  // Decoupled from keywordStatsRefresh's own ad-corpus sweep completion —
+  // see competitionScoreCron.js's doc comment for why that gating left
+  // competition_score empty for most keywords. Only touches the small
+  // keyword_stats_unique rollup (~500k-1M rows), so it's cheap enough to
+  // run frequently without competing with the (much heavier) ad-corpus
+  // sweep for SQL/ES capacity.
+  keywordCompetitionScore: () => runCompetitionScoreRefresh(),
 };
 
 /**

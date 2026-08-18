@@ -121,7 +121,31 @@ async function importKeywordsFile(req, db, logger) {
   }
 
   try {
-    const placeholders = wanted.map(() => '?').join(', ');
+    // WHERE compares the BARE column (gtk.keyword IN (...)) — same gotcha
+    // already diagnosed and fixed once in this codebase for this exact
+    // table (see KEYWORDS_EXPLORER_MANIFEST.md §6 gotcha 4): wrapping the
+    // indexed column in LOWER(TRIM(CONVERT(...))) silently defeats the
+    // `keyword`/`keyword_2` indexes, forcing a full ~42M-row scan on every
+    // import — measured there at 80.7s for one page; this endpoint hit the
+    // same wall (60s+, reverse-proxy 502) for a SINGLE keyword. The
+    // original wrap existed for a real reason (gtk.keyword is utf8mb3;
+    // params arrive utf8mb4, and MySQL can't always coerce that
+    // automatically — "Conversion from utf8mb4_unicode_ci into
+    // utf8mb3_unicode_ci impossible for parameter"), so that charset-safety
+    // still needs to happen — just on the PARAMETER side (CONVERT(? USING
+    // utf8mb3) per placeholder) instead of the column side. Casting a bound
+    // value costs nothing per-row; casting the column costs a full scan.
+    // `wanted` is already trim()+toLowerCase()'d in JS (see `cleaned`
+    // above) and the column's own collation (utf8mb3_unicode_ci) is already
+    // case-insensitive, so no LOWER()/TRIM() is needed on either side to
+    // match correctly.
+    // CONVERT(? USING utf8mb3) alone only fixes the CHARSET — it silently
+    // applies that charset's DEFAULT collation (utf8mb3_general_ci), not
+    // gtk.keyword's actual utf8mb3_unicode_ci. Comparing two different
+    // collations of the same charset throws "Illegal mix of collations"
+    // just as surely as the original charset mismatch did — the explicit
+    // COLLATE here is required, not decorative.
+    const placeholders = wanted.map(() => 'CONVERT(? USING utf8mb3) COLLATE utf8mb3_unicode_ci').join(', ');
     const matched = await db.sql.query(
       `SELECT gtk.keyword, ANY_VALUE(gtk.country) AS country,
               ANY_VALUE(ksu.sample_keyword_id) AS keyword_id,
@@ -130,17 +154,13 @@ async function importKeywordsFile(req, db, logger) {
               MAX(ksu.competition_score) AS competition_score, ANY_VALUE(ksu.category) AS category,
               MIN(ksu.first_seen) AS first_seen, MAX(ksu.last_seen) AS last_seen
        FROM google_text_keywords gtk
-       -- gtk.keyword is utf8mb3 but the bound params arrive as utf8mb4; MySQL can't
-       -- coerce a utf8mb4 param (e.g. an emoji/accented char in an uploaded file)
-       -- into the utf8mb3 column collation ("Conversion from utf8mb4_unicode_ci into
-       -- utf8mb3_unicode_ci impossible for parameter" → 500). Convert the column up
-       -- to utf8mb4 (a lossless superset) and pin the comparison collation to the
-       -- params' so both sides match — a non-matching keyword just falls to not_found.
-       -- keyword_stats_unique already stores keyword text deduped/lowercased, so it's
-       -- joined by normalized text instead of keyword_id (see keyword_stats_unique_schema.sql).
+       -- JOIN side untouched — keyword_stats_unique is a small (one-row-per-
+       -- keyword) table, so this wrap's cost is bounded by however many gtk
+       -- rows the WHERE above already matched, not the full corpus. Not the
+       -- bottleneck; left as-is to keep this fix minimal and low-risk.
        LEFT JOIN keyword_stats_unique ksu
          ON ksu.keyword = LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci
-       WHERE LOWER(TRIM(CONVERT(gtk.keyword USING utf8mb4))) COLLATE utf8mb4_unicode_ci IN (${placeholders})
+       WHERE gtk.keyword IN (${placeholders})
        -- A keyword string can map to several google_text_keywords rows (one per
        -- country); dedupe by keyword text so a searched/imported keyword shows once.
        GROUP BY gtk.keyword`,
