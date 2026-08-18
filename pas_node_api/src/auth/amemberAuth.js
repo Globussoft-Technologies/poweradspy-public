@@ -19,6 +19,7 @@ const { generateToken } = require('../middleware/auth');
 const config = require('../config');
 const logger = require('../logger');
 const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
+const { ensureOnboardingLoginState } = require('../services/common/helpers/onboardingLoginState');
 
 const log = logger.createChild('amember-auth');
 const router = Router();
@@ -331,18 +332,23 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     // Step 6: Compute subscription type (mirrors PHP max key logic)
     const userSubscriptionType = computeSubscriptionType(subscriptions);
 
-    // Step 6b: Onboarding status — additive, fail-open (see resolveNeedsOnboarding above).
-    const needsOnboarding = await resolveNeedsOnboarding(parseInt(userId, 10), added);
+    // Step 6b: Persist a local first-login footprint for onboarding failover.
+    // This is additive/fail-open: login must keep working even if this write fails.
+    const userIdNum = parseInt(userId, 10);
+    await ensureOnboardingLoginState(userIdNum, email, added);
+
+    // Step 6c: Onboarding status — additive, fail-open (see resolveNeedsOnboarding above).
+    const needsOnboarding = await resolveNeedsOnboarding(userIdNum, added);
 
     log.info('User authenticated', { userId, username, userSubscriptionType, expiryDate, platformAccess, needsOnboarding });
 
     // Step 7: Build JWT payload with all user data
     const payload = {
-      id: parseInt(userId, 10),
+      id: userIdNum,
       email,
       name,
       login: username,
-      user_id: parseInt(userId, 10),
+      user_id: userIdNum,
       userSubscriptionType,
       subscriptions,
       expiry_date: expiryDate,

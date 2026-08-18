@@ -8,6 +8,12 @@ const ANALYTICS_PLATFORM_TITLES = {
 
 const KNOWN_PLAN_TIERS = ['free', 'starter', 'basic', 'standard', 'pro', 'premium', 'enterprise'];
 
+// Guest/share links carry an opaque access token as the second path segment
+// (e.g. /guest/6f93d3826ebc2327180eaa156aa4e150). Swap it for a fixed, human
+// -readable label before it ever reaches GA4.
+const GUEST_ROUTE_LABELS = { guest: 'GuestPage', share: 'LandingPage' };
+const GUEST_ROUTE_TITLES = { guest: 'Guest Page', share: 'Shared Landing Page' };
+
 export function resolveGa4RuntimeEnvironment(hostname = typeof window !== 'undefined'
   ? window.location.hostname
   : '') {
@@ -168,6 +174,28 @@ export function trackAnalyticsPageView(network) {
   const pagePath = `/${platform}/adanalytics`;
   const pageLocation = `${window.location.origin}${pagePath}`;
   const pageTitle = `Ad Analytics for ${ANALYTICS_PLATFORM_TITLES[platform] || platform}`;
+  window.gtag('set', { page_path: pagePath, page_location: pageLocation, page_title: pageTitle });
+  window.gtag('event', 'page_view', { page_location: pageLocation, page_path: pagePath, page_title: pageTitle });
+  return true;
+}
+
+/**
+ * Same idea as trackAnalyticsPageView(), but for the /guest/{token} and
+ * /share/{token} entry routes. Without this, GA4's default page_location
+ * (document.location.href) would carry the raw access token into every
+ * event fired while the visitor is on that page — search, filters,
+ * feature_blocked, etc. — not just an initial page_view hit. Call this once
+ * up front so the token never appears; every subsequent event on the page
+ * inherits the sanitized page_path/page_location via gtag('set', ...).
+ */
+export function trackGuestRoutePageView(pathname = typeof window !== 'undefined' ? window.location.pathname : '/') {
+  if (!canTrackWithGa4()) return false;
+  const routeType = String(pathname).split('/').filter(Boolean)[0];
+  const label = GUEST_ROUTE_LABELS[routeType];
+  if (!label) return false;
+  const pagePath = `/${routeType}/${label}`;
+  const pageLocation = `${window.location.origin}${pagePath}`;
+  const pageTitle = GUEST_ROUTE_TITLES[routeType];
   window.gtag('set', { page_path: pagePath, page_location: pageLocation, page_title: pageTitle });
   window.gtag('event', 'page_view', { page_location: pageLocation, page_path: pagePath, page_title: pageTitle });
   return true;

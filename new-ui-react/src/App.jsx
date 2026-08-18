@@ -14,7 +14,7 @@ import {
   resolveProjectsAccess,
 } from "./utils/planEntitlement";
 import { getDashboardAdNavigation } from "./utils/dashboardAdNavigation";
-import { classifyError, getFilterCountBucket, getNetworkContext, trackAdAction, trackAnalyticsPageView, trackProductEvent } from "./utils/googleAnalytics";
+import { classifyError, getFilterCountBucket, getNetworkContext, trackAdAction, trackAnalyticsPageView, trackGuestRoutePageView, trackProductEvent } from "./utils/googleAnalytics";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import {
@@ -247,6 +247,16 @@ const App = () => {
   const dispatch = useDispatch();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Guest/share links carry an opaque token in the URL (/guest/{token},
+  // /share/{token}). Override GA4's page_path/page_location to a clean,
+  // human-readable value *before* any other event can fire on this page —
+  // otherwise the token leaks into GA as the default page_location.
+  useEffect(() => {
+    if (location.pathname.startsWith('/guest/') || location.pathname.startsWith('/share/')) {
+      trackGuestRoutePageView(location.pathname);
+    }
+  }, [location.pathname]);
 
   // ── Auth Guard ────────────────────────────────────────────────────────
   const {
