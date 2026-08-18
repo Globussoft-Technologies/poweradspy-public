@@ -149,15 +149,26 @@ export function trackProductEvent(eventName, details = {}) {
   return true;
 }
 
-/** Send an aggregate GA page view without changing the application's URL. */
+/**
+ * Send an aggregate GA page view without changing the application's URL.
+ *
+ * The app pushes a real, ID-bearing URL (e.g. /facebook/134052) via
+ * history.pushState when an ad opens, so document.location.href — the value
+ * GA4 auto-attaches as page_location to *every* event by default — carries
+ * that ID from this point on. A one-off `event: page_view` override only
+ * fixes the single page_view hit; any event sent right after (trackAdAction,
+ * trackProductEvent, ...) would still pick up the live, ID-bearing URL.
+ * `gtag('set', ...)` persists instead of firing a hit, so it overrides
+ * page_location/page_path for this event *and* every subsequent one, until
+ * the next trackAnalyticsPageView() call changes it again.
+ */
 export function trackAnalyticsPageView(network) {
   if (!canTrackWithGa4()) return false;
   const platform = String(network || 'unknown').toLowerCase();
   const pagePath = `/${platform}/adanalytics`;
-  window.gtag('event', 'page_view', {
-    page_location: `${window.location.origin}${pagePath}`,
-    page_path: pagePath,
-    page_title: `Ad Analytics for ${ANALYTICS_PLATFORM_TITLES[platform] || platform}`,
-  });
+  const pageLocation = `${window.location.origin}${pagePath}`;
+  const pageTitle = `Ad Analytics for ${ANALYTICS_PLATFORM_TITLES[platform] || platform}`;
+  window.gtag('set', { page_path: pagePath, page_location: pageLocation, page_title: pageTitle });
+  window.gtag('event', 'page_view', { page_location: pageLocation, page_path: pagePath, page_title: pageTitle });
   return true;
 }

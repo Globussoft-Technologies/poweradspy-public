@@ -36,8 +36,15 @@ const stripNulls = (obj) =>
 /**
  * PHP getDataForLander(): up to 50 ads at redirect_status, joined to their users'
  * current country (group_concat). Mirrors the Laravel query exactly.
+ *
+ * `redirectStatus` accepts either a single status or an array of statuses (an array
+ * becomes a SQL `IN (...)`). The service calls this once per status in priority order
+ * (PENDING, then IN_PROCESSING only if PENDING is empty) rather than passing an array,
+ * so one status's queue is never diluted by the other within the same 50-row batch.
  */
 async function getDataForLander(exec, redirectStatus) {
+  const statuses = Array.isArray(redirectStatus) ? redirectStatus : [redirectStatus];
+  const placeholders = statuses.map(() => '?').join(',');
   const sql = `
     SELECT facebook_ad_meta_data.facebook_ad_id AS id,
            facebook_ad_meta_data.ad_url,
@@ -48,11 +55,11 @@ async function getDataForLander(exec, redirectStatus) {
       LEFT JOIN facebook_users    ON facebook_users.id = facebook_ad_users.user_id
       LEFT JOIN country_only      ON country_only.id = facebook_users.current_country_id
       LEFT JOIN facebook_ad       ON facebook_ad.id = facebook_ad_meta_data.facebook_ad_id
-     WHERE facebook_ad_meta_data.redirect_status = ?
+     WHERE facebook_ad_meta_data.redirect_status IN (${placeholders})
      GROUP BY facebook_ad_meta_data.facebook_ad_id
      ORDER BY facebook_ad_meta_data.facebook_ad_id DESC
      LIMIT 50`;
-  return rows(await exec.query(sql, [redirectStatus]));
+  return rows(await exec.query(sql, statuses));
 }
 
 /** PHP getMetaDataDetails(): the screenshot/zip/status snapshot used by insertHtml. */

@@ -6,10 +6,14 @@
  * Faithful port of BlackHatController@getAdwithCountryCode (api app).
  *
  * Flow:
- *   1. Fetch up to 50 ads at redirect_status = 0 (with their users' countries).
+ *   1. Fetch up to 50 ads at redirect_status = 0 (PENDING), with their users' countries.
+ *      PENDING has priority: only when the pending queue is fully drained (0 rows) does
+ *      it fall back to redirect_status = 2 (IN_PROCESSING) — ads already claimed by a
+ *      worker that crashed/never finished — so those get re-served instead of stranded,
+ *      but never ahead of brand-new pending ones.
  *   2. For each ad, check Elasticsearch (search_mix, match on facebook_ad.id):
- *        - present → set redirect_status = 2, resolve ISO country codes, emit the ad.
- *        - absent  → set redirect_status = 5 (not found).
+ *        - present → set redirect_status = 2 (IN_PROCESSING), resolve ISO country codes, emit the ad.
+ *        - absent  → set redirect_status = 5 (NOT_FOUND).
  *   3. Return { code, message, data, exe_time } — same shape as the PHP JSON.
  *
  * The ISO accumulator (`a`) is intentionally shared across ads to mirror the legacy
@@ -19,8 +23,13 @@
 const { searchIdQuery } = require('../insertion/esDocBuilder');
 const repo = require('./repository');
 
+// redirect_status values (facebook_ad_meta_data):
+//   0     = PENDING        — not claimed yet
+//   2     = IN_PROCESSING  — claimed (present in ES), handed off to a worker
+//   3, 4  = FOUND          — worker finished (set elsewhere, e.g. insertHtmlRedirectCountry)
+//   5     = NOT_FOUND      — absent from ES, dead-ended
 const PENDING = 0;
-const FOUND = 2;
+const IN_PROCESSING = 2;
 const NOT_FOUND = 5;
 
 function esHits(res) {
@@ -38,7 +47,13 @@ async function getAdwithCountryCode(db, log) {
       return { code: 401, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
     }
 
-    const ads = await repo.getDataForLander(sql, PENDING);
+    // PENDING has priority: only fall back to IN_PROCESSING (ads already claimed, e.g.
+    // by a worker that crashed mid-flight) once the pending queue is fully drained —
+    // never mix the two in the same batch.
+    let ads = await repo.getDataForLander(sql, PENDING);
+    if (!ads.length) {
+      ads = await repo.getDataForLander(sql, IN_PROCESSING);
+    }
 
     if (!ads.length) {
       return { code: 400, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
@@ -63,8 +78,8 @@ async function getAdwithCountryCode(db, log) {
         continue;
       }
 
-      // Present → mark in-progress.
-      await repo.updateMeta(sql, id, { redirect_status: FOUND });
+      // Present → mark in-processing.
+      await repo.updateMeta(sql, id, { redirect_status: IN_PROCESSING });
 
       const country = String(row.country || '').split(',').filter(Boolean);
       const userRows = await repo.getAdUserIds(sql, id);

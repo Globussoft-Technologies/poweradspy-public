@@ -37,6 +37,13 @@ const {
 
 const DEFAULT_YT_INDEX = ytNet?.database?.elastic?.index || process.env.YT_ELASTIC_INDEX || 'youtube_ads_data';
 
+// The "CJ Affiliate" filter option sends value "cj_affiliate" (matching its
+// UI label), but youtube_ads_data.affiliate_networks only ever stores the
+// short code "cj" — every other affiliate network's filter value already
+// matches what's stored (clickbank, maxbounty, shareasale, ...); this is the
+// one exception.
+const AFFILIATE_VALUE_MAP = { cj_affiliate: 'cj' };
+
 // Displayable-media gate — mirrors the UI's blocked-media filter so hits.total
 // equals what actually renders. Two branches:
 //   • VIDEO / DISCOVERY → must have a real thumbnail_url (not a placeholder/
@@ -339,7 +346,8 @@ class SearchMixQueryBuilder {
   _getAffiliateEnv() {
     const a = this._params.affiliate;
     if (!a || !a.length) return null;
-    return asFilter(matchFilter('affiliate_networks', a));
+    const normalized = a.map((v) => AFFILIATE_VALUE_MAP[v] || v);
+    return asFilter(matchFilter('affiliate_networks', normalized));
   }
 
   _getMarketPlatformEnv() {

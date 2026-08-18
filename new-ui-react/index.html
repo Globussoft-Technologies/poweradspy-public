@@ -28,7 +28,11 @@
         window.dataLayer = window.dataLayer || [];
         window.gtag = function gtag(){window.dataLayer.push(arguments);};
         window.gtag('js', new Date());
-        window.gtag('config', tagId);
+        // send_page_view: false — this is a single-page app, so the raw
+        // browser URL at script-load time can contain a dynamic ID
+        // (e.g. /pinterest/07184...). Page views are sent explicitly via
+        // trackAnalyticsPageView() with a clean, ID-free path instead.
+        window.gtag('config', tagId, { send_page_view: false });
 
         const script = document.createElement('script');
         script.async = true;
