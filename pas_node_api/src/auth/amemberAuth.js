@@ -18,8 +18,7 @@ const { Router } = require('express');
 const { generateToken } = require('../middleware/auth');
 const config = require('../config');
 const logger = require('../logger');
-const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
-const { ensureOnboardingLoginState } = require('../services/common/helpers/onboardingLoginState');
+const { resolveNeedsOnboarding, normalizeOnboardingMode } = require('../services/common/helpers/onboardingEligibility');
 
 const log = logger.createChild('amember-auth');
 const router = Router();
@@ -89,6 +88,55 @@ async function checkAmemberAccess(username) {
   }
 
   return response.json();
+}
+
+function extractAmemberUserRecord(data) {
+  if (!data) return null;
+  if (Array.isArray(data)) return data[0] || null;
+  if (data?.user && typeof data.user === 'object') return data.user;
+  if (data && typeof data === 'object') {
+    if (data['0'] && typeof data['0'] === 'object') return data['0'];
+    const firstNumericKey = Object.keys(data).find(key => /^\d+$/.test(key) && data[key] && typeof data[key] === 'object');
+    if (firstNumericKey) return data[firstNumericKey];
+  }
+  if (data && typeof data === 'object' && (data.user_id || data.login || data.email)) return data;
+  return null;
+}
+
+function buildAmemberUsersUrl(criteria, apiUrl, apiKey) {
+  const params = new URLSearchParams({ _key: apiKey });
+  if (criteria?.userId) {
+    params.set('_filter[user_id]', String(criteria.userId));
+  } else if (criteria?.username) {
+    params.set('_filter[login]', String(criteria.username));
+  } else {
+    throw new Error('aMember user lookup requires userId or username');
+  }
+  return `${apiUrl}users?${params.toString()}`;
+}
+
+async function fetchAmemberUser(criteria, apiUrl, apiKey, { timeoutMs = 1200 } = {}) {
+  try {
+    const url = buildAmemberUsersUrl(criteria, apiUrl, apiKey);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`aMember users API returned ${response.status}`);
+      }
+      const data = await response.json();
+      return extractAmemberUserRecord(data);
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (err) {
+    const lookup = criteria?.userId ? { userId: criteria.userId } : { username: criteria?.username };
+    const error = err?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : err.message;
+    log.warn('Failed to fetch aMember user details', { ...lookup, error });
+    return null;
+  }
 }
 
 /**
@@ -258,6 +306,11 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
 
     log.info('aMember login redirect received', { username, ip, referrer });
 
+    const shouldLookupUserCreatedAt = normalizeOnboardingMode(config.onboarding?.mode) === 'new_users';
+    const amUserPromise = shouldLookupUserCreatedAt
+      ? fetchAmemberUser({ username }, config.amember.apiUrl, config.amember.apiKey)
+      : null;
+
     // Step 2: Call aMember API to verify user + get subscriptions
     const amData = await checkAmemberAccess(username);
 
@@ -270,10 +323,19 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     const name = amData.name || '';
     const email = amData.email || '';
     const subscriptions = amData.subscriptions || {};
-    const added = amData.added || amData.created_at || amData.createdAt || null;
+    let added = amData.added || amData.created_at || amData.createdAt || null;
 
     if (!userId) {
       return res.status(401).json({ code: 401, message: 'User not found in aMember' });
+    }
+
+    if (!added) {
+      const amUser = amUserPromise
+        ? await amUserPromise
+        : await fetchAmemberUser({ userId }, config.amember.apiUrl, config.amember.apiKey);
+      if (!amUser?.user_id || Number(amUser.user_id) === Number(userId)) {
+        added = amUser?.added || amUser?.created_at || amUser?.createdAt || null;
+      }
     }
 
     // Step 3: Handle free plan — if has plan 20 + other plans, remove 20 (mirrors PHP)
@@ -332,12 +394,8 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
     // Step 6: Compute subscription type (mirrors PHP max key logic)
     const userSubscriptionType = computeSubscriptionType(subscriptions);
 
-    // Step 6b: Persist a local first-login footprint for onboarding failover.
-    // This is additive/fail-open: login must keep working even if this write fails.
+    // Step 6b: Onboarding status — additive, fail-open (see resolveNeedsOnboarding above).
     const userIdNum = parseInt(userId, 10);
-    await ensureOnboardingLoginState(userIdNum, email, added);
-
-    // Step 6c: Onboarding status — additive, fail-open (see resolveNeedsOnboarding above).
     const needsOnboarding = await resolveNeedsOnboarding(userIdNum, added);
 
     log.info('User authenticated', { userId, username, userSubscriptionType, expiryDate, platformAccess, needsOnboarding });

@@ -20,7 +20,6 @@ const planAccessService = require('../services/planAccess/planAccessService');
 const { overlayAiMetaLegacyDecision } = require('../services/planControl/legacyPlanAccessBridge');
 const { getCapabilityDecision } = require('../services/planControl/registries/routeClassification');
 const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
-const { ensureOnboardingLoginState } = require('../services/common/helpers/onboardingLoginState');
 
 const log = logger.createChild('auth');
 const router = Router();
@@ -46,7 +45,6 @@ router.post('/login',
   // ─── Dev test user (development only — bypasses DB) ──
   if (config.isDev && email === 'test@pas.dev' && password === 'Test@123') {
     const added = '2026-07-22';
-    await ensureOnboardingLoginState(281, 'test@pas.dev', added);
     const needsOnboarding = await resolveNeedsOnboarding(281, added);
     const payload = { id: 281, email: 'test@pas.dev', name: 'Test User', plan_id: 69, role: 'admin', added, needsOnboarding };
     const token = generateToken(payload);
@@ -87,7 +85,6 @@ router.post('/login',
     return res.status(401).json({ code: 401, message: 'Invalid email or password' });
   }
 
-  await ensureOnboardingLoginState(user.id, user.email, user.added);
   const needsOnboarding = await resolveNeedsOnboarding(user.id, user.added);
 
   // Build JWT payload (no sensitive data)

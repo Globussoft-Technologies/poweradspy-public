@@ -15,7 +15,8 @@ async function executeQuery(sql, params = []) {
 }
 
 class InstagramRepository {
-  // GET endpoint: fetch ads with redirect_status=0
+  // GET endpoint: fetch up to 100 ads at the given redirect_status
+  // (called with PENDING=0 first, falling back to IN_PROCESSING=2 when PENDING is drained).
   static async getDataForLander(status) {
     const sql = `
       SELECT

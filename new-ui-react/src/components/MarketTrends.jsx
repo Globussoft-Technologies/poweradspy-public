@@ -19,6 +19,7 @@ import gdnIcon from '../assets/gdn.png';
 import tiktokIcon from '../assets/tiktoklogo.jpg';
 import { SkeletonChartLine, SkeletonBarChart, SkeletonTableRows, FadeIn, ErrorRetry } from './shared/Skeleton';
 import PlanLockedSection from './shared/PlanLockedSection';
+import { trackProductEvent } from '../utils/googleAnalytics';
 
 /**
  * Market Trends — Google-Trends-style Explore/Compare for ad data (single file).
@@ -80,6 +81,13 @@ const NET_ICON = {
 const TERM_COLORS = ['#4285F4', '#DB4437', '#0F9D58', '#F4B400', '#AB47BC'];
 const TOP_TYPES = [{ v: 'advertiser', label: 'Advertisers' }, { v: 'cta', label: 'CTAs' }];
 const shortLabel = (v) => (typeof v === 'string' && v.length > 18 ? `${v.slice(0, 17)}…` : v);
+
+// Every Market Trends interaction reports under one GA4 event ('market_trend'),
+// classified by `action_name` — same pattern as trackAdAction()'s single
+// 'ad_action' event — so GA4 groups everything under one event and the
+// individual actions (advertiser_compare, network, export_csv, ...) show up
+// as breakdowns of it instead of as separate top-level events.
+const trackMarketTrend = (actionName, details = {}) => trackProductEvent('market_trend', { action_name: actionName, ...details });
 
 // Per-panel "which advertiser" toggle — shown on each panel in compare-mode so
 // it's clear (right there) whose data the chart shows. Controls a shared active
@@ -264,6 +272,13 @@ function TrendTable({ title, subtitle, info, columnLabel, valueLabel, rows, colo
 // Date filter — presets + a react-day-picker range calendar (no ad-type tabs).
 const toYMD = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const DATE_PRESETS = [['All time', 365], ['Last 7 days', 7], ['Last 30 days', 30], ['Last 90 days', 90]];
+// GA4 event name for each date-filter preset (used by MarketTrends' DateRangePicker).
+const DATE_FILTER_EVENTS = {
+  365: 'date_filter_all_time',
+  7: 'date_filter_last7days',
+  30: 'date_filter_last30days',
+  90: 'date_filter_last90days',
+};
 function DateRangePicker({ days, from, to, onPreset, onRange, onClear }) {
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState(undefined);
@@ -702,12 +717,22 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
 
   const addTerm = () => {
     const t = termInput.trim();
-    if (t && !terms.includes(t) && terms.length < 5) setTerms((p) => [...p, t]);
+    if (t && !terms.includes(t) && terms.length < 5) {
+      setTerms((p) => [...p, t]);
+      trackMarketTrend('advertiser_compare', { advertiser: t });
+    }
     setTermInput('');
   };
   const removeTerm = (t) => setTerms((p) => p.filter((x) => x !== t));
   const isAllNets = selected.length === AVAILABLE_NETWORKS.length;
-  const selectAll = () => setSelected(AVAILABLE_NETWORKS);
+  // action_name for a network selection IS the selected network name(s) — e.g.
+  // "facebook" or "google,facebook" — not a generic "network" label, so GA4's
+  // action_name breakdown reads directly as which network(s) got picked.
+  const netActionName = (list) => (list.length === AVAILABLE_NETWORKS.length ? 'all' : list.join(','));
+  const selectAll = () => {
+    setSelected(AVAILABLE_NETWORKS);
+    trackMarketTrend('all');
+  };
   // From "All" a click solos that network; after that clicks toggle (multi-select, min 1).
   // A network the plan doesn't include stays visible (never hidden — "not a hard
   // removal", same principle as LockedFeaturePreview) but clicking it opens the
@@ -715,9 +740,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
   const toggleNet = (n) => {
     if (!AVAILABLE_NETWORKS.includes(n)) { onNetworkRestricted?.(); return; }
     setSelected((prev) => {
-      if (prev.length === AVAILABLE_NETWORKS.length) return [n];
-      if (prev.includes(n)) return prev.length > 1 ? prev.filter((x) => x !== n) : prev;
-      return [...prev, n];
+      const next = prev.length === AVAILABLE_NETWORKS.length ? [n]
+        : prev.includes(n) ? (prev.length > 1 ? prev.filter((x) => x !== n) : prev)
+        : [...prev, n];
+      if (next !== prev) trackMarketTrend(netActionName(next));
+      return next;
     });
   };
 
@@ -748,6 +775,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     if (!kwUnsupported) { rows.push([], ['Top keywords'], ['keyword', 'ads']); keywords.forEach((k) => rows.push([k.keyword, k.count])); }
     downloadCsv(`market-trends-${days}d.csv`, rows);
   };
+  // Same CSV underneath, but the header button vs. the per-panel download icons
+  // (Top movers / Rising categories) are tracked as distinct GA4 events.
+  const exportCsvTracked = () => { trackMarketTrend('export_csv'); exportCsv(); };
+  const exportTopMovers = () => { trackMarketTrend('downlaoded_top_movers'); exportCsv(); };
+  const exportRisingCategories = () => { trackMarketTrend('downloaded_raising_categories'); exportCsv(); };
 
   return (
     <div className="flex-1 overflow-y-auto bg-theme-bg">
@@ -759,17 +791,21 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
             <h1 className="text-lg font-semibold text-white">Market Trends</h1>
             <p className="text-xs text-white/60">Compare advertisers &amp; networks over time, see where ads run and what's trending — on real ad data.</p>
           </div>
-          <button onClick={exportCsv} className="text-xs flex items-center gap-1.5 bg-white/5 hover:bg-white/10 rounded-lg px-3 py-1.5 text-white h-fit">
+          <button onClick={exportCsvTracked} className="text-xs flex items-center gap-1.5 bg-white/5 hover:bg-white/10 rounded-lg px-3 py-1.5 text-white h-fit">
             <Download size={13} /> Export CSV
           </button>
-          <select value={country} onChange={(e) => setCountry(e.target.value)}
+          <select value={country} onChange={(e) => {
+            const v = e.target.value;
+            setCountry(v);
+            if (v) trackMarketTrend('country_filter_applied', { country: v });
+          }}
             className="text-xs bg-theme-bg border border-theme-border rounded-lg px-3 py-1.5 text-white h-fit max-w-[150px]">
             <option value="">All countries</option>
             {countryOpts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <DateRangePicker days={days} from={from} to={to}
-            onPreset={(d) => { setDays(d); setFrom(''); setTo(''); }}
-            onRange={(f, t) => { setFrom(f); setTo(t); setDays('custom'); }}
+            onPreset={(d) => { setDays(d); setFrom(''); setTo(''); trackMarketTrend(DATE_FILTER_EVENTS[d] || 'date_filter_custom_date'); }}
+            onRange={(f, t) => { setFrom(f); setTo(t); setDays('custom'); trackMarketTrend('date_filter_custom_date', { from: f, to: t }); }}
             onClear={() => { setDays(30); setFrom(''); setTo(''); }} />
         </div>
 
@@ -955,7 +991,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                 emptyMsg={topUnsupported ? metaOnlyMsg : `No ${topType === 'cta' ? 'CTA' : 'advertiser'} data for ${metaNet} in this window.`}
                 onRowClick={(r) => drill(topType, r.label)}
                 onCompare={topType === 'advertiser' ? (r) => setTerms((p) => (p.includes(r.label) || p.length >= 5 ? p : [...p, r.label])) : undefined}
-                onExport={exportCsv}
+                onExport={exportTopMovers}
                 scope={<AdvScope terms={terms} activeTerm={topScope} onPick={setTopScope} />}
                 right={(
                   <div className="flex gap-1">
@@ -982,7 +1018,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                 note={risingUnsupported ? '' : risingNote}
                 emptyMsg={risingUnsupported ? metaOnlyMsg : `No category data ${termMode ? `for “${risingScope || 'the compared advertisers'}” ` : ''}in this window — category is only tagged on Facebook, Instagram, Native, Pinterest & Google.`}
                 onRowClick={(r) => drill('category', r.label)}
-                onExport={exportCsv}
+                onExport={exportRisingCategories}
                 scope={<AdvScope terms={terms} activeTerm={risingScope} onPick={setRisingScope} />} />
               </PlanLockedSection>
 

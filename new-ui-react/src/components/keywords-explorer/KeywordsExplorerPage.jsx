@@ -7,8 +7,28 @@ import KeywordListsPanel from "./KeywordListsPanel.jsx";
 import { Skeleton, SkeletonStatCard, FadeIn, ErrorRetry } from "../shared/Skeleton.jsx";
 import PlanLockedSection from "../shared/PlanLockedSection.jsx";
 import { useAuth } from "../../hooks/useAuth.jsx";
+import { trackProductEvent } from "../../utils/googleAnalytics";
 
 const PAGE_SIZE = 50;
+
+// Every Keywords Explorer interaction reports under one GA4 event
+// ('keyword_explorer'), classified by `action_name` — same pattern as
+// MarketTrends.jsx's 'market_trend' event — so GA4 groups everything under
+// one event and the individual actions (import_csv, explore_entire_db,
+// volume_filter, ...) show up as breakdowns of it.
+const trackKeywordExplorer = (actionName, details = {}) => trackProductEvent("keyword_explorer", { action_name: actionName, ...details });
+
+// Which filter-bar field each GA4 action_name covers — min/max of the same
+// range share one action_name (e.g. volume_min & volume_max both → volume_filter).
+const FILTER_ACTION_NAMES = {
+  volume_min: "volume_filter",
+  volume_max: "volume_filter",
+  competition_min: "competetion_filter",
+  competition_max: "competetion_filter",
+  growth_min: "growth_filter",
+  growth_max: "growth_filter",
+  category: "category_filter",
+};
 
 // Shimmer visibility, synced EXACTLY to `loading` — no delay — so it's
 // on-screen the instant a fetch starts, with no gap where a panel could fall
@@ -259,6 +279,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
     // otherwise clearing the text leaves the previous search's stale results on
     // screen with no obvious way back (the Search button used to just disable).
     if (!pasteText.trim()) { resetToDatabase(); return; }
+    trackKeywordExplorer("keyword_searched");
     setMode("search");
     setPage(1); // reset stale browse page so it doesn't show e.g. "Page 4 of 1"
     setImporting(true);
@@ -288,6 +309,30 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
     } finally {
       setImporting(false);
     }
+  };
+
+  // KeywordFilterBar now only calls onChange() once per deliberate Apply
+  // click (or Enter) — never per keystroke (see its own doc comment for why:
+  // live-as-you-type used to fire a backend request, AND a GA4 hit, on every
+  // single keystroke). Since this only ever fires on an already-"settled"
+  // action, tracking can just fire immediately here — no debounce/blur-flush
+  // machinery needed anymore to avoid a per-keystroke flood.
+  //
+  // Diffs the FULL merged filters object against the previous `filters`
+  // state to find which field(s) changed and tracks just those. Skips
+  // tracking on Clear (onChange({})), which isn't one of the tracked actions.
+  const handleFilterChange = (f) => {
+    if (Object.keys(f).length > 0) {
+      const keys = new Set([...Object.keys(filters), ...Object.keys(f)]);
+      for (const k of keys) {
+        if (FILTER_ACTION_NAMES[k] && (filters[k] ?? "") !== (f[k] ?? "")) {
+          trackKeywordExplorer(FILTER_ACTION_NAMES[k], { [k]: f[k] });
+        }
+      }
+    }
+    setFilters(f);
+    setPage(1);
+    setMode("browse");
   };
 
   const resetToDatabase = () => {
@@ -367,7 +412,12 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
               accept=".csv,.txt"
               className="hidden"
               disabled={busy}
-              onChange={(e) => { handleFileUpload(e.target.files?.[0]); e.target.value = ""; }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) trackKeywordExplorer("import_csv", { file_name: file.name });
+                handleFileUpload(file);
+                e.target.value = "";
+              }}
             />
             <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-full z-30 mt-2 whitespace-nowrap rounded-lg border border-theme-border bg-theme-surface px-2.5 py-1.5 text-[11px] font-semibold text-theme-text-secondary opacity-0 shadow-xl transition-opacity duration-150 group-hover/imp:opacity-100">
               Import CSV / TXT keywords
@@ -377,7 +427,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
           {/* Explore — right next to Import, near the search bar */}
           <button
             type="button"
-            onClick={resetToDatabase}
+            onClick={() => { trackKeywordExplorer("explore_entire_db"); resetToDatabase(); }}
             disabled={busy}
             aria-label="Explore entire database"
             className="group/exp relative flex-none inline-flex items-center justify-center rounded-full border border-theme-border bg-theme-card h-9 w-9 text-theme-text-secondary transition-colors hover:text-theme-text hover:bg-theme-text/[0.06] active:scale-95 disabled:opacity-50"
@@ -434,7 +484,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
                   Without this, changing/clearing a filter while a search result was shown
                   did nothing (the browse fetch is guarded to mode==='browse'), so e.g.
                   removing a Category left the list empty instead of restoring it. */}
-              <KeywordFilterBar filters={filters} onChange={(f) => { setFilters(f); setPage(1); setMode("browse"); }} />
+              <KeywordFilterBar filters={filters} onChange={handleFilterChange} />
             </div>
             </PlanLockedSection>
             <PlanLockedSection allowed={access.browse} title="Keyword table" onUpgrade={onUpgrade} className="mt-4">
