@@ -61,6 +61,12 @@ html, body {
   font-size: 14px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  /* Hard backstop — a wide table/chart deep inside the flex layout should
+     NEVER be able to widen the whole page (that's what .card-body's own
+     overflow-x:auto below is for, scoped to just that card). This
+     guarantees it regardless of any flexbox min-width sizing quirk
+     upstream. */
+  overflow-x: hidden;
 }
 
 .hidden { display: none !important; }
@@ -341,6 +347,12 @@ html, body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Flex items default to min-width:auto (their content's intrinsic
+     minimum), NOT 0 — a wide table anywhere inside can force this flex
+     item wider than its allotted space instead of being clipped/scrolled
+     by it, which is what actually let a wide table push the whole page
+     into horizontal scroll despite .card-body's own overflow-x:auto. */
+  min-width: 0;
 }
 
 .top-bar {
@@ -448,7 +460,9 @@ html, body {
   display: none;
   padding: 24px 28px;
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1;
+  min-width: 0;
 }
 
 .tab-content.active {

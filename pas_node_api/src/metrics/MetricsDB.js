@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
+const { getClientIp } = require('../utils/geoip');
 
 /**
  * MetricsDB - Lightweight, persistent SQLite database for application metrics.
@@ -110,7 +111,13 @@ class MetricsDB {
       endpoint: this._simplifyPath(req.originalUrl || req.url),
       status: req.res ? req.res.statusCode : 200, // Assuming available here if modified in middleware
       response_time: responseTime,
-      ip: req.ip || req.connection?.remoteAddress || 'unknown',
+      // getClientIp() checks cf-connecting-ip / x-forwarded-for / x-real-ip
+      // before falling back to req.ip — behind Cloudflare/a reverse proxy,
+      // plain req.ip can resolve to the proxy's own address instead of the
+      // real client, which is why a real public IP could show up nowhere
+      // in the IP Manager table (every row was being recorded under the
+      // proxy's IP instead).
+      ip: getClientIp(req) || 'unknown',
       timestamp: new Date().toISOString()
     });
 
@@ -127,7 +134,7 @@ class MetricsDB {
       method: req.method,
       url: req.originalUrl || req.url,
       status: res.statusCode,
-      ip: req.ip || req.connection?.remoteAddress || 'unknown',
+      ip: getClientIp(req) || 'unknown',
       timestamp: new Date().toISOString()
     });
     

@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const config = require('../config');
 const fs = require('fs');
 const path = require('path');
+const { getClientIp } = require('../utils/geoip');
 
 // ─── IP Blocklist ─────────────────────────────────────────
 let blockedIps = new Set();
@@ -55,7 +56,12 @@ if (_reloadTimer.unref) _reloadTimer.unref();
  * Middleware to reject requests from blocked IPs.
  */
 function ipBlocklistMiddleware(req, res, next) {
-  const clientIp = req.ip || req.connection.remoteAddress;
+  // getClientIp() (utils/geoip.js) checks cf-connecting-ip/x-forwarded-for/
+  // x-real-ip before falling back to req.ip — behind Cloudflare/a reverse
+  // proxy, plain req.ip can resolve to the proxy's own address, so a block
+  // entered for the real client IP would never match incoming requests
+  // (which all "arrive" as the proxy's IP under the old req.ip-only check).
+  const clientIp = getClientIp(req) || req.ip || req.connection.remoteAddress;
   if (blockedIps.has(clientIp)) {
     return res.status(403).json({
       code: 403,
@@ -92,7 +98,7 @@ const globalLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip || req.connection.remoteAddress,
+  keyGenerator: (req) => getClientIp(req) || req.ip || req.connection.remoteAddress,
   // Skip (exempt) everything EXCEPT the search/analytics endpoints above.
   skip: (req) => !RATE_LIMITED_PATHS.some((p) => req.path.includes(p)),
 });
