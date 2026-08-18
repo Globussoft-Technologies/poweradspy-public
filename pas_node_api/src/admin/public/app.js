@@ -1094,6 +1094,12 @@ function toggleIpRow(ip) {
   else expandedIpRows.add(ip);
   const tbody = document.getElementById('ip-stats-table');
   tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="10" class="muted">No IP data yet</td></tr>';
+  // Rebuilding the tbody from scratch (to show/hide the expanded detail
+  // row) resets every row's display style — that silently threw away
+  // whatever filterIpTable() had hidden, so clicking a row while a search
+  // was active made the full unfiltered list reappear even though the
+  // search box itself was untouched. Re-apply it after every rebuild.
+  filterIpTable();
 }
 
 async function loadIpStats() {
@@ -1108,6 +1114,7 @@ async function loadIpStats() {
 
     const tbody = document.getElementById('ip-stats-table');
     tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="10" class="muted">No IP data yet</td></tr>';
+    filterIpTable(); // re-apply an active search after this full rebuild too
   } catch (err) {
     showToast('Failed to load IP stats', 'error');
   }
