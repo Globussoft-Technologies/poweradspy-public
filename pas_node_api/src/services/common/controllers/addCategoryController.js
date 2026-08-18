@@ -1222,13 +1222,16 @@ async function getRecentAdsForAiMeta(req, res) {
       }
       const scanSize = Math.min(RECENT_SQL_SCAN_SIZE, remainingScanRows);
       const sqlStartedAt = Date.now();
+      // mysql2 prepared statements reject a bound LIMIT value with
+      // "Incorrect arguments to mysqld_stmt_execute", so inline this
+      // validated scan size just like the other pagination controllers.
       const sqlRows = await service.db.sql.query(
         `SELECT id, DATE_FORMAT(created_date, '%Y-%m-%d %H:%i:%s.%f') AS inserted_at FROM ${sqlConfig.table}
          WHERE created_date <= ?
            AND (created_date > ? OR (created_date = ? AND id > ?))
          ORDER BY created_date ASC, id ASC
-         LIMIT ?`,
-        [mysqlUtcTimestamp(availableThrough), mysqlUtcTimestamp(scanCursor.insertedAt), mysqlUtcTimestamp(scanCursor.insertedAt), scanCursor.id, scanSize],
+         LIMIT ${scanSize}`,
+        [mysqlUtcTimestamp(availableThrough), mysqlUtcTimestamp(scanCursor.insertedAt), mysqlUtcTimestamp(scanCursor.insertedAt), scanCursor.id],
       );
       sqlQueryMs += Date.now() - sqlStartedAt;
       if (!sqlRows.length) break;

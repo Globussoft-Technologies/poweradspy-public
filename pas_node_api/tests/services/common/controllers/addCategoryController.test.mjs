@@ -492,9 +492,11 @@ describe("addCategoryController > getRecentAdsForAiMeta", () => {
     const sqlQuery = vi.fn(async (query, params) => {
       if (query.includes("AS inserted_at FROM facebook_ad")) {
         expect(query).toContain("created_date <= ?");
-        expect(params).toHaveLength(5);
+        expect(query).toMatch(/LIMIT\s+\d+/);
+        expect(params).toHaveLength(4);
         const afterId = Number(params[3]);
-        return allRows.filter(row => row.id > afterId).slice(0, params[4]);
+        const scanSize = Number(query.match(/LIMIT\s+(\d+)/)?.[1] || 0);
+        return allRows.filter(row => row.id > afterId).slice(0, scanSize);
       }
       return [];
     });
@@ -628,7 +630,8 @@ describe("addCategoryController > getRecentAdsForAiMeta", () => {
     const sqlQuery = vi.fn(async (query, params) => {
       if (!query.includes("AS inserted_at FROM facebook_ad")) return [];
       const afterId = Number(params[3]);
-      return Array.from({ length: Number(params[4]) }, (_, index) => ({
+      const scanSize = Number(query.match(/LIMIT\s+(\d+)/)?.[1] || 0);
+      return Array.from({ length: scanSize }, (_, index) => ({
         id: afterId + index + 1,
         inserted_at: "2026-08-17 10:00:01.000000",
       }));
