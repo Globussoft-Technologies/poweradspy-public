@@ -1262,18 +1262,35 @@ html, body {
 
 .ip-detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 8px;
 }
 
 .ip-detail-endpoint {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 6px;
   font-size: 12px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Endpoint path can be long — truncate with ellipsis (full path is the
+   title= tooltip) instead of overflowing into the next grid cell. */
+.ip-detail-endpoint > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ip-detail-endpoint > span:last-child {
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 
 .pill {

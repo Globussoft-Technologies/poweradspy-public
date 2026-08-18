@@ -96,6 +96,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('lw-query-modal-close').addEventListener('click', () => {
     document.getElementById('lw-query-modal').classList.add('hidden');
   });
+  document.getElementById('lw-query-modal-copy').addEventListener('click', (e) => {
+    copyToClipboard(document.getElementById('lw-query-modal-text').textContent, e.currentTarget);
+  });
   document.getElementById('lw-query-modal').addEventListener('click', (e) => {
     if (e.target === document.getElementById('lw-query-modal')) {
       document.getElementById('lw-query-modal').classList.add('hidden');
@@ -472,6 +475,7 @@ async function loadMetrics() {
     setText('m-p95', `P95: ${data.responseTimes.p95} ms · P99: ${data.responseTimes.p99} ms`);
     setText('m-active-conn', data.requests.activeConnections);
     setText('m-errors', `Errors: ${data.errors.total}`);
+    setText('m-active-clients', data.requests.activeClients5m ?? '—');
     setText('m-cpu', data.server.loadAvg[0]);
     setText('m-cpus', `${data.server.cpuCount} cores`);
 
@@ -485,8 +489,13 @@ async function loadMetrics() {
     // Recent errors
     renderRecentErrors(data.errors.recent);
 
-    // Real-time trend charts — driven by `snapshots` (recorded every ~10s,
-    // see MetricsCollector._startSnapshotCollection), not a fabricated demo.
+    // Real-time trend charts. Memory: driven by `snapshots`, now
+    // singleton-owner-only (see MetricsCollector._startSnapshotCollection)
+    // so it's one coherent process's story. Throughput: driven by
+    // `data.throughput` — a direct bucketed COUNT(*) over the `requests`
+    // table (MetricsDB.getThroughputSeries), NOT a diff of the old
+    // per-worker snapshots.total_requests counter (that produced the
+    // random-looking sawtooth — see that method's doc comment for why).
     const snaps = data.snapshots || [];
     drawTimeChart('dash-chart-memory', [{
       label: 'Heap Used',
@@ -494,9 +503,9 @@ async function loadMetrics() {
       points: snaps.map((s) => ({ ts: new Date(s.timestamp).getTime(), value: (s.heap_used || 0) / 1048576 })),
     }], { formatValue: (v) => `${v.toFixed(0)}MB` });
     drawTimeChart('dash-chart-throughput', [{
-      label: 'Requests/tick',
+      label: 'Requests/10s',
       color: '#34d399',
-      points: computeThroughputSeries(snaps),
+      points: data.throughput || [],
     }], { formatValue: (v) => v.toFixed(0) });
 
     if (metricDetailOpen) renderMetricDetail(metricDetailOpen);
@@ -522,22 +531,6 @@ function fmtBytes(bytes) {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-// snapshots.total_requests is a cumulative since-startup counter — diffing
-// consecutive samples turns it into an actual per-tick throughput line,
-// which is what's worth looking at on a live dashboard (a cumulative count
-// only ever goes up and says nothing about "is traffic busy right now").
-function computeThroughputSeries(snapshots) {
-  const pts = [];
-  for (let i = 1; i < snapshots.length; i++) {
-    const prev = snapshots[i - 1], cur = snapshots[i];
-    pts.push({
-      ts: new Date(cur.timestamp).getTime(),
-      value: Math.max(0, (cur.total_requests || 0) - (prev.total_requests || 0)),
-    });
-  }
-  return pts;
-}
-
 // ─── Metric card click-to-expand ───────────────────────────
 // Every branch below reuses data already fetched by loadMetrics()/
 // loadWorkers() — no extra network round-trip on click.
@@ -561,7 +554,7 @@ function renderMetricDetail(key) {
 
   const workerRow = (w, valueHtml) => `
     <div class="ip-detail-endpoint">
-      <span>${w.workerId ? `Worker ${escapeHtml(w.workerId)}` : `PID ${w.pid}`}${w.alive ? '' : ' <span class="pill pill-warning">stale</span>'}</span>
+      <span>${escapeHtml(workerLabel(w))}${w.alive ? '' : ' <span class="pill pill-warning">stale</span>'}</span>
       <span class="mono">${valueHtml}</span>
     </div>`;
 
@@ -569,16 +562,33 @@ function renderMetricDetail(key) {
     panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Per-worker uptime (${workers.length} reporting)</div>
       <div class="ip-detail-grid">${workers.map((w) => workerRow(w, lwFmtSec(w.uptimeSec))).join('') || '<p class="muted">No workers reporting yet</p>'}</div>`;
   } else if (key === 'requests') {
-    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Request rate — last ${(d.snapshots || []).length} samples (~5 min)</div>
+    // Deliberately NOT the same "last 5 min" chart already always-visible
+    // below (Request Throughput) — this is today's pattern, hourly buckets
+    // over the last 24h, so clicking the card actually shows something new.
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Today's traffic pattern — hourly, last 24h</div>
       <div class="chart-canvas-wrap"><canvas id="detail-chart-requests" height="110"></canvas></div>`;
-    drawTimeChart('detail-chart-requests', [{ label: 'Requests/tick', color: '#34d399', points: computeThroughputSeries(d.snapshots || []) }], {});
+    drawTimeChart('detail-chart-requests', [{ label: 'Requests/hour', color: '#34d399', points: d.throughputDaily || [] }], { formatValue: (v) => v.toLocaleString() });
+  } else if (key === 'clients') {
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Active clients</div>
+      <div class="ip-detail-grid">
+        <div class="ip-detail-endpoint"><span>Unique client IPs, last 5 min</span><span class="mono">${d.requests.activeClients5m ?? '—'}</span></div>
+        <div class="ip-detail-endpoint"><span>Total requests, last 5 min</span><span class="mono">${(d.throughput || []).reduce((s, p) => s + p.value, 0).toLocaleString()}</span></div>
+      </div>
+      <p class="muted" style="font-size:11px;margin-top:10px">Full per-IP breakdown (requests, errors, endpoints) is in the IP Manager tab.</p>`;
   } else if (key === 'memory') {
-    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Heap used — last ${(d.snapshots || []).length} samples</div>
-      <div class="chart-canvas-wrap"><canvas id="detail-chart-memory" height="110"></canvas></div>`;
-    drawTimeChart('detail-chart-memory', [{
-      label: 'Heap MB', color: '#60a5fa',
-      points: (d.snapshots || []).map((s) => ({ ts: new Date(s.timestamp).getTime(), value: (s.heap_used || 0) / 1048576 })),
-    }], { formatValue: (v) => `${v.toFixed(0)}MB` });
+    // Deliberately NOT the same trend chart already always-visible below
+    // (that's ONE worker's heap over time) — this is every worker's CURRENT
+    // RSS side by side, so clicking the card surfaces the thing the chart
+    // can't show: which worker is actually using the most memory right now.
+    const sorted = [...workers].sort((a, b) => (b.memory?.rss || 0) - (a.memory?.rss || 0));
+    const maxRss = Math.max(1, ...sorted.map((w) => w.memory?.rss || 0));
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">RSS memory per worker (current)</div>
+      <div class="bar-chart">
+        ${sorted.map((w) => {
+          const pct = Math.max(2, Math.round(((w.memory?.rss || 0) / maxRss) * 100));
+          return `<div class="bar-row"><span class="bar-label">${escapeHtml(workerLabel(w))}</span><div class="bar-track"><div class="bar-fill info" style="width:${pct}%">${fmtBytes(w.memory?.rss)}</div></div></div>`;
+        }).join('') || '<p class="muted">No workers reporting yet</p>'}
+      </div>`;
   } else if (key === 'response') {
     panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Response time percentiles (sample size: ${d.responseTimes.sampleSize})</div>
       <div class="ip-detail-grid">
@@ -601,6 +611,14 @@ function renderMetricDetail(key) {
   }
 }
 
+// Shared by the Worker Instances table AND the metric-detail panels
+// (uptime/connections) so a worker is labeled the same way everywhere.
+function workerLabel(w) {
+  if (w.workerId) return `Worker ${w.workerId}`;
+  if (w.nodeAppInstance !== null && w.nodeAppInstance !== undefined) return `PM2 #${w.nodeAppInstance}`;
+  return `PID ${w.pid}`;
+}
+
 // One row per live OS process (this app's own internal cluster.fork()
 // workers, PM2 -i instances, or a single bare process — whichever layer(s)
 // are actually running, every process heartbeats itself independently, see
@@ -621,7 +639,7 @@ async function loadWorkers() {
 
     const tbody = document.getElementById('worker-instances');
     tbody.innerHTML = (data.workers || []).map((w) => {
-      const label = w.workerId ? `Worker ${w.workerId}` : (w.nodeAppInstance !== null && w.nodeAppInstance !== undefined ? `PM2 #${w.nodeAppInstance}` : 'single');
+      const label = workerLabel(w);
       const statusHtml = w.alive
         ? '<span class="status-badge" style="color:var(--success,#22c55e)">● alive</span>'
         : `<span class="status-badge error">● stale (${Math.round(w.lastHeartbeatAgoMs / 1000)}s ago)</span>`;
@@ -1038,10 +1056,15 @@ function ipRowHtml(ip) {
   const entries = Object.entries(ip.endpoints || {});
   const topEp = entries[0];
 
+  // Real ip-api.com data (see adminRoutes.js's /api/metrics/ips) — "—" when
+  // unresolved (top-30-only lookup, or the lookup failed), never guessed.
+  const location = [ip.city, ip.country].filter(Boolean).join(', ') || '—';
+
   const mainRow = `
     <tr data-ip="${escapeHtml(ip.ip)}" class="ip-row ${isBlocked ? 'ip-row-blocked' : ''}" onclick="toggleIpRow('${escapeHtml(ip.ip)}')">
       <td class="mono" style="width:18px;color:var(--text-muted)">${isExpanded ? '▾' : '▸'}</td>
       <td class="mono">${escapeHtml(ip.ip)}${isBlocked ? ' <span class="pill pill-danger" title="This IP is on the blocklist but is still showing up in traffic">🚫 blocked</span>' : ''}</td>
+      <td style="font-size:12px">${escapeHtml(location)}</td>
       <td>${ip.requests.toLocaleString()}</td>
       <td>${errorCount ? `<span class="pill pill-warning">${errorCount.toLocaleString()}</span>` : '<span class="pill pill-muted">0</span>'}</td>
       <td>${rateLimitHits ? `<span class="pill pill-danger">${rateLimitHits.toLocaleString()}</span>` : '<span class="pill pill-muted">0</span>'}</td>
@@ -1058,9 +1081,9 @@ function ipRowHtml(ip) {
   if (!isExpanded) return mainRow;
 
   const detailRow = `
-    <tr class="ip-row-detail" data-ip="${escapeHtml(ip.ip)}"><td colspan="9">
+    <tr class="ip-row-detail" data-ip="${escapeHtml(ip.ip)}"><td colspan="10">
       <div class="ip-detail-grid">
-        ${entries.map(([ep, count]) => `<div class="ip-detail-endpoint"><span class="mono">${escapeHtml(ep)}</span><span>${count}</span></div>`).join('') || '<span class="muted">No endpoint data</span>'}
+        ${entries.map(([ep, count]) => `<div class="ip-detail-endpoint" title="${escapeHtml(ep)}"><span class="mono">${escapeHtml(ep)}</span><span>${count}</span></div>`).join('') || '<span class="muted">No endpoint data</span>'}
       </div>
     </td></tr>`;
   return mainRow + detailRow;
@@ -1070,7 +1093,7 @@ function toggleIpRow(ip) {
   if (expandedIpRows.has(ip)) expandedIpRows.delete(ip);
   else expandedIpRows.add(ip);
   const tbody = document.getElementById('ip-stats-table');
-  tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="9" class="muted">No IP data yet</td></tr>';
+  tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="10" class="muted">No IP data yet</td></tr>';
 }
 
 async function loadIpStats() {
@@ -1084,7 +1107,7 @@ async function loadIpStats() {
     renderIpSummaryStrip(lastIpStatsData);
 
     const tbody = document.getElementById('ip-stats-table');
-    tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="9" class="muted">No IP data yet</td></tr>';
+    tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="10" class="muted">No IP data yet</td></tr>';
   } catch (err) {
     showToast('Failed to load IP stats', 'error');
   }
@@ -1295,17 +1318,36 @@ function lwFmtSec(s) {
   return s >= 60 ? `${(s / 60).toFixed(1)}m` : `${s}s`;
 }
 
+// Every network individually, or "All Networks" (value "all") — merged
+// view across every configured network, tagged per-row so it's never
+// ambiguous which network a query/spike/chart line belongs to.
+let lwAllNetworks = [];
+const LW_NETWORK_COLORS = ['#fb7185', '#60a5fa', '#34d399', '#a78bfa', '#fbbf24', '#f472b6', '#38bdf8', '#facc15', '#94a3b8'];
+function lwColorFor(slug) {
+  const idx = lwAllNetworks.findIndex((n) => n.slug === slug);
+  return LW_NETWORK_COLORS[Math.max(0, idx) % LW_NETWORK_COLORS.length];
+}
+
 async function loadLiveWatcherNetworks() {
   try {
     const res = await fetch(`${API}/live-watcher/networks`, { credentials: 'include' });
     const { data } = await res.json();
-    const networks = data || [];
+    lwAllNetworks = data || [];
     const sel = document.getElementById('lw-network-select');
     const prev = lwCurrentNetwork || sel.value;
-    sel.innerHTML = networks.map((n) => `<option value="${n.slug}">${n.slug}${n.hasElastic ? '' : ' (no ES)'}${n.hasSql ? '' : ' (no SQL)'}</option>`).join('');
-    lwCurrentNetwork = networks.find((n) => n.slug === prev) ? prev : (networks[0]?.slug || null);
+    sel.innerHTML = `<option value="all">◆ All Networks</option>` +
+      lwAllNetworks.map((n) => `<option value="${n.slug}">${n.slug}${n.hasElastic ? '' : ' (no ES)'}${n.hasSql ? '' : ' (no SQL)'}</option>`).join('');
+    const prevValid = prev === 'all' || lwAllNetworks.find((n) => n.slug === prev);
+    lwCurrentNetwork = prevValid ? prev : (lwAllNetworks[0]?.slug || null);
     if (lwCurrentNetwork) sel.value = lwCurrentNetwork;
   } catch (e) { /* silent — keep whatever was there */ }
+}
+
+/** The list of network slugs the current selection should fetch — one slug
+ * for a specific network, every configured network for "all". */
+function lwTargetNetworks() {
+  if (lwCurrentNetwork === 'all') return lwAllNetworks.map((n) => n.slug);
+  return lwCurrentNetwork ? [lwCurrentNetwork] : [];
 }
 
 async function loadLiveWatcherConfig() {
@@ -1358,9 +1400,13 @@ async function saveLiveWatcherGuard() {
 async function loadLiveWatcherNow() {
   if (!lwCurrentNetwork) return;
   try {
-    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/now`, { credentials: 'include' });
-    const { data } = await res.json();
-    renderLiveWatcherNow(data);
+    const targets = lwTargetNetworks();
+    const results = await Promise.all(targets.map((slug) =>
+      fetch(`${API}/live-watcher/${slug}/now`, { credentials: 'include' })
+        .then((r) => r.json()).then((j) => ({ slug, data: j.data }))
+        .catch(() => ({ slug, data: null }))
+    ));
+    renderLiveWatcherNow(results.filter((r) => r.data));
   } catch (e) { /* silent — this polls every few seconds, don't spam toasts on a blip */ }
 }
 
@@ -1373,67 +1419,93 @@ function lwSeverityColor(pct) {
   return 'var(--success)';
 }
 
-function renderLiveWatcherNow(data) {
-  const es = data.es;
-  const sql = data.sql;
+// `results`: [{slug, data}] — ONE entry for a specific network, or one per
+// network when "All Networks" is selected. The metric cards show the
+// worst-case (max) across whatever's in the list — on a single network
+// that's just that network's own number, unchanged from before.
+function renderLiveWatcherNow(results) {
   const isEditor = currentRole === 'editor';
+  const isAll = lwCurrentNetwork === 'all';
 
-  if (es && !es.error) {
-    setText('lw-es-cpu', `${es.cpuPct}%`);
-    document.getElementById('lw-es-cpu').style.color = lwSeverityColor(es.cpuPct);
-    setText('lw-es-load1m', `load1m: ${es.load1m}`);
-    const searchPools = (es.threadPool || []).filter((p) => p.pool === 'search');
-    const queue = searchPools.reduce((a, p) => a + (p.queue || 0), 0);
-    const rejected = searchPools.reduce((a, p) => a + (p.rejected || 0), 0);
-    const active = searchPools.reduce((a, p) => a + (p.active || 0), 0);
-    setText('lw-es-queue', `${queue} / ${rejected}`);
-    setText('lw-es-active', `active: ${active}`);
-    document.getElementById('lw-es-tasks').innerHTML = (es.liveTasks || []).map((t) => `
-      <tr>
-        <td>${lwFmtSec(t.runningSec)}</td>
-        <td style="max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</td>
-        <td>${escapeHtml(String(t.nodeId || '').slice(0, 8))}</td>
-        <td>${isEditor ? `<button class="btn btn-danger btn-sm" onclick="lwCancelEsTask('${t.taskId}')">Cancel</button>` : '<span class="muted">read-only</span>'}</td>
-      </tr>
-    `).join('') || '<tr><td colspan="4" class="muted">No search tasks running right now</td></tr>';
+  let worstEsCpu = null, worstEsSlug = null, esQueue = 0, esRejected = 0, esActive = 0;
+  let worstSqlLoad = null, worstSqlSlug = null;
+  let anySpike = false;
+  const esRows = [];
+  const sqlRows = [];
+
+  for (const { slug, data } of results) {
+    const es = data?.es, sql = data?.sql;
+    if (es && !es.error) {
+      if (worstEsCpu === null || es.cpuPct > worstEsCpu) { worstEsCpu = es.cpuPct; worstEsSlug = slug; }
+      const searchPools = (es.threadPool || []).filter((p) => p.pool === 'search');
+      esQueue += searchPools.reduce((a, p) => a + (p.queue || 0), 0);
+      esRejected += searchPools.reduce((a, p) => a + (p.rejected || 0), 0);
+      esActive += searchPools.reduce((a, p) => a + (p.active || 0), 0);
+      for (const t of es.liveTasks || []) esRows.push({ slug, ...t });
+    }
+    if (sql && !sql.error) {
+      if (worstSqlLoad === null || sql.loadPct > worstSqlLoad) { worstSqlLoad = sql.loadPct; worstSqlSlug = slug; }
+      for (const q of sql.liveQueries || []) sqlRows.push({ slug, ...q });
+    }
+    if (data?.inSpike?.es || data?.inSpike?.sql) anySpike = true;
+  }
+  esRows.sort((a, b) => b.runningSec - a.runningSec);
+  sqlRows.sort((a, b) => b.timeSec - a.timeSec);
+
+  if (worstEsCpu !== null) {
+    setText('lw-es-cpu', `${worstEsCpu}%`);
+    document.getElementById('lw-es-cpu').style.color = lwSeverityColor(worstEsCpu);
+    setText('lw-es-load1m', isAll ? `worst: ${worstEsSlug}` : `load1m: ${results[0]?.data?.es?.load1m ?? '—'}`);
+    setText('lw-es-queue', `${esQueue} / ${esRejected}`);
+    setText('lw-es-active', `active: ${esActive}`);
   } else {
-    setText('lw-es-cpu', es?.error ? 'error' : 'n/a');
+    setText('lw-es-cpu', 'n/a');
     document.getElementById('lw-es-cpu').style.color = '';
     setText('lw-es-load1m', '—');
-    document.getElementById('lw-es-tasks').innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(es?.error || 'No Elasticsearch connection for this network')}</td></tr>`;
+    setText('lw-es-queue', '—');
+    setText('lw-es-active', '');
   }
+  document.getElementById('lw-es-tasks').innerHTML = esRows.map((t) => `
+    <tr>
+      <td><span class="pill" style="background:${hexToRgba(lwColorFor(t.slug), 0.15)};color:${lwColorFor(t.slug)}">${escapeHtml(t.slug)}</span></td>
+      <td>${lwFmtSec(t.runningSec)}</td>
+      <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</td>
+      <td>${escapeHtml(String(t.nodeId || '').slice(0, 8))}</td>
+      <td>${isEditor ? `<button class="btn btn-danger btn-sm" onclick="lwCancelEsTask('${t.taskId}', '${t.slug}')">Cancel</button>` : '<span class="muted">read-only</span>'}</td>
+    </tr>
+  `).join('') || `<tr><td colspan="5" class="muted">No search tasks running right now</td></tr>`;
 
-  if (sql && !sql.error) {
-    setText('lw-sql-load', `${sql.loadPct.toFixed(1)}%`);
-    document.getElementById('lw-sql-load').style.color = lwSeverityColor(sql.loadPct);
-    setText('lw-sql-threads', `${sql.threadsRunning} / ${sql.maxConnections} threads`);
-    document.getElementById('lw-sql-queries').innerHTML = (sql.liveQueries || []).map((q) => `
-      <tr>
-        <td>${q.id}</td>
-        <td>${q.timeSec}s</td>
-        <td>${escapeHtml(q.db || '')}</td>
-        <td>${escapeHtml(q.state || '')}</td>
-        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info)}">${escapeHtml(q.info)}</td>
-        <td>${isEditor ? `<button class="btn btn-danger btn-sm" onclick="lwKillSqlQuery(${q.id})">Kill</button>` : '<span class="muted">read-only</span>'}</td>
-      </tr>
-    `).join('') || '<tr><td colspan="6" class="muted">No active queries right now</td></tr>';
+  if (worstSqlLoad !== null) {
+    setText('lw-sql-load', `${worstSqlLoad.toFixed(1)}%`);
+    document.getElementById('lw-sql-load').style.color = lwSeverityColor(worstSqlLoad);
+    setText('lw-sql-threads', isAll ? `worst: ${worstSqlSlug}` : `${results[0]?.data?.sql?.threadsRunning ?? '—'} / ${results[0]?.data?.sql?.maxConnections ?? '—'} threads`);
   } else {
-    setText('lw-sql-load', sql?.error ? 'error' : 'n/a');
+    setText('lw-sql-load', 'n/a');
     document.getElementById('lw-sql-load').style.color = '';
     setText('lw-sql-threads', '—');
-    document.getElementById('lw-sql-queries').innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(sql?.error || 'No SQL connection for this network')}</td></tr>`;
   }
+  document.getElementById('lw-sql-queries').innerHTML = sqlRows.map((q) => `
+    <tr>
+      <td><span class="pill" style="background:${hexToRgba(lwColorFor(q.slug), 0.15)};color:${lwColorFor(q.slug)}">${escapeHtml(q.slug)}</span></td>
+      <td>${q.id}</td>
+      <td>${q.timeSec}s</td>
+      <td>${escapeHtml(q.db || '')}</td>
+      <td>${escapeHtml(q.state || '')}</td>
+      <td style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info)}">${escapeHtml(q.info)}</td>
+      <td>${isEditor ? `<button class="btn btn-danger btn-sm" onclick="lwKillSqlQuery(${q.id}, '${q.slug}')">Kill</button>` : '<span class="muted">read-only</span>'}</td>
+    </tr>
+  `).join('') || `<tr><td colspan="7" class="muted">No active queries right now</td></tr>`;
 
-  const inSpike = data.inSpike?.es || data.inSpike?.sql;
-  setText('lw-spike-status', inSpike ? '⚠ Spike' : '✓ Normal');
-  document.getElementById('lw-spike-status').style.color = inSpike ? 'var(--danger)' : 'var(--success)';
+  setText('lw-spike-status', anySpike ? '⚠ Spike' : '✓ Normal');
+  document.getElementById('lw-spike-status').style.color = anySpike ? 'var(--danger)' : 'var(--success)';
   setText('lw-updated-at', `updated ${new Date().toLocaleTimeString()}`);
 }
 
-async function lwCancelEsTask(taskId) {
-  if (!confirm(`Cancel this Elasticsearch search task?\n${taskId}`)) return;
+async function lwCancelEsTask(taskId, network) {
+  const net = network || lwCurrentNetwork;
+  if (!confirm(`Cancel this Elasticsearch search task on "${net}"?\n${taskId}`)) return;
   try {
-    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/es/cancel`, {
+    const res = await fetch(`${API}/live-watcher/${net}/es/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1447,10 +1519,11 @@ async function lwCancelEsTask(taskId) {
   }
 }
 
-async function lwKillSqlQuery(id) {
-  if (!confirm(`Kill SQL query id ${id}?`)) return;
+async function lwKillSqlQuery(id, network) {
+  const net = network || lwCurrentNetwork;
+  if (!confirm(`Kill SQL query id ${id} on "${net}"?`)) return;
   try {
-    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/sql/kill`, {
+    const res = await fetch(`${API}/live-watcher/${net}/sql/kill`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1464,21 +1537,94 @@ async function lwKillSqlQuery(id) {
   }
 }
 
+// Copy-to-clipboard, shared by the spike-detail view and the "view full
+// query" modal — brief inline confirmation on the button itself.
+function copyToClipboard(text, btnEl) {
+  navigator.clipboard.writeText(text).then(() => {
+    if (btnEl) {
+      const orig = btnEl.textContent;
+      btnEl.textContent = '✓ Copied';
+      setTimeout(() => { btnEl.textContent = orig; }, 1500);
+    }
+  }).catch(() => showToast('Copy failed — clipboard permission blocked', 'error'));
+}
+
+// Spike events currently rendered, by index — same "store the array, index
+// into it from onclick" pattern as lwRecentEs/lwRecentSql (avoids embedding
+// large/quote-heavy text directly into an onclick attribute).
+let lwHistoryEvents = [];
+
+function lwSpikeDetailPlainText(e) {
+  const d = e.detail || {};
+  let text = `Spike: ${e.network} (${e.type.toUpperCase()})\nStarted: ${formatDate(new Date(e.startedAt).toISOString())}\nDuration: ${lwFmtSec(Math.round(e.durationMs / 1000))}\nPeak: ${e.peak.toFixed(1)}%\n\n`;
+  if (d.topTasks?.length) text += `Top ES tasks at spike start:\n${d.topTasks.map((t) => `  [${t.runningSec}s] ${t.description}`).join('\n')}\n\n`;
+  if (d.topQueries?.length) text += `Top SQL queries at spike start:\n${d.topQueries.map((q) => `  [${q.timeSec}s] ${q.db || ''}: ${q.info}`).join('\n')}\n\n`;
+  if (d.threadPool?.length) text += `Thread pool:\n${d.threadPool.map((p) => `  ${p.node}/${p.pool}: active=${p.active} queue=${p.queue} rejected=${p.rejected}`).join('\n')}\n\n`;
+  if (d.hotThreads) text += `Hot threads:\n${d.hotThreads}\n`;
+  if (d.error) text += `Detail capture failed: ${d.error}\n`;
+  return text;
+}
+
+// Formatted tables instead of a raw JSON.stringify dump — a rejected>0 pool
+// row and a slow query are both meant to be scannable at a glance, not
+// parsed out of braces.
+function lwSpikeDetailHtml(e) {
+  const d = e.detail || {};
+  const parts = [];
+
+  if (Array.isArray(d.topTasks)) {
+    parts.push(d.topTasks.length
+      ? `<div class="metric-label" style="margin:10px 0 4px">Top ES tasks at spike start</div>
+         <table class="data-table" style="font-size:11px"><thead><tr><th>Running</th><th>Query</th></tr></thead><tbody>
+           ${d.topTasks.map((t) => `<tr><td>${lwFmtSec(t.runningSec)}</td><td class="mono" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description || '')}">${escapeHtml((t.description || '').slice(0, 140))}</td></tr>`).join('')}
+         </tbody></table>`
+      : `<p class="muted" style="font-size:11px;margin-top:10px">No search task was caught running at the exact spike-start instant — queries here finish in 0.1-0.3s, so a snapshot easily misses them. See hot threads below for what CPU was actually doing.</p>`);
+  }
+
+  if (d.topQueries?.length) {
+    parts.push(`<div class="metric-label" style="margin:10px 0 4px">Top SQL queries at spike start</div>
+      <table class="data-table" style="font-size:11px"><thead><tr><th>Time</th><th>DB</th><th>Query</th></tr></thead><tbody>
+        ${d.topQueries.map((q) => `<tr><td>${q.timeSec}s</td><td>${escapeHtml(q.db || '')}</td><td class="mono" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info || '')}">${escapeHtml((q.info || '').slice(0, 140))}</td></tr>`).join('')}
+      </tbody></table>`);
+  }
+
+  if (d.threadPool?.length) {
+    parts.push(`<div class="metric-label" style="margin:10px 0 4px">Thread pool at spike start</div>
+      <table class="data-table" style="font-size:11px"><thead><tr><th>Node</th><th>Pool</th><th>Active</th><th>Queue</th><th>Rejected</th></tr></thead><tbody>
+        ${d.threadPool.map((p) => `<tr><td>${escapeHtml(p.node || '')}</td><td>${escapeHtml(p.pool || '')}</td><td>${p.active}</td><td>${p.queue}</td><td>${p.rejected > 0 ? `<span class="pill pill-warning">${p.rejected}</span>` : p.rejected}</td></tr>`).join('')}
+      </tbody></table>`);
+  }
+
+  if (d.hotThreads) {
+    parts.push(`<div class="metric-label" style="margin:10px 0 4px">Hot threads — what CPU was actually doing</div>
+      <pre style="max-height:260px;overflow:auto;white-space:pre-wrap;font-size:11px;background:#1a1f32;border:1px solid var(--border);border-radius:8px;padding:10px">${escapeHtml(d.hotThreads)}</pre>`);
+  }
+
+  if (d.error) parts.push(`<p style="color:var(--danger);font-size:11px;margin-top:8px">Detail capture failed: ${escapeHtml(d.error)}</p>`);
+
+  return parts.join('') || '<p class="muted" style="font-size:11px;margin-top:10px">No detail captured.</p>';
+}
+
+function lwToggleSpikeDetail(i) {
+  document.getElementById(`lw-hist-${i}`).classList.toggle('hidden');
+}
+
+function lwCopySpikeDetail(i, btnEl) {
+  const e = lwHistoryEvents[i];
+  if (e) copyToClipboard(lwSpikeDetailPlainText(e), btnEl);
+}
+
+// network=null (the "All Networks" option) omits the filter entirely, same
+// as the backend's getSpikeHistory({network}) already supports — the
+// FRONTEND previously never passed `network` at all, so this table always
+// showed every network's spikes regardless of the dropdown selection.
 async function loadLiveWatcherHistory() {
   try {
-    const res = await fetch(`${API}/live-watcher/history?hours=24`, { credentials: 'include' });
+    const qs = lwCurrentNetwork && lwCurrentNetwork !== 'all' ? `&network=${encodeURIComponent(lwCurrentNetwork)}` : '';
+    const res = await fetch(`${API}/live-watcher/history?hours=24${qs}`, { credentials: 'include' });
     const { data } = await res.json();
-    document.getElementById('lw-history').innerHTML = (data || []).map((e) => {
-      const detailId = `lw-hist-${e.network}-${e.type}-${e.startedAt}`;
-      // hotThreads is a multi-line JVM stack-trace dump (see liveWatcher.js's
-      // getEsHotThreads) — rendered on its own below the JSON block, with real
-      // line breaks, instead of buried as an escaped \n-joined string inside
-      // JSON.stringify's output where it's unreadable.
-      const { hotThreads, ...restDetail } = e.detail || {};
-      const hotThreadsBlock = hotThreads
-        ? `\n\n--- hot threads (what CPU was actually doing) ---\n${escapeHtml(hotThreads)}`
-        : '';
-      return `
+    lwHistoryEvents = data || [];
+    document.getElementById('lw-history').innerHTML = lwHistoryEvents.map((e, i) => `
       <tr>
         <td>${escapeHtml(e.network)}</td>
         <td>${e.type.toUpperCase()}</td>
@@ -1486,11 +1632,13 @@ async function loadLiveWatcherHistory() {
         <td>${lwFmtSec(Math.round(e.durationMs / 1000))}</td>
         <td>${e.peak.toFixed(1)}%</td>
         <td>
-          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">View</button>
-          <pre id="${detailId}" class="hidden" style="max-width:520px;white-space:pre-wrap;font-size:11px;margin-top:6px">${escapeHtml(JSON.stringify(restDetail, null, 2))}${hotThreadsBlock}</pre>
+          <button class="btn btn-ghost btn-sm" onclick="lwToggleSpikeDetail(${i})">View</button>
+          <div id="lw-hist-${i}" class="hidden" style="max-width:640px;margin-top:8px">
+            <button class="btn btn-ghost btn-sm" onclick="lwCopySpikeDetail(${i}, this)">📋 Copy</button>
+            ${lwSpikeDetailHtml(e)}
+          </div>
         </td>
-      </tr>`;
-    }).join('') || '<tr><td colspan="6" class="muted">No spikes in the last 24h</td></tr>';
+      </tr>`).join('') || '<tr><td colspan="6" class="muted">No spikes in the last 24h</td></tr>';
   } catch (e) { /* silent */ }
 }
 
@@ -1501,35 +1649,44 @@ let lwRecentEs = [];
 let lwRecentSql = [];
 
 async function loadLiveWatcherRecent() {
-  if (!lwCurrentNetwork) return;
+  const targets = lwTargetNetworks();
+  if (!targets.length) return;
   try {
-    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/recent`, { credentials: 'include' });
-    const { data } = await res.json();
-    lwRecentEs = data.es || [];
-    lwRecentSql = data.sql || [];
+    const results = await Promise.all(targets.map((slug) =>
+      fetch(`${API}/live-watcher/${slug}/recent`, { credentials: 'include' })
+        .then((r) => r.json()).then((j) => ({ slug, data: j.data }))
+        .catch(() => ({ slug, data: null }))
+    ));
+
+    lwRecentEs = results.flatMap(({ slug, data }) => (data?.es || []).map((t) => ({ slug, ...t })))
+      .sort((a, b) => b.capturedAt - a.capturedAt);
+    lwRecentSql = results.flatMap(({ slug, data }) => (data?.sql || []).map((q) => ({ slug, ...q })))
+      .sort((a, b) => b.capturedAt - a.capturedAt);
 
     document.getElementById('lw-es-recent').innerHTML = lwRecentEs.map((t, i) => `
       <tr>
+        <td><span class="pill" style="background:${hexToRgba(lwColorFor(t.slug), 0.15)};color:${lwColorFor(t.slug)}">${escapeHtml(t.slug)}</span></td>
         <td>${formatDate(new Date(t.capturedAt).toISOString())}</td>
         <td>${lwFmtSec(t.runningSec)}</td>
-        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</td>
+        <td style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</td>
         <td>${escapeHtml(String(t.nodeId || '').slice(0, 8))}</td>
         <td>${t.cpuAtCapture != null ? t.cpuAtCapture.toFixed(1) + '%' : '—'}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="lwShowFullQuery('es', ${i})">View full</button></td>
       </tr>
-    `).join('') || '<tr><td colspan="6" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
+    `).join('') || '<tr><td colspan="7" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
 
     document.getElementById('lw-sql-recent').innerHTML = lwRecentSql.map((q, i) => `
       <tr>
+        <td><span class="pill" style="background:${hexToRgba(lwColorFor(q.slug), 0.15)};color:${lwColorFor(q.slug)}">${escapeHtml(q.slug)}</span></td>
         <td>${formatDate(new Date(q.capturedAt).toISOString())}</td>
         <td>${q.id}</td>
         <td>${escapeHtml(q.db || '')}</td>
         <td>${escapeHtml(q.state || '')}</td>
-        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info)}">${escapeHtml(q.info)}</td>
+        <td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(q.info)}">${escapeHtml(q.info)}</td>
         <td>${q.loadAtCapture != null ? q.loadAtCapture.toFixed(1) + '%' : '—'}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="lwShowFullQuery('sql', ${i})">View full</button></td>
       </tr>
-    `).join('') || '<tr><td colspan="7" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
+    `).join('') || '<tr><td colspan="8" class="muted">No queries seen yet — leave this tab open a little longer, it captures on every poll</td></tr>';
   } catch (e) { /* silent */ }
 }
 
@@ -1693,14 +1850,37 @@ function lwDrawSparkline(canvasId, points, valueKey, color, label) {
   }], { minMax: 100, formatValue: (v) => `${v.toFixed(0)}%` });
 }
 
+// Single network: one line per chart (unchanged look). "All Networks": one
+// line PER NETWORK on the SAME chart, color-coded — drawTimeChart already
+// supports multi-series, this just feeds it one series per network instead
+// of fabricating a fake combined average.
 async function loadLiveWatcherChart() {
-  if (!lwCurrentNetwork) return;
+  const targets = lwTargetNetworks();
+  if (!targets.length) return;
   try {
-    const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/metrics-history?minutes=60`, { credentials: 'include' });
-    const { data } = await res.json();
-    lwDrawSparkline('lw-chart-es-cpu', data.es || [], 'cpuPct', '#fb7185', 'ES CPU');
-    lwDrawSparkline('lw-chart-es-heap', data.es || [], 'heapUsedPct', '#60a5fa', 'ES Heap');
-    lwDrawSparkline('lw-chart-sql-load', data.sql || [], 'loadPct', '#a78bfa', 'SQL Load');
+    const results = await Promise.all(targets.map((slug) =>
+      fetch(`${API}/live-watcher/${slug}/metrics-history?minutes=60`, { credentials: 'include' })
+        .then((r) => r.json()).then((j) => ({ slug, data: j.data }))
+        .catch(() => ({ slug, data: { es: [], sql: [] } }))
+    ));
+
+    const seriesFor = (valueKey, type) => results
+      .filter(({ data }) => (data?.[type] || []).length)
+      .map(({ slug, data }) => ({
+        label: slug,
+        color: lwColorFor(slug),
+        points: data[type].map((p) => ({ ts: p.ts, value: Number(p[valueKey]) || 0 })),
+      }));
+
+    const opts = { minMax: 100, formatValue: (v) => `${v.toFixed(0)}%` };
+    drawTimeChart('lw-chart-es-cpu', seriesFor('cpuPct', 'es'), opts);
+    drawTimeChart('lw-chart-es-heap', seriesFor('heapUsedPct', 'es'), opts);
+    drawTimeChart('lw-chart-sql-load', seriesFor('loadPct', 'sql'), opts);
+
+    const legend = document.getElementById('lw-chart-legend');
+    legend.innerHTML = targets.length > 1
+      ? targets.map((slug) => `<span class="chart-legend-item"><span class="chart-legend-dot" style="background:${lwColorFor(slug)}"></span>${escapeHtml(slug)}</span>`).join('')
+      : '';
   } catch (e) { /* silent */ }
 }
 

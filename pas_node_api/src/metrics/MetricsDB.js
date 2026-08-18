@@ -293,6 +293,54 @@ class MetricsDB {
   }
 
   /**
+   * True cluster-wide request throughput, bucketed into `bucketSeconds`
+   * windows over the last `minutes` — a direct COUNT(*) over the `requests`
+   * table, which every worker writes real per-request rows into (no
+   * per-worker counter involved, so there's nothing to interleave).
+   *
+   * Replaces an earlier approach that diffed consecutive `snapshots.
+   * total_requests` values: that column is `MetricsCollector.
+   * totalRequestsReceivedSinceStartup`, a PER-WORKER in-memory counter that
+   * resets on every worker restart. Every worker's own snapshot-collection
+   * interval writes into the SAME shared snapshots table (see MetricsDB.
+   * dbPath — one fixed path, not per-WORKER_ID), so two consecutive rows in
+   * that table can belong to two DIFFERENT workers with unrelated counter
+   * values — diffing them produced meaningless, sometimes-negative deltas
+   * (clamped to 0), which is why the "Request Throughput" chart looked like
+   * a random sawtooth instead of a real trend.
+   */
+  async getThroughputSeries(minutes = 5, bucketSeconds = 10) {
+    if (!this.db) return [];
+    const sinceIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const rows = await this.db.all(
+      `SELECT (CAST(strftime('%s', timestamp) AS INTEGER) / ?) * ? as bucket, COUNT(*) as count
+       FROM requests
+       WHERE timestamp >= ?
+       GROUP BY bucket
+       ORDER BY bucket ASC`,
+      [bucketSeconds, bucketSeconds, sinceIso]
+    );
+    return rows.map((r) => ({ ts: r.bucket * 1000, value: r.count }));
+  }
+
+  /**
+   * Distinct client IPs seen in the last `minutes` — "how many unique
+   * clients are actively hitting my backend right now", not to be confused
+   * with `activeConnections` (an instantaneous in-flight-request gauge,
+   * which is correct but usually reads as 0-1 on a fast API since a request
+   * completes in milliseconds and rarely overlaps a sample instant).
+   */
+  async getActiveClientCount(minutes = 5) {
+    if (!this.db) return 0;
+    const sinceIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const row = await this.db.get(
+      `SELECT COUNT(DISTINCT ip) as count FROM requests WHERE timestamp >= ?`,
+      [sinceIso]
+    );
+    return row?.count || 0;
+  }
+
+  /**
    * Fetch per-IP analytics.
    */
   async getIpStats(startDate, endDate) {

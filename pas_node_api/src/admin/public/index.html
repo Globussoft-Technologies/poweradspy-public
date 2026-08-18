@@ -136,10 +136,16 @@
             <span class="metric-expand-hint">▾ percentiles</span>
           </div>
           <div class="metric-card glass clickable" onclick="toggleMetricDetail('connections')">
-            <div class="metric-label">Active Connections</div>
+            <div class="metric-label">In-Flight Requests</div>
             <div class="metric-value" id="m-active-conn">—</div>
             <div class="metric-sub" id="m-errors">Errors: —</div>
             <span class="metric-expand-hint">▾ per worker</span>
+          </div>
+          <div class="metric-card glass clickable" onclick="toggleMetricDetail('clients')">
+            <div class="metric-label">Active Clients (5m)</div>
+            <div class="metric-value" id="m-active-clients">—</div>
+            <div class="metric-sub">unique client IPs, last 5 min</div>
+            <span class="metric-expand-hint">▾ details</span>
           </div>
           <div class="metric-card glass clickable" onclick="toggleMetricDetail('cpu')">
             <div class="metric-label">CPU Load (1m)</div>
@@ -156,14 +162,16 @@
               <h3 style="padding:16px 20px 0">Memory (Heap Used)</h3>
             </div>
             <div class="card-body">
+              <p class="muted" style="font-size:11px;margin:-4px 0 8px">One worker's own heap over time (the singleton owner) — a coherent single-process trend, not a cluster sum. See Worker Instances below for every worker's current memory.</p>
               <div class="chart-canvas-wrap"><canvas id="dash-chart-memory" height="90"></canvas></div>
             </div>
           </div>
           <div class="card glass">
             <div class="chart-card-header">
-              <h3 style="padding:16px 20px 0">Request Throughput (per ~10s)</h3>
+              <h3 style="padding:16px 20px 0">Request Throughput</h3>
             </div>
             <div class="card-body">
+              <p class="muted" style="font-size:11px;margin:-4px 0 8px">Real requests/10s across every worker (direct count, not a diffed counter).</p>
               <div class="chart-canvas-wrap"><canvas id="dash-chart-throughput" height="90"></canvas></div>
             </div>
           </div>
@@ -383,6 +391,7 @@
                 <tr>
                   <th></th>
                   <th>IP Address</th>
+                  <th>Location</th>
                   <th>Requests</th>
                   <th>Errors</th>
                   <th>Rate-Limited (429)</th>
@@ -528,6 +537,7 @@
         <div class="card glass">
           <div class="card-header"><h3>Last Hour — CPU &amp; RAM</h3></div>
           <div class="card-body">
+            <div id="lw-chart-legend" class="chart-legend" style="margin-bottom:10px"></div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
               <div>
                 <div class="metric-label" style="margin-bottom:6px">ES CPU %</div>
@@ -550,8 +560,8 @@
           <div class="card-header"><h3>Running Now — Elasticsearch</h3></div>
           <div class="card-body">
             <table class="data-table">
-              <thead><tr><th>Running</th><th>Description</th><th>Node</th><th>Action</th></tr></thead>
-              <tbody id="lw-es-tasks"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+              <thead><tr><th>Network</th><th>Running</th><th>Description</th><th>Node</th><th>Action</th></tr></thead>
+              <tbody id="lw-es-tasks"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -560,28 +570,28 @@
           <div class="card-header"><h3>Running Now — MySQL</h3></div>
           <div class="card-body">
             <table class="data-table">
-              <thead><tr><th>Id</th><th>Time</th><th>DB</th><th>State</th><th>Query</th><th>Action</th></tr></thead>
-              <tbody id="lw-sql-queries"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+              <thead><tr><th>Network</th><th>Id</th><th>Time</th><th>DB</th><th>State</th><th>Query</th><th>Action</th></tr></thead>
+              <tbody id="lw-sql-queries"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>
 
         <div class="card glass">
-          <div class="card-header"><h3>Recent Queries — Elasticsearch (last 15 seen)</h3></div>
+          <div class="card-header"><h3>Recent Queries — Elasticsearch (last 15 seen per network)</h3></div>
           <div class="card-body">
             <table class="data-table">
-              <thead><tr><th>Seen</th><th>Ran For</th><th>Description</th><th>Node</th><th title="Cluster-wide ES CPU % at the instant this query was captured — ES has no true per-query cost metric, this is the closest available signal">Cluster CPU %</th><th></th></tr></thead>
-              <tbody id="lw-es-recent"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+              <thead><tr><th>Network</th><th>Seen</th><th>Ran For</th><th>Description</th><th>Node</th><th title="Cluster-wide ES CPU % at the instant this query was captured — ES has no true per-query cost metric, this is the closest available signal">Cluster CPU %</th><th></th></tr></thead>
+              <tbody id="lw-es-recent"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>
 
         <div class="card glass">
-          <div class="card-header"><h3>Recent Queries — MySQL (last 15 seen)</h3></div>
+          <div class="card-header"><h3>Recent Queries — MySQL (last 15 seen per network)</h3></div>
           <div class="card-body">
             <table class="data-table">
-              <thead><tr><th>Seen</th><th>Id</th><th>DB</th><th>State</th><th>Query</th><th title="MySQL load % (Threads_running / max_connections) at the instant this query was captured — MySQL has no true per-query cost metric, this is the closest available signal">SQL Load %</th><th></th></tr></thead>
-              <tbody id="lw-sql-recent"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
+              <thead><tr><th>Network</th><th>Seen</th><th>Id</th><th>DB</th><th>State</th><th>Query</th><th title="MySQL load % (Threads_running / max_connections) at the instant this query was captured — MySQL has no true per-query cost metric, this is the closest available signal">SQL Load %</th><th></th></tr></thead>
+              <tbody id="lw-sql-recent"><tr><td colspan="8" class="muted">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -602,7 +612,10 @@
         <div class="modal-box" style="max-width:800px">
           <div class="modal-header">
             <h3>Full Query</h3>
-            <button type="button" class="btn btn-ghost btn-sm" id="lw-query-modal-close">✕</button>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button type="button" class="btn btn-ghost btn-sm" id="lw-query-modal-copy">📋 Copy</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="lw-query-modal-close">✕</button>
+            </div>
           </div>
           <div class="modal-body">
             <pre id="lw-query-modal-text" style="white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:60vh;overflow:auto"></pre>

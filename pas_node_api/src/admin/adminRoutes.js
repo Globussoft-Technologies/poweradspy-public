@@ -10,6 +10,7 @@ const databaseManager = require('../database/DatabaseManager');
 const { adminAuthMiddleware, requireEditorRole, login, logout, verifyEditKey } = require('./adminAuth');
 const { blockIp, unblockIp, getBlockedIps } = require('../middleware/rateLimiter');
 const { sendTelegramAlert } = require('../utils/telegram');
+const { getLocationDetails } = require('../utils/geoip');
 const {
   getAllDocs, getDoc, createDoc, updateDoc, patchField, deleteDoc,
   addFilter, updateFilter, deleteFilter,
@@ -147,9 +148,22 @@ router.get('/api/metrics', async (req, res) => {
 router.get('/api/metrics/ips', async (req, res) => {
   const { startDate, endDate } = req.query;
   const ips = await metrics.getIpStats(startDate, endDate);
+
+  // Country/city enrichment — only for the top GEO_LOOKUP_LIMIT IPs (already
+  // sorted by request count desc), not all 100 rows: ip-api.com's free tier
+  // is 45 req/min, and getLocationDetails() caches for an hour, so this
+  // stays well within budget on repeat loads. The rest show "—", not a
+  // fabricated guess.
+  const GEO_LOOKUP_LIMIT = 30;
+  const withGeo = await Promise.all(ips.map(async (ip, i) => {
+    if (i >= GEO_LOOKUP_LIMIT) return { ...ip, country: null, city: null };
+    const loc = await getLocationDetails(ip.ip).catch(() => null);
+    return { ...ip, country: loc?.country || null, city: loc?.city || null };
+  }));
+
   res.json({
     success: true,
-    data: ips,
+    data: withGeo,
   });
 });
 

@@ -55,36 +55,58 @@ const IP_CACHE_MAX = 10000;
 // can't drag the whole search request with it.
 const IP_LOOKUP_TIMEOUT_MS = 1500;
 
-const getLocation = async (ipAddress) => {
+// Shared lookup — both getLocation() (existing callers, country-string only)
+// and getLocationDetails() (new: admin IP Manager, country+city) read from
+// the SAME cache entry, so an IP looked up by one flow doesn't cost a
+// second ip-api.com call (45 req/min free-tier limit) if the other flow
+// happens to touch the same IP.
+async function _lookupIp(ipAddress) {
   if (!ipAddress) return null;
 
-  // Fast path — cache hit
   const hit = _ipCache.get(ipAddress);
-  if (hit && Date.now() - hit.at < IP_CACHE_TTL_MS) return hit.country;
+  if (hit && Date.now() - hit.at < IP_CACHE_TTL_MS) return hit;
 
   try {
     const response = await axios.get(`http://ip-api.com/json/${ipAddress}`, {
       timeout: IP_LOOKUP_TIMEOUT_MS,
     });
-    const country = response.data?.country || null;
-
-    // Evict oldest entry if we hit cap (Map preserves insertion order)
+    const entry = {
+      country: response.data?.country || null,
+      city: response.data?.city || null,
+      region: response.data?.regionName || null,
+      at: Date.now(),
+    };
     if (_ipCache.size >= IP_CACHE_MAX) {
       const oldestKey = _ipCache.keys().next().value;
       if (oldestKey !== undefined) _ipCache.delete(oldestKey);
     }
-    _ipCache.set(ipAddress, { country, at: Date.now() });
-    return country;
+    _ipCache.set(ipAddress, entry);
+    return entry;
   } catch (error) {
     // Cache nulls too (briefly) so a flapping upstream doesn't trigger N retries
     // for the same IP within a single user's session.
-    _ipCache.set(ipAddress, { country: null, at: Date.now() });
-    return null;
+    const entry = { country: null, city: null, region: null, at: Date.now() };
+    _ipCache.set(ipAddress, entry);
+    return entry;
   }
+}
+
+const getLocation = async (ipAddress) => {
+  const entry = await _lookupIp(ipAddress);
+  return entry?.country ?? null;
+};
+
+/** Country + city + region for one IP — real ip-api.com data, null fields
+ * when the lookup fails/times out (never fabricated). */
+const getLocationDetails = async (ipAddress) => {
+  const entry = await _lookupIp(ipAddress);
+  if (!entry) return null;
+  return { country: entry.country, city: entry.city, region: entry.region };
 };
 
 module.exports = {
   getClientIp,
   detectCountry,
   getLocation,
+  getLocationDetails,
 };
