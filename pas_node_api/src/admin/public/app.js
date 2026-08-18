@@ -1802,7 +1802,7 @@ function drawTimeChart(canvasId, series, opts = {}) {
 
   const fmt = opts.formatValue || ((v) => v.toFixed(0));
   const first = series[0];
-  if (first && first.points.length) {
+  if (opts.showValueLabel !== false && first && first.points.length) {
     const lastVal = first.points[first.points.length - 1].value;
     ctx.fillStyle = first.color;
     ctx.font = '600 11px sans-serif';
@@ -1850,13 +1850,20 @@ function lwDrawSparkline(canvasId, points, valueKey, color, label) {
   }], { minMax: 100, formatValue: (v) => `${v.toFixed(0)}%` });
 }
 
-// Single network: one line per chart (unchanged look). "All Networks": one
-// line PER NETWORK on the SAME chart, color-coded — drawTimeChart already
-// supports multi-series, this just feeds it one series per network instead
-// of fabricating a fake combined average.
+// Single network: 3 big real-time charts (#lw-chart-single), unchanged.
+// "All Networks": #lw-chart-all — small-multiples, one compact tile per
+// network per metric (Grafana's own "repeat panel by variable" pattern).
+// Overlaying every network's line on ONE tiny chart stops being readable
+// past a handful of series (13 networks = 13 crossing lines, unreadable) —
+// small tiles scale to any network count and stay individually labeled, so
+// there's nothing to cross-reference against a separate legend.
 async function loadLiveWatcherChart() {
   const targets = lwTargetNetworks();
   if (!targets.length) return;
+  const isAll = lwCurrentNetwork === 'all';
+  document.getElementById('lw-chart-single').classList.toggle('hidden', isAll);
+  document.getElementById('lw-chart-all').classList.toggle('hidden', !isAll);
+
   try {
     const results = await Promise.all(targets.map((slug) =>
       fetch(`${API}/live-watcher/${slug}/metrics-history?minutes=60`, { credentials: 'include' })
@@ -1864,24 +1871,42 @@ async function loadLiveWatcherChart() {
         .catch(() => ({ slug, data: { es: [], sql: [] } }))
     ));
 
-    const seriesFor = (valueKey, type) => results
-      .filter(({ data }) => (data?.[type] || []).length)
-      .map(({ slug, data }) => ({
-        label: slug,
-        color: lwColorFor(slug),
-        points: data[type].map((p) => ({ ts: p.ts, value: Number(p[valueKey]) || 0 })),
-      }));
+    if (!isAll) {
+      const r = results[0];
+      lwDrawSparkline('lw-chart-es-cpu', r?.data?.es || [], 'cpuPct', '#fb7185', 'ES CPU');
+      lwDrawSparkline('lw-chart-es-heap', r?.data?.es || [], 'heapUsedPct', '#60a5fa', 'ES Heap');
+      lwDrawSparkline('lw-chart-sql-load', r?.data?.sql || [], 'loadPct', '#a78bfa', 'SQL Load');
+      return;
+    }
 
-    const opts = { minMax: 100, formatValue: (v) => `${v.toFixed(0)}%` };
-    drawTimeChart('lw-chart-es-cpu', seriesFor('cpuPct', 'es'), opts);
-    drawTimeChart('lw-chart-es-heap', seriesFor('heapUsedPct', 'es'), opts);
-    drawTimeChart('lw-chart-sql-load', seriesFor('loadPct', 'sql'), opts);
-
-    const legend = document.getElementById('lw-chart-legend');
-    legend.innerHTML = targets.length > 1
-      ? targets.map((slug) => `<span class="chart-legend-item"><span class="chart-legend-dot" style="background:${lwColorFor(slug)}"></span>${escapeHtml(slug)}</span>`).join('')
-      : '';
+    lwRenderMiniGrid('lw-mini-es-cpu', results, 'es', 'cpuPct');
+    lwRenderMiniGrid('lw-mini-es-heap', results, 'es', 'heapUsedPct');
+    lwRenderMiniGrid('lw-mini-sql-load', results, 'sql', 'loadPct');
   } catch (e) { /* silent */ }
+}
+
+function lwRenderMiniGrid(containerId, results, type, valueKey) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = results.map(({ slug }) => `
+    <div class="lw-mini-tile">
+      <div class="lw-mini-tile-header">
+        <span class="lw-mini-tile-name"><span class="chart-legend-dot" style="background:${lwColorFor(slug)}"></span>${escapeHtml(slug)}</span>
+        <span class="lw-mini-tile-value" id="mini-val-${containerId}-${slug}">—</span>
+      </div>
+      <div class="chart-canvas-wrap"><canvas id="mini-${containerId}-${slug}" height="28"></canvas></div>
+    </div>
+  `).join('') || '<p class="muted">No networks configured</p>';
+
+  for (const { slug, data } of results) {
+    const points = (data?.[type] || []).map((p) => ({ ts: p.ts, value: Number(p[valueKey]) || 0 }));
+    const last = points[points.length - 1];
+    const valEl = document.getElementById(`mini-val-${containerId}-${slug}`);
+    if (valEl) {
+      valEl.textContent = last ? `${last.value.toFixed(0)}%` : 'n/a';
+      valEl.style.color = last ? lwSeverityColor(last.value) : '';
+    }
+    drawTimeChart(`mini-${containerId}-${slug}`, [{ label: slug, color: lwColorFor(slug), points }], { minMax: 100, showValueLabel: false });
+  }
 }
 
 function stopLwPolling() {

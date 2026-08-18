@@ -546,6 +546,12 @@ html, body {
 
 .card-body {
   padding: 20px;
+  /* A wide table (Live Watcher's Running Now/Recent Queries, IP Manager's
+     stats table) used to push .card-body itself wider than the viewport,
+     which forced the ENTIRE PAGE to scroll horizontally instead of just
+     the offending table. Scrolling lives here instead — the table (or
+     anything else) scrolls within its own card, the page never does. */
+  overflow-x: auto;
 }
 
 .grid-2col {
@@ -654,6 +660,8 @@ html, body {
 
 .chart-legend {
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 6px;
   gap: 14px;
   font-size: 11px;
   color: var(--text-muted);
@@ -681,6 +689,51 @@ html, body {
   display: block;
   width: 100%;
   cursor: crosshair;
+}
+
+/* "All Networks" mode — one overlay line per network on a single small
+   chart stops being readable past a handful of series (13 networks =
+   13 overlapping lines, a solid mess). Small-multiples (one compact tile
+   per network, Grafana's own "repeat panel by variable" pattern) scales
+   to any network count and stays scannable — each tile is self-labeled,
+   so no shared legend is needed either. */
+.lw-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.lw-mini-tile {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.lw-mini-tile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.lw-mini-tile-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lw-mini-tile-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 /* Tooltip that follows the mouse over a chart — positioned via inline

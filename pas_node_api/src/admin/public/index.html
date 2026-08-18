@@ -537,8 +537,8 @@
         <div class="card glass">
           <div class="card-header"><h3>Last Hour — CPU &amp; RAM</h3></div>
           <div class="card-body">
-            <div id="lw-chart-legend" class="chart-legend" style="margin-bottom:10px"></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+            <!-- Single network: 3 big real-time charts (unchanged). -->
+            <div id="lw-chart-single" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
               <div>
                 <div class="metric-label" style="margin-bottom:6px">ES CPU %</div>
                 <div class="chart-canvas-wrap"><canvas id="lw-chart-es-cpu" height="70"></canvas></div>
@@ -551,6 +551,17 @@
                 <div class="metric-label" style="margin-bottom:6px">SQL Load %</div>
                 <div class="chart-canvas-wrap"><canvas id="lw-chart-sql-load" height="70"></canvas></div>
               </div>
+            </div>
+            <!-- All Networks: small-multiples — one compact tile per network
+                 per metric, instead of every network's line crowded onto one
+                 tiny overlay chart (unreadable past a handful of networks). -->
+            <div id="lw-chart-all" class="hidden">
+              <div class="metric-label" style="margin-bottom:8px">ES CPU % — per network</div>
+              <div id="lw-mini-es-cpu" class="lw-mini-grid"></div>
+              <div class="metric-label" style="margin:16px 0 8px">ES Heap % — per network</div>
+              <div id="lw-mini-es-heap" class="lw-mini-grid"></div>
+              <div class="metric-label" style="margin:16px 0 8px">SQL Load % — per network</div>
+              <div id="lw-mini-sql-load" class="lw-mini-grid"></div>
             </div>
             <p class="muted" style="font-size:12px;margin-top:8px">ES doesn't expose per-query CPU/RAM usage — these are cluster-level readings, sampled every ~8s, kept for the last hour only.</p>
           </div>

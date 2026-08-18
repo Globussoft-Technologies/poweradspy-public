@@ -36,6 +36,21 @@ function saveBlockedIps() {
 // Load on startup
 loadBlockedIps();
 
+// Cross-worker sync (2026-08-18) — `blockedIps` is a per-process in-memory
+// Set. Under PM2/cluster mode, blockIp() run by whichever worker answered
+// the admin's POST only updated THAT worker's own Set (plus the shared
+// file) — every other worker kept serving its stale, already-loaded Set:
+// ipBlocklistMiddleware on those workers never saw the new block (so the
+// IP wasn't actually blocked for most traffic), and an admin GET that
+// landed on a different worker than the POST didn't show the new entry in
+// the list either. Re-reading the file periodically converges every
+// worker's enforcement within RELOAD_INTERVAL_MS; getBlockedIps() (below)
+// additionally force-reloads on every call since it's only hit by the
+// low-frequency admin list view, not the hot request path.
+const RELOAD_INTERVAL_MS = 5000;
+const _reloadTimer = setInterval(loadBlockedIps, RELOAD_INTERVAL_MS);
+if (_reloadTimer.unref) _reloadTimer.unref();
+
 /**
  * Middleware to reject requests from blocked IPs.
  */
@@ -83,17 +98,27 @@ const globalLimiter = rateLimit({
 });
 
 // ─── Blocklist management API (used by admin routes) ──────
+// Reload-then-mutate-then-save (not mutate-then-save) — closes the
+// lost-update race where this worker's own in-memory Set is stale relative
+// to the file (another worker blocked/unblocked something since this one
+// last reloaded); saving straight from a stale Set would silently drop
+// that other change when this write overwrites the whole file.
 function blockIp(ip) {
+  loadBlockedIps();
   blockedIps.add(ip);
   saveBlockedIps();
 }
 
 function unblockIp(ip) {
+  loadBlockedIps();
   blockedIps.delete(ip);
   saveBlockedIps();
 }
 
 function getBlockedIps() {
+  // Force-fresh — admin-only, low-frequency call (unlike ipBlocklistMiddleware,
+  // which relies on the periodic reload above to stay fast on every request).
+  loadBlockedIps();
   return [...blockedIps];
 }
 

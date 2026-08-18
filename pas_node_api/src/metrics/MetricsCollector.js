@@ -85,7 +85,19 @@ class MetricsCollector {
         // ALL workers in the last 5 minutes — the "unique users right now" number.
         activeConnections: this.activeConnections,
         activeClients5m,
-        rps: parseFloat(((dbAggregates.requests?.total || 0) / (uptime || 1)).toFixed(2)),
+        // BUG FIXED (2026-08-18): was `dbAggregates.requests.total / uptime` —
+        // `total` is the CLUSTER-WIDE count over the whole selected date
+        // range (days, from the shared requests table), but `uptime` is
+        // THIS ONE WORKER's own process.uptime() (minutes since ITS last
+        // restart) — two completely mismatched time bases. Right after any
+        // worker restart (PM2 reload, crash-restart) this divided a
+        // multi-day total by a 2-minute uptime and produced a wildly
+        // inflated, meaningless req/s. Real rps: real request COUNT over
+        // the real 5-minute window `throughput` already covers (see
+        // MetricsDB.getThroughputSeries), divided by that same window.
+        rps: throughput.length
+          ? parseFloat((throughput.reduce((s, p) => s + p.value, 0) / (throughput.length * 10)).toFixed(2))
+          : 0,
       },
       responseTimes: dbAggregates.responseTimes || { avg: 0, p50: 0, p95: 0, p99: 0, sampleSize: 0 },
       errors: dbAggregates.errors || { total: 0, recent: [] },
