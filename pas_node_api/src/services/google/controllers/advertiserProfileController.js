@@ -24,6 +24,7 @@ const {
   UNIQUE_ADS,
   UNIQUE_KEYWORDS,
   UNIQUE_DOMAINS,
+  BUCKET_UNIQUE_ADS,
   readAggs,
   readHits,
   resolveInterval,
@@ -94,9 +95,13 @@ async function getAdvertiserProfile(req, db, logger) {
       keyword_portfolio: termsByUniqueAds(AGG_FIELD.keyword, topN),
       top_domains: termsByUniqueAds(AGG_FIELD.domain, topN, {}, REDIRECT_DOMAINS),
       position_mix: termsByUniqueAds(AGG_FIELD.subPosition, 5),
+      // Per-date-bucket cardinality, same reasoning as termsByUniqueAds
+      // (aggregations.js) — precision_threshold 40000 multiplied by every
+      // histogram bucket (up to hundreds at interval=day) is what made this
+      // endpoint slow; a trend LINE only needs approximate per-point counts.
       trend: {
         date_histogram: { field: 'last_seen', interval, format, min_doc_count: 1 },
-        aggs: { ads: UNIQUE_ADS },
+        aggs: { ads: BUCKET_UNIQUE_ADS },
       },
     },
   };

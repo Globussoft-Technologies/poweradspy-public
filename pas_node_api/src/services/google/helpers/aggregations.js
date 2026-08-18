@@ -128,14 +128,32 @@ function buildBaseQuery(p, indexName, extraFilters = []) {
   return query;
 }
 
+// Per-bucket cardinality for TOP-N ranking/display — deliberately NOT the same
+// precision as the single-bucket summary counts (UNIQUE_ADS etc. above).
+// Per this file's own measured cost (see cardinalityAgg's comment just above):
+// precision 40000 costs ~18.5s for a 200-bucket page; precision 1000 costs
+// ~300-370ms for a 1000-bucket page, same aggregation family. keywords/insight
+// and advertiser/profile each run termsByUniqueAds up to 2-3 times per request
+// (top_advertisers/top_domains/keyword_portfolio, plus country_spread at up to
+// 250 buckets) — at precision 40000 that multiplies straight into the
+// multi-second latency both endpoints were measured at. A ranked top-N list
+// only ever needs an approximate per-bucket count for ordering/display, never
+// a near-exact one — the exact totals still come from the single UNIQUE_*
+// summary aggs elsewhere in each response, which are untouched by this.
+const BUCKET_ADS_PRECISION = 1000;
+const BUCKET_UNIQUE_ADS = { cardinality: { field: 'id', precision_threshold: BUCKET_ADS_PRECISION } };
+
 // terms agg that ranks by distinct-ad count rather than raw doc_count.
 // `exclude` drops exact term values (e.g. REDIRECT_DOMAINS) before ranking.
+// execution_hint 'map' avoids building/using global ordinals for this
+// query — same pattern already validated live (Kibana) for this codebase's
+// other keyword-family terms aggs against this exact ES cluster.
 function termsByUniqueAds(field, size, extraAggs = {}, exclude = null) {
-  const terms = { field, size, order: { ads: 'desc' } };
+  const terms = { field, size, order: { ads: 'desc' }, execution_hint: 'map' };
   if (exclude && exclude.length) terms.exclude = exclude;
   return {
     terms,
-    aggs: { ads: UNIQUE_ADS, ...extraAggs },
+    aggs: { ads: BUCKET_UNIQUE_ADS, ...extraAggs },
   };
 }
 
@@ -231,6 +249,8 @@ module.exports = {
   UNIQUE_ADVERTISERS,
   UNIQUE_DOMAINS,
   UNIQUE_KEYWORDS,
+  BUCKET_ADS_PRECISION,
+  BUCKET_UNIQUE_ADS,
   REDIRECT_DOMAINS,
   readAggs,
   readHits,

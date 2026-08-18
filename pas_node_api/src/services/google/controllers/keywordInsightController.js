@@ -25,6 +25,8 @@ const {
   UNIQUE_ADS,
   UNIQUE_ADVERTISERS,
   UNIQUE_DOMAINS,
+  BUCKET_ADS_PRECISION,
+  BUCKET_UNIQUE_ADS,
   readAggs,
   readHits,
   resolveInterval,
@@ -32,6 +34,7 @@ const {
   buildBaseQuery,
   termsByUniqueAds,
   mapTermBuckets,
+  cardinalityAgg,
   REDIRECT_DOMAINS,
 } = require('../helpers/aggregations');
 
@@ -79,9 +82,13 @@ async function getKeywordInsight(req, db, logger) {
       }),
       top_domains: termsByUniqueAds(AGG_FIELD.domain, topN, {}, REDIRECT_DOMAINS),
       position_mix: termsByUniqueAds(AGG_FIELD.subPosition, 5),
+      // Per-date-bucket cardinality, same reasoning as termsByUniqueAds
+      // (aggregations.js) — precision_threshold 40000 multiplied by every
+      // histogram bucket (up to hundreds at interval=day) is what made this
+      // endpoint slow; a trend LINE only needs approximate per-point counts.
       trend: {
         date_histogram: { field: 'last_seen', interval, format, min_doc_count: 1 },
-        aggs: { ads: UNIQUE_ADS, advertisers: UNIQUE_ADVERTISERS },
+        aggs: { ads: BUCKET_UNIQUE_ADS, advertisers: cardinalityAgg(AGG_FIELD.advertiser, BUCKET_ADS_PRECISION) },
       },
     },
   };
