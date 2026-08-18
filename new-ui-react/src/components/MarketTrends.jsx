@@ -350,8 +350,29 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
   const keywordsAllowed = sectionAllowed('intelligence.market_trends.keywords');
   const compareAllowed = sectionAllowed('intelligence.market_trends.compare');
   // Re-sync once the plan's real allowedPlatforms arrives (it's fetched async in
-  // App.jsx, so it's usually undefined on first render here).
-  useEffect(() => { setSelected(AVAILABLE_NETWORKS); }, [AVAILABLE_NETWORKS]);
+  // App.jsx, so it's usually undefined on first render here, then resolves a bit
+  // later — concurrently with every panel's own first fetch).
+  //
+  // Guarded by a VALUE compare, not just AVAILABLE_NETWORKS's reference
+  // (2026-08-17): AVAILABLE_NETWORKS is a useMemo keyed on the allowedPlatforms
+  // prop, so any parent re-render that passes a new-but-equal array (e.g.
+  // App.jsx's own state updates elsewhere) recomputes it as a NEW array
+  // instance even when its contents are identical. Calling setSelected on
+  // every such reference change reset `selected` to a new array each time,
+  // which changed `netParam`'s dependency identity and re-fired every panel
+  // fetch effect that depends on netParam (regions/categories/top/keywords —
+  // NOT overview, which hardcodes network:'all' and was never affected,
+  // matching what was actually observed: overview rendered fine while the
+  // other panels kept clearing back to their skeleton mid-load). Only
+  // resetting `selected` when the network list's actual VALUES changed keeps
+  // the one legitimate re-sync (once real plan entitlements load) working
+  // while removing every spurious one caused by unrelated re-renders.
+  useEffect(() => {
+    setSelected((prev) => {
+      const same = prev.length === AVAILABLE_NETWORKS.length && prev.every((n, i) => n === AVAILABLE_NETWORKS[i]);
+      return same ? prev : AVAILABLE_NETWORKS;
+    });
+  }, [AVAILABLE_NETWORKS]);
   const [indexed, setIndexed] = useState(true);
   const [topType, setTopType] = useState('advertiser');
   const [country, setCountry] = useState('');
@@ -442,8 +463,9 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     setOverviewError(false);
     setOverview(null); // clear immediately so a stale response can never linger under a new selection
     apiGet('/trends/overview', { ...dpOf(), network: 'all', country })
-      .then((ov) => { if (alive) { setOverview(ov?.data || null); setOverviewLoading(false); } })
-      .catch(() => { if (alive) { setOverviewError(true); setOverviewLoading(false); } });
+      .then((ov) => { if (alive) setOverview(ov?.data || null); })
+      .catch(() => { if (alive) setOverviewError(true); })
+      .finally(() => { if (alive) setOverviewLoading(false); }); // always clears, success or failure — never stuck
     return () => { alive = false; };
   }, [days, from, to, country, overviewRetry, overviewAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -461,9 +483,9 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
         // Names are normalised server-side (ISO codes → country names); dedupe +
         // sort so the filter list has no duplicates and reads cleanly.
         if (rg?.data?.items?.length) setCountryOpts([...new Set(rg.data.items.map((c) => c.country).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
-        setRegionsLoading(false);
       })
-      .catch(() => { if (alive) { setRegionsError(true); setRegionsLoading(false); } });
+      .catch(() => { if (alive) setRegionsError(true); })
+      .finally(() => { if (alive) setRegionsLoading(false); }); // always clears, success or failure — never stuck
     return () => { alive = false; };
   }, [days, from, to, netParam, regionsScope, terms, regionsRetry, regionsAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -475,8 +497,9 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     setCategoriesError(false);
     setCategories([]);
     apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(catScope) })
-      .then((cat) => { if (!alive) return; setCategories(cat?.data?.items || []); setCatUnsupported(!!cat?.meta?.unsupported); setMetaNet(cat?.data?.network || 'All networks'); setCategoriesLoading(false); })
-      .catch(() => { if (alive) { setCategoriesError(true); setCategoriesLoading(false); } });
+      .then((cat) => { if (!alive) return; setCategories(cat?.data?.items || []); setCatUnsupported(!!cat?.meta?.unsupported); setMetaNet(cat?.data?.network || 'All networks'); })
+      .catch(() => { if (alive) setCategoriesError(true); })
+      .finally(() => { if (alive) setCategoriesLoading(false); }); // always clears, success or failure — never stuck
     return () => { alive = false; };
   }, [days, from, to, netParam, country, catScope, terms, categoriesRetry, categoriesAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -488,8 +511,9 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     setRisingError(false);
     setRisingCats([]);
     apiGet('/trends/categories', { ...dpOf(), network: netParam, size: 20, country, advertiser: advOf(risingScope) })
-      .then((cat) => { if (!alive) return; setRisingCats(cat?.data?.items || []); setRisingUnsupported(!!cat?.meta?.unsupported); setRisingLoading(false); })
-      .catch(() => { if (alive) { setRisingError(true); setRisingLoading(false); } });
+      .then((cat) => { if (!alive) return; setRisingCats(cat?.data?.items || []); setRisingUnsupported(!!cat?.meta?.unsupported); })
+      .catch(() => { if (alive) setRisingError(true); })
+      .finally(() => { if (alive) setRisingLoading(false); }); // always clears, success or failure — never stuck
     return () => { alive = false; };
   }, [days, from, to, netParam, country, risingScope, terms, risingRetry, categoriesAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -501,8 +525,9 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     setTopError(false);
     setTop([]);
     apiGet('/trends/top', { ...dpOf(), type: topType, network: netParam, size: 12, country, advertiser: advOf(topScope) })
-      .then((tp) => { if (!alive) return; setTop(tp?.data?.items || []); setTopUnsupported(!!tp?.meta?.unsupported); setTopLoading(false); })
-      .catch(() => { if (alive) { setTopError(true); setTopLoading(false); } });
+      .then((tp) => { if (!alive) return; setTop(tp?.data?.items || []); setTopUnsupported(!!tp?.meta?.unsupported); })
+      .catch(() => { if (alive) setTopError(true); })
+      .finally(() => { if (alive) setTopLoading(false); }); // always clears, success or failure — never stuck
     return () => { alive = false; };
   }, [days, from, to, netParam, country, topType, topScope, terms, topRetry, topMoversAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -514,8 +539,9 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     setKwError(false);
     setKeywords([]);
     apiGet('/trends/keywords', { ...dpOf(), network: netParam, size: 12, country, advertiser: advOf(kwScope) })
-      .then((kw) => { if (!alive) return; setKeywords(kw?.data?.items || []); setKwUnsupported(!!kw?.meta?.unsupported); setKwLoading(false); })
-      .catch(() => { if (alive) { setKwError(true); setKwLoading(false); } });
+      .then((kw) => { if (!alive) return; setKeywords(kw?.data?.items || []); setKwUnsupported(!!kw?.meta?.unsupported); })
+      .catch(() => { if (alive) setKwError(true); })
+      .finally(() => { if (alive) setKwLoading(false); }); // always clears, success or failure — never stuck
     return () => { alive = false; };
   }, [days, from, to, netParam, country, kwScope, terms, kwRetry, keywordsAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 

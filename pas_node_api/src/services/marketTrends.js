@@ -28,6 +28,9 @@ const config = require('../config');
 const databaseManager = require('../database/DatabaseManager');
 const serviceRegistry = require('./ServiceRegistry');
 const { authMiddleware } = require('../middleware/auth');
+const { withLimit } = require('./common/helpers/esConcurrency');
+const logger = require('../logger');
+const log = logger.createChild('market-trends');
 const { asyncHandler } = require('../middleware/errorHandler');
 const planAccessService = require('./planAccess/planAccessService');
 const { getCapabilityDecision } = require('./planControl/registries/routeClassification');
@@ -265,13 +268,15 @@ async function getAnchorMs(es, field = 'facebook_ad.last_seen') {
   } catch { return Date.now(); }
 }
 // Try candidate fields in order; a text field w/o `.keyword` throws → next one.
-async function aggWithFallback(es, buildBody, candidates) {
+// `timeoutMs` defaults to the shared constant — only the Google keyword call
+// below overrides it, every other caller is unaffected.
+async function aggWithFallback(es, buildBody, candidates, timeoutMs = NET_REQUEST_TIMEOUT_MS) {
   if (!es) return { ok: false, aggs: {}, reason: 'Elasticsearch connection unavailable' };
   const index = es.indexName || 'search_mix';
   let last = null;
   for (const f of candidates) {
     try {
-      const r = await es.search({ index, request_cache: true, body: buildBody(f) }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
+      const r = await es.search({ index, request_cache: true, body: buildBody(f) }, { requestTimeout: timeoutMs });
       return { ok: true, field: f, aggs: esBody(r).aggregations || {} };
     } catch (e) { last = e; }
   }
@@ -516,8 +521,10 @@ async function catForCfg(cfg, days, size, country, advertiser, custom) {
   const anchorMs = custom ? 0 : await getAnchorMs(es, cfg.date);
   const win = winFrom(days, anchorMs, custom);
   const extra = extraFilters(cfg.net, country, advertiser);
-  const { aggs } = await aggWithFallback(es, (f) => categoryBodyFor(cfg, size, f, win, extra), cfg.category);
-  return { cur: mapBuckets(aggs.current?.items?.buckets), prev: mapBuckets(aggs.previous?.items?.buckets) };
+  return withGoogleLimit(cfg.net, async () => {
+    const { aggs } = await aggWithFallback(es, (f) => categoryBodyFor(cfg, size, f, win, extra), cfg.category);
+    return { cur: mapBuckets(aggs.current?.items?.buckets), prev: mapBuckets(aggs.previous?.items?.buckets) };
+  });
 }
 // top advertiser/CTA buckets [{key,label,current,previous,net}] for one Meta config.
 async function topForCfg(cfg, type, days, size, country, advertiser, custom) {
@@ -527,14 +534,16 @@ async function topForCfg(cfg, type, days, size, country, advertiser, custom) {
   const win = winFrom(days, anchorMs, custom);
   const subAggs = type === 'advertiser' ? { label: { top_hits: { size: 1, _source: [cfg.advLabel] } } } : undefined;
   const extra = extraFilters(cfg.net, country, advertiser);
-  const { aggs } = await aggWithFallback(es, (f) => topBodyFor(cfg, size, f, win, subAggs, extra), cfg[type]);
-  const prevMap = mapBuckets(aggs.previous?.items?.buckets);
-  return (aggs.current?.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
-    .map((b) => ({
-      key: String(b.key),
-      label: type === 'advertiser' ? (topHit(b)?.[cfg.advLabel] || String(b.key)) : String(b.key),
-      current: b.doc_count, previous: prevMap[b.key] || 0, net: cfg.net,
-    }));
+  return withGoogleLimit(cfg.net, async () => {
+    const { aggs } = await aggWithFallback(es, (f) => topBodyFor(cfg, size, f, win, subAggs, extra), cfg[type]);
+    const prevMap = mapBuckets(aggs.previous?.items?.buckets);
+    return (aggs.current?.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
+      .map((b) => ({
+        key: String(b.key),
+        label: type === 'advertiser' ? (topHit(b)?.[cfg.advLabel] || String(b.key)) : String(b.key),
+        current: b.doc_count, previous: prevMap[b.key] || 0, net: cfg.net,
+      }));
+  });
 }
 // dominant contributing network from a { net: count } tally.
 const dominantNet = (nets) => Object.entries(nets).sort((a, b) => b[1] - a[1])[0]?.[0];
@@ -639,6 +648,24 @@ async function resolveTrendDates(nets) {
   }));
   return { anchorMs: anchor || Date.now(), byNet };
 }
+// Queues Google-bound Market Trends calls through their OWN dedicated
+// semaphore key (2026-08-17) — NOT the shared 'google' key that
+// keywordAdNotificationController.js / searchIntelligenceQueries.js already
+// use for their own background cron/batch work. First attempt used the
+// shared 'google' key and made things WORSE (measured 23s+ across every
+// panel) because Market Trends' calls were then queuing behind whatever
+// unrelated background traffic happened to be holding that same key at the
+// same moment, not just behind each other. A dedicated key still caps this
+// ONE feature's own self-inflicted burst (originally ~5-6 simultaneous calls
+// per page load was the real cause of multi-second latency — keywords 8.63s,
+// top 5.1s, while Meta-network calls on separate clusters answered in
+// ~1.5s), without adding Market Trends load to any other feature's queue or
+// vice versa. Scoped to Google only — every other network is untouched.
+const GOOGLE_MT_SEMAPHORE_KEY = 'market-trends-google';
+function withGoogleLimit(net, fn) {
+  return net === 'google' ? withLimit(GOOGLE_MT_SEMAPHORE_KEY, fn, 3) : fn();
+}
+
 // { 'YYYY-MM-DD': count } for a network in [startMs,endMs], placeholder ads
 // excluded, optionally filtered to a country.
 async function dailySeries(net, startMs, endMs, country, resolvedDate) {
@@ -649,21 +676,23 @@ async function dailySeries(net, startMs, endMs, country, resolvedDate) {
   const f = d.field;
   const cc = countryClause(net, country);
   const intervalKey = es.esMajor >= 8 ? 'calendar_interval' : 'interval'; // ES8 renamed it
-  try {
-    const r = await es.search({
-      index: es.indexName,
-      request_cache: true,
-      body: {
-        size: 0,
-        query: { bool: { filter: [{ range: { [f]: { gte: fmt(startMs), lte: fmt(endMs), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must_not: placeholderMustNot() } },
-        aggs: { d: { date_histogram: { field: f, [intervalKey]: 'day', format: 'yyyy-MM-dd' } } },
-      },
-    }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
-    const buckets = esBody(r).aggregations?.d?.buckets || [];
-    const map = {};
-    for (const b of buckets) map[b.key_as_string] = b.doc_count;
-    return map;
-  } catch { return null; }
+  return withGoogleLimit(net, async () => {
+    try {
+      const r = await es.search({
+        index: es.indexName,
+        request_cache: true,
+        body: {
+          size: 0,
+          query: { bool: { filter: [{ range: { [f]: { gte: fmt(startMs), lte: fmt(endMs), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must_not: placeholderMustNot() } },
+          aggs: { d: { date_histogram: { field: f, [intervalKey]: 'day', format: 'yyyy-MM-dd' } } },
+        },
+      }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
+      const buckets = esBody(r).aggregations?.d?.buckets || [];
+      const map = {};
+      for (const b of buckets) map[b.key_as_string] = b.doc_count;
+      return map;
+    } catch { return null; }
+  });
 }
 
 // ── Ads by country (all networks) ────────────────────────────────────────────
@@ -763,23 +792,25 @@ async function regionsForNet(net, days, advertiser, custom) {
   const start = custom ? custom.fromMs : d.maxMs - days * 86400000;
   const end = custom ? custom.toMs : d.maxMs;
   const ac = advertiserClause(net, advertiser);
-  try {
-    const r = await es.search({
-      index: es.indexName,
-      request_cache: true,
-      body: {
-        size: 0,
-        query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(ac ? [ac] : [])] } },
-        aggs: { c: { terms: { field: cf, size: 80 } } },
-      },
-    }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
-    const out = {};
-    for (const b of (esBody(r).aggregations?.c?.buckets || [])) {
-      const name = normCountry(b.key);
-      if (name) out[name] = (out[name] || 0) + b.doc_count;
-    }
-    return out;
-  } catch { return {}; }
+  return withGoogleLimit(net, async () => {
+    try {
+      const r = await es.search({
+        index: es.indexName,
+        request_cache: true,
+        body: {
+          size: 0,
+          query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(ac ? [ac] : [])] } },
+          aggs: { c: { terms: { field: cf, size: 80 } } },
+        },
+      }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
+      const out = {};
+      for (const b of (esBody(r).aggregations?.c?.buckets || [])) {
+        const name = normCountry(b.key);
+        if (name) out[name] = (out[name] || 0) + b.doc_count;
+      }
+      return out;
+    } catch { return {}; }
+  });
 }
 async function getRegions(req, res) {
   const raw = { ...req.query, ...req.body };
@@ -874,51 +905,32 @@ async function getSearch(req, res) {
 // Search-keyword networks expose a `target_keyword` term (Google search ads).
 // `fields` is a candidate LIST (tried in order via aggWithFallback).
 //
-// GOOGLE MOVED OFF THIS ES PATH (2026-08-17): a `target_keyword` terms agg was
-// eventually confirmed genuinely correct (keyword-typed, not mistyped — see git
-// history for the full 2026-08-14 investigation) and fast once
-// `eager_global_ordinals` was set, but it was still a live ES aggregation on
-// every request. Google already has a purpose-built, lightweight SQL rollup
-// for exactly this question ("top keywords by ad volume") —
-// `keyword_stats_unique`, one row per keyword TEXT, refreshed periodically by
-// jobs/refreshKeywordStats.js and already serving the Keyword Explorer page
-// (keywordsExplorerController.js). Reusing it here (see
-// keywordsForGoogleSql below) means zero extra ES load AND the exact same
-// numbers a user already sees in Keyword Explorer, instead of two different
-// "top keywords" answers for the same keyword depending which panel they're
-// looking at. Pinterest has no such SQL rollup, so it stays on the ES path.
+// Google is ES-only (2026-08-17, reverted off the SQL rollup) — `target_keyword`
+// is keyword-typed with eager_global_ordinals already set, so a plain
+// date-range + terms agg is a cheap, single-shard-ish query on its own (verified
+// directly in Kibana: no advertiser filter, just the range + terms agg). The
+// SQL rollup (`keyword_stats_unique`) had no advertiser column at all, so it
+// could never answer "top keywords FOR an advertiser" — the actual point of
+// this panel once a compare-advertiser is active — and kept returning the same
+// unfiltered top-15 regardless of what the user searched. Every Google call
+// here is queued through withLimit('google', …) (see getKeywords) so it never
+// becomes an unguarded extra call on top of this file's other concurrent
+// Google panels. Pinterest has no SQL rollup either, so it's always been ES.
 const NET_KEYWORD = {
   pinterest: { date: 'pinterest_ad.last_seen', fields: ['pinterest_ad.target_keyword.keyword'] },
 };
-
-// keyword_stats_unique has no per-day window and no advertiser column (it's a
-// keyword-level rollup across the whole corpus, not scoped to a date range or
-// a specific advertiser) — `days`/`advertiser` are accepted by the route for
-// the other (ES) networks but intentionally have no effect on Google's result
-// here. `country` maps onto the same `countries` JSON-array column Keyword
-// Explorer already filters on, so it still works.
-async function keywordsForGoogleSql(size, country) {
-  const sql = databaseManager.getSQL('google');
-  if (!sql) return [];
-  const where = [];
-  const params = [];
-  if (country) { where.push('JSON_CONTAINS(countries, JSON_QUOTE(?))'); params.push(country); }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  // LIMIT inlined, not bound as `?` — mysql2's execute() (prepared statements)
-  // rejects a bound LIMIT on this MySQL setup; size is clampInt()-validated
-  // (1-50) upstream in getKeywords, so inlining it is safe (same pattern as
-  // keywordsExplorerController.js).
-  try {
-    const rows = await sql.query(
-      `SELECT keyword, ads_total AS count FROM keyword_stats_unique ${whereSql} ORDER BY ads_total DESC LIMIT ${Number(size) || 15}`,
-      params
-    );
-    return rows.map((r) => ({ key: String(r.keyword), count: Number(r.count) || 0, net: 'google' }));
-  } catch (e) {
-    return [];
-  }
-}
-async function keywordsForNet(net, cfg, days, size, country, advertiser, custom) {
+const GOOGLE_KEYWORD_CFG = { date: 'last_seen', fields: ['target_keyword'] };
+// Measured in production (2026-08-17): this specific query took 8.63s end to
+// end against a genuinely busy Google cluster (top movers on the same
+// cluster measured 5.1s at the same moment — this is real cluster load, not
+// a cost specific to this query). That's uncomfortably close to the shared
+// 9s cap every other Market Trends ES call uses — a real, correctly-working
+// query that just needed slightly longer would get killed and silently
+// counted as "failed" a few hundred ms from success. Give Google's keyword
+// call more headroom; every other caller of aggWithFallback/keywordsForNet
+// keeps the shared 9s default untouched.
+const GOOGLE_KEYWORD_TIMEOUT_MS = 15000;
+async function keywordsForNet(net, cfg, days, size, country, advertiser, custom, timeoutMs) {
   const es = getEs(net);
   if (!es) return [];
   const anchor = (await getCoalescedDateMax(es, cfg.date).catch(() => null))?.value;
@@ -931,9 +943,20 @@ async function keywordsForNet(net, cfg, days, size, country, advertiser, custom)
     query: { bool: { filter: [{ range: { [cfg.date]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...extra] } },
     aggs: { items: { terms: { field, size } } },
   });
-  const { aggs } = await aggWithFallback(es, buildBody, cfg.fields);
-  return (aggs.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
-    .map((b) => ({ key: String(b.key), count: b.doc_count, net }));
+  const { ok, aggs, reason } = await aggWithFallback(es, buildBody, cfg.fields, timeoutMs);
+  const buckets = (aggs.items?.buckets || []).filter((b) => String(b.key).trim() !== '');
+  // Diagnostic only (2026-08-17) — an empty keyword panel was previously
+  // indistinguishable between "the aggregation genuinely found zero matching
+  // ads" and "the field/query itself failed" (aggWithFallback swallows the
+  // error entirely). Log which one it actually was so a real empty result
+  // (e.g. an advertiser with no Google Search-type ads carrying a target
+  // keyword) isn't mistaken for a bug next time, without changing behavior.
+  if (!ok) {
+    log.warn('[keywords] aggregation failed, returning empty', { net, field: cfg.fields, reason });
+  } else if (!buckets.length && advertiser) {
+    log.info('[keywords] query succeeded but found zero buckets for a filtered advertiser', { net, field: cfg.fields, advertiser, country, days });
+  }
+  return buckets.map((b) => ({ key: String(b.key), count: b.doc_count, net }));
 }
 async function getKeywords(req, res) {
   const raw = { ...req.query, ...req.body };
@@ -946,9 +969,26 @@ async function getKeywords(req, res) {
   const esNets = (list ? list.filter((n) => NET_KEYWORD[n]) : Object.keys(NET_KEYWORD));
   const wantsGoogle = !list || list.includes('google');
   const merged = {};
+  // Google always goes through ES now — a plain date-range + terms agg on
+  // target_keyword, plus the post_owner_name advertiser filter (via
+  // extraFilters inside keywordsForNet) whenever a compare-advertiser is
+  // active. Queued through the SAME dedicated Market-Trends-only semaphore
+  // (GOOGLE_MT_SEMAPHORE_KEY, see withGoogleLimit above) as every other
+  // Google-bound panel in this file — it QUEUES, it never drops or returns
+  // empty on its own. (An earlier version of this also skipped the query
+  // entirely via isEsUnderStress() when the cluster looked busy — removed
+  // 2026-08-17: this is a user-facing panel, not a discretionary background
+  // job, and this product must never substitute a real answer with a silent
+  // empty one — same rule already established for getCompetitorsCount.) The
+  // longer GOOGLE_KEYWORD_TIMEOUT_MS gives a genuinely busy-but-working
+  // cluster room to actually finish instead of being killed near the finish
+  // line.
+  const googleQuery = wantsGoogle
+    ? withLimit(GOOGLE_MT_SEMAPHORE_KEY, () => keywordsForNet('google', GOOGLE_KEYWORD_CFG, days, size, country, advertiser, custom, GOOGLE_KEYWORD_TIMEOUT_MS), 3)
+    : Promise.resolve([]);
   const [esParts, googleItems] = await Promise.all([
     Promise.all(esNets.map((n) => keywordsForNet(n, NET_KEYWORD[n], days, size, country, advertiser, custom))),
-    wantsGoogle ? keywordsForGoogleSql(size, country) : Promise.resolve([]),
+    googleQuery,
   ]);
   for (const listx of [...esParts, googleItems]) for (const b of listx) {
     if (!merged[b.key]) merged[b.key] = { keyword: b.key, count: 0, net: b.net };
