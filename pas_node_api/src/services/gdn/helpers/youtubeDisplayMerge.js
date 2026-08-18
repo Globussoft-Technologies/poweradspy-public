@@ -122,6 +122,17 @@ function buildSharedFilters(p) {
   if (p.advertiser) {
     must.push({ match_phrase: { post_owner: String(p.advertiser) } });
   }
+  // Domain search is applied to the native GDN query separately, so mirror the
+  // YouTube query builder's host normalization and `ad_url` filter here. Without
+  // this clause, every YouTube DISPLAY/IMAGE hit is eligible for the merged page
+  // even when the GDN half of the request is restricted to one domain.
+  if (p.domain) {
+    const url = String(p.domain);
+    let domain;
+    try { domain = new URL(url.startsWith('http') ? url : `http://${url}`).hostname; }
+    catch (_) { domain = url.split('/')[0]; }
+    filter.push({ wildcard: { ad_url: `*${domain}*` } });
+  }
   // Country — mirror YouTube SearchMixQueryBuilder._getCountryEnv()
   // (YouTube DISPLAY ads store countries in the top-level `countries` array).
   // Use multiFieldMatchFilter to stay byte-for-byte consistent with the native
