@@ -313,6 +313,7 @@ async function dedupCount(client, index, boolQuery) {
       index,
       size: 0,
       body: {
+        track_total_hits: false, // aggregation-only — .aggregations is read, hits.total never is
         query: { bool: boolQuery },
         aggs: {
           unique_ads: {
@@ -1000,6 +1001,7 @@ const getAdvertiserAdCount = async (advertiser) => {
           index,
           size: 0,
           body: {
+            track_total_hits: false,
             query: {
               bool: {
                 must: [ownerClause],
@@ -1008,7 +1010,7 @@ const getAdvertiserAdCount = async (advertiser) => {
               },
             },
             aggs: {
-              countries: { terms: { field: finalField, size: 1000 } }
+              countries: { terms: { field: finalField, size: 1000, execution_hint: 'map' } }
             }
           }
         });
@@ -1063,6 +1065,7 @@ const getAdvertiserAdCount = async (advertiser) => {
             index: idx,
             size: 0,
             body: {
+              track_total_hits: false,
               query: {
                 bool: {
                   must: [ownerClause],
@@ -1262,6 +1265,7 @@ const getAdvertiserAdCount = async (advertiser) => {
           index,
           size: 0,
           body: {
+            track_total_hits: false,
             query: {
               bool: {
                 must: [ownerClause],
@@ -2498,6 +2502,7 @@ async insertpaidSearch(req,res){
 
         return {
           size: 0,
+          track_total_hits: false,
           query: {
             bool: {
               must: [buildOwnerClause(cfg.index, competitor)],
@@ -2511,6 +2516,7 @@ async insertpaidSearch(req,res){
               terms: {
                 field: countryFieldForIndex(cfg.index, cfg.countryField),
                 size: COUNTRY_BUCKET_SIZE,
+                execution_hint: 'map',
               },
             },
             ...dateAggregations,
@@ -2791,6 +2797,7 @@ async insertpaidSearch(req,res){
           const r = await client.search({
             index, size: 0,
             body: {
+              track_total_hits: false,
               query: {
                 bool: {
                   must: [ownerClause],
@@ -2890,6 +2897,7 @@ async insertpaidSearch(req,res){
             const r = await client.search({
               index, size: 0,
               body: {
+                track_total_hits: false,
                 query: {
                   bool: {
                     must: [ownerClause],
@@ -2898,7 +2906,7 @@ async insertpaidSearch(req,res){
                     ...(mustNotClauses.length && { must_not: mustNotClauses }),
                   },
                 },
-                aggs: { countries: { terms: { field: finalField, size: 1000 } } }
+                aggs: { countries: { terms: { field: finalField, size: 1000, execution_hint: 'map' } } }
               }
             });
             // Sum doc_count per country across platforms so "Top Country" reflects

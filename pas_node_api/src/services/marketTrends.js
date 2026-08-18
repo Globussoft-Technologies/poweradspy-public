@@ -248,7 +248,7 @@ function getCoalescedDateMax(es, field) {
   const promise = es.search({
     index,
     request_cache: true,
-    body: { size: 0, aggs: { a: { max: { field } } } },
+    body: { size: 0, track_total_hits: false, aggs: { a: { max: { field } } } },
   }, { requestTimeout: NET_REQUEST_TIMEOUT_MS }).then((r) => esBody(r).aggregations?.a || null);
   entries.set(key, promise);
   promise.then(
@@ -439,6 +439,7 @@ function categoryBodyFor(cfg, size, field, win, extra = []) {
   const t = { terms: { field, size } };
   return {
     size: 0,
+    track_total_hits: false,
     query: windowQueryFor(cfg, prevStartMs, nowMs, extra),
     aggs: {
       current: { filter: { range: { [cfg.date]: { gte: fmt(startMs), lte: fmt(nowMs), format: DATE_FMT } } }, aggs: { items: t } },
@@ -452,6 +453,7 @@ function topBodyFor(cfg, size, field, win, subAggs, extra = []) {
   const { nowMs, startMs, prevStartMs } = win;
   return {
     size: 0,
+    track_total_hits: false,
     query: windowQueryFor(cfg, prevStartMs, nowMs, extra),
     aggs: {
       current: { filter: { range: { [cfg.date]: { gte: fmt(startMs), lte: fmt(nowMs), format: DATE_FMT } } }, aggs: { items: { terms: { field, size }, ...(subAggs ? { aggs: subAggs } : {}) } } },
@@ -683,6 +685,7 @@ async function dailySeries(net, startMs, endMs, country, resolvedDate) {
         request_cache: true,
         body: {
           size: 0,
+          track_total_hits: false,
           query: { bool: { filter: [{ range: { [f]: { gte: fmt(startMs), lte: fmt(endMs), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must_not: placeholderMustNot() } },
           aggs: { d: { date_histogram: { field: f, [intervalKey]: 'day', format: 'yyyy-MM-dd' } } },
         },
@@ -799,6 +802,7 @@ async function regionsForNet(net, days, advertiser, custom) {
         request_cache: true,
         body: {
           size: 0,
+          track_total_hits: false,
           query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(ac ? [ac] : [])] } },
           aggs: { c: { terms: { field: cf, size: 80 } } },
         },
@@ -864,6 +868,7 @@ async function searchDaily(net, q, days, country, custom) {
       request_cache: true,
       body: {
         size: 0,
+        track_total_hits: false,
         query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must: [{ match: { [advField]: q } }] } },
         aggs: { dd: { date_histogram: { field: d.field, interval: 'day', format: 'yyyy-MM-dd' } } },
       },
@@ -938,10 +943,18 @@ async function keywordsForNet(net, cfg, days, size, country, advertiser, custom,
   const start = custom ? custom.fromMs : anchor - days * 86400000;
   const end = custom ? custom.toMs : anchor;
   const extra = extraFilters(net, country, advertiser);
+  // execution_hint: 'map' (2026-08-17) — counts terms with a direct hash map
+  // instead of building/using global ordinals for this query. Verified
+  // directly in Kibana as faster for this exact shape (date-range filter +
+  // small top-N terms agg) on this field. track_total_hits: false skips
+  // computing an exact match count we never read (only .aggregations is
+  // used) — safe everywhere in this file, not just here (verified no caller
+  // anywhere reads response.hits.total).
   const buildBody = (field) => ({
     size: 0,
+    track_total_hits: false,
     query: { bool: { filter: [{ range: { [cfg.date]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...extra] } },
-    aggs: { items: { terms: { field, size } } },
+    aggs: { items: { terms: { field, size, execution_hint: 'map' } } },
   });
   const { ok, aggs, reason } = await aggWithFallback(es, buildBody, cfg.fields, timeoutMs);
   const buckets = (aggs.items?.buckets || []).filter((b) => String(b.key).trim() !== '');
