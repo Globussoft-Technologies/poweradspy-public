@@ -385,7 +385,7 @@
               <input type="text" id="ip-search" class="input-sm" placeholder="Search IP...">
             </div>
           </div>
-          <div class="card-body">
+          <div class="card-body table-panel">
             <table class="data-table">
               <thead>
                 <tr>
@@ -569,7 +569,7 @@
 
         <div class="card glass">
           <div class="card-header"><h3>Running Now — Elasticsearch</h3></div>
-          <div class="card-body">
+          <div class="card-body table-panel">
             <table class="data-table">
               <thead><tr><th>Network</th><th>Running</th><th>Description</th><th>Node</th><th>Action</th></tr></thead>
               <tbody id="lw-es-tasks"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
@@ -579,7 +579,7 @@
 
         <div class="card glass">
           <div class="card-header"><h3>Running Now — MySQL</h3></div>
-          <div class="card-body">
+          <div class="card-body table-panel">
             <table class="data-table">
               <thead><tr><th>Network</th><th>Id</th><th>Time</th><th>DB</th><th>State</th><th>Query</th><th>Action</th></tr></thead>
               <tbody id="lw-sql-queries"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
@@ -589,7 +589,7 @@
 
         <div class="card glass">
           <div class="card-header"><h3>Recent Queries — Elasticsearch (last 15 seen per network)</h3></div>
-          <div class="card-body">
+          <div class="card-body table-panel">
             <table class="data-table">
               <thead><tr><th>Network</th><th>Seen</th><th>Ran For</th><th>Description</th><th>Node</th><th title="Cluster-wide ES CPU % at the instant this query was captured — ES has no true per-query cost metric, this is the closest available signal">Cluster CPU %</th><th></th></tr></thead>
               <tbody id="lw-es-recent"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
@@ -599,7 +599,7 @@
 
         <div class="card glass">
           <div class="card-header"><h3>Recent Queries — MySQL (last 15 seen per network)</h3></div>
-          <div class="card-body">
+          <div class="card-body table-panel">
             <table class="data-table">
               <thead><tr><th>Network</th><th>Seen</th><th>Id</th><th>DB</th><th>State</th><th>Query</th><th title="MySQL load % (Threads_running / max_connections) at the instant this query was captured — MySQL has no true per-query cost metric, this is the closest available signal">SQL Load %</th><th></th></tr></thead>
               <tbody id="lw-sql-recent"><tr><td colspan="8" class="muted">Loading...</td></tr></tbody>
@@ -609,7 +609,7 @@
 
         <div class="card glass">
           <div class="card-header"><h3>Spike History (last 24h)</h3></div>
-          <div class="card-body">
+          <div class="card-body table-panel">
             <table class="data-table">
               <thead><tr><th>Network</th><th>Type</th><th>Started</th><th>Duration</th><th>Peak</th><th>Details</th></tr></thead>
               <tbody id="lw-history"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>

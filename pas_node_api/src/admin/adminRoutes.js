@@ -135,6 +135,44 @@ router.get('/api/session', (req, res) => {
 router.post('/api/logout', logout);
 router.post('/api/verify-edit-key', express.json(), verifyEditKey);
 
+// Diagnostic — hit this from a real client browser (not curl on the server
+// itself) to see EXACTLY what this request looked like once it reached
+// Node: which proxy headers actually arrived, and what each IP-resolution
+// path computes from them. If recorded IPs are showing Cloudflare's own
+// edge ranges (172.68.x/172.69.x/172.71.x/162.158.x) instead of real
+// visitors even after restarting, this tells you definitively whether
+// cf-connecting-ip is even reaching this process — if it's missing here,
+// the problem is upstream (an nginx/load-balancer hop between Cloudflare
+// and this app that isn't forwarding it), not in this app's code.
+router.get('/api/debug/ip', (req, res) => {
+  const { getClientIp, isCloudflareIp } = require('../utils/geoip');
+  const cfHeader = req.headers['cf-connecting-ip'] || null;
+  const xffHeader = req.headers['x-forwarded-for'] || null;
+  res.json({
+    code: 200,
+    data: {
+      headers: {
+        'cf-connecting-ip': cfHeader,
+        'x-forwarded-for': xffHeader,
+        'x-real-ip': req.headers['x-real-ip'] || null,
+        'cf-ipcountry': req.headers['cf-ipcountry'] || null,
+      },
+      'req.ip': req.ip,
+      'req.ips': req.ips,
+      'req.connection.remoteAddress': req.connection?.remoteAddress,
+      isCloudflareRange: {
+        'cf-connecting-ip': cfHeader ? isCloudflareIp(cfHeader) : null,
+        'x-forwarded-for (first)': xffHeader ? isCloudflareIp(xffHeader.split(',')[0].trim()) : null,
+        'req.ip': isCloudflareIp(req.ip),
+      },
+      // What the IP Manager table will actually record for this request —
+      // null means every candidate was empty or a Cloudflare edge IP (an
+      // upstream hop is dropping the real client IP entirely).
+      resolvedByGetClientIp: getClientIp(req),
+    },
+  });
+});
+
 // ─── Metrics ──────────────────────────────────────────────────
 router.get('/api/metrics', async (req, res) => {
   const { startDate, endDate } = req.query;

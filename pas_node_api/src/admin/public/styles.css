@@ -568,6 +568,22 @@ html, body {
   overflow-x: auto;
 }
 
+/* Long tables (100-row IP stats, Live Watcher's query/spike lists) used to
+   stretch the whole PAGE tall — scrolling down to see the next card meant
+   scrolling past every row of whatever long table came before it. This
+   caps the table's own viewport and gives IT the vertical scrollbar
+   instead, so the page stays a normal, bounded-height list of cards. */
+.card-body.table-panel {
+  max-height: 420px;
+  overflow-y: auto;
+}
+.card-body.table-panel table.data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 1;
+}
+
 .grid-2col {
   display: grid;
   grid-template-columns: 1fr 1fr;
