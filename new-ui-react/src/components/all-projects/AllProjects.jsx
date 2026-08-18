@@ -427,19 +427,6 @@ const INITIAL_PROJECTS = [];
 // COUNTRIES (full ISO 3166-1 list) now lives in src/utils/countries.js — the
 // single source of truth shared with the analytics country map. Imported above.
 
-const KEYWORDS_SUGGESTIONS = [
-  "ecommerce",
-  "online shopping",
-  "retail",
-  "deals",
-  "prime",
-  "electronics",
-  "fashion",
-  "books",
-  "spy tool",
-  "ad research",
-];
-
 // Signal used to keep the user on a project's Competitor Analytics view when
 // AllProjects remounts while they're still in this browser tab session —
 // covers a plain page REFRESH, the browser Back button after drilling into
@@ -495,7 +482,26 @@ const readAddAdvertiserDraft = () => {
   if (!draft || typeof draft !== "object") return null;
   const viewState = Number(draft.viewState);
   if (![1, 2, 3].includes(viewState)) return null;
-  return { ...draft, viewState };
+
+  // Older drafts did not store an explicit completion flag. A content ref is
+  // the only reliable evidence that their keyword request actually completed.
+  const hasCompletionFlag = Object.prototype.hasOwnProperty.call(
+    draft,
+    "keywordRequestCompleted",
+  );
+  const keywordRequestCompleted = hasCompletionFlag
+    ? draft.keywordRequestCompleted === true
+    : Boolean(draft.fetchedContentRefId);
+  const safeViewState =
+    viewState === 3 || (viewState === 2 && !keywordRequestCompleted)
+      ? 1
+      : viewState;
+
+  return {
+    ...draft,
+    viewState: safeViewState,
+    keywordRequestCompleted,
+  };
 };
 
 // Still called from the drill-down click handlers below — now redundant with
@@ -518,7 +524,7 @@ const markReturnToAnalytics = () => {
 const getRestoreViewState = (addAdvertiserDraft) => {
   try {
     if (addAdvertiserDraft) {
-      return addAdvertiserDraft.viewState === 3 ? 2 : addAdvertiserDraft.viewState;
+      return addAdvertiserDraft.viewState;
     }
     if (!sessionStorage.getItem(RESTORE_ANALYTICS_FLAG)) return 0;
     if (!localStorage.getItem("pas_dashboard_selected_proj_id")) return 0;
@@ -621,11 +627,14 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     Array.isArray(restoredAddAdvertiserDraft?.keywordSuggestions) &&
     restoredAddAdvertiserDraft.keywordSuggestions.length > 0
       ? restoredAddAdvertiserDraft.keywordSuggestions
-      : KEYWORDS_SUGGESTIONS,
+      : [],
   );
   const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
   const [fetchedContentRefId, setFetchedContentRefId] = useState(
     () => restoredAddAdvertiserDraft?.fetchedContentRefId || "",
+  );
+  const [keywordRequestCompleted, setKeywordRequestCompleted] = useState(
+    () => restoredAddAdvertiserDraft?.keywordRequestCompleted === true,
   );
   const [maxCompetitors, setMaxCompetitors] = useState(
     () => restoredAddAdvertiserDraft?.maxCompetitors || "15",
@@ -920,11 +929,20 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   useEffect(() => {
     if (viewState === 1 || viewState === 2 || viewState === 3) {
       writeJsonSessionItem(RESTORE_ADD_ADVERTISER_KEY, {
-        viewState: viewState === 3 ? 2 : viewState,
+        // A refresh cannot resume the in-flight HTTP request. Restore keyword
+        // generation to the advertiser step, while preserving a completed
+        // configuration if refresh happens during final project submission.
+        viewState:
+          viewState === 3
+            ? keywordRequestCompleted
+              ? 2
+              : 1
+            : viewState,
         websiteLink,
         selectedKeywords,
         keywordSuggestions,
         fetchedContentRefId,
+        keywordRequestCompleted,
         maxCompetitors,
         customKeyword,
         selectedCountries,
@@ -941,6 +959,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     selectedKeywords,
     keywordSuggestions,
     fetchedContentRefId,
+    keywordRequestCompleted,
     maxCompetitors,
     customKeyword,
     selectedCountries,
@@ -1370,6 +1389,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
 
   const handleNextPhase = async () => {
     if (!websiteLink) return;
+    // Never let a new advertiser reuse suggestions or a Python session from a
+    // previous request, especially after Add Another or an interrupted reload.
+    setKeywordRequestCompleted(false);
+    setFetchedContentRefId("");
+    setKeywordSuggestions([]);
+    setSelectedKeywords([]);
+    setCustomKeyword("");
     setIsGeneratingKeywords(true);
     // Temporarily go to state 3 (loading) to let user know something is happening
     setViewState(3);
@@ -1410,16 +1436,17 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       }
 
       // CAPTURE THE UUID SESSION ID FROM PYTHON
-      if (response?.data?.content_ref_id) {
-        setFetchedContentRefId(response.data.content_ref_id);
-      } else if (response?.content_ref_id) {
-        setFetchedContentRefId(response.content_ref_id);
-      }
+      const responseContentRefId =
+        response?.data?.content_ref_id || response?.content_ref_id || "";
 
       if (extractedKws.length > 0) {
+        setFetchedContentRefId(responseContentRefId);
         setKeywordSuggestions(extractedKws);
+        setKeywordRequestCompleted(true);
         setViewState(2); // Move to keyword selection only when keywords are available
       } else {
+        setFetchedContentRefId("");
+        setKeywordRequestCompleted(false);
         showToast(
           "Failed to fetch keywords. Please try again.",
           "error",
@@ -1434,6 +1461,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         return;
       }
       console.error("Failed to fetch keywords:", error);
+      setFetchedContentRefId("");
+      setKeywordRequestCompleted(false);
       showToast(
         "Failed to fetch keywords. Please try again.",
         "error",
@@ -1522,6 +1551,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       setSelectedProjectId(projectId);
       setWebsiteLink("");
       setSelectedKeywords([]);
+      setKeywordSuggestions([]);
+      setKeywordRequestCompleted(false);
+      setCustomKeyword("");
       setSelectedCountries([]);
       setCountrySearch("");
       setIsCountryAccordionOpen(false);
@@ -2038,6 +2070,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     }
     setWebsiteLink("");
     setSelectedKeywords([]);
+    setKeywordSuggestions([]);
+    setFetchedContentRefId("");
+    setKeywordRequestCompleted(false);
+    setCustomKeyword("");
     setSelectedCountries([]);
     setCountrySearch("");
     setIsCountryAccordionOpen(false);

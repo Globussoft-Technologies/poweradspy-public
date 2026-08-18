@@ -1,6 +1,10 @@
 'use strict';
 
-const { getAggs, getTotal, resolveTimeWindow, getAllUserEmails, resolveUserIds: helperResolveUserIds, getCache, setCache } = require('../helpers/searchIntelligenceHelpers');
+const {
+  getAggs, getTotal, resolveTimeWindow, getAllUserEmails, fetchAllTermsBuckets,
+  resolveUserIds: helperResolveUserIds, getCache, setCache,
+  detectOtherActivity, parseFilterPills, parsePagination,
+} = require('../helpers/searchIntelligenceHelpers');
 const { buildAllSearchesQuery } = require('../queries/searchIntelligenceQueries');
 
 
@@ -39,8 +43,7 @@ async function getAllSearches(req, elastic, logger) {
       page = 0, size = 10,
     } = req.query;
 
-    const pageNum  = Math.max(0, Number(page));
-    const pageSize = Math.min(100, Math.max(1, Number(size)));
+    const { pageNum, pageSize } = parsePagination({ page, size });
 
     // Resolve time window using helper
     const { fromTs, toTs } = resolveTimeWindow({ from_date, to_date, from_time, to_time, tz_offset_minutes, date_range });
@@ -120,183 +123,11 @@ async function getAllSearches(req, elastic, logger) {
         ? new Date(dtSec * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
         : (s['date'] ?? null);
 
-      // Human-readable labels for all stored fields
-      const FILTER_LABEL_MAP = {
-        'filter.countries':        'Country',
-        'filter.languages':        'Language',
-        'filter.call_to_actions':  'CTA',
-        'filter.ad_positions':     'Ad Position',
-        'filter.ad_subPositions':  'Ad Sub-Position',
-        'filter.gender':           'Gender',
-        'filter.ad_type':          'Ad Type',
-        'filter.ad_categories':    'Category',
-        'filter.ad_subCategories': 'Sub-Category',
-        'filter.status':           'Status',
-        'filter.sort_by':          'Sort By',
-        'filter.platform':         'Platform',
-        'filter.image_size':       'Image Size',
-        'filter.network':          'Network',
-        'filter.native_network':   'Native Network',
-        'filter.ctr':              'CTR',
-        'filter.budget':           'Budget',
-      };
-
-      // Sort-only dashboard fields (single value)
-      // NOTE: dashboard.favourite, dashboard.hidden, dashboard.exportsAds, dashboard.show_original
-      // are other-activity signals, NOT filter pills — keep them out of this map.
-      const DASHBOARD_SORT_MAP = {
-        'dashboard.newest_sort':          'Sort: Newest',
-        'dashboard.running_longest_sort': 'Sort: Running Longest',
-        'dashboard.last_seen_sort':       'Sort: Last Seen',
-        'dashboard.domain_sort':          'Sort: Domain',
-        'dashboard.likes_sort':           'Sort: Likes',
-        'dashboard.comments_sort':        'Sort: Comments',
-        'dashboard.shares_sort':          'Sort: Shares',
-        'dashboard.popularity_sort':      'Sort: Popularity',
-        'dashboard.impressions_sort':     'Sort: Impressions',
-        'dashboard.views_sort':           'Sort: Views',
-        'dashboard.verified':             'Verified',
-        'dashboard.meta_ads_library':     'Meta Ads Library',
-        'dashboard.likes':                'Likes',
-        'dashboard.comments':             'Comments',
-        'dashboard.shares':               'Shares',
-      };
-
-      // Range pairs: [min, max] → "Label: min to max"
-      const RANGE_PAIRS = [
-        { label: 'Likes',       range: 'dashboard.likes_range',       sort: 'dashboard.likes_sort'       },
-        { label: 'Comments',    range: 'dashboard.comments_range',    sort: 'dashboard.comments_sort'    },
-        { label: 'Shares',      range: 'dashboard.shares_range',      sort: 'dashboard.shares_sort'      },
-        { label: 'Popularity',  range: 'dashboard.popularity_range',  sort: 'dashboard.popularity_sort'  },
-        { label: 'Impressions', range: 'dashboard.impressions_range', sort: 'dashboard.impressions_sort' },
-        { label: 'Views',       range: 'dashboard.views_range',       sort: 'dashboard.views_sort'       },
-        { label: 'Ad Budget',   range: 'dashboard.adBudget',          sort: null                         },
-        { label: 'Ad Seen',     range: 'dashboard.ad_seen',           sort: null                         },
-        { label: 'Post Date',   range: 'dashboard.post_date',         sort: null                         },
-      ];
-
-      const SEARCH_BY_LABEL_MAP = {
-        'search_by.text':        'Search By: Text',
-        'search_by.celebrities': 'Search By: Celebrity',
-        'search_by.objects':     'Search By: Object',
-        'search_by.brands':      'Search By: Brand',
-      };
-
-      const LANDER_LABEL_MAP = {
-        'lander.affiliates': 'Affiliate Network',
-        'lander.ecommerce':  'Ecommerce Platform',
-        'lander.funnels':    'Funnel Type',
-        'lander.sources':    'Traffic Source',
-        'lander.marketing':  'Lander: Marketing',
-      };
-
-      // sort_by.* only used when no corresponding range pill was already added
-      const SORT_BY_LABEL_MAP = {
-        'sort_by.likes':    { label: 'Sort: Likes',    rangeKey: 'dashboard.likes_range'    },
-        'sort_by.comments': { label: 'Sort: Comments', rangeKey: 'dashboard.comments_range' },
-        'sort_by.views':    { label: 'Sort: Views',    rangeKey: 'dashboard.views_range'    },
-      };
-
-      const FILTER_TYPE_LABELS = {
-        'filter_only':       'Filter Only',
-        'search_only':       'Search Only',
-        'search_and_filter': 'Search + Filter',
-      };
-
-      // Detect other activity type FIRST — these docs have no meaningful filter pills
-      const gf = (key) => { if (s[key] !== undefined) return s[key]; const parts = key.split('.'); let c = s; for (const p of parts) { if (c == null || typeof c !== 'object') return undefined; c = c[p]; } return c; };
-      let other_activity = null;
-      if      (gf('favourite_ad_id'))         other_activity = `Favourite Ad #${gf('favourite_ad_id')}`;
-      else if (gf('unfavourite_ad_id'))       other_activity = `Unfavourite Ad #${gf('unfavourite_ad_id')}`;
-      else if (gf('download.ad_id'))          other_activity = `Download Ad #${gf('download.ad_id')}`;
-      else if (gf('hide_ad_id'))              other_activity = `Hide Ad #${gf('hide_ad_id')}`;
-      else if (gf('unhide_ad_id'))            other_activity = `Unhide Ad #${gf('unhide_ad_id')}`;
-      else if (gf('hide_advertiser_id'))      other_activity = `Hide Advertiser #${gf('hide_advertiser_id')}`;
-      else if (gf('unhide_advertiser_id'))    other_activity = `Unhide Advertiser #${gf('unhide_advertiser_id')}`;
-      else if (gf('copy.ad_id'))              other_activity = `Copy Landing Page #${gf('copy.ad_id')}`;
-      else if (gf('show_analytics.ad_id'))    other_activity = `Analytics Modal #${gf('show_analytics.ad_id')}`;
-      else if (gf('dashboard.show_original')) other_activity = gf('dashboard.show_original') === 'true' ? 'Show Original: Checked' : 'Show Original: Unchecked';
-      else if (gf('dashboard.exportsAds'))    other_activity = 'Export Ads';
-      else if (gf('dashboard.favourite'))     other_activity = 'Favourite Dashboard';
-      else if (gf('dashboard.hidden'))        other_activity = 'Hidden Dashboard';
-      else if (gf('user.language'))           other_activity = `Language Translation: ${gf('user.language_name') ?? gf('user.language')}`;
-      else if (gf('share.guest_page_url'))    other_activity = 'Share Guest Page';
-      else if (gf('vieworiginal.ad_id'))      other_activity = `View Original Ad #${gf('vieworiginal.ad_id')}`;
-
-      // Build filters_applied pills — skip entirely for other-activity docs
-      const filterPills = [];
-
-      if (!other_activity) {
-        const usedSortKeys = new Set();
-
-        const ARRAY_JOIN_KEYS = new Set([
-          'Country', 'Language', 'CTA', 'Ad Position', 'Ad Sub-Position',
-          'Category', 'Sub-Category', 'Platform', 'Network', 'Image Size',
-          'Affiliate Network', 'Ecommerce Platform', 'Funnel Type', 'Traffic Source', 'Lander: Marketing',
-          'Native Network', 'Budget',
-        ]);
-
-        const addPills = (labelMap) => {
-          for (const [key, label] of Object.entries(labelMap)) {
-            const val = s[key];
-            if (!val || val === 'NA') continue;
-            const vals = Array.isArray(val)
-              ? val.filter(v => v && v !== 'NA')
-              : [val].filter(v => v && v !== 'NA');
-            if (vals.length === 0) continue;
-            if (vals.length > 1 && ARRAY_JOIN_KEYS.has(label)) {
-              const first = vals.slice(0, 2).join(', ');
-              const rest  = vals.slice(2).join(', ');
-              filterPills.push(rest ? `${label}: ${first}\n${rest}` : `${label}: ${first}`);
-            } else {
-              for (const v of vals) filterPills.push(`${label}: ${v}`);
-            }
-          }
-        };
-
-        const DATE_RANGE_KEYS = new Set(['Ad Seen', 'Post Date']);
-
-        for (const { label, range, sort } of RANGE_PAIRS) {
-          const val = s[range];
-          if (val && val !== 'NA') {
-            const arr = Array.isArray(val) ? val : [val];
-            if (arr.length >= 2) {
-              filterPills.push(DATE_RANGE_KEYS.has(label)
-                ? `${label}: ${arr[0]}\nto ${arr[1]}`
-                : `${label}: ${arr[0]} to ${arr[1]}`);
-            } else if (arr.length === 1) {
-              filterPills.push(`${label}: ${arr[0]}`);
-            }
-            if (sort) usedSortKeys.add(sort);
-          }
-        }
-
-        for (const [key, label] of Object.entries(DASHBOARD_SORT_MAP)) {
-          if (usedSortKeys.has(key)) continue;
-          const val = s[key];
-          if (!val || val === 'NA') continue;
-          filterPills.push(`${label}`);
-        }
-
-        // Age range — combine lower_age + upper_age into one pill
-        const lowerAge = s['filter.lower_age'] ?? s?.filter?.lower_age ?? null;
-        const upperAge = s['filter.upper_age'] ?? s?.filter?.upper_age ?? null;
-        if (lowerAge && upperAge) filterPills.push(`Age: ${lowerAge} to ${upperAge}`);
-        else if (lowerAge)        filterPills.push(`Age From: ${lowerAge}`);
-        else if (upperAge)        filterPills.push(`Age To: ${upperAge}`);
-
-        addPills(FILTER_LABEL_MAP);
-        addPills(SEARCH_BY_LABEL_MAP);
-        addPills(LANDER_LABEL_MAP);
-        // sort_by.* — skip if the corresponding range was already shown
-        for (const [key, { label, rangeKey }] of Object.entries(SORT_BY_LABEL_MAP)) {
-          if (s[rangeKey] && s[rangeKey] !== 'NA') continue; // range pill already added
-          const val = s[key];
-          if (!val || val === 'NA') continue;
-          filterPills.push(`${label}: ${val}`);
-        }
-
-      }
+      // Detect other-activity type and build filter pills — shared with the
+      // rest of the admin panel via searchIntelligenceHelpers.js instead of
+      // being rebuilt here on every row.
+      const other_activity = detectOtherActivity(s);
+      const filterPills = parseFilterPills(s, other_activity);
 
       // Country: user's current country (not the filter.country they searched with)
       const country = s['user.current_country'] ?? null;
@@ -422,29 +253,21 @@ async function getFilterOptions(req, elastic, logger) {
     const aggs = getAggs(result);
     const pick = (buckets) => (buckets ?? []).map((b) => b.key).filter(Boolean);
 
-    // Also fetch unique user emails via email_hit trick
-    const emailBody = {
-      size: 0,
+    // Also fetch unique user emails via email_hit trick.
+    // Paginated (no fixed size cap) so ranking by activity covers every user,
+    // not just whichever ones happened to land in the first page.
+    const emailBuckets = await fetchAllTermsBuckets(elastic, {
       query: { bool: { filter: [
         { range: { dateTime: { gte: fromTs } } },
         { exists: { field: 'user.email' } },
       ] } },
-      aggs: {
-        per_user: {
-          terms: { field: 'user.id', size: 200, order: { _count: 'desc' } },
-          aggs:  { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
-        },
-      },
-    };
-
-
-    const emailResult = await elastic.search({
-      index: 'user_activities',
-      body: emailBody,
+      field: 'user.id',
+      subAggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
     });
 
     const INVALID_FO = new Set(['na', 'n/a', 'null', 'undefined', 'unknown', '-', '']);
-    const users = (getAggs(emailResult)?.per_user?.buckets ?? [])
+    const users = emailBuckets
+      .sort((a, b) => b.doc_count - a.doc_count)
       .map((b) => {
         const src = b.email_hit?.hits?.hits?.[0]?._source ?? {};
         return src['user.email'] ?? src?.user?.email ?? null;
@@ -777,7 +600,6 @@ async function getSummaryStats(req, elastic, logger) {
 
     // Fetch all docs to extract unique platforms (network field can be comma-separated)
     const allDocsBody = {
-      size: 1000,
       query: { bool: { filter: filters } },
       _source: ['network'],
     };

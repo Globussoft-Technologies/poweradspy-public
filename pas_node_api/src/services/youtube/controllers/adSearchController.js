@@ -426,6 +426,10 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
           if (src['youtube.lowerBudget']   !== undefined) row.lowerBudget   = src['youtube.lowerBudget'];
           if (src['youtube.upperBudget']   !== undefined) row.upperBudget   = src['youtube.upperBudget'];
           if (src['youtube.averageBudget'] !== undefined) row.averageBudget = src['youtube.averageBudget'];
+          // Funnel / built_with_analytics_tracking — ES's `funnel` is the current value
+          // (kept fresh by built-withController's ES overlay on every re-scrape); the SQL
+          // column above can lag behind it. Same precedence adDetailController already uses.
+          if (src.funnel) row.built_with_analytics_tracking = src.funnel;
 
           return row;
         });

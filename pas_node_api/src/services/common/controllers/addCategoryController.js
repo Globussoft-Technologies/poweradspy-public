@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const serviceRegistry = require('../../ServiceRegistry');
 const networksConfig = require('../../../config/networks');
 const config = require('../../../config');
@@ -20,6 +21,29 @@ const AI_META_OPERATION_TIMEOUT_MS = Number.isFinite(parsedAiMetaTimeoutMs) && p
 // database connections and ES capacity for an unbounded backlog.
 const DEFAULT_AI_META_BULK_RECOMMENDED_SIZE = 5;
 const DEFAULT_AI_META_BULK_MAX_SIZE = 10;
+const RECENT_AD_PLATFORMS = new Set(['facebook', 'instagram', 'youtube', 'google', 'native', 'pinterest']);
+const RECENT_CHECKPOINT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const RECENT_SQL_SCAN_SIZE = 500;
+const parsedRecentMaxScanRows = Number(process.env.RECENT_ADS_MAX_SCAN_ROWS);
+const RECENT_ADS_MAX_SCAN_ROWS = Number.isSafeInteger(parsedRecentMaxScanRows) && parsedRecentMaxScanRows >= RECENT_SQL_SCAN_SIZE
+  ? parsedRecentMaxScanRows
+  : 2000;
+const parsedRecentSettleSeconds = Number(process.env.RECENT_ADS_SETTLE_SECONDS);
+const RECENT_ADS_SETTLE_SECONDS = Number.isSafeInteger(parsedRecentSettleSeconds) && parsedRecentSettleSeconds >= 0
+  ? parsedRecentSettleSeconds
+  : 60;
+
+// SQL is the insertion-time source of truth. Several platform ES mappings do not
+// index created_date (Instagram intentionally omits it), so last_seen/first_seen
+// must not be substituted for the actual database insertion time.
+const RECENT_SQL_CONFIG = {
+  facebook:  { table: 'facebook_ad' },
+  instagram: { table: 'instagram_ad' },
+  youtube:   { table: 'youtube_ad' },
+  google:    { table: 'google_text_ad' },
+  native:    { table: 'native_ad' },
+  pinterest: { table: 'pinterest_ad' },
+};
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -801,6 +825,120 @@ async function fetchSqlDescriptionFallback(sqlClient, sqlCfg, ids) {
 }
 
 /**
+ * Normalize one ES ad document into the shared classifier feed shape. Both the
+ * historical and recent feeds call this helper so platform mappings cannot drift.
+ */
+function normalizeDescriptionHit(hit, cfg, platform, pageField) {
+  const src = hit._source || {};
+  const row = {};
+  const wantsTextFields = !cfg.suppressTextFields;
+
+  row.id = src[pageField];
+  row.cursor = src[pageField];
+  if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
+  if (wantsTextFields) {
+    row.ad_text = src[cfg.textField] ?? null;
+    row.ad_title = src[cfg.titleField] ?? null;
+    row.news_feed_description = src[cfg.newsFeedField] ?? null;
+  }
+  row.post_owner_name = src[cfg.ownerField] ?? null;
+  row.category = src[`${platform}.category`] ?? null;
+  row.sub_category = src[`${platform}.subCategory`] ?? null;
+  row.category_id = src.category_id ?? null;
+  row.subcategory_id = src.subCategory_id ?? null;
+  if (src.confidence_score !== undefined) row.confidence_score = src.confidence_score;
+  row.ai_meta = readAiMetaFromSource(src, platform);
+
+  if (src[cfg.ocrField] !== undefined) row.ocr = src[cfg.ocrField];
+  if (cfg.destPageField && src[cfg.destPageField] !== undefined) {
+    row.destination_page_text = src[cfg.destPageField];
+  }
+
+  const adType = src[cfg.typeField] || '';
+  if (platform === 'native') row.native_creative_type = src[cfg.typeField] ?? null;
+  const nasValue = src[cfg.imageNasField] || '';
+  const origValue = cfg.imageOrigField ? (src[cfg.imageOrigField] || '') : '';
+  if (cfg.imageOrigField) row.image_url_original = resolveCreativeUrl(origValue);
+
+  if (adType === 'IMAGE' || cfg.alwaysEmitImage || platform === 'native') {
+    row.ad_image = resolveCreativeUrl(nasValue) ?? resolveCreativeUrl(origValue) ?? null;
+  }
+  if (adType === 'VIDEO' && cfg.thumbField) {
+    row.thumbnail = served(src[cfg.thumbField] || '') ?? null;
+  }
+
+  return row;
+}
+
+/**
+ * Restrict ES responses to fields consumed by normalizeDescriptionHit. Some ad
+ * documents contain very large lander/content objects; fetching the full _source
+ * for up to 500 candidates wastes ES CPU, network bandwidth, and Node heap.
+ */
+function descriptionSourceIncludes(cfg, platform, pageField) {
+  return [...new Set([
+    pageField,
+    cfg.adIdField,
+    cfg.textField,
+    cfg.titleField,
+    cfg.ownerField,
+    cfg.ocrField,
+    cfg.newsFeedField,
+    cfg.typeField,
+    cfg.imageNasField,
+    cfg.imageOrigField,
+    cfg.thumbField,
+    cfg.destPageField,
+    `${platform}.category`,
+    `${platform}.subCategory`,
+    'category_id',
+    'subCategory_id',
+    'confidence_score',
+    'ai',
+    'ai_meta',
+  ].filter(Boolean))];
+}
+
+/**
+ * Fill fields that have not reached ES yet from the platform's authoritative SQL
+ * tables. This is shared by both classifier feeds and never overwrites ES values.
+ */
+async function applyDescriptionSqlFallback(rows, service, cfg, platform) {
+  const sqlCfg = sqlFallbackConfigFor(platform);
+  if (!sqlCfg || !service.db.sql) return;
+  const wantsTextFields = !cfg.suppressTextFields;
+  const idsNeedingFallback = [...new Set(
+    rows
+      .filter(row => (wantsTextFields && (isBlankValue(row.ad_text) || isBlankValue(row.ad_title) || isBlankValue(row.news_feed_description))) || isBlankValue(row.post_owner_name) || row.ad_image === null || (platform === 'native' && isBlankValue(row.ad_image)))
+      .map(row => row.id)
+  )];
+  if (!idsNeedingFallback.length) return;
+
+  const fallbackMap = await fetchSqlDescriptionFallback(service.db.sql, sqlCfg, idsNeedingFallback);
+  for (const row of rows) {
+    const sqlRow = fallbackMap.get(String(row.id));
+    if (!sqlRow) continue;
+    if (wantsTextFields) {
+      if (isBlankValue(row.ad_text) && !isBlankValue(sqlRow.ad_text)) row.ad_text = sqlRow.ad_text;
+      if (isBlankValue(row.ad_title) && !isBlankValue(sqlRow.ad_title)) row.ad_title = sqlRow.ad_title;
+      if (isBlankValue(row.news_feed_description) && !isBlankValue(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
+    }
+    if (isBlankValue(row.post_owner_name) && !isBlankValue(sqlRow.post_owner_name)) row.post_owner_name = sqlRow.post_owner_name;
+    if (platform === 'native' && isBlankValue(row.image_url_original) && !isBlankValue(sqlRow.ad_image_url)) row.image_url_original = resolveCreativeUrl(sqlRow.ad_image_url);
+    if (isBlankValue(row.ad_image) && !isBlankValue(sqlRow.ad_image_url)) row.ad_image = resolveCreativeUrl(sqlRow.ad_image_url);
+  }
+}
+
+function addNativeCreativeAvailability(rows, platform) {
+  if (platform !== 'native') return;
+  for (const row of rows) {
+    if (!isBlankValue(row.ad_image)) continue;
+    const hasText = !isBlankValue(row.ad_text) || !isBlankValue(row.ad_title) || !isBlankValue(row.news_feed_description);
+    if (!hasText) row.creative_availability_reason = 'No usable creative image or text was available from ES or SQL.';
+  }
+}
+
+/**
  * GET /getDescriptionDetails
  *
  * Unified replacement for the per-platform Laravel getDescriptionDetails endpoints.
@@ -860,16 +998,16 @@ async function getDescriptionDetails(req, res) {
     // returns gets sent through the external category/AI-meta classifier, so
     // an undisplayable ad is pure wasted classification spend.
     const mediaFilter = getDisplayableMediaFilter(platform);
-    const boolQuery = { must: [{ range: { [pageField]: { gt: exVal } } }] };
-    if (mediaFilter) boolQuery.filter = mediaFilter;
+    // Filter context avoids score calculation for cursor and visibility clauses.
+    const boolQuery = { filter: [{ range: { [pageField]: { gt: exVal } } }, ...(mediaFilter || [])] };
 
     let esResult;
     try {
       esResult = await service.db.elastic.search({
         index: esIndex,
         body: {
-          from: 0,
           size: limit,
+          _source: descriptionSourceIncludes(cfg, platform, pageField),
           sort: [{ [pageField]: 'asc' }],
           query: { bool: boolQuery },
         },
@@ -888,122 +1026,17 @@ async function getDescriptionDetails(req, res) {
     }
 
     const hits = (esResult.hits || esResult.body?.hits)?.hits || [];
-    const wantsTextFields = !cfg.suppressTextFields;
-    const finalArray = hits.map(hit => {
-      const src = hit._source || {};
-      const row = {};
-
-      row.id = src[pageField];
-      // Stable pagination cursor: the exact value the caller should send back as
-      // the next `exVal`. This is always the field the ES sort/range used.
-      row.cursor = src[pageField];
-      // Only platforms whose index keeps id and ad_id distinct (Google) carry both.
-      if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
-      // GDN sends no ad-copy text at all (see PLATFORM_CONFIG.gdn.suppressTextFields)
-      // it has no real TEXT-type ads, and the incidental text some IMAGE ads carry is
-      // scraped banner boilerplate, not classifiable ad copy.
-      if (wantsTextFields) {
-        row.ad_text = src[cfg.textField] ?? null;
-        row.ad_title = src[cfg.titleField] ?? null;
-        row.news_feed_description = src[cfg.newsFeedField] ?? null;
-      }
-      row.post_owner_name = src[cfg.ownerField] ?? null;
-
-      // Read-back of the stored AI/human category so the classifier can verify a
-      // prior newCatInsertion write actually attached and skip already-categorised
-      // ads (Issue 1). Fields mirror exactly what newCatInsertion writes onto the ad:
-      // the literal dotted `${platform}.category` / `${platform}.subCategory` keys plus
-      // the flat `category_id` / `subCategory_id` / `confidence_score`.
-      row.category = src[`${platform}.category`] ?? null;
-      row.sub_category = src[`${platform}.subCategory`] ?? null;
-      row.category_id = src.category_id ?? null;
-      row.subcategory_id = src.subCategory_id ?? null;
-      if (src.confidence_score !== undefined) row.confidence_score = src.confidence_score;
-      // Read-back of any stored AI-Meta enrichment so the classifier can verify a prior
-      // /ai-meta (or newCatInsertion+ai_meta) write and skip already-enriched ads.
-      row.ai_meta = readAiMetaFromSource(src, platform);
-
-      if (src[cfg.ocrField] !== undefined) row.ocr = src[cfg.ocrField];
-      if (cfg.destPageField && src[cfg.destPageField] !== undefined) {
-        row.destination_page_text = src[cfg.destPageField];
-      }
-
-      const adType = src[cfg.typeField] || '';
-      if (platform === 'native') row.native_creative_type = src[cfg.typeField] ?? null;
-      const nasValue = src[cfg.imageNasField] || '';
-      // Original scraped image URL, where the platform keeps one (native). Surfaced
-      // both as a fallback for ad_image and on its own so the classifier can recover
-      // backlog ads whose NAS creative was never stored (Issue 3).
-      const origValue = cfg.imageOrigField ? (src[cfg.imageOrigField] || '') : '';
-      if (cfg.imageOrigField) row.image_url_original = resolveCreativeUrl(origValue);
-
-      if (adType === 'IMAGE' || cfg.alwaysEmitImage || platform === 'native') {
-        // Prefer the stored NAS copy; fall back to the original scraped URL when the
-        // NAS creative is missing. Native deliberately runs this for IMAGE and TEXT
-        // records because its original URL is the same dashboard creative regardless
-        // of the scraper's creative-type label. `cfg.alwaysEmitImage` (google) only
-        // widens WHEN this runs; Google has no equivalent original-creative fallback.
-        row.ad_image = resolveCreativeUrl(nasValue) ?? resolveCreativeUrl(origValue) ?? null;
-      }
-      if (adType === 'VIDEO' && cfg.thumbField) {
-        const thumb = src[cfg.thumbField] || '';
-        row.thumbnail = served(thumb) ?? null;
-      }
-
-      return row;
-    });
+    const finalArray = hits.map(hit => normalizeDescriptionHit(hit, cfg, platform, pageField));
 
     // SQL fallback: ES is a downstream sync of MySQL, so an ad whose ES doc hasn't
     // (yet) received text/title/description/owner/image carries the real value in
     // MySQL. Only fills fields ES left null  never overwrites an ES-derived value.
-    const sqlCfg = sqlFallbackConfigFor(platform);
-    if (sqlCfg && service.db.sql) {
-      try {
-        // Blank, not falsy: a legit value like ad_text `"0"` must never be treated
-        // as missing (a plain `!value` check would wrongly overwrite/skip it).
-        // GDN never gets ad_text/ad_title/news_feed_description backfilled either
-        // those keys don't exist on the row at all for gdn (suppressTextFields), so
-        // they must be excluded from both the "does this row need a SQL lookup" check
-        // and the merge, or the fallback would silently reintroduce them from MySQL.
-        const idsNeedingFallback = [...new Set(
-          finalArray
-            // Native TEXT rows can omit `ad_image` entirely, so widen the fallback
-            // trigger only for native. Other platforms keep the original null-only
-            // behavior to avoid pulling SQL unnecessarily when the response shape
-            // already matches the existing contract.
-            .filter(row => (wantsTextFields && (isBlankValue(row.ad_text) || isBlankValue(row.ad_title) || isBlankValue(row.news_feed_description))) || isBlankValue(row.post_owner_name) || row.ad_image === null || (platform === 'native' && isBlankValue(row.ad_image)))
-            .map(row => row.id)
-        )];
-        if (idsNeedingFallback.length) {
-          const fallbackMap = await fetchSqlDescriptionFallback(service.db.sql, sqlCfg, idsNeedingFallback);
-          for (const row of finalArray) {
-            const sqlRow = fallbackMap.get(String(row.id));
-            if (!sqlRow) continue;
-            if (wantsTextFields) {
-              if (isBlankValue(row.ad_text) && !isBlankValue(sqlRow.ad_text)) row.ad_text = sqlRow.ad_text;
-              if (isBlankValue(row.ad_title) && !isBlankValue(sqlRow.ad_title)) row.ad_title = sqlRow.ad_title;
-              if (isBlankValue(row.news_feed_description) && !isBlankValue(sqlRow.news_feed_description)) row.news_feed_description = sqlRow.news_feed_description;
-            }
-            if (isBlankValue(row.post_owner_name) && !isBlankValue(sqlRow.post_owner_name)) row.post_owner_name = sqlRow.post_owner_name;
-            if (platform === 'native' && isBlankValue(row.image_url_original) && !isBlankValue(sqlRow.ad_image_url)) row.image_url_original = resolveCreativeUrl(sqlRow.ad_image_url);
-            // Native text ads can omit `ad_image` entirely, so treat both null and
-            // undefined as missing and let SQL backfill the creative when available.
-            if (isBlankValue(row.ad_image) && !isBlankValue(sqlRow.ad_image_url)) row.ad_image = resolveCreativeUrl(sqlRow.ad_image_url);
-          }
-        }
-      } catch (sqlErr) {
-        service.log?.warn(`[getDescriptionDetails] SQL fallback failed for platform=${platform}: ${sqlErr.message}`);
-      }
+    try {
+      await applyDescriptionSqlFallback(finalArray, service, cfg, platform);
+    } catch (sqlErr) {
+      service.log?.warn(`[getDescriptionDetails] SQL fallback failed for platform=${platform}: ${sqlErr.message}`);
     }
-
-    for (const row of finalArray) {
-      if (platform !== 'native') continue;
-      if (!isBlankValue(row.ad_image)) continue;
-      const hasText = !isBlankValue(row.ad_text) || !isBlankValue(row.ad_title) || !isBlankValue(row.news_feed_description);
-      if (!hasText) {
-        row.creative_availability_reason = 'No usable creative image or text was available from ES or SQL.';
-      }
-    }
+    addNativeCreativeAvailability(finalArray, platform);
 
     return res.status(200).json(finalArray);
 
@@ -1019,6 +1052,322 @@ async function getDescriptionDetails(req, res) {
     }
     service.log?.error(`[getDescriptionDetails] platform=${platform} error: ${err.message}`);
     return res.status(500).json({ code: 500, message: 'Some Error Occured', error: err.message });
+  }
+}
+
+function recentCheckpointSecret() {
+  // A dedicated secret permits independent rotation; JWT is a backwards-compatible
+  // deployment fallback so the endpoint does not start issuing unsigned cursors.
+  return process.env.RECENT_ADS_CHECKPOINT_SECRET || config.jwt?.secret || '';
+}
+
+function encodeRecentCheckpoint(platform, insertedAt, id, issuedAt = Date.now()) {
+  const payload = Buffer.from(JSON.stringify({
+    v: 1,
+    p: platform,
+    t: insertedAt,
+    id: String(id),
+    iat: issuedAt,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', recentCheckpointSecret()).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function decodeRecentCheckpoint(token, platform, now = Date.now()) {
+  if (typeof token !== 'string' || !token) throw new Error('checkpoint must be a non-empty string or null');
+  const parts = token.split('.');
+  if (parts.length !== 2 || !/^[A-Za-z0-9_-]+$/.test(parts[0]) || !/^[A-Za-z0-9_-]{43}$/.test(parts[1]) || !recentCheckpointSecret()) {
+    throw new Error('checkpoint is invalid');
+  }
+  const expected = crypto.createHmac('sha256', recentCheckpointSecret()).update(parts[0]).digest();
+  let supplied;
+  try { supplied = Buffer.from(parts[1], 'base64url'); } catch { throw new Error('checkpoint is invalid'); }
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) throw new Error('checkpoint is invalid');
+
+  let payload;
+  try { payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')); } catch { throw new Error('checkpoint is invalid'); }
+  if (payload.v !== 1 || payload.p !== platform || typeof payload.t !== 'string' || !/^\d+$/.test(payload.id || '') || !Number.isFinite(payload.iat)) {
+    throw new Error('checkpoint is invalid for this platform');
+  }
+  if (now - payload.iat > RECENT_CHECKPOINT_TTL_MS || payload.iat > now + 60_000) throw new Error('checkpoint has expired or has an invalid issue time');
+  if (!parseUtcTimestamp(payload.t)) throw new Error('checkpoint contains an invalid insertion position');
+  return { insertedAt: payload.t, id: payload.id, issuedAt: payload.iat };
+}
+
+function parseUtcTimestamp(value) {
+  const match = typeof value === 'string'
+    ? value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/)
+    : null;
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second, fraction = '0'] = match;
+  const millis = Number(fraction.padEnd(3, '0'));
+  const timestamp = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), millis);
+  const date = new Date(timestamp);
+  // Date.UTC normalizes impossible dates (for example February 30), so compare
+  // every component to reject them instead of silently shifting the watermark.
+  if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)
+    || date.getUTCHours() !== Number(hour) || date.getUTCMinutes() !== Number(minute) || date.getUTCSeconds() !== Number(second)) return null;
+  return date.toISOString();
+}
+
+function mysqlUtcTimestamp(isoValue) {
+  return isoValue.replace('T', ' ').replace(/Z$/, '');
+}
+
+function canonicalSqlTimestamp(value) {
+  if (value instanceof Date) return value.toISOString();
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  // DATE_FORMAT makes MySQL return text rather than allowing mysql2 to parse a
+  // DATETIME in the Node host timezone. Normalize microseconds to ISO millis.
+  const utcText = raw.replace(' ', 'T').replace(/Z$/, '');
+  const match = utcText.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/);
+  if (!match) return null;
+  const normalized = `${match[1]}.${(match[2] || '0').padEnd(3, '0').slice(0, 3)}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function recentFeedError(res, status, code, message, requestId, retryable = false, retryAfter = null) {
+  if (retryAfter) setRetryAfter(res, retryAfter);
+  return res.status(status).json({
+    success: false,
+    code,
+    message,
+    retryable,
+    ...(retryAfter ? { retry_after: retryAfter } : {}),
+    request_id: requestId,
+  });
+}
+
+function assertCompleteRecentEsSearch(esResult) {
+  const response = esResult?.body || esResult || {};
+  if (!response.timed_out && Number(response._shards?.failed || 0) === 0) return;
+  // A partial ES page is never safe for checkpoint advancement because a missing
+  // shard could contain a candidate that would then be skipped permanently.
+  const error = new Error(response.timed_out ? 'Elasticsearch search timed out' : 'Elasticsearch search had failed shards');
+  error.statusCode = 503;
+  throw error;
+}
+
+/**
+ * POST /getRecentAdsForAiMeta
+ *
+ * SQL supplies the authoritative insertion tuple; Elasticsearch applies the same
+ * dashboard visibility rules and response normalization as getDescriptionDetails.
+ */
+async function getRecentAdsForAiMeta(req, res) {
+  const body = req.body || {};
+  const requestId = req.id || req.requestId || null;
+  const platform = String(body.platform || '').toLowerCase().trim();
+  if (!RECENT_AD_PLATFORMS.has(platform)) {
+    return recentFeedError(res, 400, 'INVALID_PLATFORM', `Unsupported platform: ${platform}`, requestId);
+  }
+  if (!Object.prototype.hasOwnProperty.call(body, 'checkpoint') || (body.checkpoint !== null && typeof body.checkpoint !== 'string')) {
+    return recentFeedError(res, 400, 'INVALID_CHECKPOINT', 'checkpoint is required and must be a string or null', requestId);
+  }
+  if (!Number.isInteger(body.limit) || body.limit < 1 || body.limit > 100) {
+    return recentFeedError(res, 400, 'INVALID_LIMIT', 'limit must be an integer from 1 to 100', requestId);
+  }
+  if (body.wait_seconds !== undefined && (!Number.isInteger(body.wait_seconds) || body.wait_seconds < 0 || body.wait_seconds > 15)) {
+    return recentFeedError(res, 400, 'INVALID_WAIT_SECONDS', 'wait_seconds must be an integer from 0 to 15', requestId);
+  }
+
+  let cursor;
+  if (body.checkpoint === null) {
+    const startFrom = parseUtcTimestamp(body.start_from);
+    if (!startFrom) return recentFeedError(res, 400, 'INVALID_START_FROM', 'start_from must be a valid ISO-8601 UTC timestamp on the first request', requestId);
+    // Legacy created_date columns commonly have one-second precision. Round the
+    // first watermark down so a DS timestamp such as .482Z cannot skip inserts
+    // stored as the same second; the conservative replay is safe for DS dedupe.
+    const inclusiveStart = new Date(Math.floor(Date.parse(startFrom) / 1000) * 1000).toISOString();
+    cursor = { insertedAt: inclusiveStart, id: '0', issuedAt: Date.now() };
+  } else {
+    try {
+      cursor = decodeRecentCheckpoint(body.checkpoint, platform);
+    } catch (err) {
+      const invalidService = serviceRegistry.getService(PLATFORM_CONFIG[platform].service);
+      invalidService?.log?.warn?.('[getRecentAdsForAiMeta] invalid checkpoint', { platform, request_id: requestId });
+      return recentFeedError(res, 400, 'INVALID_CHECKPOINT', err.message, requestId);
+    }
+  }
+
+  const cfg = PLATFORM_CONFIG[platform];
+  const service = serviceRegistry.getService(cfg.service);
+  if (!service?.db?.sql || !service?.db?.elastic) {
+    return recentFeedError(res, 503, 'TEMPORARY_BACKEND_UNAVAILABLE', `Recent ad feed is unavailable for platform: ${platform}`, requestId, true, 30);
+  }
+
+  const sqlConfig = RECENT_SQL_CONFIG[platform];
+  const pageField = cfg.descIdField || cfg.idField;
+  const esIndex = cfg.service === 'native' && service.db.elastic.indexName ? service.db.elastic.indexName : cfg.index;
+  const wanted = body.limit + 1;
+  const eligible = [];
+  let scanCursor = { ...cursor };
+  const responseIssuedAt = Date.now();
+  // Do not race a committed SQL row against its ES index/refresh operation. Newer
+  // rows become eligible on a later poll after this bounded settling interval.
+  const availableThrough = new Date(responseIssuedAt - (RECENT_ADS_SETTLE_SECONDS * 1000)).toISOString();
+  let sqlQueryMs = 0;
+  let esQueryMs = 0;
+  let scannedRows = 0;
+  let scanLimitReached = false;
+
+  try {
+    while (eligible.length < wanted) {
+      const remainingScanRows = RECENT_ADS_MAX_SCAN_ROWS - scannedRows;
+      if (remainingScanRows <= 0) {
+        scanLimitReached = true;
+        break;
+      }
+      const scanSize = Math.min(RECENT_SQL_SCAN_SIZE, remainingScanRows);
+      const sqlStartedAt = Date.now();
+      const sqlRows = await service.db.sql.query(
+        `SELECT id, DATE_FORMAT(created_date, '%Y-%m-%d %H:%i:%s.%f') AS inserted_at FROM ${sqlConfig.table}
+         WHERE created_date <= ?
+           AND (created_date > ? OR (created_date = ? AND id > ?))
+         ORDER BY created_date ASC, id ASC
+         LIMIT ?`,
+        [mysqlUtcTimestamp(availableThrough), mysqlUtcTimestamp(scanCursor.insertedAt), mysqlUtcTimestamp(scanCursor.insertedAt), scanCursor.id, scanSize],
+      );
+      sqlQueryMs += Date.now() - sqlStartedAt;
+      if (!sqlRows.length) break;
+      scannedRows += sqlRows.length;
+
+      const positions = new Map();
+      for (const sqlRow of sqlRows) {
+        const insertedAt = canonicalSqlTimestamp(sqlRow.inserted_at);
+        if (!insertedAt) throw new Error(`Invalid created_date for ${platform} id=${sqlRow.id}`);
+        positions.set(String(sqlRow.id), { insertedAt, id: String(sqlRow.id) });
+      }
+      const lastSqlRow = sqlRows[sqlRows.length - 1];
+      scanCursor = positions.get(String(lastSqlRow.id));
+
+      const boolQuery = { filter: [{ terms: { [pageField]: sqlRows.map(row => row.id) } }] };
+      const mediaFilter = getDisplayableMediaFilter(platform);
+      if (mediaFilter) boolQuery.filter.push(...mediaFilter);
+      const esStartedAt = Date.now();
+      // Phase 1 fetches only IDs to evaluate dashboard eligibility cheaply. Full
+      // source can include large content fields and is needed for at most limit+1
+      // rows, not every SQL candidate in the scan batch.
+      const eligibilityResult = await service.db.elastic.search({
+        index: esIndex,
+        body: {
+          size: sqlRows.length,
+          timeout: '2s',
+          _source: [pageField],
+          query: { bool: boolQuery },
+        },
+      });
+      esQueryMs += Date.now() - esStartedAt;
+      assertCompleteRecentEsSearch(eligibilityResult);
+      const eligibilityHits = (eligibilityResult.hits || eligibilityResult.body?.hits)?.hits || [];
+      const visibleIds = new Set(eligibilityHits.map(hit => String(hit._source?.[pageField])));
+      const detailIds = [];
+      for (const sqlRow of sqlRows) {
+        if (!visibleIds.has(String(sqlRow.id))) continue;
+        detailIds.push(sqlRow.id);
+        if (eligible.length + detailIds.length >= wanted) break;
+      }
+
+      if (detailIds.length) {
+        const detailFilter = [{ terms: { [pageField]: detailIds } }, ...(mediaFilter || [])];
+        const detailStartedAt = Date.now();
+        const detailResult = await service.db.elastic.search({
+          index: esIndex,
+          body: {
+            size: detailIds.length,
+            timeout: '2s',
+            _source: descriptionSourceIncludes(cfg, platform, pageField),
+            query: { bool: { filter: detailFilter } },
+          },
+        });
+        esQueryMs += Date.now() - detailStartedAt;
+        assertCompleteRecentEsSearch(detailResult);
+        const detailHits = (detailResult.hits || detailResult.body?.hits)?.hits || [];
+        const byId = new Map(detailHits.map(hit => [String(hit._source?.[pageField]), hit]));
+        if (byId.size !== detailIds.length) {
+          const error = new Error('Elasticsearch detail lookup changed during page assembly');
+          error.statusCode = 503;
+          throw error;
+        }
+
+        for (const sqlRow of sqlRows) {
+          const hit = byId.get(String(sqlRow.id));
+          if (!hit) continue;
+        const position = positions.get(String(sqlRow.id));
+        const row = normalizeDescriptionHit(hit, cfg, platform, pageField);
+        row.ad_id = String(row.ad_id ?? row.id);
+        row.inserted_at = position.insertedAt;
+        row.insertion_cursor = encodeRecentCheckpoint(platform, position.insertedAt, position.id, responseIssuedAt);
+        eligible.push(row);
+        if (eligible.length >= wanted) break;
+        }
+      }
+      if (sqlRows.length < scanSize) break;
+    }
+
+    if (scanLimitReached && eligible.length === 0) {
+      service.log?.warn?.('[getRecentAdsForAiMeta] scan limit reached without an eligible row', {
+        platform,
+        request_id: requestId,
+        scanned_rows: scannedRows,
+      });
+      return recentFeedError(
+        res,
+        503,
+        'RECENT_SCAN_LIMIT_REACHED',
+        'Recent ad feed scan limit reached before an eligible ad was found',
+        requestId,
+        true,
+        30,
+      );
+    }
+
+    const hasMore = eligible.length > body.limit || scanLimitReached;
+    const items = eligible.slice(0, body.limit);
+    try {
+      await applyDescriptionSqlFallback(items, service, cfg, platform);
+    } catch (sqlErr) {
+      service.log?.warn(`[getRecentAdsForAiMeta] SQL field fallback failed platform=${platform}: ${sqlErr.message}`);
+    }
+    addNativeCreativeAvailability(items, platform);
+
+    const nextCheckpoint = items.length
+      ? items[items.length - 1].insertion_cursor
+      // Preserve an empty-page checkpoint byte-for-byte when supplied so callers
+      // can safely persist/reuse it without a synthetic watermark advance.
+      : (body.checkpoint || encodeRecentCheckpoint(platform, cursor.insertedAt, cursor.id, responseIssuedAt));
+    const serverTime = new Date().toISOString();
+    service.log?.info?.('[getRecentAdsForAiMeta] page', {
+      platform,
+      request_id: requestId,
+      returned_count: items.length,
+      empty: items.length === 0,
+      sql_query_ms: sqlQueryMs,
+      es_query_ms: esQueryMs,
+      insertion_lag_ms: items.length ? Math.max(0, Date.parse(serverTime) - Date.parse(items[items.length - 1].inserted_at)) : null,
+      scanned_rows: scannedRows,
+      scan_limit_reached: scanLimitReached,
+      available_through: availableThrough,
+      checkpoint_hash: crypto.createHash('sha256').update(String(body.checkpoint || '')).digest('hex').slice(0, 12),
+      next_checkpoint_hash: crypto.createHash('sha256').update(nextCheckpoint).digest('hex').slice(0, 12),
+    });
+    return res.status(200).json({ platform, items, next_checkpoint: nextCheckpoint, has_more: hasMore, server_time: serverTime, request_id: requestId });
+  } catch (err) {
+    const temporaryStatus = getTemporaryEsStatus(err);
+    const status = temporaryStatus || 503;
+    const retryAfter = getRetryAfterSeconds(err);
+    service.log?.error?.(`[getRecentAdsForAiMeta] platform=${platform} error: ${err.message}`);
+    return recentFeedError(
+      res,
+      status,
+      status === 429 ? 'CAPACITY_LIMIT' : 'TEMPORARY_BACKEND_UNAVAILABLE',
+      'Recent ad feed is temporarily unavailable',
+      requestId,
+      true,
+      retryAfter,
+    );
   }
 }
 
@@ -1663,4 +2012,4 @@ async function insertAiMetaBulk(req, res) {
   });
 }
 
-module.exports = { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk };
+module.exports = { getDescriptionDetails, getRecentAdsForAiMeta, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk };

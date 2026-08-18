@@ -11837,6 +11837,108 @@ paths:
         '503':
           description: ES not available for the given platform
 
+  /api/v1/common/getRecentAdsForAiMeta:
+    post:
+      tags:
+        - Category (Internal)
+      summary: Get recently inserted ads for Category and AI-Meta processing
+      description: |
+        Returns dashboard-eligible ads ordered by the stable SQL tuple
+        `(created_date, id)`. Checkpoints are opaque, signed, platform-bound,
+        and valid for seven days. This initial implementation validates
+        `wait_seconds` but returns immediately instead of long polling.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform, checkpoint, limit]
+              properties:
+                platform:
+                  type: string
+                  enum: [facebook, instagram, youtube, google, native, pinterest]
+                checkpoint:
+                  type: string
+                  nullable: true
+                  description: Null on the first request; otherwise use the last durably committed next_checkpoint.
+                start_from:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: Required with a null checkpoint and interpreted as an inclusive UTC insertion boundary.
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                wait_seconds:
+                  type: integer
+                  minimum: 0
+                  maximum: 15
+                  default: 0
+      responses:
+        '200':
+          description: A stable page of recent ads; an empty feed is also HTTP 200.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [platform, items, next_checkpoint, has_more, server_time, request_id]
+                properties:
+                  platform:
+                    type: string
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: number
+                        ad_id:
+                          type: string
+                        insertion_cursor:
+                          type: string
+                        inserted_at:
+                          type: string
+                          format: date-time
+                        ad_title:
+                          type: string
+                          nullable: true
+                        ad_text:
+                          type: string
+                          nullable: true
+                        news_feed_description:
+                          type: string
+                          nullable: true
+                        ad_image:
+                          type: string
+                          nullable: true
+                        thumbnail:
+                          type: string
+                          nullable: true
+                        image_url_original:
+                          type: string
+                          nullable: true
+                        native_creative_type:
+                          type: string
+                          nullable: true
+                  next_checkpoint:
+                    type: string
+                  has_more:
+                    type: boolean
+                  server_time:
+                    type: string
+                    format: date-time
+                  request_id:
+                    type: string
+                    nullable: true
+        '400':
+          description: Invalid request, unsupported platform, or invalid/expired checkpoint.
+        '429':
+          description: Retryable capacity limit with Retry-After.
+        '503':
+          description: Retryable SQL or Elasticsearch unavailability with Retry-After.
+
   /api/v1/common/newCatInsertion:
     post:
       tags:

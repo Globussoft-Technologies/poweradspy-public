@@ -24,6 +24,53 @@ function getTotal(result) {
   return typeof t === 'object' ? (t.value ?? 0) : (t ?? 0);
 }
 
+// Page through every bucket of a terms-style aggregation on `field` via the
+// composite aggregation. Composite aggs page with after_key instead of a
+// fixed result cap, so this loops until every distinct value has been read —
+// no result is ever dropped no matter how many distinct users exist.
+//
+// `pageSize` is a per-request batch size, not a cap: it just controls how
+// many buckets come back per round trip before the next `after_key` page is
+// fetched. Composite aggregations default to 10 per page when unset, which
+// would turn one query into dozens of sequential round trips for any field
+// with more than a handful of distinct values — so this always sets it
+// explicitly, matching the composite-agg pattern used elsewhere in this repo
+// (e.g. google/jobs/refreshKeywordStats.js). 1000 keeps the common case
+// (a few hundred distinct users) down to a single request, while still
+// paging correctly if that count ever grows past it.
+async function fetchAllTermsBuckets(elastic, { index = 'user_activities', query, field, subAggs, pageSize = 1000 } = {}) {
+  const out = [];
+  let afterKey;
+
+  do {
+    const result = await elastic.search({
+      index,
+      body: {
+        size: 0,
+        query,
+        aggs: {
+          paged: {
+            composite: {
+              size: pageSize,
+              sources: [{ key: { terms: { field } } }],
+              ...(afterKey ? { after: afterKey } : {}),
+            },
+            ...(subAggs ? { aggs: subAggs } : {}),
+          },
+        },
+      },
+    });
+
+    const agg = getAggs(result)?.paged;
+    const page = agg?.buckets ?? [];
+    for (const b of page) out.push({ ...b, key: b.key.key });
+
+    afterKey = page.length === pageSize ? agg?.after_key : undefined;
+  } while (afterKey);
+
+  return out;
+}
+
 // Fetch all user emails and cache for 1 hour
 async function getAllUserEmails(elastic) {
   const CACHE_KEY = 'all_user_emails';
@@ -35,22 +82,14 @@ async function getAllUserEmails(elastic) {
   const INVALID_EMAILS = new Set(['na', 'n/a', 'null', 'undefined', 'unknown', '-', '']);
 
   try {
-    const result = await elastic.search({
-      index: 'user_activities',
-      body: {
-        size: 0,
-        query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-        aggs: {
-          per_user: {
-            terms: { field: 'user.id', size: 10000 },
-            aggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
-          },
-        },
-      },
+    const buckets = await fetchAllTermsBuckets(elastic, {
+      query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
+      field: 'user.id',
+      subAggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
     });
 
     const emailMap = {};
-    for (const b of (getAggs(result)?.per_user?.buckets ?? [])) {
+    for (const b of buckets) {
       const src = b.email_hit?.hits?.hits?.[0]?._source ?? {};
       const email = src['user.email'] ?? src?.user?.email ?? null;
       if (email && !INVALID_EMAILS.has(String(email).trim().toLowerCase())) {
@@ -123,118 +162,80 @@ function getFallbackNetworks() {
   return ELASTIC_FALLBACK_NETWORKS;
 }
 
+// Field(s) that identify each activity_type. Single-field types resolve to a
+// plain `exists` filter; multi-field types are OR'd together via `should`.
+const ACTIVITY_TYPE_FIELDS = {
+  keyword:    ['search.keyword'],
+  advertiser: ['search.advertiser'],
+  domain:     ['search.domain'],
+  filters: [
+    'filter.country', 'filter.countries', 'filter.gender', 'filter.ad_type',
+    'filter.ad_categories', 'filter.ad_subCategories', 'filter.status',
+    'filter.sort_by', 'filter.platform', 'filter.native_network',
+    'filter.ctr', 'filter.budget',
+  ],
+  other_activity: [
+    'dashboard.exportsAds', 'favourite_ad_id', 'unfavourite_ad_id',
+    'download.ad_id', 'hide_ad_id', 'unhide_ad_id', 'hide_advertiser_id',
+    'unhide_advertiser_id', 'dashboard.show_original', 'user.language_name',
+    'vieworiginal.ad_id',
+  ],
+  sorting_filters: [
+    'dashboard.newest_sort', 'dashboard.running_longest_sort',
+    'dashboard.last_seen_sort', 'dashboard.domain_sort',
+    'dashboard.likes_sort', 'dashboard.comments_sort',
+    'dashboard.shares_sort', 'dashboard.popularity_sort',
+    'dashboard.impressions_sort', 'dashboard.views_sort',
+  ],
+};
+
 // Build comprehensive activity filter for getAllSearches
 function buildActivityTypeFilter(activity_type) {
-  if (!activity_type || activity_type === '') return null;
+  const fields = ACTIVITY_TYPE_FIELDS[activity_type];
+  if (!fields) return null;
 
-  if (activity_type === 'keyword') {
-    return { exists: { field: 'search.keyword' } };
-  } else if (activity_type === 'advertiser') {
-    return { exists: { field: 'search.advertiser' } };
-  } else if (activity_type === 'domain') {
-    return { exists: { field: 'search.domain' } };
-  } else if (activity_type === 'filters') {
-    return { bool: { should: [
-      { exists: { field: 'filter.country' } },
-      { exists: { field: 'filter.countries' } },
-      { exists: { field: 'filter.gender' } },
-      { exists: { field: 'filter.ad_type' } },
-      { exists: { field: 'filter.ad_categories' } },
-      { exists: { field: 'filter.ad_subCategories' } },
-      { exists: { field: 'filter.status' } },
-      { exists: { field: 'filter.sort_by' } },
-      { exists: { field: 'filter.platform' } },
-      { exists: { field: 'filter.native_network' } },
-      { exists: { field: 'filter.ctr' } },
-      { exists: { field: 'filter.budget' } },
-    ], minimum_should_match: 1 } };
-  } else if (activity_type === 'other_activity') {
-    return { bool: { should: [
-      { exists: { field: 'dashboard.exportsAds' } },
-      { exists: { field: 'favourite_ad_id' } },
-      { exists: { field: 'unfavourite_ad_id' } },
-      { exists: { field: 'download.ad_id' } },
-      { exists: { field: 'hide_ad_id' } },
-      { exists: { field: 'unhide_ad_id' } },
-      { exists: { field: 'hide_advertiser_id' } },
-      { exists: { field: 'unhide_advertiser_id' } },
-      { exists: { field: 'dashboard.show_original' } },
-      { exists: { field: 'user.language_name' } },
-      { exists: { field: 'vieworiginal.ad_id' } },
-    ], minimum_should_match: 1 } };
-  } else if (activity_type === 'sorting_filters') {
-    return { bool: { should: [
-      { exists: { field: 'dashboard.newest_sort' } },
-      { exists: { field: 'dashboard.running_longest_sort' } },
-      { exists: { field: 'dashboard.last_seen_sort' } },
-      { exists: { field: 'dashboard.domain_sort' } },
-      { exists: { field: 'dashboard.likes_sort' } },
-      { exists: { field: 'dashboard.comments_sort' } },
-      { exists: { field: 'dashboard.shares_sort' } },
-      { exists: { field: 'dashboard.popularity_sort' } },
-      { exists: { field: 'dashboard.impressions_sort' } },
-      { exists: { field: 'dashboard.views_sort' } },
-    ], minimum_should_match: 1 } };
-  }
-  return null;
+  if (fields.length === 1) return { exists: { field: fields[0] } };
+  return {
+    bool: {
+      should: fields.map((field) => ({ exists: { field } })),
+      minimum_should_match: 1,
+    },
+  };
 }
 
-// Base activity filter for getAllSearches (covers all activity types)
-const BASE_ACTIVITY_FILTER = { bool: { should: [
-  { exists: { field: 'search.keyword' } },
-  { exists: { field: 'search.advertiser' } },
-  { exists: { field: 'search.domain' } },
-  { exists: { field: 'dashboard.newest_sort' } },
-  { exists: { field: 'dashboard.running_longest_sort' } },
-  { exists: { field: 'dashboard.last_seen_sort' } },
-  { exists: { field: 'dashboard.domain_sort' } },
-  { exists: { field: 'dashboard.likes_sort' } },
-  { exists: { field: 'dashboard.comments_sort' } },
-  { exists: { field: 'dashboard.shares_sort' } },
-  { exists: { field: 'dashboard.popularity_sort' } },
-  { exists: { field: 'dashboard.impressions_sort' } },
-  { exists: { field: 'dashboard.views_sort' } },
-  { exists: { field: 'dashboard.verified' } },
-  { exists: { field: 'dashboard.meta_ads_library' } },
-  { exists: { field: 'dashboard.ad_seen' } },
-  { exists: { field: 'dashboard.likes' } },
-  { exists: { field: 'dashboard.comments' } },
-  { exists: { field: 'dashboard.shares' } },
-  { exists: { field: 'lander.affiliates' } },
-  { exists: { field: 'lander.ecommerce' } },
-  { exists: { field: 'lander.funnels' } },
-  { exists: { field: 'lander.sources' } },
-  { exists: { field: 'lander.marketing' } },
-  { exists: { field: 'filter.country' } },
-  { exists: { field: 'filter.countries' } },
-  { exists: { field: 'filter.gender' } },
-  { exists: { field: 'filter.ad_type' } },
-  { exists: { field: 'filter.ad_categories' } },
-  { exists: { field: 'filter.ad_subCategories' } },
-  { exists: { field: 'filter.status' } },
-  { exists: { field: 'filter.sort_by' } },
-  { exists: { field: 'filter.platform' } },
-  { exists: { field: 'filterType' } },
-  { exists: { field: 'favourite_ad_id' } },
-  { exists: { field: 'unfavourite_ad_id' } },
-  { exists: { field: 'download.ad_id' } },
-  { exists: { field: 'hide_ad_id' } },
-  { exists: { field: 'unhide_ad_id' } },
-  { exists: { field: 'hide_advertiser_id' } },
-  { exists: { field: 'unhide_advertiser_id' } },
-  { exists: { field: 'copy.ad_id' } },
-  { exists: { field: 'show_analytics.ad_id' } },
-  { exists: { field: 'dashboard.show_original' } },
-  { exists: { field: 'dashboard.exportsAds' } },
-  { exists: { field: 'dashboard.favourite' } },
-  { exists: { field: 'dashboard.hidden' } },
-  { exists: { field: 'user.language' } },
-  { exists: { field: 'share.guest_page_url' } },
-  { exists: { field: 'vieworiginal.ad_id' } },
-  { exists: { field: 'filter.native_network' } },
-  { exists: { field: 'filter.ctr' } },
-  { exists: { field: 'filter.budget' } },
-], minimum_should_match: 1 } };
+// Fields that make up the "any activity" filter but aren't part of any
+// single activity_type group above.
+const OTHER_BASE_ACTIVITY_FIELDS = [
+  'dashboard.verified', 'dashboard.meta_ads_library', 'dashboard.ad_seen',
+  'dashboard.likes', 'dashboard.comments', 'dashboard.shares',
+  'lander.affiliates', 'lander.ecommerce', 'lander.funnels',
+  'lander.sources', 'lander.marketing',
+  'filterType', 'copy.ad_id', 'show_analytics.ad_id',
+  'dashboard.favourite', 'dashboard.hidden',
+  'user.language', 'share.guest_page_url',
+];
+
+// Base activity filter for getAllSearches (covers all activity types).
+// Reuses the same field groups as buildActivityTypeFilter instead of
+// re-listing them, plus the fields only relevant here.
+// Note: other_activity's 'user.language_name' is intentionally excluded —
+// this filter has always used 'user.language' instead (see above).
+const BASE_ACTIVITY_FILTER_FIELDS = [
+  ...ACTIVITY_TYPE_FIELDS.keyword,
+  ...ACTIVITY_TYPE_FIELDS.advertiser,
+  ...ACTIVITY_TYPE_FIELDS.domain,
+  ...ACTIVITY_TYPE_FIELDS.sorting_filters,
+  ...ACTIVITY_TYPE_FIELDS.filters,
+  ...ACTIVITY_TYPE_FIELDS.other_activity.filter((f) => f !== 'user.language_name'),
+  ...OTHER_BASE_ACTIVITY_FIELDS,
+];
+
+const BASE_ACTIVITY_FILTER = {
+  bool: {
+    should: BASE_ACTIVITY_FILTER_FIELDS.map((field) => ({ exists: { field } })),
+    minimum_should_match: 1,
+  },
+};
 
 // Filter label mappings for getAllSearches
 const FILTER_LABEL_MAP = {
@@ -414,6 +415,15 @@ function parseFilterPills(s, other_activity) {
   return filterPills;
 }
 
+// Parse page/size query params into a clamped { pageNum, pageSize } pair.
+// pageNum >= 0; pageSize clamped to [1, 100]. Same defaults and clamp used by
+// every paginated admin-panel endpoint.
+function parsePagination({ page = 0, size = 10 } = {}) {
+  const pageNum  = Math.max(0, Number(page));
+  const pageSize = Math.min(100, Math.max(1, Number(size)));
+  return { pageNum, pageSize };
+}
+
 // Resolve time window from params or defaults
 // Returns { fromTs, toTs } as Unix seconds
 function resolveTimeWindow(queryParams) {
@@ -471,23 +481,11 @@ async function resolveUserIds(patterns, elastic) {
 
     if (isDomain) {
       const suffix = (p.startsWith('.') ? p : `.${p}`).toLowerCase();
-      const lookupBody = {
-        size: 0,
-        query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-        aggs: {
-          per_user: {
-            terms: { field: 'user.id', size: 5000 },
-            aggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
-          },
-        },
-      };
 
       try {
-        const res = await elastic.search({ index: 'user_activities', body: lookupBody });
-        for (const b of (getAggs(res)?.per_user?.buckets ?? [])) {
-          const src = b.email_hit?.hits?.hits?.[0]?._source ?? {};
-          const email = (src['user.email'] ?? src?.user?.email ?? '').toLowerCase();
-          if (email.endsWith(suffix)) ids.add(b.key);
+        const emailMap = await getAllUserEmails(elastic);
+        for (const [uid, email] of Object.entries(emailMap)) {
+          if (String(email).toLowerCase().endsWith(suffix)) ids.add(uid);
         }
       } catch (err) {
 
@@ -520,6 +518,7 @@ module.exports = {
   getAggs,
   getTotal,
   getAllUserEmails,
+  fetchAllTermsBuckets,
   normalizeTimestampForQuery,
   formatTimestampString,
   convertToUnixSeconds,
@@ -531,6 +530,7 @@ module.exports = {
   detectOtherActivity,
   parseFilterPills,
   resolveTimeWindow,
+  parsePagination,
   resolveUserIds,
   FILTER_LABEL_MAP,
   DASHBOARD_SORT_MAP,

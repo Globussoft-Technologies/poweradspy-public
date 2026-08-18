@@ -488,6 +488,7 @@ SearchMixQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'nas_video_url',
   'thumbnail_url',
   'redirect_urls',
+  'funnel',
 ];
 
 module.exports = SearchMixQueryBuilder;

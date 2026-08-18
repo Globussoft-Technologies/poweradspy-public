@@ -23,7 +23,7 @@ const { getAdInsights: ttAdInsights } = require('../controllers/tiktokCommonInsi
 const { getAdCountry } = require('../controllers/adCountryController');
 const { createShareLink, getSharedAd } = require('../controllers/shareAdController');
 const { syncCategory, syncAllCategories } = require('../controllers/categoryController');
-const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk } = require('../controllers/addCategoryController');
+const { getDescriptionDetails, getRecentAdsForAiMeta, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk } = require('../controllers/addCategoryController');
 const { createDashboardShare, getDashboardShare, guestSearch, publicSearch } = require('../controllers/dashboardShareController');
 const { dailyKeywordRequest, getPriorityRequests } = require('../controllers/dailyKeywordRequestController');
 const { storeKeywordSearch, scraperWork, insertSyntheticKeywords, addScrapingHistory } = require('../controllers/keywordSearchController');
@@ -431,6 +431,13 @@ router.post(
 router.get(
   '/getDescriptionDetails',
   asyncHandler(getDescriptionDetails)
+);
+
+// POST /api/v1/common/getRecentAdsForAiMeta
+// Stable insertion-time feed for the DS recent Category + AI-Meta lane.
+router.post(
+  '/getRecentAdsForAiMeta',
+  asyncHandler(getRecentAdsForAiMeta)
 );
 
 // POST /api/v1/common/newCatInsertion

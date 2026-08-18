@@ -3152,6 +3152,7 @@ async generateCompetitorsInBackground({
                   const pc = stats.platformCompetitorCount || {};
                   if (pc.facebook > 0) p.push("Facebook");
                   if (pc.instagram > 0) p.push("Instagram");
+                  if (pc.google > 0) p.push("Google");
                   return p.length > 0 ? p : (row.platforms || []);
                 })(),
               };

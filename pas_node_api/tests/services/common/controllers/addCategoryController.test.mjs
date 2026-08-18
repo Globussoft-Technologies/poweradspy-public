@@ -18,7 +18,7 @@ require.cache[catCtrlPath] = {
 const config = require("../../../../src/config");
 const originalEnv = config.env;
 
-const { getDescriptionDetails, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk } = require(
+const { getDescriptionDetails, getRecentAdsForAiMeta, newCatInsertion, getAdCategory, insertAiMeta, insertAiMetaBulk } = require(
   "../../../../src/services/common/controllers/addCategoryController"
 );
 
@@ -183,7 +183,7 @@ describe("addCategoryController > getDescriptionDetails", () => {
   });
   it("applies the displayable-media filter to the ES query (facebook)", async () => {
     const search = vi.fn(async (params) => {
-      expect(params.body.query.bool.must).toEqual([{ range: { "facebook_ad.id": { gt: 0 } } }]);
+      expect(params.body.query.bool.filter[0]).toEqual({ range: { "facebook_ad.id": { gt: 0 } } });
       const filter = params.body.query.bool.filter;
       expect(Array.isArray(filter)).toBe(true);
       expect(JSON.stringify(filter)).toContain("new_nas_image_url");
@@ -211,7 +211,7 @@ describe("addCategoryController > getDescriptionDetails", () => {
     const search = vi.fn(async (params) => {
       // Assert ES query uses the monotonic internal PK, not the public ad_id.
       expect(params.body.sort).toEqual([{ id: "asc" }]);
-      expect(params.body.query.bool.must[0].range).toEqual({ id: { gt: 7 } });
+      expect(params.body.query.bool.filter[0].range).toEqual({ id: { gt: 7 } });
       // Google's live builder lowercases these term values via the index
       // normalizer, so the common mirror must use the same literals.
       expect(JSON.stringify(params.body.query.bool.filter)).toContain('"type":"image"');
@@ -463,6 +463,188 @@ describe("addCategoryController > getDescriptionDetails", () => {
     const res = mkRes();
     await getDescriptionDetails({ query: {}, body: { platform: "facebook" } }, res);
     expect(res.statusCode).toBe(500);
+  });
+});
+
+describe("addCategoryController > getRecentAdsForAiMeta", () => {
+  function recentFacebookHit(id) {
+    return { _source: {
+      "facebook_ad.id": id,
+      "facebook_ad.type": "IMAGE",
+      "facebook_ad_variants.text_exactly": `Text ${id}`,
+      "facebook_ad_variants.title_exactly": `Title ${id}`,
+      "facebook_ad_variants.newsfeed_description_exactly": `Description ${id}`,
+      "facebook_ad_post_owners.post_owner_name": "Owner",
+      new_nas_image_url: `https://cdn.example/${id}.jpg`,
+    } };
+  }
+
+  it("rejects a missing first-request watermark", async () => {
+    const res = mkRes();
+    await getRecentAdsForAiMeta({ body: { platform: "facebook", checkpoint: null, limit: 20 }, id: "req-1" }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatchObject({ code: "INVALID_START_FROM", retryable: false, request_id: "req-1" });
+  });
+
+  it("paginates more than 100 equal-timestamp rows without gaps", async () => {
+    const insertedAt = "2026-08-17 10:05:31.000";
+    const allRows = Array.from({ length: 102 }, (_, index) => ({ id: index + 1, inserted_at: insertedAt }));
+    const sqlQuery = vi.fn(async (query, params) => {
+      if (query.includes("AS inserted_at FROM facebook_ad")) {
+        expect(query).toContain("created_date <= ?");
+        expect(params).toHaveLength(5);
+        const afterId = Number(params[3]);
+        return allRows.filter(row => row.id > afterId).slice(0, params[4]);
+      }
+      return [];
+    });
+    const esSearch = vi.fn(async ({ body }) => {
+      expect(body._source).toContain("facebook_ad.id");
+      if (body._source.length > 1) {
+        expect(body._source).toContain("facebook_ad_variants.text_exactly");
+        expect(body._source).not.toContain("facebook_ad_html_lander_content");
+      }
+      const ids = body.query.bool.filter[0].terms["facebook_ad.id"];
+      return { hits: { hits: ids.map(recentFacebookHit) } };
+    });
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch, sql: { query: sqlQuery } }));
+
+    const first = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "facebook", checkpoint: null, start_from: "2026-08-17T10:00:00.000Z", limit: 100 },
+      id: "page-1",
+    }, first);
+    expect(first.statusCode).toBe(200);
+    expect(first.body.items.map(item => item.id)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+    expect(first.body.has_more).toBe(true);
+    expect(first.body.items[0]).toMatchObject({ ad_id: "1", inserted_at: "2026-08-17T10:05:31.000Z" });
+
+    const second = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "facebook", checkpoint: first.body.next_checkpoint, limit: 100 },
+      id: "page-2",
+    }, second);
+    expect(second.statusCode).toBe(200);
+    expect(second.body.items.map(item => item.id)).toEqual([101, 102]);
+    expect(second.body.has_more).toBe(false);
+  });
+
+  it("replays a checkpoint and includes rows inserted after the previous page", async () => {
+    const rows = [
+      { id: 1, inserted_at: "2026-08-17 10:00:01.000" },
+      { id: 2, inserted_at: "2026-08-17 10:00:02.000" },
+    ];
+    const sqlQuery = vi.fn(async (query, params) => {
+      if (!query.includes("AS inserted_at FROM facebook_ad")) return [];
+      const boundaryTime = String(params[1]);
+      const boundaryId = Number(params[3]);
+      return rows.filter(row => row.inserted_at > boundaryTime || (row.inserted_at === boundaryTime && row.id > boundaryId));
+    });
+    const esSearch = vi.fn(async ({ body }) => ({
+      hits: { hits: body.query.bool.filter[0].terms["facebook_ad.id"].map(recentFacebookHit) },
+    }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch, sql: { query: sqlQuery } }));
+
+    const first = mkRes();
+    const initialBody = { platform: "facebook", checkpoint: null, start_from: "2026-08-17T10:00:00.000Z", limit: 1 };
+    await getRecentAdsForAiMeta({ body: initialBody, id: "first" }, first);
+    const replay = mkRes();
+    await getRecentAdsForAiMeta({ body: initialBody, id: "replay" }, replay);
+    expect(replay.body.items.map(item => item.id)).toEqual([1]);
+
+    rows.push({ id: 3, inserted_at: "2026-08-17 10:00:03.000" });
+    const next = mkRes();
+    await getRecentAdsForAiMeta({ body: { platform: "facebook", checkpoint: first.body.next_checkpoint, limit: 10 }, id: "next" }, next);
+    expect(next.body.items.map(item => item.id)).toEqual([2, 3]);
+  });
+
+  it("returns an empty page with the reusable supplied checkpoint", async () => {
+    const rows = [{ id: 1, inserted_at: "2026-08-17 10:00:01.000" }];
+    const sqlQuery = vi.fn(async (query, params) => query.includes("AS inserted_at FROM facebook_ad")
+      ? rows.filter(row => row.id > Number(params[3]))
+      : []);
+    const esSearch = vi.fn(async ({ body }) => ({
+      hits: { hits: body.query.bool.filter[0].terms["facebook_ad.id"].map(recentFacebookHit) },
+    }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch, sql: { query: sqlQuery } }));
+
+    const first = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "facebook", checkpoint: null, start_from: "2026-08-17T10:00:00.000Z", limit: 1 },
+      id: "first",
+    }, first);
+    const empty = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "facebook", checkpoint: first.body.next_checkpoint, limit: 1 },
+      id: "empty",
+    }, empty);
+    expect(empty.body.items).toEqual([]);
+    expect(empty.body.next_checkpoint).toBe(first.body.next_checkpoint);
+    expect(empty.body.has_more).toBe(false);
+  });
+
+  it("rejects a checkpoint issued for another platform", async () => {
+    const sqlQuery = vi.fn(async (query) => query.includes("AS inserted_at FROM facebook_ad")
+      ? [{ id: 1, inserted_at: "2026-08-17 10:00:01.000" }]
+      : []);
+    const esSearch = vi.fn(async () => ({ hits: { hits: [recentFacebookHit(1)] } }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch, sql: { query: sqlQuery } }));
+    const first = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "facebook", checkpoint: null, start_from: "2026-08-17T10:00:00.000Z", limit: 1 },
+      id: "first",
+    }, first);
+
+    const wrongPlatform = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "instagram", checkpoint: first.body.next_checkpoint, limit: 1 },
+      id: "wrong-platform",
+    }, wrongPlatform);
+    expect(wrongPlatform.statusCode).toBe(400);
+    expect(wrongPlatform.body).toMatchObject({ code: "INVALID_CHECKPOINT", retryable: false });
+  });
+
+  it("returns a retryable error instead of advancing on a partial ES response", async () => {
+    const sqlQuery = vi.fn(async (query) => query.includes("AS inserted_at FROM facebook_ad")
+      ? [{ id: 1, inserted_at: "2026-08-17 10:00:01.000000" }]
+      : []);
+    const esSearch = vi.fn(async () => ({
+      timed_out: true,
+      _shards: { total: 5, successful: 4, failed: 1 },
+      hits: { hits: [] },
+    }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch, sql: { query: sqlQuery } }));
+
+    const res = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "facebook", checkpoint: null, start_from: "2026-08-17T10:00:00.000Z", limit: 20 },
+      id: "partial-es",
+    }, res);
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toMatchObject({ code: "TEMPORARY_BACKEND_UNAVAILABLE", retryable: true });
+  });
+
+  it("bounds work and does not advance when no candidate is ES-eligible", async () => {
+    const sqlQuery = vi.fn(async (query, params) => {
+      if (!query.includes("AS inserted_at FROM facebook_ad")) return [];
+      const afterId = Number(params[3]);
+      return Array.from({ length: Number(params[4]) }, (_, index) => ({
+        id: afterId + index + 1,
+        inserted_at: "2026-08-17 10:00:01.000000",
+      }));
+    });
+    const esSearch = vi.fn(async () => ({ hits: { hits: [] } }));
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch, sql: { query: sqlQuery } }));
+
+    const res = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform: "facebook", checkpoint: null, start_from: "2026-08-17T10:00:00.000Z", limit: 20 },
+      id: "bounded-scan",
+    }, res);
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toMatchObject({ code: "RECENT_SCAN_LIMIT_REACHED", retryable: true });
+    expect(sqlQuery).toHaveBeenCalledTimes(4);
+    expect(esSearch).toHaveBeenCalledTimes(4);
   });
 });
 

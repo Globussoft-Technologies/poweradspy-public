@@ -1,6 +1,6 @@
 ﻿'use strict';
 
-const { getAggs } = require('../helpers/searchIntelligenceHelpers');
+const { getAggs, getAllUserEmails, parsePagination } = require('../helpers/searchIntelligenceHelpers');
 const databaseManager = require('../../../database/DatabaseManager');
 const { fetchAdsCountForKeywordsByPlatform } = require('../queries/searchIntelligenceQueries');
 
@@ -26,8 +26,7 @@ async function getKeywordTrends(req, elastic, logger, mongo) {
 
     const { type = 'all', page = 0, size = 10, sort_by = 'createdAt', status, search_value } = req.query;
 
-    const pageNum = Math.max(0, Number(page));
-    const pageSize = Math.min(100, Math.max(1, Number(size)));
+    const { pageNum, pageSize } = parsePagination({ page, size });
     const skip = pageNum * pageSize;
 
     // Map type string to typeNum (1=keyword, 2=advertiser, 3=domain)
@@ -644,8 +643,7 @@ async function getProjectActivity(req, elastic, logger) {
       page = 0, size = 10,
     } = req.query;
 
-    const pageNum  = Math.max(0, Number(page));
-    const pageSize = Math.min(100, Math.max(1, Number(size)));
+    const { pageNum, pageSize } = parsePagination({ page, size });
 
     // Resolve time window
     let toTs, fromTs;
@@ -685,28 +683,16 @@ async function getProjectActivity(req, elastic, logger) {
       ], minimum_should_match: 1 } },
     ];
 
-    // Resolve user email → user_id, then filter by user.id in ES
+    // Resolve user email → user_id, then filter by user.id in ES.
+    // Shared, cached map — also reused below to populate row emails, so this
+    // is a single lookup per cache window instead of a fresh query each time.
+    const emailMap = await getAllUserEmails(elastic);
+
     if (user && user.trim() !== '') {
       const uf = user.trim().toLowerCase();
-      const userLookup = await elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-          aggs: {
-            per_user: {
-              terms: { field: 'user.id', size: 2000 },
-              aggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
-            },
-          },
-        },
-      });
-      const matchedIds = [];
-      for (const b of (getAggs(userLookup)?.per_user?.buckets ?? [])) {
-        const src   = b.email_hit?.hits?.hits?.[0]?._source ?? {};
-        const email = src['user.email'] ?? src?.user?.email ?? '';
-        if (email.toLowerCase().includes(uf)) matchedIds.push(String(b.key));
-      }
+      const matchedIds = Object.entries(emailMap)
+        .filter(([, email]) => String(email).toLowerCase().includes(uf))
+        .map(([uid]) => uid);
       if (matchedIds.length === 0) {
         return {
           code: 200,
@@ -725,30 +711,7 @@ async function getProjectActivity(req, elastic, logger) {
       _source: true,
     };
 
-    const [result, emailResult] = await Promise.all([
-      elastic.search({ index: 'user_activities', body }),
-      elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-          aggs: {
-            per_user: {
-              terms: { field: 'user.id', size: 1000 },
-              aggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } },
-            },
-          },
-        },
-      }),
-    ]);
-
-    // Build email map
-    const emailMap = {};
-    for (const b of (getAggs(emailResult)?.per_user?.buckets ?? [])) {
-      const src   = b.email_hit?.hits?.hits?.[0]?._source ?? {};
-      const email = src['user.email'] ?? src?.user?.email ?? null;
-      if (email) emailMap[String(b.key)] = email;
-    }
+    const result = await elastic.search({ index: 'user_activities', body });
 
     const hitsArr = result?.hits?.hits ?? result?.body?.hits?.hits ?? [];
     const total   = (() => {

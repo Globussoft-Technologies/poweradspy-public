@@ -3184,7 +3184,7 @@ describe("competitorService > generateCompetitorsInBackground", () => {
         averageImpression: 1000,
         totalBudget: 50000,
         uniqueCountries: ["IN", "US"],
-        platformCompetitorCount: { facebook: 10, instagram: 5 },
+        platformCompetitorCount: { facebook: 10, instagram: 5, google: 3 },
       },
       C2: {
         averagePopularity: 40, // > 33 → "Medium"
@@ -3207,7 +3207,7 @@ describe("competitorService > generateCompetitorsInBackground", () => {
     const enriched = batchEmit[1].rows;
     expect(enriched[0].popularity).toContain("High");
     expect(enriched[0].budget).toContain("$50,000");
-    expect(enriched[0].platforms).toEqual(["Facebook", "Instagram"]);
+    expect(enriched[0].platforms).toEqual(["Facebook", "Instagram", "Google"]);
     expect(enriched[1].popularity).toContain("Medium");
 
     saveSpy.mockRestore();

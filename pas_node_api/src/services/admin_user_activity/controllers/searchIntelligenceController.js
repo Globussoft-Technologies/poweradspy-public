@@ -6,7 +6,9 @@ const {
   getAggs,
   getTotal,
   getAllUserEmails,
+  fetchAllTermsBuckets,
   resolveTimeWindow,
+  parsePagination,
   getCache,
   setCache,
 } = require('../helpers/searchIntelligenceHelpers');
@@ -106,26 +108,18 @@ async function getIntelligenceStats(req, elastic, logger) {
       },
     };
 
-    const highVolumeFlagsQuery = {
-      index: 'user_activities',
-      body: {
-        size: 0,
-        query: { bool: { filter: baseFilter(nowTs - DAY_S, nowTs) } },
-        aggs: {
-          per_user: { terms: { field: 'user.id', size: 10000 } },
-        },
-      },
-    };
+    // Per-user doc counts for the high-volume flag — paginated via composite
+    // agg so a busy day with many distinct users still gets every one of them.
+    const highVolumeFlagsFilter = { bool: { filter: baseFilter(nowTs - DAY_S, nowTs) } };
 
-    const [currResult, prevResult, flagResult] = await Promise.all([
+    const [currResult, prevResult, perUserBuckets] = await Promise.all([
       elastic.search(currentPeriodQuery),
       elastic.search(previousPeriodQuery),
-      elastic.search(highVolumeFlagsQuery),
+      fetchAllTermsBuckets(elastic, { query: highVolumeFlagsFilter, field: 'user.id' }),
     ]);
 
     const currAggs = getAggs(currResult);
     const prevAggs = getAggs(prevResult);
-    const flagAggs = getAggs(flagResult);
 
     // total_searches = total docs in window (hits.total)
     const totalSearches  = getTotal(currResult);
@@ -140,7 +134,6 @@ async function getIntelligenceStats(req, elastic, logger) {
                              + (prevAggs.unique_adv?.value ?? 0)
                              + (prevAggs.unique_dom?.value ?? 0);
 
-    const perUserBuckets  = flagAggs.per_user?.buckets ?? [];
     const highVolumeFlags = perUserBuckets.filter((b) => b.doc_count > 500).length;
 
     function trendPct(curr, prev) {
@@ -405,8 +398,7 @@ async function getOtherActivities(req, elastic, logger) {
     const DAY_S = 24 * 60 * 60;
     const { date_range = 'Last 90 days', from_date, to_date, user, page = 0, size = 10 } = req.query;
 
-    const pageNum  = Math.max(0, Number(page));
-    const pageSize = Math.min(100, Math.max(1, Number(size)));
+    const { pageNum, pageSize } = parsePagination({ page, size });
 
     let toTs, fromTs;
     if (from_date && to_date) {
@@ -441,23 +433,16 @@ async function getOtherActivities(req, elastic, logger) {
       { bool: { should: activityFields.map(f => ({ exists: { field: f } })), minimum_should_match: 1 } },
     ];
 
-    // User filter — resolve email → user_id
+    // User filter — resolve email → user_id.
+    // Shared, cached map — also reused below to populate row emails, so this
+    // is a single lookup per cache window instead of a fresh query each time.
+    const emailMap = await getAllUserEmails(elastic);
+
     if (user && user.trim() !== '') {
       const uf = user.trim().toLowerCase();
-      const userLookup = await elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-          aggs: { per_user: { terms: { field: 'user.id', size: 2000 }, aggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } } } },
-        },
-      });
-      const matchedIds = [];
-      for (const b of (getAggs(userLookup)?.per_user?.buckets ?? [])) {
-        const src = b.email_hit?.hits?.hits?.[0]?._source ?? {};
-        const em  = src['user.email'] ?? src?.user?.email ?? '';
-        if (em.toLowerCase().includes(uf)) matchedIds.push(String(b.key));
-      }
+      const matchedIds = Object.entries(emailMap)
+        .filter(([, email]) => String(email).toLowerCase().includes(uf))
+        .map(([uid]) => uid);
       if (matchedIds.length === 0) {
         const fromLabel = new Date(fromTs * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
         const toLabel   = new Date(toTs   * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -466,33 +451,16 @@ async function getOtherActivities(req, elastic, logger) {
       filters.push({ terms: { 'user.id': matchedIds } });
     }
 
-    const [result, emailResult] = await Promise.all([
-      elastic.search({
-        index: 'user_activities',
-        body: {
-          size: pageSize,
-          from: pageNum * pageSize,
-          query: { bool: { filter: filters } },
-          sort: [{ dateTime: { order: 'desc' } }, { _id: { order: 'desc' } }],
-          _source: true,
-        },
-      }),
-      elastic.search({
-        index: 'user_activities',
-        body: {
-          size: 0,
-          query: { bool: { filter: [{ exists: { field: 'user.email' } }] } },
-          aggs: { per_user: { terms: { field: 'user.id', size: 1000 }, aggs: { email_hit: { top_hits: { size: 1, _source: ['user.email'] } } } } },
-        },
-      }),
-    ]);
-
-    const emailMap = {};
-    for (const b of (getAggs(emailResult)?.per_user?.buckets ?? [])) {
-      const src = b.email_hit?.hits?.hits?.[0]?._source ?? {};
-      const em  = src['user.email'] ?? src?.user?.email ?? null;
-      if (em) emailMap[String(b.key)] = em;
-    }
+    const result = await elastic.search({
+      index: 'user_activities',
+      body: {
+        size: pageSize,
+        from: pageNum * pageSize,
+        query: { bool: { filter: filters } },
+        sort: [{ dateTime: { order: 'desc' } }, { _id: { order: 'desc' } }],
+        _source: true,
+      },
+    });
 
     const hitsArr = result?.hits?.hits ?? result?.body?.hits?.hits ?? [];
     const total   = (() => { const t = (result?.hits ?? result?.body?.hits ?? {}).total; return typeof t === 'object' ? (t.value ?? 0) : (t ?? 0); })();
