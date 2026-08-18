@@ -110,36 +110,89 @@
 
       <!-- Dashboard Tab -->
       <section id="tab-dashboard" class="tab-content active">
-        <div class="metrics-grid">
-          <div class="metric-card glass">
+        <div class="metrics-grid" id="metrics-grid">
+          <div class="metric-card glass clickable" onclick="toggleMetricDetail('uptime')">
             <div class="metric-label">Uptime</div>
             <div class="metric-value" id="m-uptime">—</div>
             <div class="metric-sub" id="m-started">—</div>
+            <span class="metric-expand-hint">▾ workers</span>
           </div>
-          <div class="metric-card glass">
+          <div class="metric-card glass clickable" onclick="toggleMetricDetail('requests')">
             <div class="metric-label">Total Requests</div>
             <div class="metric-value" id="m-total-req">—</div>
             <div class="metric-sub" id="m-rps">— req/s</div>
+            <span class="metric-expand-hint">▾ trend</span>
           </div>
-          <div class="metric-card glass">
+          <div class="metric-card glass clickable" onclick="toggleMetricDetail('memory')">
             <div class="metric-label">Memory (Heap)</div>
             <div class="metric-value" id="m-memory">—</div>
             <div class="metric-sub" id="m-rss">RSS: —</div>
+            <span class="metric-expand-hint">▾ trend</span>
           </div>
-          <div class="metric-card glass">
+          <div class="metric-card glass clickable" onclick="toggleMetricDetail('response')">
             <div class="metric-label">Avg Response</div>
             <div class="metric-value" id="m-avg-resp">— ms</div>
             <div class="metric-sub" id="m-p95">P95: — ms</div>
+            <span class="metric-expand-hint">▾ percentiles</span>
           </div>
-          <div class="metric-card glass">
+          <div class="metric-card glass clickable" onclick="toggleMetricDetail('connections')">
             <div class="metric-label">Active Connections</div>
             <div class="metric-value" id="m-active-conn">—</div>
             <div class="metric-sub" id="m-errors">Errors: —</div>
+            <span class="metric-expand-hint">▾ per worker</span>
           </div>
-          <div class="metric-card glass">
+          <div class="metric-card glass clickable" onclick="toggleMetricDetail('cpu')">
             <div class="metric-label">CPU Load (1m)</div>
             <div class="metric-value" id="m-cpu">—</div>
             <div class="metric-sub" id="m-cpus">— cores</div>
+            <span class="metric-expand-hint">▾ 5m/15m</span>
+          </div>
+          <div id="metric-detail-panel" class="metric-detail-panel hidden"></div>
+        </div>
+
+        <div class="grid-2col">
+          <div class="card glass">
+            <div class="chart-card-header">
+              <h3 style="padding:16px 20px 0">Memory (Heap Used)</h3>
+            </div>
+            <div class="card-body">
+              <div class="chart-canvas-wrap"><canvas id="dash-chart-memory" height="90"></canvas></div>
+            </div>
+          </div>
+          <div class="card glass">
+            <div class="chart-card-header">
+              <h3 style="padding:16px 20px 0">Request Throughput (per ~10s)</h3>
+            </div>
+            <div class="card-body">
+              <div class="chart-canvas-wrap"><canvas id="dash-chart-throughput" height="90"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header">
+            <h3>Worker Instances</h3>
+            <div class="card-actions">
+              <span id="w-summary" class="status-badge">—</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Worker</th>
+                  <th>PID</th>
+                  <th>Status</th>
+                  <th>Uptime</th>
+                  <th>CPU</th>
+                  <th>RSS</th>
+                  <th>Heap Used</th>
+                  <th>Active Conns</th>
+                  <th>Requests</th>
+                </tr>
+              </thead>
+              <tbody id="worker-instances"></tbody>
+            </table>
           </div>
         </div>
 
@@ -294,6 +347,8 @@
 
       <!-- IP Manager Tab -->
       <section id="tab-ips" class="tab-content">
+        <div class="ip-summary-strip" id="ip-summary-strip"></div>
+
         <div class="card glass">
           <div class="card-header">
             <h3>Block IP Address</h3>
@@ -326,11 +381,14 @@
             <table class="data-table">
               <thead>
                 <tr>
+                  <th></th>
                   <th>IP Address</th>
                   <th>Requests</th>
+                  <th>Errors</th>
+                  <th>Rate-Limited (429)</th>
                   <th>First Seen</th>
                   <th>Last Seen</th>
-                  <th>Endpoints Hit</th>
+                  <th>Top Endpoint</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -473,15 +531,15 @@
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
               <div>
                 <div class="metric-label" style="margin-bottom:6px">ES CPU %</div>
-                <canvas id="lw-chart-es-cpu" height="70"></canvas>
+                <div class="chart-canvas-wrap"><canvas id="lw-chart-es-cpu" height="70"></canvas></div>
               </div>
               <div>
                 <div class="metric-label" style="margin-bottom:6px">ES Heap (RAM) %</div>
-                <canvas id="lw-chart-es-heap" height="70"></canvas>
+                <div class="chart-canvas-wrap"><canvas id="lw-chart-es-heap" height="70"></canvas></div>
               </div>
               <div>
                 <div class="metric-label" style="margin-bottom:6px">SQL Load %</div>
-                <canvas id="lw-chart-sql-load" height="70"></canvas>
+                <div class="chart-canvas-wrap"><canvas id="lw-chart-sql-load" height="70"></canvas></div>
               </div>
             </div>
             <p class="muted" style="font-size:12px;margin-top:8px">ES doesn't expose per-query CPU/RAM usage — these are cluster-level readings, sampled every ~8s, kept for the last hour only.</p>

@@ -445,6 +445,13 @@ function refreshCurrentTab() {
 }
 
 // ─── Dashboard / Metrics ──────────────────────────────────
+// Cached so the click-to-expand metric detail panel (toggleMetricDetail)
+// can render without a separate fetch, and so it re-renders live on every
+// 10s auto-refresh while it's open.
+let lastMetricsData = null;
+let lastWorkersData = null;
+let metricDetailOpen = null;
+
 async function loadMetrics() {
   try {
     const res = await fetch(API + '/metrics' + getDateQueryParams(), {
@@ -452,6 +459,7 @@ async function loadMetrics() {
     });
     if (!res.ok) return;
     const { data } = await res.json();
+    lastMetricsData = data;
 
     // Update metric cards
     setText('m-uptime', data.server.uptimeHuman);
@@ -477,6 +485,22 @@ async function loadMetrics() {
     // Recent errors
     renderRecentErrors(data.errors.recent);
 
+    // Real-time trend charts — driven by `snapshots` (recorded every ~10s,
+    // see MetricsCollector._startSnapshotCollection), not a fabricated demo.
+    const snaps = data.snapshots || [];
+    drawTimeChart('dash-chart-memory', [{
+      label: 'Heap Used',
+      color: '#60a5fa',
+      points: snaps.map((s) => ({ ts: new Date(s.timestamp).getTime(), value: (s.heap_used || 0) / 1048576 })),
+    }], { formatValue: (v) => `${v.toFixed(0)}MB` });
+    drawTimeChart('dash-chart-throughput', [{
+      label: 'Requests/tick',
+      color: '#34d399',
+      points: computeThroughputSeries(snaps),
+    }], { formatValue: (v) => v.toFixed(0) });
+
+    if (metricDetailOpen) renderMetricDetail(metricDetailOpen);
+
     // Server status
     const statusEl = document.getElementById('server-status');
     statusEl.textContent = '● Connected';
@@ -486,6 +510,136 @@ async function loadMetrics() {
     statusEl.textContent = '● Disconnected';
     statusEl.classList.add('error');
   }
+
+  loadWorkers();
+}
+
+function fmtBytes(bytes) {
+  if (!bytes) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
+// snapshots.total_requests is a cumulative since-startup counter — diffing
+// consecutive samples turns it into an actual per-tick throughput line,
+// which is what's worth looking at on a live dashboard (a cumulative count
+// only ever goes up and says nothing about "is traffic busy right now").
+function computeThroughputSeries(snapshots) {
+  const pts = [];
+  for (let i = 1; i < snapshots.length; i++) {
+    const prev = snapshots[i - 1], cur = snapshots[i];
+    pts.push({
+      ts: new Date(cur.timestamp).getTime(),
+      value: Math.max(0, (cur.total_requests || 0) - (prev.total_requests || 0)),
+    });
+  }
+  return pts;
+}
+
+// ─── Metric card click-to-expand ───────────────────────────
+// Every branch below reuses data already fetched by loadMetrics()/
+// loadWorkers() — no extra network round-trip on click.
+function toggleMetricDetail(key) {
+  const panel = document.getElementById('metric-detail-panel');
+  if (metricDetailOpen === key) {
+    panel.classList.add('hidden');
+    metricDetailOpen = null;
+    return;
+  }
+  metricDetailOpen = key;
+  panel.classList.remove('hidden');
+  renderMetricDetail(key);
+}
+
+function renderMetricDetail(key) {
+  const panel = document.getElementById('metric-detail-panel');
+  const d = lastMetricsData;
+  if (!d) { panel.innerHTML = '<p class="muted">Loading…</p>'; return; }
+  const workers = (lastWorkersData && lastWorkersData.workers) || [];
+
+  const workerRow = (w, valueHtml) => `
+    <div class="ip-detail-endpoint">
+      <span>${w.workerId ? `Worker ${escapeHtml(w.workerId)}` : `PID ${w.pid}`}${w.alive ? '' : ' <span class="pill pill-warning">stale</span>'}</span>
+      <span class="mono">${valueHtml}</span>
+    </div>`;
+
+  if (key === 'uptime') {
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Per-worker uptime (${workers.length} reporting)</div>
+      <div class="ip-detail-grid">${workers.map((w) => workerRow(w, lwFmtSec(w.uptimeSec))).join('') || '<p class="muted">No workers reporting yet</p>'}</div>`;
+  } else if (key === 'requests') {
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Request rate — last ${(d.snapshots || []).length} samples (~5 min)</div>
+      <div class="chart-canvas-wrap"><canvas id="detail-chart-requests" height="110"></canvas></div>`;
+    drawTimeChart('detail-chart-requests', [{ label: 'Requests/tick', color: '#34d399', points: computeThroughputSeries(d.snapshots || []) }], {});
+  } else if (key === 'memory') {
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Heap used — last ${(d.snapshots || []).length} samples</div>
+      <div class="chart-canvas-wrap"><canvas id="detail-chart-memory" height="110"></canvas></div>`;
+    drawTimeChart('detail-chart-memory', [{
+      label: 'Heap MB', color: '#60a5fa',
+      points: (d.snapshots || []).map((s) => ({ ts: new Date(s.timestamp).getTime(), value: (s.heap_used || 0) / 1048576 })),
+    }], { formatValue: (v) => `${v.toFixed(0)}MB` });
+  } else if (key === 'response') {
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Response time percentiles (sample size: ${d.responseTimes.sampleSize})</div>
+      <div class="ip-detail-grid">
+        <div class="ip-detail-endpoint"><span>P50</span><span class="mono">${d.responseTimes.p50} ms</span></div>
+        <div class="ip-detail-endpoint"><span>P95</span><span class="mono">${d.responseTimes.p95} ms</span></div>
+        <div class="ip-detail-endpoint"><span>P99</span><span class="mono">${d.responseTimes.p99} ms</span></div>
+        <div class="ip-detail-endpoint"><span>Average</span><span class="mono">${d.responseTimes.avg} ms</span></div>
+      </div>`;
+  } else if (key === 'connections') {
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">Active connections per worker</div>
+      <div class="ip-detail-grid">${workers.map((w) => workerRow(w, `${w.activeConnections} active`)).join('') || '<p class="muted">No workers reporting yet</p>'}</div>`;
+  } else if (key === 'cpu') {
+    const [l1, l5, l15] = d.server.loadAvg;
+    panel.innerHTML = `<div class="metric-label" style="margin-bottom:10px">System load average (${d.server.cpuCount} cores)</div>
+      <div class="ip-detail-grid">
+        <div class="ip-detail-endpoint"><span>1 min</span><span class="mono">${l1}</span></div>
+        <div class="ip-detail-endpoint"><span>5 min</span><span class="mono">${l5}</span></div>
+        <div class="ip-detail-endpoint"><span>15 min</span><span class="mono">${l15}</span></div>
+      </div>`;
+  }
+}
+
+// One row per live OS process (this app's own internal cluster.fork()
+// workers, PM2 -i instances, or a single bare process — whichever layer(s)
+// are actually running, every process heartbeats itself independently, see
+// metrics/workerHeartbeat.js). "alive" means it heartbeated in the last 20s;
+// a worker that stops reporting (crashed/restarted) drops out of "alive"
+// immediately instead of lingering as a stale, misleading row.
+async function loadWorkers() {
+  try {
+    const res = await fetch(API + '/workers', { credentials: 'include' });
+    if (!res.ok) return;
+    const { data } = await res.json();
+    lastWorkersData = data;
+    if (metricDetailOpen === 'uptime' || metricDetailOpen === 'connections') renderMetricDetail(metricDetailOpen);
+
+    const summaryEl = document.getElementById('w-summary');
+    summaryEl.textContent = `${data.aliveCount} alive / ${data.totalReporting} reporting`;
+    summaryEl.classList.toggle('error', data.aliveCount === 0);
+
+    const tbody = document.getElementById('worker-instances');
+    tbody.innerHTML = (data.workers || []).map((w) => {
+      const label = w.workerId ? `Worker ${w.workerId}` : (w.nodeAppInstance !== null && w.nodeAppInstance !== undefined ? `PM2 #${w.nodeAppInstance}` : 'single');
+      const statusHtml = w.alive
+        ? '<span class="status-badge" style="color:var(--success,#22c55e)">● alive</span>'
+        : `<span class="status-badge error">● stale (${Math.round(w.lastHeartbeatAgoMs / 1000)}s ago)</span>`;
+      return `
+        <tr>
+          <td>${escapeHtml(label)}</td>
+          <td class="mono">${w.pid}</td>
+          <td>${statusHtml}</td>
+          <td>${lwFmtSec(w.uptimeSec)}</td>
+          <td>${w.cpuPercent}%</td>
+          <td>${fmtBytes(w.memory?.rss)}</td>
+          <td>${fmtBytes(w.memory?.heapUsed)}</td>
+          <td>${w.activeConnections}</td>
+          <td>${(w.requestsSinceStart || 0).toLocaleString()}</td>
+        </tr>
+      `;
+    }).join('') || '<tr><td colspan="9" class="muted">No workers reporting yet</td></tr>';
+  } catch (err) { /* silent — same best-effort pattern as loadMetrics */ }
 }
 
 function renderBarChart(containerId, data, colorFn) {
@@ -825,12 +979,17 @@ async function loadIps() {
   await loadIpStats();
 }
 
+// Kept around so loadIpStats() can mark rows already on the blocklist —
+// both loading and re-blocking without a page nav.
+let currentBlockedIps = new Set();
+
 async function loadBlockedIps() {
   try {
     const res = await fetch(`${API}/blocked-ips`, {
       credentials: 'include'
     });
     const { data } = await res.json();
+    currentBlockedIps = new Set(data || []);
 
     const container = document.getElementById('blocked-ips-list');
     if (!data || data.length === 0) {
@@ -849,30 +1008,83 @@ async function loadBlockedIps() {
   }
 }
 
+// IPs whose endpoint-breakdown row is currently expanded — kept across
+// refreshes so an admin mid-investigation of one IP doesn't get collapsed
+// out from under them on the next 10s poll.
+let expandedIpRows = new Set();
+let lastIpStatsData = [];
+
+function renderIpSummaryStrip(ips) {
+  const strip = document.getElementById('ip-summary-strip');
+  if (!strip) return;
+  const totalErrors = ips.reduce((s, ip) => s + (ip.errorCount || 0), 0);
+  const totalRateLimited = ips.reduce((s, ip) => s + (ip.rateLimitHits || 0), 0);
+  const topOffender = [...ips].sort((a, b) => (b.errorCount || 0) - (a.errorCount || 0))[0];
+
+  strip.innerHTML = `
+    <div class="ip-summary-tile"><div class="label">Tracked IPs</div><div class="value">${ips.length}</div></div>
+    <div class="ip-summary-tile"><div class="label">Blocked</div><div class="value ${currentBlockedIps.size ? 'danger' : ''}">${currentBlockedIps.size}</div></div>
+    <div class="ip-summary-tile"><div class="label">Total Errors</div><div class="value ${totalErrors ? 'warning' : ''}">${totalErrors.toLocaleString()}</div></div>
+    <div class="ip-summary-tile"><div class="label">Rate-Limited Hits</div><div class="value ${totalRateLimited ? 'danger' : ''}">${totalRateLimited.toLocaleString()}</div></div>
+    <div class="ip-summary-tile"><div class="label">Top Offender</div><div class="value mono" style="font-size:14px">${topOffender && topOffender.errorCount ? escapeHtml(topOffender.ip) : '—'}</div></div>
+  `;
+}
+
+function ipRowHtml(ip) {
+  const isBlocked = currentBlockedIps.has(ip.ip);
+  const errorCount = ip.errorCount || 0;
+  const rateLimitHits = ip.rateLimitHits || 0;
+  const isExpanded = expandedIpRows.has(ip.ip);
+  const entries = Object.entries(ip.endpoints || {});
+  const topEp = entries[0];
+
+  const mainRow = `
+    <tr data-ip="${escapeHtml(ip.ip)}" class="ip-row ${isBlocked ? 'ip-row-blocked' : ''}" onclick="toggleIpRow('${escapeHtml(ip.ip)}')">
+      <td class="mono" style="width:18px;color:var(--text-muted)">${isExpanded ? '▾' : '▸'}</td>
+      <td class="mono">${escapeHtml(ip.ip)}${isBlocked ? ' <span class="pill pill-danger" title="This IP is on the blocklist but is still showing up in traffic">🚫 blocked</span>' : ''}</td>
+      <td>${ip.requests.toLocaleString()}</td>
+      <td>${errorCount ? `<span class="pill pill-warning">${errorCount.toLocaleString()}</span>` : '<span class="pill pill-muted">0</span>'}</td>
+      <td>${rateLimitHits ? `<span class="pill pill-danger">${rateLimitHits.toLocaleString()}</span>` : '<span class="pill pill-muted">0</span>'}</td>
+      <td>${formatDate(ip.firstSeen)}</td>
+      <td>${formatDate(ip.lastSeen)}</td>
+      <td class="mono" style="font-size:11px">${topEp ? `${escapeHtml(topEp[0])} <span class="muted">(${topEp[1]})</span>` : '—'}${entries.length > 1 ? ` <span class="muted">+${entries.length - 1} more</span>` : ''}</td>
+      <td onclick="event.stopPropagation()">
+        ${isBlocked
+          ? '<span class="muted">already blocked</span>'
+          : `<button class="btn btn-danger btn-sm" onclick="blockIpDirect('${escapeHtml(ip.ip)}')">🚫 Block</button>`}
+      </td>
+    </tr>`;
+
+  if (!isExpanded) return mainRow;
+
+  const detailRow = `
+    <tr class="ip-row-detail" data-ip="${escapeHtml(ip.ip)}"><td colspan="9">
+      <div class="ip-detail-grid">
+        ${entries.map(([ep, count]) => `<div class="ip-detail-endpoint"><span class="mono">${escapeHtml(ep)}</span><span>${count}</span></div>`).join('') || '<span class="muted">No endpoint data</span>'}
+      </div>
+    </td></tr>`;
+  return mainRow + detailRow;
+}
+
+function toggleIpRow(ip) {
+  if (expandedIpRows.has(ip)) expandedIpRows.delete(ip);
+  else expandedIpRows.add(ip);
+  const tbody = document.getElementById('ip-stats-table');
+  tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="9" class="muted">No IP data yet</td></tr>';
+}
+
 async function loadIpStats() {
   try {
     const res = await fetch(API + '/metrics/ips' + getDateQueryParams(), {
       credentials: 'include'
     });
     const { data } = await res.json();
+    lastIpStatsData = (data || []).slice(0, 100);
+
+    renderIpSummaryStrip(lastIpStatsData);
 
     const tbody = document.getElementById('ip-stats-table');
-    tbody.innerHTML = (data || []).slice(0, 100).map(ip => `
-      <tr data-ip="${escapeHtml(ip.ip)}">
-        <td class="mono">${escapeHtml(ip.ip)}</td>
-        <td>${ip.requests.toLocaleString()}</td>
-        <td>${formatDate(ip.firstSeen)}</td>
-        <td>${formatDate(ip.lastSeen)}</td>
-        <td>
-          <ul class="ip-endpoints-list">
-            ${Object.entries(ip.endpoints || {}).map(([ep, count]) => `<li><span class="mono">${escapeHtml(ep)}</span>: ${count}</li>`).join('')}
-          </ul>
-        </td>
-        <td>
-          <button class="btn btn-danger btn-sm" onclick="blockIpDirect('${escapeHtml(ip.ip)}')">🚫 Block</button>
-        </td>
-      </tr>
-    `).join('') || '<tr><td colspan="6" class="muted">No IP data yet</td></tr>';
+    tbody.innerHTML = lastIpStatsData.map(ipRowHtml).join('') || '<tr><td colspan="9" class="muted">No IP data yet</td></tr>';
   } catch (err) {
     showToast('Failed to load IP stats', 'error');
   }
@@ -896,7 +1108,8 @@ async function blockIpDirect(ip) {
       credentials: 'include'
     });
     showToast(`IP ${ip} blocked`, 'success');
-    loadBlockedIps();
+    await loadBlockedIps();
+    loadIpStats(); // re-render so this row now shows "already blocked"
   } catch (err) {
     showToast('Failed to block IP', 'error');
   }
@@ -909,7 +1122,8 @@ async function unblockIp(ip) {
       credentials: 'include'
     });
     showToast(`IP ${ip} unblocked`, 'success');
-    loadBlockedIps();
+    await loadBlockedIps();
+    loadIpStats();
   } catch (err) {
     showToast('Failed to unblock IP', 'error');
   }
@@ -962,7 +1176,10 @@ async function loadDbStatus() {
 function renderDbConn(type, health, pool) {
   const isConnected = health?.status === 'connected';
   const statusClass = isConnected ? 'connected' : 'disconnected';
-  const statusText = health?.status || 'unknown';
+  // health.checking = a real ping hasn't completed yet (right after this
+  // worker started) — genuinely different from a confirmed-down connection,
+  // shown distinctly rather than blending into the same green "connected".
+  const statusText = health?.checking ? 'connected (checking...)' : (health?.status || 'unknown');
 
   let poolInfo = '';
   if (isConnected && pool && pool.totalConnections !== undefined) {
@@ -974,11 +1191,21 @@ function renderDbConn(type, health, pool) {
     `;
   }
 
+  // Real, periodically-pinged status (DatabaseManager.startHealthPing —
+  // SELECT 1 / {ping:1} / client.ping() every 15s) — not just "a connection
+  // object exists". lastCheckedAt/error give a backend dev something to act
+  // on immediately instead of a bare "disconnected".
+  const meta = [];
+  if (health?.lastCheckedAt) meta.push(`checked ${Math.round((Date.now() - health.lastCheckedAt) / 1000)}s ago`);
+  if (!isConnected && health?.error) meta.push(escapeHtml(health.error));
+  const metaHtml = meta.length ? `<div class="pool-stats">${meta.join(' · ')}</div>` : '';
+
   return `
     <div class="db-conn-card">
       <div class="type">${type}</div>
       <div class="status ${statusClass}">● ${statusText}</div>
       ${poolInfo}
+      ${metaHtml}
     </div>
   `;
 }
@@ -1137,6 +1364,15 @@ async function loadLiveWatcherNow() {
   } catch (e) { /* silent — this polls every few seconds, don't spam toasts on a blip */ }
 }
 
+// Simple severity gradient for a live load %, reused for ES CPU + SQL load
+// so the number itself carries meaning at a glance (Grafana-style stat
+// coloring) instead of always being flat white regardless of how bad it is.
+function lwSeverityColor(pct) {
+  if (pct >= 85) return 'var(--danger)';
+  if (pct >= 60) return 'var(--warning)';
+  return 'var(--success)';
+}
+
 function renderLiveWatcherNow(data) {
   const es = data.es;
   const sql = data.sql;
@@ -1144,6 +1380,7 @@ function renderLiveWatcherNow(data) {
 
   if (es && !es.error) {
     setText('lw-es-cpu', `${es.cpuPct}%`);
+    document.getElementById('lw-es-cpu').style.color = lwSeverityColor(es.cpuPct);
     setText('lw-es-load1m', `load1m: ${es.load1m}`);
     const searchPools = (es.threadPool || []).filter((p) => p.pool === 'search');
     const queue = searchPools.reduce((a, p) => a + (p.queue || 0), 0);
@@ -1161,12 +1398,14 @@ function renderLiveWatcherNow(data) {
     `).join('') || '<tr><td colspan="4" class="muted">No search tasks running right now</td></tr>';
   } else {
     setText('lw-es-cpu', es?.error ? 'error' : 'n/a');
+    document.getElementById('lw-es-cpu').style.color = '';
     setText('lw-es-load1m', '—');
     document.getElementById('lw-es-tasks').innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(es?.error || 'No Elasticsearch connection for this network')}</td></tr>`;
   }
 
   if (sql && !sql.error) {
     setText('lw-sql-load', `${sql.loadPct.toFixed(1)}%`);
+    document.getElementById('lw-sql-load').style.color = lwSeverityColor(sql.loadPct);
     setText('lw-sql-threads', `${sql.threadsRunning} / ${sql.maxConnections} threads`);
     document.getElementById('lw-sql-queries').innerHTML = (sql.liveQueries || []).map((q) => `
       <tr>
@@ -1180,12 +1419,14 @@ function renderLiveWatcherNow(data) {
     `).join('') || '<tr><td colspan="6" class="muted">No active queries right now</td></tr>';
   } else {
     setText('lw-sql-load', sql?.error ? 'error' : 'n/a');
+    document.getElementById('lw-sql-load').style.color = '';
     setText('lw-sql-threads', '—');
     document.getElementById('lw-sql-queries').innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(sql?.error || 'No SQL connection for this network')}</td></tr>`;
   }
 
   const inSpike = data.inSpike?.es || data.inSpike?.sql;
   setText('lw-spike-status', inSpike ? '⚠ Spike' : '✓ Normal');
+  document.getElementById('lw-spike-status').style.color = inSpike ? 'var(--danger)' : 'var(--success)';
   setText('lw-updated-at', `updated ${new Date().toLocaleTimeString()}`);
 }
 
@@ -1229,6 +1470,14 @@ async function loadLiveWatcherHistory() {
     const { data } = await res.json();
     document.getElementById('lw-history').innerHTML = (data || []).map((e) => {
       const detailId = `lw-hist-${e.network}-${e.type}-${e.startedAt}`;
+      // hotThreads is a multi-line JVM stack-trace dump (see liveWatcher.js's
+      // getEsHotThreads) — rendered on its own below the JSON block, with real
+      // line breaks, instead of buried as an escaped \n-joined string inside
+      // JSON.stringify's output where it's unreadable.
+      const { hotThreads, ...restDetail } = e.detail || {};
+      const hotThreadsBlock = hotThreads
+        ? `\n\n--- hot threads (what CPU was actually doing) ---\n${escapeHtml(hotThreads)}`
+        : '';
       return `
       <tr>
         <td>${escapeHtml(e.network)}</td>
@@ -1238,7 +1487,7 @@ async function loadLiveWatcherHistory() {
         <td>${e.peak.toFixed(1)}%</td>
         <td>
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">View</button>
-          <pre id="${detailId}" class="hidden" style="max-width:520px;white-space:pre-wrap;font-size:11px;margin-top:6px">${escapeHtml(JSON.stringify(e.detail || {}, null, 2))}</pre>
+          <pre id="${detailId}" class="hidden" style="max-width:520px;white-space:pre-wrap;font-size:11px;margin-top:6px">${escapeHtml(JSON.stringify(restDetail, null, 2))}${hotThreadsBlock}</pre>
         </td>
       </tr>`;
     }).join('') || '<tr><td colspan="6" class="muted">No spikes in the last 24h</td></tr>';
@@ -1291,39 +1540,157 @@ function lwShowFullQuery(kind, index) {
   document.getElementById('lw-query-modal').classList.remove('hidden');
 }
 
-// Small dependency-free canvas sparkline — last-hour CPU/heap/SQL-load. No
-// charting library: this is a self-hosted admin page under a strict CSP, and
-// a single, cheap line-plot doesn't need one.
-function lwDrawSparkline(canvasId, points, valueKey, color) {
+// ─── Shared real-time chart engine (dependency-free canvas) ───────────────
+// No charting library: this is a self-hosted admin page under a strict CSP
+// (no CDN scripts), and gridlines + gradient area fill + a hover tooltip
+// covers everything Dashboard/Live Watcher actually need. Used by every
+// canvas chart in the admin panel — one engine, one visual language.
+
+function hexToRgba(hex, alpha) {
+  const h = String(hex).replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const r = parseInt(full.slice(0, 2), 16) || 0;
+  const g = parseInt(full.slice(2, 4), 16) || 0;
+  const b = parseInt(full.slice(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+const _chartListenerAttached = new WeakSet();
+
+/**
+ * Draws one or more time-series lines with gridlines, gradient area fill,
+ * and a hover crosshair/tooltip, onto `canvasId` inside a `.chart-canvas-wrap`
+ * parent (the wrapper hosts the absolutely-positioned .chart-tooltip div).
+ *
+ * @param {string} canvasId
+ * @param {{label:string, color:string, points:{ts:number,value:number}[]}[]} series
+ * @param {{height?:number, minMax?:number, fixedMax?:number, formatValue?:(v:number)=>string}} opts
+ */
+function drawTimeChart(canvasId, series, opts = {}) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
-  const parentWidth = canvas.parentElement ? canvas.parentElement.clientWidth : 300;
-  canvas.width = Math.max(100, parentWidth);
+  const wrap = canvas.parentElement;
+  const parentWidth = wrap ? wrap.clientWidth : 300;
+  const height = opts.height || canvas.height || 90;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(100, parentWidth);
+  const h = height;
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
   const ctx = canvas.getContext('2d');
-  const w = canvas.width, h = canvas.height;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  if (!points.length) {
+
+  const allPoints = series.flatMap((s) => s.points || []);
+  if (!allPoints.length) {
     ctx.fillStyle = '#64748b';
     ctx.font = '11px sans-serif';
     ctx.fillText('No data yet', 8, h / 2);
+    canvas._chartState = null;
     return;
   }
-  const values = points.map((p) => Number(p[valueKey]) || 0);
-  const max = Math.max(100, ...values); // percentages — scale to at least 100
-  const stepX = values.length > 1 ? w / (values.length - 1) : 0;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  values.forEach((v, i) => {
-    const x = values.length > 1 ? i * stepX : w / 2;
-    const y = h - (v / max) * (h - 6) - 3;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+
+  const padL = 4, padR = 4, padT = 8, padB = 4;
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+  const maxLen = Math.max(...series.map((s) => (s.points || []).length));
+  const yMaxRaw = Math.max(...allPoints.map((p) => p.value));
+  const yMax = opts.fixedMax || Math.max(yMaxRaw * 1.15, opts.minMax || 1);
+
+  // Gridlines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const y = padT + (plotH / 3) * i;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(w - padR, y);
+    ctx.stroke();
+  }
+
+  const xFor = (i, len) => padL + (len > 1 ? (i / (len - 1)) * plotW : plotW / 2);
+  const yFor = (v) => padT + plotH - (Math.max(0, v) / yMax) * plotH;
+
+  series.forEach((s) => {
+    const pts = s.points || [];
+    if (!pts.length) return;
+    const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+    grad.addColorStop(0, hexToRgba(s.color, 0.30));
+    grad.addColorStop(1, hexToRgba(s.color, 0.02));
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = xFor(i, pts.length), y = yFor(p.value);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.lineTo(xFor(pts.length - 1, pts.length), padT + plotH);
+    ctx.lineTo(xFor(0, pts.length), padT + plotH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = xFor(i, pts.length), y = yFor(p.value);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.75;
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = 5;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   });
-  ctx.stroke();
-  const last = values[values.length - 1];
-  ctx.fillStyle = color;
-  ctx.font = '11px sans-serif';
-  ctx.fillText(`${last.toFixed(0)}%`, Math.max(0, w - 34), 12);
+
+  const fmt = opts.formatValue || ((v) => v.toFixed(0));
+  const first = series[0];
+  if (first && first.points.length) {
+    const lastVal = first.points[first.points.length - 1].value;
+    ctx.fillStyle = first.color;
+    ctx.font = '600 11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(fmt(lastVal), w - padR - 2, padT + 10);
+    ctx.textAlign = 'left';
+  }
+
+  canvas._chartState = { series, padL, plotW, maxLen, formatValue: fmt };
+
+  if (wrap && !_chartListenerAttached.has(canvas)) {
+    _chartListenerAttached.add(canvas);
+    let tooltip = wrap.querySelector('.chart-tooltip');
+    if (!tooltip) {
+      tooltip = document.createElement('div');
+      tooltip.className = 'chart-tooltip';
+      wrap.appendChild(tooltip);
+    }
+    canvas.addEventListener('mousemove', (e) => {
+      const state = canvas._chartState;
+      if (!state || state.maxLen < 1) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const idx = Math.round(((mx - state.padL) / state.plotW) * (state.maxLen - 1));
+      const i = Math.max(0, Math.min(state.maxLen - 1, idx));
+      const lines = state.series
+        .map((s) => (s.points || [])[i] ? { label: s.label, color: s.color, value: s.points[i].value, ts: s.points[i].ts } : null)
+        .filter(Boolean);
+      if (!lines.length) return;
+      tooltip.innerHTML = `<div class="tt-time">${new Date(lines[0].ts).toLocaleTimeString()}</div>` +
+        lines.map((l) => `<div class="tt-row"><span class="tt-dot" style="background:${l.color}"></span>${escapeHtml(l.label)}: <b>${state.formatValue(l.value)}</b></div>`).join('');
+      tooltip.style.left = `${Math.max(0, Math.min(w, mx))}px`;
+      tooltip.classList.add('show');
+    });
+    canvas.addEventListener('mouseleave', () => tooltip.classList.remove('show'));
+  }
+}
+
+// Back-compat single-series wrapper — Live Watcher's 3 sparklines call this.
+function lwDrawSparkline(canvasId, points, valueKey, color, label) {
+  drawTimeChart(canvasId, [{
+    label: label || valueKey,
+    color,
+    points: points.map((p) => ({ ts: p.ts, value: Number(p[valueKey]) || 0 })),
+  }], { minMax: 100, formatValue: (v) => `${v.toFixed(0)}%` });
 }
 
 async function loadLiveWatcherChart() {
@@ -1331,9 +1698,9 @@ async function loadLiveWatcherChart() {
   try {
     const res = await fetch(`${API}/live-watcher/${lwCurrentNetwork}/metrics-history?minutes=60`, { credentials: 'include' });
     const { data } = await res.json();
-    lwDrawSparkline('lw-chart-es-cpu', data.es || [], 'cpuPct', '#f87171');
-    lwDrawSparkline('lw-chart-es-heap', data.es || [], 'heapUsedPct', '#60a5fa');
-    lwDrawSparkline('lw-chart-sql-load', data.sql || [], 'loadPct', '#34d399');
+    lwDrawSparkline('lw-chart-es-cpu', data.es || [], 'cpuPct', '#fb7185', 'ES CPU');
+    lwDrawSparkline('lw-chart-es-heap', data.es || [], 'heapUsedPct', '#60a5fa', 'ES Heap');
+    lwDrawSparkline('lw-chart-sql-load', data.sql || [], 'loadPct', '#a78bfa', 'SQL Load');
   } catch (e) { /* silent */ }
 }
 

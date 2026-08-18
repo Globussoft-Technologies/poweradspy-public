@@ -10,6 +10,7 @@ const networksConfig = require('./config/networks');
 const serviceRegistry = require('./services/ServiceRegistry');
 const HealthCheck = require('./health/HealthCheck');
 const metricsDB = require('./metrics/MetricsDB');
+const { isSingletonOwner } = require('./clusterWorkerIdentity');
 
 // Middleware
 const requestIdMiddleware = require('./middleware/requestId');
@@ -67,14 +68,35 @@ async function createApp() {
   }));
   app.use(express.urlencoded({ extended: true, limit: config.bodyLimit }));
 
-  // 6. IP Blocklist check (before rate limiter)
+  // 6. IP Blocklist check (before rate limiter) — rejected here without
+  // metrics recording, intentionally: a blocked IP is cheaply short-circuited
+  // before any further work, including a SQLite write.
   app.use(ipBlocklistMiddleware);
 
-  // 7. Rate limiting (100 req/min per IP from config.json)
+  // 7. Metrics collection — MUST be registered before the rate limiter.
+  // express-rate-limit does NOT call next() when it rejects a request (it
+  // sends the 429 directly and ends the chain), so a limiter registered
+  // first would make every 429 invisible to metricsMiddleware's res.on
+  // ('finish') listener — it would never get attached. Registering metrics
+  // first still works correctly for rate-limited requests: the listener is
+  // already attached to `res` by the time the limiter (or anything else
+  // downstream) sends a response, and 'finish' fires regardless of which
+  // middleware actually sent it. This is what makes the IP Manager's
+  // rate-limit-hits-per-IP column (MetricsDB.getIpStats) non-zero.
+  app.use(metricsMiddleware());
+
+  // 8. Rate limiting (100 req/min per IP from config.json)
   app.use(globalLimiter);
 
-  // 8. Metrics collection
-  app.use(metricsMiddleware());
+  // Per-worker heartbeat for the admin Dashboard's "Worker Instances" panel —
+  // runs on EVERY process (unlike the isSingletonOwner()-gated jobs below),
+  // since the whole point is for each worker to report itself.
+  try {
+    const { startWorkerHeartbeat } = require('./metrics/workerHeartbeat');
+    startWorkerHeartbeat();
+  } catch (error) {
+    log.error('Failed to start worker heartbeat', { error: error.message });
+  }
 
   // 9. Request logging
   app.use(logger.requestMiddleware());
@@ -190,7 +212,7 @@ async function createApp() {
 
   // Large domain-date ES updates are persisted by the request handler and drained
   // by one worker per machine. A MySQL advisory lock provides cross-process safety.
-  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+  if (isSingletonOwner()) {
     try {
       const { initDomainDateEsQueueWorker } = require('./services/common/helpers/domainDateEsQueue');
       initDomainDateEsQueueWorker();
@@ -202,7 +224,7 @@ async function createApp() {
   // Initialize push notification cron jobs (only on one worker to avoid duplicate jobs).
   // These crons (push + daily mail + keyword status) ARE the notification mechanism —
   // they poll and send directly in-process, so no separate notificationService is needed.
-  if ((!process.env.WORKER_ID || process.env.WORKER_ID === '1') && config.notifications?.enabled !== false) {
+  if (isSingletonOwner() && config.notifications?.enabled !== false) {
     try {
       const {
         initPushNotificationCron,
@@ -225,7 +247,7 @@ async function createApp() {
   // NAS media upload retry cron — re-uploads media that failed during insertion
   // (media.globussoft.com transient outages) from on-disk persisted bytes. One worker
   // per machine; independent of notifications. No data loss even if NAS was down.
-  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+  if (isSingletonOwner()) {
     try {
       const { initNasUploadRetryCron } = require('./jobs/nasUploadRetryCron');
       initNasUploadRetryCron();
@@ -236,7 +258,7 @@ async function createApp() {
 
   // Initialize config-driven crons (config.json "crons" section) — also on one
   // worker only. Independent of the notification toggle above.
-  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+  if (isSingletonOwner()) {
     try {
       const { initConfigCrons } = require('./jobs/cronManager');
       initConfigCrons();
@@ -247,7 +269,7 @@ async function createApp() {
 
   // NAS storage snapshot cron — records a periodic `df` snapshot (total/used/free) into the
   // on-disk history so the admin NAS-storage report can show day-over-day growth. Worker-1 only.
-  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+  if (isSingletonOwner()) {
     try {
       const { initNasStorageSnapshotCron } = require('./jobs/nasStorageSnapshotCron');
       initNasStorageSnapshotCron();
@@ -258,7 +280,7 @@ async function createApp() {
 
   // NAS per-network du cron — once a day at server-time midnight, kicks a background per-network
   // `du` so the NAS-storage report can show how much each network occupies. Worker-1 only.
-  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+  if (isSingletonOwner()) {
     try {
       const { initNasPerNetworkDuCron } = require('./jobs/nasPerNetworkDuCron');
       initNasPerNetworkDuCron();
@@ -269,7 +291,7 @@ async function createApp() {
 
   // NAS intake scan cron — hourly, kicks a background per-network/per-tree file-intake scan so the
   // NAS-storage report can show today's ingest (files/bytes per network) + a baseline. Worker-1 only.
-  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+  if (isSingletonOwner()) {
     try {
       const { initNasIntakeScanCron } = require('./jobs/nasIntakeScanCron');
       initNasIntakeScanCron();
@@ -280,7 +302,7 @@ async function createApp() {
 
   // Keyword ad-notification cron (additive, own config toggle keywordSearch.notify.enabled).
   // Worker-1 only to avoid duplicate jobs in cluster mode.
-  if ((!process.env.WORKER_ID || process.env.WORKER_ID === '1')) {
+  if (isSingletonOwner()) {
     try {
       const { initKeywordAdNotificationCron } = require('./jobs/keywordAdNotificationCron');
       initKeywordAdNotificationCron();
@@ -292,7 +314,7 @@ async function createApp() {
   // Scrape-request retry cron — resends Google scrape-request triggers that failed at
   // store-time (config.keywordSearch.scrapeRequestUrl down/unreachable) from an on-disk
   // queue once the endpoint recovers, surviving an API restart. Worker-1 only.
-  if (!process.env.WORKER_ID || process.env.WORKER_ID === '1') {
+  if (isSingletonOwner()) {
     try {
       const { initScrapeRequestRetryCron } = require('./jobs/scrapeRequestRetryCron');
       initScrapeRequestRetryCron();

@@ -37,6 +37,7 @@ const config = require('../config');
 const databaseManager = require('../database/DatabaseManager');
 const { requireEditorRole } = require('./adminAuth');
 const { sendTelegramAlert } = require('../utils/telegram');
+const { isSingletonOwner } = require('../clusterWorkerIdentity');
 const logger = require('../logger');
 
 const log = logger.createChild('admin-live-watcher');
@@ -209,6 +210,20 @@ async function getEsLiveTasks(client) {
   return running;
 }
 
+// Same diagnostic scripts/watch-google-es-spikes.js's captureSpike() uses —
+// hot threads pinpoints the exact Lucene-level work (e.g. TermInSetQuery
+// rewrite, BitSet.or, merges, GC) consuming CPU AT that instant, independent
+// of whether tasks.list happened to catch a matching search task in flight.
+// Normal queries on this cluster finish in 0.1-0.3s (measured this session),
+// so a 3s-poll tasks.list snapshot routinely misses the query that actually
+// caused the spike — hot threads doesn't have that miss window, it reads
+// straight from the JVM's live thread stacks. nodes.hotThreads returns plain
+// text, not JSON, hence the String() coercion (matches watch-google-es-spikes.js).
+async function getEsHotThreads(client, threads = 5) {
+  const resp = await esCall(client, 'nodes.hotThreads', { threads }, { requestTimeout: ES_TIMEOUT_MS });
+  return String(resp).split('\n').slice(0, 80).join('\n');
+}
+
 async function getEsThreadPool(client) {
   const stats = await esCall(client, 'nodes.stats', { metric: ['thread_pool'] }, { requestTimeout: ES_TIMEOUT_MS });
   const pools = [];
@@ -272,21 +287,37 @@ const recentSqlQueries = new Map(); // slug -> array (most recent first)
 // which worker answered the request. Writing the full map to disk on every
 // push and reading it fresh on every GET makes every worker see the same
 // data regardless of who's actually polling ES/SQL.
-function persistRecent() {
-  writeJson(RECENT_FILE, {
-    es: Object.fromEntries(recentEsQueries),
-    sql: Object.fromEntries(recentSqlQueries),
-  });
+//
+// pushRecent (2026-08-18 hardening): the WORKER_ID guard assumes exactly one
+// process is ever the logical "worker 1" — true for this app's own internal
+// cluster.fork(), but if the process is ALSO wrapped in PM2's own `-i`
+// cluster mode (double-clustering), you get more than one independent
+// "WORKER_ID=1", each running its own collector and each blindly overwriting
+// the WHOLE RECENT_FILE with only what IT saw — the observed symptom being
+// entries appearing then vanishing a moment later. Reading the on-disk state
+// and merging into it (by id, keyed per network) before writing back makes
+// every write additive regardless of how many independent writers exist —
+// one writer's capture can no longer erase another's.
+function persistRecentSlug(type, slug, merged) {
+  const stored = readJson(RECENT_FILE, { es: {}, sql: {} });
+  stored.es = stored.es || {};
+  stored.sql = stored.sql || {};
+  stored[type][slug] = merged;
+  writeJson(RECENT_FILE, stored);
 }
 
-function pushRecent(map, slug, items, idKey) {
+function pushRecent(map, type, slug, items, idKey) {
   if (!items.length) return;
-  const existing = map.get(slug) || [];
-  const byId = new Map(existing.map((e) => [e[idKey], e]));
+  const stored = readJson(RECENT_FILE, { es: {}, sql: {} });
+  const onDisk = stored[type]?.[slug] || [];
+  const inMemory = map.get(slug) || [];
+  const byId = new Map();
+  for (const e of onDisk) byId.set(e[idKey], e);
+  for (const e of inMemory) byId.set(e[idKey], e);
   for (const item of items) byId.set(item[idKey], item); // refresh if still running, add if new
-  const merged = [...byId.values()].sort((a, b) => b.capturedAt - a.capturedAt);
-  map.set(slug, merged.slice(0, RECENT_MAX));
-  persistRecent();
+  const merged = [...byId.values()].sort((a, b) => b.capturedAt - a.capturedAt).slice(0, RECENT_MAX);
+  map.set(slug, merged);
+  persistRecentSlug(type, slug, merged);
 }
 
 // ─── CPU/RAM metrics history (last 1h, 2026-08-17) ─────────────────────────
@@ -436,14 +467,19 @@ async function checkNetworkEs(slug, elastic, cfg) {
     // cluster-wide CPU reading at the same instant this query was seen, so
     // the "recent queries" view can at least show what the cluster looked
     // like when each entry was captured.
-    pushRecent(recentEsQueries, slug, tasks.map((t) => ({ ...t, capturedAt: now, cpuAtCapture: cpuPct })), 'taskId');
+    pushRecent(recentEsQueries, 'es', slug, tasks.map((t) => ({ ...t, capturedAt: now, cpuAtCapture: cpuPct })), 'taskId');
     pushMetricPoint(slug, 'es', { ts: now, cpuPct, load1m, heapUsedPct });
     await runQueryGuardEs(slug, elastic, tasks, cfg);
     // Reuses the SAME tasks.list result for spike detail instead of a second
-    // call — a spike-start only needs to add the (cheap) thread-pool stats.
+    // call — a spike-start only needs to add thread-pool stats + hot threads
+    // (the latter is what actually pins down the cause when topTasks comes
+    // back empty — see getEsHotThreads' comment above).
     await updateSpikeState(slug, 'es', cpuPct, cfg.esCpuThresholdPct, async () => {
-      const threadPool = await getEsThreadPool(elastic.client).catch((e) => ({ error: e.message }));
-      return { topTasks: tasks.slice(0, 10), threadPool };
+      const [threadPool, hotThreads] = await Promise.all([
+        getEsThreadPool(elastic.client).catch((e) => ({ error: e.message })),
+        getEsHotThreads(elastic.client).catch((e) => `(hot threads unavailable: ${e.message})`),
+      ]);
+      return { topTasks: tasks.slice(0, 10), threadPool, hotThreads };
     }, cfg);
   } catch (e) {
     // Never let a monitoring failure surface as an app error — this is best-effort observability.
@@ -458,7 +494,7 @@ async function checkNetworkSql(slug, sql, cfg) {
       getSqlLoad(sql),
       getSqlLiveQueries(sql).catch(() => []),
     ]);
-    pushRecent(recentSqlQueries, slug, queries.map((q) => ({ ...q, capturedAt: now, loadAtCapture: loadPct })), 'id');
+    pushRecent(recentSqlQueries, 'sql', slug, queries.map((q) => ({ ...q, capturedAt: now, loadAtCapture: loadPct })), 'id');
     pushMetricPoint(slug, 'sql', { ts: now, loadPct, threadsRunning, maxConnections });
     await runQueryGuardSql(slug, sql, queries, cfg);
     await updateSpikeState(slug, 'sql', loadPct, cfg.sqlLoadThresholdPct, async () => ({ topQueries: queries.slice(0, 10) }), cfg);
@@ -494,15 +530,22 @@ async function tick() {
 
 function startCollector() {
   if (collectorTimer) return;
-  // Same convention as app.js's other worker-1-only startup blocks
-  // (keyword ad-notify cron, etc.) — under PM2/cluster mode this file loads
-  // in EVERY worker, so without this guard N workers would each poll ES/SQL
-  // independently every POLL_INTERVAL_MS, multiplying the exact load this
-  // feature was built to never add. Only the logical worker 1 actually
-  // collects; every worker still serves the HTTP routes, which now read the
-  // shared files worker 1 writes (see persistRecent / METRICS_FILE above).
-  if (process.env.WORKER_ID && process.env.WORKER_ID !== '1') {
-    log.info(`[live-watcher] background collector skipped on worker ${process.env.WORKER_ID} (worker 1 only)`);
+  // Same convention as app.js's other singleton-owner-only startup blocks
+  // (keyword ad-notify cron, etc.) — this file loads in EVERY process, so
+  // without this guard every process would each poll ES/SQL independently
+  // every POLL_INTERVAL_MS, multiplying the exact load this feature was
+  // built to never add. isSingletonOwner() covers BOTH this app's own
+  // internal cluster.fork() (WORKER_ID) AND PM2's own `-i N` cluster mode
+  // (NODE_APP_INSTANCE) — a plain WORKER_ID-only check left every PM2
+  // instance running its own collector whenever PM2's `-i` was used without
+  // this app's internal clustering also enabled (WORKER_ID never set by
+  // anything in that case), which is what caused the collector's own
+  // RECENT_FILE writes to race and entries to appear/vanish. Only the
+  // singleton owner actually collects; every process still serves the HTTP
+  // routes, which read the shared files the owner writes (see
+  // persistRecentSlug / METRICS_FILE above).
+  if (!isSingletonOwner()) {
+    log.info(`[live-watcher] background collector skipped on this process (not the singleton owner — WORKER_ID=${process.env.WORKER_ID || 'unset'}, NODE_APP_INSTANCE=${process.env.NODE_APP_INSTANCE ?? 'unset'})`);
     return;
   }
   collectorTimer = setInterval(tick, POLL_INTERVAL_MS);

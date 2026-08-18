@@ -21,6 +21,22 @@
   --warning: #f59e0b;
   --danger: #ef4444;
   --info: #3b82f6;
+
+  /* ─── Real-time chart palette (Grafana/Prometheus-style: muted, glowing
+     lines + area fills, not flat saturated blocks) — shared by every canvas
+     chart across Dashboard / Live Watcher. One consistent color per metric
+     FAMILY (not per-widget) so the same signal always reads the same color
+     everywhere it appears. ─── */
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-axis-text: #6b7280;
+  --chart-cpu: #fb7185;      /* CPU / load */
+  --chart-mem: #60a5fa;      /* memory / heap */
+  --chart-req: #34d399;      /* throughput / requests */
+  --chart-sql: #a78bfa;      /* SQL / db load */
+  --chart-latency: #fbbf24;  /* response time */
+  --tooltip-bg: rgba(13, 15, 23, 0.97);
+  --tooltip-border: rgba(255, 255, 255, 0.12);
+
   --radius: 12px;
   --radius-sm: 8px;
   --radius-lg: 16px;
@@ -619,10 +635,131 @@ html, body {
   min-width: 30px;
 }
 
-.bar-fill.success { background: linear-gradient(135deg, #22c55e, #16a34a); }
-.bar-fill.warning { background: linear-gradient(135deg, #f59e0b, #d97706); }
-.bar-fill.danger { background: linear-gradient(135deg, #ef4444, #dc2626); }
-.bar-fill.info { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+/* Softer than a flat saturated block — a subtle gradient + matching outer
+   glow reads as "data visualization" rather than a UI-kit progress bar. */
+.bar-fill.success { background: linear-gradient(90deg, rgba(34,197,94,0.75), rgba(34,197,94,0.95)); box-shadow: 0 0 12px rgba(34,197,94,0.25); }
+.bar-fill.warning { background: linear-gradient(90deg, rgba(245,158,11,0.75), rgba(245,158,11,0.95)); box-shadow: 0 0 12px rgba(245,158,11,0.25); }
+.bar-fill.danger  { background: linear-gradient(90deg, rgba(239,68,68,0.75), rgba(239,68,68,0.95)); box-shadow: 0 0 12px rgba(239,68,68,0.25); }
+.bar-fill.info    { background: linear-gradient(90deg, rgba(59,130,246,0.75), rgba(59,130,246,0.95)); box-shadow: 0 0 12px rgba(59,130,246,0.25); }
+.bar-fill.neutral { background: linear-gradient(90deg, rgba(167,139,250,0.7), rgba(167,139,250,0.9)); box-shadow: 0 0 12px rgba(167,139,250,0.22); }
+
+/* ─── Real-time charts (canvas, Grafana-style) ────────── */
+
+.chart-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.chart-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+}
+
+/* Tooltip that follows the mouse over a chart — positioned via inline
+   left/top from JS, kept in the DOM once per canvas and toggled visible. */
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--tooltip-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  white-space: nowrap;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 10;
+  top: 4px;
+  transform: translateX(-50%);
+}
+
+.chart-tooltip.show { opacity: 1; }
+
+.chart-tooltip .tt-time {
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+.chart-tooltip .tt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-tooltip .tt-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ─── Clickable metric cards → inline expand ──────────── */
+
+.metric-card.clickable {
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.metric-card.clickable:hover {
+  border-color: var(--border-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.metric-card.clickable .metric-expand-hint {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.metric-detail-panel {
+  grid-column: 1 / -1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-top: -8px;
+  animation: expandDown 0.18s ease;
+}
+
+@keyframes expandDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 /* ─── Log Viewer ──────────────────────────────────────── */
 
@@ -1076,3 +1213,81 @@ html, body {
 .ip-endpoints-list li {
   margin-bottom: 2px;
 }
+
+/* ─── IP Manager — summary strip + expandable rows ────── */
+
+.ip-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.ip-summary-tile {
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.ip-summary-tile .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.ip-summary-tile .value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ip-summary-tile .value.danger { color: var(--danger); }
+.ip-summary-tile .value.warning { color: var(--warning); }
+
+.data-table tr.ip-row {
+  cursor: pointer;
+}
+
+.data-table tr.ip-row-blocked td {
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.ip-row-detail td {
+  background: rgba(255, 255, 255, 0.02);
+  padding: 14px 20px !important;
+}
+
+.ip-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.ip-detail-endpoint {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill-danger { background: rgba(239, 68, 68, 0.12); color: #f87171; }
+.pill-warning { background: rgba(245, 158, 11, 0.12); color: #fbbf24; }
+.pill-muted { background: rgba(255, 255, 255, 0.06); color: var(--text-muted); }
+.pill-success { background: rgba(34, 197, 94, 0.12); color: #4ade80; }

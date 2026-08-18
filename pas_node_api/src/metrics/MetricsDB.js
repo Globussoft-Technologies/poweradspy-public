@@ -19,8 +19,14 @@ class MetricsDB {
     this.errorBuffer = [];
     this.bufferSize = 100; // Flush every 100 requests or interval
     this.flushIntervalMs = 5000; // Flush every 5s if not full
-    
+
     this._flushTimer = null;
+
+    // See getDashboardAggregates()'s doc comment — short-TTL cache so the
+    // Dashboard's 10s auto-refresh doesn't re-run 8 aggregation queries on
+    // every single overlapping request at production's row counts.
+    this._aggCache = new Map();
+    this.AGG_CACHE_TTL_MS = 9000;
   }
 
   /**
@@ -79,6 +85,12 @@ class MetricsDB {
       CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(timestamp);
       CREATE INDEX IF NOT EXISTS idx_requests_ep ON requests(endpoint);
       CREATE INDEX IF NOT EXISTS idx_requests_ip ON requests(ip);
+      -- Dashboard's "Requests by Method"/"Requests by Status" GROUP BY these
+      -- two columns on every load — with no index here, that's a full table
+      -- scan. Invisible at dev's row counts, real at production's (this
+      -- table holds up to 3 days of every request through every worker).
+      CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method);
+      CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
       CREATE INDEX IF NOT EXISTS idx_errors_ts ON errors(timestamp);
       CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(timestamp);
     `);
@@ -181,13 +193,28 @@ class MetricsDB {
   /**
    * Fetch aggregate data for the Dashboard.
    * If startDate/endDate are empty, defaults to all available data (last 3 days).
+   *
+   * Cached per-worker for AGG_CACHE_TTL_MS — the admin Dashboard tab
+   * auto-refreshes every 10s while open (see admin/public/app.js's
+   * showDashboard()), and at production's row counts (up to 3 days of every
+   * request across every worker, vs dev's near-empty table) these 8
+   * aggregation queries are real work, not free. A ~9s TTL means a normal
+   * 10s refresh cycle always sees fresh data, but anything that lands inside
+   * the SAME cycle (a second admin with the tab open, a quick tab-switch
+   * back to Dashboard) reuses the just-computed result instead of re-running
+   * every query. Same in-process Map+TTL pattern already used in
+   * keywordsExplorerController.js's statsCache for the identical reason.
    */
   async getDashboardAggregates(startDate, endDate) {
     if (!this.db) return {};
 
+    const cacheKey = `${startDate || ''}::${endDate || ''}`;
+    const cached = this._aggCache?.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+
     let dateWhere = '';
     let params = [];
-    
+
     if (startDate && endDate) {
       dateWhere = 'WHERE timestamp BETWEEN ? AND ?';
       params = [startDate, endDate + 'T23:59:59.999Z'];
@@ -206,13 +233,18 @@ class MetricsDB {
     const byStatus = {};
     byStatusRows.forEach(r => byStatus[r.status] = r.count);
 
-    // Top Endpoints (exclude /admin/)
+    // Top Endpoints (exclude /admin/*). Prefix-only wildcard (no leading %) —
+    // every admin route is mounted at app.use('/admin', ...), so `endpoint`
+    // (originalUrl) always has /admin as a PREFIX, never buried mid-string.
+    // A leading-% LIKE can't use idx_requests_ep at all (forces a full table
+    // scan to pattern-match every row); a prefix-only LIKE is sargable —
+    // same exact rows excluded, materially cheaper at production's row counts.
     const topEndpoints = await this.db.all(`
-      SELECT endpoint, COUNT(*) as count, ROUND(AVG(response_time)) as avgTime 
-      FROM requests 
-      ${dateWhere ? dateWhere + " AND " : "WHERE "} endpoint NOT LIKE '%/admin/%'
-      GROUP BY endpoint 
-      ORDER BY count DESC 
+      SELECT endpoint, COUNT(*) as count, ROUND(AVG(response_time)) as avgTime
+      FROM requests
+      ${dateWhere ? dateWhere + " AND " : "WHERE "} endpoint NOT LIKE '/admin/%'
+      GROUP BY endpoint
+      ORDER BY count DESC
       LIMIT 10
     `, params);
 
@@ -234,7 +266,7 @@ class MetricsDB {
     // Snapshots
     const snapshots = await this.db.all(`SELECT * FROM snapshots ${dateWhere} ORDER BY timestamp DESC LIMIT 30`, params);
 
-    return {
+    const result = {
       requests: {
         total: reqCounts.total,
         byMethod,
@@ -254,6 +286,10 @@ class MetricsDB {
       },
       snapshots: snapshots.reverse()
     };
+
+    if (!this._aggCache) this._aggCache = new Map();
+    this._aggCache.set(cacheKey, { value: result, expiresAt: Date.now() + this.AGG_CACHE_TTL_MS });
+    return result;
   }
 
   /**
@@ -269,9 +305,18 @@ class MetricsDB {
       params = [startDate, endDate + 'T23:59:59.999Z'];
     }
 
-    // Get primary aggregates
+    // Get primary aggregates. errorCount/rateLimitHits come straight out of
+    // the `status` column already recorded on every request (now indexed —
+    // see MetricsDB.init()) — no separate tracking needed. These are the two
+    // signals an admin actually needs to spot abuse: raw request volume
+    // alone doesn't distinguish a busy legitimate integration from a bot
+    // hammering a bad endpoint or getting rate-limited over and over.
     const ips = await this.db.all(`
-      SELECT ip, COUNT(*) as requests, MIN(timestamp) as firstSeen, MAX(timestamp) as lastSeen
+      SELECT ip,
+        COUNT(*) as requests,
+        SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) as errorCount,
+        SUM(CASE WHEN status = 429 THEN 1 ELSE 0 END) as rateLimitHits,
+        MIN(timestamp) as firstSeen, MAX(timestamp) as lastSeen
       FROM requests
       ${dateWhere}
       GROUP BY ip

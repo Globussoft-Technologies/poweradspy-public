@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../config');
 const metrics = require('../metrics/MetricsCollector');
+const { getWorkerHeartbeats } = require('../metrics/workerHeartbeat');
 const databaseManager = require('../database/DatabaseManager');
 const { adminAuthMiddleware, requireEditorRole, login, logout, verifyEditKey } = require('./adminAuth');
 const { blockIp, unblockIp, getBlockedIps } = require('../middleware/rateLimiter');
@@ -150,6 +151,12 @@ router.get('/api/metrics/ips', async (req, res) => {
     success: true,
     data: ips,
   });
+});
+
+// Per-worker breakdown (CPU/RAM/active connections/requests handled, one row
+// per live OS process) — see metrics/workerHeartbeat.js.
+router.get('/api/workers', (req, res) => {
+  res.json({ success: true, data: getWorkerHeartbeats() });
 });
 
 // ─── NAS Storage (read-only report) ───────────────────────

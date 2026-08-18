@@ -26,6 +26,11 @@ class DatabaseManager {
     this.connections = new Map(); // networkSlug → { sql, mongo, elastic }
     this._esClientCache = new Map(); // cacheKey → { client, refCount }
     this.initialized = false;
+
+    // Live-checked health (2026-08-18) — see startHealthPing()'s doc comment.
+    this._liveHealth = new Map(); // networkSlug → { sql, mongo, elastic: {ok, checkedAt, error} }
+    this._healthPingTimer = null;
+    this.HEALTH_PING_INTERVAL_MS = 15000;
   }
 
   /**
@@ -113,6 +118,81 @@ class DatabaseManager {
 
     log.info(`═══ Database Connections Summary ═══`);
     log.info(`Networks: ${totalNetworks} | SQL: ${sqlCount} | MongoDB: ${mongoCount} | Elasticsearch: ${elasticCount} (${sharedEsClients} shared ES client(s))`);
+
+    this.startHealthPing();
+  }
+
+  // ─── Live health ping (2026-08-18) ─────────────────────────
+  // getHealth() previously reported "connected" forever the moment a
+  // connection object was created at startup — it never re-checked. If
+  // MySQL/Mongo/ES later actually went down (network blip, credential
+  // rotation, server restart, firewall change) the admin Database tab kept
+  // showing green "connected" with no way to tell — connections are
+  // per-worker pools/clients, not re-validated on every use. This runs a
+  // cheap real ping (SELECT 1 / {ping:1} / client.ping()) per connection on
+  // an interval and caches the last real result; getHealth() below reads
+  // THAT instead of the static existence check.
+
+  async _pingSql(conn) {
+    try {
+      await conn.query('SELECT 1');
+      return { ok: true, checkedAt: Date.now() };
+    } catch (err) {
+      return { ok: false, checkedAt: Date.now(), error: err.message };
+    }
+  }
+
+  async _pingMongo(conn) {
+    try {
+      await conn.db.command({ ping: 1 });
+      return { ok: true, checkedAt: Date.now() };
+    } catch (err) {
+      return { ok: false, checkedAt: Date.now(), error: err.message };
+    }
+  }
+
+  async _pingElastic(conn) {
+    try {
+      await conn.client.ping();
+      return { ok: true, checkedAt: Date.now() };
+    } catch (err) {
+      return { ok: false, checkedAt: Date.now(), error: err.message };
+    }
+  }
+
+  async _pingAllConnections() {
+    for (const [slug, conns] of this.connections) {
+      const live = this._liveHealth.get(slug) || {};
+      const tasks = [];
+      if (conns.sql) tasks.push(this._pingSql(conns.sql).then((r) => { live.sql = r; }));
+      if (conns.mongo) tasks.push(this._pingMongo(conns.mongo).then((r) => { live.mongo = r; }));
+      if (conns.elastic) tasks.push(this._pingElastic(conns.elastic).then((r) => { live.elastic = r; }));
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(tasks);
+      this._liveHealth.set(slug, live);
+    }
+  }
+
+  /** Called automatically at the end of connectAll(); every worker pings its
+   * OWN connections (pools/clients are per-process, not shared across
+   * workers) — no singleton-owner gating needed, a `SELECT 1`/ping is cheap
+   * enough to run on every process independently. */
+  startHealthPing() {
+    if (this._healthPingTimer) return;
+    this._pingAllConnections().catch((e) => log.debug('[health-ping] initial check failed', { error: e.message }));
+    this._healthPingTimer = setInterval(() => {
+      this._pingAllConnections().catch((e) => log.debug('[health-ping] check failed', { error: e.message }));
+    }, this.HEALTH_PING_INTERVAL_MS);
+    if (this._healthPingTimer.unref) this._healthPingTimer.unref();
+  }
+
+  _connStatus(conn, live) {
+    if (!conn) return { status: 'not configured' };
+    // No ping has completed yet (right after startup) — optimistic, since
+    // connecting successfully at startup already proved reachability once.
+    if (!live) return { status: 'connected', type: conn.type, checking: true };
+    if (live.ok) return { status: 'connected', type: conn.type, lastCheckedAt: live.checkedAt };
+    return { status: 'disconnected', type: conn.type, lastCheckedAt: live.checkedAt, error: live.error };
   }
 
   // ─── SQL (MySQL2 connection pool) ──────────────────────
@@ -428,10 +508,11 @@ class DatabaseManager {
     const health = {};
 
     for (const [slug, conns] of this.connections) {
+      const live = this._liveHealth.get(slug) || {};
       health[slug] = {
-        sql: conns.sql ? { status: 'connected', type: conns.sql.type } : { status: 'not configured' },
-        mongo: conns.mongo ? { status: 'connected', type: conns.mongo.type } : { status: 'not configured' },
-        elastic: conns.elastic ? { status: 'connected', type: conns.elastic.type } : { status: 'not configured' },
+        sql: this._connStatus(conns.sql, live.sql),
+        mongo: this._connStatus(conns.mongo, live.mongo),
+        elastic: this._connStatus(conns.elastic, live.elastic),
       };
     }
 
