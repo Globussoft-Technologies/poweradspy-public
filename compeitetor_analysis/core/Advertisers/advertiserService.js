@@ -3,6 +3,7 @@ import config from "config";
 import logger from "../../resources/logs/logger.log.js";
 import { esClient, esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
+import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
 // import {client} from "../../utils/Elasticsearch.js";
 import Response from "../../utils/response.js";
 
@@ -1326,6 +1327,7 @@ class AdvertiserService {
       const advertiserIndexConfigs = [
         {
           index: NETWORK_INDEXES.facebook,
+          platform: "facebook",
           field: "facebook_ad_post_owners.post_owner_name",
           searchFields: [
             "facebook_ad_post_owners.post_owner_name",
@@ -1339,6 +1341,7 @@ class AdvertiserService {
         },
         {
           index: NETWORK_INDEXES.instagram,
+          platform: "instagram",
           field: "instagram_ad_post_owners.post_owner_name",
           searchFields: [
             "instagram_ad_post_owners.post_owner_name",
@@ -1352,12 +1355,14 @@ class AdvertiserService {
         },
         {
           index: NETWORK_INDEXES.youtube,
+          platform: "youtube",
           field: "post_owner",
           searchFields: ["post_owner"],
           sortField: "duration",
         },
         {
           index: NETWORK_INDEXES.google,
+          platform: "google",
           field: "post_owner_name",
           searchFields: ["post_owner_name"],
           sortField: "days_running",
@@ -1379,8 +1384,13 @@ class AdvertiserService {
         );
 
         const longestAdPromises = relevantAdvertiserIndexes.map(
-          async ({ index, field, searchFields, sortField }) => {
+          async ({ index, field, searchFields, sortField, platform }) => {
             try {
+              // Keep Creative Style Examples aligned with the same
+              // displayable-media gate the Ad Library uses, so we do not pick
+              // a "longest" ad whose creative is already hidden / broken in
+              // the main search experience.
+              const displayableMediaFilter = getDisplayableMediaFilter(platform);
               const params = {
                 index,
                 body: {
@@ -1403,6 +1413,9 @@ class AdvertiserService {
                           },
                         },
                       ],
+                      ...(Array.isArray(displayableMediaFilter) && displayableMediaFilter.length
+                        ? { filter: displayableMediaFilter }
+                        : {}),
                     },
                   },
                 },

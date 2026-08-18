@@ -11857,7 +11857,7 @@ paths:
               properties:
                 platform:
                   type: string
-                  enum: [facebook, instagram, youtube, google, native, pinterest]
+                  enum: [facebook, instagram, youtube, google, native, linkedin, reddit, pinterest]
                 checkpoint:
                   type: string
                   nullable: true

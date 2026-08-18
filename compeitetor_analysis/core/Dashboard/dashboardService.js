@@ -2615,7 +2615,8 @@ async insertpaidSearch(req,res){
               index: cfg.index,
               maxConcurrentSearches: COMPETITOR_MSEARCH_MAX_CONCURRENT_SEARCHES,
               maxConcurrentShardRequests: COMPETITOR_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS,
-              request_cache: true,
+              // ES 6.8 rejects request_cache as a top-level _msearch query
+              // parameter, which would make every network silently return zero.
               body,
             }), 2);
             const responses = result?.responses || [];

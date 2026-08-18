@@ -180,4 +180,34 @@ describe("extractImages", () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toContain("/real.jpg");
   });
+
+  it("keeps absolute image URLs intact instead of prefixing them twice", () => {
+    const data = {
+      facebook: {
+        longestRunningAds: [
+          { "facebook_ad.type": "IMAGE", new_nas_image_url: "https://cdn.example.com/real.jpg" },
+        ],
+      },
+      instagram: { longestRunningAds: [] },
+      google: { longestRunningAds: [] },
+    };
+    expect(extractImages(data)).toEqual(["https://cdn.example.com/real.jpg"]);
+  });
+
+  it("drops placeholder creative URLs that are not displayable assets", () => {
+    const data = {
+      facebook: {
+        longestRunningAds: [
+          { "facebook_ad.type": "IMAGE", new_nas_image_url: "/DefaultImage.jpg" },
+          { "facebook_ad.type": "IMAGE", new_nas_image_url: "/real.jpg" },
+        ],
+      },
+      instagram: { longestRunningAds: [] },
+      google: { longestRunningAds: [] },
+    };
+    const result = extractImages(data);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toContain("/real.jpg");
+    expect(result.some((url) => /DefaultImage/i.test(url))).toBe(false);
+  });
 });

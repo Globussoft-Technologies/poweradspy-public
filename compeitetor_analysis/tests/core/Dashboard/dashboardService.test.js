@@ -1214,6 +1214,7 @@ describe("dashboardService > getCompetitorsCountNew", () => {
       expect(request.body).toHaveLength(2);
       expect(request.maxConcurrentSearches).toBe(4);
       expect(request.maxConcurrentShardRequests).toBe(2);
+      expect(request).not.toHaveProperty("request_cache");
       expect(request.body[1].aggs).toEqual(expect.objectContaining({
         unique_ads: expect.any(Object),
         countries: expect.any(Object),

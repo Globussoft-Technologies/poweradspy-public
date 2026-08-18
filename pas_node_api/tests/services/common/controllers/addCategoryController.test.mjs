@@ -606,6 +606,37 @@ describe("addCategoryController > getRecentAdsForAiMeta", () => {
     expect(wrongPlatform.body).toMatchObject({ code: "INVALID_CHECKPOINT", retryable: false });
   });
 
+  it.each([
+    ["linkedin", "linkedin_ad"],
+    ["reddit", "reddit_ad"],
+  ])("accepts %s and queries %s", async (platform, table) => {
+    const sqlQuery = vi.fn(async (query, params) => {
+      expect(query).toContain(`FROM ${table}`);
+      expect(query).toContain("created_date <= ?");
+      expect(query).toMatch(/LIMIT\s+\d+/);
+      expect(params).toHaveLength(4);
+      return [];
+    });
+    const esSearch = vi.fn();
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch, sql: { query: sqlQuery } }));
+
+    const res = mkRes();
+    await getRecentAdsForAiMeta({
+      body: { platform, checkpoint: null, start_from: "2026-08-17T10:00:00.000Z", limit: 1 },
+      id: `recent-${platform}`,
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({
+      platform,
+      items: [],
+      has_more: false,
+      request_id: `recent-${platform}`,
+    });
+    expect(sqlQuery).toHaveBeenCalledTimes(1);
+    expect(esSearch).not.toHaveBeenCalled();
+  });
+
   it("returns a retryable error instead of advancing on a partial ES response", async () => {
     const sqlQuery = vi.fn(async (query) => query.includes("AS inserted_at FROM facebook_ad")
       ? [{ id: 1, inserted_at: "2026-08-17 10:00:01.000000" }]

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { getDisplayableMediaFilter } from "../../../utils/displayableMediaFilters.js";
 
 const spies = vi.hoisted(() => ({
   loggerInfoSpy: vi.fn(),
@@ -160,6 +161,27 @@ describe("advertiserService > getAverageBudgetByData outer catch (lines 1234-123
 });
 
 describe("advertiserService > getLongestAd + getTopLikes outer catches (lines 1381-1383, 1497-1499)", () => {
+  it("getLongestAd applies the displayable-media filter before collecting creative examples", async () => {
+    Object.values(spies.esClient).forEach((c) => c.search.mockResolvedValue(emptyAggResult()));
+
+    const res = mockRes();
+    await svc.getLongestAd({ body: { competitors: "X" } }, res);
+
+    const fbCall = spies.esClient.server1.search.mock.calls.find(([params]) => params.index === "search_mix");
+    const igCall = spies.esClient.server2.search.mock.calls.find(([params]) => params.index === "instagram_search_mix");
+    const googleCall = spies.esClient.server3.search.mock.calls.find(([params]) => params.index === "google_ads_data_v2");
+
+    expect(fbCall?.[0]?.body?.query?.bool?.filter).toEqual(
+      expect.arrayContaining(getDisplayableMediaFilter("facebook")),
+    );
+    expect(igCall?.[0]?.body?.query?.bool?.filter).toEqual(
+      expect.arrayContaining(getDisplayableMediaFilter("instagram")),
+    );
+    expect(googleCall?.[0]?.body?.query?.bool?.filter).toEqual(
+      expect.arrayContaining(getDisplayableMediaFilter("google")),
+    );
+  });
+
   it("getLongestAd outer catch: null esServers → 'Internal server error'", async () => {
     const orig = svc.esServers;
     svc.esServers = null;

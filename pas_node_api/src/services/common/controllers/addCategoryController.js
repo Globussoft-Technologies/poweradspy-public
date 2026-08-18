@@ -21,7 +21,6 @@ const AI_META_OPERATION_TIMEOUT_MS = Number.isFinite(parsedAiMetaTimeoutMs) && p
 // database connections and ES capacity for an unbounded backlog.
 const DEFAULT_AI_META_BULK_RECOMMENDED_SIZE = 5;
 const DEFAULT_AI_META_BULK_MAX_SIZE = 10;
-const RECENT_AD_PLATFORMS = new Set(['facebook', 'instagram', 'youtube', 'google', 'native', 'pinterest']);
 const RECENT_CHECKPOINT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const RECENT_SQL_SCAN_SIZE = 500;
 const parsedRecentMaxScanRows = Number(process.env.RECENT_ADS_MAX_SCAN_ROWS);
@@ -42,8 +41,14 @@ const RECENT_SQL_CONFIG = {
   youtube:   { table: 'youtube_ad' },
   google:    { table: 'google_text_ad' },
   native:    { table: 'native_ad' },
+  linkedin:  { table: 'linkedin_ad' },
+  reddit:    { table: 'reddit_ad' },
   pinterest: { table: 'pinterest_ad' },
 };
+
+// Keep the validator aligned with the SQL table map so adding a network only
+// requires one source of truth.
+const RECENT_AD_PLATFORMS = new Set(Object.keys(RECENT_SQL_CONFIG));
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number(value);

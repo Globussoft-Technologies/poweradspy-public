@@ -640,9 +640,28 @@ export const extractHeadlines = (longestData) => {
 
 /**
  * Extract creative image URLs from get-longest response (matches Laravel logic).
- * Uses longestRunningAds → IMAGE type → new_nas_image_url, prefixed with NAS_URL.
+ * Uses longestRunningAds → IMAGE type → new_nas_image_url, but keeps absolute
+ * URLs intact and prefixes only the relative NAS paths that still need it.
+ * Placeholder media is dropped so Creative Style Examples only render
+ * creatives the library would actually consider displayable.
  */
 export const extractImages = (longestData) => {
+  const isPlaceholderCreativeUrl = (url) =>
+    /(?:DefaultImage|pasimages|pasvideos|pasvideoes|pasimage|bydefault)/i.test(url);
+
+  const normalizeCreativeImageUrl = (url) => {
+    if (!url || typeof url !== "string") return "";
+    const trimmed = url.trim();
+    if (!trimmed || isPlaceholderCreativeUrl(trimmed)) return "";
+    if (/^https?:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) {
+      return trimmed;
+    }
+    if (/^\/\//.test(trimmed)) {
+      return `https:${trimmed}`;
+    }
+    return `${NAS_URL}${trimmed.startsWith("/") ? "" : "/"}${trimmed}`;
+  };
+
   // Different ad variants (and different platforms) can reuse the exact same
   // creative asset, so collecting raw matches per-platform and only
   // deduplicating at the end can undercount: a platform's own duplicates fill
@@ -665,9 +684,10 @@ export const extractImages = (longestData) => {
       } else if (platform === "google" && ad["type"] === "IMAGE") {
         url = ad["new_nas_image_url"];
       }
-      if (url && !seen.has(url)) {
-        seen.add(url);
-        images.push(url);
+      const resolvedUrl = normalizeCreativeImageUrl(url);
+      if (resolvedUrl && !seen.has(resolvedUrl)) {
+        seen.add(resolvedUrl);
+        images.push(resolvedUrl);
       }
       if (images.length >= 5) break;
     }
@@ -683,8 +703,7 @@ export const extractImages = (longestData) => {
     getImageAdImages(longestData.google.longestRunningAds, "google");
   }
 
-  // Prefix with NAS_URL
-  return images.map((img) => `${NAS_URL}${img}`);
+  return images;
 };
 
 // ─── Main Component ─────────────────────────────────────────────────────────

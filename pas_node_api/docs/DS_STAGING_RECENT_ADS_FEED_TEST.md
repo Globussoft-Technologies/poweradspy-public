@@ -5,7 +5,8 @@
 Validate one returned ad at a time for each supported network before the backend
 is promoted to production:
 
-`facebook`, `instagram`, `youtube`, `google`, `native`, `pinterest`.
+`facebook`, `instagram`, `youtube`, `google`, `native`, `linkedin`, `reddit`,
+`pinterest`.
 
 This is a read-only feed test. Do not call the Category or AI-Meta POST APIs, start
 production workers, or persist the staging checkpoint as a production checkpoint.
@@ -110,6 +111,8 @@ duration, and this completed table:
 | youtube | | | | | | | | | | | | |
 | google | | | | | | | | | | | | |
 | native | | | | | | | | | | | | |
+| linkedin | | | | | | | | | | | | |
+| reddit | | | | | | | | | | | | |
 | pinterest | | | | | | | | | | | | |
 
 Do not redact IDs, timestamps, timing values, or request IDs. Secrets and unrelated
@@ -117,7 +120,7 @@ ad payload content may be redacted.
 
 ## Pass condition
 
-Production promotion is approved only after all six rows pass, the first/replay
+Production promotion is approved only after all eight rows pass, the first/replay
 responses are supplied, and the backend log thresholds are confirmed. Any wrong
 identifier, missing creative contract, checkpoint replay mismatch, timeout, partial
 ES response, scan-limit event, or non-200 response must be investigated first.
