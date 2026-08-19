@@ -52,6 +52,38 @@ function normalizeSessionId(value) {
   return text || null;
 }
 
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, minimum), maximum);
+}
+
+function rangeFilter(field, value) {
+  if (!active(value)) return null;
+
+  let minimum;
+  let maximum;
+
+  if (Array.isArray(value)) {
+    [minimum, maximum] = value;
+  } else if (value && typeof value === 'object') {
+    minimum = value.min ?? value.gte ?? value.lower ?? value.lower_age;
+    maximum = value.max ?? value.lte ?? value.upper ?? value.upper_age;
+  } else {
+    return null;
+  }
+
+  const range = {};
+  const gte = Number(minimum);
+  const lte = Number(maximum);
+
+  if (Number.isFinite(gte)) range.gte = gte;
+  if (Number.isFinite(lte)) range.lte = lte;
+  if (!Object.keys(range).length) return null;
+
+  return { range: { [field]: range } };
+}
+
 function buildCommonClauses(input) {
   const must = [];
   const filter = [{ term: { status: 1 } }];
@@ -87,6 +119,9 @@ function buildCommonClauses(input) {
   const adPosition = values(input.ad_position ?? input.ad_position_filter).map((value) => value.toLowerCase());
   const adSubPosition = values(input.ad_sub_position).map((value) => value.toLowerCase());
   const imageSize = imageSizeValues(input.ad_image_size ?? input.size);
+  const leadScoreRange = input.leadScoreRange ?? input.admob_lead_score_range ?? input.lead_score_range;
+  const occurrenceCountRange = input.occurrenceCountRange ?? input.admob_occurrence_count_range ?? input.occurrence_count_range;
+  const activeDaysRange = input.activeDaysRange ?? input.admob_active_days_range ?? input.active_days_range ?? input.days_running_range;
   // `order_column` is the shared frontend transport field. Keep the
   // AdMob-specific aliases supported for direct API callers as well.
   const sortInput = String(
@@ -108,6 +143,12 @@ function buildCommonClauses(input) {
   if (adPosition.length) filter.push({ terms: { ad_position: adPosition } });
   if (adSubPosition.length) filter.push({ terms: { ad_sub_position: adSubPosition } });
   if (imageSize.length) filter.push({ terms: { ad_image_size: imageSize } });
+  const leadScoreClause = rangeFilter('lead_score', leadScoreRange);
+  const occurrenceCountClause = rangeFilter('occurrence_count', occurrenceCountRange);
+  const activeDaysClause = rangeFilter('days_running', activeDaysRange);
+  if (leadScoreClause) filter.push(leadScoreClause);
+  if (occurrenceCountClause) filter.push(occurrenceCountClause);
+  if (activeDaysClause) filter.push(activeDaysClause);
 
   let sortField = 'last_seen';
   if (sortInput === 'lead_score' || sortInput === 'top_ranked') sortField = 'lead_score';
@@ -247,6 +288,147 @@ function toCardRow(hit) {
     platform: 19,
     network: 'admob',
   };
+}
+
+async function resolveAdRecord(sql, input) {
+  const internalId = normalizeNumericId(input.id ?? input.internal_id);
+  const publicAdId = normalizeAdId(
+    input.ad_id ?? input.adId ?? (internalId === null ? input.id : null)
+  );
+
+  if (internalId !== null && Number.isInteger(internalId) && internalId > 0) {
+    const rows = await sql.query(
+      `SELECT id, ad_id, first_seen, last_seen
+       FROM mob_ads
+       WHERE id = ?
+       LIMIT 1`,
+      [internalId]
+    );
+    return rows?.[0] || null;
+  }
+
+  if (!publicAdId) return null;
+
+  const rows = await sql.query(
+    `SELECT id, ad_id, first_seen, last_seen
+     FROM mob_ads
+     WHERE LOWER(TRIM(ad_id)) = ?
+     LIMIT 1`,
+    [publicAdId]
+  );
+  return rows?.[0] || null;
+}
+
+async function getAdSessions(req, db, logger) {
+  if (!db?.sql) {
+    return {
+      code: 503,
+      status: 'server_error',
+      message: 'AdMob SQL connection is unavailable.',
+      data: null,
+    };
+  }
+
+  const input = { ...(req.query || {}), ...(req.body || {}) };
+
+  try {
+    const ad = await resolveAdRecord(db.sql, input);
+    if (!ad) {
+      return {
+        code: 404,
+        status: 'not_found',
+        message: 'AdMob ad not found.',
+        data: null,
+      };
+    }
+
+    const size = boundedInteger(input.take ?? input.limit, 25, 1, 100);
+    const page = boundedInteger(input.skip ?? input.page, 0, 0, 1000000);
+    const offset = page * size;
+
+    const sourceAppRows = await db.sql.query(
+      'SELECT source_app_id FROM mob_ad_source_apps WHERE ad_id = ?',
+      [ad.id]
+    );
+    const sourceAppIds = [...new Set((sourceAppRows || [])
+      .map((row) => normalizeNumericId(row.source_app_id))
+      .filter((value) => value !== null))];
+
+    const occurrenceCountPromise = db.sql.query(
+      'SELECT COUNT(*) AS sessions_total FROM mob_ad_observations WHERE ad_id = ?',
+      [ad.id]
+    );
+    const sessionRowsPromise = db.sql.query(
+      `SELECT session_id, system_id, observed_at
+       FROM mob_ad_observations
+       WHERE ad_id = ?
+       ORDER BY observed_at DESC
+       LIMIT ${size}
+       OFFSET ${offset}`,
+      [ad.id]
+    );
+    const totalSessionsPromise = sourceAppIds.length > 0
+      ? db.sql.query(
+        `SELECT COUNT(DISTINCT o.session_id) AS total_sessions
+         FROM mob_ad_observations o
+         INNER JOIN mob_ad_source_apps x ON x.ad_id = o.ad_id
+         WHERE x.source_app_id IN (${sourceAppIds.map(() => '?').join(', ')})`,
+        sourceAppIds
+      )
+      : db.sql.query(
+        'SELECT COUNT(DISTINCT session_id) AS total_sessions FROM mob_ad_observations',
+        []
+      );
+
+    const [occurrenceRows, sessionRows, totalSessionRows] = await Promise.all([
+      occurrenceCountPromise,
+      sessionRowsPromise,
+      totalSessionsPromise,
+    ]);
+
+    const occurrenceCount = Number(occurrenceRows?.[0]?.sessions_total || 0);
+    const trackedSessionsTotal = Number(totalSessionRows?.[0]?.total_sessions || 0);
+    const safeTrackedSessionsTotal = trackedSessionsTotal > 0 ? trackedSessionsTotal : occurrenceCount;
+    const occurrenceRate = safeTrackedSessionsTotal > 0
+      ? occurrenceCount / safeTrackedSessionsTotal
+      : null;
+    const runningDays = daysRunning(ad.first_seen, ad.last_seen);
+
+    return {
+      code: 200,
+      status: 'ok',
+      message: 'AdMob ad sessions fetched successfully.',
+      data: {
+        id: ad.id,
+        ad_id: ad.ad_id,
+        first_seen: ad.first_seen,
+        last_seen: ad.last_seen,
+        days_running: runningDays,
+        occurrence_count: occurrenceCount,
+        sessions_total: occurrenceCount,
+        total_sessions: safeTrackedSessionsTotal,
+        occurrence_rate: occurrenceRate == null ? null : Number(occurrenceRate.toFixed(6)),
+        occurrence_rate_percent: occurrenceRate == null ? null : Number((occurrenceRate * 100).toFixed(2)),
+        lead_score: occurrenceCount * (runningDays || 0),
+        page,
+        size,
+        sessions: (sessionRows || []).map((row) => ({
+          session_id: row.session_id,
+          system_id: row.system_id,
+          observed_at: row.observed_at,
+        })),
+      },
+    };
+  } catch (error) {
+    logger.error('AdMob sessions lookup failed', { error: error.message });
+    return {
+      code: 500,
+      status: 'server_error',
+      message: 'AdMob ad sessions could not be fetched.',
+      error: error.message,
+      data: null,
+    };
+  }
 }
 
 async function searchAds(req, db, logger) {
@@ -390,4 +572,4 @@ async function searchHiddenAds(input, db, logger, sessionScope = { adIds: null, 
   }
 }
 
-module.exports = { searchAds };
+module.exports = { searchAds, getAdSessions };

@@ -209,6 +209,7 @@ class DatabaseManager {
         database: sqlConfig.database,
         waitForConnections: true,
         connectionLimit: sqlConfig.poolSize,
+        maxIdle: Math.max(1, Math.floor(sqlConfig.poolSize / 2)),   // new line
         queueLimit: config.databases.sql.queueLimit || 0,
         enableKeepAlive: true,
         keepAliveInitialDelay: config.databases.sql.keepAliveInitialDelay || 10000,

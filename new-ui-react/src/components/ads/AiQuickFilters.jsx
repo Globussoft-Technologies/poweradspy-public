@@ -139,13 +139,21 @@ const AiQuickFilters = ({
   });
   if (visiblePresets.length === 0) return null;
 
-  const commit = (replacement) => {
+  const commit = (replacement, presetId = null) => {
     if (isRestricted) {
       onRestricted?.();
       return;
     }
     discardAiFilterDraft();
-    onApply?.(replaceAiFilters(filterValues, doc, replacement));
+    onApply?.(
+      replaceAiFilters(filterValues, doc, replacement),
+      presetId
+        ? {
+            filterName: `quick_filter_${presetId}`,
+            entryPoint: "quick_filters",
+          }
+        : null,
+    );
   };
 
   return (
@@ -169,7 +177,7 @@ const AiQuickFilters = ({
               key={preset.id}
               type="button"
               aria-pressed={isActive}
-              onClick={() => commit(preset.filters)}
+              onClick={() => commit(preset.filters, preset.id)}
               className={`group relative flex min-w-[136px] shrink-0 items-center gap-2 rounded-lg border py-2 pl-2.5 pr-7 text-left transition-all ${
                 isActive
                   ? "border-[#6b99ff] bg-[#3762c1]/12 shadow-[0_0_0_1px_rgba(107,153,255,0.15)]"

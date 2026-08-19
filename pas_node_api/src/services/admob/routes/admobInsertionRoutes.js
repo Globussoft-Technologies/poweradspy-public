@@ -6,7 +6,7 @@ const { insertionAuth } = require('../../../middleware/insertionAuth');
 const { insertionEnabled } = require('../../../middleware/insertionEnabled');
 const { authMiddleware } = require('../../../middleware/auth');
 const controller = require('../controllers/admobInsertionController');
-const { searchAds } = require('../controllers/adSearchController');
+const { searchAds, getAdSessions } = require('../controllers/adSearchController');
 const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
 
 function createAdmobRoutes(service) {
@@ -16,6 +16,14 @@ function createAdmobRoutes(service) {
     authMiddleware,
     asyncHandler(async (req, res) => {
       const result = await searchAds(req, service.db, service.log);
+      return res.status(result.code).json(result);
+    })
+  );
+  router.post(
+    '/ads/sessions',
+    authMiddleware,
+    asyncHandler(async (req, res) => {
+      const result = await getAdSessions(req, service.db, service.log);
       return res.status(result.code).json(result);
     })
   );

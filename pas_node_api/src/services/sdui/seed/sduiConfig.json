@@ -736,7 +736,52 @@
             "value": "running_days",
             "rank": 6,
             "selected_by_default": false,
-            "platform_applicability": "all"
+            "platform_applicability": [
+              "facebook",
+              "instagram",
+              "youtube",
+              "google",
+              "gdn",
+              "native",
+              "linkedin",
+              "reddit",
+              "quora",
+              "pinterest",
+              "tiktok"
+            ]
+          },
+          {
+            "_id": "sb_admob_top_ranked",
+            "filter_id": "sort_by",
+            "label": "Top Ranked",
+            "value": "lead_score",
+            "rank": 8,
+            "selected_by_default": false,
+            "platform_applicability": [
+              "admob"
+            ]
+          },
+          {
+            "_id": "sb_admob_most_seen",
+            "filter_id": "sort_by",
+            "label": "Most Seen",
+            "value": "occurrence_count",
+            "rank": 9,
+            "selected_by_default": false,
+            "platform_applicability": [
+              "admob"
+            ]
+          },
+          {
+            "_id": "sb_admob_active_days",
+            "filter_id": "sort_by",
+            "label": "Active Days",
+            "value": "days_running",
+            "rank": 10,
+            "selected_by_default": false,
+            "platform_applicability": [
+              "admob"
+            ]
           },
           {
             "_id": "sb_domain_reg",
@@ -11412,6 +11457,135 @@
       }
     ],
     "created_at": "2026-07-23T00:00:00.000Z"
+  },
+  {
+    "_id": "admob_poster_intelligence",
+    "config_type": "sidebar",
+    "title": "POSTER INTELLIGENCE",
+    "rank": 23,
+    "collapsed_by_default": false,
+    "visible": true,
+    "icon": {
+      "type": "none",
+      "value": null
+    },
+    "meta": "Rank AdMob posters by relative visibility and longevity, then narrow the metric ranges.",
+    "display_mode": "accordion",
+    "created_at": "2026-08-19T00:00:00.000Z",
+    "filters": [
+      {
+        "_id": "admob_poster_rank_filter",
+        "group_id": "admob_poster_intelligence",
+        "label": "Poster Intelligence",
+        "type": "radio",
+        "rank": 1,
+        "query_param": "admobPosterSort",
+        "multi_select": false,
+        "visible": true,
+        "platform_applicability": [
+          "admob"
+        ],
+        "options": [
+          {
+            "_id": "admob_poster_rank_top_ranked",
+            "filter_id": "admob_poster_rank_filter",
+            "label": "Top Ranked",
+            "value": "lead_score",
+            "rank": 1,
+            "selected_by_default": false,
+            "platform_applicability": [
+              "admob"
+            ]
+          },
+          {
+            "_id": "admob_poster_rank_most_seen",
+            "filter_id": "admob_poster_rank_filter",
+            "label": "Most Seen",
+            "value": "occurrence_count",
+            "rank": 2,
+            "selected_by_default": false,
+            "platform_applicability": [
+              "admob"
+            ]
+          },
+          {
+            "_id": "admob_poster_rank_active_days",
+            "filter_id": "admob_poster_rank_filter",
+            "label": "Active Days",
+            "value": "days_running",
+            "rank": 3,
+            "selected_by_default": false,
+            "platform_applicability": [
+              "admob"
+            ]
+          }
+        ]
+      },
+      {
+        "_id": "admob_lead_score_range",
+        "group_id": "admob_poster_intelligence",
+        "label": "Top Ranked",
+        "type": "range_slider",
+        "rank": 2,
+        "query_param": "leadScoreRange",
+        "multi_select": false,
+        "visible": true,
+        "platform_applicability": [
+          "admob"
+        ],
+        "min": 0,
+        "max": 10000,
+        "step": 10,
+        "default_min": 0,
+        "default_max": 10000,
+        "loose_ends": "right",
+        "slider_scale": "exponential",
+        "pin_mode": "double"
+      },
+      {
+        "_id": "admob_occurrence_count_range",
+        "group_id": "admob_poster_intelligence",
+        "label": "Most Seen",
+        "type": "range_slider",
+        "rank": 3,
+        "query_param": "occurrenceCountRange",
+        "multi_select": false,
+        "visible": true,
+        "platform_applicability": [
+          "admob"
+        ],
+        "min": 0,
+        "max": 1000,
+        "step": 1,
+        "default_min": 0,
+        "default_max": 1000,
+        "loose_ends": "right",
+        "slider_scale": "exponential",
+        "pin_mode": "double"
+      },
+      {
+        "_id": "admob_active_days_range",
+        "group_id": "admob_poster_intelligence",
+        "label": "Active Days",
+        "type": "range_slider",
+        "rank": 4,
+        "query_param": "activeDaysRange",
+        "multi_select": false,
+        "visible": true,
+        "platform_applicability": [
+          "admob"
+        ],
+        "min": 0,
+        "max": 365,
+        "step": 1,
+        "default_min": 0,
+        "default_max": 365,
+        "loose_ends": "right",
+        "slider_scale": "linear",
+        "pin_mode": "double"
+      }
+    ],
+    "flag": true
   },
   {
     "_id": "ad_sub_position",

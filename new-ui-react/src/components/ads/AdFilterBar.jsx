@@ -210,9 +210,11 @@ const AdFilterBar = ({
     setShowFilterTip(true);
   };
 
+  const activeLower = (activePlatforms || []).map((platform) => String(platform).toLowerCase());
+  const isAdmobOnly = activeLower.length === 1 && activeLower[0] === "admob";
+
   const AD_TYPE_OPTIONS = useMemo(() => {
-    const activeLower = activePlatforms.map((platform) => platform.toLowerCase());
-    if (activeLower.length === 1 && activeLower[0] === "admob") {
+    if (isAdmobOnly) {
       return ADMOB_AD_TYPE_OPTIONS;
     }
 
@@ -541,34 +543,38 @@ const AdFilterBar = ({
           </div>
         )}
 
-        {/* Original Preview Toggle */}
-        <button
-          onClick={() => {
-            const network = activePlatforms?.length === 1 ? activePlatforms[0] : 'All';
-            trackEvent('showOriginal', { network, show_original: previewMode ? 'false' : 'true' });
-            if (!previewMode) {
-              const networkContext = getNetworkContext(activePlatforms || []);
-              trackAdAction('show_original', {
-                entry_point: 'filter_bar',
-                feature_name: 'original_ad',
-                ...networkContext,
-                platform: networkContext.network,
-                request_context: 'ad_open',
-              });
-            }
-            setPreviewMode(!previewMode);
-          }}
-          className={`items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${
-            !showOriginalOnMobile ? "hidden md:flex" : "flex"
-          } ${
-            previewMode
-              ? "bg-[#335296] text-white border-[#3759a3] shadow-md shadow-[#3759a3]/20"
-              : "bg-theme-card text-white/50 border-theme-border hover:text-theme-text-secondary hover:border-theme-text-muted"
-          }`}
-        >
-          <Smartphone size={12} />
-          <span className="sm:inline hidden">Show Original</span>
-        </button>
+        {!isAdmobOnly && (
+          <>
+            {/* Original Preview Toggle */}
+            <button
+              onClick={() => {
+                const network = activePlatforms?.length === 1 ? activePlatforms[0] : 'All';
+                trackEvent('showOriginal', { network, show_original: previewMode ? 'false' : 'true' });
+                if (!previewMode) {
+                  const networkContext = getNetworkContext(activePlatforms || []);
+                  trackAdAction('show_original', {
+                    entry_point: 'filter_bar',
+                    feature_name: 'original_ad',
+                    ...networkContext,
+                    platform: networkContext.network,
+                    request_context: 'ad_open',
+                  });
+                }
+                setPreviewMode(!previewMode);
+              }}
+              className={`items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${
+                !showOriginalOnMobile ? "hidden md:flex" : "flex"
+              } ${
+                previewMode
+                  ? "bg-[#335296] text-white border-[#3759a3] shadow-md shadow-[#3759a3]/20"
+                  : "bg-theme-card text-white/50 border-theme-border hover:text-theme-text-secondary hover:border-theme-text-muted"
+              }`}
+            >
+              <Smartphone size={12} />
+              <span className="sm:inline hidden">Show Original</span>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

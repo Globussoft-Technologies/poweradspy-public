@@ -7,7 +7,7 @@ import searchModule from '../../src/services/admob/controllers/adSearchControlle
 const { validateAdmobPayload } = validateModule;
 const { normalizeAdmobPayload } = normalizeModule;
 const { buildAdmobDocument } = documentModule;
-const { searchAds } = searchModule;
+const { searchAds, getAdSessions } = searchModule;
 
 const payload = {
   ad_id: '00bcf053e64747019f6a35ee',
@@ -19,6 +19,7 @@ const payload = {
   platform: 19,
   post_date: 1785826419,
   source: 'Android',
+  session_id: 'session-1',
   system_id: '20260804_065315_cc600c3f',
   type: 'BANNER',
   version: '30.4',
@@ -165,5 +166,101 @@ describe('isolated AdMob insertion contract', () => {
     expect(searchBody.query.bool.filter).toEqual(expect.arrayContaining([
       { terms: { type: ['banner'] } },
     ]));
+  });
+
+  it('applies AdMob poster intelligence range filters to the ES query', async () => {
+    let searchBody;
+    const elastic = {
+      indexName: 'mob_search_mix',
+      search: async ({ body }) => {
+        searchBody = body;
+        return { body: { hits: { total: { value: 0 }, hits: [] } } };
+      },
+    };
+
+    const result = await searchAds({ body: {
+      leadScoreRange: { min: 10, max: 100 },
+      occurrenceCountRange: { min: 2, max: 8 },
+      activeDaysRange: { min: 5, max: 30 },
+      admobPosterSort: 'occurrence_count',
+    } }, { elastic }, { error() {} });
+
+    expect(result.code).toBe(200);
+    expect(searchBody.sort).toEqual(expect.arrayContaining([
+      { occurrence_count: { order: 'desc', missing: '_last' } },
+      { id: 'desc' },
+    ]));
+    expect(searchBody.query.bool.filter).toEqual(expect.arrayContaining([
+      { range: { lead_score: { gte: 10, lte: 100 } } },
+      { range: { occurrence_count: { gte: 2, lte: 8 } } },
+      { range: { days_running: { gte: 5, lte: 30 } } },
+    ]));
+  });
+
+  it('returns AdMob session history with occurrence totals and rate', async () => {
+    const sql = {
+      query: async (query, params) => {
+        if (query.includes('FROM mob_ads')) {
+          expect(params).toEqual([42]);
+          return [{
+            id: 42,
+            ad_id: payload.ad_id,
+            first_seen: '2026-08-01 00:00:00',
+            last_seen: '2026-08-10 00:00:00',
+          }];
+        }
+        if (query.includes('FROM mob_ad_source_apps')) {
+          return [{ source_app_id: 77 }];
+        }
+        if (query.includes('COUNT(*) AS sessions_total')) {
+          return [{ sessions_total: 3 }];
+        }
+        if (query.includes('ORDER BY observed_at DESC')) {
+          return [
+            {
+              session_id: 'session-3',
+              system_id: 'system-3',
+              observed_at: '2026-08-10 09:00:00',
+            },
+            {
+              session_id: 'session-2',
+              system_id: 'system-2',
+              observed_at: '2026-08-09 09:00:00',
+            },
+          ];
+        }
+        if (query.includes('COUNT(DISTINCT o.session_id) AS total_sessions')) {
+          expect(params).toEqual([77]);
+          return [{ total_sessions: 10 }];
+        }
+        throw new Error(`Unexpected query: ${query}`);
+      },
+    };
+
+    const result = await getAdSessions(
+      { body: { id: 42, take: 2, skip: 0 } },
+      { sql },
+      { error() {} },
+    );
+
+    expect(result.code).toBe(200);
+    expect(result.data).toEqual(expect.objectContaining({
+      id: 42,
+      ad_id: payload.ad_id,
+      days_running: 10,
+      occurrence_count: 3,
+      sessions_total: 3,
+      total_sessions: 10,
+      occurrence_rate: 0.3,
+      occurrence_rate_percent: 30,
+      lead_score: 30,
+      size: 2,
+      page: 0,
+    }));
+    expect(result.data.sessions).toHaveLength(2);
+    expect(result.data.sessions[0]).toEqual(expect.objectContaining({
+      session_id: 'session-3',
+      system_id: 'system-3',
+    }));
   });
 });

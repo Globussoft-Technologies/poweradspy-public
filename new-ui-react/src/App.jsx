@@ -79,6 +79,27 @@ const INTEL_ENV_ON = import.meta.env.VITE_ENABLE_INTELLIGENCE_FEATURE === "true"
 const KEYWORD_EXPLORER_ON = import.meta.env.VITE_ENABLE_KEYWORD_EXPLORER === "true";
 const GOOGLE_INTEL_ON = KEYWORD_EXPLORER_ON;
 
+const SAVED_HIDDEN_SNAPSHOT_KEY = 'pas.savedHiddenAdSnapshots.v1';
+const MAX_SAVED_HIDDEN_SNAPSHOTS = 120;
+
+const canUseSavedHiddenSnapshotStorage = () =>
+  typeof window !== 'undefined' &&
+  typeof window.sessionStorage !== 'undefined';
+
+const getSavedHiddenSnapshotKey = (ad) => {
+  const network = String(ad?.network || '').toLowerCase().trim();
+  const adId = String(ad?.adId || ad?.id || '').trim();
+  if (!network || !adId) return '';
+  return `${network}:${adId}`;
+};
+
+const pruneSavedHiddenSnapshotStore = (store) => {
+  const entries = Object.entries(store);
+  if (entries.length <= MAX_SAVED_HIDDEN_SNAPSHOTS) return store;
+  entries.sort((a, b) => (b[1]?.ts || 0) - (a[1]?.ts || 0));
+  return Object.fromEntries(entries.slice(0, MAX_SAVED_HIDDEN_SNAPSHOTS));
+};
+
 import ChatbotWidget from "./components/shared/ChatbotWidget";
 import NotificationPermissionPrompt from "./components/layout/NotificationPermissionPrompt";
 import UnsubscribePage from "./components/UnsubscribePage";
@@ -864,14 +885,25 @@ const App = () => {
 
   const sortingDoc = sdui.config?.navbar?.find((d) => d._id === "sorting");
   const sortFilter = sortingDoc?.filters?.[0];
-  const sortOptions = sortFilter?.options || [];
   const sortTabs = useMemo(() => {
-    if (sortOptions.length > 0) return sortOptions;
-    return ["Newest", "Ad Running Days", "Domain Registration Date"].map((t) => ({
+    const fallback = ["Newest", "Ad Running Days", "Domain Registration Date"].map((t) => ({
       label: t,
       value: t === "Newest" ? "-created_at" : t === "Ad Running Days" ? "-running_days" : "-domain_reg_date",
     }));
-  }, [sortOptions]);
+
+    if (!sortingDoc) return fallback;
+    if (!sortFilter || !sdui.shouldShowFilter(sortFilter)) return [];
+
+    const visibleOptions = (sortFilter.options || []).filter((option) => sdui.shouldShowOption(option));
+    if (visibleOptions.length > 0) return visibleOptions;
+    return [];
+  }, [sortingDoc, sortFilter, sdui.shouldShowFilter, sdui.shouldShowOption]);
+
+  useEffect(() => {
+    if (sortTabs.length > 0) return;
+    if (sdui.sortBy) sdui.setSortBy("");
+    if (ui.activeTab) dispatch(setActiveTab(""));
+  }, [dispatch, sdui.sortBy, sdui.setSortBy, sortTabs.length, ui.activeTab]);
 
   // activeTab is transient UI state, while sorting is persisted by useSDUI.
   // Rebuild the selected label from the persisted value after refresh so the
@@ -887,21 +919,26 @@ const App = () => {
   // Derive primary/dropdown split from config: options with primary:true are inline tabs,
   // rest go in the dropdown. Falls back to hardcoded labels if config has no primary flag.
   const { PRIMARY_SORT_LABELS, DROPDOWN_SORT_LABELS } = useMemo(() => {
-    const hasPrimaryFlag = sortOptions.some((o) => o.primary === true);
+    if (sortTabs.length === 0) {
+      return { PRIMARY_SORT_LABELS: [], DROPDOWN_SORT_LABELS: [] };
+    }
+
+    const hasPrimaryFlag = sortTabs.some((o) => o.primary === true);
     if (hasPrimaryFlag) {
-      const primary = sortOptions.filter((o) => o.primary).map((o) => (o.label ?? "").toLowerCase());
-      const dropdown = sortOptions.filter((o) => !o.primary).map((o) => (o.label ?? "").toLowerCase());
+      const primary = sortTabs.filter((o) => o.primary).map((o) => (o.label ?? "").toLowerCase());
+      const dropdown = sortTabs.filter((o) => !o.primary).map((o) => (o.label ?? "").toLowerCase());
       return { PRIMARY_SORT_LABELS: primary, DROPDOWN_SORT_LABELS: dropdown };
     }
+
     // No primary flag in config — use all option labels split by hardcoded known-primary set
     const knownPrimary = new Set(["newest", "impressions", "popularity"]);
-    const primary = sortOptions.map((o) => (o.label ?? "").toLowerCase()).filter((l) => knownPrimary.has(l));
-    const dropdown = sortOptions.map((o) => (o.label ?? "").toLowerCase()).filter((l) => !knownPrimary.has(l));
+    const primary = sortTabs.map((o) => (o.label ?? "").toLowerCase()).filter((l) => knownPrimary.has(l));
+    const dropdown = sortTabs.map((o) => (o.label ?? "").toLowerCase()).filter((l) => !knownPrimary.has(l));
     return {
       PRIMARY_SORT_LABELS: primary.length > 0 ? primary : ["newest", "impressions", "popularity"],
       DROPDOWN_SORT_LABELS: dropdown.length > 0 ? dropdown : ["newest", "ad running days", "domain registration date"],
     };
-  }, [sortOptions]);
+  }, [sortTabs]);
 
   const allPlatformValues = useMemo(() => {
     if (platformOptions.length > 0)
@@ -976,6 +1013,13 @@ const App = () => {
   ]);
 
   const isAllActive = ui.specificPlatforms.length === 0;
+
+  // Keep filter analytics aligned with the actual selected UI tab. The list
+  // of active networks may be a plan-limited subset even while "All" is shown.
+  useEffect(() => {
+    sdui.setAnalyticsAllPlatformsSelected(isAllActive);
+  }, [isAllActive, sdui.setAnalyticsAllPlatformsSelected]);
+
   const hasAllActivePlatforms =
     sdui.activePlatforms.length === allPlatformValues.length &&
     allPlatformValues.every((platform) => sdui.activePlatforms.includes(platform));
@@ -1208,6 +1252,73 @@ const App = () => {
     [ads.length, visibleAds.length],
   );
 
+  const savedHiddenSnapshotsRef = useRef({});
+
+  const readSavedHiddenSnapshots = useCallback(() => {
+    if (canUseSavedHiddenSnapshotStorage()) {
+      try {
+        const raw = window.sessionStorage.getItem(SAVED_HIDDEN_SNAPSHOT_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            savedHiddenSnapshotsRef.current = parsed;
+            return parsed;
+          }
+        }
+      } catch {
+        // Ignore storage issues and fall back to memory.
+      }
+    }
+    return savedHiddenSnapshotsRef.current;
+  }, []);
+
+  const writeSavedHiddenSnapshots = useCallback((store) => {
+    savedHiddenSnapshotsRef.current = store;
+    if (!canUseSavedHiddenSnapshotStorage()) return;
+    try {
+      window.sessionStorage.setItem(SAVED_HIDDEN_SNAPSHOT_KEY, JSON.stringify(store));
+    } catch {
+      // Ignore storage issues and keep the in-memory snapshot store.
+    }
+  }, []);
+
+  const rememberSavedHiddenSnapshots = useCallback((adsToRemember = []) => {
+    if (!Array.isArray(adsToRemember) || adsToRemember.length === 0) return;
+    const store = { ...readSavedHiddenSnapshots() };
+    let changed = false;
+    adsToRemember.forEach((ad, index) => {
+      const key = getSavedHiddenSnapshotKey(ad);
+      if (!key) return;
+      store[key] = {
+        ad: { ...ad },
+        ts: Date.now() + index,
+      };
+      changed = true;
+    });
+    if (!changed) return;
+    writeSavedHiddenSnapshots(pruneSavedHiddenSnapshotStore(store));
+  }, [readSavedHiddenSnapshots, writeSavedHiddenSnapshots]);
+
+  const resolveSavedHiddenAd = useCallback((ad) => {
+    const key = getSavedHiddenSnapshotKey(ad);
+    if (!key) return ad;
+    const snapshot = readSavedHiddenSnapshots()[key]?.ad;
+    if (!snapshot) return ad;
+    return {
+      ...ad,
+      ...snapshot,
+      network: ad?.network || snapshot.network,
+      adId: ad?.adId || snapshot.adId,
+      id: ad?.id || snapshot.id,
+      hideType: ad?.hideType ?? snapshot.hideType,
+      hiddenPostOwnerId: ad?.hiddenPostOwnerId ?? snapshot.hiddenPostOwnerId,
+    };
+  }, [readSavedHiddenSnapshots]);
+
+  useEffect(() => {
+    rememberSavedHiddenSnapshots(visibleAds);
+  }, [visibleAds, rememberSavedHiddenSnapshots]);
+
   const handleHideAd = useCallback(async (ad) => {
     try {
       await hideAds({
@@ -1228,6 +1339,7 @@ const App = () => {
         next.delete(hideKey);
         return next;
       });
+      rememberSavedHiddenSnapshots([ad]);
       showToast("Ad hidden successfully", "success");
       trackAdAction('hide_ad', { entry_point: 'ad_card', feature_name: 'ad_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', platform: String(ad.network || 'unknown').toLowerCase(), request_context: 'ad_open' });
       trackEvent('favAds', { ad_id: ad.adId, network: ad.network, hidetype: 2, post_owner_id: ad.postOwnerId ?? 'NA' });
@@ -1298,6 +1410,7 @@ const App = () => {
         keysToDrop.forEach((k) => next.delete(k));
         return next;
       });
+      rememberSavedHiddenSnapshots([ad]);
       showToast("Advertiser hidden successfully", "success");
       trackAdAction('hide_advertiser', { entry_point: 'ad_card', feature_name: 'advertiser_hiding', network: String(ad.network || 'unknown').toLowerCase(), network_scope: 'single', platform: String(ad.network || 'unknown').toLowerCase(), request_context: 'ad_open' });
       trackEvent('favAds', { ad_id: ad.adId, network: ad.network, hidetype: 1, post_owner_id: ad.postOwnerId ?? 'NA' });
@@ -1340,6 +1453,7 @@ const App = () => {
           next.add(favKey);
           return next;
         });
+        rememberSavedHiddenSnapshots([ad]);
         showToast("Added to Saved", "success");
         trackAdAction('favorite_added', { entry_point: 'ad_card', feature_name: 'saved_ads', network: platform, network_scope: 'single', platform, request_context: 'ad_open' });
         trackEvent('favAds', { ad_id: ad.adId, network: ad.network, hidetype: 3, post_owner_id: ad.postOwnerId ?? 'NA' });
@@ -2495,6 +2609,7 @@ const App = () => {
             favouriteAdIds={favouriteAdIds}
             hiddenAdIds={hiddenAdIds}
             hiddenAdvertiserIds={hiddenAdvertiserIds}
+            resolveSavedHiddenAd={resolveSavedHiddenAd}
             onToggleFavourite={handleToggleFavourite}
             onHideAd={handleHideAd}
             onHideAdvertiser={handleHideAdvertiser}

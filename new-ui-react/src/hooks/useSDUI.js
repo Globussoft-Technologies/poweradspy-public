@@ -51,6 +51,22 @@ export const resolveAnalyticsFilterLabel = (config, filterId) => {
             .replace(/_filter$|_range$|_btn_sort$/g, '');
 };
 
+export const resolveFilterAnalyticsNetworkContext = (config, platforms = []) => {
+    const normalizedActive = [...new Set(withoutDisabledPlatforms(platforms)
+        .map(normalizeStoredValue).filter(Boolean))];
+    const platformsDocument = config?.navbar?.find(document => document?._id === 'platforms');
+    const configuredPlatforms = [...new Set((platformsDocument?.filters || [])
+        .flatMap(filter => filter?.options || [])
+        .map(option => normalizeStoredValue(option?.value))
+        .filter(value => value && value !== 'all'))];
+    const allSelected = configuredPlatforms.length > 0
+        && normalizedActive.length === configuredPlatforms.length
+        && configuredPlatforms.every(platform => normalizedActive.includes(platform));
+    return allSelected
+        ? { network: 'all', network_scope: 'all' }
+        : getNetworkContext(normalizedActive);
+};
+
 const withoutDisabledPlatforms = (platforms) => {
     const values = Array.isArray(platforms) ? platforms : [];
     if (ADMOB_FRONTEND_ENABLED) return values;
@@ -171,6 +187,14 @@ export function useSDUI() {
     // Refs to avoid circular deps — always up to date
     const activePlatformsRef = useRef(activePlatforms);
     activePlatformsRef.current = activePlatforms;
+
+    // The UI owns the authoritative meaning of the visible "All" tab. A
+    // platform-array comparison is not reliable because plan restrictions can
+    // make "All" contain only the networks available to the current user.
+    const analyticsAllPlatformsSelectedRef = useRef(false);
+    const setAnalyticsAllPlatformsSelected = useCallback((selected) => {
+        analyticsAllPlatformsSelectedRef.current = selected === true;
+    }, []);
 
     const platformFilterMatrixRef = useRef(platformFilterMatrix);
     platformFilterMatrixRef.current = platformFilterMatrix;
@@ -418,23 +442,37 @@ export function useSDUI() {
     ]);
 
     // ── Filter setters — stable references ──────────────────────────────────
-    const setFilter = useCallback((filterId, value) => {
-        const previousValue = filterValuesRef.current?.[filterId];
-        const changed = JSON.stringify(previousValue) !== JSON.stringify(value);
-        if (filterId !== '_autoSortField' && changed && hasAnalyticsFilterValue(value)) {
+    const trackAppliedFilter = useCallback((filterId, value, entryPoint = 'sidebar', includeValues = false) => {
+        if (filterId !== '_autoSortField' && hasAnalyticsFilterValue(value)) {
             const platforms = activePlatformsRef.current || [];
-            const networkContext = getNetworkContext(platforms);
-            const platformLabel = platforms.length === 1
+            const networkContext = analyticsAllPlatformsSelectedRef.current
+                ? { network: 'all', network_scope: 'all' }
+                : resolveFilterAnalyticsNetworkContext(configRef.current, platforms);
+            const platformLabel = networkContext.network === 'all'
+                ? 'all'
+                : platforms.length === 1
                 ? (FILTER_PLATFORM_LABELS[String(platforms[0]).toLowerCase()] || normalizeFilterLabel(platforms[0]))
                 : networkContext.network.replace(/,/g, '_');
+            const filterLabel = resolveAnalyticsFilterLabel(configRef.current, filterId);
+            const normalizedValues = (Array.isArray(value) ? value : [value])
+                .map(normalizeFilterLabel).filter(Boolean);
             trackProductEvent('filter_applied', {
-                filter_name: `${platformLabel}_${resolveAnalyticsFilterLabel(configRef.current, filterId)}`,
-                entry_point: 'sidebar',
+                filter_name: `${platformLabel}_${filterLabel}${includeValues && normalizedValues.length
+                    ? `_${normalizedValues.join('_')}`
+                    : ''}`,
+                ...(includeValues ? { filter_values: normalizedValues.join(',') } : {}),
+                entry_point: entryPoint,
                 feature_name: 'ad_filters',
                 ...networkContext,
                 request_context: 'search',
             });
         }
+    }, []);
+
+    const setFilter = useCallback((filterId, value) => {
+        const previousValue = filterValuesRef.current?.[filterId];
+        const changed = JSON.stringify(previousValue) !== JSON.stringify(value);
+        if (changed) trackAppliedFilter(filterId, value);
         setFilterValues(prev => {
             const next = { ...prev, [filterId]: value };
             if (filterId === '_autoSortField') return next;
@@ -450,29 +488,73 @@ export function useSDUI() {
             filterValuesRef.current = next;
             return next;
         });
-    }, []);
+    }, [trackAppliedFilter]);
 
-    const setAllFilters = useCallback((next) => {
-        setFilterValues(next || {});
-    }, []);
+    const setAllFilters = useCallback((next, analytics = null) => {
+        const nextFilters = next || {};
+        if (analytics?.filterName) {
+            trackAppliedFilter(analytics.filterName, true, analytics.entryPoint || 'quick_filters');
+        }
+        if (Array.isArray(analytics?.changedFilterIds)) {
+            analytics.changedFilterIds.forEach((filterId) => {
+                const previousValues = new Set((Array.isArray(filterValuesRef.current?.[filterId])
+                    ? filterValuesRef.current[filterId]
+                    : [filterValuesRef.current?.[filterId]])
+                    .map(normalizeFilterLabel).filter(Boolean));
+                (Array.isArray(nextFilters[filterId]) ? nextFilters[filterId] : [nextFilters[filterId]])
+                    .forEach((value) => {
+                        const normalizedValue = normalizeFilterLabel(value);
+                        if (normalizedValue && !previousValues.has(normalizedValue)) {
+                            trackAppliedFilter(
+                                filterId,
+                                normalizedValue,
+                                analytics.entryPoint || 'ai_filter_modal',
+                                true,
+                            );
+                        }
+                    });
+            });
+        }
+        filterValuesRef.current = nextFilters;
+        setFilterValues(nextFilters);
+    }, [trackAppliedFilter]);
 
     // Ad Type used several state keys during the UI migration. Update its
     // canonical key and delete every old alias atomically; otherwise a denied
     // plan can clear `ad_type` while stale `ad_types`/`type` still reaches the
     // search payload and applies the filter behind the upgrade dialog.
     const setAdTypes = useCallback((valueOrUpdater) => {
+        const current = filterValuesRef.current?.ad_type
+            || filterValuesRef.current?.ad_types
+            || filterValuesRef.current?.type
+            || filterValuesRef.current?.adType
+            || [];
+        const value = typeof valueOrUpdater === 'function'
+            ? valueOrUpdater(current)
+            : valueOrUpdater;
+        const changed = JSON.stringify(current) !== JSON.stringify(value);
+        if (changed) {
+            const currentTypes = new Set((Array.isArray(current) ? current : [current])
+                .map(normalizeFilterLabel).filter(Boolean));
+            // Record each newly applied type separately. This keeps the GA4
+            // custom dimension short and avoids high-cardinality cumulative
+            // values such as image_video_stories_display_banner_...
+            (Array.isArray(value) ? value : [value]).forEach((adType) => {
+                const normalizedAdType = normalizeFilterLabel(adType);
+                if (normalizedAdType && !currentTypes.has(normalizedAdType)) {
+                    trackAppliedFilter('ad_type', normalizedAdType, 'filter_bar', true);
+                }
+            });
+        }
         setFilterValues(prev => {
-            const current = prev.ad_type || prev.ad_types || prev.type || prev.adType || [];
-            const value = typeof valueOrUpdater === 'function'
-                ? valueOrUpdater(current)
-                : valueOrUpdater;
             const next = { ...prev, ad_type: value };
             delete next.ad_types;
             delete next.type;
             delete next.adType;
+            filterValuesRef.current = next;
             return next;
         });
-    }, []);
+    }, [trackAppliedFilter]);
 
     const getFilter = useCallback((filterId) => {
         return filterValues[filterId];
@@ -778,6 +860,7 @@ export function useSDUI() {
         effectivePlatforms,
         hasUnsupportedActiveFiltersFor,
         setActivePlatforms,
+        setAnalyticsAllPlatformsSelected,
         platformFilterMatrix,
 
         // Visibility helpers

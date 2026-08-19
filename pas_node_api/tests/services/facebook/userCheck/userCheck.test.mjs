@@ -68,7 +68,7 @@ describe("services/facebook/userCheck > fbUserData (ads-data)", () => {
     expect(await fbUserData({ body: { platform: "10" } }, db, fakeLogger)).toEqual({ code: 400, message: "please provide facebookId first" });
   });
 
-  it("new user → 200, keeps current_country NAME and adds current_country_id, strips platform, uppercases Gender", async () => {
+  it("new user → 200, keeps current_country NAME and adds current_country_id, strips platform/system_id, uppercases Gender", async () => {
     const { db, calls } = makeDb({ country: 0 });
     const out = await fbUserData(
       { body: { facebook_id: "615", current_country: "India", name: "Matt", Gender: "male", age: "25", platform: "10", system_id: "GLB-1" } },
@@ -77,6 +77,7 @@ describe("services/facebook/userCheck > fbUserData (ads-data)", () => {
     expect(out).toEqual({ code: 200, message: "data added successfully" });
     expect(calls.insertCountry).toBe(1);
     expect(calls.insertUser.q).not.toMatch(/platform/);
+    expect(calls.insertUser.q).not.toMatch(/system_id/);
     const cols = colsOf(calls.insertUser.q);
     expect(cols).toContain("current_country");
     expect(cols).toContain("current_country_id");

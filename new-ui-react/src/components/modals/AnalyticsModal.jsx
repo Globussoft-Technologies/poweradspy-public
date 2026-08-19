@@ -1663,6 +1663,22 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
     ?? processedAd?.occurrenceCount ?? ad?.occurrenceCount;
   const analyticsLeadScore = d.lead_score ?? processedAd?.lead_score ?? ad?.lead_score
     ?? processedAd?.leadScore ?? ad?.leadScore;
+  const admobSessionsData =
+    isAdmob && insights.admobSessions && typeof insights.admobSessions === "object"
+      ? insights.admobSessions
+      : null;
+  const admobSessionRows = Array.isArray(admobSessionsData?.sessions)
+    ? admobSessionsData.sessions
+    : [];
+  const admobSessionsTotal = Number(
+    admobSessionsData?.sessions_total ?? analyticsOccurrenceCount ?? 0,
+  );
+  const admobTrackedSessionsTotal = Number(admobSessionsData?.total_sessions || 0);
+  const admobOccurrenceRatePercent = Number(
+    admobSessionsData?.occurrence_rate_percent ?? 0,
+  );
+  const hasAdmobSessionHistory =
+    isAdmob && (admobSessionRows.length > 0 || admobSessionsTotal > 0);
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
   const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
 
@@ -1681,6 +1697,14 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
     if (s.includes('T')) return s.split('T')[0];
     if (s.includes(' ')) return s.split(' ')[0];
     return s;
+  };
+  const fmtDateTime = (val) => {
+    if (!val) return '-';
+    const date = new Date(val);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString().slice(0, 19).replace('T', ' ');
+    }
+    return String(val);
   };
   const transparencyDate = (val) => {
     return formatTransparencyCalendarDate(val);
@@ -1834,12 +1858,14 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
           value: String(analyticsOccurrenceCount),
           icon: Activity,
           color: "text-cyan-400",
+          tooltip: "How many times we've spotted this exact ad so far.",
         }] : []),
         ...(Number(analyticsLeadScore) > 0 ? [{
           label: "LEAD SCORE",
           value: String(analyticsLeadScore),
           icon: TrendingUp,
           color: "text-violet-400",
+          tooltip: "How proven this ad is — combines how often it shows up and how long it's been running. Higher means a stronger track record.",
         }] : []),
       ] : []),
       {
@@ -2053,6 +2079,20 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
       item.value === "—"
     );
   });
+
+  const admobSessionSummaryText = (() => {
+    if (!hasAdmobSessionHistory) return "";
+    if (admobTrackedSessionsTotal > 0) {
+      const suffix = admobOccurrenceRatePercent > 0
+        ? ` (${admobOccurrenceRatePercent}% occurrence rate)`
+        : "";
+      return `Seen in ${admobSessionsTotal} of ${admobTrackedSessionsTotal} tracked sessions${suffix}.`;
+    }
+    if (admobSessionsTotal > 0) {
+      return `Seen in ${admobSessionsTotal} scraping sessions.`;
+    }
+    return "";
+  })();
 
   return (
     <div
@@ -2338,7 +2378,7 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                           : ""
                       }`}
                     >
-                      <div className="flex items-center gap-2.5">
+                      <div className={`flex items-center gap-2.5 ${item.tooltip ? "relative group/row" : ""}`}>
                         <item.icon
                           size={14}
                           className={iconColorClass(item.color, isLight)}
@@ -2346,6 +2386,11 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                         <span className="text-[12px] font-bold text-[#aaa]">
                           {item.label}
                         </span>
+                        {item.tooltip && (
+                          <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/row:opacity-100 pointer-events-none transition-opacity z-50">
+                            {item.tooltip}
+                          </div>
+                        )}
                       </div>
                       {item.expandable ? (
                         <div className="flex items-center gap-1.5 max-w-[60%]">
@@ -2380,6 +2425,111 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                 </div>
               </div>
             </div>}
+
+            {hasAdmobSessionHistory && (
+              <div className="pt-4 mt-4">
+                <h2
+                  className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
+                >
+                  <BarChart3 size={16} />
+                  Session History
+                </h2>
+                <div
+                  className={`rounded-2xl border-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/10"}`}
+                >
+                  <div className="px-4 pt-4 flex flex-wrap gap-2">
+                    <span
+                      className={`relative group/badge inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
+                        isLight ? "bg-blue-50 text-blue-700" : "bg-blue-500/10 text-blue-300"
+                      }`}
+                    >
+                      Sessions Seen: {admobSessionsTotal}
+                      <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/badge:opacity-100 pointer-events-none transition-opacity z-50">
+                        How many times we've actually found this ad.
+                      </div>
+                    </span>
+                    {admobTrackedSessionsTotal > 0 && (
+                      <span
+                        className={`relative group/badge inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
+                          isLight ? "bg-violet-50 text-violet-700" : "bg-violet-500/10 text-violet-300"
+                        }`}
+                      >
+                        Tracked Sessions: {admobTrackedSessionsTotal}
+                        <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/badge:opacity-100 pointer-events-none transition-opacity z-50">
+                          How many times we checked the app this ad lives in — whether or not this ad happened to show up.
+                        </div>
+                      </span>
+                    )}
+                    {admobOccurrenceRatePercent > 0 && (
+                      <span
+                        className={`relative group/badge inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
+                          isLight ? "bg-emerald-50 text-emerald-700" : "bg-emerald-500/10 text-emerald-300"
+                        }`}
+                      >
+                        Occurrence Rate: {admobOccurrenceRatePercent}%
+                        <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/badge:opacity-100 pointer-events-none transition-opacity z-50">
+                          How consistently this ad shows up whenever we check — Sessions Seen out of Tracked Sessions.
+                        </div>
+                      </span>
+                    )}
+                  </div>
+
+                  {admobSessionSummaryText && (
+                    <p className={`px-4 pt-3 text-[13px] ${isLight ? "text-gray-600" : "text-white/65"}`}>
+                      {admobSessionSummaryText}
+                    </p>
+                  )}
+
+                  {admobSessionRows.length > 0 ? (
+                    <>
+                      {admobSessionRows.length < admobSessionsTotal && (
+                        <div className={`px-4 pt-3 text-[12px] font-medium ${isLight ? "text-gray-500" : "text-white/45"}`}>
+                          Showing most recent {admobSessionRows.length} of {admobSessionsTotal} sessions.
+                        </div>
+                      )}
+                      <div className="px-4 pb-4 pt-3">
+                        <div
+                          className={`max-h-72 overflow-y-auto rounded-xl border ${
+                            isLight ? "border-gray-200 bg-white" : "border-white/10 bg-black/10"
+                          }`}
+                        >
+                          {admobSessionRows.map((session, index) => (
+                            <div
+                              key={`${session.session_id || "session"}-${session.system_id || index}-${session.observed_at || ""}`}
+                              className={`flex items-start justify-between gap-4 px-4 py-3 ${
+                                index < admobSessionRows.length - 1
+                                  ? isLight
+                                    ? "border-b border-gray-200"
+                                    : "border-b border-white/10"
+                                  : ""
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className={`text-[13px] font-semibold break-all ${isLight ? "text-gray-900" : "text-white/85"}`}>
+                                  {session.session_id || "Unknown session"}
+                                </div>
+                                {session.system_id && (
+                                  <div className={`mt-1 text-[11px] break-all ${isLight ? "text-gray-500" : "text-white/45"}`}>
+                                    System ID: {session.system_id}
+                                  </div>
+                                )}
+                              </div>
+                              <div className={`text-[12px] whitespace-nowrap ${isLight ? "text-gray-500" : "text-white/50"}`}>
+                                {fmtDateTime(session.observed_at)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className={`px-4 py-4 text-[13px] ${isLight ? "text-gray-500" : "text-white/50"}`}>
+                      Session counts are available, but individual session rows are not returned yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ── Sections below hero ────────────────────────────── */}

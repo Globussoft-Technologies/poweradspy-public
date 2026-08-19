@@ -601,6 +601,34 @@ describe("buildSearchPayload > AdMob sidebar filters", () => {
     expect(p.sub_network).toEqual(["gdn"]);
     expect(p.source_app).toEqual(["Cricket App"]);
   });
+
+  it("serializes AdMob poster intelligence sort and range filters", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["admob"],
+      admobPosterSort: "occurrence_count",
+      leadScoreRange: { min: 10, max: 250 },
+      occurrenceCountRange: { min: 2, max: 15 },
+      activeDaysRange: { min: 7, max: 45 },
+    });
+    expect(p.admobPosterSort).toBe("occurrence_count");
+    expect(p.leadScoreRange).toEqual({ min: 10, max: 250 });
+    expect(p.occurrenceCountRange).toEqual({ min: 2, max: 15 });
+    expect(p.activeDaysRange).toEqual({ min: 7, max: 45 });
+  });
+
+  it("drops AdMob poster intelligence ranges for non-AdMob searches", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["google"],
+      admobPosterSort: "lead_score",
+      leadScoreRange: { min: 10, max: 250 },
+      occurrenceCountRange: { min: 2, max: 15 },
+      activeDaysRange: { min: 7, max: 45 },
+    });
+    expect(p.admobPosterSort).toBe("lead_score");
+    expect(p.leadScoreRange).toBe("NA");
+    expect(p.occurrenceCountRange).toBe("NA");
+    expect(p.activeDaysRange).toBe("NA");
+  });
 });
 
 describe("buildSearchPayload > misc fields", () => {

@@ -70,7 +70,6 @@ async function fbUserData(req, db, log) {
     if (decoded.Gender !== undefined && decoded.Gender !== null) {
       decoded.Gender = String(decoded.Gender).toUpperCase();
     }
-
     const user = await repo.getUserByFacebookId(sql, decoded.facebook_id);
 
     if (user.code === 400) {
@@ -78,6 +77,7 @@ async function fbUserData(req, db, log) {
       const insertData = { ...decoded };
       delete insertData.platform;
       delete insertData.data;
+      delete insertData.system_id;
       const id = await repo.insertUser(sql, insertData);
       if (id > 0) return { code: 200, message: 'data added successfully' };
       // PHP leaves $response untouched when the insert yields no id → empty body.

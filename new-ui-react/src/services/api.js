@@ -552,8 +552,14 @@ export const mapAdToCard = (raw) => {
     internalId: raw.id ?? raw.sql_id ?? null,
     advertiser: isAdmob ? (raw.post_owner ?? null) : (raw.post_owner || 'Unknown'),
     advertiserImage: raw.post_owner_image ? `${raw.post_owner_image}` : null,
-    date: formatDate(raw.post_date),
-    lastSeen: formatDate(transparencyWindow?.lastSeenRaw ?? raw.last_seen),
+    date: formatDate(
+      isGoogleTransparency
+        ? raw.last_seen
+        : raw.post_date
+    ),
+    // Google Transparency date filters run against the top-level last_seen field,
+    // so the grid must render that same value to avoid mismatched cards.
+    lastSeen: formatDate(raw.last_seen),
     firstSeen: formatDate(transparencyWindow?.firstSeenRaw ?? raw.first_seen),
     // IMAGE ads whose NAS image isn't ready yet are flagged preview_unavailable by the
     // backend — show a placeholder (don't fall back to an expiring source URL). The real
@@ -1046,6 +1052,12 @@ export const FILTER_PLATFORM_SUPPORT = {
   admob_source_app_filter: ['admob'],
   source_app_filter: ['admob'],
   source_app: ['admob'],
+  admob_lead_score_range: ['admob'],
+  leadScoreRange: ['admob'],
+  admob_occurrence_count_range: ['admob'],
+  occurrenceCountRange: ['admob'],
+  admob_active_days_range: ['admob'],
+  activeDaysRange: ['admob'],
   native_network: ['native'],
   has_ai_meta:    ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'google', 'tiktok'],
   language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google'],
@@ -1148,6 +1160,9 @@ export const buildSearchPayload = (filters = {}) => {
   const explicitAdmobPosterSort = String(
     pick('admobPosterSort', 'admob_poster_sort', 'admob_poster_rank_filter') ?? ''
   ).trim();
+  const leadScoreRange = pick('leadScoreRange', 'admob_lead_score_range');
+  const occurrenceCountRange = pick('occurrenceCountRange', 'admob_occurrence_count_range');
+  const activeDaysRange = pick('activeDaysRange', 'admob_active_days_range');
   const implicitAdmobPosterSort = (() => {
     if (!admobSelected || explicitAdmobPosterSort) return '';
     const raw = String(sortBy ?? '').trim().toLowerCase();
@@ -1435,6 +1450,9 @@ export const buildSearchPayload = (filters = {}) => {
     // Google-only mode, so it retains its narrowed request.
     network: filters.isAllTab === true && !googleTransparencyEnabled ? 'all' : resolvedNetworks,
     admobPosterSort: admobPosterSort || 'NA',
+    leadScoreRange: ps(resolvedNetworks, 'leadScoreRange') ? v(leadScoreRange) : 'NA',
+    occurrenceCountRange: ps(resolvedNetworks, 'occurrenceCountRange') ? v(occurrenceCountRange) : 'NA',
+    activeDaysRange: ps(resolvedNetworks, 'activeDaysRange') ? v(activeDaysRange) : 'NA',
     youtube_display_ads,
     // user_id: 281,
     advertiser,

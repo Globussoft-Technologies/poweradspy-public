@@ -59,6 +59,9 @@ const BODY_TO_SDUI_FILTER_IDS = {
   source_app:     ['source_app_filter', 'admob_source_app_filter', 'source_app'],
   admobPosterSort:['admob_poster_rank_filter'],
   admob_poster_sort:['admob_poster_rank_filter'],
+  leadScoreRange:['admob_lead_score_range'],
+  occurrenceCountRange:['admob_occurrence_count_range'],
+  activeDaysRange:['admob_active_days_range'],
   verified:       ['verified_filter', 'verified'],
   popularity:     ['popularity_range_filter', 'popularity'],
   likes:          ['likes_range_filter', 'likes'],
@@ -108,6 +111,9 @@ const STATIC_FILTER_NETWORKS = {
   source_app: ['admob'],
   admobPosterSort: ['admob'],
   admob_poster_sort: ['admob'],
+  leadScoreRange: ['admob'],
+  occurrenceCountRange: ['admob'],
+  activeDaysRange: ['admob'],
 };
 
 // AdMob should not participate in AI/category-driven searches. These filters

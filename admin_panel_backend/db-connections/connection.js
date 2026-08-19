@@ -28,6 +28,7 @@ configs.forEach((config, index) => {
     ...config,
     waitForConnections: true,
     connectionLimit: 50,
+      maxIdle: 10,
     queueLimit: 100,
     connectTimeout: 10000,
   });

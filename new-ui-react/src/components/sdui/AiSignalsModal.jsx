@@ -635,7 +635,10 @@ const AiSignalsModal = ({
           delete next[key];
         }
       }
-      onApply(next);
+      onApply(next, {
+        changedFilterIds: filterKeys,
+        entryPoint: "ai_filter_modal",
+      });
     }
     closeAndForgetDraft();
   };

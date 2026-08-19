@@ -55,6 +55,7 @@ const SavedAdsPage = ({
   sdui,
   favouriteAdIds = new Set(),
   hiddenAdvertiserIds = new Set(),
+  resolveSavedHiddenAd = (ad) => ad,
   onToggleFavourite,
   onUnHideAd,
   onHideAdvertiser,
@@ -219,7 +220,7 @@ const SavedAdsPage = ({
         skip: 0,
       };
       const result = await fetchAds(payload);
-      const fetched = result.ads || [];
+      const fetched = (result.ads || []).map(resolveSavedHiddenAd);
       // Deduplicate by adId — API can return duplicates when pagination boundaries shift
       const seen = new Set();
       const unique = fetched.filter((ad) => {
@@ -241,7 +242,7 @@ const SavedAdsPage = ({
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, []);
+  }, [resolveSavedHiddenAd]);
 
   // Load more — reads from refs to avoid stale closures
   const loadMore = useCallback(async () => {
@@ -270,7 +271,7 @@ const SavedAdsPage = ({
         skip: pageRef.current,
       };
       const result = await fetchAds(payload);
-      const fetched = result.ads || [];
+      const fetched = (result.ads || []).map(resolveSavedHiddenAd);
       setAds((prev) => {
         const existingIds = new Set(prev.map((a) => String(a.adId || a.id || "")));
         const unique = fetched.filter((a) => {
@@ -287,7 +288,7 @@ const SavedAdsPage = ({
       setLoadingMore(false);
       isFetchingRef.current = false;
     }
-  }, []);
+  }, [resolveSavedHiddenAd]);
 
   // Re-fetch fresh when tab or platform changes
   useEffect(() => {

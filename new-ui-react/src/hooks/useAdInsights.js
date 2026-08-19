@@ -46,6 +46,7 @@ export function useAdInsights(
     pageDetails: null,
     targetSite: null,
     aiMeta: null,
+    admobSessions: null,
   });
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
@@ -70,6 +71,7 @@ export function useAdInsights(
       pageDetails: null,
       targetSite: null,
       aiMeta: null,
+      admobSessions: null,
     });
     setErrors({});
     setNotFound(false);
@@ -86,20 +88,41 @@ export function useAdInsights(
         // AdMob details are served by its existing search endpoint rather than
         // the common-network SSE endpoint. The URL uses mob_ads.id.
         if (normalizedNetwork === 'admob') {
-          const res = await fetch(`${PAS_API_BASE}/api/v1/admob/ads/search`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              'Authorization': `Bearer ${PAS_API_TOKEN}`,
-            },
-            body: JSON.stringify({ id: adId, take: 1 }),
-            signal: controller.signal,
-          });
-          const payload = await res.json().catch(() => null);
-          const detail = payload?.data?.[0] || null;
+          const headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${PAS_API_TOKEN}`,
+          };
+          const [detailPayload, sessionsPayload] = await Promise.all([
+            fetch(`${PAS_API_BASE}/api/v1/admob/ads/search`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ id: adId, take: 1 }),
+              signal: controller.signal,
+            }).then(async (response) => {
+              if (!response.ok) return null;
+              return response.json().catch(() => null);
+            }),
+            Promise.resolve(fetch(`${PAS_API_BASE}/api/v1/admob/ads/sessions`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ id: adId, take: 25, skip: 0 }),
+              signal: controller.signal,
+            }))
+              .then(async (response) => {
+                if (!response?.ok) return null;
+                return response.json().catch(() => null);
+              })
+              .catch(() => null),
+          ]);
+
+          const detail = detailPayload?.data?.[0] || null;
           if (detail) {
-            setInsights((previous) => ({ ...previous, adDetails: detail }));
+            setInsights((previous) => ({
+              ...previous,
+              adDetails: detail,
+              admobSessions: sessionsPayload?.data || null,
+            }));
           } else {
             setNotFound(true);
             setNotFoundForId(adId);
