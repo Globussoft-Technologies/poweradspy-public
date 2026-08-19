@@ -646,7 +646,27 @@ class SearchMixQueryBuilder {
     } catch {
       domain = url.split('/')[0];
     }
-    return asFilter({ wildcard: { 'instagram_ad_meta_data.destination_url': `*${domain}*` } });
+    domain = String(domain || '').replace(/^www\./i, '').toLowerCase().trim();
+    if (!domain) return null;
+    // A leading-wildcard scan (`*domain*`) on the analyzed destination_url
+    // field pinned the ES search thread pool during real traffic (2026-08-19
+    // incident — 100+ concurrent search tasks, 100k+ rejected writes on the
+    // same node). destination_url.keyword holds the untokenized full URL, so
+    // matching it against the small set of real-world protocol/www prefixes
+    // a destination URL can start with turns the scan into a handful of
+    // indexed prefix lookups — same "does this ad go to domain X" result,
+    // without walking the whole term dictionary.
+    return asFilter({
+      bool: {
+        should: [
+          { prefix: { 'instagram_ad_meta_data.destination_url.keyword': `http://${domain}` } },
+          { prefix: { 'instagram_ad_meta_data.destination_url.keyword': `https://${domain}` } },
+          { prefix: { 'instagram_ad_meta_data.destination_url.keyword': `http://www.${domain}` } },
+          { prefix: { 'instagram_ad_meta_data.destination_url.keyword': `https://www.${domain}` } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
   }
 
   // must_not collectors

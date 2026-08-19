@@ -175,6 +175,27 @@ function buildQuery(net, type, value, dateScoped, today) {
           minimum_should_match: 1,
         },
       });
+    } else if (net === 'instagram') {
+      // instagram has no dedicated domain-only keyword field yet (its
+      // instagram_ad_domain doc only indexes domain_registered_date — see
+      // platformSearchFields.js). destination_url.keyword holds the
+      // untokenized full URL, so match it against the real-world
+      // protocol/www prefixes instead of a leading-wildcard scan of the
+      // analyzed field — same "does this ad go to domain X" result without
+      // walking the whole term dictionary (2026-08-19 incident: this exact
+      // wildcard, fired from this cron AND from live user domain search,
+      // pinned the ES search thread pool and starved the write pool).
+      must.push({
+        bool: {
+          should: [
+            { prefix: { [`${domainField}.keyword`]: `http://${domain}` } },
+            { prefix: { [`${domainField}.keyword`]: `https://${domain}` } },
+            { prefix: { [`${domainField}.keyword`]: `http://www.${domain}` } },
+            { prefix: { [`${domainField}.keyword`]: `https://www.${domain}` } },
+          ],
+          minimum_should_match: 1,
+        },
+      });
     } else {
       must.push({ wildcard: { [domainField]: `*${domain}*` } });
     }

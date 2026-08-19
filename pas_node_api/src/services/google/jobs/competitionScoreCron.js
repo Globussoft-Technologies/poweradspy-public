@@ -20,14 +20,24 @@
  * rows — nothing like the 42M-row ad corpus that caused this session's
  * other slow-query incidents). It's decoupling it from the ad-corpus
  * sweep's own (much slower) completion signal and giving it its own
- * frequent, independent schedule instead — same reused, already-correct
- * percentile-rank query, just no longer gated behind an event that may
- * effectively never fire.
+ * frequent, independent schedule instead — same percentile-rank query,
+ * just no longer gated behind an event that may effectively never fire.
+ * Scores whatever rows already exist in keyword_stats_unique right now
+ * (however much of the ad-corpus sweep has completed so far) — never
+ * touches, waits on, or duplicates that sweep in any way.
+ *
+ * Imports from helpers/competitionScoring.js, NOT scripts/refresh-keyword-
+ * stats-safe.js — that script has top-level side effects (process.on
+ * SIGINT/SIGTERM handlers, dotenv.config()) that run the instant it's
+ * require()'d, not just when its CLI entry point runs. That's fine for a
+ * one-off CLI invocation but wrong to pull into the long-lived server
+ * process for one function; scripts/refresh-keyword-stats-safe.js is left
+ * completely untouched.
  */
 
 const databaseManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
-const { recomputeCompetitionScores } = require('../../../../scripts/refresh-keyword-stats-safe');
+const { recomputeCompetitionScores } = require('../helpers/competitionScoring');
 
 const log = logger.createChild('keyword-competition-score');
 const NETWORK = 'google';
