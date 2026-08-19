@@ -788,6 +788,24 @@ describe("dashboardService > projectcompeitetor", () => {
     expect(res.send).toHaveBeenCalled();
   });
 
+  it("monitoring=true branch survives ObjectId/string mismatches", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({
+      _id: "p1",
+      competitors: ["c1"],
+      monitoring: ["c1"],
+    });
+    spies.competitorsFindSpy.mockResolvedValueOnce([
+      { _id: { toString: () => "c1" }, competitor_name: "C1" },
+    ]);
+    Object.values(spies.esClient).forEach((c) => c.count.mockResolvedValue({ count: 5 }));
+    const res = mockRes();
+    await svc.projectcompeitetor(
+      { body: { project_name: "Acme", user_id: "u1" } },
+      res
+    );
+    expect(res.send.mock.calls[0][0].body.data.comp_details.C1.monitoring).toBe(true);
+  });
+
   it("outer catch (lines 363-368): throwing-Proxy req.body → outer catch fires", async () => {
     const body = new Proxy({ exists: true }, {
       get(target, prop) {
@@ -878,6 +896,26 @@ describe("dashboardService > projectcompeitetorClient", () => {
       res
     );
     expect(res.send.mock.calls[0][0].body.msg).toContain("Project name retrieved");
+  });
+
+  it("monitoring=true branch survives ObjectId/string mismatches", async () => {
+    spies.competitorsReqFindOneSpy.mockResolvedValueOnce({
+      _id: "p1",
+      competitors: ["c1"],
+      monitoring: ["c1"],
+    });
+    const mod = await import("../../../models/competitors.js");
+    mod.default.countDocuments = vi.fn().mockResolvedValueOnce(1);
+    mod.default.aggregate = vi.fn().mockResolvedValueOnce([
+      { _id: { toString: () => "c1" }, competitor_name: "C1" },
+    ]);
+    Object.values(spies.esClient).forEach((c) => c.count.mockResolvedValue({ count: 1 }));
+    const res = mockRes();
+    await svc.projectcompeitetorClient(
+      { body: { project_name: "Acme", user_id: "u1", page: 1, limit: 10 } },
+      res
+    );
+    expect(res.send.mock.calls[0][0].body.data.comp_details.C1.monitoring).toBe(true);
   });
 
   it("projectcompeitetorClient: monitoring missing → `|| []` defensive fallback (line 418)", async () => {

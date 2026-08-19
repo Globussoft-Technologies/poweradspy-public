@@ -1690,6 +1690,8 @@ describe("competitorService > insertCompRequests", () => {
         category: "tech",
       },
     }, res);
+    const createPayload = spies.competitorsReqCreateSpy.mock.calls[0][0];
+    expect(createPayload.monitoring).toEqual([]);
     expect(res.send.mock.calls[0][0].body.msg).toContain("Competitor Request created");
   });
 

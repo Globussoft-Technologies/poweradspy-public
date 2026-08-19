@@ -401,18 +401,20 @@ async create(req, res) {
             }
            }
 
-           let payload = {
-            user_id,
-            project_name,
-            advertiser,
-            brand_url,
-            competitors: competitorIds,
-            monitoring: competitorIds,
-            //need for new view
-            // competitors: [], // Store only selected competitors
-            // monitoring: [],  // Initial display with monitoring turned off
-            country: Array.isArray(country) ? country : country ? [country] : [],
-            category: Array.isArray(category) ? category : category ? [category] : []
+         let payload = {
+          user_id,
+          project_name,
+          advertiser,
+          brand_url,
+          competitors: competitorIds,
+          // Monitoring must start empty; explicit user action controls which
+          // competitors are marked as monitored after the request is created.
+          monitoring: [],
+          //need for new view
+          // competitors: [], // Store only selected competitors
+          // monitoring: [],  // Initial display with monitoring turned off
+          country: Array.isArray(country) ? country : country ? [country] : [],
+          category: Array.isArray(category) ? category : category ? [category] : []
           };
 
               //INSERTING INTO COMPETITOR_REQUEST COLLECTION    

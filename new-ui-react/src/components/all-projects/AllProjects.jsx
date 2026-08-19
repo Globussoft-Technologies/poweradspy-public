@@ -206,6 +206,37 @@ const isRenderableTopCountry = (value) => {
   return info.isGlobal || SUPPORTED_TOP_COUNTRY_CODES.has(String(info.f || "").toLowerCase());
 };
 
+// Project cards can receive either a lightweight summary payload (competitor
+// ids + persisted `monitoring[]`) or a hydrated detail payload where each
+// competitor row carries `isMonitored`. Only the latter should drive the live
+// on-screen count; otherwise a refreshed page would incorrectly treat a plain
+// id array as "hydrated" and render 0 monitored competitors.
+export const getProjectMonitoredCount = (proj) => {
+  if (!proj || typeof proj !== "object") return 0;
+
+  const competitorRows = Array.isArray(proj.competitors) ? proj.competitors : [];
+  const hasHydratedCompetitorFlags = competitorRows.some(
+    (competitor) =>
+      competitor &&
+      typeof competitor === "object" &&
+      !Array.isArray(competitor) &&
+      (Object.prototype.hasOwnProperty.call(competitor, "isMonitored") ||
+        Object.prototype.hasOwnProperty.call(competitor, "monitoring")),
+  );
+
+  if (hasHydratedCompetitorFlags) {
+    return competitorRows.filter((competitor) => Boolean(
+      competitor?.isMonitored ?? competitor?.monitoring,
+    )).length;
+  }
+
+  if (Array.isArray(proj.monitoring)) {
+    return proj.monitoring.length;
+  }
+
+  return proj.initialMonitoredCount || 0;
+};
+
 // Real API responses can list the same country more than once under
 // different raw strings (e.g. "India" and "Republic of India" both resolve
 // to the same ISO code), and can also mix in the "all"/Global-reach artifact
@@ -2542,13 +2573,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
           ) : hasProjects ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {projects.map((proj) => {
-                const liveMonitoredCount = Array.isArray(proj.competitors)
-                  ? proj.competitors.filter((c) => c.isMonitored).length
-                  : null;
-                const monitoredCount =
-                  liveMonitoredCount != null
-                    ? liveMonitoredCount
-                    : proj.initialMonitoredCount || 0;
+                const monitoredCount = getProjectMonitoredCount(proj);
                 return (
                   <div
                     key={proj.id}

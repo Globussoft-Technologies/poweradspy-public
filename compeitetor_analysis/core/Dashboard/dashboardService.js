@@ -446,9 +446,12 @@ class DashboardService {
                   competitors_data = competitors_data.slice(0, MAX_FB_COMPETITORS);
                 }
                 let names = competitors_data.map(c => c.competitor_name);
+                // Compare ids as strings so ObjectId/string mixes don't flip
+                // monitoring state for the legacy project read path.
+                const monitoredSet = new Set((monitoringStatus || []).map((id) => String(id)));
 
                 let cnames = competitors_data.reduce((acc, c) => {
-                  if (monitoringStatus.includes(c._id)) {
+                  if (monitoredSet.has(String(c._id))) {
                     acc[c.competitor_name] = {
                       id: c._id,
                       comp_request_id: projectName._id,
@@ -619,12 +622,15 @@ const getAdvertiserAdCount = async (advertiser) => {
         const specificToMatchByName = new Map(
           (projectName.specificToMatches || []).map(m => [m.name, m.match])
         );
+        // String-normalize monitoring ids here as well; this path feeds the
+        // competitor list that the UI renders after opening an existing project.
+        const monitoredSet = new Set((monitoringStatus || []).map((id) => String(id)));
 
         const cnames = competitors_data.reduce((acc, c) => {
           acc[c.competitor_name] = {
             id: c._id,
             comp_request_id: projectName._id,
-            monitoring: monitoringStatus.includes(c._id),
+            monitoring: monitoredSet.has(String(c._id)),
             specific_to_match: specificToMatchByName.get(c.competitor_name?.toLowerCase().trim()) || null
           };
           return acc;
