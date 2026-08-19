@@ -2313,6 +2313,10 @@ const App = () => {
       });
       const result = await fetchAdsForExport({ ...sdui.filterValues, activePlatforms: exportPlatforms, activePlatform, searchQuery: ui.searchQuery, searchIn: ui.searchIn, exactSearch: ui.exactSearch, selCategories: sdui.selCategories, selCountries: sdui.selCountries, sortBy: sdui.sortBy });
       trackProductEvent('feature_completed', { entry_point: 'dashboard', feature_name: 'ad_export', filter_count_bucket: getFilterCountBucket(sdui.filterValues), ...getNetworkContext(isAllActive ? [] : exportPlatforms), request_context: 'export', search_mode: 'standard', search_type: String(ui.searchIn || 'keyword').toLowerCase() });
+      // Also report under the shared 'ad_action' event (action_name: export_ads) —
+      // same event other ad-card/detail actions (ad_analytics, show_original, ...)
+      // report under, so Export_ads shows up in that breakdown too.
+      trackAdAction('export_ads', { entry_point: 'dashboard', feature_name: 'ad_export', filter_count_bucket: getFilterCountBucket(sdui.filterValues), ...getNetworkContext(isAllActive ? [] : exportPlatforms), request_context: 'export', search_mode: 'standard', search_type: String(ui.searchIn || 'keyword').toLowerCase() });
       return result;
     } catch (err) {
       trackProductEvent('feature_error', { entry_point: 'dashboard', error_type: classifyError(err), feature_name: 'ad_export', ...getNetworkContext(sdui.effectivePlatforms), request_context: 'export' });

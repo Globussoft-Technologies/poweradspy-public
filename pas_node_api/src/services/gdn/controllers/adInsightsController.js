@@ -302,10 +302,21 @@ async function aggregateCountryData(db, hits) {
   return result;
 }
 
+// Some GDN targeting data stores country names with a leading article
+// ("The Netherlands", "The Bahamas") while country_data.nicename only has the
+// plain form ("Netherlands"). Stripping it lets those variants resolve to the
+// same ISO/dedup key instead of showing up as separate country rows.
+function stripLeadingArticle(name) {
+  return String(name || '').trim().replace(/^the\s+/i, '');
+}
+
 async function batchCountryLookup(db, names) {
   if (!db.sql || !names || names.length === 0) return new Map();
   const uniqueNames = [...new Set(names)];
-  const placeholders = uniqueNames.map(() => '?').join(',');
+  // Also query the article-stripped form of each name so e.g. "The
+  // Netherlands" can match the "Netherlands" row in country_data.
+  const queryNames = [...new Set(uniqueNames.flatMap((n) => [n, stripLeadingArticle(n)]))];
+  const placeholders = queryNames.map(() => '?').join(',');
   try {
     // Query both nicename and iso columns to handle cases where input is ISO code
     // Also search in lowercase for case-insensitive matching
@@ -314,7 +325,7 @@ async function batchCountryLookup(db, names) {
        WHERE nicename IN (${placeholders})
           OR iso IN (${placeholders})
           OR LOWER(iso) IN (${placeholders.split(',').map(() => 'LOWER(?)').join(',')})`,
-      [...uniqueNames, ...uniqueNames, ...uniqueNames]
+      [...queryNames, ...queryNames, ...queryNames]
     );
     const map = new Map();
     if (rows) {
@@ -332,6 +343,18 @@ async function batchCountryLookup(db, names) {
           map.set(row.country.toUpperCase(), { country: row.country, iso: row.iso });
         }
       }
+    }
+    // Alias the original (un-stripped) input names back to whatever the
+    // stripped form resolved to, so callers doing isoMap.get(rawName) —
+    // exact, lowercase, or uppercase — find the same entry as the plain name.
+    for (const original of uniqueNames) {
+      const stripped = stripLeadingArticle(original);
+      if (stripped === original) continue;
+      const match = map.get(stripped) || map.get(stripped.toLowerCase()) || map.get(stripped.toUpperCase());
+      if (!match) continue;
+      if (!map.has(original)) map.set(original, match);
+      if (!map.has(original.toLowerCase())) map.set(original.toLowerCase(), match);
+      if (!map.has(original.toUpperCase())) map.set(original.toUpperCase(), match);
     }
     return map;
   } catch {

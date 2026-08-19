@@ -203,6 +203,21 @@ describe("services/gdn/controllers/adInsightsController > getGdnAdCountry", () =
     expect(out.data.length).toBe(1);
     expect(out.data[0].iso).toBe("CD");
   });
+
+  it("'The Netherlands' resolves via the plain 'Netherlands' country_data row (deduped by ISO)", async () => {
+    const db = { sql: { query: vi.fn(async () => [
+      { country: "Netherlands", iso: "NL" },
+      { country: "The Netherlands", iso: null },
+    ])}};
+    const out = await getGdnAdCountry(
+      { body: { gdn_ad_id: "1", user_id: "u" }, query: {} }, db, fakeLogger
+    );
+    // country_data only has a "Netherlands" row (no "The Netherlands" row), but
+    // batchCountryLookup now also matches the article-stripped form, so both
+    // variants resolve to NL and are deduplicated into a single entry.
+    expect(out.data.length).toBe(1);
+    expect(out.data[0]).toEqual({ country: "Netherlands", iso: "NL" });
+  });
 });
 
 describe("services/gdn/controllers/adInsightsController > getGdnOutgoings", () => {
@@ -448,6 +463,26 @@ describe("services/gdn/controllers/adInsightsController > getAdvertiserCountryDa
     expect(out.data).toHaveLength(1);
     expect(out.data[0].country).toBe("Germany");
   });
+  it("advertiser-level: 'Netherlands' and 'The Netherlands' merge into one row (no more duplicate countries)", async () => {
+    const db = mkDb({
+      metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
+      esHits: [
+        { fields: { "gdn_ad.id": [1], "gdn_country_only.country.keyword": ["Netherlands"] } },
+        { fields: { "gdn_ad.id": [2], "gdn_country_only.country.keyword": ["Netherlands"] } },
+        { fields: { "gdn_ad.id": [3], "gdn_country_only.country.keyword": ["The Netherlands"] } },
+      ],
+      // country_data only has the plain "Netherlands" row, mirroring prod —
+      // there is no separate "The Netherlands" row.
+      countryRows: [{ nicename: "Netherlands", country: "Netherlands", iso: "NL" }],
+    });
+    const out = await getAdvertiserCountryData(
+      { body: { gdn_ad_id: "1" }, query: {} }, db, fakeLogger
+    );
+    expect(out.code).toBe(200);
+    expect(out.data).toHaveLength(1);
+    expect(out.data[0]).toMatchObject({ country: "Netherlands", iso: "NL", ad_count: 3 });
+  });
+
   it("aggregateCountryData returns null when no country buckets produced", async () => {
     const db = mkDb({
       metaRow: { post_owner_name: "Brand", post_owner_id: 5, last_seen: "2024-01-01" },
