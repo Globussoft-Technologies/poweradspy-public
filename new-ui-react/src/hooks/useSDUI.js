@@ -47,8 +47,42 @@ export const resolveAnalyticsFilterLabel = (config, filterId) => {
     const group = matchedFilter?.group_id || matchedDocument?._id || filterId;
     const normalizedGroup = normalizeFilterLabel(group);
     return FILTER_GROUP_LABELS[normalizedGroup]
-        || normalizeFilterLabel(matchedDocument?.title || matchedFilter?.label || normalizedGroup)
+        || normalizeFilterLabel(matchedFilter?.label || matchedDocument?.title || normalizedGroup)
             .replace(/_filter$|_range$|_btn_sort$/g, '');
+};
+
+const findAnalyticsOption = (options, targetValue) => {
+    for (const option of options || []) {
+        const optionValue = option?.value ?? option?._id ?? option?.label;
+        if (String(optionValue) === String(targetValue)) return option;
+        const nestedMatch = findAnalyticsOption(
+            option?.children || option?.sub_options || option?.options,
+            targetValue,
+        );
+        if (nestedMatch) return nestedMatch;
+    }
+    return null;
+};
+
+export const resolveAnalyticsFilterValueLabel = (config, filterId, value) => {
+    const documents = [
+        ...(config?.searchbar || []),
+        ...(config?.navbar || []),
+        ...(config?.sidebar || []),
+    ];
+    for (const document of documents) {
+        for (const filter of document?.filters || []) {
+            const ownsValue = filter?._id === filterId
+                || filter?.parent_filter_id === filterId
+                || filter?.child_filter_id === filterId;
+            if (!ownsValue) continue;
+            const option = findAnalyticsOption(filter?.options, value);
+            if (option) {
+                return option?.label || option?.name || option?.title || value;
+            }
+        }
+    }
+    return value;
 };
 
 export const resolveFilterAnalyticsNetworkContext = (config, platforms = []) => {
@@ -455,6 +489,11 @@ export function useSDUI() {
                 : networkContext.network.replace(/,/g, '_');
             const filterLabel = resolveAnalyticsFilterLabel(configRef.current, filterId);
             const normalizedValues = (Array.isArray(value) ? value : [value])
+                .map(filterValue => resolveAnalyticsFilterValueLabel(
+                    configRef.current,
+                    filterId,
+                    filterValue,
+                ))
                 .map(normalizeFilterLabel).filter(Boolean);
             trackProductEvent('filter_applied', {
                 filter_name: `${platformLabel}_${filterLabel}${includeValues && normalizedValues.length
