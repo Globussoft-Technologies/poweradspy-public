@@ -2007,7 +2007,7 @@ const AdDetailModal = ({
                   onClick={() => {
                     const network = String(platform || ad.network || 'facebook').toLowerCase();
                     trackEvent('viewOriginal', { ad_id: ad.adId ?? ad.id, network });
-                    trackAdAction('show_original', { entry_point: 'ad_detail_modal', feature_name: 'original_ad', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
+                    trackAdAction('view_original', { entry_point: 'ad_detail_modal', feature_name: 'original_ad', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
                   }}
                   className="px-4 py-2 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5"
                   style={{
