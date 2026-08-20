@@ -537,10 +537,10 @@ export function useSDUI() {
         }
     }, []);
 
-    const setFilter = useCallback((filterId, value) => {
+    const setFilter = useCallback((filterId, value, entryPoint) => {
         const previousValue = filterValuesRef.current?.[filterId];
         const changed = JSON.stringify(previousValue) !== JSON.stringify(value);
-        if (changed) trackAppliedFilter(filterId, value);
+        if (changed) trackAppliedFilter(filterId, value, entryPoint || 'sidebar');
         setFilterValues(prev => {
             const next = { ...prev, [filterId]: value };
             if (filterId === '_autoSortField') return next;

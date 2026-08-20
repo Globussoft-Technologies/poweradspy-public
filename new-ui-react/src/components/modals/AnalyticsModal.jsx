@@ -599,11 +599,14 @@ const TargetedKeywords = ({ adDetails, ad, isLight, competitiveIntelEnabled, onK
     ad?.target_keyword ||
     ad?.keywords ||
     ad?.target_keywords;
+  // Keyword strings can separate terms with "," or "|" (e.g. Google Ads'
+  // "jil sander|puma india" pipe-delimited targeting) — split on either so
+  // each term gets its own box instead of one box holding the raw string.
   const kwList = Array.isArray(keywords)
     ? keywords
     : typeof keywords === "string"
       ? keywords
-          .split(",")
+          .split(/[,|]/)
           .map((k) => k.trim())
           .filter(Boolean)
       : [];

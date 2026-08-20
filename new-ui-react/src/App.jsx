@@ -1139,17 +1139,17 @@ const App = () => {
     domain_reg: "domain_date_btn_sort",
   };
 
-  const handleDateChange = (type, dates) => {
+  const handleDateChange = (type, dates, entryPoint) => {
     if (guestGuard("Please login to change filters", {})) return;
     const filterKey = DATE_TYPE_TO_FILTER_KEY[type] || type;
     if (!dates || !dates[0] || !dates[1]) {
-      sdui.setFilter(filterKey, null);
+      sdui.setFilter(filterKey, null, entryPoint);
       return;
     }
     const [from, to] = dates;
     const toStartUnix = (d) => { const dt = new Date(d); return Math.floor(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate(), 0, 0, 0) / 1000); };
     const toEndUnix   = (d) => { const dt = new Date(d); return Math.floor(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59) / 1000); };
-    sdui.setFilter(filterKey, [toEndUnix(to), toStartUnix(from)]);
+    sdui.setFilter(filterKey, [toEndUnix(to), toStartUnix(from)], entryPoint);
   };
 
   // ── Hidden & Favourite State ─────────────────────────────────────────
@@ -1980,7 +1980,7 @@ const App = () => {
     // wrong network set for competitor drill-downs.
     setSearchTrigger(prev => prev + 1);
     trackProductEvent('search_submitted', {
-      entry_point: 'header',
+      entry_point: options.entryPoint || 'header',
       feature_name: 'ad_search',
       filter_count_bucket: getFilterCountBucket(options.resetFilters ? {} : sdui.filterValues),
       ...getNetworkContext(platform ? [platform] : ui.specificPlatforms),
@@ -2166,8 +2166,8 @@ const App = () => {
       dispatch(setSpecificPlatforms(pls));
     }
 
-    handleSearch(advertiserName, "advertiser");
-    if (range) handleDateChange("ad_seen", range);
+    handleSearch(advertiserName, "advertiser", undefined, { entryPoint: 'projects' });
+    if (range) handleDateChange("ad_seen", range, 'projects');
     // Fold the upcoming filter snapshot into the page-navigation history entry so
     // one browser Back returns to the project's Competitor Analytics view.
     coalesceNextHistoryWrite();

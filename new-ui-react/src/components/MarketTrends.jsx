@@ -990,7 +990,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                 note={topNote}
                 emptyMsg={topUnsupported ? metaOnlyMsg : `No ${topType === 'cta' ? 'CTA' : 'advertiser'} data for ${metaNet} in this window.`}
                 onRowClick={(r) => drill(topType, r.label)}
-                onCompare={topType === 'advertiser' ? (r) => setTerms((p) => (p.includes(r.label) || p.length >= 5 ? p : [...p, r.label])) : undefined}
+                onCompare={topType === 'advertiser' ? (r) => { setTerms((p) => (p.includes(r.label) || p.length >= 5 ? p : [...p, r.label])); trackMarketTrend('advertiser_compare'); } : undefined}
                 onExport={exportTopMovers}
                 scope={<AdvScope terms={terms} activeTerm={topScope} onPick={setTopScope} />}
                 right={(
