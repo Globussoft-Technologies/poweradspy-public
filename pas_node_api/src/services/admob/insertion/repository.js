@@ -112,9 +112,22 @@ async function setNasImage(sql, id, originalUrl, nasPath) {
 }
 
 async function insertObservation(tx, id, data, payloadHash) {
+  // ON DUPLICATE KEY (ad_id, session_id) means the scraper re-submitted this
+  // exact ad within the same session — bump repeat_count instead of the old
+  // INSERT IGNORE behavior of silently dropping the resubmission.
+  //
+  // The caller's `newObservation` flag must stay true ONLY for a genuinely
+  // new (ad_id, session_id) row — it gates whether country/state/sub_network/
+  // source_app appearance_count get incremented, and a same-session resubmit
+  // must NOT double-count those. MySQL reports affectedRows=1 for a fresh
+  // INSERT and =2 for a row that hit the UPDATE branch (values changed), so
+  // checking === 1 preserves the original "was this new" semantics exactly.
   const result = await tx.query(
-    `INSERT IGNORE INTO mob_ad_observations (ad_id, session_id, system_id, payload_hash, observed_at)
-     VALUES (?, ?, ?, UNHEX(?), ?)`,
+    `INSERT INTO mob_ad_observations (ad_id, session_id, system_id, payload_hash, observed_at, repeat_count)
+     VALUES (?, ?, ?, UNHEX(?), ?, 1)
+     ON DUPLICATE KEY UPDATE
+       repeat_count = repeat_count + 1,
+       observed_at = VALUES(observed_at)`,
     [id, data.session_id, data.system_id, payloadHash, data.last_seen]
   );
   return result.affectedRows === 1;

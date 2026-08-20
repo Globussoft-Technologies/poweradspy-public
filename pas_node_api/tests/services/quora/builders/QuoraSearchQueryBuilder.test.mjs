@@ -167,6 +167,15 @@ describe("Quora builder > clause generators (filter)", () => {
     const filter = b.build().body.query.bool.filter;
     expect(filter.some(f => f.exists?.field === "quora_ad_meta_data.firstSeenOnIos")).toBe(true);
   });
+  it("source desktop matches both current source and legacy first-seen data", () => {
+    b.setSource(["desktop"]);
+    const filter = b.build().body.query.bool.filter;
+    const desktop = filter.find(f => f.bool?.should?.some(clause =>
+      clause.exists?.field === "quora_ad_meta_data.firstSeenOnDesktop"
+    ));
+    expect(desktop?.bool?.minimum_should_match).toBe(1);
+    expect(desktop.bool.should.some(clause => clause.match?.source)).toBe(true);
+  });
   it("source unknown value alone → null (no filter)", () => {
     b.setSource(["unknown"]);
     const filter = b.build().body.query.bool.filter;

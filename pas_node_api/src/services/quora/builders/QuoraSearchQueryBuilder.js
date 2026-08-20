@@ -347,16 +347,22 @@ class QuoraSearchQueryBuilder {
     const src = this._params.source;
     if (!src || !src.length) return null;
     // Source rules (per product):
-    //   DESKTOP — `source == "desktop"` is authoritative: the ad is desktop regardless of
-    //             any firstSeenOn* timestamps.
+    //   DESKTOP - match both the current source field and legacy firstSeenOnDesktop data.
     //   iOS / ANDROID — these ads don't carry a reliable `source`, so they're identified by
     //             a firstSeenOn<platform> timestamp AND NOT being marked desktop (so a
     //             desktop ad that was also seen on iOS stays desktop-only).
     const sourceIsDesktop = { match: { source: { query: 'desktop', operator: 'and' } } };
+    const hasDesktopFirstSeen = { exists: { field: 'quora_ad_meta_data.firstSeenOnDesktop' } };
+    const desktopClause = {
+      bool: {
+        should: [sourceIsDesktop, hasDesktopFirstSeen],
+        minimum_should_match: 1,
+      },
+    };
     const clauseFor = (v) => {
-      if (v === 'desktop') return sourceIsDesktop;
-      if (v === 'ios')     return { bool: { filter: [{ exists: { field: 'quora_ad_meta_data.firstSeenOnIos' } }],     must_not: [sourceIsDesktop] } };
-      if (v === 'android') return { bool: { filter: [{ exists: { field: 'quora_ad_meta_data.firstSeenOnAndroid' } }], must_not: [sourceIsDesktop] } };
+      if (v === 'desktop') return desktopClause;
+      if (v === 'ios')     return { bool: { filter: [{ exists: { field: 'quora_ad_meta_data.firstSeenOnIos' } }],     must_not: [desktopClause] } };
+      if (v === 'android') return { bool: { filter: [{ exists: { field: 'quora_ad_meta_data.firstSeenOnAndroid' } }], must_not: [desktopClause] } };
       return null;
     };
 

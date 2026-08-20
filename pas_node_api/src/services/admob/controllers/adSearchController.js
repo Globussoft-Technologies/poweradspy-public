@@ -150,6 +150,17 @@ function buildCommonClauses(input) {
   if (occurrenceCountClause) filter.push(occurrenceCountClause);
   if (activeDaysClause) filter.push(activeDaysClause);
 
+  // Ad Seen Date filter (calendar dropdown) — sent as [upper_epoch, lower_epoch]
+  // seconds, same shape every other platform uses for seen_btn_sort.
+  const seenBtnSort = input.seen_btn_sort;
+  if (Array.isArray(seenBtnSort) && seenBtnSort.length === 2) {
+    const lower = Number(seenBtnSort[1]);
+    const upper = Number(seenBtnSort[0]);
+    if (Number.isFinite(lower) && Number.isFinite(upper)) {
+      filter.push({ range: { last_seen: { gte: lower, lte: upper, format: 'epoch_second' } } });
+    }
+  }
+
   let sortField = 'last_seen';
   if (sortInput === 'lead_score' || sortInput === 'top_ranked') sortField = 'lead_score';
   else if (sortInput === 'occurrence_count' || sortInput === 'most_seen') sortField = 'occurrence_count';
@@ -359,7 +370,7 @@ async function getAdSessions(req, db, logger) {
       [ad.id]
     );
     const sessionRowsPromise = db.sql.query(
-      `SELECT session_id, system_id, observed_at
+      `SELECT session_id, system_id, observed_at, repeat_count
        FROM mob_ad_observations
        WHERE ad_id = ?
        ORDER BY observed_at DESC
@@ -367,6 +378,8 @@ async function getAdSessions(req, db, logger) {
        OFFSET ${offset}`,
       [ad.id]
     );
+    // No linked source app to scope by — fall back to this ad's own session
+    // count instead of an unbounded, unfiltered scan of the whole table.
     const totalSessionsPromise = sourceAppIds.length > 0
       ? db.sql.query(
         `SELECT COUNT(DISTINCT o.session_id) AS total_sessions
@@ -375,16 +388,52 @@ async function getAdSessions(req, db, logger) {
          WHERE x.source_app_id IN (${sourceAppIds.map(() => '?').join(', ')})`,
         sourceAppIds
       )
-      : db.sql.query(
-        'SELECT COUNT(DISTINCT session_id) AS total_sessions FROM mob_ad_observations',
-        []
-      );
+      : occurrenceCountPromise.then((rows) => [
+        { total_sessions: Number(rows?.[0]?.sessions_total || 0) },
+      ]);
 
-    const [occurrenceRows, sessionRows, totalSessionRows] = await Promise.all([
+    // Per-app breakdowns for the Session History card: how many times THIS ad
+    // was seen in each app (appearance_count), and how many sessions were
+    // tracked for each app individually (not summed/deduped across apps).
+    const sourceAppNamesPromise = sourceAppIds.length > 0
+      ? db.sql.query(
+        `SELECT s.id AS source_app_id, s.source_app AS name, x.appearance_count
+         FROM mob_ad_source_apps x
+         JOIN mob_source_apps s ON s.id = x.source_app_id
+         WHERE x.ad_id = ?`,
+        [ad.id]
+      )
+      : Promise.resolve([]);
+    const trackedByAppPromise = sourceAppIds.length > 0
+      ? db.sql.query(
+        `SELECT x.source_app_id, COUNT(DISTINCT o.session_id) AS tracked
+         FROM mob_ad_observations o
+         INNER JOIN mob_ad_source_apps x ON x.ad_id = o.ad_id
+         WHERE x.source_app_id IN (${sourceAppIds.map(() => '?').join(', ')})
+         GROUP BY x.source_app_id`,
+        sourceAppIds
+      )
+      : Promise.resolve([]);
+
+    const [occurrenceRows, sessionRows, totalSessionRows, sourceAppNameRows, trackedByAppRows] = await Promise.all([
       occurrenceCountPromise,
       sessionRowsPromise,
       totalSessionsPromise,
+      sourceAppNamesPromise,
+      trackedByAppPromise,
     ]);
+
+    const trackedByAppId = new Map(
+      (trackedByAppRows || []).map((row) => [normalizeNumericId(row.source_app_id), Number(row.tracked || 0)])
+    );
+    const sessionsSeenByApp = (sourceAppNameRows || []).map((row) => ({
+      name: row.name,
+      count: Number(row.appearance_count || 0),
+    }));
+    const trackedSessionsByApp = (sourceAppNameRows || []).map((row) => ({
+      name: row.name,
+      count: trackedByAppId.get(normalizeNumericId(row.source_app_id)) || 0,
+    }));
 
     const occurrenceCount = Number(occurrenceRows?.[0]?.sessions_total || 0);
     const trackedSessionsTotal = Number(totalSessionRows?.[0]?.total_sessions || 0);
@@ -407,6 +456,8 @@ async function getAdSessions(req, db, logger) {
         occurrence_count: occurrenceCount,
         sessions_total: occurrenceCount,
         total_sessions: safeTrackedSessionsTotal,
+        sessions_seen_by_app: sessionsSeenByApp,
+        tracked_sessions_by_app: trackedSessionsByApp,
         occurrence_rate: occurrenceRate == null ? null : Number(occurrenceRate.toFixed(6)),
         occurrence_rate_percent: occurrenceRate == null ? null : Number((occurrenceRate * 100).toFixed(2)),
         lead_score: occurrenceCount * (runningDays || 0),
@@ -416,6 +467,7 @@ async function getAdSessions(req, db, logger) {
           session_id: row.session_id,
           system_id: row.system_id,
           observed_at: row.observed_at,
+          repeat_count: Number(row.repeat_count || 1),
         })),
       },
     };

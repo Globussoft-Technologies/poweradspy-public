@@ -119,7 +119,8 @@ const DATE_TYPE_TO_PLAN_ACCESS_ID = {
   domain_reg: 'domain_registration',
 };
 
-const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, guest, disableTooltips = false, isFilterRestricted, onRestricted }) => {
+const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobOnly = false, guest, disableTooltips = false, isFilterRestricted, onRestricted }) => {
+  const restrictToAdSeenOnly = isTikTok || isAdmobOnly;
   const [isOpen, setIsOpen] = useState(false);
   const [showTip, setShowTip] = useState(false);
   const [tipPos, setTipPos] = useState({ x: 0, y: 0 });
@@ -399,8 +400,8 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, guest, d
         <div className="absolute top-full sm:right-0 mt-2 scale-75 2xl:scale-100 origin-top-left sm:origin-top-right min-w-[300px] sm:min-w-[480px] bg-theme-bg border border-theme-border rounded-xl shadow-2xl z-50 flex flex-col">
           {/* Tabs for Date Types */}
           <div className="p-3 border-b border-[#363840]/70 bg-theme-surface">
-            <div className={`flex gap-2 ${isTikTok ? "justify-center" : ""}`}>
-              {OPTIONS.filter((opt) => !isTikTok || opt.id === "ad_seen").map((opt) => (
+            <div className={`flex gap-2 ${restrictToAdSeenOnly ? "justify-center" : ""}`}>
+              {OPTIONS.filter((opt) => !restrictToAdSeenOnly || opt.id === "ad_seen").map((opt) => (
                 <button
                   key={opt.id}
                   onClick={() => {
@@ -408,7 +409,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, guest, d
                     if (isDateTypeRestricted(opt.id)) { onRestricted?.(); setIsOpen(false); return; }
                     setActiveDateType(opt.id);
                   }}
-                  className={`${isTikTok ? "px-6" : "flex-1"} py-1.5 px-2 text-[10px] whitespace-nowrap sm:text-[11px] font-semibold rounded-md transition-colors border ${
+                  className={`${restrictToAdSeenOnly ? "px-6" : "flex-1"} py-1.5 px-2 text-[10px] whitespace-nowrap sm:text-[11px] font-semibold rounded-md transition-colors border ${
                     activeDateType === opt.id
                       ? "bg-[#335296] border-[#5a5c66]/40 text-white"
                       : "bg-[#222325] border-transparent text-white/70 hover:text-white"

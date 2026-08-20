@@ -166,11 +166,13 @@ CREATE TABLE IF NOT EXISTS `mob_ad_observations` (
   `system_id` VARCHAR(191) NOT NULL,
   `payload_hash` BINARY(32) NOT NULL,
   `observed_at` DATETIME(3) NOT NULL,
+  `repeat_count` INT UNSIGNED NOT NULL DEFAULT 1,
   `created_at` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_mob_observation_session` (`ad_id`, `session_id`),
   KEY `idx_mob_observations_session` (`session_id`, `observed_at`, `ad_id`),
   KEY `idx_mob_observations_observed` (`observed_at`, `ad_id`),
+  KEY `idx_mob_observations_ad_observed` (`ad_id`, `observed_at`),
   CONSTRAINT `fk_mob_observations_ad` FOREIGN KEY (`ad_id`) REFERENCES `mob_ads` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 

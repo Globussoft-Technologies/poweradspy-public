@@ -144,6 +144,7 @@ import {
   Sparkles,
   Youtube,
   Megaphone,
+  Info,
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import { useAdInsights } from "../../hooks/useAdInsights";
@@ -1318,11 +1319,20 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
   const [creativeClosed, setCreativeClosed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [regionExpanded, setRegionExpanded] = useState(false);
+  const [openInfoTooltip, setOpenInfoTooltip] = useState(null);
 
   useEffect(() => {
     setActiveIndex(0);
     setRegionExpanded(false);
+    setOpenInfoTooltip(null);
   }, [ad]);
+
+  useEffect(() => {
+    if (!openInfoTooltip) return;
+    const closeTooltip = () => setOpenInfoTooltip(null);
+    document.addEventListener("click", closeTooltip);
+    return () => document.removeEventListener("click", closeTooltip);
+  }, [openInfoTooltip]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -1677,6 +1687,9 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
   const admobOccurrenceRatePercent = Number(
     admobSessionsData?.occurrence_rate_percent ?? 0,
   );
+  const admobTrackedSessionsByApp = Array.isArray(admobSessionsData?.tracked_sessions_by_app)
+    ? admobSessionsData.tracked_sessions_by_app.filter((row) => row?.name)
+    : [];
   const hasAdmobSessionHistory =
     isAdmob && (admobSessionRows.length > 0 || admobSessionsTotal > 0);
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
@@ -1697,6 +1710,15 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
     if (s.includes('T')) return s.split('T')[0];
     if (s.includes(' ')) return s.split(' ')[0];
     return s;
+  };
+  const fmtFriendlyDateTime = (val) => {
+    if (!val) return '-';
+    const date = new Date(val);
+    if (Number.isNaN(date.getTime())) return String(val);
+    return date.toLocaleString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
   };
   const fmtDateTime = (val) => {
     if (!val) return '-';
@@ -2080,20 +2102,6 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
     );
   });
 
-  const admobSessionSummaryText = (() => {
-    if (!hasAdmobSessionHistory) return "";
-    if (admobTrackedSessionsTotal > 0) {
-      const suffix = admobOccurrenceRatePercent > 0
-        ? ` (${admobOccurrenceRatePercent}% occurrence rate)`
-        : "";
-      return `Seen in ${admobSessionsTotal} of ${admobTrackedSessionsTotal} tracked sessions${suffix}.`;
-    }
-    if (admobSessionsTotal > 0) {
-      return `Seen in ${admobSessionsTotal} scraping sessions.`;
-    }
-    return "";
-  })();
-
   return (
     <div
       className={`fixed inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-xl animate-in fade-in zoom-in-95 ${isLight ? "bg-black/40" : "bg-[#0a0a0a]/90"}`}
@@ -2387,7 +2395,7 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                           {item.label}
                         </span>
                         {item.tooltip && (
-                          <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/row:opacity-100 pointer-events-none transition-opacity z-50">
+                          <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg opacity-0 group-hover/row:opacity-100 pointer-events-none transition-opacity z-50">
                             {item.tooltip}
                           </div>
                         )}
@@ -2437,91 +2445,200 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                 <div
                   className={`rounded-2xl border-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/10"}`}
                 >
-                  <div className="px-4 pt-4 flex flex-wrap gap-2">
-                    <span
-                      className={`relative group/badge inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
-                        isLight ? "bg-blue-50 text-blue-700" : "bg-blue-500/10 text-blue-300"
-                      }`}
-                    >
-                      Sessions Seen: {admobSessionsTotal}
-                      <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/badge:opacity-100 pointer-events-none transition-opacity z-50">
-                        How many times we've actually found this ad.
+                  <div className="px-4 pt-4 flex flex-col gap-2.5">
+                    {/* Sessions Seen — how many times we've actually found this ad. */}
+                    {admobSessionsTotal > 0 && (
+                      <div className="relative inline-flex items-center w-fit">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
+                            isLight ? "bg-blue-50 text-blue-700" : "bg-blue-500/10 text-blue-300"
+                          }`}
+                        >
+                          Sessions Seen: {admobSessionsTotal}
+                          <Info
+                            size={11}
+                            className="opacity-60 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenInfoTooltip((t) => (t === "sessionsSeen" ? null : "sessionsSeen"));
+                            }}
+                          />
+                        </span>
+                        {openInfoTooltip === "sessionsSeen" && (
+                          <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50">
+                            This ad has been found {admobSessionsTotal}x so far.
+                          </div>
+                        )}
                       </div>
-                    </span>
-                    {admobTrackedSessionsTotal > 0 && (
-                      <span
-                        className={`relative group/badge inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
-                          isLight ? "bg-violet-50 text-violet-700" : "bg-violet-500/10 text-violet-300"
-                        }`}
-                      >
-                        Tracked Sessions: {admobTrackedSessionsTotal}
-                        <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/badge:opacity-100 pointer-events-none transition-opacity z-50">
-                          How many times we checked the app this ad lives in — whether or not this ad happened to show up.
-                        </div>
-                      </span>
                     )}
-                    {admobOccurrenceRatePercent > 0 && (
-                      <span
-                        className={`relative group/badge inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
-                          isLight ? "bg-emerald-50 text-emerald-700" : "bg-emerald-500/10 text-emerald-300"
+
+                    {/* Tracked Sessions — same pattern: labeled total first, then a chip per
+                        app. If this ad gets linked to more apps later, each one shows up here
+                        as its own chip automatically, no code change needed. */}
+                    {(() => {
+                    const trackedTooltip = admobTrackedSessionsByApp.length > 0
+                      ? admobTrackedSessionsByApp
+                          .map((row) => `${row.name} has been scanned ${row.count}x`)
+                          .join(", ")
+                          + "."
+                      : "How many times we've scanned the app(s) this ad appears in.";
+                    return (admobTrackedSessionsByApp.length > 0 || admobTrackedSessionsTotal > 0) && (
+                      <div
+                        className={`relative inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-full px-3 py-1 w-fit ${
+                          isLight ? "bg-violet-50" : "bg-violet-500/10"
                         }`}
                       >
-                        Occurrence Rate: {admobOccurrenceRatePercent}%
-                        <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[11px] leading-snug font-normal normal-case rounded-md border border-white/10 opacity-0 group-hover/badge:opacity-100 pointer-events-none transition-opacity z-50">
-                          How consistently this ad shows up whenever we check — Sessions Seen out of Tracked Sessions.
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide shrink-0 ${isLight ? "text-violet-700" : "text-violet-300"}`}>
+                          Tracked Sessions: {admobTrackedSessionsTotal}
+                          <Info
+                            size={11}
+                            className="opacity-60 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenInfoTooltip((t) => (t === "trackedSessions" ? null : "trackedSessions"));
+                            }}
+                          />
+                        </span>
+                        {admobTrackedSessionsByApp.map((row) => (
+                          <span
+                            key={`tracked-${row.name}`}
+                            className={`text-[11px] font-semibold ${isLight ? "text-violet-700/70" : "text-violet-300/70"}`}
+                          >
+                            · {row.name} {row.count}x
+                          </span>
+                        ))}
+                        {openInfoTooltip === "trackedSessions" && (
+                          <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50">
+                            {trackedTooltip}
+                          </div>
+                        )}
+                      </div>
+                    );
+                    })()}
+
+                    {/* Occurrence Rate — bar reveals on hover instead of always sitting on screen */}
+                    {admobOccurrenceRatePercent > 0 && (
+                      <div className="relative group/rate inline-flex items-center gap-2 w-fit">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide cursor-default ${
+                            isLight ? "bg-emerald-50 text-emerald-700" : "bg-emerald-500/10 text-emerald-300"
+                          }`}
+                        >
+                          Occurrence Rate: {admobOccurrenceRatePercent}%
+                          <Info
+                            size={11}
+                            className="opacity-60 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenInfoTooltip((t) => (t === "occurrenceRate" ? null : "occurrenceRate"));
+                            }}
+                          />
+                        </span>
+                        <div className="grid grid-cols-[0fr] group-hover/rate:grid-cols-[1fr] transition-[grid-template-columns] duration-200 ease-out">
+                          <div className="overflow-hidden">
+                            <div className={`h-1.5 w-28 rounded-full overflow-hidden ${isLight ? "bg-gray-200" : "bg-white/10"}`}>
+                              <div
+                                className={`h-full rounded-full ${isLight ? "bg-emerald-500" : "bg-emerald-400"}`}
+                                style={{ width: `${Math.min(100, Math.max(2, admobOccurrenceRatePercent))}%` }}
+                              />
+                            </div>
+                          </div>
                         </div>
-                      </span>
+                        {openInfoTooltip === "occurrenceRate" && (
+                          <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50">
+                            Out of {admobTrackedSessionsTotal} times we scanned, this ad showed up {admobSessionsTotal}x — that's {admobOccurrenceRatePercent}%.
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 
-                  {admobSessionSummaryText && (
-                    <p className={`px-4 pt-3 text-[13px] ${isLight ? "text-gray-600" : "text-white/65"}`}>
-                      {admobSessionSummaryText}
-                    </p>
-                  )}
-
                   {admobSessionRows.length > 0 ? (
-                    <>
-                      {admobSessionRows.length < admobSessionsTotal && (
-                        <div className={`px-4 pt-3 text-[12px] font-medium ${isLight ? "text-gray-500" : "text-white/45"}`}>
-                          Showing most recent {admobSessionRows.length} of {admobSessionsTotal} sessions.
-                        </div>
-                      )}
-                      <div className="px-4 pb-4 pt-3">
-                        <div
-                          className={`max-h-72 overflow-y-auto rounded-xl border ${
-                            isLight ? "border-gray-200 bg-white" : "border-white/10 bg-black/10"
+                    <div className="group/sightings">
+                      {/* Header row — button + count. Hovering anywhere in this row, or the
+                          expanded box below, keeps the box open (they share one group). */}
+                      <div className="px-4 pt-4 pb-2 flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          className={`relative group/badge inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-wide shrink-0 transition-colors cursor-default ${
+                            isLight
+                              ? "bg-fuchsia-50 text-fuchsia-600 group-hover/sightings:bg-fuchsia-100"
+                              : "bg-fuchsia-500/10 text-fuchsia-400 group-hover/sightings:bg-fuchsia-500/20"
                           }`}
                         >
-                          {admobSessionRows.map((session, index) => (
+                          Sighting Log
+                          <Info
+                            size={11}
+                            className="opacity-60 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenInfoTooltip((t) => (t === "sightingLog" ? null : "sightingLog"));
+                            }}
+                          />
+                          {openInfoTooltip === "sightingLog" && (
+                            <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50">
+                              Every time we've found this ad, most recent first.
+                            </div>
+                          )}
+                        </button>
+                        {admobSessionRows.length < admobSessionsTotal && (
+                          <span className={`text-[11px] font-medium ${isLight ? "text-gray-400" : "text-white/30"}`}>
+                            Showing {admobSessionRows.length} of {admobSessionsTotal}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Expands in place, full width of the card — stays inside the Session
+                          History block instead of floating outside it, and grows to fit the
+                          data (capped + scrollable past max-h-96). */}
+                      <div className="grid grid-rows-[0fr] group-hover/sightings:grid-rows-[1fr] transition-[grid-template-rows] duration-300 ease-out">
+                        <div className="overflow-hidden">
+                          <div className="px-4 pb-4">
                             <div
-                              key={`${session.session_id || "session"}-${session.system_id || index}-${session.observed_at || ""}`}
-                              className={`flex items-start justify-between gap-4 px-4 py-3 ${
-                                index < admobSessionRows.length - 1
-                                  ? isLight
-                                    ? "border-b border-gray-200"
-                                    : "border-b border-white/10"
-                                  : ""
+                              className={`max-h-96 overflow-y-auto rounded-xl border ${
+                                isLight ? "border-gray-200 bg-white" : "border-white/10 bg-black/10"
                               }`}
                             >
-                              <div className="min-w-0">
-                                <div className={`text-[13px] font-semibold break-all ${isLight ? "text-gray-900" : "text-white/85"}`}>
-                                  {session.session_id || "Unknown session"}
-                                </div>
-                                {session.system_id && (
-                                  <div className={`mt-1 text-[11px] break-all ${isLight ? "text-gray-500" : "text-white/45"}`}>
-                                    System ID: {session.system_id}
+                              {admobSessionRows.map((session, index) => (
+                                <div
+                                  key={`${session.session_id || "session"}-${session.system_id || index}-${session.observed_at || ""}`}
+                                  className={`flex items-start justify-between gap-4 px-4 py-3 ${
+                                    index < admobSessionRows.length - 1
+                                      ? isLight
+                                        ? "border-b border-gray-200"
+                                        : "border-b border-white/10"
+                                      : ""
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className={`text-[13px] font-semibold ${isLight ? "text-gray-900" : "text-white/85"}`}>
+                                        {fmtFriendlyDateTime(session.observed_at)}
+                                      </span>
+                                      <span className="relative group/repeat shrink-0 inline-flex items-center">
+                                        <span
+                                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide cursor-default ${
+                                            isLight ? "bg-blue-50 text-blue-700" : "bg-blue-500/10 text-blue-300"
+                                          }`}
+                                        >
+                                          viewed {session.repeat_count}x
+                                        </span>
+                                        <div className="absolute top-full right-0 mt-1.5 w-48 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg opacity-0 group-hover/repeat:opacity-100 pointer-events-none transition-opacity z-50">
+                                          We saw this ad {session.repeat_count} time{session.repeat_count === 1 ? "" : "s"} during this particular session.
+                                        </div>
+                                      </span>
+                                    </div>
+                                    <div className={`mt-0.5 text-[11px] font-mono break-all ${isLight ? "text-gray-400" : "text-white/30"}`}>
+                                      {session.session_id || "Unknown session"}
+                                    </div>
                                   </div>
-                                )}
-                              </div>
-                              <div className={`text-[12px] whitespace-nowrap ${isLight ? "text-gray-500" : "text-white/50"}`}>
-                                {fmtDateTime(session.observed_at)}
-                              </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
+                          </div>
                         </div>
                       </div>
-                    </>
+                    </div>
                   ) : (
                     <div className={`px-4 py-4 text-[13px] ${isLight ? "text-gray-500" : "text-white/50"}`}>
                       Session counts are available, but individual session rows are not returned yet.

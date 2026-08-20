@@ -133,6 +133,7 @@ erDiagram
         string system_id
         binary payload_hash
         datetime observed_at
+        int repeat_count "resubmissions within same session"
         timestamp created_at
     }
     mob_es_outbox {

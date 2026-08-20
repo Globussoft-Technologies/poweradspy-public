@@ -51,7 +51,6 @@ const ADMOB_AD_TYPE_OPTIONS = [
   { label: "Play Store Ad", value: "PLAY_STORE_AD" },
   { label: "Visual Banner", value: "VISUAL_BANNER" },
   { label: "Visual Native Ad", value: "VISUAL_NATIVE_AD" },
-  { label: "Unknown", value: "UNKNOWN" },
 ];
 
 export const resolveSortPlanAccessId = (label, value) => {
@@ -344,7 +343,7 @@ const AdFilterBar = ({
 
       {/* Right side controls */}
       <div className="flex items-center gap-2 flex-wrap shrink-0">
-        <AdDateDropdown onDateChange={onDateChange} filterValues={sdui?.filterValues} isTikTok={specificPlatforms.length === 1 && specificPlatforms[0]?.toLowerCase() === "tiktok"} disableTooltips={disableTooltips} isFilterRestricted={isFilterRestricted} onRestricted={onDateRestricted} />
+        <AdDateDropdown onDateChange={onDateChange} filterValues={sdui?.filterValues} isTikTok={specificPlatforms.length === 1 && specificPlatforms[0]?.toLowerCase() === "tiktok"} isAdmobOnly={isAdmobOnly} disableTooltips={disableTooltips} isFilterRestricted={isFilterRestricted} onRestricted={onDateRestricted} />
         {/* Ad Type Filter — hidden when no options available for current platform */}
         {AD_TYPE_OPTIONS.length > 0 && <div className="relative" ref={adTypeFilterRef}>
           <button

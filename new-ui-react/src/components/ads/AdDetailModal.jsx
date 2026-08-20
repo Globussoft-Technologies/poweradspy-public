@@ -1023,27 +1023,32 @@ const AdDetailModal = ({
               </>
             )}
 
-            {/* Original Preview toggle button — bottom center */}
-            <button
-              onClick={() => {
-                if (!showOriginal) {
-                  const network = String(platform || ad.network || 'facebook').toLowerCase();
-                  trackEvent('showOriginal', { ad_id: ad.adId ?? ad.id, network });
-                  trackAdAction('show_original', { entry_point: 'ad_detail_modal', feature_name: 'original_ad', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
-                }
-                setShowOriginal(!showOriginal);
-              }}
-              className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-[3] flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all backdrop-blur-md border ${
-                showOriginal
-                  ? "bg-[#335296] text-white border-[#3759a3] shadow-lg shadow-[#3759a3]/30"
-                  : "bg-black/40 text-white/80 border-white/15 hover:bg-black/60 hover:text-white"
-              }`}
-            >
-              <Smartphone size={12} />
-              {showOriginal
-                ? (isGoogleTransparency ? "Show Saved Preview" : "Show Image")
-                : "Original Preview"}
-            </button>
+            {/* Original Preview toggle button — bottom center. AdMob has no
+                "original platform" rendering to show (OriginalPreview only
+                simulates Facebook/Google-style placements), so it's hidden
+                for that platform rather than shown broken/empty. */}
+            {platform !== "admob" && (
+              <button
+                onClick={() => {
+                  if (!showOriginal) {
+                    const network = String(platform || ad.network || 'facebook').toLowerCase();
+                    trackEvent('showOriginal', { ad_id: ad.adId ?? ad.id, network });
+                    trackAdAction('show_original', { entry_point: 'ad_detail_modal', feature_name: 'original_ad', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
+                  }
+                  setShowOriginal(!showOriginal);
+                }}
+                className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-[3] flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all backdrop-blur-md border ${
+                  showOriginal
+                    ? "bg-[#335296] text-white border-[#3759a3] shadow-lg shadow-[#3759a3]/30"
+                    : "bg-black/40 text-white/80 border-white/15 hover:bg-black/60 hover:text-white"
+                }`}
+              >
+                <Smartphone size={12} />
+                {showOriginal
+                  ? (isGoogleTransparency ? "Show Saved Preview" : "Show Image")
+                  : "Original Preview"}
+              </button>
+            )}
           </div>
 
           {/* Right: Details - Added pt-12 to prevent cross overlap with heart button */}

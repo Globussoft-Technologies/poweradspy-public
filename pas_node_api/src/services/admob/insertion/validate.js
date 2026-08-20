@@ -5,7 +5,7 @@ const { isIP } = require('node:net');
 const AD_TYPES = new Set([
   'BANNER', 'WEBVIEW_BANNER', 'INTERSTITIAL_OR_NATIVE', 'INTERSTITIAL_WEBVIEW',
   'NATIVE_OR_UNKNOWN', 'REWARDED_OR_VIDEO', 'PLAY_STORE_AD', 'VISUAL_BANNER',
-  'VISUAL_NATIVE_AD', 'UNKNOWN',
+  'VISUAL_NATIVE_AD',
 ]);
 
 const ADMOB_ADS_RULES = {
@@ -38,7 +38,7 @@ const ADMOB_ADS_RULES = {
   state: 'string|nullable',
   system_id: 'required|string',
   target_site: 'url|nullable',
-  type: 'required|string|in:BANNER,WEBVIEW_BANNER,INTERSTITIAL_OR_NATIVE,INTERSTITIAL_WEBVIEW,NATIVE_OR_UNKNOWN,REWARDED_OR_VIDEO,PLAY_STORE_AD,VISUAL_BANNER,VISUAL_NATIVE_AD,UNKNOWN',
+  type: 'required|string|in:BANNER,WEBVIEW_BANNER,INTERSTITIAL_OR_NATIVE,INTERSTITIAL_WEBVIEW,NATIVE_OR_UNKNOWN,REWARDED_OR_VIDEO,PLAY_STORE_AD,VISUAL_BANNER,VISUAL_NATIVE_AD',
   version: 'string|nullable',
   source_app: 'required|string',
   source_app_pkg: 'string|nullable',

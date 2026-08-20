@@ -31,8 +31,9 @@ Required fields are `ad_id`, `country`, `last_seen`, `network`, `platform`,
 There is no `sub_type` field. `type` directly stores one of:
 
 `BANNER`, `WEBVIEW_BANNER`, `INTERSTITIAL_OR_NATIVE`, `INTERSTITIAL_WEBVIEW`,
-`NATIVE_OR_UNKNOWN`, `REWARDED_OR_VIDEO`, `PLAY_STORE_AD`, `VISUAL_BANNER`,
-`VISUAL_NATIVE_AD`, or `UNKNOWN`.
+`NATIVE_OR_UNKNOWN`, `REWARDED_OR_VIDEO`, `PLAY_STORE_AD`, `VISUAL_BANNER`, or
+`VISUAL_NATIVE_AD`. `UNKNOWN` was removed from the accepted set (2026-08-20) —
+it was a placeholder value with no meaningful ad-type filter behind it on the UI.
 
 `source_app_pkg` is optional. All other documented payload fields are optional and
 may be null where validation permits. Unknown fields are rejected to prevent silent
@@ -50,8 +51,15 @@ data loss caused by producer/consumer contract drift.
   are stored as case-insensitive per-ad dimensions with appearance counts.
 - Source app and package form a case-insensitive identity. Global and per-ad
   appearance counts are maintained.
-- `(ad_id, session_id)` is a unique observation. Retrying the same event updates the
-  ad safely but does not increase dimension or source-app counts.
+- `(ad_id, session_id)` is a unique observation. Retrying the same event
+  (same ad resubmitted within the same scrape session) updates the ad safely
+  and increments that observation row's `repeat_count`, but does **not**
+  create a second row and does **not** increase dimension or source-app
+  appearance counts — those only increment for a genuinely new
+  `(ad_id, session_id)` pair (2026-08-20: changed from silently dropping the
+  resubmission via `INSERT IGNORE` to `INSERT ... ON DUPLICATE KEY UPDATE
+  repeat_count = repeat_count + 1`, so the retry is now visible instead of
+  discarded).
 - AdMob search documents also expose `occurrence_count`, `days_running`, and
   `lead_score` so the dashboard can rank long-running, frequently seen posters.
 - Saved / hidden / favourite actions are stored separately in `mob_hidden_ads`
@@ -133,6 +141,10 @@ hand-maintained static list.
   - `Most Seen` -> `occurrence_count`
   - `Active Days` -> `days_running`
   - `Scan Run` -> `session_id`
+- The calendar date filter (`seen_btn_sort`, same body key every network uses)
+  filters on `last_seen` via an ES range query (`format: epoch_second`,
+  2026-08-20). The UI restricts AdMob to a single "Ad Seen Date" tab — Post
+  Date and Domain Reg. Date are not applicable to AdMob.
 - The generic `All` traffic-source option is not shown for AdMob; only live AdMob
   source values are surfaced.
 - AI quick filters and AI-meta searches are not applicable to AdMob. When any
