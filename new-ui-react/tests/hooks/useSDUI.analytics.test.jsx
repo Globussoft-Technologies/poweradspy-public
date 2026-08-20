@@ -89,20 +89,18 @@ describe("useSDUI GA filter batching", () => {
       },
     ));
 
-    expect(trackProductEvent).toHaveBeenCalledTimes(3);
+    expect(trackProductEvent).toHaveBeenCalledTimes(2);
     expect(trackProductEvent).toHaveBeenCalledWith("filter_applied", expect.objectContaining({
-      filter_name: "all_ai_ad_type_testimonial",
-      filter_values: "testimonial",
+      filter_name: "AI_Filter_ad_Type",
       network: "all",
     }));
     expect(trackProductEvent).toHaveBeenCalledWith("filter_applied", expect.objectContaining({
-      filter_name: "all_ai_intent_purchase",
-      filter_values: "purchase",
+      filter_name: "AI_Filter_Intent",
       network: "all",
     }));
   });
 
-  it("sends AI category and subcategory names instead of IDs", async () => {
+  it("sends one label-only AI Category event without category values or IDs", async () => {
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     act(() => result.current.setAnalyticsAllPlatformsSelected(true));
@@ -115,13 +113,11 @@ describe("useSDUI GA filter batching", () => {
       },
     ));
 
+    expect(trackProductEvent).toHaveBeenCalledTimes(1);
     expect(trackProductEvent).toHaveBeenCalledWith("filter_applied", expect.objectContaining({
-      filter_name: "all_category_cannabis",
-      filter_values: "cannabis",
+      filter_name: "AI_Filter_Category",
+      network: "all",
     }));
-    expect(trackProductEvent).toHaveBeenCalledWith("filter_applied", expect.objectContaining({
-      filter_name: "all_ai_subcategory_id_cannabis_stocks",
-      filter_values: "cannabis_stocks",
-    }));
+    expect(trackProductEvent.mock.calls[0][1]).not.toHaveProperty("filter_values");
   });
 });

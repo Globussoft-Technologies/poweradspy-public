@@ -18,6 +18,17 @@ const FILTER_GROUP_LABELS = {
     subcategory: 'categories', engagement: 'engagements', engagements: 'engagements',
 };
 
+const AI_FILTER_ANALYTICS_LABELS = {
+    ai_ad_type: 'AI_Filter_ad_Type',
+    ai_intent: 'AI_Filter_Intent',
+    ai_hook: 'AI_Filter_Hook',
+    ai_offer_type: 'AI_Filter_Offer_type',
+    ai_offering_type: 'AI_Filter_Offering_type',
+    ai_colors: 'AI_Filter_Colors',
+    ai_category_id: 'AI_Filter_Category',
+    ai_subcategory_id: 'AI_Filter_Category',
+};
+
 const hasAnalyticsFilterValue = (value) => {
     if (value == null || value === false || value === '' || value === 'NA') return false;
     if (Array.isArray(value)) return value.some(hasAnalyticsFilterValue);
@@ -553,23 +564,27 @@ export function useSDUI() {
             trackAppliedFilter(analytics.filterName, true, analytics.entryPoint || 'quick_filters');
         }
         if (Array.isArray(analytics?.changedFilterIds)) {
+            const appliedAiLabels = new Set();
             analytics.changedFilterIds.forEach((filterId) => {
-                const previousValues = new Set((Array.isArray(filterValuesRef.current?.[filterId])
-                    ? filterValuesRef.current[filterId]
-                    : [filterValuesRef.current?.[filterId]])
-                    .map(normalizeFilterLabel).filter(Boolean));
-                (Array.isArray(nextFilters[filterId]) ? nextFilters[filterId] : [nextFilters[filterId]])
-                    .forEach((value) => {
-                        const normalizedValue = normalizeFilterLabel(value);
-                        if (normalizedValue && !previousValues.has(normalizedValue)) {
-                            trackAppliedFilter(
-                                filterId,
-                                normalizedValue,
-                                analytics.entryPoint || 'ai_filter_modal',
-                                true,
-                            );
-                        }
-                    });
+                const analyticsLabel = AI_FILTER_ANALYTICS_LABELS[filterId];
+                if (!analyticsLabel || appliedAiLabels.has(analyticsLabel)) return;
+                const previousValue = filterValuesRef.current?.[filterId];
+                const nextValue = nextFilters[filterId];
+                const changed = JSON.stringify(previousValue) !== JSON.stringify(nextValue);
+                if (!changed || !hasAnalyticsFilterValue(nextValue)) return;
+
+                appliedAiLabels.add(analyticsLabel);
+                const platforms = activePlatformsRef.current || [];
+                const networkContext = analyticsAllPlatformsSelectedRef.current
+                    ? { network: 'all', network_scope: 'all' }
+                    : resolveFilterAnalyticsNetworkContext(configRef.current, platforms);
+                trackProductEvent('filter_applied', {
+                    filter_name: analyticsLabel,
+                    entry_point: analytics.entryPoint || 'ai_filter_modal',
+                    feature_name: 'ad_filters',
+                    ...networkContext,
+                    request_context: 'search',
+                });
             });
         }
         filterValuesRef.current = nextFilters;
