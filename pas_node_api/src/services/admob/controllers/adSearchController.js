@@ -15,7 +15,12 @@ function values(value) {
 }
 
 function totalHits(total) {
-  return typeof total === 'object' && total !== null ? Number(total.value || 0) : Number(total || 0);
+  const raw = typeof total === 'object' && total !== null ? Number(total.value ?? 0) : Number(total ?? 0);
+  // ES can report hits.total.value as -1 when total tracking degrades
+  // (shard-level issue). -1 is truthy, so an earlier `|| 0` guard silently
+  // let it through to the UI as "Admob: -1". Clamp defensively — a search
+  // result count is never negative.
+  return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
 function imageSizeValues(value) {
@@ -29,10 +34,15 @@ function imageSizeValues(value) {
 
 function daysRunning(firstSeen, lastSeen) {
   if (!firstSeen || !lastSeen) return null;
-  const start = Date.parse(firstSeen);
-  const end = Date.parse(lastSeen);
-  if (Number.isNaN(start) || Number.isNaN(end)) return null;
-  return Math.max(1, Math.ceil((end - start) / 86400000) + 1);
+  const start = new Date(firstSeen);
+  const end = new Date(lastSeen);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  // Diff calendar dates, not raw timestamps — otherwise a same-day ad seen
+  // hours apart (e.g. 08:00 and 23:00) rounds up to "2 days" even though
+  // first_seen and last_seen fall on the same date.
+  const startDay = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  const endDay = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  return Math.max(1, Math.round((endDay - startDay) / 86400000) + 1);
 }
 
 function normalizeAdId(value) {
@@ -235,8 +245,12 @@ async function runElasticSearch(db, { must, filter, sortField, page, size }) {
     body: {
       from: page * size,
       size,
-      // Exact totals are not shown in the UI, so skip the expensive full count.
-      track_total_hits: false,
+      // Must stay true — the UI shows this total ("Admob: N" badge) and
+      // pagination's hasMore depends on it. `false` makes ES skip counting
+      // entirely, so hits.total becomes an unreliable/negative estimate,
+      // which broke both the total badge and infinite scroll (hasMore stuck
+      // at false). Do not change this back to false.
+      track_total_hits: true,
       query: { bool: { must, filter } },
       sort: [{ [sortField]: { order: 'desc', missing: '_last' } }, { id: 'desc' }],
     },
@@ -341,7 +355,7 @@ async function resolveAdRecord(sql, input) {
   const rows = await sql.query(
     `SELECT id, ad_id, first_seen, last_seen
      FROM mob_ads
-     WHERE ad_id = ?
+     WHERE LOWER(TRIM(ad_id)) = ?
      LIMIT 1`,
     [publicAdId]
   );

@@ -8,10 +8,15 @@ function iso(value) {
 
 function daysRunning(firstSeen, lastSeen) {
   if (!firstSeen || !lastSeen) return null;
-  const start = Date.parse(firstSeen);
-  const end = Date.parse(lastSeen);
-  if (Number.isNaN(start) || Number.isNaN(end)) return null;
-  return Math.max(1, Math.ceil((end - start) / 86400000) + 1);
+  const start = new Date(firstSeen);
+  const end = new Date(lastSeen);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  // Diff calendar dates, not raw timestamps — otherwise a same-day ad seen
+  // hours apart (e.g. 08:00 and 23:00) rounds up to "2 days" even though
+  // first_seen and last_seen fall on the same date.
+  const startDay = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  const endDay = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  return Math.max(1, Math.round((endDay - startDay) / 86400000) + 1);
 }
 
 function asArray(value) {
