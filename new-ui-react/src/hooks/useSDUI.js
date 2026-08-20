@@ -243,6 +243,16 @@ export function useSDUI() {
     const fullConfigRef = useRef(null);
     const configRef = useRef(config);
     configRef.current = config;
+    // Range sliders fire onChange continuously while dragging (once per pixel
+    // step, not just on release), so calling trackAppliedFilter straight from
+    // setFilter turned one slider drag into a burst of filter_applied GA4
+    // hits — network tab shows a single batched request, but GA4 still counts
+    // every event inside it. Debounce per filterId so only the value the user
+    // settles on (after they stop moving the thumb) gets tracked.
+    const filterTrackTimersRef = useRef({});
+    useEffect(() => () => {
+        Object.values(filterTrackTimersRef.current).forEach(clearTimeout);
+    }, []);
 
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
     const applyConfig = useCallback((cfg, options = {}) => {
@@ -495,16 +505,24 @@ export function useSDUI() {
                     filterValue,
                 ))
                 .map(normalizeFilterLabel).filter(Boolean);
-            trackProductEvent('filter_applied', {
-                filter_name: `${platformLabel}_${filterLabel}${includeValues && normalizedValues.length
-                    ? `_${normalizedValues.join('_')}`
-                    : ''}`,
-                ...(includeValues ? { filter_values: normalizedValues.join(',') } : {}),
-                entry_point: entryPoint,
-                feature_name: 'ad_filters',
-                ...networkContext,
-                request_context: 'search',
-            });
+
+            // Debounced per filterId — a slider drag calls this many times in a
+            // row (see filterTrackTimersRef above); only the last value within
+            // the window actually gets sent, so one user interaction = one hit.
+            clearTimeout(filterTrackTimersRef.current[filterId]);
+            filterTrackTimersRef.current[filterId] = setTimeout(() => {
+                delete filterTrackTimersRef.current[filterId];
+                trackProductEvent('filter_applied', {
+                    filter_name: `${platformLabel}_${filterLabel}${includeValues && normalizedValues.length
+                        ? `_${normalizedValues.join('_')}`
+                        : ''}`,
+                    ...(includeValues ? { filter_values: normalizedValues.join(',') } : {}),
+                    entry_point: entryPoint,
+                    feature_name: 'ad_filters',
+                    ...networkContext,
+                    request_context: 'search',
+                });
+            }, 600);
         }
     }, []);
 

@@ -1067,7 +1067,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
               <button onClick={() => { const it = drillItem; setDrillItem(null); onDrill && onDrill(it.kind, it.value, selected); }}
                 className="flex-1 text-xs bg-[#335296] text-white rounded-lg px-3 py-2 font-medium">Open in Ads Library</button>
               {drillItem.kind === 'advertiser' && (
-                <button onClick={() => { const v = drillItem.value; setDrillItem(null); setTerms((p) => (p.includes(v) || p.length >= 5 ? p : [...p, v])); }}
+                <button onClick={() => { const v = drillItem.value; setDrillItem(null); setTerms((p) => (p.includes(v) || p.length >= 5 ? p : [...p, v])); trackMarketTrend('advertiser_compare'); }}
                   className="text-xs text-white px-3 py-2 rounded-lg border border-theme-border">+ Compare</button>
               )}
               <button onClick={() => setDrillItem(null)} className="text-xs text-white/60 hover:text-white px-3 py-2 rounded-lg border border-theme-border">Close</button>

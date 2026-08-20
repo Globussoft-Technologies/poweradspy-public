@@ -28,6 +28,8 @@ const FILTER_ACTION_NAMES = {
   growth_min: "growth_filter",
   growth_max: "growth_filter",
   category: "category_filter",
+  include: "include_term_filter",
+  exclude: "exclude_term_filter",
 };
 
 // Shimmer visibility, synced EXACTLY to `loading` — no delay — so it's
@@ -328,7 +330,10 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
       const keys = new Set([...Object.keys(filters), ...Object.keys(f)]);
       for (const k of keys) {
         if (FILTER_ACTION_NAMES[k] && (filters[k] ?? "") !== (f[k] ?? "")) {
-          trackKeywordExplorer(FILTER_ACTION_NAMES[k], { [k]: f[k] });
+          // Only the fact that this filter was applied is tracked — never the actual
+          // typed/entered value (it can be a competitor/brand name, or otherwise
+          // reveal what the user searched) — so no per-filter details are forwarded.
+          trackKeywordExplorer(FILTER_ACTION_NAMES[k]);
         }
       }
     }
@@ -416,7 +421,7 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
               disabled={busy}
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) trackKeywordExplorer("import_csv", { file_name: file.name });
+                if (file) trackKeywordExplorer("import_csv");
                 handleFileUpload(file);
                 e.target.value = "";
               }}

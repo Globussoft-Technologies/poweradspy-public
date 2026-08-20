@@ -666,11 +666,18 @@ async function scraperWork(req, res) {
   }
 }
 
+// Non-terminal statuses a session can be stuck in — the initial claim ('scrapping')
+// and an interim in-progress report via addScrapingHistory ('processing'). Both are
+// swept the same way below so a session reported 'processing' and then abandoned
+// (scraper crashed before ever sending a terminal status) doesn't linger forever.
+const STALE_RECOVERABLE_STATUSES = ['scrapping', 'processing'];
+
 /**
- * Reclaim crashed scrape sessions (status 'scrapping' older than staleClaimMinutes):
- * mark them 'failed' (set endTime), and for priority sessions re-activate that
- * session's network. Batched (config.keywordSearch.staleSweepBatch) to stay cheap.
- * Exported for a cron/admin trigger; also called opportunistically by scraperWork.
+ * Reclaim crashed scrape sessions (status 'scrapping'/'processing' older than
+ * staleClaimMinutes): mark them 'failed' (set endTime), and for priority sessions
+ * re-activate that session's network. Batched (config.keywordSearch.staleSweepBatch)
+ * to stay cheap. Exported for a cron/admin trigger; also called opportunistically by
+ * scraperWork.
  */
 async function recoverStaleClaims() {
   if (!config.keywordSearch.enabled) return { recovered: 0 };
@@ -680,13 +687,14 @@ async function recoverStaleClaims() {
   const now = new Date();
 
   const stale = await col.find(
-    { scrapping_status: { $elemMatch: { status: 'scrapping', startTime: { $lt: cutoff } } } },
+    { scrapping_status: { $elemMatch: { status: { $in: STALE_RECOVERABLE_STATUSES }, startTime: { $lt: cutoff } } } },
     { projection: { scrapping_status: 1 } }
   ).limit(config.keywordSearch.staleSweepBatch).toArray();
 
   let recovered = 0;
   for (const doc of stale) {
-    const sessions = (doc.scrapping_status || []).filter(s => s.status === 'scrapping' && s.startTime < cutoff);
+    const sessions = (doc.scrapping_status || [])
+      .filter(s => STALE_RECOVERABLE_STATUSES.includes(s.status) && s.startTime < cutoff);
     const setFields = {
       'scrapping_status.$[s].status': 'failed',
       'scrapping_status.$[s].endTime': now,
@@ -698,7 +706,7 @@ async function recoverStaleClaims() {
     await col.updateOne(
       { _id: doc._id },
       { $set: setFields },
-      { arrayFilters: [{ 's.status': 'scrapping', 's.startTime': { $lt: cutoff } }] }
+      { arrayFilters: [{ 's.status': { $in: STALE_RECOVERABLE_STATUSES }, 's.startTime': { $lt: cutoff } }] }
     );
     recovered += sessions.length;
   }
@@ -905,7 +913,11 @@ async function insertSyntheticKeywords(req, res) {
 //   end_time              ISO     optional — defaults to now
 //   owner                 string  required — scraper/plugin name
 //   mode                  string  required — 'priority' | 'daily'
-//   status                string  optional — 'completed' | 'no_ads_found' | 'failed' (default completed)
+//   status                string  optional — 'processing' | 'completed' | 'no_ads_found' | 'failed' (default completed)
+//                          'processing' is a non-terminal, in-progress report — same as the
+//                          other three for session matching/upsert, but recoverStaleClaims()
+//                          also reaps it like 'scrapping' if it's never followed by a terminal
+//                          status, and it never satisfies notification "ready" queries.
 //   ads_count             number  optional
 // }
 async function addScrapingHistory(req, res) {
@@ -951,7 +963,7 @@ async function addScrapingHistory(req, res) {
 
     const mode = String(body.mode || '').trim().toLowerCase();
 
-    const allowedStatuses = ['completed', 'no_ads_found', 'failed'];
+    const allowedStatuses = ['processing', 'completed', 'no_ads_found', 'failed'];
     const rawStatus = String(body.status || 'completed').trim().toLowerCase();
     const finalStatus = allowedStatuses.includes(rawStatus) ? rawStatus : 'completed';
 
