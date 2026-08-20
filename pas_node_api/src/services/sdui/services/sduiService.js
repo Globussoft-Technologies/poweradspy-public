@@ -368,7 +368,7 @@ async function fetchAdmobOptionsFromSql() {
       `SELECT MIN(ad_image_size) AS value, COUNT(*) AS doc_count
        FROM mob_ads
        WHERE status = 1 AND ad_image_size IS NOT NULL AND TRIM(ad_image_size) <> ''
-       GROUP BY LOWER(REPLACE(REPLACE(REPLACE(TRIM(ad_image_size), '×', 'x'), '*', 'x'), ' ', ''))
+       GROUP BY LOWER(REPLACE(REPLACE(REPLACE(TRIM(ad_image_size), '\u00D7', 'x'), '*', 'x'), ' ', ''))
        ORDER BY doc_count DESC, value ASC`
     ),
     sql.query(
@@ -442,7 +442,7 @@ async function fetchAdmobPersistentOptionsFromSql() {
       `SELECT MIN(ad_image_size) AS value, COUNT(*) AS doc_count
        FROM mob_ads
        WHERE ad_image_size IS NOT NULL AND TRIM(ad_image_size) <> ''
-       GROUP BY LOWER(REPLACE(REPLACE(REPLACE(TRIM(ad_image_size), 'Ã—', 'x'), '*', 'x'), ' ', ''))
+       GROUP BY LOWER(REPLACE(REPLACE(REPLACE(TRIM(ad_image_size), '×', 'x'), '*', 'x'), ' ', ''))
        ORDER BY doc_count DESC, value ASC`
     ),
     sql.query(

@@ -218,7 +218,8 @@ async function runElasticSearch(db, { must, filter, sortField, page, size }) {
     body: {
       from: page * size,
       size,
-      track_total_hits: true,
+      // Exact totals are not shown in the UI, so skip the expensive full count.
+      track_total_hits: false,
       query: { bool: { must, filter } },
       sort: [{ [sortField]: { order: 'desc', missing: '_last' } }, { id: 'desc' }],
     },
@@ -323,7 +324,7 @@ async function resolveAdRecord(sql, input) {
   const rows = await sql.query(
     `SELECT id, ad_id, first_seen, last_seen
      FROM mob_ads
-     WHERE LOWER(TRIM(ad_id)) = ?
+     WHERE ad_id = ?
      LIMIT 1`,
     [publicAdId]
   );

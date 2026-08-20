@@ -155,6 +155,8 @@ AdMob is registered in the Plan Control network registry, so Admin policy can gr
 deny it per plan. Runtime insertion enablement and customer plan access are separate
 controls; both must be enabled for their respective use cases.
 
+For the end-to-end AdMob lander flow, schema changes, and migration scripts, see [AdMob Lander Implementation](ADMOB-LANDER-IMPLEMENTATION.md).
+
 ## Deployment order
 
 1. Review and apply `scripts/admob/mobdb.schema.sql` with a migration-capable DB user.

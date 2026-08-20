@@ -21,6 +21,29 @@ async function getAdForUpdate(tx, adId) {
   return rows[0] || null;
 }
 
+async function getAdsForLander(sql, redirectStatus = 0, limit = 50) {
+  const safeStatus = Number.isInteger(Number(redirectStatus)) ? Number(redirectStatus) : 0;
+  const safeLimit = Math.min(Math.max(Math.trunc(Number(limit)) || 50, 1), 100);
+
+  // LIMIT placeholders are rejected by this MySQL server inside prepared statements,
+  // so the clamped integer is inlined after validation.
+  return sql.query(
+    `SELECT a.id,
+            ANY_VALUE(a.ad_id) AS ad_id,
+            ANY_VALUE(u.destination_url) AS destination_url,
+            GROUP_CONCAT(DISTINCT c.country ORDER BY c.country SEPARATOR ',') AS country
+       FROM mob_ads a
+       LEFT JOIN mob_ad_urls u ON u.ad_id = a.id
+       LEFT JOIN mob_ad_countries c ON c.ad_id = a.id
+      WHERE a.redirect_status = ?
+        AND u.destination_url IS NOT NULL
+      GROUP BY a.id
+      ORDER BY a.id DESC
+      LIMIT ${safeLimit}`,
+    [safeStatus]
+  );
+}
+
 async function ensureOwner(tx, data, incrementAds) {
   if (!data.post_owner) return null;
   await tx.query(
@@ -99,6 +122,96 @@ async function upsertOriginalImage(tx, id, originalUrl) {
      VALUES (?, 'IMAGE', 0, ?)
      ON DUPLICATE KEY UPDATE original_url = VALUES(original_url)`,
     [id, originalUrl]
+  );
+}
+
+async function updateRedirectStatus(tx, adId, redirectStatus) {
+  await tx.query('UPDATE mob_ads SET redirect_status = ? WHERE id = ?', [redirectStatus, adId]);
+}
+
+async function upsertLanderContent(tx, id, data) {
+  // Store the DS lander scrape plus the WA/VPN enrichment in one row so the
+  // lander flow can round-trip the evidence without touching legacy tables.
+  await tx.query(
+    `INSERT INTO mob_ad_lander_content
+      (ad_id, lander_status, crawled_by, destinations, html_path, screen_shot, html_content,
+       domain_registered_date, domain_age, country_iso_json, outgoing_url_json, redirects_json,
+       ad_category, source_website, source_parameters_json, whatsapp_url, whatsapp_domain,
+       whatsapp_path, whatsapp_phone, whatsapp_message, whatsapp_parameters_json, campaign_id,
+       location_without_vpn_json, location_with_vpn_json, comparison_json, whatsapp_links_json,
+       whatsapp_texts_json, phone_numbers_json, contact_buttons_json, contact_button_count,
+       whatsapp_rotator_detected, whatsapp_rotator_phone_count, lead_campaign_tag, raw_payload_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       lander_status = VALUES(lander_status),
+       crawled_by = VALUES(crawled_by),
+       destinations = VALUES(destinations),
+       html_path = VALUES(html_path),
+       screen_shot = VALUES(screen_shot),
+       html_content = VALUES(html_content),
+       domain_registered_date = VALUES(domain_registered_date),
+       domain_age = VALUES(domain_age),
+       country_iso_json = VALUES(country_iso_json),
+       outgoing_url_json = VALUES(outgoing_url_json),
+       redirects_json = VALUES(redirects_json),
+       ad_category = VALUES(ad_category),
+       source_website = VALUES(source_website),
+       source_parameters_json = VALUES(source_parameters_json),
+       whatsapp_url = VALUES(whatsapp_url),
+       whatsapp_domain = VALUES(whatsapp_domain),
+       whatsapp_path = VALUES(whatsapp_path),
+       whatsapp_phone = VALUES(whatsapp_phone),
+       whatsapp_message = VALUES(whatsapp_message),
+       whatsapp_parameters_json = VALUES(whatsapp_parameters_json),
+       campaign_id = VALUES(campaign_id),
+       location_without_vpn_json = VALUES(location_without_vpn_json),
+       location_with_vpn_json = VALUES(location_with_vpn_json),
+       comparison_json = VALUES(comparison_json),
+       whatsapp_links_json = VALUES(whatsapp_links_json),
+       whatsapp_texts_json = VALUES(whatsapp_texts_json),
+       phone_numbers_json = VALUES(phone_numbers_json),
+       contact_buttons_json = VALUES(contact_buttons_json),
+       contact_button_count = VALUES(contact_button_count),
+       whatsapp_rotator_detected = VALUES(whatsapp_rotator_detected),
+       whatsapp_rotator_phone_count = VALUES(whatsapp_rotator_phone_count),
+       lead_campaign_tag = VALUES(lead_campaign_tag),
+       raw_payload_json = VALUES(raw_payload_json)`,
+    [
+      id,
+      data.lander_status,
+      data.crawled_by,
+      data.destinations,
+      data.html_path,
+      data.screen_shot,
+      data.html_content,
+      data.domain_registered_date,
+      data.domain_age,
+      data.country_iso_json,
+      data.outgoing_url_json,
+      data.redirects_json,
+      data.ad_category,
+      data.source_website,
+      data.source_parameters_json,
+      data.whatsapp_url,
+      data.whatsapp_domain,
+      data.whatsapp_path,
+      data.whatsapp_phone,
+      data.whatsapp_message,
+      data.whatsapp_parameters_json,
+      data.campaign_id,
+      data.location_without_vpn_json,
+      data.location_with_vpn_json,
+      data.comparison_json,
+      data.whatsapp_links_json,
+      data.whatsapp_texts_json,
+      data.phone_numbers_json,
+      data.contact_buttons_json,
+      data.contact_button_count,
+      data.whatsapp_rotator_detected,
+      data.whatsapp_rotator_phone_count,
+      data.lead_campaign_tag,
+      data.raw_payload_json,
+    ]
   );
 }
 
@@ -227,11 +340,27 @@ async function getCompleteAd(sql, publicAdId) {
     `SELECT a.*, o.name AS post_owner, o.image_url AS post_owner_image,
        u.ad_url, u.destination_url, u.redirect_url, u.placement_url,
        u.target_site, u.destination_host, m.original_url AS image_url_original,
-       m.nas_path AS image_url
+       m.nas_path AS image_url,
+       lc.lander_status, lc.crawled_by AS lander_crawled_by,
+       lc.destinations AS lander_destination_url,
+       lc.html_path AS lander_html_path,
+       lc.screen_shot AS lander_screen_shot,
+       lc.domain_registered_date AS lander_domain_registered_date,
+       lc.domain_age AS lander_domain_age,
+       lc.country_iso_json, lc.outgoing_url_json, lc.redirects_json,
+       lc.ad_category AS lander_ad_category,
+       lc.source_website, lc.source_parameters_json, lc.whatsapp_url,
+       lc.whatsapp_domain, lc.whatsapp_path, lc.whatsapp_phone,
+       lc.whatsapp_message, lc.whatsapp_parameters_json, lc.campaign_id,
+       lc.location_without_vpn_json, lc.location_with_vpn_json, lc.comparison_json,
+       lc.whatsapp_links_json, lc.whatsapp_texts_json, lc.phone_numbers_json,
+       lc.contact_buttons_json, lc.contact_button_count, lc.whatsapp_rotator_detected,
+       lc.whatsapp_rotator_phone_count, lc.lead_campaign_tag, lc.raw_payload_json
      FROM mob_ads a
      LEFT JOIN mob_post_owners o ON o.id = a.post_owner_id
      LEFT JOIN mob_ad_urls u ON u.ad_id = a.id
      LEFT JOIN mob_ad_media m ON m.ad_id = a.id AND m.media_kind = 'IMAGE' AND m.ordinal = 0
+     LEFT JOIN mob_ad_lander_content lc ON lc.ad_id = a.id
      WHERE a.ad_id = ? LIMIT 1`,
     [publicAdId]
   );
@@ -261,7 +390,7 @@ async function getCompleteAd(sql, publicAdId) {
 }
 
 module.exports = {
-  withTransaction, getAdForUpdate, ensureOwner, insertAd, updateAd, upsertUrls,
-  upsertOriginalImage, setNasImage, insertObservation, upsertDimension,
-  upsertSourceApp, queueEs, getPendingEs, completeEs, failEs, getCompleteAd,
+  withTransaction, getAdForUpdate, getAdsForLander, ensureOwner, insertAd, updateAd, upsertUrls,
+  upsertOriginalImage, updateRedirectStatus, upsertLanderContent, setNasImage, insertObservation,
+  upsertDimension, upsertSourceApp, queueEs, getPendingEs, completeEs, failEs, getCompleteAd,
 };

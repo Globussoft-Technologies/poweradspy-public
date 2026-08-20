@@ -82,6 +82,83 @@ describe('isolated AdMob insertion contract', () => {
     expect(doc.image_url).toContain('/admob/adImage/');
   });
 
+  it('projects the WA/VPN lander enrichment fields into the ES document', () => {
+    const doc = buildAdmobDocument({
+      id: 77,
+      ad_id: payload.ad_id,
+      post_owner_id: null,
+      post_owner: null,
+      post_owner_image: null,
+      type: 'BANNER',
+      platform: 19,
+      network: 'mob-network',
+      source: 'android',
+      status: 1,
+      first_seen: '2026-08-01 00:00:00',
+      last_seen: '2026-08-10 00:00:00',
+      occurrence_count: 4,
+      image_url_original: payload.image_url_original,
+      image_url: '/pas-dev/stream/admob/adImage/202608/77.webp',
+      source_website: 'https://clickza.space/DDD/',
+      source_parameters_json: JSON.stringify({
+        gad_source: '5',
+        gad_campaignid: '24090156948',
+        gclid: 'gclid-value',
+      }),
+      whatsapp_url: 'https://api.whatsapp.com/send/?phone=%2B919311475239&text=Hello&type=phone_number&app_absent=0',
+      whatsapp_domain: 'api.whatsapp.com',
+      whatsapp_path: '/send/',
+      whatsapp_phone: '+919311475239',
+      whatsapp_message: 'Hello',
+      whatsapp_parameters_json: JSON.stringify({
+        phone: '+919311475239',
+        text: 'Hello',
+        type: 'phone_number',
+        app_absent: '0',
+      }),
+      campaign_id: '24090156948',
+      location_without_vpn_json: JSON.stringify({
+        ip: '106.51.38.160',
+        country: 'India',
+        country_code: 'IN',
+      }),
+      location_with_vpn_json: JSON.stringify({
+        ip: '185.177.126.136',
+        country: 'Netherlands',
+        country_code: 'NL',
+      }),
+      comparison_json: JSON.stringify({
+        location_changed: true,
+        whatsapp_data_changed: false,
+      }),
+      countries: [],
+      states: [],
+      sub_networks: [],
+      source_apps: [],
+    });
+
+    expect(doc.source_website).toBe('https://clickza.space/DDD/');
+    expect(doc.source_parameters).toEqual(expect.objectContaining({
+      gad_source: '5',
+      gad_campaignid: '24090156948',
+      gclid: 'gclid-value',
+    }));
+    expect(doc.whatsapp_phone).toBe('+919311475239');
+    expect(doc.whatsapp_parameters).toEqual(expect.objectContaining({
+      phone: '+919311475239',
+      text: 'Hello',
+    }));
+    expect(doc.campaign_id).toBe('24090156948');
+    expect(doc.location_without_vpn).toEqual(expect.objectContaining({
+      country: 'India',
+      country_code: 'IN',
+    }));
+    expect(doc.comparison).toEqual(expect.objectContaining({
+      location_changed: true,
+      whatsapp_data_changed: false,
+    }));
+  });
+
   it('searches mob_search_mix and returns an independent admob card row', async () => {
     const elastic = {
       indexName: 'mob_search_mix',

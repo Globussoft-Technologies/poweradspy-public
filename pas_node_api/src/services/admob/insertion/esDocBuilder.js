@@ -14,6 +14,59 @@ function daysRunning(firstSeen, lastSeen) {
   return Math.max(1, Math.ceil((end - start) / 86400000) + 1);
 }
 
+function asArray(value) {
+  if (value === null || value === undefined || value === '') return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed !== null && parsed !== undefined) return [parsed];
+    } catch {
+      return value
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }
+  }
+  return [value];
+}
+
+function flattenTextArray(value) {
+  return asArray(value)
+    .flatMap((item) => {
+      if (item === null || item === undefined) return [];
+      if (typeof item === 'string') return [item];
+      if (typeof item === 'object') {
+        const candidate = item.text || item.label || item.title || item.href || item.url || item.phone || item.value;
+        if (candidate !== undefined && candidate !== null && candidate !== '') {
+          return [String(candidate)];
+        }
+        try {
+          return [JSON.stringify(item)];
+        } catch {
+          return [];
+        }
+      }
+      return [String(item)];
+    })
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function asObject(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function details(rows) {
   return rows.map((row) => ({
     name: row.name,
@@ -52,6 +105,7 @@ function buildAdmobDocument(ad) {
     ad_sub_position: ad.ad_sub_position,
     city: ad.city,
     ip_address: ad.ip_address,
+    redirect_status: ad.redirect_status === null || ad.redirect_status === undefined ? null : Number(ad.redirect_status),
     first_seen: iso(ad.first_seen),
     last_seen: iso(ad.last_seen),
     days_running: runningDays,
@@ -69,6 +123,35 @@ function buildAdmobDocument(ad) {
     destination_host: ad.destination_host,
     image_url_original: ad.image_url_original,
     image_url: ad.image_url,
+    lander_status: ad.lander_status === null || ad.lander_status === undefined ? null : Number(ad.lander_status),
+    lander_crawled_by: ad.lander_crawled_by,
+    lander_destination_url: ad.lander_destination_url,
+    lander_html_path: ad.lander_html_path,
+    lander_screen_shot: ad.lander_screen_shot,
+    lander_domain_registered_date: iso(ad.lander_domain_registered_date),
+    lander_domain_age: ad.lander_domain_age === null || ad.lander_domain_age === undefined ? null : Number(ad.lander_domain_age),
+    country_iso: asArray(ad.country_iso_json),
+    source_website: ad.source_website,
+    source_parameters: asObject(ad.source_parameters_json),
+    whatsapp_url: ad.whatsapp_url,
+    whatsapp_domain: ad.whatsapp_domain,
+    whatsapp_path: ad.whatsapp_path,
+    whatsapp_phone: ad.whatsapp_phone,
+    whatsapp_message: ad.whatsapp_message,
+    whatsapp_parameters: asObject(ad.whatsapp_parameters_json),
+    campaign_id: ad.campaign_id,
+    location_without_vpn: asObject(ad.location_without_vpn_json),
+    location_with_vpn: asObject(ad.location_with_vpn_json),
+    comparison: asObject(ad.comparison_json),
+    whatsapp_links: asArray(ad.whatsapp_links_json),
+    whatsapp_prefilled_texts: asArray(ad.whatsapp_texts_json),
+    phone_numbers: asArray(ad.phone_numbers_json),
+    contact_buttons: flattenTextArray(ad.contact_buttons_json),
+    contact_button_count: ad.contact_button_count === null || ad.contact_button_count === undefined ? 0 : Number(ad.contact_button_count),
+    whatsapp_rotator_detected: Boolean(Number(ad.whatsapp_rotator_detected)),
+    whatsapp_rotator_phone_count: ad.whatsapp_rotator_phone_count === null || ad.whatsapp_rotator_phone_count === undefined ? 0 : Number(ad.whatsapp_rotator_phone_count),
+    lead_campaign_tag: ad.lead_campaign_tag,
+    lander_ad_category: ad.lander_ad_category,
     country: ad.countries.map((row) => row.name),
     state: ad.states.map((row) => row.name),
     sub_network: ad.sub_networks.map((row) => row.name),

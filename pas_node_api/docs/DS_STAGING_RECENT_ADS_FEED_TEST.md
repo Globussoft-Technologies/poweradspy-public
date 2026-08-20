@@ -99,6 +99,14 @@ confirm:
 - `returned_count: 1`;
 - `available_through` is about 60 seconds behind request time.
 
+These values are application-log fields, not API response fields and not database
+records. With the repository's default logging configuration, search
+`<API_WORKING_DIRECTORY>/logs/combined-YYYY-MM-DD.log` (or the directory configured
+by `LOG_DIR`) for `[getRecentAdsForAiMeta] page` and the supplied request ID. In a
+production-mode deployment, the same structured JSON is also written to stdout and
+may be available in the server's centralized container/process logs. A non-production
+console line may omit the metadata, so use the combined file for staging.
+
 These are single-request staging thresholds, not a substitute for later load-test
 percentiles.
 

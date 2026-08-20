@@ -100,7 +100,7 @@ Body shape: `{ code, message, error?, data?, meta? }`. `code` is also the HTTP s
 
 ### Error examples
 
-#### 400 â€” invalid network
+#### 400 - invalid network
 
 ```json
 {
@@ -119,7 +119,7 @@ Body shape: `{ code, message, error?, data?, meta? }`. `code` is also the HTTP s
 }
 ```
 
-#### 500 â€” SQL query failure
+#### 500 - SQL query failure
 
 ```json
 {

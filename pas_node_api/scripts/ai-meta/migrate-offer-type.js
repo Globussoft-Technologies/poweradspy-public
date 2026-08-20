@@ -61,7 +61,7 @@ async function schemaHost(sql) {
 
 async function main() {
   const { commit, networks } = parseArgs(process.argv.slice(2));
-  console.log(`\n=== AI-Meta offer_type migration â€” ${commit ? 'COMMIT' : 'DRY-RUN'} ===`);
+  console.log(`\n=== AI-Meta offer_type migration - ${commit ? 'COMMIT' : 'DRY-RUN'} ===`);
   console.log(`networks: ${networks.join(', ')}\n`);
 
   await databaseManager.connectAll(networksConfig);
@@ -71,7 +71,7 @@ async function main() {
     const sql = databaseManager.getSQL(net);
     const cfgNet = NET_SQL[net];
     if (!sql) {
-      console.log(`[${net}] SKIP â€” no SQL connection`);
+      console.log(`[${net}] SKIP - no SQL connection`);
       summary.push({ net, status: 'no-sql' });
       continue;
     }
@@ -108,7 +108,7 @@ async function main() {
       continue;
     }
 
-    console.log(`   â€¢ no-op`);
+    console.log(`   * no-op`);
     summary.push({ net, status: 'exists' });
   }
 
