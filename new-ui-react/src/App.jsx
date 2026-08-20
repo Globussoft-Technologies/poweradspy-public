@@ -1139,17 +1139,17 @@ const App = () => {
     domain_reg: "domain_date_btn_sort",
   };
 
-  const handleDateChange = (type, dates, entryPoint) => {
+  const handleDateChange = (type, dates, entryPoint, forceTrack = false) => {
     if (guestGuard("Please login to change filters", {})) return;
     const filterKey = DATE_TYPE_TO_FILTER_KEY[type] || type;
     if (!dates || !dates[0] || !dates[1]) {
-      sdui.setFilter(filterKey, null, entryPoint);
+      sdui.setFilter(filterKey, null, entryPoint, forceTrack);
       return;
     }
     const [from, to] = dates;
     const toStartUnix = (d) => { const dt = new Date(d); return Math.floor(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate(), 0, 0, 0) / 1000); };
     const toEndUnix   = (d) => { const dt = new Date(d); return Math.floor(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59) / 1000); };
-    sdui.setFilter(filterKey, [toEndUnix(to), toStartUnix(from)], entryPoint);
+    sdui.setFilter(filterKey, [toEndUnix(to), toStartUnix(from)], entryPoint, forceTrack);
   };
 
   // ── Hidden & Favourite State ─────────────────────────────────────────
@@ -2167,7 +2167,12 @@ const App = () => {
     }
 
     handleSearch(advertiserName, "advertiser", undefined, { entryPoint: 'projects' });
-    if (range) handleDateChange("ad_seen", range, 'projects');
+    // forceTrack: "Last Month" etc. compute the same date-based range no
+    // matter which advertiser row was clicked, so a second click (different
+    // advertiser, same day) can produce a value identical to what's already
+    // active — force the GA hit so every explicit stat click is tracked,
+    // not just ones that happen to change the resulting filter value.
+    if (range) handleDateChange("ad_seen", range, 'projects', true);
     // Fold the upcoming filter snapshot into the page-navigation history entry so
     // one browser Back returns to the project's Competitor Analytics view.
     coalesceNextHistoryWrite();

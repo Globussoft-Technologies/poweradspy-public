@@ -537,10 +537,19 @@ export function useSDUI() {
         }
     }, []);
 
-    const setFilter = useCallback((filterId, value, entryPoint) => {
+    // forceTrack: bypass the "did the value actually change" guard for
+    // callers where the VALUE can coincidentally match what's already active
+    // even though the user just took a distinct, explicit action. e.g. the
+    // Projects "Last Month" stat computes the same [start, end] unix range
+    // no matter which advertiser row you click (it's date-based, not
+    // advertiser-based) and that range is also sessionStorage-persisted per
+    // tab, so a second click — on a different advertiser, same day — was
+    // silently untracked because `changed` was false against the leftover
+    // value from the first click.
+    const setFilter = useCallback((filterId, value, entryPoint, forceTrack = false) => {
         const previousValue = filterValuesRef.current?.[filterId];
         const changed = JSON.stringify(previousValue) !== JSON.stringify(value);
-        if (changed) trackAppliedFilter(filterId, value, entryPoint || 'sidebar');
+        if (changed || forceTrack) trackAppliedFilter(filterId, value, entryPoint || 'sidebar');
         setFilterValues(prev => {
             const next = { ...prev, [filterId]: value };
             if (filterId === '_autoSortField') return next;
