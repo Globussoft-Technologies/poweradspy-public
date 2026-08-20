@@ -1542,7 +1542,15 @@ export const buildSearchPayload = (filters = {}) => {
       return selected.length > 0 ? selected : 'NA';
     })(),
     funnel: Array.isArray(funnel) && funnel.length > 0 ? funnel : v(funnel),
-    affiliate: Array.isArray(affiliate) && affiliate.length > 0 ? affiliate : 'NA',
+    // The "CJ Affiliate" filter chip's SDUI value is `cj_affiliate` (matches
+    // its label), but every network's affiliate-network data only ever
+    // stores the short code `cj` — translate it here, at the payload
+    // boundary, so the SDUI option/label stay untouched and every other
+    // affiliate value (clickbank, maxbounty, shareasale, ...) passes through
+    // as-is.
+    affiliate: Array.isArray(affiliate) && affiliate.length > 0
+      ? affiliate.map((a) => (a === 'cj_affiliate' ? 'cj' : a))
+      : 'NA',
     // Native Network is a Native-only filter. A persisted value must never leak
     // into YouTube/Google/another platform request and trigger a false plan gate.
     nativeNetwork: !resolvedNetworks.includes('native') ||
