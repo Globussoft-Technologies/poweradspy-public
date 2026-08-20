@@ -98,13 +98,30 @@ function buildCommonClauses(input) {
     filter.push({ term: { ad_id: publicAdId } });
   }
 
-  const keyword = [input.keyword, input.advertiser, input.domain]
-    .find((value) => active(value) && String(value).trim());
-  if (keyword) {
+  // Each search mode is restricted to its own field(s) — "Advertiser"/"Domain"
+  // must not fall back to matching keyword-style fields like ad_text/newsfeed_description,
+  // or a query like an advertiser name would surface ads with no real advertiser/domain match.
+  if (active(input.keyword) && String(input.keyword).trim()) {
     must.push({
       simple_query_string: {
-        query: String(keyword).trim(),
+        query: String(input.keyword).trim(),
         fields: ['ad_title^3', 'ad_text^2', 'newsfeed_description', 'post_owner^2', 'ad_id', 'destination_host'],
+        default_operator: 'and',
+      },
+    });
+  } else if (active(input.advertiser) && String(input.advertiser).trim()) {
+    must.push({
+      simple_query_string: {
+        query: String(input.advertiser).trim(),
+        fields: ['post_owner'],
+        default_operator: 'and',
+      },
+    });
+  } else if (active(input.domain) && String(input.domain).trim()) {
+    must.push({
+      simple_query_string: {
+        query: String(input.domain).trim(),
+        fields: ['destination_host'],
         default_operator: 'and',
       },
     });

@@ -132,13 +132,16 @@ export const TrendChart = ({ points = [], height = 180 }) => {
 
 /** Ranked horizontal-bar list. items: [{ key, ads, display? }]. */
 export const RankedBars = ({ items = [], onItemClick, emptyLabel = "No data.", max = 10 }) => {
-  if (!items.length) return <EmptyState label={emptyLabel} />;
-  const top = items.slice(0, max);
+  // Drop entries with no real name (blank/null key from the aggregation, e.g. an
+  // ad with no country set) instead of rendering them as a fake "—" bucket.
+  const named = items.filter((it) => it.display || it.key);
+  if (!named.length) return <EmptyState label={emptyLabel} />;
+  const top = named.slice(0, max);
   const peak = Math.max(...top.map((i) => i.ads || 0), 1);
   return (
     <div className="space-y-1.5">
       {top.map((it, i) => {
-        const label = it.display || it.key || "—";
+        const label = it.display || it.key;
         const pct = Math.max(2, Math.round(((it.ads || 0) / peak) * 100));
         const clickable = typeof onItemClick === "function";
         return (

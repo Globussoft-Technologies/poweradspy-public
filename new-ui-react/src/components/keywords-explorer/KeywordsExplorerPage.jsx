@@ -226,14 +226,15 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
   // would replace the search result with the whole database).
   useEffect(() => { if (mode === "browse") fetchRows(); }, [fetchRows, mode]);
 
-  // In search mode, sort the loaded matched rows client-side so the sort arrows
-  // reorder just the result (browse mode is already server-sorted → pass through).
+  // In search mode, the whole matched set is loaded at once (no server paging),
+  // so sort AND page slicing both happen client-side here (browse mode is already
+  // server-sorted/paged → pass through).
   // Empty/null values always sort last regardless of direction.
   const displayRows = useMemo(() => {
     if (mode !== "search") return rows;
     const { sort_by, sort_dir } = sort;
     const dir = sort_dir === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) => {
+    const sorted = [...rows].sort((a, b) => {
       const av = a?.[sort_by];
       const bv = b?.[sort_by];
       const aEmpty = av == null || av === "";
@@ -247,7 +248,8 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
       if (sort_by === "first_seen") return (new Date(av) - new Date(bv)) * dir;
       return String(av).localeCompare(String(bv)) * dir;
     });
-  }, [rows, sort, mode]);
+    return sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  }, [rows, sort, mode, page]);
 
   // Clear the previous results so a failed/empty import doesn't leave the stat
   // cards (Keywords / Avg Competition / Total Ad Volume / Trending) and the table
