@@ -630,3 +630,31 @@ describe("advertiserService > inner bucket-format coverage", () => {
     expect(res.send).toHaveBeenCalled();
   });
 });
+
+describe("advertiserService > getAdCount date-source regression", () => {
+  it("uses first_seen first and post_date as the fallback for all three networks", async () => {
+    spies.esClient.server1.search.mockResolvedValue(emptyAggResult());
+    spies.esClient.server2.search.mockResolvedValue(emptyAggResult());
+    spies.esClient.server3.search.mockResolvedValue(emptyAggResult());
+
+    await svc.getAdCount({ body: { competitors: "X" } }, mockRes());
+
+    const fbCall = spies.esClient.server1.search.mock.calls[0][0];
+    const igCall = spies.esClient.server2.search.mock.calls[0][0];
+    const googleCall = spies.esClient.server3.search.mock.calls[0][0];
+
+    expect(fbCall.body.aggs.monthly_ads.date_histogram.script.params.fields).toEqual([
+      "facebook_ad.first_seen.keyword",
+      "facebook_ad.post_date",
+    ]);
+    expect(igCall.body.aggs.monthly_ads.date_histogram.script.params.fields).toEqual([
+      "instagram_ad.first_seen.keyword",
+      "instagram_ad.post_date",
+    ]);
+    expect(googleCall.body.aggs.monthly_ads.date_histogram.script.params.fields).toEqual([
+      "first_seen",
+      "post_date",
+    ]);
+    expect(fbCall.body.aggs.monthly_ads.date_histogram.script.source).toContain("LocalDateTime");
+  });
+});

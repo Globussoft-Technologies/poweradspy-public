@@ -1959,9 +1959,10 @@ class AdvertiserService {
             "facebook_ad_post_owners.post_owner_name_exactly",
           ],
           dateFields: [
-            "facebook_ad_meta_data.firstSeenOnIos",
-            "facebook_ad_meta_data.firstSeenOnAndroid",
-            "facebook_ad_meta_data.firstSeenOnDesktop",
+            // The competition graph should bucket by the ad's actual
+            // first_seen timestamp, falling back to post_date when the
+            // publisher-side first_seen value is missing or malformed.
+            "facebook_ad.first_seen.keyword",
             "facebook_ad.post_date"
           ],
           platform: "facebook"
@@ -1978,9 +1979,7 @@ class AdvertiserService {
             "instagram_ad_post_owners.post_owner_name_exactly",
           ],
           dateFields: [
-            "instagram_ad_meta_data.firstSeenOnIos",
-            "instagram_ad_meta_data.firstSeenOnAndroid",
-            "instagram_ad_meta_data.firstSeenOnDesktop",
+            "instagram_ad.first_seen.keyword",
             "instagram_ad.post_date"
           ],
           platform: "instagram"
@@ -1990,9 +1989,8 @@ class AdvertiserService {
           field: "post_owner_name",
           searchFields: ["post_owner_name"],
           dateFields: [
-            "firstSeenOnIos",
-            "firstSeenOnAndroid",
-            "firstSeenOnDesktop",
+            "first_seen",
+            "post_date",
           ],
           platform: "google"
         },
@@ -2010,6 +2008,46 @@ class AdvertiserService {
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
       ];
+
+      // Build an ES 6.8-safe fallback script:
+      // 1) try the first_seen field first;
+      // 2) if it is missing or invalid, fall back to post_date;
+      // 3) parse FB/IG keyword strings in the same `yyyy-MM-dd HH:mm:ss`
+      //    format used by the stored documents.
+      const buildMonthlyDateScript = (dateFields) => ({
+        source: `
+          def fmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+          def zone = java.time.ZoneId.of(params.tz);
+          for (def fieldName : params.fields) {
+            if (!doc.containsKey(fieldName) || doc[fieldName].size() == 0) {
+              continue;
+            }
+            def value = doc[fieldName].value;
+            if (value == null) {
+              continue;
+            }
+            try {
+              return value.toInstant().toEpochMilli();
+            } catch (Exception dateErr) {
+              try {
+                return java.time.LocalDateTime
+                  .parse(value.toString(), fmt)
+                  .atZone(zone)
+                  .toInstant()
+                  .toEpochMilli();
+              } catch (Exception textErr) {
+                // Try the next fallback field.
+              }
+            }
+          }
+          return null;
+        `,
+        lang: "painless",
+        params: {
+          fields: dateFields,
+          tz: "+05:30",
+        },
+      });
 
       // Media gate — same EXTRA_CONDITION the search builders apply, so the
       // monthly counts match what users actually SEE (no-media / placeholder
@@ -2053,11 +2091,6 @@ class AdvertiserService {
   
         const aggPromises = relevantIndexes.map(async ({ index, searchFields, dateFields, platform }) => {
           try {
-            // Build script for sequential date fallback
-            const scriptSource = dateFields
-              .map(f => `doc['${f}'].size()!=0 ? doc['${f}'].value : null`)
-              .join(" ?: ");
-  
             const media = mediaFilterFor(index);
 
             // Elasticsearch query
@@ -2087,10 +2120,7 @@ class AdvertiserService {
                     format: "MMMM",
                     time_zone: "+05:30",
                     min_doc_count: 1,
-                    script: {
-                      lang: "painless",
-                      source: scriptSource
-                    }
+                    script: buildMonthlyDateScript(dateFields)
                   }
                 }
               }
