@@ -29,6 +29,7 @@ const databaseManager = require('../database/DatabaseManager');
 const serviceRegistry = require('./ServiceRegistry');
 const { authMiddleware } = require('../middleware/auth');
 const { withLimit } = require('./common/helpers/esConcurrency');
+const { getDisplayableMediaFilter } = require('./common/helpers/displayableMediaFilters');
 const logger = require('../logger');
 const log = logger.createChild('market-trends');
 const { asyncHandler } = require('../middleware/errorHandler');
@@ -427,11 +428,30 @@ function placeholderMustNot() {
   return o;
 }
 // date in [s,e] AND (for search_mix nets) not a placeholder-media ad — scoped to
-// a Meta config's date field. Flat-schema nets (mediaFilter:false) skip the media
-// must_not since they don't have those fields.
+// a Meta config's date field.
+//
+// Flat-schema nets (mediaFilter:false) skip the search_mix placeholder heuristic
+// above, but still need the network's OWN always-applied exclusions — e.g.
+// Google's index mixes in ORGANIC SEARCH results alongside real paid ads (146M
+// of 197M docs) and IMAGE ads with no valid NAS url, both excluded by default
+// in the live Ads Library search (GoogleSearchQueryBuilder.js). Without the same
+// exclusion here, Top Movers/Categories could aggregate a non-ad organic result's
+// post_owner as an "advertiser" — a bucket that can never show a matching ad on
+// click-through, since Ads Library correctly hides it by design (confirmed
+// 2026-08-20: a GDN-looking breadcrumb advertiser turned out to be exactly this
+// — a real doc, just type=ORGANIC SEARCH, not a running ad). Reuses the same
+// canonical gate shared with admin_panel_backend/compeitetor_analysis
+// (displayableMediaFilters.js) rather than re-deriving the rules here — per its
+// own doc comment, these clauses belong in `filter`, not `must_not` (they
+// self-negate internally).
 function windowQueryFor(cfg, s, e, extra = []) {
   const b = { filter: [{ range: { [cfg.date]: { gte: fmt(s), lte: fmt(e), format: DATE_FMT } } }, ...extra] };
-  if (cfg.mediaFilter !== false) b.must_not = placeholderMustNot();
+  if (cfg.mediaFilter !== false) {
+    b.must_not = placeholderMustNot();
+  } else {
+    const dmf = getDisplayableMediaFilter(cfg.net);
+    if (dmf) b.filter.push(...dmf);
+  }
   return { bool: b };
 }
 function categoryBodyFor(cfg, size, field, win, extra = []) {
@@ -465,6 +485,30 @@ function topBodyFor(cfg, size, field, win, subAggs, extra = []) {
 // ─── Controllers ─────────────────────────────────────────────────────────────
 const mapBuckets = (b) => (b || []).reduce((o, x) => { o[x.key] = x.doc_count; return o; }, {});
 const topHit = (b) => b.label?.hits?.hits?.[0]?._source || null;
+
+// GDN (and any other network without a verified advertiser identity) can hand
+// back a scraped destination-URL breadcrumb as the "advertiser" name — e.g.
+// "https://www.g2.com/…/Teramind/Teramind-Reviews" — instead of a brand name.
+// Trim it down to "domain › last segment" for display only; the response's
+// `key`/`id` field (the raw, exact aggregation bucket value) is left untouched
+// so the frontend's click-through search still matches every ad in the bucket.
+// Split on breadcrumb arrows AND plain "/" path separators — the raw value may
+// be either style ("g2.com › … › Teramind" or "webcatalog.io/apps/teramind").
+const BREADCRUMB_SEP = /[›>|/]/;
+const ELLIPSIS_SEGMENT = /^(\.{2,}|…)$/;
+function cleanAdvertiserLabel(raw) {
+  const s = String(raw || '').trim();
+  // Only touch values that actually look like a URL — "|" or ">" alone can
+  // appear in a legitimate brand name (e.g. "Nike | Official Store") and must
+  // not be mangled.
+  if (!/^(https?:\/\/|www\.)/i.test(s)) return s;
+  const noScheme = s.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+  const segments = noScheme.split(BREADCRUMB_SEP).map((p) => p.trim()).filter((p) => p && !ELLIPSIS_SEGMENT.test(p));
+  if (!segments.length) return s;
+  const domain = segments[0];
+  const last = segments[segments.length - 1];
+  return last && last.toLowerCase() !== domain.toLowerCase() ? `${domain} › ${last}` : domain;
+}
 
 async function getOverview(req, res) {
   const raw = { ...req.query, ...req.body };
@@ -542,7 +586,7 @@ async function topForCfg(cfg, type, days, size, country, advertiser, custom) {
     return (aggs.current?.items?.buckets || []).filter((b) => String(b.key).trim() !== '')
       .map((b) => ({
         key: String(b.key),
-        label: type === 'advertiser' ? (topHit(b)?.[cfg.advLabel] || String(b.key)) : String(b.key),
+        label: type === 'advertiser' ? cleanAdvertiserLabel(topHit(b)?.[cfg.advLabel] || String(b.key)) : String(b.key),
         current: b.doc_count, previous: prevMap[b.key] || 0, net: cfg.net,
       }));
   });
@@ -1093,3 +1137,7 @@ router.get('/trends/keywords', authMiddleware, accessGuard, marketSectionGate('k
 router.get('/trends/search', authMiddleware, accessGuard, marketSectionGate('compare'), restrictNetworkToPlan, asyncHandler(withResponseCache(getSearch)));
 
 module.exports = router;
+// Exposed for unit testing/diagnostics only — primary consumers just `require()` the router.
+module.exports.cleanAdvertiserLabel = cleanAdvertiserLabel;
+module.exports.getTop = getTop;
+module.exports.windowQueryFor = windowQueryFor;

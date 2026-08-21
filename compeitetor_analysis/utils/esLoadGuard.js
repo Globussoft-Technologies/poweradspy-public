@@ -62,12 +62,23 @@ export async function isEsUnderStress(serverKey) {
     if (client) {
       const poolSize = await getSearchPoolSize(serverKey, client);
       const stats = await client.nodes.stats({ metric: ["thread_pool"] });
-      for (const node of Object.values(stats.nodes || {})) {
+      for (const [nodeId, node] of Object.entries(stats.nodes || {})) {
         const search = node.thread_pool?.search;
         if (!search) continue;
-        const prevRejected = lastRejectedByServer.get(serverKey) ?? search.rejected;
+        // Keyed per-NODE (2026-08-21 fix), not just per-server: a server with
+        // multiple ES nodes (confirmed on server1/facebook+youtube — two nodes
+        // with very different cumulative `rejected` counts, e.g. 2504 vs
+        // 18259) was comparing one node's absolute rejected count against
+        // whatever the PREVIOUS node in this same loop had just set moments
+        // earlier — a completely different node's baseline — producing a
+        // huge spurious "newRejections" delta on every single check. This is
+        // exactly why facebook alone showed stressed-skip == candidates on
+        // 100% of batches while instagram/google (servers with matching or
+        // single-node counts) were unaffected by the same code path.
+        const nodeKey = `${serverKey}:${nodeId}`;
+        const prevRejected = lastRejectedByServer.get(nodeKey) ?? search.rejected;
         const newRejections = search.rejected - prevRejected;
-        lastRejectedByServer.set(serverKey, search.rejected);
+        lastRejectedByServer.set(nodeKey, search.rejected);
         const poolBusy = poolSize != null && search.active >= poolSize * POOL_SATURATION_RATIO;
         if (poolBusy || search.queue > STRESS_QUEUE_THRESHOLD || newRejections > 0) stressed = true;
       }

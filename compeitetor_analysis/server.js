@@ -15,6 +15,7 @@ import { initSocket } from "./utils/socket.js";
 import { initDataReportCron } from "./core/mailer/dataReportCron.js";
 import { initKeywordNotifyCron } from "./core/mailer/keywordNotifyCron.js";
 import { initSnapshotCron } from "./core/Dashboard/snapshotCron.js";
+import { initCompetitorMailCron } from "./core/Competitors/competitorMailCron.js";
 
 const app = express();
 app.use(cors({
@@ -105,6 +106,12 @@ const startServer = async () => {
     // Competitor snapshot → alert-evaluation → change-detection chain — its
     // OWN switch (`competitor_snapshot_cron`). No-op unless enabled.
     initSnapshotCron();
+
+    // Competitor-pulse mail pipeline (get-competitors → update-competitors-status
+    // → active-competitor-contacts → update-daily-competitors), now in-process.
+    // Its OWN switch (`competitor_mail_cron`). No-op unless enabled — safe to
+    // deploy alongside the still-existing external crontab during rollout.
+    initCompetitorMailCron();
   } catch (error) {
     Logger.error(`Failed to start server: ${error.message}`);
     process.exit(1);

@@ -74,6 +74,8 @@ vi.mock("../utils/socket.js", () => ({ initSocket: initSocketSpy }));
 vi.mock("../core/mailer/dataReportCron.js", () => ({ initDataReportCron: vi.fn() }));
 // Same node-cron issue via the new competitor-snapshot cron (NEW).
 vi.mock("../core/Dashboard/snapshotCron.js", () => ({ initSnapshotCron: vi.fn() }));
+// Same node-cron issue via the new competitor-mail cron (NEW).
+vi.mock("../core/Competitors/competitorMailCron.js", () => ({ initCompetitorMailCron: vi.fn() }));
 
 let readFileSyncSpy, exitSpy;
 

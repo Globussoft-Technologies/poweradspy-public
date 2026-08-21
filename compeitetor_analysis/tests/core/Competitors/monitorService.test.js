@@ -17,6 +17,9 @@ const {
   memberFindSpy,
   logSendSpy,
   isBlacklistedSpy,
+  sortSpy,
+  pipelineStateFindByIdSpy,
+  pipelineStateUpdateOneSpy,
 } = vi.hoisted(() => {
   const esClientFake = {
     server1: { search: vi.fn(), count: vi.fn() },
@@ -46,6 +49,9 @@ const {
     memberFindSpy: vi.fn(() => ({ lean: () => Promise.resolve([]) })),
     logSendSpy: vi.fn(),
     isBlacklistedSpy: vi.fn(() => false),
+    sortSpy: vi.fn(),
+    pipelineStateFindByIdSpy: vi.fn(() => ({ lean: () => Promise.resolve(null) })),
+    pipelineStateUpdateOneSpy: vi.fn(() => Promise.resolve({})),
   };
 });
 
@@ -113,6 +119,9 @@ vi.mock("../../../models/brandCcMember.js", () => ({
 vi.mock("../../../models/member.js", () => ({
   default: { find: memberFindSpy },
 }));
+vi.mock("../../../models/competitorPipelineState.js", () => ({
+  default: { findById: pipelineStateFindByIdSpy, updateOne: pipelineStateUpdateOneSpy },
+}));
 vi.mock("../../../core/mailer/emailAudit.js", () => ({
   newSendId: () => "sid",
   logSend: logSendSpy,
@@ -143,6 +152,9 @@ beforeEach(async () => {
   memberFindSpy.mockReset().mockReturnValue({ lean: () => Promise.resolve([]) });
   logSendSpy.mockReset();
   isBlacklistedSpy.mockReset().mockReturnValue(false);
+  sortSpy.mockReset();
+  pipelineStateFindByIdSpy.mockReset().mockReturnValue({ lean: () => Promise.resolve(null) });
+  pipelineStateUpdateOneSpy.mockReset().mockResolvedValue({});
   configGetSpy.mockReset();
   esClientFake.server1.search.mockReset();
   esClientFake.server2.search.mockReset();
@@ -692,6 +704,34 @@ describe("monitorService > fetchTopAdPreview ES paths (PR #201)", () => {
     expect(out.image_url).toBeFalsy();
   });
 
+  it("retry-for-image (2026-08-21): top hit has no image, 2nd candidate does → uses the 2nd hit's ad, coherently", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [
+      { _source: { "facebook_ad_variants.title": "No image ad", "facebook_ad_post_owners.post_owner_name": "Acme" } },
+      { _source: { "facebook_ad_variants.title": "Has image ad", image_url: "https://x/real.png", "facebook_ad_post_owners.post_owner_name": "Acme2" } },
+    ] } });
+    const out = await svc.fetchTopAdPreview("Acme", "facebook");
+    expect(out.image_url).toBe("https://x/real.png");
+    expect(out.title).toBe("Has image ad"); // fields come from the SAME chosen hit, not mixed
+    expect(out.post_owner_name).toBe("Acme2");
+  });
+
+  it("retry-for-image: query requests multiple candidates, not just size:1", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [{ _source: { "facebook_ad_variants.title": "T" } }] } });
+    await svc.fetchTopAdPreview("Acme", "facebook");
+    const call = esClientFake.server1.search.mock.calls[0][0];
+    expect(call.body.size).toBeGreaterThan(1);
+  });
+
+  it("retry-for-image: NONE of the candidates have an image (e.g. Google text ads) → falls back to the top hit, no image, unchanged behavior", async () => {
+    esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [
+      { _source: { "facebook_ad_variants.title": "First, text-only" } },
+      { _source: { "facebook_ad_variants.title": "Second, also text-only" } },
+    ] } });
+    const out = await svc.fetchTopAdPreview("Acme", "facebook");
+    expect(out.title).toBe("First, text-only"); // still the most recent hit
+    expect(out.image_url).toBeFalsy();
+  });
+
   it("ad with title but no image → image_url empty (L295 #1)", async () => {
     esClientFake.server1.search.mockResolvedValueOnce({ hits: { hits: [{ _source: {
       "facebook_ad_variants.title": "Title only",
@@ -886,13 +926,22 @@ describe("monitorService > getCompetitors", () => {
 
   it("returns competitor names and updates their status to 1", async () => {
     competitorsFindSpy.mockReturnValueOnce({
-      sort: () => ({ limit: () => Promise.resolve([{ _id: "a", competitor_name: "X" }]) }),
+      sort: (arg) => { sortSpy(arg); return { limit: () => Promise.resolve([{ _id: "a", competitor_name: "X" }]) }; },
     });
     competitorsUpdateManySpy.mockResolvedValueOnce({});
     const res = mockRes();
     await svc.getCompetitors({ query: { platform: "facebook" } }, res);
     expect(competitorsUpdateManySpy).toHaveBeenCalled();
     expect(res.send.mock.calls[0][0].body.data).toEqual({ competitorNames: ["X"] });
+  });
+
+  it("sorts by oldest-touched-first (updatedAt asc), not newest-created-first", async () => {
+    competitorsFindSpy.mockReturnValueOnce({
+      sort: (arg) => { sortSpy(arg); return { limit: () => Promise.resolve([]) }; },
+    });
+    const res = mockRes();
+    await svc.getCompetitors({ query: { platform: "facebook" } }, res);
+    expect(sortSpy).toHaveBeenCalledWith({ updatedAt: 1 });
   });
 
   it("covers instagram/youtube/google platform branches", async () => {
@@ -1055,19 +1104,55 @@ describe("monitorService > updateCompetitorsStatus", () => {
 });
 
 describe("monitorService > updateDailyCompetitors", () => {
-  it("success: resets statuses across both collections", async () => {
+  it("success: resets statuses across both collections and writes today's marker", async () => {
     competitorsUpdateManySpy.mockResolvedValueOnce({});
     competitorsReqUpdateManySpy.mockResolvedValueOnce({});
     const res = mockRes();
     await svc.updateDailyCompetitors({}, res);
     expect(competitorsUpdateManySpy).toHaveBeenCalled();
     expect(competitorsReqUpdateManySpy).toHaveBeenCalled();
+    expect(pipelineStateUpdateOneSpy).toHaveBeenCalledWith(
+      { _id: "daily_reset" },
+      { $set: { lastResetDateIST: expect.any(String) } },
+      { upsert: true }
+    );
   });
   it("catch on Mongo failure", async () => {
     competitorsUpdateManySpy.mockRejectedValueOnce(new Error("nope"));
     const res = mockRes();
     await svc.updateDailyCompetitors({}, res);
     expect(res.send.mock.calls[0][0].body.msg).toContain("Failed to update");
+  });
+  it("already reset today -> no-op, updateMany NOT called", async () => {
+    const todayIST = new Date().toISOString().slice(0, 10);
+    pipelineStateFindByIdSpy.mockReturnValueOnce({
+      lean: () => Promise.resolve({ lastResetDateIST: todayIST }),
+    });
+    const res = mockRes();
+    await svc.updateDailyCompetitors({}, res);
+    expect(competitorsUpdateManySpy).not.toHaveBeenCalled();
+    expect(competitorsReqUpdateManySpy).not.toHaveBeenCalled();
+    expect(res.send.mock.calls[0][0].body.msg).toContain("already reset today");
+  });
+  it("marker read fails -> fails open, reset still proceeds", async () => {
+    pipelineStateFindByIdSpy.mockReturnValueOnce({
+      lean: () => Promise.reject(new Error("marker read boom")),
+    });
+    competitorsUpdateManySpy.mockResolvedValueOnce({});
+    competitorsReqUpdateManySpy.mockResolvedValueOnce({});
+    const res = mockRes();
+    await svc.updateDailyCompetitors({}, res);
+    expect(competitorsUpdateManySpy).toHaveBeenCalled();
+    expect(competitorsReqUpdateManySpy).toHaveBeenCalled();
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Statuses updated to 0 successfully");
+  });
+  it("marker write fails -> reset still reports success", async () => {
+    competitorsUpdateManySpy.mockResolvedValueOnce({});
+    competitorsReqUpdateManySpy.mockResolvedValueOnce({});
+    pipelineStateUpdateOneSpy.mockRejectedValueOnce(new Error("marker write boom"));
+    const res = mockRes();
+    await svc.updateDailyCompetitors({}, res);
+    expect(res.send.mock.calls[0][0].body.msg).toContain("Statuses updated to 0 successfully");
   });
 });
 

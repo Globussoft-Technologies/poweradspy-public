@@ -85,6 +85,22 @@ describe("GDN builder > clause generators (must)", () => {
     b.setPostOwnerName("brand");
     expect(b.build().body.query.bool.must.length).toBeGreaterThan(0);
   });
+  // GDN's "advertiser" text is often a scraped destination-URL breadcrumb
+  // (e.g. "https://www.g2.com › … › Teramind Reviews"), not a clean brand
+  // name — the phrase/prefix clauses above can miss it due to punctuation.
+  // An exact `term` match against post_owner_lower.keyword (the same field
+  // Top Movers aggregates on) must always be present as an additional
+  // should-clause so a Top-Movers click-through is guaranteed to match every
+  // ad in that bucket, regardless of tokenization.
+  it("postOwnerName non-quoted → also includes an exact term match on post_owner_lower.keyword", () => {
+    b.setPostOwnerName("https://www.g2.com › … › Teramind Reviews");
+    const must = b.build().body.query.bool.must;
+    const postOwnerClause = must.find((m) => m.bool?.should?.some((s) => s.term));
+    expect(postOwnerClause).toBeDefined();
+    expect(postOwnerClause.bool.should).toContainEqual({
+      term: { "gdn_ad_post_owners.post_owner_lower.keyword": "https://www.g2.com › … › teramind reviews" },
+    });
+  });
   it("postOwnerName quoted", () => {
     b.setPostOwnerName('"BrandX"');
     expect(b.build().body.query.bool.must.length).toBeGreaterThan(0);

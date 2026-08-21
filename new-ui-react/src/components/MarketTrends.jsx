@@ -760,7 +760,11 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
     </div>
   ) : null);
 
-  const drill = (kind, value) => value && setDrillItem({ kind, value });
+  // `queryValue` defaults to the displayed value, but Top Movers advertiser rows
+  // pass the raw aggregation key separately (see topRows/onRowClick below) — the
+  // backend may show a cleaned-up label while the actual search still needs the
+  // exact underlying value to reliably match every ad in that bucket.
+  const drill = (kind, value, queryValue) => value && setDrillItem({ kind, value, queryValue: queryValue ?? value });
   const daysLabel = days === 'custom' ? (from && to ? `${from} → ${to}` : 'custom range') : `last ${days} days`;
   // In compare-mode, spell out whose data THIS panel is scoped to right now.
   const scopeText = (scope) => (termMode ? ` · showing ${scope || 'all compared advertisers'}` : '');
@@ -989,7 +993,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                 color="#4285F4"
                 note={topNote}
                 emptyMsg={topUnsupported ? metaOnlyMsg : `No ${topType === 'cta' ? 'CTA' : 'advertiser'} data for ${metaNet} in this window.`}
-                onRowClick={(r) => drill(topType, r.label)}
+                onRowClick={(r) => drill(topType, r.label, topType === 'advertiser' ? (r.id || r.label) : r.label)}
                 onCompare={topType === 'advertiser' ? (r) => { setTerms((p) => (p.includes(r.label) || p.length >= 5 ? p : [...p, r.label])); trackMarketTrend('advertiser_compare'); } : undefined}
                 onExport={exportTopMovers}
                 scope={<AdvScope terms={terms} activeTerm={topScope} onPick={setTopScope} />}
@@ -1064,7 +1068,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
             <h3 className="text-base font-semibold text-white mt-0.5 break-words">{drillItem.value}</h3>
             <p className="text-xs text-white/60 mt-2">Open this in the Ads Library to see every matching ad with full analytics.</p>
             <div className="flex gap-2 mt-4">
-              <button onClick={() => { const it = drillItem; setDrillItem(null); onDrill && onDrill(it.kind, it.value, selected); }}
+              <button onClick={() => { const it = drillItem; setDrillItem(null); onDrill && onDrill(it.kind, it.queryValue, selected); }}
                 className="flex-1 text-xs bg-[#335296] text-white rounded-lg px-3 py-2 font-medium">Open in Ads Library</button>
               {drillItem.kind === 'advertiser' && (
                 <button onClick={() => { const v = drillItem.value; setDrillItem(null); setTerms((p) => (p.includes(v) || p.length >= 5 ? p : [...p, v])); trackMarketTrend('advertiser_compare'); }}

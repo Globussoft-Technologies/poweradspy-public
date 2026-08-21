@@ -211,6 +211,15 @@ class GoogleSearchQueryBuilder {
         should: [
           { match: { post_owner_name: { query: clean, operator: "and" } } },
           { match_phrase_prefix: { post_owner_name: clean } },
+          // Google Ads "advertiser" text is often a scraped destination-URL
+          // breadcrumb (e.g. "https://www.g2.com/…/Teramind/Teramind Reviews"),
+          // not a clean brand name — punctuation/slashes can break the
+          // analyzed match/phrase-prefix clauses above even for a verbatim
+          // value. `post_owner_lower` is the exact keyword field Top Movers
+          // groups advertisers on (see marketTrends.js META.google.advertiser),
+          // so a `term` match here guarantees a hit whenever the query is
+          // literally one of its own bucket keys — independent of tokenization.
+          { term: { post_owner_lower: clean.trim().toLowerCase() } },
         ],
         minimum_should_match: 1,
       },

@@ -7,6 +7,7 @@ import Competitors_request from "../../models/competitors_request.js";
 import User_details from "../../models/user_details.js";
 import BrandCcMember from "../../models/brandCcMember.js";
 import Member from "../../models/member.js";
+import CompetitorPipelineState from "../../models/competitorPipelineState.js";
 import emailService from "../mailer/emailService.js"
 import { newSendId, logSend } from "../mailer/emailAudit.js";
 import { isBlacklisted, BLACKLISTED_SKIP_REASON } from "../mailer/bounceGuard.js";
@@ -27,6 +28,14 @@ import { isEsUnderStress, withLimit } from "../../utils/esLoadGuard.js";
 // as useful; isEsUnderStress() (reads the cluster's own live, shared state)
 // is the backpressure signal that's correct regardless of process count.
 const ES_MAX_CONCURRENT = 1;
+
+// Ad-preview retry-for-image (2026-08-21): how many recent hits
+// fetchTopAdPreview pulls per competitor/platform so it can fall through to
+// the next-most-recent ad when the top one's image is empty/unresolvable
+// (skipped pasimages/pasvideos path, or an otherwise-broken relative path).
+// One extra ES round trip's worth of `size`, not `size` extra round trips —
+// still a single query.
+const AD_PREVIEW_CANDIDATE_SIZE = 5;
 
 // Diagnostic logging gate — flip MAIL_DEBUG_LOG in config (e.g. true in
 // localDev.json, false in default.json/production). When the flag is off
@@ -245,11 +254,20 @@ class  MonitorService{
     // No date filter — some advertisers (like forestessentials) have
     // their latest ad older than 90 days but the count API still says
     // they exist. We need the most recent CREATIVE regardless of age,
-    // so we just sort by last_seen desc and take size:1. With
-    // track_total_hits:false ES doesn't count all matches, which keeps
-    // this fast even for popular advertisers (50k+ docs).
+    // so we just sort by last_seen desc. With track_total_hits:false ES
+    // doesn't count all matches, which keeps this fast even for popular
+    // advertisers (50k+ docs).
+    //
+    // size: AD_PREVIEW_CANDIDATE_SIZE, not 1 (2026-08-21) — the single
+    // most-recent hit sometimes has an image_url that's empty (skipped
+    // pasimages/pasvideos path) or a genuinely broken URL, silently
+    // rendering the "purple, no image" card. Pull a few recent candidates
+    // and pick the first one whose image actually resolves (see the loop
+    // below) instead of committing to just the top hit. Google is mostly
+    // text ads — if none of the candidates have an image, this correctly
+    // falls back to the top hit's title/body with no image, same as today.
     const esQueryBody = {
-      size: 1,
+      size: AD_PREVIEW_CANDIDATE_SIZE,
       track_total_hits: false,
       timeout: "30s",
       sort: [{ [cfg.sortField]: { order: "desc", unmapped_type: "long" } }],
@@ -279,10 +297,26 @@ class  MonitorService{
       const result = await withLimit(serverKey, () => client.search({ index: cfg.index, body: esQueryBody }), ES_MAX_CONCURRENT);
       const esMs = Date.now() - tEsStart;
 
-      const hit = result?.hits?.hits?.[0]?._source;
-      if (!hit) {
+      const hits = (result?.hits?.hits || []).map((h) => h._source).filter(Boolean);
+      if (!hits.length) {
         dlog(`${tag} 0 hits (${esMs}ms)`);
         return null;
+      }
+
+      // Retry-for-image: resolve each candidate hit's image the same way,
+      // in recency order, and use the FIRST one whose image actually
+      // resolves. Falls back to the top (most recent) hit if none do — a
+      // coherent single ad's fields are never mixed across hits.
+      let hit = hits[0];
+      let image_url = "";
+      for (const candidate of hits) {
+        const candidateType = String(getByPath(candidate, cfg.typeField) || "").toUpperCase();
+        const candidateIsVideo = candidateType.includes("VIDEO");
+        const candidateImageFields = candidateIsVideo
+          ? (cfg.thumbnailPaths || cfg.imagePaths || [])
+          : (cfg.imagePaths || cfg.thumbnailPaths || []);
+        const candidateImageUrl = pickFirstUrl(candidate, candidateImageFields);
+        if (candidateImageUrl) { hit = candidate; image_url = candidateImageUrl; break; }
       }
 
       // Hard-truncate at the data layer: the primary ad card is 124x124
@@ -297,17 +331,7 @@ class  MonitorService{
       // shown at the top of the creative card above the title.
       /* v8 ignore next -- every platform cfg defines searchFields, so the `|| []` is defensive */
       const post_owner_name = pickFirstString(hit, cfg.searchFields || [], 20);
-
-      // VIDEO ads have an .mp4 URL in image_url_original (won't render in
-      // email), so swap to the thumbnail field.
       const adType = String(getByPath(hit, cfg.typeField) || "").toUpperCase();
-      const isVideo = adType.includes("VIDEO");
-      /* v8 ignore start -- every platform cfg defines both thumbnailPaths and imagePaths, so the secondary `||` fallbacks are defensive/unreachable */
-      const imageFieldList = isVideo
-        ? (cfg.thumbnailPaths || cfg.imagePaths || [])
-        : (cfg.imagePaths || cfg.thumbnailPaths || []);
-      /* v8 ignore stop */
-      const image_url = pickFirstUrl(hit, imageFieldList);
       /* v8 ignore next -- every platform cfg defines ownerImagePaths, so the `|| []` is defensive */
       const post_owner_image_url = pickFirstUrl(hit, cfg.ownerImagePaths || []);
 
@@ -316,7 +340,7 @@ class  MonitorService{
         return null;
       }
 
-      dlog(`${tag} ✓ (${esMs}ms)  type=${adType}  owner=${JSON.stringify(post_owner_name)}  title=${JSON.stringify((title || "").slice(0, 40))}  image=${image_url ? "yes" : "no"}`);
+      dlog(`${tag} ✓ (${esMs}ms)  candidates=${hits.length}  type=${adType}  owner=${JSON.stringify(post_owner_name)}  title=${JSON.stringify((title || "").slice(0, 40))}  image=${image_url ? "yes" : "no"}`);
       return { platform, title, body, cta, image_url, post_owner_image_url, post_owner_name };
     } catch (err) {
       dlog(`${tag} ❌ ES error (${Date.now() - tEsStart}ms): ${err.message}`);
@@ -644,9 +668,17 @@ class  MonitorService{
                 Response.validationFailResp("Invalid platform provided", "")
             );
             }
+            // Oldest-touched-first (was newest-created-first): as the tracked
+            // pool grows, sorting by createdAt DESC lets freshly-added
+            // competitors perpetually jump the queue ahead of older ones,
+            // which can starve genuinely-active competitors from ever
+            // reaching the front of a day's checked batch. updatedAt changes
+            // every time a competitor's status flips (via this endpoint,
+            // updateCompetitorsStatus, or the daily reset), so sorting by it
+            // ascending is a real least-recently-checked ordering.
             const competitors = await Competitors.find({
             [platform_status]: 0
-            }) .sort({ createdAt: -1 }).limit(limit);
+            }) .sort({ updatedAt: 1 }).limit(limit);
 
             if (competitors?.length === 0) {
              return res.send(
@@ -783,22 +815,37 @@ class  MonitorService{
             try {
             if (await isEsUnderStress(serverKey)) {
                 dlog(`[updateCompetitorsStatus ${platform}/${compName}] skipped — ES already under stress this cycle`);
-                return null;
+                return { compName, outcome: "stressed" };
             }
             const esRes = await withLimit(serverKey, () => client.search(esQuery), ES_MAX_CONCURRENT);
             if (esRes.hits.hits.length > 0) {
-                return compName;
+                return { compName, outcome: "matched" };
             }
+            return { compName, outcome: "zero" };
             } catch (err) {
             console.error(`Error querying ES for ${compName}:`, err.message);
+            return { compName, outcome: "error", error: err.message };
             }
-
-            return null;
         })
         );
 
         const results = await Promise.all(searchPromises);
-        const filteredResults = results.filter(Boolean);
+        const filteredResults = results.filter((r) => r.outcome === "matched").map((r) => r.compName);
+
+        // Diagnostic counters (2026-08-20) — added after a multi-day incident where
+        // this endpoint returned HTTP 200 every night but promoted almost nothing to
+        // status=2, with NO trace in any log: isEsUnderStress() skips only dlog(),
+        // which is silent in production (MAIL_DEBUG_LOG=false) and console-only
+        // (never reaches this winston logger) even when it does print. This
+        // logger.info call is the only durable record of WHY a cycle promoted so
+        // few/none — read it in resources/logs/responselogs/ the morning after.
+        const outcomeCounts = { stressed: 0, zero: 0, error: 0, matched: 0 };
+        for (const r of results) outcomeCounts[r.outcome] = (outcomeCounts[r.outcome] || 0) + 1;
+        logger.info(
+        `[updateCompetitorsStatus] platform=${platform} candidates=${competitors.length} ` +
+        `matched=${outcomeCounts.matched} stressed-skip=${outcomeCounts.stressed} ` +
+        `zero-hit=${outcomeCounts.zero} error=${outcomeCounts.error}`
+        );
 
         if (filteredResults.length > 0) {
         await Competitors.updateMany(
@@ -1368,6 +1415,24 @@ async _runMemberBrandPass({ userBrands, ownerUserId, ownerName, ownerEmail }) {
 
 async updateDailyCompetitors(req, res) {
     try {
+        // Same-day no-op guard (2026-08-20) — lets the old external DevOps
+        // crontab and the new in-process competitorMailCron safely coexist
+        // during rollout. A marker-read failure fails OPEN (proceeds with
+        // the real reset) — same philosophy as isEsUnderStress()'s own
+        // fail-open catch — so a transient Mongo hiccup on the guard itself
+        // never blocks the actual daily reset.
+        const todayIST = moment.utc().utcOffset("+05:30").format("YYYY-MM-DD");
+        try {
+            const marker = await CompetitorPipelineState.findById("daily_reset").lean();
+            if (marker?.lastResetDateIST === todayIST) {
+                return res.send(
+                    Response.userSuccessResp("Statuses already reset today — no-op", [])
+                );
+            }
+        } catch (e) {
+            logger.error(`updateDailyCompetitors: marker read failed, proceeding with reset: ${e.message}`);
+        }
+
         await Competitors.updateMany(
             {},
             {
@@ -1384,6 +1449,16 @@ async updateDailyCompetitors(req, res) {
             {},
             { $set: { email_status: 0 } }
         );
+
+        try {
+            await CompetitorPipelineState.updateOne(
+                { _id: "daily_reset" },
+                { $set: { lastResetDateIST: todayIST } },
+                { upsert: true }
+            );
+        } catch (e) {
+            logger.error(`updateDailyCompetitors: marker write failed: ${e.message}`);
+        }
 
         return res.send(
             Response.userSuccessResp("Statuses updated to 0 successfully", [])

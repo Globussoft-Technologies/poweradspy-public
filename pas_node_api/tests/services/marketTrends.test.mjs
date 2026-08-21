@@ -17,6 +17,14 @@ require.cache[authMwPath] = { id: authMwPath, filename: authMwPath, loaded: true
 const errHandlerPath = require.resolve("../../src/middleware/errorHandler");
 require.cache[errHandlerPath] = { id: errHandlerPath, filename: errHandlerPath, loaded: true, exports: { asyncHandler: (fn) => fn } };
 
+// The real logger module reads config.log.level at import time — the config
+// stub below only carries `intelligence`, so without this mock every test in
+// this file crashes at require() with "Cannot read properties of undefined
+// (reading 'level')" (same pattern used in DatabaseManager.test.mjs etc.).
+const loggerPath = require.resolve("../../src/logger");
+const childLog = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+require.cache[loggerPath] = { id: loggerPath, filename: loggerPath, loaded: true, exports: { createChild: vi.fn(() => childLog) } };
+
 const planSvcPath = require.resolve("../../src/services/planAccess/planAccessService");
 const planSvc = { getConfig: vi.fn(async () => []), getFilterStatus: vi.fn(() => ({})), getAllowedPlatforms: vi.fn(() => []) };
 require.cache[planSvcPath] = { id: planSvcPath, filename: planSvcPath, loaded: true, exports: planSvc };
@@ -412,5 +420,81 @@ describe("marketTrends router > restrictNetworkToPlan (via /trends/overview)", (
     await networkMw("/trends/overview")(req, res, next);
     expect(req.query.network).toBe("youtube");
     expect(next).toHaveBeenCalledTimes(1);
+  });
+});
+
+// GDN (and other search_mix networks without a verified advertiser identity)
+// can hand back a scraped destination-URL breadcrumb as the Top Movers
+// "advertiser" label (e.g. "https://www.g2.com/…/Teramind/Teramind Reviews")
+// instead of a real brand name. cleanAdvertiserLabel() trims that down for
+// display only — the response's `key`/`id` field stays the raw value so the
+// click-through search still matches every ad in that aggregation bucket.
+describe("marketTrends router > cleanAdvertiserLabel", () => {
+  it("collapses a breadcrumb-arrow URL to \"domain › last segment\"", () => {
+    const sut = freshSut();
+    expect(sut.cleanAdvertiserLabel("https://www.g2.com › ... › Teramind › Teramind Reviews"))
+      .toBe("g2.com › Teramind Reviews");
+  });
+
+  it("collapses a plain-path URL (no arrows) the same way", () => {
+    const sut = freshSut();
+    expect(sut.cleanAdvertiserLabel("https://webcatalog.io/apps/teramind")).toBe("webcatalog.io › teramind");
+  });
+
+  it("falls back to just the domain when the last segment duplicates it", () => {
+    const sut = freshSut();
+    expect(sut.cleanAdvertiserLabel("https://github.com")).toBe("github.com");
+  });
+
+  it("leaves a plain advertiser name untouched", () => {
+    const sut = freshSut();
+    expect(sut.cleanAdvertiserLabel("Teramind Inc.")).toBe("Teramind Inc.");
+  });
+
+  it("does not mangle a real name containing '|' or '>' with no URL scheme", () => {
+    const sut = freshSut();
+    expect(sut.cleanAdvertiserLabel("Nike | Official Store")).toBe("Nike | Official Store");
+    expect(sut.cleanAdvertiserLabel("Ben & Jerry's > Scoop Shop")).toBe("Ben & Jerry's > Scoop Shop");
+  });
+
+  it("handles empty/undefined input without throwing", () => {
+    const sut = freshSut();
+    expect(sut.cleanAdvertiserLabel("")).toBe("");
+    expect(sut.cleanAdvertiserLabel(undefined)).toBe("");
+  });
+});
+
+// google_ads_data mixes ORGANIC SEARCH results in with real paid ads (146M of
+// 197M docs) — the live Ads Library search always excludes type=organic search
+// (+ IMAGE ads with no valid NAS url) by default (GoogleSearchQueryBuilder.js),
+// but Top Movers/Categories didn't, so an organic result's post_owner could
+// surface as a Top Movers "advertiser" that can never show a matching ad on
+// click-through. Confirmed 2026-08-20 in production: a GDN-looking breadcrumb
+// advertiser ("g2.com › Teramind Reviews") was actually a real doc with
+// type=ORGANIC SEARCH, not a running ad. Fix reuses the canonical
+// displayableMediaFilters.js gate (shared with admin_panel_backend /
+// compeitetor_analysis) instead of re-deriving the rules here.
+describe("marketTrends router > windowQueryFor", () => {
+  it("applies the canonical Google displayable-media + organic-search gate (in filter, not must_not)", () => {
+    const sut = freshSut();
+    const q = sut.windowQueryFor({ net: 'google', date: 'last_seen', mediaFilter: false }, 0, 1000);
+    const serialized = JSON.stringify(q.bool.filter);
+    expect(serialized).toContain('"organic search"');
+    expect(serialized).toContain('new_nas_image_url');
+    expect(q.bool.must_not).toBeUndefined();
+  });
+
+  it("mediaFilter:false network with no displayableMediaFilters entry adds nothing extra", () => {
+    const sut = freshSut();
+    const q = sut.windowQueryFor({ net: 'nonexistent-net', date: 'last_seen', mediaFilter: false }, 0, 1000);
+    expect(q.bool.filter).toHaveLength(1); // just the date range
+    expect(q.bool.must_not).toBeUndefined();
+  });
+
+  it("search_mix networks (mediaFilter unset) keep the existing placeholder-media must_not", () => {
+    const sut = freshSut();
+    const q = sut.windowQueryFor({ net: 'facebook', date: 'facebook_ad.last_seen' }, 0, 1000);
+    expect(q.bool.must_not?.length).toBeGreaterThan(0);
+    expect(JSON.stringify(q.bool.must_not)).not.toContain('organic search');
   });
 });

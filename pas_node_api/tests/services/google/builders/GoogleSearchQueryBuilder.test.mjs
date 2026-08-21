@@ -102,6 +102,23 @@ describe("Google builder > clause generators", () => {
     b.setPostOwnerName("brand");
     expect(JSON.stringify(b.build())).toContain("brand");
   });
+  // Google Ads "advertiser" text is often a scraped destination-URL breadcrumb
+  // (e.g. "https://www.g2.com/…/Teramind/Teramind Reviews"), not a clean brand
+  // name — the analyzed match/phrase-prefix clauses can miss it due to
+  // punctuation. An exact `term` match against post_owner_lower (the same
+  // field Top Movers aggregates advertisers on) must always be present as an
+  // additional should-clause so a Top-Movers click-through is guaranteed to
+  // match every ad in that bucket, regardless of tokenization.
+  it("postOwnerName non-quoted → also includes an exact term match on post_owner_lower", () => {
+    b.setPostOwnerName("https://www.g2.com › … › Teramind Reviews");
+    const query = b.build().body.query;
+    const filter = query.bool.filter;
+    const postOwnerClause = filter.find((f) => f.bool?.should?.some((s) => s.term));
+    expect(postOwnerClause).toBeDefined();
+    expect(postOwnerClause.bool.should).toContainEqual({
+      term: { post_owner_lower: "https://www.g2.com › … › teramind reviews" },
+    });
+  });
   it("postOwnerName quoted", () => {
     b.setPostOwnerName('"BrandX"');
     expect(JSON.stringify(b.build())).toContain("BrandX");

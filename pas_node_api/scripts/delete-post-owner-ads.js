@@ -40,7 +40,10 @@ const NETWORKS = {
       'facebook_ad_post_owners.post_owner_name_exactly',
       'facebook_ad_post_owners.post_owner_name',
     ],
+    internalIdFields: ['facebook_ad.id'],
     processDelete: require('../src/services/facebook/insertion/deletePipeline').processDelete,
+    repository: require('../src/services/facebook/insertion/repository'),
+    extraChildDeletes: [['facebook_ad_html_lander_content', 'facebook_ad_id']],
   },
   instagram: {
     mainTable: 'instagram_ad',
@@ -50,7 +53,11 @@ const NETWORKS = {
       'instagram_ad_post_owners.post_owner_name_exactly',
       'instagram_ad_post_owners.post_owner_name',
     ],
+    internalIdFields: ['instagram_ad.id'],
+    searchBuilder: require('../src/services/instagram/builders/SearchMixQueryBuilder'),
     processDelete: require('../src/services/instagram/insertion/deletePipeline').processDelete,
+    repository: require('../src/services/instagram/insertion/repository'),
+    esDrivenOneByOne: true,
   },
   gdn: {
     mainTable: 'gdn_ad',
@@ -60,6 +67,7 @@ const NETWORKS = {
       'gdn_ad_post_owners.post_owner_name_exactly',
       'gdn_ad_post_owners.post_owner_name',
     ],
+    internalIdFields: ['gdn_ad.id'],
     processDelete: require('../src/services/gdn/insertion/deletePipeline').processDelete,
   },
   youtube: {
@@ -67,6 +75,7 @@ const NETWORKS = {
     ownerTable: 'youtube_ad_post_owners',
     ownerSourceFields: ['post_owner', 'post_owner_name'],
     ownerQueryFields: ['post_owner', 'post_owner_name'],
+    internalIdFields: ['id'],
     processDelete: require('../src/services/youtube/insertion/deletePipeline').processDelete,
   },
   google: {
@@ -74,6 +83,7 @@ const NETWORKS = {
     ownerTable: 'google_text_ad_post_owners',
     ownerSourceFields: ['post_owner_name', 'post_owner'],
     ownerQueryFields: ['post_owner_name', 'post_owner'],
+    internalIdFields: ['id'],
     processDelete: require('../src/services/google/insertion/deletePipeline').processDelete,
   },
   native: {
@@ -84,6 +94,7 @@ const NETWORKS = {
       'native_ad_post_owners.post_owner_name_exactly',
       'native_ad_post_owners.post_owner_name',
     ],
+    internalIdFields: ['native_ad.id'],
     processDelete: require('../src/services/native/insertion/deletePipeline').processDelete,
   },
   linkedin: {
@@ -91,6 +102,7 @@ const NETWORKS = {
     ownerTable: 'linkedin_ad_post_owners',
     ownerSourceFields: ['post_owner', 'post_owner_name'],
     ownerQueryFields: ['post_owner', 'post_owner_name'],
+    internalIdFields: ['id'],
     processDelete: require('../src/services/linkedin/insertion/deletePipeline').processDelete,
   },
   reddit: {
@@ -102,6 +114,7 @@ const NETWORKS = {
       'reddit_ad_post_owners.post_owner_name',
       'post_owner',
     ],
+    internalIdFields: ['reddit_ad.id'],
     processDelete: require('../src/services/reddit/insertion/deletePipeline').processDelete,
     deleteArg: (id) => ({ body: { id } }),
   },
@@ -110,6 +123,7 @@ const NETWORKS = {
     ownerTable: 'quora_ad_post_owners',
     ownerSourceFields: ['quora_ad_post_owners.post_owner_name', 'post_owner'],
     ownerQueryFields: ['quora_ad_post_owners.post_owner_name', 'post_owner'],
+    internalIdFields: ['quora_ad.id'],
     processDelete: require('../src/services/quora/insertion/deletePipeline').processDelete,
   },
   pinterest: {
@@ -121,13 +135,15 @@ const NETWORKS = {
       'pinterest_ad_post_owners.post_owner_name',
       'post_owner',
     ],
+    internalIdFields: ['pinterest_ad.id'],
     processDelete: require('../src/services/pinterest/insertion/deletePipeline').processDelete,
   },
   tiktok: {
     esOnly: true,
     ownerSourceFields: ['post_owner'],
     ownerQueryFields: ['post_owner'],
-    esSourceFields: ['sql_id', 'post_owner_id'],
+    internalIdFields: ['sql_id'],
+    esSourceFields: ['post_owner_id'],
   },
 };
 
@@ -256,39 +272,69 @@ function sourceMatchesOwner(source, fields, normalizedOwner) {
   return fields.some((field) => normalizePostOwnerName(sourceValue(source, field)) === normalizedOwner);
 }
 
-async function discoverSqlAds(sql, spec, postOwner) {
-  if (spec.esOnly) return [];
-  const rows = await sql.query(
-    `SELECT a.id, a.ad_id, o.id AS post_owner_id, o.post_owner_name
-       FROM ${spec.mainTable} AS a
-       INNER JOIN ${spec.ownerTable} AS o ON a.post_owner_id = o.id
-      WHERE LOWER(TRIM(o.post_owner_name)) = LOWER(TRIM(?))
-      ORDER BY a.id ASC`,
-    [postOwner]
-  );
-  const normalizedOwner = normalizePostOwnerName(postOwner);
-  return (Array.isArray(rows) ? rows : []).filter(
-    (row) => normalizePostOwnerName(row.post_owner_name) === normalizedOwner
-  );
+function internalIdFromHit(hit, spec) {
+  for (const field of spec.internalIdFields || []) {
+    const value = sourceValue(hit?._source, field);
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return hit?._id;
 }
 
-async function discoverEsHits(elastic, spec, postOwner) {
+async function discoverSqlAds(sql, spec, esHits) {
+  if (spec.esOnly) return [];
+  const ids = [...new Set(
+    esHits.map((hit) => internalIdFromHit(hit, spec))
+      .filter((id) => id !== undefined && id !== null && id !== '')
+  )];
+  // Instagram is driven directly from ES IDs so its huge SQL tables are never
+  // scanned during preflight. A missing SQL row is safe on a resumed cleanup.
+  if (spec.esDrivenOneByOne) return ids.map((id) => ({ id }));
+
+  const rows = [];
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const chunk = ids.slice(offset, offset + 500);
+    const marks = chunk.map(() => '?').join(',');
+    const found = await sql.query(
+      `SELECT id, ad_id, post_owner_id
+         FROM ${spec.mainTable}
+        WHERE id IN (${marks})
+        ORDER BY id ASC`,
+      chunk
+    );
+    if (Array.isArray(found)) rows.push(...found);
+  }
+  return rows;
+}
+
+async function discoverEsHits(elastic, spec, postOwner, useSearchMatches = false) {
   const normalizedOwner = normalizePostOwnerName(postOwner);
-  const query = {
-    bool: {
-      minimum_should_match: 1,
-      should: spec.ownerQueryFields.map((field) => ({
-        match_phrase: { [field]: postOwner },
-      })),
-    },
-  };
+  let query;
+  if (useSearchMatches) {
+    if (!spec.searchBuilder) throw new Error('Search-API matching is not configured for this network.');
+    const builder = new spec.searchBuilder(elastic.indexName);
+    builder.setFrom(0).setSize(10000).setPostOwnerName(postOwner);
+    query = builder.build().body.query;
+  } else {
+    query = {
+      bool: {
+        minimum_should_match: 1,
+        should: spec.ownerQueryFields.map((field) => ({
+          match_phrase: { [field]: postOwner },
+        })),
+      },
+    };
+  }
   const response = await elastic.search({
     index: elastic.indexName,
     body: {
       query,
       size: 10000,
       track_total_hits: true,
-      _source: [...new Set([...spec.ownerSourceFields, ...(spec.esSourceFields || [])])],
+      _source: [...new Set([
+        ...spec.ownerSourceFields,
+        ...(spec.internalIdFields || []),
+        ...(spec.esSourceFields || []),
+      ])],
     },
   });
   const hits = extractHits(response);
@@ -298,9 +344,17 @@ async function discoverEsHits(elastic, spec, postOwner) {
       `Elasticsearch owner query returned ${candidateTotal} candidates, above the safe 10000-hit inspection limit. No deletion was performed.`
     );
   }
-  return hits.filter(
-    (hit) => sourceMatchesOwner(hit._source, spec.ownerSourceFields, normalizedOwner)
-  );
+  return useSearchMatches
+    ? hits
+    : hits.filter(
+      (hit) => sourceMatchesOwner(hit._source, spec.ownerSourceFields, normalizedOwner)
+    );
+}
+
+function usesSearchApiMatching(network) {
+  // Instagram's public search uses translated owner fields and prefix matching.
+  // Always mirror it so cleanup cannot leave ads visible through that API.
+  return network === 'instagram';
 }
 
 function ownerIsBlocked(network, postOwner) {
@@ -337,10 +391,13 @@ async function preflight(opts) {
     if (!db?.sql) throw new Error(`[${network}] SQL connection is required but unavailable.`);
     if (!db?.elastic) throw new Error(`[${network}] Elasticsearch connection is required but unavailable.`);
 
-    const [sqlRows, esHits] = await Promise.all([
-      discoverSqlAds(db.sql, spec, opts.postOwner),
-      discoverEsHits(db.elastic, spec, opts.postOwner),
-    ]);
+    const esHits = await discoverEsHits(
+      db.elastic,
+      spec,
+      opts.postOwner,
+      usesSearchApiMatching(network)
+    );
+    const sqlRows = await discoverSqlAds(db.sql, spec, esHits);
     report.push({
       network,
       database: networksConfig[network]?.database?.sql?.database || null,
@@ -399,11 +456,29 @@ async function mapWithConcurrency(items, concurrency, worker) {
       results[index] = await worker(items[index], index);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, lane));
+  const settled = await Promise.allSettled(
+    Array.from({ length: Math.min(concurrency, items.length) }, lane)
+  );
+  const failed = settled.find((result) => result.status === 'rejected');
+  if (failed) throw failed.reason;
   return results;
 }
 
-async function bulkDeleteEsHits(elastic, hits) {
+async function deleteSqlAd(spec, sql, internalId) {
+  if (!spec.repository) return null;
+  return spec.repository.withTransaction(sql, async (tx) => {
+    for (const [table, column] of spec.extraChildDeletes || []) {
+      try {
+        await tx.query(`DELETE FROM ${table} WHERE ${column} = ?`, [internalId]);
+      } catch (error) {
+        if (!(error && (error.errno === 1146 || error.code === 'ER_NO_SUCH_TABLE'))) throw error;
+      }
+    }
+    return spec.repository.deleteAdCascade(tx, internalId);
+  });
+}
+
+async function bulkDeleteEsHits(elastic, hits, refresh = true) {
   if (!hits.length) return 0;
   let deleted = 0;
   for (let offset = 0; offset < hits.length; offset += 500) {
@@ -414,7 +489,10 @@ async function bulkDeleteEsHits(elastic, hits) {
       if (elastic.esMajor && elastic.esMajor < 8) action._type = hit._type || 'doc';
       body.push({ delete: action });
     }
-    const response = await elastic.bulk({ refresh: true, body });
+    const response = await elastic.bulk({
+      refresh: refresh && offset + chunk.length >= hits.length,
+      body,
+    });
     const payload = response?.body || response;
     const failures = (payload?.items || [])
       .map((item) => item.delete)
@@ -425,6 +503,37 @@ async function bulkDeleteEsHits(elastic, hits) {
     deleted += chunk.length;
   }
   return deleted;
+}
+
+async function deleteEsDrivenAdsOneByOne(spec, db, hits, network, concurrency = 1) {
+  const sqlDeletes = new Map();
+  let completed = 0;
+
+  await mapWithConcurrency(hits, concurrency, async (hit) => {
+    const internalId = internalIdFromHit(hit, spec);
+    if (internalId === undefined || internalId === null || internalId === '') {
+      throw new Error(`[${network}] ES document ${hit._id} has no internal SQL ad ID.`);
+    }
+
+    const key = String(internalId);
+    if (!sqlDeletes.has(key)) {
+      sqlDeletes.set(key, deleteSqlAd(spec, db.sql, internalId));
+    }
+    // SQL first, then delete the exact ES document which provided that SQL ID.
+    // Zero affected SQL rows is valid when resuming an interrupted cleanup.
+    await sqlDeletes.get(key);
+    await bulkDeleteEsHits(db.elastic, [hit], false);
+
+    completed += 1;
+    if (completed % 10 === 0 || completed === hits.length) {
+      console.log(`[${network}] ES-driven SQL+ES deletes ${completed}/${hits.length}`);
+    }
+  });
+
+  if (hits.length) {
+    await db.elastic.client.indices.refresh({ index: db.elastic.indexName });
+  }
+  return { sqlIdsAttempted: sqlDeletes.size, esDocumentsDeleted: completed };
 }
 
 async function withSqlTransaction(sql, fn) {
@@ -468,15 +577,22 @@ async function deleteNetwork(item, opts) {
   if (item.network === 'tiktok') {
     await cleanupTiktokSql(db.sql, item.esHits);
     await bulkDeleteEsHits(db.elastic, item.esHits);
+  } else if (spec.esDrivenOneByOne) {
+    await deleteEsDrivenAdsOneByOne(spec, db, item.esHits, item.network, opts.concurrency);
   } else {
     let completed = 0;
     await mapWithConcurrency(item.sqlRows, opts.concurrency, async (row) => {
-      const arg = spec.deleteArg ? spec.deleteArg(row.id) : { id: row.id };
-      const result = await spec.processDelete(arg, { db, log, network: item.network });
-      if (!result || result.code < 200 || result.code >= 300) {
-        throw new Error(
-          `[${item.network}] cascade delete failed for internal id ${row.id}: ${result?.message || 'unknown error'}`
-        );
+      if (spec.repository) {
+        const deleted = await deleteSqlAd(spec, db.sql, row.id);
+        if (!deleted) throw new Error(`[${item.network}] SQL row ${row.id} was not deleted.`);
+      } else {
+        const arg = spec.deleteArg ? spec.deleteArg(row.id) : { id: row.id };
+        const result = await spec.processDelete(arg, { db, log, network: item.network });
+        if (!result || result.code < 200 || result.code >= 300) {
+          throw new Error(
+            `[${item.network}] cascade delete failed for internal id ${row.id}: ${result?.message || 'unknown error'}`
+          );
+        }
       }
       completed += 1;
       if (completed % 100 === 0 || completed === item.sqlRows.length) {
@@ -485,13 +601,28 @@ async function deleteNetwork(item, opts) {
     });
 
     // Delete ES-only or duplicate owner hits that had no matching canonical SQL row.
-    const remainingHits = await discoverEsHits(db.elastic, spec, opts.postOwner);
+    const remainingHits = await discoverEsHits(
+      db.elastic,
+      spec,
+      opts.postOwner,
+      usesSearchApiMatching(item.network)
+    );
     await bulkDeleteEsHits(db.elastic, remainingHits);
   }
 
   const [remainingSql, remainingEs] = await Promise.all([
-    discoverSqlAds(db.sql, spec, opts.postOwner),
-    discoverEsHits(db.elastic, spec, opts.postOwner),
+    discoverEsHits(
+      db.elastic,
+      spec,
+      opts.postOwner,
+      usesSearchApiMatching(item.network)
+    ).then((hits) => discoverSqlAds(db.sql, spec, hits)),
+    discoverEsHits(
+      db.elastic,
+      spec,
+      opts.postOwner,
+      usesSearchApiMatching(item.network)
+    ),
   ]);
   if (remainingSql.length || remainingEs.length) {
     throw new Error(
@@ -588,6 +719,10 @@ module.exports = {
   sourceValue,
   sourceMatchesOwner,
   discoverSqlAds,
+  discoverEsHits,
+  internalIdFromHit,
+  mapWithConcurrency,
+  deleteEsDrivenAdsOneByOne,
   validateApply,
   printableReport,
   main,
