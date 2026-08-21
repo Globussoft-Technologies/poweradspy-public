@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS `mob_ads` (
   KEY `idx_mob_ads_last_seen` (`last_seen`, `id`),
   KEY `idx_mob_ads_redirect_status` (`redirect_status`, `id`),
   KEY `idx_mob_ads_owner` (`post_owner_id`, `last_seen`),
+  KEY `idx_mob_ads_source` (`source`),
+  KEY `idx_mob_ads_ad_position` (`ad_position`),
+  KEY `idx_mob_ads_ad_sub_position` (`ad_sub_position`),
+  KEY `idx_mob_ads_ad_image_size` (`ad_image_size`),
   CONSTRAINT `fk_mob_ads_owner` FOREIGN KEY (`post_owner_id`) REFERENCES `mob_post_owners` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 

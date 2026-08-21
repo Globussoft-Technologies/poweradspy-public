@@ -40,19 +40,6 @@ const SORT_TO_PLAN_ACCESS_ID = {
   domain_reg: 'domain_reg_sort',
   domain_reg_sort: 'domain_reg_sort',
 };
-// added as fallback for the ad_types 
-const ADMOB_AD_TYPE_OPTIONS = [
-  { label: "Banner", value: "BANNER" },
-  { label: "Webview Banner", value: "WEBVIEW_BANNER" },
-  { label: "Interstitial Or Native", value: "INTERSTITIAL_OR_NATIVE" },
-  { label: "Interstitial Webview", value: "INTERSTITIAL_WEBVIEW" },
-  { label: "Native Or Unknown", value: "NATIVE_OR_UNKNOWN" },
-  { label: "Rewarded Or Video", value: "REWARDED_OR_VIDEO" },
-  { label: "Play Store Ad", value: "PLAY_STORE_AD" },
-  { label: "Visual Banner", value: "VISUAL_BANNER" },
-  { label: "Visual Native Ad", value: "VISUAL_NATIVE_AD" },
-];
-
 export const resolveSortPlanAccessId = (label, value) => {
   const normalize = (input) => String(input ?? '').toLowerCase().trim().replace(/[\s-]+/g, '_');
   const rawLabel = String(label ?? '').toLowerCase().trim();
@@ -213,10 +200,6 @@ const AdFilterBar = ({
   const isAdmobOnly = activeLower.length === 1 && activeLower[0] === "admob";
 
   const AD_TYPE_OPTIONS = useMemo(() => {
-    if (isAdmobOnly) {
-      return ADMOB_AD_TYPE_OPTIONS;
-    }
-
     // Search all sections (sidebar + navbar) for the ad_type document
     const allDocs = [...(config?.sidebar || []), ...(config?.navbar || [])];
     // Find the doc that contains an ad_type filter
@@ -236,7 +219,10 @@ const AdFilterBar = ({
       }
     }
     if (opts.length === 0) {
-      // Fallback if config not loaded yet
+      // Fallback if config not loaded yet — admob intentionally gets no
+      // fallback here (its options must come from SDUI config; no local
+      // hardcode bypass).
+      if (isAdmobOnly) return opts;
       return [
         { label: "Image", value: "Image" },
         { label: "Video", value: "Video" },
@@ -256,7 +242,7 @@ const AdFilterBar = ({
       }
       return true;
     });
-  }, [config, activePlatforms]);
+  }, [config, activePlatforms, isAdmobOnly]);
 
   const toggleAdType = (type) => {
     if (guest?.showGuestWarning("Please login to filter by ad type")) return;

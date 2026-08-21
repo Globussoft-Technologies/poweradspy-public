@@ -309,6 +309,19 @@ export const formatNumber = (n) => {
 const formatDate = (dateStr) => {
   if (!dateStr) return '';
   try {
+    // Database date/datetime strings represent a producer calendar day. Parse
+    // the leading date directly so an attached positive timezone offset cannot
+    // roll Aug 21 back to Aug 20 when the card is formatted in UTC.
+    if (typeof dateStr === 'string') {
+      const calendar = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (calendar) {
+        const [, year, month, day] = calendar;
+        const calendarDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+        return calendarDate.toLocaleDateString('en-US', {
+          day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+        });
+      }
+    }
     // UNIX_TIMESTAMP() in MySQL returns seconds; JS Date expects milliseconds
     const d = (typeof dateStr === 'number' && dateStr < 1e10)
       ? new Date(dateStr * 1000)

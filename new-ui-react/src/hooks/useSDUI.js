@@ -265,9 +265,22 @@ export function useSDUI() {
         Object.values(filterTrackTimersRef.current).forEach(clearTimeout);
     }, []);
 
+    // The initial (unscoped) fetch and the platform-scoped reload fetch are
+    // separate in-flight requests with no shared cancellation. If the slower
+    // one resolves last, it silently overwrites the other's result — e.g. the
+    // unscoped response (missing AdMob's live-hydrated Source App/Sub Network
+    // options) landing after the scoped one, wiping out correct data with
+    // stale data for no visible reason. Every fetch site bumps this counter
+    // before firing and captures its own id; the response is only applied if
+    // no newer fetch has started since — a request-ordering guard, not a
+    // content comparison, so it never blocks a legitimate (even smaller)
+    // correction the way a "biggest wins" heuristic would.
+    const configFetchSeqRef = useRef(0);
+
     // ── Apply a config (initial or from polling) — NO deps on activePlatforms ─
     const applyConfig = useCallback((cfg, options = {}) => {
         let frontendConfig = withoutDisabledPlatformConfig(cfg);
+
         if (options.platformFiltered !== true) {
             fullConfigRef.current = frontendConfig;
         }
@@ -378,11 +391,12 @@ export function useSDUI() {
     // ── Initial fetch ───────────────────────────────────────────────────────
     useEffect(() => {
         let cancelled = false;
+        const mySeq = ++configFetchSeqRef.current;
         const load = async () => {
             try {
                 setLoading(true);
                 const cfg = await fetchSDUIConfig();
-                if (cancelled) return;
+                if (cancelled || configFetchSeqRef.current !== mySeq) return;
                 // Config controls what is visible, not which persisted filters
                 // remain applied. Only explicit user/auth flows may clear them.
                 applyConfig(cfg);
@@ -420,6 +434,7 @@ export function useSDUI() {
         }
 
         let cancelled = false;
+        const mySeq = ++configFetchSeqRef.current;
         const reload = async () => {
             try {
                 const cfg = await fetchSDUIConfig({
@@ -427,7 +442,7 @@ export function useSDUI() {
                     platforms: activePlatforms,
                 });
                 /* v8 ignore next -- cancelled-during-reload race (unmount mid-refetch) is a defensive guard */
-                if (!cancelled) {
+                if (!cancelled && configFetchSeqRef.current === mySeq) {
                     applyConfig(cfg, {
                         preserveGoogleTransparency: true,
                         preserveConfigVersion: true,
@@ -445,13 +460,22 @@ export function useSDUI() {
 
     // ── Polling for config changes ──────────────────────────────────────────
     const handleConfigChanged = useCallback((freshConfig) => {
-        // Polling already fetched the latest published config, so keep that
-        // full schema in place and let the client-side visibility rules decide
-        // which docs appear for the current platform selection.
+        // Polling always fetches the unscoped full schema (deliberately — see
+        // useSDUIPolling), which never carries AdMob's live-hydrated Source
+        // App / Sub Network / Ad Position options (those only come from a
+        // platforms-scoped fetch). Applying it as-is would silently wipe that
+        // live data out from under an active AdMob selection whenever a
+        // config version changes to land, with no user action to blame.
+        // Bump the sequence so any in-flight scoped reload response still
+        // wins if it resolves after this, then reset the platform-key ref so
+        // the "Re-fetch config when platforms change" effect fires again on
+        // its next run and restores the scoped data immediately.
+        ++configFetchSeqRef.current;
         applyConfig(freshConfig);
+        lastConfigPlatformKeyRef.current = null;
     }, [applyConfig]);
 
-    useSDUIPolling(config?.config_version || 0, handleConfigChanged, activePlatforms);
+    useSDUIPolling(config?.config_version || 0, handleConfigChanged);
 
     // ── Persist filterValues + activePlatforms per browser tab ─────────────
     useEffect(() => {

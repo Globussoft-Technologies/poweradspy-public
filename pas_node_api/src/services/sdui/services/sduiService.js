@@ -411,10 +411,15 @@ async function fetchAdmobPersistentOptionsFromSql() {
     sourceAppRows,
   ] = await Promise.all([
     sql.query(
+      // normalizeAdmobPayload() already lowercases+trims `source` before it is
+      // ever written to mob_ads (see insertion/normalize.js), so grouping by
+      // the raw column is equivalent to LOWER(TRIM(source)) for this table —
+      // and lets MySQL satisfy the GROUP BY straight from idx_mob_ads_source
+      // instead of building a temp table to re-derive the expression per row.
       `SELECT MIN(source) AS value, COUNT(*) AS doc_count
        FROM mob_ads
-       WHERE source IS NOT NULL AND TRIM(source) <> ''
-       GROUP BY LOWER(TRIM(source))
+       WHERE source IS NOT NULL AND source <> ''
+       GROUP BY source
        ORDER BY doc_count DESC, value ASC`
     ),
     sql.query(
@@ -425,24 +430,31 @@ async function fetchAdmobPersistentOptionsFromSql() {
        ORDER BY doc_count DESC, value ASC`
     ),
     sql.query(
+      // normalizeAdmobPayload() canonicalizes ad_position to UPPERCASE before
+      // it is ever written (insertion/normalize.js), matching what has always
+      // been on disk — grouping by the raw column is safe and lets MySQL use
+      // idx_mob_ads_ad_position directly instead of a temp table.
       `SELECT MIN(ad_position) AS value, COUNT(*) AS doc_count
        FROM mob_ads
-       WHERE ad_position IS NOT NULL AND TRIM(ad_position) <> ''
-       GROUP BY LOWER(TRIM(ad_position))
+       WHERE ad_position IS NOT NULL AND ad_position <> ''
+       GROUP BY ad_position
        ORDER BY doc_count DESC, value ASC`
     ),
     sql.query(
+      // Same canonicalization applies to ad_sub_position.
       `SELECT MIN(ad_sub_position) AS value, COUNT(*) AS doc_count
        FROM mob_ads
-       WHERE ad_sub_position IS NOT NULL AND TRIM(ad_sub_position) <> ''
-       GROUP BY LOWER(TRIM(ad_sub_position))
+       WHERE ad_sub_position IS NOT NULL AND ad_sub_position <> ''
+       GROUP BY ad_sub_position
        ORDER BY doc_count DESC, value ASC`
     ),
     sql.query(
+      // ad_image_size is canonicalized to 'WIDTH*HEIGHT' (no '×', no spaces)
+      // at insertion time, matching the existing on-disk format.
       `SELECT MIN(ad_image_size) AS value, COUNT(*) AS doc_count
        FROM mob_ads
-       WHERE ad_image_size IS NOT NULL AND TRIM(ad_image_size) <> ''
-       GROUP BY LOWER(REPLACE(REPLACE(REPLACE(TRIM(ad_image_size), '×', 'x'), '*', 'x'), ' ', ''))
+       WHERE ad_image_size IS NOT NULL AND ad_image_size <> ''
+       GROUP BY ad_image_size
        ORDER BY doc_count DESC, value ASC`
     ),
     sql.query(
@@ -470,6 +482,32 @@ async function fetchAdmobPersistentOptionsFromSql() {
   };
 }
 
+// Never let the cache regress: a transient SQL hiccup that falls through to
+// the narrower Elasticsearch fallback (status=1 ads only), or an ES result
+// that's momentarily incomplete, must not overwrite a previously-fuller
+// option list. Per filter, keep whichever of {incoming, cached} has more
+// options — the sidebar can only grow or stay the same across cache
+// refreshes, never visibly shrink. Mirrors the equivalent client-side guard
+// in useSDUI.js (admobDynamicDocsRef).
+function mergeAdmobLiveOptionsNeverRegress(incoming, cached) {
+  if (!incoming || incoming.available === false) return cached || incoming;
+  if (!cached || cached.available === false) return incoming;
+
+  const filterIds = new Set([
+    ...Object.keys(incoming.optionsByFilter || {}),
+    ...Object.keys(cached.optionsByFilter || {}),
+  ]);
+  const optionsByFilter = {};
+  for (const filterId of filterIds) {
+    const incomingOptions = incoming.optionsByFilter?.[filterId] || [];
+    const cachedOptions = cached.optionsByFilter?.[filterId] || [];
+    optionsByFilter[filterId] = incomingOptions.length >= cachedOptions.length
+      ? incomingOptions
+      : cachedOptions;
+  }
+  return { available: true, optionsByFilter };
+}
+
 async function getAdmobLiveFilterOptions() {
   const now = Date.now();
   if (admobLiveFilterCache && (now - admobLiveFilterCacheAt) < ADMOB_FILTER_CACHE_TTL_MS) {
@@ -479,21 +517,40 @@ async function getAdmobLiveFilterOptions() {
   let live = null;
   try {
     live = await fetchAdmobPersistentOptionsFromSql();
-  } catch {
+  } catch (err) {
+    // Diagnostic only — falling through to the ES source below narrows
+    // source_app/sub_network options to only currently-active (status=1)
+    // ads instead of the full persisted history. Logging the real reason
+    // instead of swallowing it silently.
+    console.warn('[sdui] AdMob live filter options: SQL source failed, falling back to Elasticsearch.', err?.message);
     live = null;
   }
 
   if (!live) {
     try {
       live = await fetchAdmobOptionsFromElastic();
-    } catch {
+    } catch (err) {
+      console.warn('[sdui] AdMob live filter options: Elasticsearch fallback also failed.', err?.message);
       live = null;
     }
   }
 
-  admobLiveFilterCache = live || { available: false, optionsByFilter: {} };
+  const nextCache = live || { available: false, optionsByFilter: {} };
+  admobLiveFilterCache = mergeAdmobLiveOptionsNeverRegress(nextCache, admobLiveFilterCache);
   admobLiveFilterCacheAt = now;
   return admobLiveFilterCache;
+}
+
+// Called by the AdMob insertion pipeline right after a successful insert/
+// update so the next SDUI request re-reads MySQL instead of serving a
+// snapshot from before this ad existed — the TTL alone could otherwise
+// serve a stale/empty list for up to ADMOB_FILTER_CACHE_TTL_MS after new
+// data lands. Safe to call liberally: it only clears an in-memory value,
+// never touches the DB, and a missed call just falls back to the existing
+// TTL behavior.
+function invalidateAdmobFilterOptionsCache() {
+  admobLiveFilterCache = null;
+  admobLiveFilterCacheAt = 0;
 }
 
 function mergeAdmobOptions(filter) {
@@ -528,7 +585,18 @@ function fallbackAdmobOptions(filter) {
 
 function resolveAdmobFilterOptions(filter, liveOptions) {
   const filterId = getCanonicalAdmobFilterId(filter._id);
-  const existingOptions = Array.isArray(filter.options) ? filter.options.map((option) => ({ ...option })) : [];
+  const allOptions = Array.isArray(filter.options) ? filter.options.map((option) => ({ ...option })) : [];
+  // Several of these live-hydrated filters (e.g. ad_position_filter) are
+  // shared sidebar docs also used by other networks (facebook/youtube), and
+  // their static options are tagged platform_applicability: "all" — meaning
+  // they leak into AdMob's list too unless filtered out. Only keep static
+  // options explicitly scoped to admob; the rest come from the live DB query
+  // below, which is the actual source of truth for AdMob's real values.
+  const existingOptions = allOptions.filter((option) => {
+    const pa = option.platform_applicability;
+    if (!pa) return true;
+    return pa === 'admob' || (Array.isArray(pa) && pa.includes('admob'));
+  });
   const dynamicOptions = liveOptions?.optionsByFilter?.[filterId];
   if (liveOptions?.available) {
     const merged = mergeAdmobOptionLists(filterId, existingOptions, dynamicOptions || []);
@@ -766,4 +834,4 @@ function computeVersion(body) {
   return hi * 0x100000000 + lo;
 }
 
-module.exports = { getSDUIConfig, filterConfigByPlatforms, computeETag, computeVersion };
+module.exports = { getSDUIConfig, filterConfigByPlatforms, computeETag, computeVersion, invalidateAdmobFilterOptionsCache };

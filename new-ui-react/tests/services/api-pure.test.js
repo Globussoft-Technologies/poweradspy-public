@@ -565,6 +565,13 @@ describe("api > mapAdToCard", () => {
     const out = mapAdToCard({ post_date: 1700000000 });
     expect(out.date).toMatch(/\d{4}/);
   });
+  it("formatDate: preserves the producer calendar date when a timezone offset is present", () => {
+    const out = mapAdToCard({
+      network: "tiktok",
+      last_seen: "2026-08-21T00:00:00+05:30",
+    });
+    expect(out.lastSeen).toBe("Aug 21, 2026");
+  });
   it("advertiserImage uses post_owner_image when present (line 229)", () => {
     expect(mapAdToCard({ post_owner_image: "http://x/p.jpg" }).advertiserImage).toBe("http://x/p.jpg");
   });

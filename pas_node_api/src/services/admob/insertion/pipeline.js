@@ -8,6 +8,7 @@ const { normalizeAdmobPayload } = require('./normalize');
 const { resolveMediaUrl } = require('./mediaResolver');
 const { buildAdmobDocument } = require('./esDocBuilder');
 const repo = require('./repository');
+const { invalidateAdmobFilterOptionsCache } = require('../../sdui/services/sduiService');
 
 function hashPayload(data) {
   return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
@@ -75,6 +76,17 @@ async function processAdmobAd(payload, ctx) {
     media.cleanupFetched(fetched);
     log.error('AdMob MySQL insertion failed', { ad_id: data.ad_id, error: error.message });
     return serverError(500, 'The AdMob ad could not be saved in pasdev_admob.', { error: error.message });
+  }
+
+  // This ad's country/state/sub_network/ad_position/image_size/source_app
+  // values just committed to MySQL — clear the SDUI sidebar's in-memory
+  // options cache so the next filter-panel request re-reads MySQL instead
+  // of serving a snapshot from before this ad existed. Never let this block
+  // the insertion response — it's a cheap, best-effort refresh signal.
+  try {
+    invalidateAdmobFilterOptionsCache();
+  } catch (error) {
+    log.warn('AdMob SDUI filter cache invalidation failed (non-fatal)', { error: error.message });
   }
 
   let nasPath = null;

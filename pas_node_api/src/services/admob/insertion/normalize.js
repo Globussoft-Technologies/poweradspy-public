@@ -15,6 +15,25 @@ function mysqlDate(value) {
   return date.toISOString().slice(0, 23).replace('T', ' ');
 }
 
+// mob_ads has always stored ad_position/ad_sub_position as UPPERCASE
+// ('TOP', 'BOTTOM', 'MIDDLE') and ad_image_size as 'WIDTHxHEIGHT' joined by
+// '*' with no spaces — sduiService's filter-option queries rely on that
+// consistency to GROUP BY the raw column directly (no LOWER/TRIM) so MySQL
+// can satisfy the grouping straight from an index instead of a temp table.
+// Coercing to that same canonical form here, once, keeps every future insert
+// matching what's already on disk instead of relying on the upstream payload
+// happening to arrive pre-normalized.
+function canonicalPosition(value) {
+  const text = nullable(value);
+  return text ? text.toUpperCase() : null;
+}
+
+function canonicalImageSize(value) {
+  const text = nullable(value);
+  if (!text) return null;
+  return text.replace(/×/g, 'x').replace(/\*/g, 'x').replace(/\s+/g, '').replace(/x/g, '*');
+}
+
 function normalizeAdmobPayload(payload) {
   const destinationUrl = nullable(payload.destination_url);
   let destinationHost = null;
@@ -22,10 +41,10 @@ function normalizeAdmobPayload(payload) {
 
   return {
     ad_id: String(payload.ad_id).trim(),
-    ad_image_size: nullable(payload.ad_image_size),
+    ad_image_size: canonicalImageSize(payload.ad_image_size),
     ad_number_position: payload.ad_number_position === null || payload.ad_number_position === undefined || payload.ad_number_position === '' ? null : Number(payload.ad_number_position),
-    ad_position: nullable(payload.ad_position),
-    ad_sub_position: nullable(payload.ad_sub_position),
+    ad_position: canonicalPosition(payload.ad_position),
+    ad_sub_position: canonicalPosition(payload.ad_sub_position),
     ad_text: nullable(payload.ad_text),
     ad_title: nullable(payload.ad_title),
     ad_url: nullable(payload.ad_url),

@@ -842,7 +842,8 @@
           "linkedin",
           "reddit",
           "quora",
-          "pinterest"
+          "pinterest",
+          "admob"
         ],
         "options": [
           {
@@ -949,6 +950,87 @@
               "reddit",
               "quora"
             ]
+          },
+          {
+            "_id": "admob_ad_type_banner",
+            "filter_id": "ad_types",
+            "label": "Banner",
+            "value": "BANNER",
+            "rank": 9,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_webview_banner",
+            "filter_id": "ad_types",
+            "label": "Webview Banner",
+            "value": "WEBVIEW_BANNER",
+            "rank": 10,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_interstitial_or_native",
+            "filter_id": "ad_types",
+            "label": "Interstitial Or Native",
+            "value": "INTERSTITIAL_OR_NATIVE",
+            "rank": 11,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_interstitial_webview",
+            "filter_id": "ad_types",
+            "label": "Interstitial Webview",
+            "value": "INTERSTITIAL_WEBVIEW",
+            "rank": 12,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_native_or_unknown",
+            "filter_id": "ad_types",
+            "label": "Native Or Unknown",
+            "value": "NATIVE_OR_UNKNOWN",
+            "rank": 13,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_rewarded_or_video",
+            "filter_id": "ad_types",
+            "label": "Rewarded Or Video",
+            "value": "REWARDED_OR_VIDEO",
+            "rank": 14,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_play_store_ad",
+            "filter_id": "ad_types",
+            "label": "Play Store Ad",
+            "value": "PLAY_STORE_AD",
+            "rank": 15,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_visual_banner",
+            "filter_id": "ad_types",
+            "label": "Visual Banner",
+            "value": "VISUAL_BANNER",
+            "rank": 16,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
+          },
+          {
+            "_id": "admob_ad_type_visual_native_ad",
+            "filter_id": "ad_types",
+            "label": "Visual Native Ad",
+            "value": "VISUAL_NATIVE_AD",
+            "rank": 17,
+            "selected_by_default": false,
+            "platform_applicability": ["admob"]
           }
         ]
       }
