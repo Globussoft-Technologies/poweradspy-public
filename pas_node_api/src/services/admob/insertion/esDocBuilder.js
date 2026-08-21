@@ -72,6 +72,15 @@ function asObject(value) {
   }
 }
 
+function asObjectArray(value) {
+  return asArray(value).flatMap((item) => {
+    const parsed = asObject(item);
+    if (parsed) return [parsed];
+    if (item && typeof item === 'object' && !Array.isArray(item)) return [item];
+    return [];
+  });
+}
+
 function details(rows) {
   return rows.map((row) => ({
     name: row.name,
@@ -89,6 +98,10 @@ function buildAdmobDocument(ad) {
     first_seen: iso(row.first_seen),
     last_seen: iso(row.last_seen),
   }));
+  const sourceAppNames = sourceApps.map((row) => row.name);
+  if (ad.lander_source_app && !sourceAppNames.some((name) => String(name).toLowerCase() === String(ad.lander_source_app).toLowerCase())) {
+    sourceAppNames.push(ad.lander_source_app);
+  }
   const runningDays = daysRunning(ad.first_seen, ad.last_seen);
   const occurrenceCount = Number(ad.occurrence_count || 0);
   return {
@@ -129,38 +142,41 @@ function buildAdmobDocument(ad) {
     image_url_original: ad.image_url_original,
     image_url: ad.image_url,
     lander_status: ad.lander_status === null || ad.lander_status === undefined ? null : Number(ad.lander_status),
-    lander_crawled_by: ad.lander_crawled_by,
+    lander_platform: ad.lander_platform === null || ad.lander_platform === undefined ? null : Number(ad.lander_platform),
     lander_destination_url: ad.lander_destination_url,
     lander_html_path: ad.lander_html_path,
     lander_screen_shot: ad.lander_screen_shot,
     lander_domain_registered_date: iso(ad.lander_domain_registered_date),
     lander_domain_age: ad.lander_domain_age === null || ad.lander_domain_age === undefined ? null : Number(ad.lander_domain_age),
     country_iso: asArray(ad.country_iso_json),
-    source_website: ad.source_website,
-    source_parameters: asObject(ad.source_parameters_json),
-    whatsapp_url: ad.whatsapp_url,
-    whatsapp_domain: ad.whatsapp_domain,
-    whatsapp_path: ad.whatsapp_path,
-    whatsapp_phone: ad.whatsapp_phone,
-    whatsapp_message: ad.whatsapp_message,
-    whatsapp_parameters: asObject(ad.whatsapp_parameters_json),
+    outgoing_url: asObjectArray(ad.outgoing_url_json).map((row) => ({
+      start_url: row.start_url ?? null,
+      redirect_urls: asArray(row.redirect_urls),
+      destination_url: row.destination_url ?? null,
+    })),
+    redirects: asArray(ad.redirects_json),
     campaign_id: ad.campaign_id,
-    location_without_vpn: asObject(ad.location_without_vpn_json),
-    location_with_vpn: asObject(ad.location_with_vpn_json),
-    comparison: asObject(ad.comparison_json),
-    whatsapp_links: asArray(ad.whatsapp_links_json),
-    whatsapp_prefilled_texts: asArray(ad.whatsapp_texts_json),
-    phone_numbers: asArray(ad.phone_numbers_json),
-    contact_buttons: flattenTextArray(ad.contact_buttons_json),
-    contact_button_count: ad.contact_button_count === null || ad.contact_button_count === undefined ? 0 : Number(ad.contact_button_count),
     whatsapp_rotator_detected: Boolean(Number(ad.whatsapp_rotator_detected)),
-    whatsapp_rotator_phone_count: ad.whatsapp_rotator_phone_count === null || ad.whatsapp_rotator_phone_count === undefined ? 0 : Number(ad.whatsapp_rotator_phone_count),
+    whatsapp_rotator_count: ad.whatsapp_rotator_count === null || ad.whatsapp_rotator_count === undefined ? 0 : Number(ad.whatsapp_rotator_count),
     lead_campaign_tag: ad.lead_campaign_tag,
-    lander_ad_category: ad.lander_ad_category,
+    whatsapp: asObjectArray(ad.whatsapp_json).map((row) => ({
+      domain: row.domain ?? null,
+      phone: row.phone ?? null,
+      button: row.button ?? null,
+      message: row.message ?? null,
+      first_detected: iso(row.first_detected),
+      last_detected: iso(row.last_detected),
+      state: row.state ?? null,
+      city: row.city ?? null,
+      country: row.country ?? null,
+      url: row.url ?? null,
+    })),
+    created: iso(ad.lander_created),
+    updated: iso(ad.lander_updated),
     country: ad.countries.map((row) => row.name),
     state: ad.states.map((row) => row.name),
     sub_network: ad.sub_networks.map((row) => row.name),
-    source_app: sourceApps.map((row) => row.name),
+    source_app: sourceAppNames,
     source_app_pkg: sourceApps.map((row) => row.package),
     source_app_count: sourceApps.reduce((sum, row) => sum + row.appearance_count, 0),
     country_details: details(ad.countries),

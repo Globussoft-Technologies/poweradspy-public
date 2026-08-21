@@ -5,6 +5,8 @@ const { buildAdmobDocument } = require('../insertion/esDocBuilder');
 const repo = require('./repository');
 const { normalizeLanderPayload } = require('./normalize');
 
+const PYTHON_CRAWLER_PLATFORM = 12;
+
 function unwrapItem(item) {
   if (!item || typeof item !== 'object') return item;
   return item.insertData && typeof item.insertData === 'object' ? item.insertData : item;
@@ -18,7 +20,7 @@ function payloadItems(body) {
 
 function validateLanderPayload(payload) {
   const errors = [];
-  const status = Number(payload?.status);
+  const status = Number(payload?.status ?? payload?.lander_status);
 
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     errors.push({ field: '$', reason: 'INVALID_PAYLOAD', message: 'Each AdMob lander payload must be a JSON object.' });
@@ -29,51 +31,37 @@ function validateLanderPayload(payload) {
     errors.push({ field: 'ad_id', reason: 'MISSING_REQUIRED_FIELD', message: 'ad_id is required and cannot be empty.' });
   }
 
-  if (payload.status === undefined || payload.status === null || String(payload.status).trim() === '') {
-    errors.push({ field: 'status', reason: 'MISSING_REQUIRED_FIELD', message: 'status is required and cannot be empty.' });
-  } else if (![1, 2, 3].includes(status)) {
+  if (payload.platform === undefined || payload.platform === null || String(payload.platform).trim() === '') {
+    errors.push({ field: 'platform', reason: 'MISSING_REQUIRED_FIELD', message: 'platform is required and cannot be empty.' });
+  } else if (!Number.isFinite(Number(payload.platform))) {
+    errors.push({ field: 'platform', reason: 'INVALID_VALUE', message: 'platform must be a numeric crawler identifier.' });
+  }
+
+  if (payload.source_app === undefined || payload.source_app === null || String(payload.source_app).trim() === '') {
+    errors.push({ field: 'source_app', reason: 'MISSING_REQUIRED_FIELD', message: 'source_app is required and cannot be empty.' });
+  }
+
+  if ((payload.status !== undefined || payload.lander_status !== undefined) && ![1, 2, 3].includes(status)) {
     errors.push({ field: 'status', reason: 'INVALID_VALUE', message: 'status must be one of: 1, 2, 3.' });
   }
 
-  if (payload.crawled_by === undefined || payload.crawled_by === null || String(payload.crawled_by).trim() === '') {
-    errors.push({ field: 'crawled_by', reason: 'MISSING_REQUIRED_FIELD', message: 'crawled_by is required and cannot be empty.' });
-  } else if (!['.net', 'python'].includes(String(payload.crawled_by).trim())) {
-    errors.push({ field: 'crawled_by', reason: 'INVALID_VALUE', message: 'crawled_by must be ".net" or "python".' });
+  if (payload.destinations === undefined || payload.destinations === null || String(payload.destinations).trim() === '') {
+    errors.push({ field: 'destinations', reason: 'MISSING_REQUIRED_FIELD', message: 'destinations is required and cannot be empty.' });
   }
 
   if (status !== 3) {
-    if (payload.destinations === undefined || payload.destinations === null || String(payload.destinations).trim() === '') {
-      errors.push({ field: 'destinations', reason: 'MISSING_REQUIRED_FIELD', message: 'destinations is required when status is 1 or 2.' });
+    if (payload.html_path === undefined || payload.html_path === null || String(payload.html_path).trim() === '') {
+      errors.push({ field: 'html_path', reason: 'MISSING_REQUIRED_FIELD', message: 'html_path is required and cannot be empty.' });
     }
     if (payload.screen_shot === undefined || payload.screen_shot === null || String(payload.screen_shot).trim() === '') {
-      errors.push({ field: 'screen_shot', reason: 'MISSING_REQUIRED_FIELD', message: 'screen_shot is required when status is 1 or 2.' });
+      errors.push({ field: 'screen_shot', reason: 'MISSING_REQUIRED_FIELD', message: 'screen_shot is required and cannot be empty.' });
     }
     if (payload.html_content === undefined || payload.html_content === null || String(payload.html_content).trim() === '') {
-      errors.push({ field: 'html_content', reason: 'MISSING_REQUIRED_FIELD', message: 'html_content is required when status is 1 or 2.' });
+      errors.push({ field: 'html_content', reason: 'MISSING_REQUIRED_FIELD', message: 'html_content is required and cannot be empty.' });
     }
   }
 
   return errors;
-}
-
-async function isAdIndexed(elastic, adId) {
-  if (!elastic) return true;
-
-  const response = await elastic.search({
-    index: elastic.indexName || 'mob_search_mix',
-    body: {
-      size: 1,
-      track_total_hits: false,
-      query: {
-        term: {
-          ad_id: String(adId).trim().toLowerCase(),
-        },
-      },
-    },
-  });
-
-  const hits = response?.body?.hits?.hits || response?.hits?.hits || [];
-  return hits.length > 0;
 }
 
 async function updateElasticDoc(db, adId) {
@@ -103,7 +91,13 @@ async function updateElasticDoc(db, adId) {
   return { indexed: true };
 }
 
-async function processItem(rawItem, db, log) {
+function parseScraperName(req) {
+  const raw = req?.headers?.['x-scraper-name'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function processItem(rawItem, db, log, scraperName = '') {
   const payload = unwrapItem(rawItem);
   const validationErrors = validateLanderPayload(payload);
   if (validationErrors.length) {
@@ -114,23 +108,6 @@ async function processItem(rawItem, db, log) {
   }
 
   const normalized = normalizeLanderPayload(payload);
-  const elastic = db?.elastic;
-  if (elastic) {
-    try {
-      const indexed = await isAdIndexed(elastic, normalized.ad_id);
-      if (!indexed) {
-        return rejected(400, 'ad not found', {
-          hint: 'Make sure the AdMob ad exists in mob_search_mix before sending lander data.',
-        });
-      }
-    } catch (error) {
-      log?.error?.('admob.landers.insertHtml ES lookup failed', { ad_id: normalized.ad_id, error: error.message });
-      return serverError(503, 'The AdMob Elasticsearch lookup failed.', {
-        hint: 'Check the mob_search_mix index and retry once Elasticsearch is healthy.',
-        error: error.message,
-      });
-    }
-  }
 
   try {
     const outcome = await repo.withTransaction(db.sql, async (tx) => {
@@ -139,44 +116,69 @@ async function processItem(rawItem, db, log) {
         throw new Error('ad not found');
       }
 
+      const isPythonCrawler = Number(normalized.platform) === PYTHON_CRAWLER_PLATFORM;
       const redirectStatus = normalized.lander_status === 3
-        ? (normalized.crawled_by === '.net' ? 3 : 6)
-        : (normalized.crawled_by === '.net' ? 1 : 4);
+        ? (isPythonCrawler ? 6 : 3)
+        : (isPythonCrawler ? 4 : 1);
 
       await repo.updateRedirectStatus(tx, existing.id, redirectStatus);
 
-      if (normalized.lander_status !== 3) {
-        await repo.upsertLanderContent(tx, existing.id, normalized);
-      }
+      // Keep the lander row in sync for every analysis attempt, including
+      // status=3 runs, so the created/updated contract remains meaningful.
+      await repo.upsertLanderContent(tx, existing.id, normalized);
+
+      // Mark the current-day claim complete when this insert belongs to a
+      // scraper that picked the ad earlier, or create a same-day claim on the
+      // fly when insert_html_content is called directly.
+      await repo.completeLanderClaim(tx, existing.id, scraperName, normalized.lander_status);
+
+      // Keep a retry record so the ES doc can be rebuilt even if the immediate
+      // index call fails after the SQL transaction has already committed.
+      await repo.queueEs(tx, existing.id);
 
       return { id: existing.id, redirectStatus, skippedContent: normalized.lander_status === 3 };
     });
 
     if (!db?.elastic) {
-      const response = ok(outcome.id, 'Destination Lander updated successfully.');
-      response.data.elastic_indexed = false;
-      response.data.mysql_saved = true;
-      response.data.redirect_status = outcome.redirectStatus;
-      response.data.skipped_content = outcome.skippedContent;
-      return response;
+      return ok(outcome.id, 'Destination Lander updated successfully. Elasticsearch indexing is queued for retry.', {
+        data: {
+          id: outcome.id,
+          mysql_saved: true,
+          elastic_indexed: false,
+          es_retry_queued: true,
+          redirect_status: outcome.redirectStatus,
+          skipped_content: outcome.skippedContent,
+        },
+        warning: 'Elasticsearch is unavailable right now; the lander data was saved in MySQL and queued for retry.',
+      });
     }
 
     try {
       const esResult = await updateElasticDoc(db, normalized.ad_id);
-      const response = ok(outcome.id, 'Destination Lander updated successfully.');
-      response.data.elastic_indexed = esResult.indexed;
-      response.data.mysql_saved = true;
-      response.data.redirect_status = outcome.redirectStatus;
-      response.data.skipped_content = outcome.skippedContent;
-      return response;
+      await repo.completeEs(db.sql, outcome.id);
+      return ok(outcome.id, 'Destination Lander updated successfully.', {
+        data: {
+          id: outcome.id,
+          mysql_saved: true,
+          elastic_indexed: esResult.indexed,
+          es_retry_queued: false,
+          redirect_status: outcome.redirectStatus,
+          skipped_content: outcome.skippedContent,
+        },
+      });
     } catch (error) {
       log?.error?.('admob.landers.insertHtml ES indexing failed', { ad_id: normalized.ad_id, error: error.message });
-      const response = serverError(503, 'The AdMob lander was saved in pasdev_admob, but Elasticsearch indexing is pending.', {
-        hint: 'Retry once Elasticsearch is healthy; the MySQL lander content is already stored.',
-        error: error.message,
+      return ok(outcome.id, 'Destination Lander updated successfully. Elasticsearch indexing is pending.', {
+        data: {
+          id: outcome.id,
+          mysql_saved: true,
+          elastic_indexed: false,
+          es_retry_queued: true,
+          redirect_status: outcome.redirectStatus,
+          skipped_content: outcome.skippedContent,
+        },
+        warning: `Elasticsearch indexing is pending: ${error.message}`,
       });
-      response.data = { id: outcome.id, mysql_saved: true, elastic_indexed: false, redirect_status: outcome.redirectStatus };
-      return response;
     }
   } catch (error) {
     if (error.message === 'ad not found') {
@@ -195,6 +197,7 @@ async function processItem(rawItem, db, log) {
 async function insertHtmlContent(req, db, log) {
   const started = Date.now();
   const items = payloadItems(req.body).filter(Boolean);
+  const scraperName = parseScraperName(req);
 
   if (!db?.sql) {
     return serverError(503, 'The AdMob MySQL connection is unavailable.', {
@@ -209,7 +212,7 @@ async function insertHtmlContent(req, db, log) {
   }
 
   if (items.length === 1) {
-    const result = await processItem(items[0], db, log);
+    const result = await processItem(items[0], db, log, scraperName);
     result.exe_time = (Date.now() - started) / 1000;
     return result;
   }
@@ -219,7 +222,7 @@ async function insertHtmlContent(req, db, log) {
   let failedCount = 0;
 
   for (const item of items) {
-    const result = await processItem(item, db, log);
+    const result = await processItem(item, db, log, scraperName);
     results.push(result);
     if (result.code >= 200 && result.code < 300) okCount += 1;
     else failedCount += 1;

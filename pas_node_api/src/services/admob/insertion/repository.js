@@ -130,21 +130,18 @@ async function updateRedirectStatus(tx, adId, redirectStatus) {
 }
 
 async function upsertLanderContent(tx, id, data) {
-  // Store the DS lander scrape plus the WA/VPN enrichment in one row so the
-  // lander flow can round-trip the evidence without touching legacy tables.
+  // Store only the finalized AdMob lander contract plus PAS-maintained
+  // rotator signals. Duplicate helper fields stay out of the schema.
   await tx.query(
     `INSERT INTO mob_ad_lander_content
-      (ad_id, lander_status, crawled_by, destinations, html_path, screen_shot, html_content,
+      (ad_id, platform, lander_status, destinations, html_path, screen_shot, html_content,
        domain_registered_date, domain_age, country_iso_json, outgoing_url_json, redirects_json,
-       ad_category, source_website, source_parameters_json, whatsapp_url, whatsapp_domain,
-       whatsapp_path, whatsapp_phone, whatsapp_message, whatsapp_parameters_json, campaign_id,
-       location_without_vpn_json, location_with_vpn_json, comparison_json, whatsapp_links_json,
-       whatsapp_texts_json, phone_numbers_json, contact_buttons_json, contact_button_count,
-       whatsapp_rotator_detected, whatsapp_rotator_phone_count, lead_campaign_tag, raw_payload_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       source_app, whatsapp_json, campaign_id, whatsapp_rotator_detected, whatsapp_rotator_count,
+       lead_campaign_tag, created, updated)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
+       platform = VALUES(platform),
        lander_status = VALUES(lander_status),
-       crawled_by = VALUES(crawled_by),
        destinations = VALUES(destinations),
        html_path = VALUES(html_path),
        screen_shot = VALUES(screen_shot),
@@ -154,32 +151,18 @@ async function upsertLanderContent(tx, id, data) {
        country_iso_json = VALUES(country_iso_json),
        outgoing_url_json = VALUES(outgoing_url_json),
        redirects_json = VALUES(redirects_json),
-       ad_category = VALUES(ad_category),
-       source_website = VALUES(source_website),
-       source_parameters_json = VALUES(source_parameters_json),
-       whatsapp_url = VALUES(whatsapp_url),
-       whatsapp_domain = VALUES(whatsapp_domain),
-       whatsapp_path = VALUES(whatsapp_path),
-       whatsapp_phone = VALUES(whatsapp_phone),
-       whatsapp_message = VALUES(whatsapp_message),
-       whatsapp_parameters_json = VALUES(whatsapp_parameters_json),
+       source_app = VALUES(source_app),
+       whatsapp_json = VALUES(whatsapp_json),
        campaign_id = VALUES(campaign_id),
-       location_without_vpn_json = VALUES(location_without_vpn_json),
-       location_with_vpn_json = VALUES(location_with_vpn_json),
-       comparison_json = VALUES(comparison_json),
-       whatsapp_links_json = VALUES(whatsapp_links_json),
-       whatsapp_texts_json = VALUES(whatsapp_texts_json),
-       phone_numbers_json = VALUES(phone_numbers_json),
-       contact_buttons_json = VALUES(contact_buttons_json),
-       contact_button_count = VALUES(contact_button_count),
        whatsapp_rotator_detected = VALUES(whatsapp_rotator_detected),
-       whatsapp_rotator_phone_count = VALUES(whatsapp_rotator_phone_count),
+       whatsapp_rotator_count = VALUES(whatsapp_rotator_count),
        lead_campaign_tag = VALUES(lead_campaign_tag),
-       raw_payload_json = VALUES(raw_payload_json)`,
+       created = COALESCE(mob_ad_lander_content.created, VALUES(created)),
+       updated = VALUES(updated)`,
     [
       id,
+      data.platform,
       data.lander_status,
-      data.crawled_by,
       data.destinations,
       data.html_path,
       data.screen_shot,
@@ -189,28 +172,14 @@ async function upsertLanderContent(tx, id, data) {
       data.country_iso_json,
       data.outgoing_url_json,
       data.redirects_json,
-      data.ad_category,
-      data.source_website,
-      data.source_parameters_json,
-      data.whatsapp_url,
-      data.whatsapp_domain,
-      data.whatsapp_path,
-      data.whatsapp_phone,
-      data.whatsapp_message,
-      data.whatsapp_parameters_json,
+      data.source_app,
+      data.whatsapp_json,
       data.campaign_id,
-      data.location_without_vpn_json,
-      data.location_with_vpn_json,
-      data.comparison_json,
-      data.whatsapp_links_json,
-      data.whatsapp_texts_json,
-      data.phone_numbers_json,
-      data.contact_buttons_json,
-      data.contact_button_count,
       data.whatsapp_rotator_detected,
-      data.whatsapp_rotator_phone_count,
+      data.whatsapp_rotator_count,
       data.lead_campaign_tag,
-      data.raw_payload_json,
+      data.created,
+      data.updated,
     ]
   );
 }
@@ -341,21 +310,16 @@ async function getCompleteAd(sql, publicAdId) {
        u.ad_url, u.destination_url, u.redirect_url, u.placement_url,
        u.target_site, u.destination_host, m.original_url AS image_url_original,
        m.nas_path AS image_url,
-       lc.lander_status, lc.crawled_by AS lander_crawled_by,
+       lc.platform AS lander_platform, lc.lander_status,
        lc.destinations AS lander_destination_url,
        lc.html_path AS lander_html_path,
        lc.screen_shot AS lander_screen_shot,
        lc.domain_registered_date AS lander_domain_registered_date,
        lc.domain_age AS lander_domain_age,
        lc.country_iso_json, lc.outgoing_url_json, lc.redirects_json,
-       lc.ad_category AS lander_ad_category,
-       lc.source_website, lc.source_parameters_json, lc.whatsapp_url,
-       lc.whatsapp_domain, lc.whatsapp_path, lc.whatsapp_phone,
-       lc.whatsapp_message, lc.whatsapp_parameters_json, lc.campaign_id,
-       lc.location_without_vpn_json, lc.location_with_vpn_json, lc.comparison_json,
-       lc.whatsapp_links_json, lc.whatsapp_texts_json, lc.phone_numbers_json,
-       lc.contact_buttons_json, lc.contact_button_count, lc.whatsapp_rotator_detected,
-       lc.whatsapp_rotator_phone_count, lc.lead_campaign_tag, lc.raw_payload_json
+       lc.source_app AS lander_source_app, lc.whatsapp_json, lc.campaign_id,
+       lc.whatsapp_rotator_detected, lc.whatsapp_rotator_count, lc.lead_campaign_tag,
+       lc.created AS lander_created, lc.updated AS lander_updated
      FROM mob_ads a
      LEFT JOIN mob_post_owners o ON o.id = a.post_owner_id
      LEFT JOIN mob_ad_urls u ON u.ad_id = a.id

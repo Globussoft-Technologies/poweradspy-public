@@ -99,64 +99,72 @@ describe('isolated AdMob insertion contract', () => {
       occurrence_count: 4,
       image_url_original: payload.image_url_original,
       image_url: '/pas-dev/stream/admob/adImage/202608/77.webp',
-      source_website: 'https://clickza.space/DDD/',
-      source_parameters_json: JSON.stringify({
-        gad_source: '5',
-        gad_campaignid: '24090156948',
-        gclid: 'gclid-value',
-      }),
-      whatsapp_url: 'https://api.whatsapp.com/send/?phone=%2B919311475239&text=Hello&type=phone_number&app_absent=0',
-      whatsapp_domain: 'api.whatsapp.com',
-      whatsapp_path: '/send/',
-      whatsapp_phone: '+919311475239',
-      whatsapp_message: 'Hello',
-      whatsapp_parameters_json: JSON.stringify({
-        phone: '+919311475239',
-        text: 'Hello',
-        type: 'phone_number',
-        app_absent: '0',
-      }),
+      lander_status: 2,
+      lander_platform: 12,
+      lander_destination_url: 'https://clickza.space/DDD/',
+      lander_html_path: '/pas-dev/stream/admob/whiteHatAd/202608/77.zip',
+      lander_screen_shot: '/pas-dev/stream/admob/whiteHatAd/202608/77.png',
+      lander_domain_registered_date: '2024-06-05',
+      lander_domain_age: 0,
+      country_iso_json: JSON.stringify(['IN']),
+      outgoing_url_json: JSON.stringify([
+        {
+          start_url: 'https://clickza.space/DDD/',
+          redirect_urls: [],
+          destination_url: 'https://clickza.space/DDD/',
+        },
+      ]),
+      redirects_json: JSON.stringify(['https://clickza.space/DDD/']),
+      lander_source_app: 'Crex',
       campaign_id: '24090156948',
-      location_without_vpn_json: JSON.stringify({
-        ip: '106.51.38.160',
-        country: 'India',
-        country_code: 'IN',
-      }),
-      location_with_vpn_json: JSON.stringify({
-        ip: '185.177.126.136',
-        country: 'Netherlands',
-        country_code: 'NL',
-      }),
-      comparison_json: JSON.stringify({
-        location_changed: true,
-        whatsapp_data_changed: false,
-      }),
+      whatsapp_rotator_detected: 0,
+      whatsapp_rotator_count: 1,
+      whatsapp_json: JSON.stringify([
+        {
+          domain: 'wa.link',
+          url: 'https://wa.link/reddylive2',
+          phone: '+919311475239',
+          button: 'Book delivery',
+          message: 'Hello',
+          first_detected: '2024-06-05T12:00:00Z',
+          last_detected: '2024-06-05T12:00:00Z',
+          state: 'IN',
+          city: 'IN',
+          country: 'IN',
+        },
+      ]),
+      lander_created: '2024-06-05 12:00:00.000',
+      lander_updated: '2024-06-05 12:00:00.000',
       countries: [],
       states: [],
       sub_networks: [],
       source_apps: [],
     });
 
-    expect(doc.source_website).toBe('https://clickza.space/DDD/');
-    expect(doc.source_parameters).toEqual(expect.objectContaining({
-      gad_source: '5',
-      gad_campaignid: '24090156948',
-      gclid: 'gclid-value',
-    }));
-    expect(doc.whatsapp_phone).toBe('+919311475239');
-    expect(doc.whatsapp_parameters).toEqual(expect.objectContaining({
-      phone: '+919311475239',
-      text: 'Hello',
-    }));
+    expect(doc.lander_platform).toBe(12);
+    expect(doc.country_iso).toEqual(['IN']);
+    expect(doc.outgoing_url).toEqual([
+      {
+        start_url: 'https://clickza.space/DDD/',
+        redirect_urls: [],
+        destination_url: 'https://clickza.space/DDD/',
+      },
+    ]);
+    expect(doc.redirects).toEqual(['https://clickza.space/DDD/']);
     expect(doc.campaign_id).toBe('24090156948');
-    expect(doc.location_without_vpn).toEqual(expect.objectContaining({
-      country: 'India',
-      country_code: 'IN',
-    }));
-    expect(doc.comparison).toEqual(expect.objectContaining({
-      location_changed: true,
-      whatsapp_data_changed: false,
-    }));
+    expect(doc.whatsapp_rotator_detected).toBe(false);
+    expect(doc.whatsapp_rotator_count).toBe(1);
+    expect(doc.whatsapp).toEqual([
+      expect.objectContaining({
+        domain: 'wa.link',
+        phone: '+919311475239',
+        button: 'Book delivery',
+        message: 'Hello',
+        url: 'https://wa.link/reddylive2',
+      }),
+    ]);
+    expect(doc.source_app).toEqual(['Crex']);
+    expect(doc).not.toHaveProperty('source_website');
   });
 
   it('searches mob_search_mix and returns an independent admob card row', async () => {

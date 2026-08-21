@@ -4,145 +4,141 @@ import normalizeModule from '../../../../src/services/admob/landers/normalize.js
 const { normalizeLanderPayload } = normalizeModule;
 
 describe('admob lander normalization', () => {
-  it('keeps the existing lander fields and flattens the WA/VPN enrichment payload', () => {
-    const payload = {
-      ad_id: 'ad-123',
-      status: 2,
-      crawled_by: '.net',
-      destinations: 'https://example-landing.com/whitehat',
-      html_path: 'https://cdn.example.com/lander.html',
-      screen_shot: 'https://cdn.example.com/screenshot.png',
-      html_content: '<html><body>lander</body></html>',
-      domain_registered_date: '2018-03-12',
+  it('normalizes the finalized AdMob lander payload into the SQL contract', () => {
+    const normalized = normalizeLanderPayload({
+      ad_id: '393b2a99a0d23d76912d7dbf',
+      platform: '12',
+      destinations: 'https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336',
+      html_path: '/pas-dev/stream/admob/whiteHatAd/202608/393b2a99a0d23d76912d7dbf.zip',
+      screen_shot: '/pas-dev/stream/admob/whiteHatAd/202608/393b2a99a0d23d76912d7dbf.png',
+      html_content: '<html><body><h1>lander</h1></body></html>',
+      domain_registered_date: null,
       domain_age: 0,
-      country_iso: ['US'],
+      country_iso: ['IN'],
       outgoing_url: [
         {
-          start_url: 'https://example-landing.com/whitehat',
+          start_url: 'https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336',
           redirect_urls: [],
-          destination_url: 'https://example-landing.com/whitehat',
+          destination_url: 'https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336',
         },
       ],
-      redirects: ['NA'],
-      ad_category: null,
-      source_website: 'https://clickza.space/DDD/',
-      source_parameters: {
-        gad_source: '5',
-        gad_campaignid: '24090156948',
-        gclid: 'CjwKCAjwvsvTBhBaEiwAmf-3nsdCtFoUW_-rRjJSpCbpGdn2nJJMtCyR8In9AnEuhuFAmquB5-LxHxoCO58QAvD_BwE',
-      },
-      whatsapp_url: 'https://api.whatsapp.com/send/?phone=%2B919311475239&text=Hello&type=phone_number&app_absent=0',
-      whatsapp: {
-        domain: 'api.whatsapp.com',
-        path: '/send/',
-        phone: '+919311475239',
-        message: 'Hello',
-        parameters: {
-          phone: '+919311475239',
-          text: 'Hello',
-          type: 'phone_number',
-          app_absent: '0',
+      redirects: ['https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336'],
+      source_app: 'crex',
+      whatsapp: [
+        {
+          domain: 'wa.link',
+          url: 'https://wa.link/reddylive2',
+          phone: '918810993624',
+          button: 'Book delivery link',
+          message: 'HI, I NEED INFO AND I:D',
+          fisrt_detected: '2024-06-05T12:00:00Z',
+          last_detected: '2024-06-05T12:00:00Z',
+          state: 'IN',
+          city: 'IN',
+          countrty: 'IN',
         },
-      },
-      campaign_id: '24090156948',
-      location: {
-        without_vpn: {
-          ip: '106.51.38.160',
-          country: 'India',
-          country_code: 'IN',
-          region: 'Karnataka',
-          region_code: 'KA',
-          city: 'Bengaluru',
-          zipcode: '560025',
-          latitude: '12.9634',
-          longitude: '77.5855',
+        {
+          domain: 'wa.link',
+          url: 'https://wa.link/reddylive2',
+          phone: '918810993624',
+          message: 'HI, I NEED INFO AND I:D',
+          fisrt_detected: '2024-06-05T12:00:00Z',
+          last_detected: '2024-06-05T12:00:00Z',
+          state: 'IN',
+          city: 'IN',
+          countrty: 'IN',
         },
-        with_vpn: {
-          ip: '185.177.126.136',
-          country: 'Netherlands',
-          country_code: 'NL',
-          region: 'South Holland',
-          region_code: 'ZH',
-          city: 'Naaldwijk',
-          zipcode: '2671',
-          latitude: '51.9981',
-          longitude: '4.198',
-        },
-      },
-      comparison: {
-        location_changed: true,
-        country_changed: true,
-        city_changed: true,
-        zipcode_changed: true,
-        whatsapp_data_changed: true,
-        campaign_id_changed: false,
-      },
-      whatsapp_rotator_detected: true,
-      whatsapp_rotator_phone_count: 7,
-    };
-
-    const normalized = normalizeLanderPayload(payload);
-
-    expect(normalized.ad_id).toBe('ad-123');
-    expect(normalized.lander_status).toBe(2);
-    expect(normalized.source_website).toBe('https://clickza.space/DDD/');
-    expect(JSON.parse(normalized.source_parameters_json)).toEqual(expect.objectContaining({
-      gad_source: '5',
-      gad_campaignid: '24090156948',
-    }));
-    expect(normalized.whatsapp_url).toContain('api.whatsapp.com');
-    expect(normalized.whatsapp_domain).toBe('api.whatsapp.com');
-    expect(normalized.whatsapp_path).toBe('/send/');
-    expect(normalized.whatsapp_phone).toBe('+919311475239');
-    expect(normalized.whatsapp_message).toBe('Hello');
-    expect(JSON.parse(normalized.whatsapp_parameters_json)).toEqual(expect.objectContaining({
-      phone: '+919311475239',
-      text: 'Hello',
-    }));
-    expect(normalized.campaign_id).toBe('24090156948');
-    expect(JSON.parse(normalized.location_without_vpn_json)).toEqual(expect.objectContaining({
-      country: 'India',
-      country_code: 'IN',
-    }));
-    expect(JSON.parse(normalized.location_with_vpn_json)).toEqual(expect.objectContaining({
-      country: 'Netherlands',
-      country_code: 'NL',
-    }));
-    expect(JSON.parse(normalized.comparison_json)).toEqual(expect.objectContaining({
-      whatsapp_data_changed: true,
-      campaign_id_changed: false,
-    }));
-    expect(JSON.parse(normalized.whatsapp_links_json)).toEqual([
-      'https://api.whatsapp.com/send/?phone=%2B919311475239&text=Hello&type=phone_number&app_absent=0',
-    ]);
-    expect(JSON.parse(normalized.phone_numbers_json)).toEqual(['+919311475239']);
-    expect(JSON.parse(normalized.whatsapp_texts_json)).toEqual(['Hello']);
-    expect(normalized.whatsapp_rotator_detected).toBe(true);
-    expect(normalized.whatsapp_rotator_phone_count).toBe(7);
-    expect(normalized.raw_payload_json).toContain('"source_website":"https://clickza.space/DDD/"');
-  });
-
-  it('does not infer rotator detection from comparison.whatsapp_data_changed alone', () => {
-    const normalized = normalizeLanderPayload({
-      ad_id: 'ad-456',
-      status: 2,
-      crawled_by: '.net',
-      destinations: 'https://example-landing.com/whitehat',
-      screen_shot: 'https://cdn.example.com/screenshot.png',
-      html_content: '<html><body>lander</body></html>',
-      whatsapp: {
-        phone: '+919311475239',
-        message: 'Hello',
-      },
-      comparison: {
-        whatsapp_data_changed: true,
-      },
+      ],
+      campaign_id: '24144585336',
+      created: '2024-06-05T12:00:00Z',
+      updated: '2024-06-05T12:00:00Z',
     });
 
+    expect(normalized.ad_id).toBe('393b2a99a0d23d76912d7dbf');
+    expect(normalized.platform).toBe(12);
+    expect(normalized.lander_status).toBe(1);
+    expect(normalized.source_app).toBe('crex');
+    expect(JSON.parse(normalized.country_iso_json)).toEqual(['IN']);
+    expect(JSON.parse(normalized.outgoing_url_json)).toEqual([
+      {
+        start_url: 'https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336',
+        redirect_urls: [],
+        destination_url: 'https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336',
+      },
+    ]);
+    expect(JSON.parse(normalized.redirects_json)).toEqual([
+      'https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336',
+    ]);
+    expect(normalized.campaign_id).toBe('24144585336');
     expect(normalized.whatsapp_rotator_detected).toBe(false);
-    expect(normalized.whatsapp_rotator_phone_count).toBe(0);
-    expect(JSON.parse(normalized.comparison_json)).toEqual(expect.objectContaining({
-      whatsapp_data_changed: true,
+    expect(normalized.whatsapp_rotator_count).toBe(1);
+    expect(normalized.lead_campaign_tag).toBe(null);
+    expect(normalized.created).toBe('2024-06-05 12:00:00.000');
+    expect(normalized.updated).toBe('2024-06-05 12:00:00.000');
+    expect(normalized).not.toHaveProperty('source_website');
+    expect(normalized).not.toHaveProperty('whatsapp_details_json');
+
+    const whatsapp = JSON.parse(normalized.whatsapp_json);
+    expect(whatsapp).toHaveLength(2);
+    expect(whatsapp.some((item) => 'path' in item)).toBe(false);
+    expect(whatsapp).toContainEqual(expect.objectContaining({
+      domain: 'wa.link',
+      phone: '918810993624',
+      button: 'Book delivery link',
+      message: 'HI, I NEED INFO AND I:D',
+      first_detected: '2024-06-05T12:00:00Z',
+      last_detected: '2024-06-05T12:00:00Z',
+      state: 'IN',
+      city: 'IN',
+      country: 'IN',
+      url: 'https://wa.link/reddylive2',
     }));
+  });
+
+  it('accepts the DS path field as a legacy alias for the stored WhatsApp url', () => {
+    const normalized = normalizeLanderPayload({
+      ad_id: 'ad-path-alias',
+      platform: 12,
+      destinations: 'https://example.com',
+      html_path: '/tmp/lander.zip',
+      screen_shot: '/tmp/lander.png',
+      html_content: '<html></html>',
+      source_app: 'crex',
+      whatsapp: [
+        {
+          domain: 'wa.link',
+          path: 'https://wa.link/legacyalias',
+          phone: '918810993624',
+        },
+      ],
+    });
+
+    expect(JSON.parse(normalized.whatsapp_json)).toEqual([
+      expect.objectContaining({
+        domain: 'wa.link',
+        phone: '918810993624',
+        url: 'https://wa.link/legacyalias',
+      }),
+    ]);
+  });
+
+  it('infers PAS-maintained WA rotator fields from distinct phone numbers', () => {
+    const normalized = normalizeLanderPayload({
+      ad_id: 'ad-rotator',
+      platform: 12,
+      destinations: 'https://example.com',
+      html_path: '/tmp/lander.zip',
+      screen_shot: '/tmp/lander.png',
+      html_content: '<html></html>',
+      source_app: 'crex',
+      whatsapp: [
+        { phone: '918810993624', message: 'A' },
+        { phone: '919999999999', message: 'B' },
+      ],
+    });
+
+    expect(normalized.whatsapp_rotator_detected).toBe(true);
+    expect(normalized.whatsapp_rotator_count).toBe(2);
+    expect(normalized.lead_campaign_tag).toBe('high-volume-lead-campaign');
   });
 });

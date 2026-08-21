@@ -4,11 +4,28 @@
 /**
  * apply-es-mapping.js - additive Elasticsearch mapping update for AdMob.
  *
- * This mirrors the repo's AI-Meta and Google transparency maintenance scripts:
- *   - dry-run by default
- *   - only performs PUT _mapping
- *   - skips missing indices
- *   - keeps the live mapping patch small and additive
+ * Use this when the live AdMob index is missing new lander fields but you do
+ * NOT want to rebuild the whole index. This script only performs PUT _mapping;
+ * it never rewrites documents and it never removes old fields.
+ *
+ * What this script does on `--commit`:
+ *   - reads the additive field fragment from `mob_search_mix_fields.mapping.json`
+ *   - compares it with the current AdMob index mapping
+ *   - adds only fields that do not exist yet
+ *   - fails fast if an existing field conflicts with the new definition
+ *
+ * Important:
+ *   - Dry-run is the default. Add `--commit` or `--apply` to actually write.
+ *   - This script cannot remove obsolete mapping fields from ES.
+ *   - Use `rebuild-search-index.js` instead when the final goal is to delete
+ *     old AdMob lander fields from the live mapping.
+ *
+ * Common commands:
+ *   node scripts/admob/apply-es-mapping.js
+ *     Preview the target index and the additive fields in the mapping patch.
+ *
+ *   node scripts/admob/apply-es-mapping.js --commit
+ *     Apply only the additive mapping patch to the live AdMob index.
  */
 
 require('dotenv').config();

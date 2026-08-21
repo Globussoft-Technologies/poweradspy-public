@@ -23,6 +23,7 @@ erDiagram
     mob_ads ||--o| mob_ad_urls : "urls"
     mob_ads ||--o{ mob_ad_media : "media"
     mob_ads ||--o| mob_ad_lander_content : "lander scrape"
+    mob_ads ||--o{ mob_ad_lander_claims : "daily lander claims"
     mob_ads ||--o{ mob_ad_countries : "country dimension"
     mob_ads ||--o{ mob_ad_states : "state dimension"
     mob_ads ||--o{ mob_ad_sub_networks : "sub-network dimension"
@@ -91,8 +92,8 @@ erDiagram
     }
     mob_ad_lander_content {
         bigint ad_id PK, FK
+        smallint platform
         tinyint lander_status
-        string crawled_by
         text destinations
         string html_path
         string screen_shot
@@ -102,16 +103,23 @@ erDiagram
         longtext country_iso_json
         longtext outgoing_url_json
         longtext redirects_json
-        string ad_category
-        longtext whatsapp_links_json
-        longtext whatsapp_texts_json
-        longtext phone_numbers_json
-        longtext contact_buttons_json
-        smallint contact_button_count
+        string source_app
+        longtext whatsapp_json
+        string campaign_id
         boolean whatsapp_rotator_detected
-        smallint whatsapp_rotator_phone_count
+        smallint whatsapp_rotator_count
         string lead_campaign_tag
-        longtext raw_payload_json
+        datetime created
+        datetime updated
+    }
+    mob_ad_lander_claims {
+        bigint ad_id PK, FK
+        date process_date PK
+        string scraper_name
+        tinyint requested_status
+        datetime claimed_at
+        datetime completed_at
+        tinyint last_lander_status
         timestamp created_at
         timestamp updated_at
     }
@@ -191,6 +199,7 @@ erDiagram
 - `mob_ads.redirect_status` drives the AdMob lander queue.
 - `mob_ad_media` has a unique media slot per `(ad_id, media_kind, ordinal)`.
 - `mob_ad_lander_content` has one summary row per ad and keeps the scraped HTML / extraction payload.
+- `mob_ad_lander_claims` prevents the same ad from being handed out to multiple scrapers on the same day.
 - `mob_ad_observations` has a unique retry-safe observation key per `(ad_id, system_id)`.
 - `mob_source_apps` deduplicates global apps by `(source_app_key, source_app_pkg)`.
 - Per-ad dimensions use generated lowercase keys so matching is case-insensitive.
@@ -218,7 +227,7 @@ Document = one ad, flat top-level keys plus nested dimension detail arrays. `_id
 | Ranking | `occurrence_count`, `days_running`, `lead_score` |
 | URL / lander | `ad_url`, `destination_url`, `redirect_url`, `placement_url`, `target_site`, `destination_host` |
 | Media | `image_url_original`, `image_url` |
-| Lander scrape | `redirect_status`, `country_iso`, `lander_status`, `lander_crawled_by`, `lander_destination_url`, `lander_html_path`, `lander_screen_shot`, `lander_domain_registered_date`, `lander_domain_age`, `whatsapp_links`, `whatsapp_prefilled_texts`, `phone_numbers`, `contact_buttons`, `contact_button_count`, `whatsapp_rotator_detected`, `whatsapp_rotator_phone_count`, `lead_campaign_tag`, `lander_ad_category` |
+| Lander scrape | `redirect_status`, `country_iso`, `lander_status`, `lander_platform`, `lander_destination_url`, `lander_html_path`, `lander_screen_shot`, `lander_domain_registered_date`, `lander_domain_age`, `outgoing_url`, `redirects`, `campaign_id`, `whatsapp_rotator_detected`, `whatsapp_rotator_count`, `lead_campaign_tag`, `whatsapp`, `created`, `updated` |
 | Geo / dimension arrays | `country`, `state`, `sub_network`, `source_app`, `source_app_pkg` |
 | Aggregates | `source_app_count` |
 | Nested detail arrays | `country_details`, `state_details`, `sub_network_details`, `source_app_details` |

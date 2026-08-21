@@ -2,84 +2,42 @@
   "properties": {
     "redirect_status": { "type": "byte" },
     "lander_status": { "type": "byte" },
-    "lander_crawled_by": { "type": "keyword", "normalizer": "mob_lowercase" },
+    "lander_platform": { "type": "short" },
     "lander_destination_url": { "type": "keyword", "index": false },
     "lander_html_path": { "type": "keyword", "index": false },
     "lander_screen_shot": { "type": "keyword", "index": false },
     "lander_domain_registered_date": { "type": "date" },
     "lander_domain_age": { "type": "short" },
     "country_iso": { "type": "keyword", "normalizer": "mob_lowercase" },
-    "source_website": { "type": "keyword", "index": false },
-    "source_parameters": {
-      "type": "object",
+    "outgoing_url": {
+      "type": "nested",
       "properties": {
-        "gad_source": { "type": "keyword" },
-        "gad_campaignid": { "type": "keyword" },
-        "gclid": { "type": "keyword" }
+        "start_url": { "type": "keyword", "index": false },
+        "redirect_urls": { "type": "keyword", "index": false },
+        "destination_url": { "type": "keyword", "index": false }
       }
     },
-    "whatsapp_url": { "type": "keyword", "index": false },
-    "whatsapp_domain": { "type": "keyword", "normalizer": "mob_lowercase" },
-    "whatsapp_path": { "type": "keyword", "index": false },
-    "whatsapp_phone": { "type": "keyword" },
-    "whatsapp_message": { "type": "text" },
-    "whatsapp_parameters": {
-      "type": "object",
-      "properties": {
-        "phone": { "type": "keyword" },
-        "text": { "type": "text" },
-        "type": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "app_absent": { "type": "keyword" }
-      }
-    },
+    "redirects": { "type": "keyword", "index": false },
     "campaign_id": { "type": "keyword" },
-    "location_without_vpn": {
-      "type": "object",
-      "properties": {
-        "ip": { "type": "ip", "ignore_malformed": true },
-        "country": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "country_code": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "region": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "region_code": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "city": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "zipcode": { "type": "keyword" },
-        "latitude": { "type": "keyword" },
-        "longitude": { "type": "keyword" }
-      }
-    },
-    "location_with_vpn": {
-      "type": "object",
-      "properties": {
-        "ip": { "type": "ip", "ignore_malformed": true },
-        "country": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "country_code": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "region": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "region_code": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "city": { "type": "keyword", "normalizer": "mob_lowercase" },
-        "zipcode": { "type": "keyword" },
-        "latitude": { "type": "keyword" },
-        "longitude": { "type": "keyword" }
-      }
-    },
-    "comparison": {
-      "type": "object",
-      "properties": {
-        "location_changed": { "type": "boolean" },
-        "country_changed": { "type": "boolean" },
-        "city_changed": { "type": "boolean" },
-        "zipcode_changed": { "type": "boolean" },
-        "whatsapp_data_changed": { "type": "boolean" },
-        "campaign_id_changed": { "type": "boolean" }
-      }
-    },
-    "whatsapp_links": { "type": "keyword", "normalizer": "mob_lowercase" },
-    "whatsapp_prefilled_texts": { "type": "text" },
-    "phone_numbers": { "type": "keyword" },
-    "contact_buttons": { "type": "text" },
-    "contact_button_count": { "type": "long" },
     "whatsapp_rotator_detected": { "type": "boolean" },
-    "whatsapp_rotator_phone_count": { "type": "long" },
+    "whatsapp_rotator_count": { "type": "long" },
     "lead_campaign_tag": { "type": "keyword", "normalizer": "mob_lowercase" },
-    "lander_ad_category": { "type": "keyword", "normalizer": "mob_lowercase" }
+    "whatsapp": {
+      "type": "nested",
+      "properties": {
+        "domain": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "phone": { "type": "keyword" },
+        "button": { "type": "text" },
+        "message": { "type": "text" },
+        "first_detected": { "type": "date" },
+        "last_detected": { "type": "date" },
+        "state": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "city": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "country": { "type": "keyword", "normalizer": "mob_lowercase" },
+        "url": { "type": "keyword", "index": false }
+      }
+    },
+    "created": { "type": "date" },
+    "updated": { "type": "date" }
   }
 }

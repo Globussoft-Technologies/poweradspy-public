@@ -5,7 +5,7 @@ const { uploadAdmobBlackhatContent } = require('../landers/uploadService');
 const { insertHtmlContent } = require('../landers/insertHtmlService');
 
 async function getAds(req, db, log) {
-  return getAdmobAdsWithCountry(db, log);
+  return getAdmobAdsWithCountry(req, db, log);
 }
 
 async function uploadFiles(req, db, log) {
