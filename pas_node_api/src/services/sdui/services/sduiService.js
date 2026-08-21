@@ -160,24 +160,6 @@ function canonicalAdmobOptionValue(filterId, normalizedValue) {
   return normalizedValue;
 }
 
-function mergeOptionPlatformApplicability(existing, incoming) {
-  const left = existing?.platform_applicability;
-  const right = incoming?.platform_applicability;
-
-  if (!left) return right;
-  if (left === 'all') return left;
-  if (!right || right === 'all') return left;
-
-  const normalized = [
-    ...(Array.isArray(left) ? left : [left]),
-    ...(Array.isArray(right) ? right : [right]),
-  ]
-    .map((value) => String(value).trim().toLowerCase())
-    .filter(Boolean);
-
-  return [...new Set(normalized)];
-}
-
 function mergeFilterPlatformApplicability(applicability, platform) {
   if (!applicability || applicability === 'all') return applicability;
 
@@ -188,47 +170,6 @@ function mergeFilterPlatformApplicability(applicability, platform) {
   if (normalized.length === 0) return [platform];
   if (normalized.includes(platform)) return normalized;
   return [...normalized, platform];
-}
-
-function mergeAdmobOptionLists(filterId, baseOptions = [], incomingOptions = []) {
-  const merged = [];
-  const indexByValue = new Map();
-
-  const upsert = (option, source) => {
-    const normalizedValue = normalizeAdmobFilterValue(filterId, option?.value ?? option?.label ?? option?._id);
-    if (!normalizedValue) return;
-
-    const existingIndex = indexByValue.get(normalizedValue);
-    const cloned = { ...option };
-
-    if (existingIndex !== undefined) {
-      const current = merged[existingIndex];
-      merged[existingIndex] = {
-        ...current,
-        ...cloned,
-        label: current.label ?? cloned.label,
-        value: current.value ?? cloned.value,
-        platform_applicability: mergeOptionPlatformApplicability(current, cloned),
-        selected_by_default: Boolean(current.selected_by_default || cloned.selected_by_default),
-      };
-      return;
-    }
-
-    indexByValue.set(normalizedValue, merged.length);
-    merged.push({
-      ...cloned,
-      rank: typeof cloned.rank === 'number' ? cloned.rank : merged.length + 1,
-      selected_by_default: Boolean(cloned.selected_by_default),
-    });
-  };
-
-  for (const option of baseOptions || []) upsert(option, 'base');
-  for (const option of incomingOptions || []) upsert(option, 'incoming');
-
-  return merged.map((option, index) => ({
-    ...option,
-    rank: typeof option.rank === 'number' ? option.rank : index + 1,
-  }));
 }
 
 function buildAdmobOptionsFromEntries(filterId, entries) {
@@ -597,12 +538,17 @@ function resolveAdmobFilterOptions(filter, liveOptions) {
     if (!pa) return true;
     return pa === 'admob' || (Array.isArray(pa) && pa.includes('admob'));
   });
+  // Manually-authored options are the primary source of truth for this
+  // filter — once an admin has curated a list, live DB data must never mix
+  // into or reorder it. Live data is consulted only as a fallback when no
+  // manual options exist at all, so a filter that has never been curated
+  // still shows real data instead of sitting empty.
+  if (existingOptions.length > 0) return existingOptions;
+
   const dynamicOptions = liveOptions?.optionsByFilter?.[filterId];
-  if (liveOptions?.available) {
-    const merged = mergeAdmobOptionLists(filterId, existingOptions, dynamicOptions || []);
-    return merged.length > 0 ? merged : existingOptions;
-  }
-  return existingOptions.length > 0 ? existingOptions : fallbackAdmobOptions(filter);
+  if (liveOptions?.available && dynamicOptions?.length > 0) return dynamicOptions;
+
+  return fallbackAdmobOptions(filter);
 }
 
 async function prepareAdmobSidebar(config) {

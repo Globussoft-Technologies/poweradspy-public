@@ -1920,6 +1920,15 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
         icon: MapPin,
         color: "text-yellow-400",
       },
+      ...(isAdmob ? [{
+        label: "SUB NETWORK",
+        value: (() => {
+          const value = d.sub_network || d.subnetwork || ad?.subnetwork || processedAd?.subnetwork;
+          return value ? String(value).toUpperCase() : "—";
+        })(),
+        icon: Share2,
+        color: "text-fuchsia-400",
+      }] : []),
       // YouTube display ads surfaced under GDN: show their true source platform + placement.
       // ytSourced comes from the card; the placement check also catches deep-link opens
       // (SEARCHFEED/HOMEFEED/DISCOVERY are YouTube-only positions, never native GDN).
