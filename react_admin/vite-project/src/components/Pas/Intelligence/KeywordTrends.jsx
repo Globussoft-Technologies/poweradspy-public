@@ -138,15 +138,24 @@ const KeywordTrends = ({ onDataReady }) => {
         // API response structure: { data: { keywords/advertisers/domains: [...] }, meta: {...} }
         const items = json.data?.keywords || json.data?.advertisers || json.data?.domains || [];
 
-        const transformItems = (items) => items.map((item) => ({
-          term: item.keyword || item.advertiser || item.domain || "Unknown",
-          type: item.keyword ? "keyword" : item.advertiser ? "advertiser" : "domain",
-          count: item.history?.length || 0,
-          platforms: item.platform || [],
-          searchedDate: item.searchedDate,
-          history: item.history || [],
-          hasScrappingStatus: (item.history && item.history.length > 0),
-        }));
+        // API now returns scrapping_status grouped by (network, date) — same network
+        // scraped more than once on a date collapses into one entry with a
+        // scrapping_time[] instead of one flat entry per run, and adsCount is a single
+        // per-group value (whole-day window) instead of per-run (see
+        // enrichKeywordsWithAds / fetchAdsCountByNetworkDate on the backend).
+        const transformItems = (items) => items.map((item) => {
+          const scrappingStatus = item.scrapping_status || [];
+          const runCount = scrappingStatus.reduce((sum, g) => sum + (g.scrapping_time?.length || 0), 0);
+          return {
+            term: item.keyword || item.advertiser || item.domain || "Unknown",
+            type: item.keyword ? "keyword" : item.advertiser ? "advertiser" : "domain",
+            count: runCount,
+            platforms: item.platform || [],
+            searchedDate: item.searchedDate,
+            scrappingStatus,
+            hasScrappingStatus: scrappingStatus.length > 0,
+          };
+        });
 
         const transformedItems = transformItems(items);
 
@@ -381,11 +390,14 @@ const KeywordTrends = ({ onDataReady }) => {
               </thead>
               <tbody>
                 {fullList.map((row, idx) => {
-                  // Calculate stats from history
-                  const completedCount = row.history?.filter(h => h.status === "completed").length || 0;
-                  const failedCount = row.history?.filter(h => h.status === "failed").length || 0;
-                  const scrapingCount = row.history?.filter(h => h.status === "scrapping").length || 0;
-                  const totalAds = row.history?.reduce((sum, h) => sum + (h.adsCount || 0), 0) || 0;
+                  // Crawled/failed/scrapping counts are per RUN (flattened across every
+                  // group's scrapping_time[]); ads count is per GROUP (one adsCount per
+                  // network+date, not per run — see enrichKeywordsWithAds on the backend).
+                  const allRuns = row.scrappingStatus?.flatMap(g => g.scrapping_time || []) || [];
+                  const completedCount = allRuns.filter(h => h.status === "completed").length;
+                  const failedCount = allRuns.filter(h => h.status === "failed").length;
+                  const scrapingCount = allRuns.filter(h => h.status === "scrapping").length;
+                  const totalAds = row.scrappingStatus?.reduce((sum, g) => sum + (g.adsCount || 0), 0) || 0;
 
                   // Build status summary
                   let statusLabel = "";
@@ -491,52 +503,57 @@ const KeywordTrends = ({ onDataReady }) => {
                         </div>
                       </td>
                       <td style={{ padding: "10px 12px", fontSize: "11px", color: "#6b7280" }}>
-                        {row.history && row.history.length > 0 ? (
+                        {row.scrappingStatus && row.scrappingStatus.length > 0 ? (
                           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                            {row.history.map((h, hIdx) => {
-                              const startTime = h.startTime ? new Date(h.startTime).toLocaleString() : "—";
-                              const endTime = h.endTime ? new Date(h.endTime).toLocaleString() : "—";
-                              return (
-                                <div key={hIdx} style={{ padding: "6px", background: "#f9fafb", borderRadius: "4px", border: "1px solid #e5e7eb" }}>
-                                  <div style={{ fontWeight: 600, color: "#374151", marginBottom: "3px" }}>
-                                    {h.network ? h.network.charAt(0).toUpperCase() + h.network.slice(1) : "Unknown"}
-                                  </div>
-                                  <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
-                                    <strong>Date:</strong> {h.date || "—"}
-                                  </div>
-                                  {h.owner && (
-                                    <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
-                                      <strong>Scrapping Server:</strong> {h.owner}
-                                    </div>
-                                  )}
-                                  {h.mode && (
-                                    <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
-                                      <strong>Mode:</strong> {h.mode}
-                                    </div>
-                                  )}
-                                  <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
-                                    <strong>Start:</strong> {startTime}
-                                  </div>
-                                  <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
-                                    <strong>End:</strong> {endTime}
-                                  </div>
-                                  <div style={{ fontSize: "10px", color: "#374151", fontWeight: 500 }}>
-                                    <strong>Ads:</strong> {h.adsCount === 0 ? (
-                                      <span style={{ display: "inline-block", background: "#fecaca", color: "#991b1b", padding: "2px 6px", borderRadius: "3px", fontSize: "10px", fontWeight: 600, marginLeft: "4px" }}>
-                                        no ads found
-                                      </span>
-                                    ) : (
-                                      <span style={{ marginLeft: "4px" }}>{h.adsCount ?? 0}</span>
-                                    )}
-                                  </div>
+                            {/* One card per (network, date) GROUP — same network scraped more than
+                                once on a date shows as multiple stacked runs inside ONE card with a
+                                single Ads count, instead of a separate card per run. */}
+                            {row.scrappingStatus.map((g, gIdx) => (
+                              <div key={gIdx} style={{ padding: "6px", background: "#f9fafb", borderRadius: "4px", border: "1px solid #e5e7eb" }}>
+                                <div style={{ fontWeight: 600, color: "#374151", marginBottom: "3px" }}>
+                                  {g.network ? g.network.charAt(0).toUpperCase() + g.network.slice(1) : "Unknown"}
                                 </div>
-                              );
-                            })}
+                                <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
+                                  <strong>Date:</strong> {g.date || "—"}
+                                </div>
+                                {(g.scrapping_time || []).map((r, rIdx) => {
+                                  const startTime = r.startTime ? new Date(r.startTime).toLocaleString() : "—";
+                                  const endTime = r.endTime ? new Date(r.endTime).toLocaleString() : "—";
+                                  return (
+                                    <div key={rIdx} style={{ marginBottom: "3px", paddingTop: rIdx > 0 ? "3px" : 0, borderTop: rIdx > 0 ? "1px dashed #e5e7eb" : "none" }}>
+                                      {r.owner && (
+                                        <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
+                                          <strong>Scrapping Server:</strong> {r.owner}
+                                        </div>
+                                      )}
+                                      <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
+                                        <strong>Start:</strong> {startTime}
+                                      </div>
+                                      <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "2px" }}>
+                                        <strong>End:</strong> {endTime}
+                                      </div>
+                                      <div style={{ fontSize: "10px", color: "#6b7280" }}>
+                                        <strong>Status:</strong> {r.status || "—"}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                <div style={{ fontSize: "10px", color: "#374151", fontWeight: 500, marginTop: "3px" }}>
+                                  <strong>Ads:</strong> {g.adsCount === 0 ? (
+                                    <span style={{ display: "inline-block", background: "#fecaca", color: "#991b1b", padding: "2px 6px", borderRadius: "3px", fontSize: "10px", fontWeight: 600, marginLeft: "4px" }}>
+                                      no ads found
+                                    </span>
+                                  ) : (
+                                    <span style={{ marginLeft: "4px" }}>{g.adsCount ?? 0}</span>
+                                  )}
+                                </div>
                               </div>
-                            ) : (
-                              <span style={{ color: "#9ca3af" }}>—</span>
-                            )}
-                          </td>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ color: "#9ca3af" }}>—</span>
+                        )}
+                      </td>
                       <td style={{ padding: "10px 12px", textAlign: "center", color: "#111827", fontWeight: 500 }}>
                         {row.count}
                       </td>

@@ -289,9 +289,34 @@ function buildSearchClause(platformConfig, searchType, searchValue) {
   return { multi_match: { query: searchValue, type: 'phrase', fields: keywordFields } };
 }
 
+// Escape characters that are special in Elasticsearch/Lucene regexp syntax (NOT the same
+// special-char set as JS regex) so a search term containing them is matched literally.
+function escapeEsRegexpValue(value) {
+  return String(value).replace(/[.?+*|{}[\]()"\\#@&<>~]/g, '\\$&');
+}
+
+// TikTok-only: word-boundary regexp match instead of buildSearchClause's multi_match phrase.
+// ad_title/industry/post_owner/target_keywords are short, punctuation-heavy fields that don't
+// tokenize the way phrase matching expects, so a `(.*[^a-z0-9])?term([^a-z0-9].*)?` regexp
+// against them (ad_title's un-analyzed .keyword subfield, the rest already keyword-mapped)
+// gives reliable whole-word/substring matches the way the TikTok ad search itself does.
+function buildTiktokRegexpSearchClause(searchValue) {
+  const pattern = `(.*[^a-z0-9])?${escapeEsRegexpValue(String(searchValue).toLowerCase())}([^a-z0-9].*)?`;
+  const fields = ['ad_title.keyword', 'industry', 'post_owner', 'target_keywords'];
+  return {
+    bool: {
+      should: fields.map(field => ({ regexp: { [field]: { value: pattern } } })),
+      minimum_should_match: 1,
+    },
+  };
+}
+
 // Query keyword scraping history from MongoDB using the shared DatabaseManager connection.
 // `mongo` is the connection object returned by DatabaseManager.getMongo('user_activity').
-async function queryKeywordScrapingHistory(mongo, searchType, searchValue) {
+// Pass `{ grouped: true }` to get the result already reshaped by groupScrapingStatusByNetworkDate
+// instead of the raw document — existing callers that need the flat scrapping_status array
+// (e.g. per-run ads-count batching) are unaffected since grouped defaults to false.
+async function queryKeywordScrapingHistory(mongo, searchType, searchValue, { grouped = false } = {}) {
   if (!mongo || !mongo.collection) {
     return null;
   }
@@ -319,10 +344,50 @@ async function queryKeywordScrapingHistory(mongo, searchType, searchValue) {
       });
     }
 
-    return matchedEntry;
+    return grouped ? groupScrapingStatusByNetworkDate(matchedEntry) : matchedEntry;
   } catch (err) {
     return null;
   }
+}
+
+// Reshape a keyword_searches document (as returned by queryKeywordScrapingHistory) into a
+// summary where scrapping_status runs are grouped by (network, date): same network scraped
+// more than once on the same date collapse into one entry with a `scrapping_time` array
+// instead of one flat entry per run.
+function groupScrapingStatusByNetworkDate(matchedEntry) {
+  if (!matchedEntry) return null;
+
+  const groups = new Map(); // `${network}|${date}` -> group entry
+  const order = []; // preserves first-seen order of (network, date) pairs
+
+  for (const run of matchedEntry.scrapping_status || []) {
+    const network = run.network;
+    const date = run.date;
+    if (!network || !date) continue; // can't group a run missing either key
+
+    const key = `${network}|${date}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { network, date, scrapping_time: [] };
+      groups.set(key, group);
+      order.push(key);
+    }
+
+    group.scrapping_time.push({
+      startTime: run.startTime?.$date || run.startTime || null,
+      endTime: run.endTime?.$date || run.endTime || null,
+      status: run.status || null,
+      owner: run.owner || null,
+    });
+  }
+
+  return {
+    value: matchedEntry.value,
+    createdAt: matchedEntry.createdAt?.$date || matchedEntry.createdAt || null,
+    lastSearchedAt: matchedEntry.lastSearchedAt?.$date || matchedEntry.lastSearchedAt || null,
+    networks: matchedEntry.networks || [],
+    scrapping_status: order.map(key => groups.get(key)),
+  };
 }
 
 // Build Elasticsearch query for getAllSearches with comprehensive filtering
@@ -699,10 +764,106 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
   return results;
 }
 
+// Fetch per-(network, date) ads counts for ONE keyword/advertiser/domain's grouped
+// scrapping_status (see groupScrapingStatusByNetworkDate). Dedicated, simpler sibling of
+// fetchAdsCountForKeywordsByPlatform: that one batches MANY keywords across MANY platforms
+// (keyword-trends list, enrichKeywordsWithAds) via a per-keyword scrappingHistory array; here
+// there's only ever a single search term, so it skips that batching layer and queries each
+// network directly, one filter-agg per date group. Same whole-day window (00:00:00–23:59:59)
+// as before, same concurrency/stress guards — just not routed through the multi-keyword path.
+// Mutates `adsCount` onto each group (0 by default, including on error) and returns the array.
+async function fetchAdsCountByNetworkDate(elastic, searchValue, searchType, scrappingStatus, logger) {
+  if (!elastic || !scrappingStatus || scrappingStatus.length === 0) {
+    return scrappingStatus || [];
+  }
+
+  // network -> group refs, in the same order they're pushed into that network's aggs below
+  const groupsByNetwork = {};
+  for (const group of scrappingStatus) {
+    group.adsCount = 0; // default until (if) overwritten below
+    if (!group.network || !group.date) continue; // no dated window to count against
+    if (!groupsByNetwork[group.network]) groupsByNetwork[group.network] = [];
+    groupsByNetwork[group.network].push(group);
+  }
+
+  const networkPromises = Object.entries(groupsByNetwork).map(async ([network, groups]) => {
+    const platformLower = normalizePlatformKey(network);
+    const indexName = PLATFORM_INDEX_MAP[platformLower] || 'search_mix';
+    const platformElastic = databaseManager.getElastic(platformLower) || elastic;
+
+    if (!platformElastic) {
+      logger?.warn?.(`[fetchAdsCountByNetworkDate] No ES client for network: ${network}`);
+      return;
+    }
+
+    // TikTok uses a dedicated regexp clause (see buildTiktokRegexpSearchClause) instead of
+    // the shared multi_match-phrase builder every other network goes through.
+    let searchClause;
+    if (platformLower === 'tiktok') {
+      searchClause = buildTiktokRegexpSearchClause(searchValue);
+    } else {
+      const fieldMappings = PLATFORM_FIELD_MAPPINGS[resolveFieldMappingKey(network)];
+      searchClause = fieldMappings ? buildSearchClause(fieldMappings, searchType, searchValue) : null;
+    }
+    if (!searchClause) {
+      logger?.warn?.(`[fetchAdsCountByNetworkDate] No field mapping for type ${searchType} on network: ${network}`);
+      return;
+    }
+
+    const timestampField = getTimestampField(platformLower);
+
+    // One filter-agg per date group — the whole calendar day, same boundary
+    // getKeywordScrapingHistory has always used.
+    const aggs = {};
+    groups.forEach((group, index) => {
+      let startStr = `${group.date} 00:00:00`;
+      let endStr = `${group.date} 23:59:59`;
+
+      // For LinkedIn and YouTube: convert to Unix seconds
+      if (platformLower === 'linkedin' || platformLower === 'youtube') {
+        startStr = convertToUnixSeconds(startStr);
+        endStr = convertToUnixSeconds(endStr);
+      }
+
+      aggs[`dt_${index}`] = {
+        filter: { range: { [timestampField]: { gte: startStr, lte: endStr } } },
+      };
+    });
+
+    try {
+      // Cross-process safety net (see esConcurrency.js) — same backoff fetchAdsCountForKeywordsByPlatform uses.
+      if (await isEsUnderStress(platformLower)) {
+        throw new Error('ES cluster under stress — skipped this cycle');
+      }
+
+      const esQuery = {
+        index: indexName,
+        body: { size: 0, track_total_hits: false, query: { bool: { must: [searchClause] } }, aggs },
+      };
+
+      console.log("queiressss",JSON.stringify(esQuery));
+      const esResult = await withLimit(platformLower, () => platformElastic.search(esQuery), ES_MAX_CONCURRENT_PER_NETWORK);
+      const resultAggs = esResult.aggregations || esResult.body?.aggregations || {};
+
+      groups.forEach((group, index) => {
+        group.adsCount = resultAggs[`dt_${index}`]?.doc_count || 0;
+      });
+    } catch (err) {
+      logger?.warn?.(`[fetchAdsCountByNetworkDate] Error for "${searchValue}" on ${network}:`, err.message);
+      // groups already defaulted to adsCount: 0 above
+    }
+  });
+
+  await Promise.all(networkPromises);
+  return scrappingStatus;
+}
+
 module.exports = {
   queryKeywordScrapingHistory,
+  groupScrapingStatusByNetworkDate,
   buildAllSearchesQuery,
   fetchAdsCountForKeywordsByPlatform,
+  fetchAdsCountByNetworkDate,
   PLATFORM_INDEX_MAP,
   PLATFORM_FIELD_MAPPINGS,
 };

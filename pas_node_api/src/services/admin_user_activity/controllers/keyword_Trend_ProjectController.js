@@ -2,7 +2,7 @@
 
 const { getAggs, getAllUserEmails, parsePagination } = require('../helpers/searchIntelligenceHelpers');
 const databaseManager = require('../../../database/DatabaseManager');
-const { fetchAdsCountForKeywordsByPlatform } = require('../queries/searchIntelligenceQueries');
+const { fetchAdsCountByNetworkDate, groupScrapingStatusByNetworkDate } = require('../queries/searchIntelligenceQueries');
 
 // Resolve a shared Mongo connection for the keyword_searches collection.
 // If the caller passed one in, use it; otherwise borrow the user_activity pool.
@@ -240,135 +240,68 @@ async function getKeywordTrends(req, elastic, logger, mongo) {
 }
 
 async function enrichKeywordsWithAds(keywords, fieldName, typeNum, elastic, logger) {
-  const docMap = {};
-  const platformKeywordMap = {};
-
-  // Step 1: Organize keywords by platform
-  for (const doc of keywords) {
+  // Group each doc's scrapping_status by (network, date) — same as
+  // queryKeywordScrapingHistory/getKeywordScrapingHistory — so a network scraped more than
+  // once on the same date collapses into one entry with a scrapping_time[] instead of one
+  // flat entry per run, and fetch its ads counts via fetchAdsCountByNetworkDate: ONE
+  // whole-day window (00:00:00-23:59:59) per group, not each individual run's narrow
+  // startTime/endTime. Reuses the same function getKeywordScrapingHistory calls, just once
+  // per keyword here since this endpoint enriches a page of them (default 10) instead of one.
+  const t1 = Date.now();
+  const enrichedDocs = await Promise.all(keywords.map(async (doc) => {
     const searchValue = doc[fieldName];
     const keyword_type = doc.type;
     const platforms = doc.networks || doc.platform || [];
-    const scrapingHistory = doc.scrapping_status || [];
 
     const rawSearchedDate = doc.searchDates?.[0]?.$date || doc.searchDates?.[0] || doc.createdAt?.$date || doc.createdAt || null;
     const searchedDateStr = rawSearchedDate ? new Date(rawSearchedDate).toLocaleDateString() : null;
 
-    const uniquePlatforms = [...new Set(platforms.length > 0 ? platforms : scrapingHistory.map(s => s.network).filter(Boolean))];
+    const grouped = groupScrapingStatusByNetworkDate(doc) || { scrapping_status: [] };
+    const scrappingStatus = grouped.scrapping_status || [];
 
-    const history = (scrapingHistory || []).map(run => ({
-      date: run.date,
-      status: run.status,
-      startTime: run.startTime?.$date || run.startTime,
-      endTime: run.endTime?.$date || run.endTime,
-      network: run.network,
-      adsCount: 0,
-      owner: run.owner,
-      mode: run.mode
-    }));
+    const uniquePlatforms = [...new Set(platforms.length > 0 ? platforms : scrappingStatus.map(g => g.network).filter(Boolean))];
 
-    docMap[searchValue] = {
-      doc,
+    if (elastic) {
+      try {
+        await fetchAdsCountByNetworkDate(elastic, searchValue, keyword_type || typeNum, scrappingStatus, logger);
+      } catch (err) {
+        logger?.warn?.('[enrichKeywordsWithAds] Ads count fetch failed for', searchValue, err.message);
+      }
+    }
+    // fetchAdsCountByNetworkDate already defaults every group's adsCount to 0 before it does
+    // anything (including its own no-elastic/empty-array early return) — this is only a
+    // backstop in case that ever changes underneath us.
+    for (const group of scrappingStatus) {
+      if (typeof group.adsCount !== 'number') group.adsCount = 0;
+    }
+
+    return {
       searchValue,
-      keyword_type,
       uniquePlatforms,
       searchedDateStr,
-      history,
-      docTypeNum: doc.type || typeNum
+      scrapping_status: scrappingStatus,
+      docTypeNum: doc.type || typeNum,
     };
+  }));
+  logger?.info?.('[enrichKeywordsWithAds] Fetch completed in', Date.now() - t1, 'ms');
 
-    // Map platform -> list of keywords for batch query. MUST be scoped to each run's OWN
-    // `network` — `uniquePlatforms` (doc.networks) is every network this TERM was ever
-    // SEARCHED under, which is not the same set as the networks it was actually SCRAPED
-    // on (doc.scrapping_status). Looping over uniquePlatforms and handing every platform
-    // the doc's WHOLE `history` used to falsely credit e.g. Facebook/YouTube with a time
-    // window only Google Transparency actually ran in — and since the merge below matches
-    // purely by startTime/endTime, the last platform processed silently overwrote the real
-    // per-run count. Group by the run's own network instead, so each platform only ever
-    // sees the windows it genuinely scraped in.
-    const historyByNetwork = {};
-    for (const h of history) {
-      if (!h.network) continue;
-      (historyByNetwork[h.network] ||= []).push(h);
-    }
-    for (const [platform, platformHistory] of Object.entries(historyByNetwork)) {
-      if (!platformKeywordMap[platform]) {
-        platformKeywordMap[platform] = [];
-      }
-      platformKeywordMap[platform].push({
-        keyword: searchValue,
-        // The item's own type (1=keyword, 2=advertiser, 3=domain) — needed because
-        // `keywords` can be a genuine mix of types when the caller passed type='all'
-        // (docTypeNum falls back to the batch typeNum only when a doc has no type).
-        type: keyword_type || typeNum,
-        scrappingHistory: platformHistory.map(h => ({
-          startTime: h.startTime,
-          endTime: h.endTime
-        }))
-      });
-    }
-  }
-
-  // Step 2: Batch fetch using existing optimized function
-  if (elastic && Object.keys(platformKeywordMap).length > 0) {
-
-    try {
-      const t1 = Date.now();
-      const platformResults = await fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, logger, typeNum || 1);
-      const t2 = Date.now();
-
-      logger?.info?.('[enrichKeywordsWithAds] Fetch completed in', t2 - t1, 'ms');
-
-      // Merge results back
-      for (const [platform, keywordsWithCounts] of Object.entries(platformResults)) {
-        for (const kwResult of keywordsWithCounts) {
-          const searchValue = kwResult.keyword;
-          const kwDoc = docMap[searchValue];
-
-          if (kwDoc) {
-            for (let i = 0; i < kwDoc.history.length; i++) {
-              const historyRun = kwDoc.history[i];
-              // Network is now part of the match (not just startTime/endTime) — belt-and-
-              // suspenders against two different networks' runs ever sharing an identical
-              // window, now that platformKeywordMap is itself scoped per-network above.
-              if (historyRun.network !== platform) continue;
-              const matchedHistory = kwResult.history_with_counts?.find(h =>
-                h.startTime === historyRun.startTime && h.endTime === historyRun.endTime
-              );
-              if (matchedHistory) {
-                historyRun.adsCount = matchedHistory.ads_count || 0;
-              }
-            }
-          }
-        }
-      }
-    } catch (err) {
-      logger?.error?.('[enrichKeywordsWithAds] Fetch failed:', err.message);
-    }
-  }
-
-  // Step 3: Build final response
-  const results = [];
-  for (const doc of keywords) {
-    const searchValue = doc[fieldName];
-    const docInfo = docMap[searchValue];
-
+  // Build final response
+  return enrichedDocs.map((docInfo) => {
     const typeLabel = docInfo.docTypeNum === 1 ? 'keyword' : docInfo.docTypeNum === 2 ? 'advertiser' : 'domain';
 
     const result = {
-      [typeLabel]: searchValue,
+      [typeLabel]: docInfo.searchValue,
       platform: docInfo.uniquePlatforms,
       searchedDate: docInfo.searchedDateStr,
-      history: docInfo.history
+      scrapping_status: docInfo.scrapping_status,
     };
 
     if (typeLabel !== 'keyword') result.keyword = null;
     if (typeLabel !== 'advertiser') result.advertiser = null;
     if (typeLabel !== 'domain') result.domain = null;
 
-    results.push(result);
-  }
-
-  return results;
+    return result;
+  });
 }
 
 // ─── GET /intelligence/items-list ──────────────────────────────────────────

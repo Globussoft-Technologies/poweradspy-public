@@ -428,6 +428,32 @@ const SummaryTag = ({ text, bg, color, border }) => (
   </span>
 );
 
+// ─── Scraping-status modal (keyword status history) helpers ─────────────────
+const statusTableHeaderCellStyle = { fontSize: "11px", color: "#6b7280", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.03em" };
+const statusNetworkBadgeStyle = { display: "inline-block", width: "fit-content", fontSize: "11px", fontWeight: 600, color: "#4338ca", background: "#eef2ff", border: "1px solid #e0e7ff", padding: "3px 10px", borderRadius: "20px", textTransform: "capitalize" };
+const statusServerCellStyle = { fontSize: "11px", color: "#6b7280", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", wordBreak: "break-word" };
+const statusTimeCellStyle = { fontSize: "11.5px", color: "#374151" };
+
+const STATUS_BADGE_STYLES = {
+  completed: { bg: "#d1fae5", color: "#065f46", text: "✓ Completed" },
+  success:   { bg: "#d1fae5", color: "#065f46", text: "✓ Completed" },
+  no_ads_found: { bg: "#fee2e2", color: "#991b1b", text: "✗ No Ads" },
+  scrapping: { bg: "#fef3c7", color: "#92400e", text: "⟳ Scrapping" },
+};
+
+function formatStatusTime(ts) {
+  return ts ? new Date(ts).toLocaleTimeString() : "-";
+}
+
+const StatusBadge = ({ status }) => {
+  const s = STATUS_BADGE_STYLES[status] || { bg: "#fee2e2", color: "#dc2626", text: "✗ Failed" };
+  return (
+    <span style={{ display: "inline-block", fontSize: "10.5px", padding: "3px 8px", borderRadius: "20px", background: s.bg, color: s.color, fontWeight: 600, whiteSpace: "nowrap" }}>
+      {s.text}
+    </span>
+  );
+};
+
 const SummaryBar = ({ summaryStats }) => {
   const platforms       = (summaryStats?.platforms ?? []).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
   const pagesVisited    = (summaryStats?.pages_visited ?? []).filter((p) => p.name !== "All Projects Dashboard");
@@ -656,12 +682,15 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
   const [statusModalData, setStatusModalData] = useState(null);
   const [statusHistory, setStatusHistory] = useState([]);
   const [statusHistoryLoading, setStatusHistoryLoading] = useState(false);
+  // Which multi-run (network, date) groups are expanded in the status modal's accordion
+  const [expandedStatusGroups, setExpandedStatusGroups] = useState({});
 
   const openStatusModal = async (rowData) => {
     setStatusModalData({ ...rowData, platform: rowData.platform || [] });
     setStatusModalOpen(true);
     setStatusHistoryLoading(true);
     setStatusHistory([]);
+    setExpandedStatusGroups({});
 
     try {
       const params = new URLSearchParams();
@@ -696,9 +725,11 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
         const data = await response.json();
         console.log("[openStatusModal] API response:", data);
         console.log("[openStatusModal] Searched date from API:", data.data?.searchedDate);
-        if (data.data?.history && data.data.history.length > 0) {
-          // Sort history by date descending (newest first)
-          const sortedHistory = [...data.data.history].sort((a, b) => new Date(b.date) - new Date(a.date));
+        if (data.data?.scrapping_status && data.data.scrapping_status.length > 0) {
+          // Already grouped by (network, date) server-side — one entry per group, with a
+          // single adsCount and a scrapping_time[] of every run that hit that network+date.
+          // Sort groups by date descending (newest first).
+          const sortedHistory = [...data.data.scrapping_status].sort((a, b) => new Date(b.date) - new Date(a.date));
           setStatusHistory(sortedHistory);
         }
         // Update modal data with platform and searched date from API response
@@ -1396,68 +1427,86 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                 </p>
               </div>
             ) : (
-              <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "90px 150px 70px 80px 110px 110px 70px 80px", gap: "10px", marginBottom: "12px", paddingBottom: "8px", borderBottom: "1px solid #e5e7eb", textAlign: "center" }}>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Scraping Date</strong>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Scrapping Server</strong>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Mode</strong>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Network</strong>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Start Time</strong>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>End Time</strong>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Ads Count</strong>
-                    <strong style={{ fontSize: "11px", color: "#6b7280" }}>Status</strong>
-                  </div>
-                  {statusHistory
-                    .map((item, idx) => {
-                    let statusColor, statusBg, statusText;
-                    if (item.status === 'success' || item.status === 'completed') {
-                      statusBg = "#d1fae5";
-                      statusColor = "#065f46";
-                      statusText = "✓ Completed";
-                    } else if (item.status === 'no_ads_found') {
-                      statusBg = "#fee2e2";
-                      statusColor = "#991b1b";
-                      statusText = "✗ No Ads";
-                    } else if (item.status === 'scrapping') {
-                      statusBg = "#fef3c7";
-                      statusColor = "#92400e";
-                      statusText = "⟳ Scrapping";
-                    } else {
-                      statusBg = "#fee2e2";
-                      statusColor = "#dc2626";
-                      statusText = "✗ Failed";
-                    }
-                    const startTime = item.startTime ? new Date(item.startTime).toLocaleTimeString() : "-";
-                    const endTime = item.endTime ? new Date(item.endTime).toLocaleTimeString() : "-";
-                    const isFailed = !item.status || item.status === 'no_ads_found' || item.status === 'failed' || item.status === 'error';
-                    const rowBg = isFailed ? "#fff5f5" : "white";
-                    const rowBorder = isFailed ? "3px solid #dc2626" : "1px solid #f3f4f6";
-
-                    return (
-                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "90px 150px 70px 80px 110px 110px 70px 80px", gap: "10px", padding: "8px 0", borderBottom: "1px solid #f3f4f6", borderLeft: rowBorder, backgroundColor: rowBg, textAlign: "center" }}>
-                        <span style={{ fontSize: "11px", color: "#374151" }}>{item.date}</span>
-                        <span style={{ fontSize: "10px", color: "#6b7280", wordBreak: "break-word" }}>{item.owner || "-"}</span>
-                        <span style={{ fontSize: "11px", color: "#374151", textTransform: "capitalize" }}>{item.mode || "-"}</span>
-                        <span style={{ fontSize: "11px", color: "#374151", textTransform: "capitalize" }}>{item.network || "-"}</span>
-                        <span style={{ fontSize: "11px", color: "#374151" }}>{startTime}</span>
-                        <span style={{ fontSize: "11px", color: "#374151" }}>{endTime}</span>
-                        <span>
-                          {item.adsCount === 0 ? (
-                            <span style={{ display: "inline-block", background: "#fecaca", color: "#991b1b", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
-                              no ads found
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: "11px", color: "#374151", fontWeight: 500 }}>{item.adsCount ?? "-"}</span>
-                          )}
-                        </span>
-                        <span style={{ fontSize: "10px", padding: "4px 8px", borderRadius: "4px", background: statusBg, color: statusColor, fontWeight: 600, border: "1px solid #fca5a5" }}>
-                          {statusText}
-                        </span>
-                      </div>
-                    );
-                  })}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: "10px", overflow: "hidden" }}>
+                {/* One row per (network, date) group — same network scraped more than once on the
+                    same date no longer gets a duplicate row. A group with a single run renders as
+                    one plain row (the common case). A group with multiple runs collapses into a
+                    summary row ("N scraping runs") that expands, on click, into a nested list of
+                    its individual runs — avoids stacking several runs' worth of server/time/status
+                    into one cramped row, which was the readability problem before. */}
+                <div style={{ display: "grid", gridTemplateColumns: "100px 130px 1fr 190px 110px 90px", gap: "12px", padding: "10px 16px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+                  <strong style={statusTableHeaderCellStyle}>Date</strong>
+                  <strong style={statusTableHeaderCellStyle}>Network</strong>
+                  <strong style={statusTableHeaderCellStyle}>Server</strong>
+                  <strong style={statusTableHeaderCellStyle}>Time Window</strong>
+                  <strong style={{ ...statusTableHeaderCellStyle, textAlign: "center" }}>Status</strong>
+                  <strong style={{ ...statusTableHeaderCellStyle, textAlign: "right" }}>Ads Count</strong>
                 </div>
+
+                {statusHistory.map((group, idx) => {
+                  const runs = group.scrapping_time && group.scrapping_time.length > 0 ? group.scrapping_time : [{}];
+                  const isMulti = runs.length > 1;
+                  const groupKey = `${group.network}|${group.date}|${idx}`;
+                  const isExpanded = !!expandedStatusGroups[groupKey];
+                  const hasFailedRun = runs.some(r => !r.status || r.status === 'no_ads_found' || r.status === 'failed' || r.status === 'error');
+                  const overallStatus = hasFailedRun ? 'failed' : runs.some(r => r.status === 'scrapping') ? 'scrapping' : 'completed';
+
+                  return (
+                    <div key={groupKey} style={{ borderBottom: idx === statusHistory.length - 1 ? "none" : "1px solid #f1f5f9" }}>
+                      <div
+                        onClick={isMulti ? () => setExpandedStatusGroups(prev => ({ ...prev, [groupKey]: !prev[groupKey] })) : undefined}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "100px 130px 1fr 190px 110px 90px",
+                          gap: "12px",
+                          alignItems: "center",
+                          padding: "10px 16px",
+                          borderLeft: hasFailedRun ? "3px solid #dc2626" : "3px solid transparent",
+                          background: hasFailedRun ? "#fff8f8" : "white",
+                          cursor: isMulti ? "pointer" : "default",
+                        }}
+                      >
+                        <span style={{ fontSize: "12.5px", color: "#374151", fontWeight: 500 }}>{group.date}</span>
+                        <span style={statusNetworkBadgeStyle}>{group.network || "-"}</span>
+
+                        {isMulti ? (
+                          <span style={{ gridColumn: "span 2", fontSize: "12px", color: "#6b7280", display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span style={{ display: "inline-block", fontSize: "9px", color: "#9ca3af", transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▶</span>
+                            {runs.length} scraping runs
+                            <span style={{ color: "#9ca3af" }}>· click to {isExpanded ? "collapse" : "view"}</span>
+                          </span>
+                        ) : (
+                          <>
+                            <span style={statusServerCellStyle}>{runs[0].owner || "-"}</span>
+                            <span style={statusTimeCellStyle}>{formatStatusTime(runs[0].startTime)} – {formatStatusTime(runs[0].endTime)}</span>
+                          </>
+                        )}
+
+                        <div style={{ textAlign: "center" }}>
+                          <StatusBadge status={isMulti ? overallStatus : runs[0].status} />
+                        </div>
+                        <div style={{ textAlign: "right", fontSize: "13px", fontWeight: 600, color: group.adsCount === 0 ? "#dc2626" : "#111827" }}>
+                          {group.adsCount ?? "-"}
+                        </div>
+                      </div>
+
+                      {isMulti && isExpanded && (
+                        <div style={{ background: "#fafbfc" }}>
+                          {runs.map((r, i) => (
+                            <div key={i} style={{ display: "grid", gridTemplateColumns: "100px 130px 1fr 190px 110px 90px", gap: "12px", alignItems: "center", padding: "8px 16px 8px 34px", borderTop: "1px dashed #e5e7eb" }}>
+                              <span />
+                              <span />
+                              <span style={statusServerCellStyle}>{r.owner || "-"}</span>
+                              <span style={statusTimeCellStyle}>{formatStatusTime(r.startTime)} – {formatStatusTime(r.endTime)}</span>
+                              <div style={{ textAlign: "center" }}><StatusBadge status={r.status} /></div>
+                              <span />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
