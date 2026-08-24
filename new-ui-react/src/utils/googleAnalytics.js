@@ -8,6 +8,25 @@ const ANALYTICS_PLATFORM_TITLES = {
 
 const KNOWN_PLAN_TIERS = ['free', 'starter', 'basic', 'standard', 'pro', 'premium', 'enterprise'];
 
+// Short, GA4-friendly platform codes used to prefix per-platform ad_action
+// event names (e.g. `fb_call_to_action_clicked`, `insta_call_to_action_clicked`).
+const PLATFORM_ACTION_PREFIXES = {
+  facebook: 'fb', instagram: 'insta', youtube: 'youtube', google: 'google',
+  gdn: 'gdn', native: 'native', linkedin: 'linkedin', reddit: 'reddit',
+  quora: 'quora', pinterest: 'pinterest', tiktok: 'tiktok',
+};
+
+/**
+ * Build a per-platform GA4 action_name, e.g. `fb_call_to_action_clicked` for
+ * Facebook or `youtube_call_to_action_clicked` for YouTube. Falls back to the
+ * raw platform string for networks without a known short code.
+ */
+export function getCallToActionEventName(platform) {
+  const key = String(platform || '').trim().toLowerCase();
+  const prefix = PLATFORM_ACTION_PREFIXES[key] || key || 'unknown';
+  return `${prefix}_call_to_action_clicked`;
+}
+
 // Guest/share links carry an opaque access token as the second path segment
 // (e.g. /guest/6f93d3826ebc2327180eaa156aa4e150). Swap it for a fixed, human
 // -readable label before it ever reaches GA4.

@@ -41,7 +41,7 @@ import { createShareLink, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 import { ctaHref, parseAdCtas } from "../../utils/cta";
-import { classifyError, trackAdAction, trackProductEvent } from "../../utils/googleAnalytics";
+import { classifyError, trackAdAction, trackProductEvent, getCallToActionEventName } from "../../utils/googleAnalytics";
 import { useTheme } from "../../hooks/useTheme";
 
 import fbIcon from "../../assets/fb.png";
@@ -1255,7 +1255,11 @@ const AdDetailModal = ({
                       onClick={(e) => {
                         e.stopPropagation();
                         const href = ctaHref(url);
-                        if (href) window.open(href, "_blank", "noopener,noreferrer");
+                        if (href) {
+                          const network = String(platform || ad.network || 'facebook').toLowerCase();
+                          trackAdAction(getCallToActionEventName(network), { entry_point: 'ad_detail_modal', feature_name: 'call_to_action', network, network_scope: 'single', platform: network, request_context: 'ad_open', cta_label: label });
+                          window.open(href, "_blank", "noopener,noreferrer");
+                        }
                       }}
                       className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold capitalize transition
                                 ${

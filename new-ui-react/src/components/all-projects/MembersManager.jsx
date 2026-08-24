@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Users, Trash2, X, Plus, Mail, Check, MailCheck } from "lucide-react";
 import { CompetitorAPI, trackProjectEvent } from "../../services/api";
+import { trackProductEvent } from "../../utils/googleAnalytics";
 
 /**
  * MembersManager (NEW) — self-contained. A floating "Members" button + modal
@@ -126,6 +127,11 @@ export default function MembersManager({ userId, projects = [], memberLimit = nu
         trackProjectEvent("add_member", {
           member_name: name.trim(),
           member_email: email.trim(),
+        });
+        trackProductEvent('project_member_added', {
+          entry_point: 'members_modal',
+          feature_name: 'project_members',
+          request_context: 'members_modal',
         });
       } else {
         setErr(r?.body?.message || "Failed to add member.");
