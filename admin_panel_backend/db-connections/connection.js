@@ -27,8 +27,8 @@ configs.forEach((config, index) => {
   const pool = mysql.createPool({
     ...config,
     waitForConnections: true,
-    connectionLimit: 50,
-      maxIdle: 10,
+    connectionLimit: 5,
+      maxIdle: 2,
     queueLimit: 100,
     connectTimeout: 10000,
   });

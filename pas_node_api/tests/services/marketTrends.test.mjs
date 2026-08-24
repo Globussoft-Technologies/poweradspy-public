@@ -498,3 +498,41 @@ describe("marketTrends router > windowQueryFor", () => {
     expect(JSON.stringify(q.bool.must_not)).not.toContain('organic search');
   });
 });
+
+// A plain `match` query defaults to OR — for a multi-word compared advertiser
+// name like "ASTROTALK SERVICES PRIVATE LIMITED" that matched any document
+// containing just "private" or "limited", flooding Top Movers/Categories/
+// Keywords/Regions (they all filter through this one function) with unrelated
+// advertisers that happen to share one generic legal-suffix word. Confirmed
+// 2026-08-24 in production — single-word compared names looked fine only
+// because OR-of-one-term is indistinguishable from an exact match.
+describe("marketTrends router > advertiserClause", () => {
+  it("requires ALL words of a multi-word compared name (operator: and)", () => {
+    const sut = freshSut();
+    const clause = sut.advertiserClause('facebook', 'ASTROTALK SERVICES PRIVATE LIMITED');
+    expect(clause.bool.should).toContainEqual({
+      match: { 'facebook_ad_post_owners.post_owner_name': { query: 'ASTROTALK SERVICES PRIVATE LIMITED', operator: 'and' } },
+    });
+  });
+
+  it("still works for a single-word compared name", () => {
+    const sut = freshSut();
+    const clause = sut.advertiserClause('facebook', 'Nykaa');
+    expect(clause.bool.should).toContainEqual({
+      match: { 'facebook_ad_post_owners.post_owner_name': { query: 'Nykaa', operator: 'and' } },
+    });
+  });
+
+  it("builds one should-clause per compared advertiser (CSV)", () => {
+    const sut = freshSut();
+    const clause = sut.advertiserClause('facebook', 'Nykaa,Myntra');
+    expect(clause.bool.should).toHaveLength(2);
+    expect(clause.bool.minimum_should_match).toBe(1);
+  });
+
+  it("returns null for an unknown network or empty input", () => {
+    const sut = freshSut();
+    expect(sut.advertiserClause('facebook', '')).toBeNull();
+    expect(sut.advertiserClause('bing', 'Nykaa')).toBeNull();
+  });
+});

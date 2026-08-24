@@ -296,6 +296,23 @@ const App = () => {
     canUseCapabilityOnNetwork,
   } = useAuth();
 
+  // TEMPORARY UI-only gate, layered ONLY on top of the nav tab's visibility —
+  // INTEL_ENV_ON / GOOGLE_INTEL_ON and the real plan/entitlement checks below
+  // (intelAccess.enabled / keywordExplorerAllowed) are completely untouched.
+  // Market Trends and Keyword Explorer are switched INDEPENDENTLY, each set to:
+  //   true            → visible to everyone (current default for both)
+  //   false           → hidden from everyone
+  //   new Set([...])  → visible only to those user IDs
+  const MARKET_TRENDS_UI_ACCESS = true;
+  // const MARKET_TRENDS_UI_ACCESS = new Set(['147251', '28477', '150355', '163479', '168106']); // production allow-list — uncomment to restrict
+  const KEYWORD_EXPLORER_UI_ACCESS = true;
+  // const KEYWORD_EXPLORER_UI_ACCESS = new Set(['147251', '28477', '150355', '163479', '168106']); // production allow-list — uncomment to restrict
+  const resolveUIAccess = (setting, userId) =>
+    typeof setting === 'boolean' ? setting : setting.has(String(userId));
+  const currentUserId = user?.user_id ?? user?.id ?? '';
+  const intelUIEnabled = INTEL_ENV_ON && resolveUIAccess(MARKET_TRENDS_UI_ACCESS, currentUserId);
+  const keywordExplorerUIEnabled = GOOGLE_INTEL_ON && resolveUIAccess(KEYWORD_EXPLORER_UI_ACCESS, currentUserId);
+
   // ── Guest Mode ────────────────────────────────────────────────────────
   const guest = useGuest();
 
@@ -396,7 +413,7 @@ const App = () => {
     if (location.pathname === '/projects') {
       dispatch(setActivePage('projects'));
       dispatch(setShowSavedAdsPage(false));
-    } else if (location.pathname === '/keywords-explorer' && GOOGLE_INTEL_ON) {
+    } else if (location.pathname === '/keywords-explorer' && keywordExplorerUIEnabled) {
       dispatch(setActivePage('keywords-explorer'));
       dispatch(setShowSavedAdsPage(false));
     } else if (location.pathname === '/saved') {
@@ -444,7 +461,7 @@ const App = () => {
     if (_isSpecialRoute) return;
     if (ui.activePage === 'projects' && location.pathname !== '/projects') {
       navigate('/projects');
-    } else if (ui.activePage === 'keywords-explorer' && GOOGLE_INTEL_ON && location.pathname !== '/keywords-explorer') {
+    } else if (ui.activePage === 'keywords-explorer' && keywordExplorerUIEnabled && location.pathname !== '/keywords-explorer') {
       navigate('/keywords-explorer');
     } else if (ui.showSavedAdsPage && location.pathname !== '/saved') {
       navigate('/saved');
@@ -652,7 +669,7 @@ const App = () => {
     return true;
   };
   const openKeywordExplorer = (keyword) => {
-    if (!(GOOGLE_INTEL_ON && keywordExplorerAllowed)) return;
+    if (!(keywordExplorerUIEnabled && keywordExplorerAllowed)) return;
     if (!keyword) return;
     if (guest?.isRestricted || !hasKeywordAnalyticsAccess) {
       dispatch(openModal('isPricingModalOpen'));
@@ -671,14 +688,14 @@ const App = () => {
     // Always navigate when the feature is globally live — same "not a hard removal"
     // pattern as Market Trends (onPageChange('intelligence') above): the page body
     // decides real content vs. locked preview based on keywordExplorerAllowed.
-    if (!GOOGLE_INTEL_ON) return;
+    if (!keywordExplorerUIEnabled) return;
     setKeywordExplorer(null);
     setAdvertiserProfile(null);
     if (selectedAdForAnalytics) closeAnalyticsModal();
     dispatch(setActivePage('keywords-explorer'));
   };
   const openAdvertiserProfile = (arg) => {
-    if (!(GOOGLE_INTEL_ON && keywordExplorerAllowed)) return;
+    if (!(keywordExplorerUIEnabled && keywordExplorerAllowed)) return;
     const next = typeof arg === "string" ? { advertiserName: arg } : arg;
     if (!next || !(next.postOwnerId || next.advertiserName)) return;
     if (!canAccessIntel()) return;
@@ -803,8 +820,17 @@ const App = () => {
   // answers — the page renders a neutral loading state instead until resolved.
   const [intelAccess, setIntelAccess] = useState({ enabled: false, stage: 'beta', networks: null, resolved: false, error: false });
   const [intelAccessAttempt, setIntelAccessAttempt] = useState(0);
+  // Market Trends is kept mounted (not remounted every page switch, see the
+  // render below) once the user has visited it at least once this session —
+  // gated on an actual visit, not just on access being enabled, so an account
+  // that has Market Trends but never opens the tab doesn't pay for its
+  // background data fetches on every page load.
+  const [hasVisitedMarketTrends, setHasVisitedMarketTrends] = useState(false);
   useEffect(() => {
-    if (!INTEL_ENV_ON || !token) { setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true, error: false }); return; }
+    if (ui.activePage === 'intelligence') setHasVisitedMarketTrends(true);
+  }, [ui.activePage]);
+  useEffect(() => {
+    if (!intelUIEnabled || !token) { setIntelAccess({ enabled: false, stage: 'beta', networks: null, resolved: true, error: false }); return; }
     setIntelAccess((previous) => ({ ...previous, resolved: false, error: false }));
     fetchMarketTrendsAccess()
       .then((r) => setIntelAccess({ ...r, resolved: true, error: false }))
@@ -819,7 +845,7 @@ const App = () => {
   const [keywordExplorerAccessError, setKeywordExplorerAccessError] = useState(false);
   const [keywordExplorerAccessAttempt, setKeywordExplorerAccessAttempt] = useState(0);
   useEffect(() => {
-    if (!GOOGLE_INTEL_ON || !token) { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); setKeywordExplorerAccessError(false); return; }
+    if (!keywordExplorerUIEnabled || !token) { setKeywordExplorerAllowed(false); setKeywordExplorerResolved(true); setKeywordExplorerAccessError(false); return; }
     setKeywordExplorerResolved(false);
     setKeywordExplorerAccessError(false);
     fetchKeywordExplorerAccess()
@@ -2511,9 +2537,9 @@ const App = () => {
           canAccessProjects={canAccessProjects}
           projectsAccessResolved={projectsAccess.resolved}
           projectsAccessUnavailable={projectsAccess.unavailable}
-          intelligenceEnabled={INTEL_ENV_ON}
+          intelligenceEnabled={intelUIEnabled}
           intelligenceStage={intelAccess.stage}
-          keywordExplorerEnabled={GOOGLE_INTEL_ON}
+          keywordExplorerEnabled={keywordExplorerUIEnabled}
           guest={guest}
           isLoggedIn={!guest?.isRestricted}
           allowedPlatforms={adsAllowedPlatforms}
@@ -2527,12 +2553,17 @@ const App = () => {
           searchIn={ui.searchIn}
         />
 
-        {INTEL_ENV_ON && ui.activePage === "intelligence" ? (
-          !intelAccess.resolved ? (
-            <PageAccessLoading />
-          ) : intelAccess.error ? (
-            <PageAccessError onRetry={() => setIntelAccessAttempt((n) => n + 1)} />
-          ) : intelAccess.enabled ? (
+        {/* Kept mounted (just hidden) once unlocked, instead of the usual
+            unmount-on-page-switch every other page here uses — Market Trends
+            carries a lot of local filter/compare-term state (network chips,
+            date range, compared advertisers, per-panel scope) that a plain
+            conditional render throws away every time the user leaves and
+            comes back, whether via the sidebar link or the browser's back
+            button (both just flip ui.activePage, which is exactly what
+            unmounts it). `contents`/`hidden` toggles visibility only — the
+            component instance, and its state, never goes away. */}
+        {intelUIEnabled && intelAccess.resolved && intelAccess.enabled && hasVisitedMarketTrends && (
+          <div className={ui.activePage === "intelligence" ? "contents" : "hidden"}>
             <MarketTrends
               onDrill={(kind, value, targetNetworks = []) => {
                 const requestedNetworks = (targetNetworks || []).map((network) => String(network).toLowerCase());
@@ -2552,10 +2583,30 @@ const App = () => {
                   dispatch(openModal("isPricingModalOpen"));
                   return;
                 }
-                if (networks.length) {
+                // If the resolved networks cover this account's ENTIRE allowed set,
+                // land on the existing "All networks" tab (specificPlatforms: [])
+                // instead of an explicit list — matches handleAllTabClick's own
+                // pattern above. An explicit list of every allowed network is
+                // functionally identical but renders as every chip individually
+                // highlighted instead of the familiar single "All" pill, which
+                // read as "it selected every network" even on a plan that already
+                // scopes "All" down to just what it's allowed to see.
+                const allowedSet = new Set((planAllowedPlatforms || []).map((n) => String(n).toLowerCase()));
+                const coversWholePlan = allowedSet.size > 0 && networks.length === allowedSet.size && networks.every((n) => allowedSet.has(n));
+                if (coversWholePlan) {
+                  sdui.setActivePlatforms(networks);
+                  dispatch(setSpecificPlatforms([]));
+                } else if (networks.length) {
                   sdui.setActivePlatforms(networks);
                   dispatch(setSpecificPlatforms(networks));
                 }
+                // Fold the upcoming filter/platform snapshot into the page-navigation
+                // history entry (same pattern as handleRecentActivityClick/
+                // handleCountryClick/handleIntelAdvertiserClick below) — without this,
+                // navigate('/') pushes one history entry and useBrowserHistoryState's
+                // own debounced write pushes a SECOND one for the same click, so the
+                // browser Back button needs two presses to undo one drill-through.
+                coalesceNextHistoryWrite();
                 navigate('/');
                 dispatch(setActivePage('ads'));
                 dispatch(setShowSavedAdsPage(false));
@@ -2564,6 +2615,19 @@ const App = () => {
               allowedPlatforms={intelAccess.networks}
               onNetworkRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             />
+          </div>
+        )}
+
+        {intelUIEnabled && ui.activePage === "intelligence" ? (
+          !intelAccess.resolved ? (
+            <PageAccessLoading />
+          ) : intelAccess.error ? (
+            <PageAccessError onRetry={() => setIntelAccessAttempt((n) => n + 1)} />
+          ) : intelAccess.enabled ? (
+            // Rendered by the always-mounted wrapper below (kept alive across
+            // page switches so its filters/compare-terms survive navigating
+            // away and back) — nothing to render in this slot while active.
+            null
           ) : (
             <LockedFeaturePreview
               title="Market Trends isn't enabled for your account yet"
@@ -2571,7 +2635,7 @@ const App = () => {
               onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
             />
           )
-        ) : ui.activePage === "keywords-explorer" && GOOGLE_INTEL_ON ? (
+        ) : ui.activePage === "keywords-explorer" && keywordExplorerUIEnabled ? (
           !keywordExplorerResolved ? (
             <PageAccessLoading />
           ) : keywordExplorerAccessError ? (
@@ -2744,13 +2808,13 @@ const App = () => {
         }}
         hasPrev={Boolean(analyticsNavigation.previous)}
         hasNext={Boolean(analyticsNavigation.next)}
-        competitiveIntelEnabled={GOOGLE_INTEL_ON && keywordExplorerAllowed}
+        competitiveIntelEnabled={keywordExplorerUIEnabled && keywordExplorerAllowed}
         onOpenKeywordExplorer={openKeywordExplorer}
         onOpenAdvertiserProfile={openAdvertiserProfile}
         onOpenKeywordsExplorer={openKeywordsExplorerPage}
       />
 
-      {GOOGLE_INTEL_ON && keywordExplorerAllowed && keywordExplorer && (
+      {keywordExplorerUIEnabled && keywordExplorerAllowed && keywordExplorer && (
         <KeywordExplorerModal
           keyword={keywordExplorer}
           onClose={() => setKeywordExplorer(null)}
@@ -2760,7 +2824,7 @@ const App = () => {
         />
       )}
 
-      {GOOGLE_INTEL_ON && advertiserProfile && (
+      {keywordExplorerUIEnabled && advertiserProfile && (
         <AdvertiserProfileModal
           postOwnerId={advertiserProfile.postOwnerId}
           advertiserName={advertiserProfile.advertiserName}

@@ -775,13 +775,23 @@ function countryClause(net, country) {
 }
 // Filter to ads by one or more advertisers (the compared search terms), so every
 // panel reflects the current search. Matches the network's advertiser-name field.
+//
+// `operator: 'and'` is required — a plain `match` defaults to OR, so a
+// multi-word compared name like "ASTROTALK SERVICES PRIVATE LIMITED" matched
+// ANY document containing just "private" or "limited" or "services", flooding
+// every panel (Top Movers, Categories, Keywords, Regions — they all filter
+// through this same function) with unrelated advertisers that happen to share
+// one generic word (e.g. any other "... Private Limited" company). Confirmed
+// 2026-08-24: single-word compared names looked fine only because OR-of-one-
+// term is indistinguishable from an exact match — the bug was invisible until
+// a multi-word legal name was compared.
 function advertiserClause(net, advCsv) {
   if (!advCsv) return null;
   const f = NET_ADV_MATCH[net];
   if (!f) return null;
   const terms = String(advCsv).split(',').map((s) => s.trim()).filter(Boolean);
   if (!terms.length) return null;
-  return { bool: { should: terms.map((t) => ({ match: { [f]: t } })), minimum_should_match: 1 } };
+  return { bool: { should: terms.map((t) => ({ match: { [f]: { query: t, operator: 'and' } } })), minimum_should_match: 1 } };
 }
 // Build the extra-filter array for a network from optional country + advertiser.
 function extraFilters(net, country, advertiser) {
@@ -913,7 +923,12 @@ async function searchDaily(net, q, days, country, custom) {
       body: {
         size: 0,
         track_total_hits: false,
-        query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must: [{ match: { [advField]: q } }] } },
+        // operator: 'and' — same fix as advertiserClause() above; a plain
+        // match on a multi-word compared name (e.g. "ASTROTALK SERVICES
+        // PRIVATE LIMITED") would otherwise OR-match any doc containing just
+        // "private" or "limited", polluting this compared advertiser's own
+        // trend line with unrelated companies' ad volume.
+        query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must: [{ match: { [advField]: { query: q, operator: 'and' } } }] } },
         aggs: { dd: { date_histogram: { field: d.field, interval: 'day', format: 'yyyy-MM-dd' } } },
       },
     }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
@@ -1141,3 +1156,4 @@ module.exports = router;
 module.exports.cleanAdvertiserLabel = cleanAdvertiserLabel;
 module.exports.getTop = getTop;
 module.exports.windowQueryFor = windowQueryFor;
+module.exports.advertiserClause = advertiserClause;
