@@ -129,15 +129,20 @@ const PLATFORM_FIELD_MAPPINGS = {
     domain: 'gdn_ad_meta_data.destination_url',
   },
   youtube: {
+    // youtube_ads_data stores fields flat/unprefixed but as ad_title/ad_text/ad_url — NOT
+    // title/text/destination_url. Matches SearchMixQueryBuilder._getKeywordEnv/_getUrlEnv
+    // (the real search the dashboard total comes from) — this used to search fields that
+    // don't exist in the index, silently missing any ad whose only match was in the title
+    // or body text (undercounting by however many such ads there were).
     keyword: [
-      'title',
-      'text',
+      'ad_title',
+      'ad_text',
       'newsfeed_description',
     ],
     advertiser: [
       'post_owner',
     ],
-    domain: 'destination_url',
+    domain: 'ad_url',
   },
   linkedin: {
     keyword: [
@@ -295,14 +300,25 @@ function escapeEsRegexpValue(value) {
   return String(value).replace(/[.?+*|{}[\]()"\\#@&<>~]/g, '\\$&');
 }
 
-// TikTok-only: word-boundary regexp match instead of buildSearchClause's multi_match phrase.
-// ad_title/industry/post_owner/target_keywords are short, punctuation-heavy fields that don't
-// tokenize the way phrase matching expects, so a `(.*[^a-z0-9])?term([^a-z0-9].*)?` regexp
-// against them (ad_title's un-analyzed .keyword subfield, the rest already keyword-mapped)
-// gives reliable whole-word/substring matches the way the TikTok ad search itself does.
-function buildTiktokRegexpSearchClause(searchValue) {
+// TikTok-only: word-boundary regexp match instead of buildSearchClause's multi_match phrase,
+// for keyword (type 1) and advertiser (type 2) searches. ad_title/industry/post_owner/
+// target_keywords are short, punctuation-heavy fields that don't tokenize the way phrase
+// matching expects, so a `(.*[^a-z0-9])?term([^a-z0-9].*)?` regexp against them (ad_title's
+// un-analyzed .keyword subfield, the rest already keyword-mapped) gives reliable whole-word/
+// substring matches the way the TikTok ad search itself does. Domain (type 3) is URL/host
+// matching, not free text, so this word-boundary pattern doesn't fit it — returns null so the
+// caller falls back to buildSearchClause's normal domain logic (see fetchAdsCountByNetworkDate).
+function buildTiktokRegexpSearchClause(searchType, searchValue) {
+  const searchTypeStr = String(searchType);
+  const fields = searchTypeStr === '2'
+    ? ['post_owner']           // matches PLATFORM_FIELD_MAPPINGS.tiktok.advertiser
+    : searchTypeStr === '3'
+    ? null                     // domain — not a regexp-shaped search, fall back
+    : ['ad_title.keyword', 'industry', 'post_owner', 'target_keywords']; // default / '1' = keyword
+
+  if (!fields) return null;
+
   const pattern = `(.*[^a-z0-9])?${escapeEsRegexpValue(String(searchValue).toLowerCase())}([^a-z0-9].*)?`;
-  const fields = ['ad_title.keyword', 'industry', 'post_owner', 'target_keywords'];
   return {
     bool: {
       should: fields.map(field => ({ regexp: { [field]: { value: pattern } } })),
@@ -796,15 +812,13 @@ async function fetchAdsCountByNetworkDate(elastic, searchValue, searchType, scra
       return;
     }
 
-    // TikTok uses a dedicated regexp clause (see buildTiktokRegexpSearchClause) instead of
-    // the shared multi_match-phrase builder every other network goes through.
-    let searchClause;
-    if (platformLower === 'tiktok') {
-      searchClause = buildTiktokRegexpSearchClause(searchValue);
-    } else {
-      const fieldMappings = PLATFORM_FIELD_MAPPINGS[resolveFieldMappingKey(network)];
-      searchClause = fieldMappings ? buildSearchClause(fieldMappings, searchType, searchValue) : null;
-    }
+    // TikTok uses a dedicated regexp clause (see buildTiktokRegexpSearchClause) for keyword/
+    // advertiser searches instead of the shared multi_match-phrase builder every other network
+    // goes through; it returns null for domain (type 3), which falls through to the same
+    // buildSearchClause logic every other network uses.
+    const fieldMappings = PLATFORM_FIELD_MAPPINGS[resolveFieldMappingKey(network)];
+    const searchClause = (platformLower === 'tiktok' && buildTiktokRegexpSearchClause(searchType, searchValue))
+      || (fieldMappings ? buildSearchClause(fieldMappings, searchType, searchValue) : null);
     if (!searchClause) {
       logger?.warn?.(`[fetchAdsCountByNetworkDate] No field mapping for type ${searchType} on network: ${network}`);
       return;

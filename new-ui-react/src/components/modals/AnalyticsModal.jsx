@@ -150,6 +150,7 @@ import { useTheme } from "../../hooks/useTheme";
 import { useAdInsights } from "../../hooks/useAdInsights";
 import { useInterestBehaviour } from "../../hooks/useInterestBehaviour";
 import { mapAdToCard, resolveNasUrl, fetchFreshTikTokVideoUrl, getVideoEmbedUrl } from '../../services/api';
+import { trackAdAction } from "../../utils/googleAnalytics";
 import { getStarRating } from "../../constants";
 import { resolveAdCategories } from "../../utils/categoryTaxonomy";
 import { iconColorClass } from "../../utils/iconColors";
@@ -611,7 +612,8 @@ const TargetedKeywords = ({ adDetails, ad, isLight, competitiveIntelEnabled, onK
           .filter(Boolean)
       : [];
   const kwClickable = typeof onKeywordClick === "function";
-  
+  const network = String(ad?.network || ad?.platform || "google").toLowerCase();
+
   return (
     <div className="px-6">
       <div className="flex items-center justify-between gap-3 mb-4">
@@ -625,7 +627,10 @@ const TargetedKeywords = ({ adDetails, ad, isLight, competitiveIntelEnabled, onK
           {competitiveIntelEnabled && typeof onOpenKeywordsExplorer === "function" ? (
             <button
               type="button"
-              onClick={() => onOpenKeywordsExplorer()}
+              onClick={() => {
+                trackAdAction('google_ad_analytics_keyword_explorer', { entry_point: 'ad_analytics_modal', feature_name: 'keyword_explorer', network, network_scope: 'single', platform: network, request_context: 'ad_analytics' });
+                onOpenKeywordsExplorer();
+              }}
               className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${isLight ? "border-blue-200 text-blue-700 hover:bg-blue-50" : "border-blue-500/30 text-blue-300 hover:bg-blue-500/10"}`}
             >
               <Tag size={13} />
@@ -635,7 +640,10 @@ const TargetedKeywords = ({ adDetails, ad, isLight, competitiveIntelEnabled, onK
           {competitiveIntelEnabled && typeof onOpenAdvertiserProfile === "function" && (advertiser || postOwnerId) ? (
             <button
               type="button"
-              onClick={() => onOpenAdvertiserProfile({ postOwnerId, advertiserName: advertiser })}
+              onClick={() => {
+                trackAdAction('google_ad_analytics_view_advertiser_profile', { entry_point: 'ad_analytics_modal', feature_name: 'advertiser_profile', network, network_scope: 'single', platform: network, request_context: 'ad_analytics' });
+                onOpenAdvertiserProfile({ postOwnerId, advertiserName: advertiser });
+              }}
               className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${isLight ? "border-blue-200 text-blue-700 hover:bg-blue-50" : "border-blue-500/30 text-blue-300 hover:bg-blue-500/10"}`}
             >
               <Building2 size={13} />

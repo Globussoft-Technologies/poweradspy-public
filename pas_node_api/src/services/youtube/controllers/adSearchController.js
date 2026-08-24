@@ -356,6 +356,7 @@ async function searchAds(req, db, logger) {
     sortField: sort.field,
     query: JSON.stringify(esParams.body.query),
   });
+  
 
   try {
     const result  = await db.elastic.search(esParams);
