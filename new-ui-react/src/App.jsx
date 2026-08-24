@@ -2237,6 +2237,36 @@ const App = () => {
 
     // Replace the whole filter state — wipes every previously applied filter
     // and leaves only the clicked country/countries.
+    const countryDisplayNames = typeof Intl !== 'undefined' && Intl.DisplayNames
+      ? new Intl.DisplayNames(['en'], { type: 'region' })
+      : null;
+    const selectedCountryNames = list.map((country) => {
+      if (country === 'ALL') return 'Global Reach';
+      if (!countryDisplayNames || !/^[A-Z]{2}$/.test(country)) return country;
+      try {
+        return countryDisplayNames.of(country) || country;
+      } catch {
+        return country;
+      }
+    });
+    const countryFilterLabel = (selectedCountryNames.length > 1
+      ? 'all_countries'
+      : selectedCountryNames[0] || 'unknown')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    // This programmatic Project navigation bypasses the normal sidebar filter
+    // tracker, so explicitly record the readable selected country.
+    trackProductEvent('filter_applied', {
+      filter_name: `project_country_${countryFilterLabel}`,
+      filter_values: selectedCountryNames.join(','),
+      entry_point: 'projects',
+      feature_name: 'competitor_country',
+      ...getNetworkContext(pls),
+      request_context: 'search',
+    });
+
     sdui.setAllFilters(list.length ? { country_filter: list } : {});
 
     handleSearch(advertiserName, "advertiser");
