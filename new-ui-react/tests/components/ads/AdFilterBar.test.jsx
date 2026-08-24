@@ -80,23 +80,31 @@ describe("resolveActiveSortLabel", () => {
 
 const baseSdui = {
   config: {
-    sidebar: [{
-      filters: [{
-        _id: "ad_types",
-        options: [
-          { label: "Image", value: "Image" },
-          { label: "Video", value: "Video" },
-          { label: "Carousel", value: "Carousel" },
-          { label: "Story", value: "Story" },
-          { label: "Reel", value: "Reel" },
-        ],
-      }],
-    }],
+    sidebar: [
+      {
+        filters: [{
+          _id: "ad_types",
+          options: [
+            { label: "Image", value: "Image" },
+            { label: "Video", value: "Video" },
+            { label: "Carousel", value: "Carousel" },
+            { label: "Story", value: "Story" },
+            { label: "Reel", value: "Reel" },
+          ],
+        }],
+      },
+      {
+        _id: "ai_meta",
+        filters: [{ _id: "ai_hook" }, { _id: "ai_intent" }],
+      },
+    ],
   },
   activePlatforms: [],
   selAdTypes: [],
   setSelAdTypes: vi.fn(),
   filterValues: {},
+  setFilter: vi.fn(),
+  setAllFilters: vi.fn(),
   sortBy: "",
   setSortBy: vi.fn(),
 };
@@ -110,23 +118,24 @@ const baseProps = {
   isAllActive: true,
   activeTab: "newest",
   setActiveTab: vi.fn(),
-  previewMode: false,
-  setPreviewMode: vi.fn(),
   sortTabs: [],
   isFilterRestricted: vi.fn(() => false),
   onAdTypeRestricted: vi.fn(),
+  onAiFilterRestricted: vi.fn(),
 };
 
 beforeEach(() => {
   baseSdui.setSelAdTypes.mockClear();
   baseSdui.setSortBy.mockClear();
+  baseSdui.setFilter.mockClear();
+  baseSdui.setAllFilters.mockClear();
   baseProps.handleAllClick.mockClear();
   baseProps.handlePlatformClick.mockClear();
   baseProps.setActiveTab.mockClear();
-  baseProps.setPreviewMode.mockClear();
   baseProps.isFilterRestricted.mockReset();
   baseProps.isFilterRestricted.mockReturnValue(false);
   baseProps.onAdTypeRestricted.mockClear();
+  baseProps.onAiFilterRestricted.mockClear();
 });
 
 describe("AdFilterBar > platform tabs", () => {
@@ -792,50 +801,71 @@ describe("AdFilterBar > sort tooltip", () => {
   });
 });
 
-describe("AdFilterBar > original preview toggle", () => {
-  it("renders 'Show Original' button + Smartphone icon", () => {
-    const { getByText, getByTestId } = render(<AdFilterBar {...baseProps} />);
-    expect(getByTestId("phone-ic")).toBeInTheDocument();
-    expect(getByText("Show Original")).toBeInTheDocument();
-  });
-  it("click toggles setPreviewMode", () => {
-    const setPreviewMode = vi.fn();
-    const { getByText } = render(<AdFilterBar {...baseProps} setPreviewMode={setPreviewMode} />);
-    fireEvent.click(getByText("Show Original"));
-    expect(setPreviewMode).toHaveBeenCalledWith(true);
-  });
-  it("previewMode=true → toggle calls setPreviewMode(false)", () => {
-    const setPreviewMode = vi.fn();
-    const { getByText } = render(
-      <AdFilterBar {...baseProps} previewMode setPreviewMode={setPreviewMode} />,
+describe("AdFilterBar > AI analysed only toggle", () => {
+  it("renders an accessible switch in place of Show Original", () => {
+    const { getByRole, getByTestId, queryByText } = render(<AdFilterBar {...baseProps} />);
+    const toggle = getByRole("switch", { name: "AI analysed only" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toHaveClass(
+      "hover:border-theme-text-muted",
+      "hover:bg-theme-text/[0.04]",
+      "hover:text-theme-text",
     );
-    fireEvent.click(getByText("Show Original"));
-    expect(setPreviewMode).toHaveBeenCalledWith(false);
+    expect(toggle).not.toHaveClass("hover:bg-violet-50/60");
+    expect(getByTestId("ai-analysed-toggle-track"))
+      .toHaveClass("bg-slate-300", "dark:bg-zinc-600");
+    expect(getByTestId("ai-analysed-toggle-thumb"))
+      .toHaveClass("left-0.5", "translate-x-0");
+    expect(queryByText("Show Original")).not.toBeInTheDocument();
   });
-  it("single active platform → network is that platform (line 428 length===1 branch)", () => {
-    const setPreviewMode = vi.fn();
-    const { getByText } = render(
-      <AdFilterBar
-        {...baseProps}
-        setPreviewMode={setPreviewMode}
-        sdui={{ ...baseSdui, activePlatforms: ["facebook"] }}
-        activePlatforms={["facebook"]}
-      />,
+
+  it("enables the backend has_ai_meta filter", () => {
+    const { getByRole } = render(<AdFilterBar {...baseProps} />);
+    fireEvent.click(getByRole("switch", { name: "AI analysed only" }));
+    expect(baseSdui.setFilter).toHaveBeenCalledWith(
+      "has_ai_meta",
+      true,
+      "filter_bar",
     );
-    fireEvent.click(getByText("Show Original"));
-    expect(setPreviewMode).toHaveBeenCalledWith(true);
   });
-  it("showOriginalOnMobile=false adds hidden md:flex", () => {
-    const { container } = render(
-      <AdFilterBar {...baseProps} showOriginalOnMobile={false} />,
+
+  it("turns off the whole AI filter family while preserving normal filters", () => {
+    const setAllFilters = vi.fn();
+    const sdui = {
+      ...baseSdui,
+      filterValues: {
+        has_ai_meta: true,
+        ai_hook: ["urgency"],
+        country_filter: ["US"],
+      },
+      setAllFilters,
+    };
+    const { getByRole } = render(<AdFilterBar {...baseProps} sdui={sdui} />);
+    const toggle = getByRole("switch", { name: "AI analysed only" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(toggle).toHaveClass("ai-analysed-toggle--active");
+    expect(getByRole("switch", { name: "AI analysed only" })
+      .querySelector('[data-testid="ai-analysed-toggle-thumb"]'))
+      .toHaveClass("translate-x-4");
+
+    fireEvent.click(toggle);
+    expect(setAllFilters).toHaveBeenCalledWith({ country_filter: ["US"] });
+  });
+
+  it("opens the restriction flow without mutating filters", () => {
+    baseProps.isFilterRestricted.mockImplementation((id) => id === "ai_meta");
+    const { getByRole } = render(<AdFilterBar {...baseProps} />);
+    fireEvent.click(getByRole("switch", { name: "AI analysed only" }));
+    expect(baseProps.onAiFilterRestricted).toHaveBeenCalledOnce();
+    expect(baseSdui.setFilter).not.toHaveBeenCalled();
+  });
+
+  it("showAiToggleOnMobile=false adds hidden md:flex", () => {
+    const { getByRole } = render(
+      <AdFilterBar {...baseProps} showAiToggleOnMobile={false} />,
     );
-    const btn = Array.from(container.querySelectorAll("button"))
-      .find(b => b.textContent.includes("Show Original"));
-    expect(btn.className).toMatch(/hidden md:flex/);
-  });
-  it("previewMode=true → adds active styling", () => {
-    const { getByText } = render(<AdFilterBar {...baseProps} previewMode />);
-    expect(getByText("Show Original").closest("button").className).toMatch(/bg-\[#335296\]/);
+    expect(getByRole("switch", { name: "AI analysed only" }))
+      .toHaveClass("hidden", "md:flex");
   });
 });
 

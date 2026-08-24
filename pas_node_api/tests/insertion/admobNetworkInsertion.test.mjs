@@ -201,6 +201,39 @@ describe('isolated AdMob insertion contract', () => {
     expect(result.data[0].image_video_url).toContain('/admob/adImage/');
   });
 
+  it('resolves AdMob lander screenshots through the backend media helper before returning ad details', async () => {
+    const elastic = {
+      indexName: 'mob_search_mix',
+      search: async () => ({
+        body: {
+          hits: {
+            total: { value: 1 },
+            hits: [{
+              _id: '72',
+              _source: {
+                id: 72,
+                ad_id: payload.ad_id,
+                type: 'BANNER',
+                platform: 19,
+                network: 'mob-network',
+                last_seen: payload.last_seen,
+                image_url: '/pas-dev/stream/admob/adImage/202608/72.webp',
+                lander_screen_shot: '/pas-dev/stream/admob/whiteHatAd/202608/f2c585b57e0536e983435451.png',
+                country: ['India'],
+              },
+            }],
+          },
+        },
+      }),
+    };
+
+    const result = await searchAds({ body: { id: 72, take: 1, skip: 0 } }, { elastic }, { error() {} });
+
+    expect(result.code).toBe(200);
+    expect(result.data[0].lander_screen_shot).toMatch(/^https?:\/\//);
+    expect(result.data[0].lander_screen_shot).toContain('/admob/whiteHatAd/');
+  });
+
   it('applies every supported AdMob sidebar filter to its ES field', async () => {
     let searchBody;
     const elastic = {

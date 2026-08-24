@@ -309,6 +309,9 @@ function attachHiddenMeta(ad, hiddenMeta) {
 function toCardRow(hit) {
   const source = hit._source || {};
   const imageUrl = resolveMediaUrl(source.image_url);
+  // Reuse the same backend NAS/CDN resolver for lander screenshots so the
+  // analytics modal receives a browser-ready URL exactly like the main creative.
+  const landerScreenshotUrl = resolveMediaUrl(source.lander_screen_shot);
   const daysRunningValue = source.days_running ?? daysRunning(source.first_seen, source.last_seen);
   return {
     ...source,
@@ -326,6 +329,7 @@ function toCardRow(hit) {
     image_url: imageUrl,
     image_video_url: imageUrl,
     image_url_original: source.image_url_original,
+    lander_screen_shot: landerScreenshotUrl,
     ad_position: source.ad_position,
     country: Array.isArray(source.country) ? source.country.join(', ') : source.country,
     platform: 19,

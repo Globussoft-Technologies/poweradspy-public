@@ -178,7 +178,6 @@ const AdGrid = ({
   isHeaderScrolled,
   onScrollChange,
   previewMode,
-  setPreviewMode,
   specificPlatforms,
   setSpecificPlatforms,
   platformOptions,
@@ -1032,14 +1031,13 @@ const AdGrid = ({
             isAllActive={isAllActive}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
-            previewMode={previewMode}
-            setPreviewMode={setPreviewMode}
             sortTabs={sortTabs}
             onDateChange={onDateChange}
             isFilterRestricted={isFilterRestricted}
             onDateRestricted={onDateRestricted}
             onSortRestricted={onSortRestricted}
             onAdTypeRestricted={onAdTypeRestricted}
+            onAiFilterRestricted={onAiFilterRestricted}
             guest={guest}
           />
           <AiQuickFilters
@@ -1396,6 +1394,7 @@ const AdGrid = ({
               ) : (
                 <MasonryCard
                   ad={item}
+                  isAiFilteredResult={isAiFilteredResult}
                   isFavourite={favouriteAdIds.has(`${(item.network || '').toLowerCase()}:${Number(item.adId || item.id)}`)}
                   onToggleFavourite={onToggleFavourite}
                   onSearch={onSearch}

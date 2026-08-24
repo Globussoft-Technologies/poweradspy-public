@@ -105,8 +105,6 @@ const Header = ({
   isAllActive,
   activeTab,
   setActiveTab,
-  previewMode,
-  setPreviewMode,
   sortTabs = [],
   showMoreTabs,
   setShowMoreTabs,
@@ -117,6 +115,8 @@ const Header = ({
   sortTipPos,
   setShowSortTip,
   onDateChange,
+  isFilterRestricted,
+  onAiFilterRestricted,
   guest,
   showOnlyFavourites = false,
   onShowFavourites,
@@ -681,14 +681,14 @@ const Header = ({
               isAllActive={isAllActive}
               activeTab={activeTab}
               setActiveTab={setActiveTab}
-              previewMode={previewMode}
-              setPreviewMode={setPreviewMode}
               sortTabs={sortTabs}
               showMoreTabs={showMoreTabsHeader}
               setShowMoreTabs={setShowMoreTabsHeader}
               moreTabsRef={moreTabsRefHeader}
               onDateChange={onDateChange}
-              showOriginalOnMobile={false}
+              isFilterRestricted={isFilterRestricted}
+              onAiFilterRestricted={onAiFilterRestricted}
+              showAiToggleOnMobile={false}
               showPlatformsOnMobile={false}
               isScrolled={isScrolled}
               disableTooltips={true}

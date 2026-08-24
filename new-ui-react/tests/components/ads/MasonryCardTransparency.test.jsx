@@ -9,13 +9,39 @@ vi.mock("../../../src/services/adPdf", () => ({
   downloadAdAsPdf: vi.fn(),
 }));
 
-const renderCard = (ad) => render(
+const renderCard = (ad, props = {}) => render(
   <ThemeProvider>
-    <MasonryCard ad={ad} onImageReady={vi.fn()} />
+    <MasonryCard ad={ad} onImageReady={vi.fn()} {...props} />
   </ThemeProvider>
 );
 
 describe("MasonryCard Google Transparency media", () => {
+  it("adds the 1a corner mark and violet edge only to AI-filtered results", () => {
+    const ad = {
+      id: 17,
+      network: "facebook",
+      adType: "image",
+      advertiser: "AI advertiser",
+      thumbnail: "https://cdn.example/ai-creative.jpg",
+    };
+    const { container, rerender } = renderCard(ad, { isAiFilteredResult: true });
+
+    const aiMarker = screen.getByLabelText("AI analysed result");
+    expect(aiMarker).toHaveClass("group-hover:opacity-0");
+    expect(aiMarker.querySelector(".lucide-sparkles")).toHaveStyle({ color: "#ffffff" });
+    expect(container.firstElementChild).toHaveClass("border-violet-300/70");
+    expect(container.firstElementChild).toHaveClass("hover:border-slate-300");
+
+    rerender(
+      <ThemeProvider>
+        <MasonryCard ad={ad} onImageReady={vi.fn()} isAiFilteredResult={false} />
+      </ThemeProvider>,
+    );
+
+    expect(screen.queryByLabelText("AI analysed result")).not.toBeInTheDocument();
+    expect(container.firstElementChild).not.toHaveClass("border-violet-300/70");
+  });
+
   it("renders and plays a shared YouTube ad with the default placeholder", () => {
     const ad = mapAdToCard({
       id: 5086296,

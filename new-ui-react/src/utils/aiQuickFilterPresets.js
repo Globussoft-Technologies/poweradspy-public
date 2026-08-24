@@ -262,11 +262,19 @@ export const findActiveAiQuickFilterPreset = (
   }) || null;
 };
 
+const hasAiMetaFlag = (value) =>
+  value === true || value === 1 || value === "1" ||
+  String(value).toLowerCase() === "true";
+
 export const hasActiveAiFilters = (filterValues, doc) =>
+  hasAiMetaFlag(filterValues?.has_ai_meta) ||
   getAiFilterKeys(doc).some((key) => !isEmptyValue(filterValues?.[key]));
 
 export const replaceAiFilters = (filterValues, doc, replacement = {}) => {
   const next = { ...(filterValues || {}) };
+  // The dashboard-level AI-only toggle belongs to the same filter family as
+  // the detailed AI controls, so replacing/clearing that family is atomic.
+  delete next.has_ai_meta;
   for (const key of getAiFilterKeys(doc)) delete next[key];
   for (const [key, value] of Object.entries(replacement)) {
     if (!isEmptyValue(value)) next[key] = value;

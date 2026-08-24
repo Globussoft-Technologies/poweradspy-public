@@ -149,6 +149,14 @@ describe("api > resolveNasUrl", () => {
 });
 
 describe("api > mapAdToCard", () => {
+  it("preserves AI metadata from search-index field variants", () => {
+    const aiMeta = { intent: ["conversion"], hook: ["discount"] };
+
+    expect(mapAdToCard({ ai: aiMeta }).ai_meta).toEqual(aiMeta);
+    expect(mapAdToCard({ ai_meta: JSON.stringify(aiMeta) }).ai_meta).toEqual(aiMeta);
+    expect(mapAdToCard({ ai: "not-json" }).ai_meta).toBeNull();
+  });
+
   it("derives id/advertiser/network/aspectRatio defaults", () => {
     const out = mapAdToCard({ ad_id: "a1", post_owner: "Brand", network: "Facebook" });
     expect(out.id).toBe("a1");

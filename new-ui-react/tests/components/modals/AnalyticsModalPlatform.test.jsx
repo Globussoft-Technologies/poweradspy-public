@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAiMetaScorecard,
   formatDomainValue,
   formatTransparencyCalendarDate,
   getAspectStyle,
@@ -10,6 +11,46 @@ import {
 } from "../../../src/components/modals/AnalyticsModal.jsx";
 
 describe("AnalyticsModal platform normalization", () => {
+  it("groups AI attributes and ROA explanations into the 1e scorecard", () => {
+    const scorecard = buildAiMetaScorecard({
+      offering: "luxury leather bags",
+      ad_type: "promotional",
+      offering_type: "both",
+      offers: [{ type: "percentage_discount" }],
+      intent: ["conversion", "awareness"],
+      hook: "discount, urgency",
+      colors: ["9aa0ae", "#FFFFFF", "invalid"],
+      caption: "Purple bags on a tropical background.",
+      roa: {
+        intent: "The call to action indicates conversion intent.",
+        hook: "The discount creates urgency.",
+        offering_type: "The creative shows a physical product.",
+        offering: "The copy names luxury bags.",
+      },
+    });
+
+    expect(scorecard.attributes.map(({ label }) => label)).toEqual([
+      "Offering",
+      "Ad type",
+      "Offering type",
+      "Offer type",
+      "Intent",
+      "Hook",
+      "Colors",
+    ]);
+    expect(scorecard.attributes.find(({ label }) => label === "Offering type")?.value)
+      .toBe("Product & Service");
+    expect(scorecard.attributes.find(({ label }) => label === "Colors")?.colors)
+      .toEqual(["#9AA0AE", "#FFFFFF"]);
+    expect(scorecard.caption).toBe("Purple bags on a tropical background.");
+    expect(scorecard.evidence.map(({ label }) => label)).toEqual([
+      "Intent reasoning",
+      "Hook reasoning",
+      "Offering type reasoning",
+      "Offering reasoning",
+    ]);
+  });
+
   it("shows a dash instead of the domain sentinel value", () => {
     expect(formatDomainValue("(none)")).toBe("\u2014");
     expect(formatDomainValue(" (NONE) ")).toBe("\u2014");

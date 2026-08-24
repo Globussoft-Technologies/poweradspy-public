@@ -220,6 +220,15 @@ a font * {
   contain: layout style paint;
 }
 
+/* Preserve the compact dark treatment while giving the enabled AI switch a
+   crisp, high-contrast surface when the app's own light theme is selected. */
+[data-theme="light"] .ai-analysed-toggle--active {
+  border-color: #a78bfa;
+  background-color: var(--color-card);
+  color: #6d28d9;
+  box-shadow: 0 1px 3px rgb(76 29 149 / 0.12);
+}
+
 /* ── Media thumbnail loading skeleton (MasonryCard / AnalyticsModal) ──────────
    The card + modal creative area is near-black, so the old loaders (a 4–8%
    white sheen with no base, and a bg-zinc-900/60 pulse) read as a flat black

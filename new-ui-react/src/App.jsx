@@ -44,7 +44,7 @@ import { Check, X, Loader2 } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
-import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setSearchIn, setExactSearch, setActiveTab, setPreviewMode, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
+import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
 import { useBrowserHistoryState, coalesceNextHistoryWrite } from './hooks/useBrowserHistoryState';
 import { ADMOB_FRONTEND_ENABLED } from './constants';
 
@@ -1925,11 +1925,6 @@ const App = () => {
     if (guestGuard("Please login to change sorting", { activeTab: val })) return;
     dispatch(setActiveTab(val));
   };
-  const guestSetPreviewMode = (val) => {
-    if (guestGuard("Please login to use this feature", {})) return;
-    dispatch(setPreviewMode(val));
-  };
-
   // ── AI Search ────────────────────────────────────────────────────────────
   // Health-gated toggle: only offered while the DS upstream is reachable, and
   // never to restricted guests.
@@ -2494,8 +2489,6 @@ const App = () => {
         activePage={ui.showSavedAdsPage ? "projects" : ui.activePage}
         isLanding={!!landingAd}
         isScrolled={isHeaderScrolled}
-        previewMode={ui.previewMode}
-        setPreviewMode={(val) => dispatch(setPreviewMode(val))}
         specificPlatforms={ui.specificPlatforms}
         setSpecificPlatforms={(val) => dispatch(setSpecificPlatforms(val))}
         platformOptions={platformOptions}
@@ -2508,6 +2501,7 @@ const App = () => {
         isFilterRestricted={isFilterRestricted}
         onDateRestricted={() => dispatch(openModal('isPricingModalOpen'))}
         onSortRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+        onAiFilterRestricted={() => dispatch(openModal('isPricingModalOpen'))}
         guest={guest}
         showOnlyFavourites={ui.showSavedAdsPage}
         onShowFavourites={() => dispatch(setShowSavedAdsPage(!ui.showSavedAdsPage))}
@@ -2766,7 +2760,6 @@ const App = () => {
             isHeaderScrolled={isHeaderScrolled}
             onScrollChange={setIsHeaderScrolled}
             previewMode={ui.previewMode}
-            setPreviewMode={(val) => dispatch(setPreviewMode(val))}
             specificPlatforms={ui.specificPlatforms}
             setSpecificPlatforms={(val) => dispatch(setSpecificPlatforms(val))}
             platformOptions={platformOptions}

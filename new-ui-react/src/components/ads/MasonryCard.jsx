@@ -31,6 +31,7 @@ import {
   Star,
   ShieldCheck,
   Bookmark,
+  Sparkles,
 } from "lucide-react";
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import {
@@ -254,6 +255,7 @@ const MasonryCard = ({
   isAdvertiserHidden = false,
   onUnhide,
   showCopyLink = false,
+  isAiFilteredResult = false,
   guest,
 }) => {
   const platform = String(ad.network || "").toLowerCase();
@@ -603,7 +605,13 @@ const MasonryCard = ({
     <>
     <div
       onClick={() => onClick?.(ad)}
-      className="group relative h-full cursor-pointer rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-300 bg-[#0f111a] border border-white/10 hover:border-white/25"
+      className={`group relative h-full cursor-pointer rounded-2xl overflow-hidden hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-300 bg-[#0f111a] border ${
+        isAiFilteredResult
+          ? isLight
+            ? "border-violet-300/70 shadow-[0_0_0_2px_rgba(109,40,217,0.12),0_0_20px_rgba(109,40,217,0.18),0_10px_20px_-8px_rgba(15,23,42,0.20)] hover:border-slate-300 hover:shadow-2xl"
+            : "border-violet-400/60 shadow-[0_0_0_2px_rgba(139,92,246,0.14),0_0_22px_rgba(109,40,217,0.24),0_12px_24px_-10px_rgba(0,0,0,0.55)] hover:border-white/25 hover:shadow-2xl"
+          : "border-white/10 shadow-lg hover:border-white/25"
+      }`}
     >
       <div className="flex flex-col h-full">
         {/* ═══ MEDIA SECTION ═══════════════════════════════════════ */}
@@ -943,6 +951,35 @@ const MasonryCard = ({
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* AI filtering is search context rather than permanent ad metadata.
+              Keep this mark over the media so the card body never reflows, and
+              fade it out when the hover action strip needs the same corner. */}
+          {isAiFilteredResult && (
+            <div
+              aria-label="AI analysed result"
+              title="AI analysed result"
+              className="absolute right-0 top-0 z-30 h-12 w-12 overflow-hidden pointer-events-none transition-opacity duration-200 group-hover:opacity-0"
+            >
+              <div
+                className={`absolute inset-0 shadow-lg ${
+                  isLight
+                    ? "bg-violet-700 shadow-violet-950/20"
+                    : "bg-violet-600 shadow-violet-950/40"
+                }`}
+                style={{ clipPath: "polygon(0 0, 100% 0, 100% 100%)" }}
+              />
+              <Sparkles
+                size={14}
+                strokeWidth={2.5}
+                aria-hidden="true"
+                className="absolute right-1.5 top-1.5 drop-shadow-sm"
+                // Inline color intentionally wins over the global light-theme
+                // text remap; this icon always sits on saturated violet.
+                style={{ color: "#ffffff" }}
+              />
             </div>
           )}
 

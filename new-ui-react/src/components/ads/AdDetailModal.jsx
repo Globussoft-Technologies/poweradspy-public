@@ -37,7 +37,7 @@ import {
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import OriginalPreview from "./OriginalPreview";
 import PlatformBadgesRow from "../shared/PlatformBadgesRow";
-import { createShareLink, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent, getAdCountry } from "../../services/api";
+import { createShareLink, fetchAdAiMeta, fetchFreshTikTokVideoUrl, getVideoEmbedUrl, trackEvent, getAdCountry } from "../../services/api";
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 import { ctaHref, parseAdCtas } from "../../utils/cta";
@@ -61,6 +61,31 @@ import he from "he";
 const isVideoMediaUrl = (url) =>
   typeof url === "string" &&
   /\.(?:mp4|webm|mov|m4v|ogv|ogg)(?:$|[?#])/i.test(url);
+
+// AI intent/hook values are stored as token arrays. Keep the modal chips
+// compact while turning backend snake-case tokens into readable labels.
+const formatAiSignalValue = (value) => {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,|]/)
+      : [];
+
+  return values
+    .map((item) => String(item ?? "").trim().replace(/[_-]+/g, " "))
+    .filter((item) => item && !["null", "undefined"].includes(item.toLowerCase()))
+    .join(", ");
+};
+
+// The detail header is a compact summary; use the primary classifier token
+// there and leave the full multi-value list for Analytics/the chip tooltip.
+const formatPrimaryAiSignal = (value) => {
+  const fullValue = formatAiSignalValue(value);
+  return {
+    value: fullValue.split(",")[0]?.trim() || "",
+    fullValue,
+  };
+};
 
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
 import mpBranch from "../../assets/marketingPlatform/branch.png";
@@ -282,6 +307,58 @@ const AdDetailModal = ({
   const [showHideMenu, setShowHideMenu] = useState(false);
   const [hideMenuPos, setHideMenuPos] = useState({ top: 0, left: 0 });
   const hideButtonRef = React.useRef(null);
+
+  const inlineAiMeta = [ad?.ai_meta, ad?.aiMeta, ad?.ai].find(
+    (value) => value && typeof value === "object" && !Array.isArray(value),
+  ) || null;
+  const inlineIntent = formatAiSignalValue(inlineAiMeta?.intent);
+  const inlineHook = formatAiSignalValue(inlineAiMeta?.hook);
+  const aiMetaAdId = ad?.adId ?? ad?.id ?? null;
+  const aiMetaInternalId = ad?.internalId ?? null;
+  const aiMetaNetwork = String(ad?.network || "").toLowerCase();
+  const aiMetaRequestKey = `${aiMetaNetwork}:${aiMetaInternalId ?? aiMetaAdId ?? ""}`;
+  const [fetchedAiMetaState, setFetchedAiMetaState] = useState({ key: "", value: null });
+
+  // Search cards do not always carry AI fields. Fetch only the lightweight
+  // metadata read-back when this AI modal cannot render the chips inline.
+  useEffect(() => {
+    if (
+      !isAiFilteredResult ||
+      inlineIntent ||
+      inlineHook ||
+      !aiMetaNetwork ||
+      aiMetaAdId == null
+    ) return undefined;
+
+    const controller = new AbortController();
+    fetchAdAiMeta({
+      network: aiMetaNetwork,
+      adId: aiMetaAdId,
+      internalId: aiMetaInternalId,
+      signal: controller.signal,
+    }).then((value) => {
+      if (!controller.signal.aborted && value) {
+        setFetchedAiMetaState({ key: aiMetaRequestKey, value });
+      }
+    });
+
+    return () => controller.abort();
+  }, [
+    aiMetaAdId,
+    aiMetaInternalId,
+    aiMetaNetwork,
+    aiMetaRequestKey,
+    inlineHook,
+    inlineIntent,
+    isAiFilteredResult,
+  ]);
+
+  // Key the async result to the open ad so a rapid next/previous navigation
+  // cannot briefly display the prior creative's AI labels.
+  const fetchedAiMeta = fetchedAiMetaState.key === aiMetaRequestKey
+    ? fetchedAiMetaState.value
+    : null;
+  const resolvedAiMeta = (inlineIntent || inlineHook) ? inlineAiMeta : fetchedAiMeta;
 
   // Multi-CTA ads arrive with their labels (and, when each has its own landing
   // page, their destination URLs) packed into one `||,`-joined string.
@@ -607,6 +684,12 @@ const AdDetailModal = ({
   const shouldShowDetailValue = (value) => !isAdmob || hasDisplayableAdmobValue(value);
   const isActive = String(ad.status ?? "").toLowerCase() === "active";
 
+  const aiHeaderSignals = [
+    { label: "Intent", ...formatPrimaryAiSignal(resolvedAiMeta?.intent) },
+    { label: "Hook", ...formatPrimaryAiSignal(resolvedAiMeta?.hook) },
+  ].filter(({ value }) => Boolean(value));
+  const hasAiSignals = isAiFilteredResult && aiHeaderSignals.length > 0;
+
   const starRating = ad.popularity ? getStarRating(ad.popularity) : 0;
 
   const hasCarousel = carouselImages.length > 1;
@@ -707,7 +790,9 @@ const AdDetailModal = ({
         </button>
 
         <div
-          className="w-[90vw] relative max-w-sm md:max-w-xl lg:max-w-3xl max-h-[90vh] flex flex-col md:flex-row rounded-2xl shadow-2xl"
+          className={`w-[90vw] relative max-w-sm md:max-w-xl lg:max-w-3xl max-h-[90vh] flex flex-col md:flex-row overflow-hidden rounded-2xl shadow-2xl ${
+            isAiFilteredResult ? "border" : ""
+          }`}
           style={{
             backgroundColor: "var(--color-card)",
             borderColor: "var(--color-border)",
@@ -1051,25 +1136,25 @@ const AdDetailModal = ({
             )}
           </div>
 
-          {/* Right: Details - Added pt-12 to prevent cross overlap with heart button */}
+          {/* Right: Details. AI-filtered ads use 1b's inline output treatment;
+              ordinary detail modals retain their existing layout. */}
           <div className="md:w-1/2 relative overflow-y-auto overflow-x-hidden p-5 pt-10 space-y-4">
-            {/* Keep the search-context badge inside the details column so it
-                never overlays or competes with the ad creative. */}
-            {isAiFilteredResult && (
-              <div
-                className={`absolute left-5 top-3 z-10 flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[8px] font-extrabold uppercase tracking-[0.14em] transition-colors ${
-                  isLightTheme
-                    ? "border-indigo-200 bg-indigo-50 text-indigo-600 shadow-sm"
-                    : "border-amber-400/35 bg-amber-400/10 text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
-                }`}
-                title="This result was refined using AI Filters"
-              >
-                <Sparkles size={9} strokeWidth={2.5} aria-hidden="true" />
-                AI Refined
-              </div>
-            )}
+            <div className="flex flex-col gap-2.5">
+              {isAiFilteredResult && (
+                <div
+                  className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.05em] ${
+                    isLightTheme
+                      ? "border-violet-200 bg-violet-50 text-violet-700"
+                      : "border-violet-400/20 bg-violet-500/10 text-violet-300"
+                  }`}
+                  title="This result was refined using AI Filters"
+                >
+                  <Sparkles size={10} strokeWidth={2.5} aria-hidden="true" />
+                  AI Analysed
+                </div>
+              )}
 
-            {/* Advertiser header */}
+              {/* Advertiser header */}
             <div className="flex items-center gap-1 pr-0">
               {/* <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]' : 'bg-white/20'}`} /> */}
               {ad.advertiser && (
@@ -1202,6 +1287,26 @@ const AdDetailModal = ({
                   <EyeOff size={18} className="text-white/30 hover:text-white/70" />
               </button>
               </div>
+            </div>
+
+              {hasAiSignals && (
+                <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5" aria-label="AI ad signals">
+                  {aiHeaderSignals.map(({ label, value, fullValue }) => (
+                    <span
+                      key={label}
+                      className={`whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-medium leading-none ${
+                        isLightTheme
+                          ? "border-slate-200 bg-slate-50 text-slate-700"
+                          : "border-white/10 bg-white/[0.05] text-zinc-300"
+                      }`}
+                      aria-label={`${label}: ${value}`}
+                      title={`${label}: ${fullValue}`}
+                    >
+                      <span className="font-semibold">{label}:</span> {value}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Title & subtitle */}

@@ -417,6 +417,116 @@ export const hasTransparencyDetailValue = (value) => {
   ].includes(normalized);
 };
 
+const formatAiMetaToken = (value) => {
+  if (value === null || value === undefined) return "";
+  const text = String(value).trim();
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  const friendly = {
+    no_explicit_offer: "No explicit offer",
+    preorder: "Preorder",
+    free_quote: "Free quote",
+    early_bird_offer: "Early bird offer",
+    listed_price: "Listed price",
+    trade_in_credit: "Trade-in credit",
+  }[lower];
+  if (friendly) return friendly;
+  return text
+    .split(/[_\s]+/)
+    .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part)
+    .join(" ");
+};
+
+const formatAiMetaValue = (value) => {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatAiMetaValue(item))
+      .filter(Boolean)
+      .join(", ");
+  }
+  const text = String(value).trim();
+  return text && text !== "null" && text !== "undefined" ? text : "";
+};
+
+const normalizeAiMetaColors = (value) => {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,\|]/)
+      : value != null
+        ? [value]
+        : [];
+
+  return items
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .map((token) => {
+      const raw = token.replace(/\s+/g, "");
+      const hex = raw.startsWith("#") ? raw : `#${raw}`;
+      return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(hex)
+        ? hex.toUpperCase()
+        : null;
+    })
+    .filter(Boolean);
+};
+
+const normalizeAiMetaTags = (value) => {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,\|]/)
+      : value != null
+        ? [value]
+        : [];
+
+  return items
+    .map((item) => formatAiMetaToken(item))
+    .filter(Boolean);
+};
+
+/**
+ * Build the two-column 1e scorecard without dropping any field from the former
+ * flat AI Insights table. Filterable attributes stay left; reasoning-of-action
+ * become evidence cards on the right.
+ */
+export const buildAiMetaScorecard = (aiMeta) => {
+  if (!aiMeta || typeof aiMeta !== "object") {
+    return { attributes: [], caption: "", evidence: [] };
+  }
+
+  const roa = aiMeta.roa && typeof aiMeta.roa === "object" ? aiMeta.roa : {};
+  const offers = Array.isArray(aiMeta.offers) ? aiMeta.offers : [];
+  const offerTypeRaw = aiMeta.offer_type ?? offers.find((offer) => offer?.type != null)?.type;
+  const offeringTypeRaw = String(aiMeta.offering_type || "").trim().toLowerCase();
+  const offeringType = offeringTypeRaw === "both"
+    ? "Product & Service"
+    : formatAiMetaToken(aiMeta.offering_type);
+
+  const attributes = [
+    { label: "Offering", value: formatAiMetaValue(aiMeta.offering) },
+    { label: "Ad type", value: formatAiMetaToken(aiMeta.ad_type) },
+    { label: "Offering type", value: offeringType },
+    { label: "Offer type", value: formatAiMetaToken(offerTypeRaw) },
+    { label: "Intent", value: formatAiMetaValue(aiMeta.intent), kind: "intent", tokens: normalizeAiMetaTags(aiMeta.intent) },
+    { label: "Hook", value: formatAiMetaValue(aiMeta.hook), kind: "hook", tokens: normalizeAiMetaTags(aiMeta.hook) },
+    { label: "Colors", value: formatAiMetaValue(aiMeta.colors), kind: "colors", colors: normalizeAiMetaColors(aiMeta.colors) },
+  ].filter(({ value, tokens, colors }) => Boolean(value || tokens?.length || colors?.length));
+
+  const evidence = [
+    { label: "Intent reasoning", value: formatAiMetaValue(roa.intent) },
+    { label: "Hook reasoning", value: formatAiMetaValue(roa.hook) },
+    { label: "Offering type reasoning", value: formatAiMetaValue(roa.offering_type) },
+    { label: "Offering reasoning", value: formatAiMetaValue(roa.offering) },
+  ].filter(({ value }) => Boolean(value));
+
+  return {
+    attributes,
+    caption: formatAiMetaValue(aiMeta.caption),
+    evidence,
+  };
+};
+
 export function getAspectStyle(platform, position, adAspectRatio) {
   if (adAspectRatio && adAspectRatio !== "auto") {
     return { aspectRatio: adAspectRatio.replace(":", "/") };
@@ -1526,130 +1636,37 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
   // `getAdCategory` provides AI-Meta independently from the SQL-first details
   // stream. Fall back to an inline value for callers that already include it.
   const aiMeta = insights.aiMeta || d.ai_meta || processedAd?.ai_meta || ad?.ai_meta || null;
-  const formatAiMetaToken = (value) => {
-    if (value === null || value === undefined) return "";
-    const text = String(value).trim();
-    if (!text) return "";
-    const lower = text.toLowerCase();
-    const friendly = {
-      no_explicit_offer: "No explicit offer",
-      preorder: "Preorder",
-      free_quote: "Free quote",
-      early_bird_offer: "Early bird offer",
-      listed_price: "Listed price",
-      trade_in_credit: "Trade-in credit",
-    }[lower];
-    if (friendly) return friendly;
-    return text
-      .split(/[_\s]+/)
-      .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part)
-      .join(" ");
-  };
-  const formatAiMetaValue = (value) => {
-    if (value === null || value === undefined) return "";
-    if (Array.isArray(value)) {
-      return value
-        .map((item) => formatAiMetaValue(item))
-        .filter(Boolean)
-        .join(", ");
-    }
-    const text = String(value).trim();
-    return text && text !== "null" && text !== "undefined" ? text : "";
-  };
-  const normalizeAiMetaColors = (value) => {
-    const items = Array.isArray(value)
-      ? value
-      : typeof value === "string"
-        ? value.split(/[,\|]/)
-        : value != null
-          ? [value]
-          : [];
-
-    return items
-      .map((item) => String(item).trim())
-      .filter(Boolean)
-      .map((token) => {
-        const raw = token.replace(/\s+/g, "");
-        const hex = raw.startsWith("#") ? raw : `#${raw}`;
-        return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(hex)
-          ? hex.toUpperCase()
-          : null;
-      })
-      .filter(Boolean);
-  };
-  const renderAiMetaColorSwatches = (swatches) => {
-    if (!swatches.length) return null;
-
-    return (
-      <div className="flex max-w-full flex-wrap items-center gap-2" aria-label="Detected color palette">
-        {swatches.map((color, index) => {
-          const configuredLabel = getAiColorLabel(color);
-          const colorLabel = configuredLabel === color
-            ? `Color ${index + 1}`
-            : configuredLabel;
-
-          return (
-            <div
-              key={`${color}-${index}`}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 ${
-                isLight
-                  ? "border-gray-200 bg-white text-gray-600 shadow-sm"
-                  : "border-white/15 bg-white/[0.035] text-white/65"
-              }`}
-              title={colorLabel}
-            >
-              <span
-                className="h-5 w-5 shrink-0 rounded-md border border-black/15 shadow-sm"
-                style={{ backgroundColor: color }}
-                aria-hidden="true"
-              />
-              <span className="text-[12px] font-medium leading-none">
-                {colorLabel}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-  const aiMetaVariableRows = (() => {
-    if (!aiMeta || typeof aiMeta !== "object") return [];
-    const roa = aiMeta.roa && typeof aiMeta.roa === "object" ? aiMeta.roa : {};
-    const offers = Array.isArray(aiMeta.offers) ? aiMeta.offers : [];
-    const offerTypeRaw = aiMeta.offer_type ?? offers.find((offer) => offer?.type != null)?.type;
-    const offerType = formatAiMetaToken(offerTypeRaw);
-    const colorSwatches = normalizeAiMetaColors(aiMeta.colors);
-    const rows = [];
-    const pushRow = (label, value, render = null) => {
-      const text = formatAiMetaValue(value);
-      if (text || render) rows.push({ label, value: text, render });
-    };
-    const offeringTypeRaw = String(aiMeta.offering_type || "").trim().toLowerCase();
-    const offeringTypeText = offeringTypeRaw === "both"
-      ? "Product & Service"
-      : formatAiMetaToken(aiMeta.offering_type);
-
-    // Keep the filterable AI fields together so the Analytics page mirrors the
-    // controls exposed in the AI Filters popup.
-    pushRow("AD TYPE", formatAiMetaToken(aiMeta.ad_type));
-    pushRow("INTENT", aiMeta.intent);
-    pushRow("HOOK", aiMeta.hook);
-    pushRow("OFFERING TYPE", offeringTypeText);
-    pushRow("OFFER TYPE", offerType);
-    pushRow("COLORS", colorSwatches.length ? colorSwatches : aiMeta.colors, colorSwatches.length ? renderAiMetaColorSwatches(colorSwatches) : null);
-
-    return [
-      { label: "OFFERING", value: formatAiMetaValue(aiMeta.offering) },
-      { label: "CAPTION", value: formatAiMetaValue(aiMeta.caption) },
-      { label: "ROA INTENT", value: formatAiMetaValue(roa.intent) },
-      { label: "ROA HOOK", value: formatAiMetaValue(roa.hook) },
-      { label: "ROA OFFERING TYPE", value: formatAiMetaValue(roa.offering_type) },
-      { label: "ROA OFFERING", value: formatAiMetaValue(roa.offering) },
-      ...rows,
-    ].filter(({ value, render }) => render || (value !== null && value !== undefined && String(value).trim() !== ""));
-  })();
+  const aiMetaScorecard = buildAiMetaScorecard(aiMeta);
+  const hasAiMetaScorecard = Boolean(
+    aiMetaScorecard.attributes.length ||
+    aiMetaScorecard.caption ||
+    aiMetaScorecard.evidence.length
+  );
   const firstAvailable = (...values) =>
     values.find((value) => value != null && value !== "");
+  // AdMob lander data is indexed under dedicated fields instead of the
+  // legacy screenshot keys used by Facebook-family payloads.
+  const landerScreenshotUrl = firstAvailable(
+    adDetailsData?.lander_screen_shot,
+    processedAd?.lander_screen_shot,
+    ad?.lander_screen_shot,
+    adDetailsData?.screenshot_url,
+    ad?.screenshot_url,
+    adDetailsData?.white_ad_screenshot,
+    ad?.white_ad_screenshot,
+  );
+  const landerVisitUrl = ctx?.platform === "admob"
+    ? firstAvailable(
+      adDetailsData?.lander_destination_url,
+      processedAd?.lander_destination_url,
+      ad?.lander_destination_url,
+      adDetailsData?.destination_url,
+      processedAd?.destination_url,
+      ad?.destination_url,
+      processedAd?.destinationUrl,
+      ad?.destinationUrl,
+    )
+    : null;
   const analyticsRunningDays = calculateRunningDays({
     lastSeen: firstAvailable(
       d.last_seen,
@@ -2682,52 +2699,165 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
               hideEmpty={isAdmob}
             />}
 
-            {aiMetaVariableRows.length > 0 && (
-              <section className="px-6">
-                <h2
-                  className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
-                >
-                  <Sparkles size={16} />
-                  AI Insights
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-extrabold leading-none tracking-[0.16em] ${
-                      isLight
-                        ? "border-indigo-200 bg-indigo-50 text-indigo-600 shadow-sm"
-                        : "border-amber-400/35 bg-amber-400/10 text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
-                    }`}
-                  >
-                    <Sparkles size={8} strokeWidth={2.5} />
-                    NEW
-                  </span>
-                </h2>
+            {hasAiMetaScorecard && (
+              <section className="px-6" data-testid="ai-insights-scorecard">
                 <div
-                  className={`rounded-2xl border-2 divide-y ${
+                  className={`overflow-hidden rounded-2xl border ${
                     isLight
-                      ? "bg-gray-50/50 border-gray-200 divide-gray-200"
-                      : "bg-white/[0.02] border-white/10 divide-white/10"
+                      ? "border-gray-200 bg-white shadow-sm"
+                      : "border-white/10 bg-white/[0.02]"
                   }`}
                 >
-                  {aiMetaVariableRows.map(({ label, value, render }) => (
-                    <div
-                      key={label}
-                      className="grid grid-cols-[minmax(130px,180px)_minmax(0,1fr)] items-start gap-5 px-4 py-3"
-                    >
-                      <span className="text-[12px] font-bold text-[#aaa]">
-                        {label}
+                  <div
+                    className={`flex items-center border-b px-5 py-4 ${
+                      isLight ? "border-gray-200" : "border-white/10"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Sparkles size={17} className="text-violet-500" aria-hidden="true" />
+                      <h2 className={`text-[18px] font-bold ${isLight ? "text-gray-900" : "text-white/90"}`}>
+                        AI Insights
+                      </h2>
+                      <span
+                        className={`rounded-md border px-1.5 py-0.5 text-[9px] font-extrabold leading-none tracking-[0.16em] ${
+                          isLight
+                            ? "border-violet-200 bg-violet-50 text-violet-700"
+                            : "border-violet-400/25 bg-violet-500/10 text-violet-300"
+                        }`}
+                      >
+                        NEW
                       </span>
-                      {render ? (
-                        <div className="min-w-0">{render}</div>
-                      ) : (
-                        <span
-                          className={`min-w-0 text-[14px] font-semibold whitespace-normal break-words leading-relaxed ${
-                            isLight ? "text-gray-900" : "text-white/85"
-                          }`}
-                        >
-                          {String(value)}
-                        </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2">
+                    <div className={`px-5 py-5 lg:border-r ${
+                      isLight ? "border-gray-200" : "border-white/10"
+                    }`}>
+                      <div className={`mb-4 font-mono text-[10px] font-semibold tracking-[0.12em] ${
+                        isLight ? "text-gray-400" : "text-white/35"
+                      }`}>
+                        WHAT THE AI READ
+                      </div>
+                      <div className="space-y-3">
+                        {aiMetaScorecard.attributes.map(({ label, value, kind, tokens, colors }) => (
+                          <div key={label} className="flex items-start justify-between gap-4">
+                            <span className={`shrink-0 text-[11px] font-medium ${
+                              isLight ? "text-gray-500" : "text-white/45"
+                            }`}>
+                              {label}
+                            </span>
+                            {kind === "colors" && colors?.length ? (
+                              <div className="flex flex-wrap justify-end gap-1.5" aria-label="Detected color palette">
+                                {colors.map((color, index) => {
+                                  const configuredLabel = getAiColorLabel(color);
+                                  const colorLabel = configuredLabel === color ? `Color ${index + 1}` : configuredLabel;
+                                  return (
+                                    <span
+                                      key={`${color}-${index}`}
+                                      className={`h-4 w-4 rounded border shadow-sm ${
+                                        isLight ? "border-gray-300" : "border-white/20"
+                                      }`}
+                                      style={{ backgroundColor: color }}
+                                      title={colorLabel}
+                                      aria-label={colorLabel}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            ) : kind === "intent" || kind === "hook" ? (
+                              <div className="flex flex-wrap justify-end gap-1.5">
+                                {tokens.map((token) => (
+                                  <span
+                                    key={token}
+                                    className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                                      kind === "intent"
+                                        ? isLight
+                                          ? "bg-violet-50 text-violet-700"
+                                          : "bg-violet-500/10 text-violet-300"
+                                        : isLight
+                                          ? "bg-amber-50 text-amber-700"
+                                          : "bg-amber-400/10 text-amber-300"
+                                    }`}
+                                  >
+                                    {token}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className={`min-w-0 text-right text-[12px] font-semibold leading-relaxed ${
+                                isLight ? "text-gray-900" : "text-white/85"
+                              }`}>
+                                {value}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {aiMetaScorecard.caption && (
+                        <div className={`mt-5 rounded-xl px-3.5 py-3 ${
+                          isLight ? "bg-gray-50" : "bg-white/[0.035]"
+                        }`}>
+                          <div className={`mb-2 font-mono text-[9px] font-semibold tracking-[0.12em] ${
+                            isLight ? "text-gray-400" : "text-white/35"
+                          }`}>
+                            CAPTION
+                          </div>
+                          <p className={`text-[12px] leading-relaxed ${
+                            isLight ? "text-gray-700" : "text-white/70"
+                          }`}>
+                            {aiMetaScorecard.caption}
+                          </p>
+                        </div>
                       )}
                     </div>
-                  ))}
+
+                    <div className={`border-t px-5 py-5 lg:border-t-0 ${
+                      isLight
+                        ? "border-gray-200 bg-violet-50/40"
+                        : "border-white/10 bg-violet-500/[0.035]"
+                    }`}>
+                      <div className={`mb-4 font-mono text-[10px] font-semibold tracking-[0.12em] ${
+                        isLight ? "text-violet-500/70" : "text-violet-300/70"
+                      }`}>
+                        EVIDENCE FROM THE CREATIVE
+                      </div>
+                      {aiMetaScorecard.evidence.length > 0 ? (
+                        <div className="space-y-3">
+                          {aiMetaScorecard.evidence.map(({ label, value }) => (
+                            <div
+                              key={label}
+                              className={`rounded-xl border px-3.5 py-3 ${
+                                isLight
+                                  ? "border-violet-100 bg-white shadow-sm"
+                                  : "border-violet-400/15 bg-white/[0.035]"
+                              }`}
+                            >
+                              <div className={`mb-1.5 text-[10px] font-bold uppercase tracking-[0.08em] ${
+                                isLight ? "text-violet-700" : "text-violet-300"
+                              }`}>
+                                {label}
+                              </div>
+                              <p className={`text-[12px] leading-relaxed ${
+                                isLight ? "text-gray-700" : "text-white/70"
+                              }`}>
+                                {value}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className={`rounded-xl border border-dashed px-4 py-5 text-[12px] leading-relaxed ${
+                          isLight
+                            ? "border-violet-200 text-gray-500"
+                            : "border-violet-400/20 text-white/45"
+                        }`}>
+                          No supporting evidence was returned for this creative.
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </section>
             )}
@@ -2800,12 +2930,8 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
               "tiktok",
             ].includes(ctx.platform) && (
               <LanderDetails
-                screenshotUrl={
-                  adDetailsData?.screenshot_url ||
-                  ad?.screenshot_url ||
-                  adDetailsData?.white_ad_screenshot ||
-                  ad?.white_ad_screenshot
-                }
+                screenshotUrl={landerScreenshotUrl}
+                pageUrl={landerVisitUrl}
               />
             )}
 

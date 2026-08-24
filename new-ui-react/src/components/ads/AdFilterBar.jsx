@@ -1,11 +1,14 @@
 import React, { useMemo, useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Filter, SlidersHorizontal, Smartphone } from "lucide-react";
+import { Check, Filter, SlidersHorizontal } from "lucide-react";
 import PlatformTab from "../shared/PlatformTab";
 import AdDateDropdown from "./AdDateDropdown";
 import { PLATFORMS } from "../../constants";
-import { trackEvent } from "../../services/api";
-import { getNetworkContext, trackAdAction } from "../../utils/googleAnalytics";
+import {
+  discardAiFilterDraft,
+  hasActiveAiFilters,
+  replaceAiFilters,
+} from "../../utils/aiQuickFilterPresets";
 
 // Maps SDUI sort labels/values to the stable Plan Control/legacy access ID.
 const SORT_TO_PLAN_ACCESS_ID = {
@@ -105,7 +108,7 @@ export const resolveActiveSortLabel = (sortTabs = [], sortBy) => {
  * 1. Platform Tabs (with horizontal scroll)
  * 2. Date Filter
  * 3. Sort Filter
- * 4. Original Preview Toggle
+ * 4. AI-analysed-only Toggle
  */
 const AdFilterBar = ({
   sdui,
@@ -116,23 +119,57 @@ const AdFilterBar = ({
   isAllActive,
   activeTab,
   setActiveTab,
-  previewMode,
-  setPreviewMode,
   sortTabs = [],
   onDateChange,
   isFilterRestricted,
   onDateRestricted,
   onSortRestricted,
   onAdTypeRestricted,
+  onAiFilterRestricted,
   className = "",
-  showOriginalOnMobile = true,
+  showAiToggleOnMobile = true,
   showPlatformsOnMobile = true,
   isScrolled = false,
   disableTooltips = false,
   guest,
 }) => {
   const { t } = useTranslation();
-  const { config, activePlatforms, selAdTypes, setSelAdTypes } = sdui;
+  const {
+    config,
+    activePlatforms,
+    selAdTypes,
+    setSelAdTypes,
+    filterValues,
+    setFilter,
+    setAllFilters,
+  } = sdui;
+
+  const aiFiltersDoc = useMemo(
+    () => config?.sidebar?.find(
+      (doc) => doc?._id === "ai_meta" && doc.visible !== false,
+    ) || null,
+    [config],
+  );
+  const isAiAnalysedOnly = hasActiveAiFilters(filterValues, aiFiltersDoc);
+
+  const toggleAiAnalysedOnly = () => {
+    if (guest?.showGuestWarning("Please login to filter AI analysed ads")) return;
+    if (isFilterRestricted?.("ai_meta")) {
+      onAiFilterRestricted?.();
+      return;
+    }
+
+    discardAiFilterDraft();
+    if (isAiAnalysedOnly) {
+      // Switching off the lane clears detailed AI filters too; otherwise the
+      // backend would still return AI-only results while the toggle looked off.
+      const next = replaceAiFilters(filterValues, aiFiltersDoc, {});
+      if (setAllFilters) setAllFilters(next);
+      else setFilter?.("has_ai_meta", false, "filter_bar");
+      return;
+    }
+    setFilter?.("has_ai_meta", true, "filter_bar");
+  };
 
   // Ad type filter dropdown state (owned here, not lifted to AdGrid)
   const [showAdTypeFilter, setShowAdTypeFilter] = useState(false);
@@ -531,36 +568,40 @@ const AdFilterBar = ({
         )}
 
         {!isAdmobOnly && (
-          <>
-            {/* Original Preview Toggle */}
-            <button
-              onClick={() => {
-                const network = activePlatforms?.length === 1 ? activePlatforms[0] : 'All';
-                trackEvent('showOriginal', { network, show_original: previewMode ? 'false' : 'true' });
-                if (!previewMode) {
-                  const networkContext = getNetworkContext(activePlatforms || []);
-                  trackAdAction('show_original', {
-                    entry_point: 'filter_bar',
-                    feature_name: 'original_ad',
-                    ...networkContext,
-                    platform: networkContext.network,
-                    request_context: 'ad_open',
-                  });
-                }
-                setPreviewMode(!previewMode);
-              }}
-              className={`items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${
-                !showOriginalOnMobile ? "hidden md:flex" : "flex"
-              } ${
-                previewMode
-                  ? "bg-[#335296] text-white border-[#3759a3] shadow-md shadow-[#3759a3]/20"
-                  : "bg-theme-card text-white/50 border-theme-border hover:text-theme-text-secondary hover:border-theme-text-muted"
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isAiAnalysedOnly}
+            aria-label="AI analysed only"
+            onClick={toggleAiAnalysedOnly}
+            className={`items-center gap-2.5 rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 ${
+              !showAiToggleOnMobile ? "hidden md:flex" : "flex"
+            } ${
+              isAiAnalysedOnly
+                ? "ai-analysed-toggle--active border-violet-400/30 bg-violet-500/10 text-violet-300"
+                // Keep hover neutral so violet communicates the enabled state only.
+                : "border-theme-border bg-theme-card text-theme-text-muted hover:border-theme-text-muted hover:bg-theme-text/[0.04] hover:text-theme-text"
+            }`}
+          >
+            <span className="hidden whitespace-nowrap sm:inline">AI analysed only</span>
+            <span
+              aria-hidden="true"
+              data-testid="ai-analysed-toggle-track"
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                isAiAnalysedOnly
+                  ? "bg-violet-600"
+                  : "bg-slate-300 dark:bg-zinc-600"
               }`}
             >
-              <Smartphone size={12} />
-              <span className="sm:inline hidden">Show Original</span>
-            </button>
-          </>
+              <span
+                data-testid="ai-analysed-toggle-thumb"
+                className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full shadow-sm transition-transform duration-200 ${
+                  isAiAnalysedOnly ? "translate-x-4" : "translate-x-0"
+                }`}
+                style={{ backgroundColor: "#ffffff" }}
+              />
+            </span>
+          </button>
         )}
       </div>
     </div>

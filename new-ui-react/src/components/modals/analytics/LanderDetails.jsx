@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { ExternalLink, ShieldCheck, Monitor } from "lucide-react"; // Monitor kept for section header
 import { useTheme } from "../../../hooks/useTheme";
+import { resolveNasUrl } from "../../../services/api";
 
-function parseScreenshotUrl(raw) {
+function parseDisplayUrl(raw) {
   if (!raw) return null;
   let url = raw;
   // white_ad_screenshot arrives already parsed into a real array (the backend
@@ -19,15 +20,18 @@ function parseScreenshotUrl(raw) {
     }
   }
   if (typeof url !== "string" || !url) return null;
+  const resolved = resolveNasUrl(url);
+  if (typeof resolved !== "string" || !resolved) return null;
   // Clean double slashes (but not the protocol ://) — the backend always sends
   // a fully-qualified URL, so no base-URL prepending is needed here.
-  return url.replace(/([^:])\/\//g, "$1/");
+  return resolved.replace(/([^:])\/\//g, "$1/");
 }
 
-const LanderDetails = ({ screenshotUrl }) => {
+const LanderDetails = ({ screenshotUrl, pageUrl = null }) => {
   const { theme } = useTheme();
   const isLight = theme === "light";
-  const resolvedUrl = parseScreenshotUrl(screenshotUrl);
+  const resolvedScreenshotUrl = parseDisplayUrl(screenshotUrl);
+  const resolvedPageUrl = parseDisplayUrl(pageUrl) || resolvedScreenshotUrl;
   const [hasError, setHasError] = useState(false);
   const settledRef = useRef(false); // set by onLoad/onError once the image resolves
 
@@ -37,12 +41,12 @@ const LanderDetails = ({ screenshotUrl }) => {
   useEffect(() => {
     setHasError(false);
     settledRef.current = false;
-    if (!resolvedUrl) return;
+    if (!resolvedScreenshotUrl) return;
     const timer = setTimeout(() => {
       if (!settledRef.current) setHasError(true);
     }, 15000);
     return () => clearTimeout(timer);
-  }, [resolvedUrl]);
+  }, [resolvedScreenshotUrl]);
 
   // processing.gif or null/empty means screenshot not ready
   const isProcessing =
@@ -52,7 +56,7 @@ const LanderDetails = ({ screenshotUrl }) => {
     (typeof screenshotUrl === "string" && screenshotUrl.includes("[null]"));
 
   // Hide if no valid URL, processing, or image failed to load
-  if (isProcessing || hasError || !resolvedUrl) return null;
+  if (isProcessing || hasError || !resolvedScreenshotUrl) return null;
 
   return (
     <div className="px-6">
@@ -65,7 +69,7 @@ const LanderDetails = ({ screenshotUrl }) => {
         </h3>
         {!isProcessing && (
           <a
-            href={resolvedUrl || "#"}
+            href={resolvedPageUrl || "#"}
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-1.5 px-2.5 py-1 bg-[#3762c1]/10 hover:bg-[#3762c1]/20 text-[#6b99ff] rounded-lg text-[10px] font-bold border border-[#3759a3]/20 transition-all"
@@ -91,7 +95,7 @@ const LanderDetails = ({ screenshotUrl }) => {
             className={`flex-1 flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] truncate ${isLight ? "bg-gray-200/60 text-gray-500" : "bg-white/5 text-white/30"}`}
           >
             <ShieldCheck size={10} className="text-emerald-400 shrink-0" />
-            <span className="truncate">{resolvedUrl || "No URL"}</span>
+            <span className="truncate">{resolvedPageUrl || "No URL"}</span>
           </div>
         </div>
         {/* Scrollable screenshot */}
@@ -100,7 +104,7 @@ const LanderDetails = ({ screenshotUrl }) => {
           style={{ height: "320px", overflowY: "auto", overflowX: "hidden" }}
         >
           <img
-            src={resolvedUrl}
+            src={resolvedScreenshotUrl}
             alt="Lander Screenshot"
             className="w-full opacity-90 group-hover:opacity-100 transition-opacity duration-300"
             style={{ display: "block" }}

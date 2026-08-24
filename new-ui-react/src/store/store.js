@@ -26,6 +26,7 @@ try {
     const parsed = JSON.parse(raw);
     const transientKeys = [
       'activeTab',
+      'previewMode',
       'isAIAnalysisModalOpen',
       'isCampaignModalOpen',
       'isPricingModalOpen',
@@ -64,6 +65,9 @@ const persistConfig = {
     // is non-persisted React state, so persisting activeTab left a pill highlighted
     // on reload while no sort was applied. Always start unselected.
     'activeTab',
+    // The dashboard-level Show Original mode was replaced by AI-only results.
+    // Do not rehydrate a stale preview that users can no longer toggle off.
+    'previewMode',
     // 'isAIAnalysisModalOpen',
     // 'isCampaignModalOpen',
     // 'isAnalyticsModalOpen',

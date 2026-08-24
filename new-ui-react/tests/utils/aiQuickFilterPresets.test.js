@@ -239,4 +239,18 @@ describe("AI quick filter presets", () => {
     expect(next).toEqual({ language_filter: ["en"] });
     expect(hasActiveAiFilters(next, doc)).toBe(false);
   });
+
+  it("treats has_ai_meta as AI state and clears it with detailed AI filters", () => {
+    const doc = makeDoc();
+    const current = {
+      country_filter: ["US"],
+      has_ai_meta: true,
+      ai_hook: ["urgency"],
+    };
+
+    expect(hasActiveAiFilters(current, doc)).toBe(true);
+    expect(replaceAiFilters(current, doc, {})).toEqual({
+      country_filter: ["US"],
+    });
+  });
 });

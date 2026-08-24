@@ -1,14 +1,16 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import AdDetailModal from "../../../src/components/ads/AdDetailModal.jsx";
 import OriginalPreview from "../../../src/components/ads/OriginalPreview.jsx";
+import { fetchAdAiMeta } from "../../../src/services/api.js";
 
 vi.mock("../../../src/services/api", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     createShareLink: vi.fn(),
+    fetchAdAiMeta: vi.fn(),
     getAdCountry: vi.fn(async () => []),
     trackEvent: vi.fn(),
   };
@@ -17,6 +19,10 @@ vi.mock("../../../src/services/api", async (importOriginal) => {
 vi.mock("../../../src/services/adPdf", () => ({
   downloadAdAsPdf: vi.fn(),
 }));
+
+beforeEach(() => {
+  fetchAdAiMeta.mockReset();
+});
 
 const transparencyTextAd = {
   id: 18,
@@ -49,7 +55,58 @@ const transparencyVideoAd = {
 
 describe("Google Transparency detail media", () => {
   it("shows the AI-filtered result indicator only for AI-filtered searches", () => {
-    const { rerender } = render(
+    const onAnalytics = vi.fn();
+    const aiTaggedAd = {
+      ...transparencyTextAd,
+      ai_meta: {
+        intent: ["conversion"],
+        hook: ["discount"],
+        offering: "luxury bags",
+      },
+    };
+    const { container, rerender } = render(
+      <AdDetailModal
+        ad={aiTaggedAd}
+        isAiFilteredResult
+        onClose={vi.fn()}
+        onAnalytics={onAnalytics}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    expect(screen.getByText("AI Analysed")).toBeInTheDocument();
+    expect(screen.getByLabelText("Intent: conversion")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hook: discount")).toBeInTheDocument();
+    expect(screen.queryByText(/Offering: luxury bags/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("AI ad signals")).toBeInTheDocument();
+    expect(fetchAdAiMeta).not.toHaveBeenCalled();
+    expect(container.querySelector(".rounded-2xl.shadow-2xl")).toHaveClass("overflow-hidden");
+    expect(screen.queryByRole("button", { name: "12 insights" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
+    expect(onAnalytics).toHaveBeenCalledWith(aiTaggedAd);
+
+    rerender(
+      <AdDetailModal
+        ad={aiTaggedAd}
+        isAiFilteredResult={false}
+        onClose={vi.fn()}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    expect(screen.queryByText("AI Analysed")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Intent: conversion")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Hook: discount")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "12 insights" })).not.toBeInTheDocument();
+  });
+
+  it("loads Intent and Hook when the search card omitted inline AI metadata", async () => {
+    fetchAdAiMeta.mockResolvedValueOnce({
+      intent: ["conversion"],
+      hook: ["comparison", "social_proof"],
+    });
+
+    render(
       <AdDetailModal
         ad={transparencyTextAd}
         isAiFilteredResult
@@ -58,18 +115,17 @@ describe("Google Transparency detail media", () => {
       />,
     );
 
-    expect(screen.getByText("AI Refined")).toBeInTheDocument();
-
-    rerender(
-      <AdDetailModal
-        ad={transparencyTextAd}
-        isAiFilteredResult={false}
-        onClose={vi.fn()}
-        guest={{ showGuestWarning: vi.fn(() => false) }}
-      />,
+    expect(await screen.findByLabelText("Intent: conversion")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hook: comparison")).toHaveAttribute(
+      "title",
+      "Hook: comparison, social proof",
     );
-
-    expect(screen.queryByText("AI Refined")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Hook: comparison, social proof")).not.toBeInTheDocument();
+    expect(fetchAdAiMeta).toHaveBeenCalledWith(expect.objectContaining({
+      network: "google",
+      adId: "CR18",
+      internalId: null,
+    }));
   });
 
   it("disables Advanced Analytics without invoking its navigation callback", () => {

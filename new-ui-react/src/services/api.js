@@ -13,6 +13,9 @@ const PAS_API_BASE = import.meta.env.VITE_PAS_API_BASE_URL || "";
 import { disableEnvAuthFallback, getAuthToken, markFiltersForExpiry } from '../hooks/useAuth';
 const getPASToken = () => getAuthToken();
 const COMPETITOR_API_BASE = import.meta.env.VITE_NODE_API_URL || "http://localhost:5000/api";
+const AD_AI_META_CACHE_TTL_MS = 5 * 60 * 1000;
+const AD_AI_META_CACHE_MAX = 200;
+const adAiMetaCache = new Map();
 
 // ─── 401 Handler ─────────────────────────────────────────────────────────────
 // Called whenever any API response returns 401. Clears auth state and redirects.
@@ -106,6 +109,60 @@ export const fetchPlansCatalog = async () => {
     const json = await res.json();
     return json.data || null;
   } catch (_e) {
+    return null;
+  }
+};
+
+/**
+ * Read the small AI metadata object used by AI-labelled detail surfaces.
+ * Google requires its internal ES id; other platforms use the public ad id.
+ */
+export const fetchAdAiMeta = async ({ network, adId, internalId = null, signal } = {}) => {
+  const normalizedNetwork = String(network || '').trim().toLowerCase();
+  if (!normalizedNetwork || adId == null || adId === '') return null;
+
+  const useInternalId = normalizedNetwork === 'google'
+    && internalId != null
+    && String(internalId).trim() !== '';
+  const lookupId = String(useInternalId ? internalId : adId);
+  const cacheKey = `${normalizedNetwork}:${useInternalId ? 'internal' : 'public'}:${lookupId}`;
+  const cached = adAiMetaCache.get(cacheKey);
+  if (cached?.expiresAt > Date.now()) {
+    // Refresh insertion order so the bounded map also acts as a small LRU.
+    adAiMetaCache.delete(cacheKey);
+    adAiMetaCache.set(cacheKey, cached);
+    return cached.value;
+  }
+  if (cached) adAiMetaCache.delete(cacheKey);
+
+  const params = new URLSearchParams({ platform: normalizedNetwork });
+  params.set(useInternalId ? 'internal_id' : 'ad_id', lookupId);
+
+  try {
+    const res = await fetch(`${PAS_API_BASE}/api/v1/common/getAdCategory?${params.toString()}`, {
+      headers: {
+        ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+      },
+      signal,
+    });
+    await checkFor401(res);
+    if (!res.ok) return null;
+    const payload = await res.json();
+    const aiMeta = payload?.ai_meta ?? payload?.data?.ai_meta ?? null;
+    if (!aiMeta || typeof aiMeta !== 'object' || Array.isArray(aiMeta)) return null;
+
+    // Bound the session cache so repeated modal opens avoid duplicate ES reads
+    // without allowing long browsing sessions to grow memory indefinitely.
+    if (adAiMetaCache.size >= AD_AI_META_CACHE_MAX) {
+      adAiMetaCache.delete(adAiMetaCache.keys().next().value);
+    }
+    adAiMetaCache.set(cacheKey, {
+      value: aiMeta,
+      expiresAt: Date.now() + AD_AI_META_CACHE_TTL_MS,
+    });
+    return aiMeta;
+  } catch (error) {
+    if (error?.name === 'AbortError') return null;
     return null;
   }
 };
@@ -483,14 +540,17 @@ export const mapAdToCard = (raw) => {
   const isGoogleTransparency = resolvedNetwork === 'google' && Number(raw.platform) === 18;
   const isTikTok = resolvedNetwork.toLowerCase() === 'tiktok' || !!raw.video_cover;
   const mappedAdType = mapAdType(raw.type);
+  const nasVideoPath = typeof raw.nas_video_url === 'string' ? raw.nas_video_url.trim() : '';
+  const hasUsableNasVideo = nasVideoPath
+    && !/defaultimage\.(?:jpe?g|png|gif|mp4)$/i.test(nasVideoPath);
   // NAS-cached copy of the creative — used as the primary source when present
   // (and the base URL is configured). `liveVideoUrl` is the live CDN URL the
   // ad shipped with; it's the primary when there's no NAS copy and the runtime
   // fallback when the NAS copy is missing or 410s/expires. Keep all three views
   // (MasonryCard, AdDetailModal, AnalyticsModal) resolving through these two so
   // their video sources never diverge.
-  const nasVideoUrl = (raw.nas_video_url && NAS_VIDEO_BASE_URL)
-    ? `${NAS_VIDEO_BASE_URL}${raw.nas_video_url.startsWith('/') ? '' : '/'}${raw.nas_video_url}`
+  const nasVideoUrl = (hasUsableNasVideo && NAS_VIDEO_BASE_URL)
+    ? `${NAS_VIDEO_BASE_URL}${nasVideoPath.startsWith('/') ? '' : '/'}${nasVideoPath}`
     : '';
   const liveVideoUrl = isGoogleTransparency
     ? resolveNasUrl(raw.video_url_original || raw.video_url || '')
@@ -797,6 +857,21 @@ export const mapAdToCard = (raw) => {
     builtWith: raw.built_with || null,
     builtWithFunnel: raw.built_with_analytics_tracking || null,
     affiliateData: raw.affiliate_data || null,
+    // Preserve AI metadata for lightweight surfaces such as AdDetailModal.
+    // Most indices expose `ai`; production Facebook retains `ai_meta`.
+    ai_meta: (() => {
+      const value = raw.ai_meta ?? raw.aiMeta ?? raw.ai ?? null;
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+      if (typeof value !== 'string' || !value.trim()) return null;
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? parsed
+          : null;
+      } catch {
+        return null;
+      }
+    })(),
     marketPlatformUrls: (() => {
       const v = raw.market_platform_urls;
       if (!v) return null;
