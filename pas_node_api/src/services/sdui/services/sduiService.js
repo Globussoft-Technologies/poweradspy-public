@@ -17,7 +17,7 @@ const ADMOB_PLATFORM_OPTION = {
   icon_type: 'url',
 };
 
-const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app', 'ad_type', 'admob_poster_intelligence'];
+const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app', 'admob_source_app', 'ad_type', 'admob_poster_intelligence'];
 const ADMOB_FILTER_ID_ALIASES = {
   source_filter: 'source_filter',
   admob_network_filter: 'admob_network_filter',
@@ -568,7 +568,14 @@ async function prepareAdmobSidebar(config) {
     })),
     sidebar: (config.sidebar || []).map((doc) => {
       if (doc._id === 'admob_network') hasAdmobNetworkDocument = true;
-      if (doc._id === 'source_app') hasSourceAppDocument = true;
+      // The admin panel's persisted, manually-curated Source App doc uses the
+      // id 'admob_source_app' (kept distinct from the never-persisted
+      // synthetic 'source_app' template below). Recognizing only 'source_app'
+      // here meant the curated doc was silently dropped from the AdMob-scoped
+      // sidebar (it isn't in ADMOB_SIDEBAR_IDS's original list) and replaced
+      // by an auto-generated doc built straight from live SQL data, bypassing
+      // the admin's curation entirely.
+      if (doc._id === 'source_app' || doc._id === 'admob_source_app') hasSourceAppDocument = true;
       if (!ADMOB_SIDEBAR_IDS.includes(doc._id)) return doc;
 
       const filters = (doc.filters || []).map((filter) => ({

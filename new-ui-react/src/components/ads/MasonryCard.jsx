@@ -1422,21 +1422,26 @@ const MasonryCard = ({
             <EyeOff size={13} className="text-white/40" />
             Hide this ad
           </button>
-          <button
-            onClick={() => {
-              if (guest?.isRestricted || guest?.isPublicLanding) {
-                guest?.showGuestWarning?.("Please login to hide advertisers");
+          {/* AdMob has no concept of an "advertiser" entity to hide by —
+              its ads are keyed by app/network, not a post_owner like other
+              platforms — so this option is meaningless there. */}
+          {!isAdmob && (
+            <button
+              onClick={() => {
+                if (guest?.isRestricted || guest?.isPublicLanding) {
+                  guest?.showGuestWarning?.("Please login to hide advertisers");
+                  setShowHideMenu(false);
+                  return;
+                }
+                onHideAdvertiser?.(ad);
                 setShowHideMenu(false);
-                return;
-              }
-              onHideAdvertiser?.(ad);
-              setShowHideMenu(false);
-            }}
-            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-white/70 hover:bg-white/5 hover:text-white transition-colors text-left"
-          >
-            <EyeOff size={13} className="text-white/40" />
-            Hide advertiser
-          </button>
+              }}
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-white/70 hover:bg-white/5 hover:text-white transition-colors text-left"
+            >
+              <EyeOff size={13} className="text-white/40" />
+              Hide advertiser
+            </button>
+          )}
         </div>,
         document.body,
       )}

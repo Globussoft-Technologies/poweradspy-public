@@ -695,17 +695,21 @@ const AdCard = ({
                       <EyeOff size={12} />
                       Hide this ad
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowMenu(false);
-                        onHideAdvertiser?.(ad);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-red-400 hover:opacity-80 transition-colors"
-                    >
-                      <UserX size={12} />
-                      Hide advertiser
-                    </button>
+                    {/* AdMob has no advertiser entity to hide by — its ads are
+                        keyed by app/network, not a post_owner. */}
+                    {platform !== "admob" && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowMenu(false);
+                          onHideAdvertiser?.(ad);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-red-400 hover:opacity-80 transition-colors"
+                      >
+                        <UserX size={12} />
+                        Hide advertiser
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

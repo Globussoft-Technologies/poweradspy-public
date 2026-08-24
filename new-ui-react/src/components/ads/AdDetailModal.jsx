@@ -2106,33 +2106,39 @@ const AdDetailModal = ({
                       <Eye size={13} className="text-white/40" />
                       Unhide this ad
                     </button>
-                    <button
-                      onClick={() => {
-                        onHideAdvertiser?.(ad);
-                        setShowHideMenu(false);
-                        onClose();
-                      }}
-                      className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-white/70 hover:bg-white/5 hover:text-white transition-colors text-left"
-                    >
-                      <EyeOff size={13} className="text-white/40" />
-                      Hide advertiser
-                    </button>
+                    {/* AdMob has no advertiser entity to hide by — its ads
+                        are keyed by app/network, not a post_owner. */}
+                    {!isAdmob && (
+                      <button
+                        onClick={() => {
+                          onHideAdvertiser?.(ad);
+                          setShowHideMenu(false);
+                          onClose();
+                        }}
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-white/70 hover:bg-white/5 hover:text-white transition-colors text-left"
+                      >
+                        <EyeOff size={13} className="text-white/40" />
+                        Hide advertiser
+                      </button>
+                    )}
                   </>
                 )}
               </>
             ) : (
               <>
-                <button
-                  onClick={() => {
-                    onHideAdvertiser?.(ad);
-                    setShowHideMenu(false);
-                    onClose();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-white/70 hover:bg-white/5 hover:text-white transition-colors text-left"
-                >
-                  <EyeOff size={13} className="text-white/40" />
-                  Hide advertiser
-                </button>
+                {!isAdmob && (
+                  <button
+                    onClick={() => {
+                      onHideAdvertiser?.(ad);
+                      setShowHideMenu(false);
+                      onClose();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-white/70 hover:bg-white/5 hover:text-white transition-colors text-left"
+                  >
+                    <EyeOff size={13} className="text-white/40" />
+                    Hide advertiser
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     onHideAd?.(ad);
