@@ -2166,6 +2166,16 @@ const App = () => {
       dispatch(setSpecificPlatforms(pls));
     }
 
+    // This click is meaningful even when the selected period contains zero ads,
+    // so record the Project action independently of any subsequent ad view.
+    trackProductEvent('project_recent_activity_selected', {
+      filter_name: `project_recent_activity_${period}`,
+      entry_point: 'projects',
+      feature_name: 'competitor_recent_activity',
+      ...getNetworkContext(pls),
+      request_context: 'search',
+    });
+
     handleSearch(advertiserName, "advertiser", undefined, { entryPoint: 'projects' });
     // forceTrack: "Last Month" etc. compute the same date-based range no
     // matter which advertiser row was clicked, so a second click (different

@@ -20,6 +20,7 @@ import { getAiColorLabel } from "../../utils/aiColorPalette";
 import { COUNTRY_NAMES } from "../../utils/countries";
 import { getDashboardAdNavigation } from "../../utils/dashboardAdNavigation";
 import { hasActiveAiFilters } from "../../utils/aiQuickFilterPresets";
+import { trackAdAction } from "../../utils/googleAnalytics";
 
 // Env kill-switch for the "Total Ads: X" count shown next to the filter chips
 // on every search. Set VITE_SHOW_TOTAL_ADS_COUNT=false to hide it; any other
@@ -702,6 +703,17 @@ const AdGrid = ({
       guest?.showGuestWarning?.("Please login to view ad details");
       return;
     }
+    const network = String(ad?.network || ad?.platform || ad?.badgeNetwork || "unknown")
+      .trim()
+      .toLowerCase();
+    trackAdAction("ad_viewed", {
+      entry_point: "ad_card",
+      feature_name: "ad_details",
+      network,
+      network_scope: "single",
+      platform: network,
+      request_context: "ad_open",
+    });
     setSelectedAd(ad);
   }, [guest]);
   const [showAllChips, setShowAllChips] = useState(false);
@@ -1360,7 +1372,7 @@ const AdGrid = ({
               previewMode ? (
                 <div
                   className="h-full cursor-pointer overflow-hidden"
-                  onClick={() => setSelectedAd(item)}
+                  onClick={() => handleCardClick(item)}
                 >
                   <OriginalPreview ad={item} fillWidth />
                 </div>
@@ -1447,12 +1459,12 @@ const AdGrid = ({
           guest={guest}
           onPrev={() => {
             if (selectedAdNavigation.previous) {
-              setSelectedAd(selectedAdNavigation.previous);
+              handleCardClick(selectedAdNavigation.previous);
             }
           }}
           onNext={() => {
             if (selectedAdNavigation.next) {
-              setSelectedAd(selectedAdNavigation.next);
+              handleCardClick(selectedAdNavigation.next);
             }
           }}
           hasPrev={Boolean(selectedAdNavigation.previous)}
