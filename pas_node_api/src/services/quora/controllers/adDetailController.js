@@ -115,6 +115,11 @@ async function getAdDetails(req, db, logger) {
           if (!adData.destination_url && src['quora_ad_meta_data.destination_url']) adData.destination_url = src['quora_ad_meta_data.destination_url'];
           if (src['quora_ad_domain.domain_registered_date'] !== undefined) adData.domain_registered_date = src['quora_ad_domain.domain_registered_date'];
           if (src['quora_ad.days_running'] !== undefined) adData.days_running = src['quora_ad.days_running'];
+          // Likes/comments/shares: ES holds the current scrape's totals; the SQL
+          // quora_ad columns (seeded above via the spread) can lag behind it.
+          if (src['quora_ad.likes']    !== undefined) adData.likes   = src['quora_ad.likes'];
+          if (src['quora_ad.comments'] !== undefined) adData.comment = src['quora_ad.comments'];
+          if (src['quora_ad.shares']   !== undefined) adData.share   = src['quora_ad.shares'];
           if (src['quora.category'] !== undefined) adData.category = src['quora.category'];
           if (src['quora.subCategory'] !== undefined) adData.subCategory = src['quora.subCategory'];
 

@@ -499,6 +499,12 @@ class QuoraSearchQueryBuilder {
 QuoraSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'quora_ad.id',
   'quora_ad.days_running',
+  // Likes/comments/shares: ES holds the current scrape's totals; the SQL quora_ad
+  // columns can lag behind (same staleness pattern as days_running above). Fetched
+  // here so search results can overlay them over the SQL-sourced row.
+  'quora_ad.likes',
+  'quora_ad.comments',
+  'quora_ad.shares',
   'lang_detect',
   'new_nas_image_url',
   'quora_ad.type',

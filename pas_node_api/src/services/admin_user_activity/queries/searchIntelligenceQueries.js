@@ -855,7 +855,7 @@ async function fetchAdsCountByNetworkDate(elastic, searchValue, searchType, scra
         body: { size: 0, track_total_hits: false, query: { bool: { must: [searchClause] } }, aggs },
       };
 
-      console.log("queiressss",JSON.stringify(esQuery));
+      logger?.info?.(`[fetchAdsCountByNetworkDate] ES query for "${searchValue}" on ${network}`, { network, index: indexName, esQuery });
       const esResult = await withLimit(platformLower, () => platformElastic.search(esQuery), ES_MAX_CONCURRENT_PER_NETWORK);
       const resultAggs = esResult.aggregations || esResult.body?.aggregations || {};
 

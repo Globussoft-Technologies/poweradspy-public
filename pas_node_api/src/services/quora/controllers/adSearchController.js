@@ -67,7 +67,10 @@ async function enrichAndFilterRows(rows, db, esIndex, typeField, nasField) {
       body: {
         query: { terms: { 'quora_ad.id': ids.map(Number) } },
         size: ids.length,
-        _source: [nasField, typeField, 'quora_ad.id'],
+        // Likes/comments/shares fetched alongside the existing NAS/type fields so
+        // favorites/hidden rows get the same ES-over-SQL overlay as regular search
+        // results — the SQL quora_ad columns can lag behind ES's current totals.
+        _source: [nasField, typeField, 'quora_ad.id', 'quora_ad.likes', 'quora_ad.comments', 'quora_ad.shares'],
       },
     });
     const hits = result.hits || result.body?.hits;
@@ -76,6 +79,11 @@ async function enrichAndFilterRows(rows, db, esIndex, typeField, nasField) {
       const src = esMap.get(String(row.ad_id)) || {};
       const adType = src[typeField] || row.type || '';
       const nasUrl = src[nasField] || '';
+
+      if (src['quora_ad.likes']    !== undefined) row.likes   = src['quora_ad.likes'];
+      if (src['quora_ad.comments'] !== undefined) row.comment = src['quora_ad.comments'];
+      if (src['quora_ad.shares']   !== undefined) row.share   = src['quora_ad.shares'];
+
       if (adType === 'IMAGE') {
         if (nasUrl) {
           row.image_video_url = nasUrl;
@@ -294,6 +302,12 @@ async function searchAds(req, db, logger) {
         // filter (e.g. "Learn More" filter returning an ad showing "Continue reading").
         // Fall back to the SQL value only when ES has none.
         call_to_action: src['quora_call_to_action.call_to_action'] || ad.call_to_action || null,
+        // Likes/comments/shares: prefer ES `quora_ad.likes/comments/shares` — it holds
+        // the current scrape's totals, while the SQL quora_ad columns (seeded via the
+        // spread above) can lag. Fall back to the SQL value only when ES has none.
+        likes:   src['quora_ad.likes']    !== undefined ? src['quora_ad.likes']    : ad.likes,
+        comment: src['quora_ad.comments'] !== undefined ? src['quora_ad.comments'] : ad.comment,
+        share:   src['quora_ad.shares']   !== undefined ? src['quora_ad.shares']   : ad.share,
         // Destination URL: the quora_ad_meta_data insert is deferred in the Node
         // pipeline, so SQL is empty for API-ingested ads while ES has it. Overlay the
         // ES value onto the top-level field the frontend reads (ad.destinationUrl) —
