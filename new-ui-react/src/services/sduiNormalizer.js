@@ -10,7 +10,13 @@
  */
 function normalizePlatformApplicability(value) {
     if (!value || value === 'all') return 'all';
-    if (Array.isArray(value)) return value;
+    if (Array.isArray(value)) {
+        // The SDUI editor can persist the wildcard as ["all"]; collapse that
+        // to the runtime wildcard so visibility checks treat it universally.
+        const hasWildcard = value.some((item) => String(item).trim().toLowerCase() === 'all');
+        if (hasWildcard) return 'all';
+        return value;
+    }
     return [value];
 }
 

@@ -942,30 +942,6 @@ const App = () => {
     }
   }, [dispatch, sdui.sortBy, sortTabs, ui.activeTab]);
 
-  // Derive primary/dropdown split from config: options with primary:true are inline tabs,
-  // rest go in the dropdown. Falls back to hardcoded labels if config has no primary flag.
-  const { PRIMARY_SORT_LABELS, DROPDOWN_SORT_LABELS } = useMemo(() => {
-    if (sortTabs.length === 0) {
-      return { PRIMARY_SORT_LABELS: [], DROPDOWN_SORT_LABELS: [] };
-    }
-
-    const hasPrimaryFlag = sortTabs.some((o) => o.primary === true);
-    if (hasPrimaryFlag) {
-      const primary = sortTabs.filter((o) => o.primary).map((o) => (o.label ?? "").toLowerCase());
-      const dropdown = sortTabs.filter((o) => !o.primary).map((o) => (o.label ?? "").toLowerCase());
-      return { PRIMARY_SORT_LABELS: primary, DROPDOWN_SORT_LABELS: dropdown };
-    }
-
-    // No primary flag in config — use all option labels split by hardcoded known-primary set
-    const knownPrimary = new Set(["newest", "impressions", "popularity"]);
-    const primary = sortTabs.map((o) => (o.label ?? "").toLowerCase()).filter((l) => knownPrimary.has(l));
-    const dropdown = sortTabs.map((o) => (o.label ?? "").toLowerCase()).filter((l) => !knownPrimary.has(l));
-    return {
-      PRIMARY_SORT_LABELS: primary.length > 0 ? primary : ["newest", "impressions", "popularity"],
-      DROPDOWN_SORT_LABELS: dropdown.length > 0 ? dropdown : ["newest", "ad running days", "domain registration date"],
-    };
-  }, [sortTabs]);
-
   const allPlatformValues = useMemo(() => {
     if (platformOptions.length > 0)
       return platformOptions.map((opt) => opt.value ?? opt.label);
@@ -2532,11 +2508,9 @@ const App = () => {
         isFilterRestricted={isFilterRestricted}
         onDateRestricted={() => dispatch(openModal('isPricingModalOpen'))}
         onSortRestricted={() => dispatch(openModal('isPricingModalOpen'))}
-        PRIMARY_SORT_LABELS={PRIMARY_SORT_LABELS}
         guest={guest}
         showOnlyFavourites={ui.showSavedAdsPage}
         onShowFavourites={() => dispatch(setShowSavedAdsPage(!ui.showSavedAdsPage))}
-        DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}
         activeTab={ui.activeTab}
       />
 
@@ -2807,8 +2781,6 @@ const App = () => {
             onAdTypeRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onAiFilterRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onGuestLimit={() => dispatch(openModal('isPricingModalOpen'))}
-            PRIMARY_SORT_LABELS={PRIMARY_SORT_LABELS}
-            DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}
             hiddenCount={hiddenCount}
             isSearchActive={!!(ui.searchQuery && ui.searchQuery.trim() && ui.searchQuery !== 'NA')}
             closeDetailSignal={closeDetailSignal}

@@ -12,7 +12,7 @@ import Masonry from "./Masonry";
 import MasonryCard from "./MasonryCard";
 import OriginalPreview from "./OriginalPreview";
 import AdDetailModal from "./AdDetailModal";
-import AdFilterBar, { resolveSortPlanAccessId } from "./AdFilterBar";
+import AdFilterBar, { resolveActiveSortLabel, resolveSortPlanAccessId } from "./AdFilterBar";
 import AiQuickFilters from "./AiQuickFilters";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
@@ -48,6 +48,97 @@ const formatCountryChipLabel = (filterId, label) => {
     .replace(/[_\s-]+/g, " ")
     .trim();
   return normalized === "reunion" ? "R\u00e9union (France)" : label;
+};
+
+const SORT_CHIP_VALUE_ALIASES = {
+  newest: "created_at",
+  newest_sort: "created_at",
+  post_date: "created_at",
+  "-created_at": "created_at",
+  popular: "popularity_score",
+  popularity: "popularity_score",
+  "-popularity_score": "popularity_score",
+  impression: "impressions",
+  "-impressions": "impressions",
+  "ad running days": "running_days",
+  "running longest": "running_days",
+  "days running": "running_days",
+  running_longest: "running_days",
+  longest_running: "running_days",
+  days_running: "running_days",
+  "-running_days": "running_days",
+  "domain registration date": "domain_reg_date",
+  "domain reg date": "domain_reg_date",
+  domain: "domain_reg_date",
+  domain_date: "domain_reg_date",
+  domain_sort: "domain_reg_date",
+  domain_reg_sort: "domain_reg_date",
+  "-domain_reg_date": "domain_reg_date",
+};
+
+const normalizeSortChipValue = (value) => {
+  const normalized = String(value ?? "").toLowerCase().trim();
+  return SORT_CHIP_VALUE_ALIASES[normalized] || normalized.replace(/[\s-]+/g, "_");
+};
+
+const LAST_SEEN_SORT_VALUES = new Set([
+  "newest",
+  "newest_sort",
+  "post_date",
+  "created_at",
+  "-created_at",
+  "latest",
+  "new",
+]);
+
+const SORT_LABEL_MAP = {
+  popular: "Popularity", popularity: "Popularity",
+  popularity_score: "Popularity", "-popularity_score": "Popularity",
+  impressions: "Impressions", impression: "Impressions",
+  "-impressions": "Impressions",
+  likes: "Likes", like: "Likes", "-engagement_score": "Likes",
+  comments: "Comments", comment: "Comments",
+  shares: "Shares", share: "Shares",
+  hits: "Hits", hit: "Hits",
+  last_seen: "Last Seen", lastseen: "Last Seen", "-last_seen_at": "Last Seen",
+  running_days: "Ad Running Days", days_running: "Ad Running Days",
+  running_longest: "Ad Running Days", longest_running: "Ad Running Days",
+  "-running_days": "Ad Running Days", "ad running days": "Ad Running Days",
+  domain: "Domain Registration Date", domain_date: "Domain Registration Date",
+  domain_reg_date: "Domain Registration Date", domain_sort: "Domain Registration Date",
+  domain_reg_sort: "Domain Registration Date", "-domain_reg_date": "Domain Registration Date",
+  "domain registration date": "Domain Registration Date",
+  ad_budget: "Ad Budget", adbudget: "Ad Budget",
+  budget: "Ad Budget", avg_ad_budget: "Ad Budget",
+};
+
+export const resolveSortChipLabel = (value, sortTabs = [], filterOptionLabels = {}) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const normalized = normalizeSortChipValue(raw);
+  // Keep the existing product copy: "Newest" sorts by last_seen in backend payloads.
+  if (LAST_SEEN_SORT_VALUES.has(raw.toLowerCase()) || normalized === "created_at") {
+    return "Last Seen";
+  }
+
+  const configuredFromTabs = resolveActiveSortLabel(sortTabs, raw);
+  if (configuredFromTabs) return configuredFromTabs;
+
+  const labelSources = [
+    filterOptionLabels.sorting,
+    filterOptionLabels.sort_by,
+  ].filter(Boolean);
+  for (const labels of labelSources) {
+    const exact = labels[raw];
+    if (exact) return exact;
+    const normalizedMatch = Object.entries(labels).find(
+      ([candidate]) => normalizeSortChipValue(candidate) === normalized,
+    );
+    if (normalizedMatch?.[1]) return normalizedMatch[1];
+  }
+
+  return SORT_LABEL_MAP[raw.toLowerCase()] || SORT_LABEL_MAP[normalized] || raw;
 };
 
 /**
@@ -101,9 +192,7 @@ const AdGrid = ({
   onSortRestricted,
   onAdTypeRestricted,
   onAiFilterRestricted,
-  PRIMARY_SORT_LABELS,
   guest,
-  DROPDOWN_SORT_LABELS,
   onClearAll,
   hiddenCount = 0,
   isSearchActive = false,
@@ -162,36 +251,6 @@ const AdGrid = ({
     seen_btn_sort: "Ad Seen",
     post_date_btn_sort: "Post Date",
     domain_date_btn_sort: "Domain Reg.",
-  };
-
-  // Pretty labels for the active-sort chip. Backend stores opaque tokens
-  // like 'popularity_score' or '-created_at'; this maps them to the same
-  // wording the user just clicked on the sort tabs.
-  // The "Newest" tab sends '-created_at' / newest_sort, but the backend
-  // paramParsers on every platform actually sort by `last_seen` — so the
-  // chip says "Last Seen" instead of "Latest" to reflect what the ordering
-  // is keyed to (and stop ads with old post_dates looking out of order).
-  const SORT_LABEL_MAP = {
-    newest: "Last Seen", post_date: "Last Seen", new: "Last Seen",
-    "-created_at": "Last Seen", created_at: "Last Seen", latest: "Last Seen",
-    popular: "Popularity", popularity: "Popularity",
-    popularity_score: "Popularity", "-popularity_score": "Popularity",
-    impressions: "Impressions", impression: "Impressions",
-    "-impressions": "Impressions",
-    likes: "Likes", like: "Likes", "-engagement_score": "Likes",
-    comments: "Comments", comment: "Comments",
-    shares: "Shares", share: "Shares",
-    hits: "Hits", hit: "Hits",
-    last_seen: "Last Seen", lastseen: "Last Seen", "-last_seen_at": "Last Seen",
-    running_days: "Ad Running Days", days_running: "Ad Running Days",
-    running_longest: "Ad Running Days", longest_running: "Ad Running Days",
-    "-running_days": "Ad Running Days", "ad running days": "Ad Running Days",
-    domain: "Domain Reg. Date", domain_date: "Domain Reg. Date",
-    domain_sort: "Domain Reg. Date", domain_reg_sort: "Domain Reg. Date",
-    "-domain_reg_date": "Domain Reg. Date",
-    "domain registration date": "Domain Reg. Date",
-    ad_budget: "Ad Budget", adbudget: "Ad Budget",
-    budget: "Ad Budget", avg_ad_budget: "Ad Budget",
   };
 
   const RANGE_FILTER_KEYS = {
@@ -484,7 +543,7 @@ const AdGrid = ({
       }
       if (typeof value === "string" && value !== "" && value !== "NA") {
         if (key === "sorting") {
-          const pretty = SORT_LABEL_MAP[value.toLowerCase()] ?? value;
+          const pretty = resolveSortChipLabel(value, sortTabs, filterOptionLabels);
           otherChips.push({
             type: "chip",
             filterId: key,
@@ -517,6 +576,7 @@ const AdGrid = ({
     filterOptionLabels,
     filterCategoryLabels,
     expandedParent,
+    sortTabs,
   ]);
 
   const removeChip = (filterId, chipValue) => {
@@ -975,14 +1035,12 @@ const AdGrid = ({
             previewMode={previewMode}
             setPreviewMode={setPreviewMode}
             sortTabs={sortTabs}
-            PRIMARY_SORT_LABELS={PRIMARY_SORT_LABELS}
             onDateChange={onDateChange}
             isFilterRestricted={isFilterRestricted}
             onDateRestricted={onDateRestricted}
             onSortRestricted={onSortRestricted}
             onAdTypeRestricted={onAdTypeRestricted}
             guest={guest}
-            DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}
           />
           <AiQuickFilters
             document={aiFiltersDoc}
@@ -1119,47 +1177,6 @@ const AdGrid = ({
                 <span>{exportLoading ? "..." : "Export_ads"}</span>
               </button>
             </div>
-            {" "}
-            {sortTabs
-              .filter((t) => {
-                // Filter by platform_applicability
-                const applicability = t.platform_applicability;
-                if (Array.isArray(applicability) && applicability.length > 0) {
-                  const matches = activePlatforms.some((p) =>
-                    applicability.map((a) => a.toLowerCase()).includes(p.toLowerCase())
-                  );
-                  if (!matches) return false;
-                }
-                return (
-                  PRIMARY_SORT_LABELS.includes((t.label ?? "").toLowerCase()) ||
-                  PRIMARY_SORT_LABELS.includes((t.value ?? "").toLowerCase())
-                );
-              })
-              .map((tab) => {
-                const tabValue = tab.value ?? tab.label;
-                const tabLabel = tab.label ?? tab;
-                return (
-                  <button
-                    key={tabValue}
-                    disabled={activeTab === tabLabel}
-                    onClick={() => {
-                      if (guest?.showGuestWarning("Please login to change sorting")) return;
-                      const planAccessId = resolveSortPlanAccessId(tabLabel, tabValue);
-                      if (planAccessId && isFilterRestricted?.(planAccessId)) {
-                        onSortRestricted?.();
-                        return;
-                      }
-                      setActiveTab(tabLabel);
-                      setSortBy(tabValue);
-                    }}
-                    className={`flex items-center gap-1 px-3 py-1.5 text-xs border border-white/10 2xl:text-[14px] bg-theme-card font-bold whitespace-nowrap transition-colors rounded-lg ${
-                      activeTab === tabLabel ? "text-[#6b99ff] cursor-default" : "text-theme-text hover:text-[#6b99ff]"
-                    }`}
-                  >
-                    {tabLabel}
-                  </button>
-                );
-              })}
           </div>
         </div>
       </div>

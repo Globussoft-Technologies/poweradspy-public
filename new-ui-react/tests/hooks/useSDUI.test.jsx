@@ -62,6 +62,13 @@ describe("useSDUI > initial load", () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it("bootstrap fetch bypasses stale cache so live SDUI wins", async () => {
+    fetchSpy.mockResolvedValue(makeConfig());
+    renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchSpy).toHaveBeenCalledWith({ skipCache: true });
+  });
+
   it("when no defaults flagged → activePlatforms = all option values", async () => {
     const cfg = makeConfig({
       navbar: [{
@@ -697,6 +704,13 @@ describe("useSDUI > visibility helpers", () => {
     expect(result.current.shouldShowFilter({ platform_applicability: "all" })).toBe(true);
   });
 
+  it("shouldShowFilter: ['all'] behaves like a wildcard", async () => {
+    fetchSpy.mockResolvedValue(makeConfig());
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.shouldShowFilter({ platform_applicability: ["all"] })).toBe(true);
+  });
+
   it("shouldShowFilter: PA matches activePlatform → true", async () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
@@ -733,7 +747,7 @@ describe("useSDUI > visibility helpers", () => {
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     act(() => { result.current.setActivePlatforms([]); });
-    expect(result.current.shouldShowFilter({ platform_applicability: ["foo"] })).toBe(true);
+    expect(result.current.shouldShowFilter({ platform_applicability: ["foo"] })).toBe(false);
   });
 
   it("shouldShowFilter: matrix restriction allows group_id", async () => {
@@ -741,6 +755,16 @@ describe("useSDUI > visibility helpers", () => {
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     expect(result.current.shouldShowFilter({ _id: "news_feed" })).toBe(true);
+  });
+
+  it("shouldShowFilter: sorting group is not hidden by the platform matrix", async () => {
+    fetchSpy.mockResolvedValue(makeConfig());
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.shouldShowFilter({
+      group_id: "sorting",
+      platform_applicability: "all",
+    })).toBe(true);
   });
 
   it("shouldShowFilter: matrix restriction blocks unlisted group_id", async () => {
@@ -759,6 +783,20 @@ describe("useSDUI > visibility helpers", () => {
     })).toBe(true);
     expect(result.current.shouldShowFilter({
       filters: [{ platform_applicability: ["reddit"] }],
+    })).toBe(false);
+  });
+
+  it("shouldShowFilter: child option-level all does not override child filter applicability", async () => {
+    sessionStorage.setItem("sdui.activePlatforms", JSON.stringify(["youtube"]));
+    fetchSpy.mockResolvedValue(makeConfig());
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.shouldShowFilter({
+      filters: [{
+        platform_applicability: ["facebook"],
+        options: [{ platform_applicability: "all" }],
+      }],
     })).toBe(false);
   });
 

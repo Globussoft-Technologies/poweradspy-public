@@ -234,7 +234,7 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
     expect(sourceApp.filters[0].options.length).toBeGreaterThan(0);
   });
 
-  it("keeps shared ad_position options and adds AdMob live values without widening other platforms", async () => {
+  it("uses AdMob live ad_position values without widening other platforms", async () => {
     mockAdmobSql();
     const config = {
       navbar: [{
@@ -267,9 +267,9 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
     const adPosition = out.sidebar.find((doc) => doc._id === "ad_position");
     const values = adPosition.filters[0].options.map((option) => option.value);
 
-    expect(values).toEqual(expect.arrayContaining(["FEED", "SIDE", "VIDEOFEED", "middle", "bottom"]));
+    expect(values).toEqual(expect.arrayContaining(["middle", "bottom"]));
+    expect(values).not.toEqual(expect.arrayContaining(["FEED", "SIDE", "VIDEOFEED"]));
     expect(values).not.toContain("instagram");
-    expect(adPosition.filters[0].options.find((option) => option.value === "FEED").platform_applicability).toBe("all");
   });
 
   it("when matrix is empty, sidebar docs pass through unchanged", async () => {
@@ -291,7 +291,7 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
             { platform_applicability: ["youtube"], options: [{ id: "o2" }] },  // dropped
             { platform_applicability: "all", options: [{ id: "o3" }] },        // kept (common)
             { /* no platform_applicability */ options: [{ id: "o4" }] },       // kept (common)
-            { platform_applicability: "not-an-array", options: [{ id: "o5" }] },// kept (non-array branch)
+            { platform_applicability: "facebook", options: [{ id: "o5" }] },   // kept (scalar branch)
           ],
         },
       ],
@@ -299,6 +299,51 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
     const out = await svc.filterConfigByPlatforms(config, ["facebook"]);
     const optionIds = out.sidebar[0].filters.flatMap(f => f.options.map(o => o.id));
     expect(optionIds).toEqual(["o1", "o3", "o4", "o5"]);
+  });
+
+  it("drops a filter when filter-level applicability excludes the platform even if an option is all", async () => {
+    const config = {
+      navbar: [
+        {
+          _id: "platforms",
+          filters: [{ _id: "platform_selector", platform_applicability: "all" }],
+        },
+        {
+          _id: "ad_type",
+          filters: [{
+            _id: "ad_types",
+            platform_applicability: ["facebook"],
+            options: [
+              { id: "o1", platform_applicability: "all" },
+              { id: "o2", platform_applicability: ["facebook"] },
+            ],
+          }],
+        },
+      ],
+    };
+
+    const out = await svc.filterConfigByPlatforms(config, ["youtube"]);
+    expect(out.navbar.find((doc) => doc._id === "ad_type")).toBeUndefined();
+  });
+
+  it("treats ['all'] as universal during platform filtering", async () => {
+    const config = {
+      navbar: [
+        {
+          _id: "sorting",
+          filters: [{
+            _id: "sort_by",
+            options: [
+              { id: "o1", platform_applicability: ["all"] },
+              { id: "o2", platform_applicability: ["facebook"] },
+            ],
+          }],
+        },
+      ],
+    };
+
+    const out = await svc.filterConfigByPlatforms(config, ["google"]);
+    expect(out.navbar[0].filters[0].options.map((o) => o.id)).toEqual(["o1"]);
   });
 
   it("filters options within a filter by platform_applicability", async () => {

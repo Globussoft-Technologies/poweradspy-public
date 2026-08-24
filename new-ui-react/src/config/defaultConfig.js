@@ -154,6 +154,36 @@ export function getSDUIFallbackConfig() {
                     },
                 ],
             },
+            {
+                _id: 'ad_type',
+                config_type: 'navbar',
+                title: 'Ad Type',
+                // Keep Ad Type available only when SDUI falls back to this config.
+                rank: 4,
+                collapsed_by_default: false,
+                visible: true,
+                icon: { type: 'none', value: '' },
+                display_mode: 'dropdown',
+                filters: [
+                    {
+                        _id: 'ad_types',
+                        group_id: 'ad_type',
+                        label: 'Ad Type',
+                        type: 'multi_select',
+                        rank: 1,
+                        query_param: 'ad_type',
+                        visible: true,
+                        platform_applicability: 'all',
+                        options: [
+                            { _id: 'ad_image', label: 'Image', value: 'Image', rank: 1 },
+                            { _id: 'ad_video', label: 'Video', value: 'Video', rank: 2 },
+                            { _id: 'ad_carousel', label: 'Carousel', value: 'Carousel', rank: 3 },
+                            { _id: 'ad_story', label: 'Story', value: 'Story', rank: 4 },
+                            { _id: 'ad_reel', label: 'Reel', value: 'Reel', rank: 5 },
+                        ],
+                    },
+                ],
+            },
         ],
         sidebar: [
             {

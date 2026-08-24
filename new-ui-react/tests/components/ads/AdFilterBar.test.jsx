@@ -79,7 +79,20 @@ describe("resolveActiveSortLabel", () => {
 });
 
 const baseSdui = {
-  config: null,
+  config: {
+    sidebar: [{
+      filters: [{
+        _id: "ad_types",
+        options: [
+          { label: "Image", value: "Image" },
+          { label: "Video", value: "Video" },
+          { label: "Carousel", value: "Carousel" },
+          { label: "Story", value: "Story" },
+          { label: "Reel", value: "Reel" },
+        ],
+      }],
+    }],
+  },
   activePlatforms: [],
   selAdTypes: [],
   setSelAdTypes: vi.fn(),
@@ -100,7 +113,6 @@ const baseProps = {
   previewMode: false,
   setPreviewMode: vi.fn(),
   sortTabs: [],
-  PRIMARY_SORT_LABELS: [],
   isFilterRestricted: vi.fn(() => false),
   onAdTypeRestricted: vi.fn(),
 };
@@ -194,14 +206,11 @@ describe("AdFilterBar > platform tabs", () => {
 });
 
 describe("AdFilterBar > ad type filter dropdown", () => {
-  it("uses fallback AD_TYPE_OPTIONS when config not loaded", () => {
-    const { getByTestId, getByText } = render(<AdFilterBar {...baseProps} />);
-    fireEvent.click(getByTestId("filter-ic").closest("button"));
-    expect(getByText("Image")).toBeInTheDocument();
-    expect(getByText("Video")).toBeInTheDocument();
-    expect(getByText("Carousel")).toBeInTheDocument();
-    expect(getByText("Story")).toBeInTheDocument();
-    expect(getByText("Reel")).toBeInTheDocument();
+  it("hides Ad Type until SDUI provides options", () => {
+    const { queryByTestId } = render(
+      <AdFilterBar {...baseProps} sdui={{ ...baseSdui, config: null }} />,
+    );
+    expect(queryByTestId("filter-ic")).toBeNull();
   });
   it("reads ad_types options from config.sidebar", () => {
     const config = {
@@ -273,9 +282,9 @@ describe("AdFilterBar > ad type filter dropdown", () => {
     expect(getByText("TikOnly")).toBeInTheDocument();
     expect(queryByText("FBOnly")).toBeNull();
   });
-  it("platform_applicability non-array → included by default", () => {
+  it("platform_applicability string matches active platforms", () => {
     const config = {
-      sidebar: [{ filters: [{ _id: "ad_type", options: [{ label: "Quirky", platform_applicability: "unknown-string" }] }] }],
+      sidebar: [{ filters: [{ _id: "ad_type", options: [{ label: "Quirky", platform_applicability: "fb" }] }] }],
     };
     const { getByTestId, getByText } = render(
       <AdFilterBar {...baseProps} sdui={{ ...baseSdui, config, activePlatforms: ["FB"] }} />,
@@ -283,12 +292,24 @@ describe("AdFilterBar > ad type filter dropdown", () => {
     fireEvent.click(getByTestId("filter-ic").closest("button"));
     expect(getByText("Quirky")).toBeInTheDocument();
   });
+  it("filter-level platform_applicability hides Ad Type even when an option is all", () => {
+    const config = {
+      navbar: [{ filters: [{
+        _id: "ad_type",
+        platform_applicability: ["facebook"],
+        options: [{ label: "Image", value: "Image", platform_applicability: "all" }],
+      }] }],
+    };
+    const { queryByTestId } = render(
+      <AdFilterBar {...baseProps} sdui={{ ...baseSdui, config, activePlatforms: ["gdn"] }} />,
+    );
+    expect(queryByTestId("filter-ic")).toBeNull();
+  });
   it("config without sidebar/navbar arrays → uses defaults", () => {
-    const { getByTestId, getByText } = render(
+    const { queryByTestId } = render(
       <AdFilterBar {...baseProps} sdui={{ ...baseSdui, config: {} }} />,
     );
-    fireEvent.click(getByTestId("filter-ic").closest("button"));
-    expect(getByText("Image")).toBeInTheDocument();
+    expect(queryByTestId("filter-ic")).toBeNull();
   });
   it("first matching doc breaks the loop (won't pick second)", () => {
     const config = {
@@ -415,12 +436,10 @@ describe("AdFilterBar > ad type filter dropdown", () => {
     const config = {
       sidebar: [{ filters: [{ _id: "ad_types", options: [] }] }],
     };
-    const { getByTestId, getByText } = render(
+    const { queryByTestId } = render(
       <AdFilterBar {...baseProps} sdui={{ ...baseSdui, config }} />,
     );
-    fireEvent.click(getByTestId("filter-ic").closest("button"));
-    // f.options exists but length===0 → if-false branch → loop continues → no opts → fallback
-    expect(getByText("Image")).toBeInTheDocument();
+    expect(queryByTestId("filter-ic")).toBeNull();
   });
   it("config doc without filters array → (doc.filters || []) fallback (line 118)", () => {
     const config = {
@@ -613,7 +632,6 @@ describe("AdFilterBar > sort dropdown", () => {
     const { getByTestId, getByText } = render(
       <AdFilterBar {...baseProps}
         sortTabs={[{ label: "popularity", value: "popularity" }]}
-        DROPDOWN_SORT_LABELS={["popularity"]}
         sdui={{ ...baseSdui, setSortBy }}
         isFilterRestricted={isFilterRestricted}
         onSortRestricted={onSortRestricted} />,
@@ -637,7 +655,6 @@ describe("AdFilterBar > sort dropdown", () => {
     const { getByTestId, getByText } = render(
       <AdFilterBar {...baseProps}
         sortTabs={[{ label, value }]}
-        DROPDOWN_SORT_LABELS={[label.toLowerCase()]}
         sdui={{ ...baseSdui, setSortBy }}
         isFilterRestricted={isFilterRestricted}
         onSortRestricted={onSortRestricted} />,
@@ -663,28 +680,19 @@ describe("AdFilterBar > sort dropdown", () => {
     fireEvent.click(getByTestId("sliders-ic").closest("button"));
     expect(getByText("newest")).toBeInTheDocument();
   });
-  it("platform_applicability filters tabs by active platforms", () => {
+  it("renders the tabs it is given; platform filtering happens upstream", () => {
     const tabs = [
       { label: "FB-only", value: "fb_only", platform_applicability: ["Facebook"] },
       { label: "TT-only", value: "tt_only", platform_applicability: ["TikTok"] },
     ];
-    const { getByTestId, getByText, queryByText } = render(
+    const { getByTestId, getByText } = render(
       <AdFilterBar {...baseProps}
         sortTabs={tabs}
-        DROPDOWN_SORT_LABELS={["fb-only", "tt-only"]}
         sdui={{ ...baseSdui, activePlatforms: ["Facebook"] }} />,
     );
     fireEvent.click(getByTestId("sliders-ic").closest("button"));
     expect(getByText("FB-only")).toBeInTheDocument();
-    expect(queryByText("TT-only")).toBeNull();
-  });
-  it("uses DROPDOWN_SORT_LABELS when provided (non-empty)", () => {
-    const tabs = [{ label: "popularity", value: "pop" }];
-    const { getByTestId, getByText } = render(
-      <AdFilterBar {...baseProps} sortTabs={tabs} DROPDOWN_SORT_LABELS={["popularity"]} />,
-    );
-    fireEvent.click(getByTestId("sliders-ic").closest("button"));
-    expect(getByText("popularity")).toBeInTheDocument();
+    expect(getByText("TT-only")).toBeInTheDocument();
   });
   it("sortTabs.length > 0 but all filtered out by platform_applicability AND emergency fallback hits → shows all", () => {
     // Actually if filter rejects all, emergency fallback returns sortTabs (not filtered).
@@ -937,12 +945,12 @@ describe("AdFilterBar > isScrolled + hasActiveFilter combo (line 197)", () => {
   it("isScrolled=true + hasActiveFilter=true → 2xl:max-w-none branch", () => {
     const sdui = { ...baseSdui, filterValues: { country: ["US"] } };
     const { container } = render(<AdFilterBar {...baseProps} sdui={sdui} isScrolled />);
-    expect(container.innerHTML).toMatch(/2xl:max-w-none/);
+    expect(container.firstChild?.className).toMatch(/flex-nowrap px-1/);
   });
   it("isScrolled=false + hasActiveFilter=true → max-w-[400px] branch", () => {
     const sdui = { ...baseSdui, filterValues: { country: ["US"] } };
     const { container } = render(<AdFilterBar {...baseProps} sdui={sdui} isScrolled={false} />);
-    expect(container.innerHTML).toMatch(/max-w-\[400px\]/);
+    expect(container.firstChild?.className).toMatch(/flex-wrap px-3/);
   });
 });
 

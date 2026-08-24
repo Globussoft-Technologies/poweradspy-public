@@ -690,9 +690,36 @@ async function getSDUIConfig() {
  * - If applicability is an array → matches if at least one platform overlaps.
  */
 function matchesPlatform(applicability, platforms) {
+  const selectedPlatforms = (Array.isArray(platforms) ? platforms : [])
+    .map((platform) => String(platform).trim().toLowerCase())
+    .filter(Boolean);
+
   if (!applicability || applicability === 'all') return true;
-  if (!Array.isArray(applicability)) return true;
-  return applicability.some(p => platforms.includes(p));
+
+  const values = Array.isArray(applicability) ? applicability : [applicability];
+  const normalizedValues = values
+    .map((value) => String(value).trim().toLowerCase())
+    .filter(Boolean);
+
+  // Legacy SDUI payloads sometimes persisted the wildcard as ["all"].
+  if (normalizedValues.includes('all')) return true;
+
+  // An empty array is not a real applicability target, so keep it hidden.
+  if (normalizedValues.length === 0) return false;
+
+  // If the caller has no selected platforms, treat the option as visible.
+  if (selectedPlatforms.length === 0) return true;
+
+  return normalizedValues.some((platform) => selectedPlatforms.includes(platform));
+}
+
+function optionMatchesPlatform(option, platforms) {
+  if (!option) return false;
+  if (matchesPlatform(option.platform_applicability, platforms)) return true;
+
+  const nestedOptions = option.children || option.sub_options || option.options;
+  return Array.isArray(nestedOptions)
+    && nestedOptions.some((child) => optionMatchesPlatform(child, platforms));
 }
 
 /**
@@ -743,18 +770,26 @@ async function filterConfigByPlatforms(config, platforms) {
         const newDoc = { ...doc };
         if (newDoc.filters) {
           newDoc.filters = newDoc.filters
+            // Filter-level applicability is the hard boundary; option "All"
+            // only applies inside the parent filter's allowed platforms.
             .filter(f => matchesPlatform(f.platform_applicability, normalizedPlatforms))
             .map(f => {
               if (!f.options) return f;
               const newF = { ...f };
               newF.options = f.options
-              .filter(o => matchesPlatform(o.platform_applicability, normalizedPlatforms))
+              .filter(o => optionMatchesPlatform(o, normalizedPlatforms))
               .map(o => {
-                if (!o.children) return o;
+                const childKey = Array.isArray(o.children)
+                  ? 'children'
+                  : Array.isArray(o.sub_options)
+                    ? 'sub_options'
+                    : null;
+                if (!childKey) return o;
+                const childNodes = Array.isArray(o[childKey]) ? o[childKey] : [];
                 return {
                   ...o,
-                  children: o.children.filter(c =>
-                    matchesPlatform(c.platform_applicability, normalizedPlatforms)
+                  [childKey]: childNodes.filter(c =>
+                    optionMatchesPlatform(c, normalizedPlatforms)
                   ),
                 };
               });

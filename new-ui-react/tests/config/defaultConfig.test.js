@@ -27,6 +27,17 @@ describe("config/defaultConfig > getSDUIFallbackConfig", () => {
     expect(filter.type).toBe("autocomplete");
     expect(filter.suggestion_sources.length).toBeGreaterThan(0);
   });
+  it("navbar fallback includes the Ad Type filter", () => {
+    const doc = cfg.navbar.find((d) => d._id === "ad_type");
+    expect(doc).toBeDefined();
+    expect(doc.filters?.[0]?.options?.map((opt) => opt.label)).toEqual([
+      "Image",
+      "Video",
+      "Carousel",
+      "Story",
+      "Reel",
+    ]);
+  });
 });
 
 describe("config/defaultConfig > default export", () => {

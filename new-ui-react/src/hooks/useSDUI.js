@@ -395,7 +395,10 @@ export function useSDUI() {
         const load = async () => {
             try {
                 setLoading(true);
-                const cfg = await fetchSDUIConfig();
+                // Bootstrap should always prefer the live SDUI response.
+                // Cached config is still used as a failure fallback inside
+                // fetchSDUIConfig, but it should not win over a healthy API.
+                const cfg = await fetchSDUIConfig({ skipCache: true });
                 if (cancelled || configFetchSeqRef.current !== mySeq) return;
                 // Config controls what is visible, not which persisted filters
                 // remain applied. Only explicit user/auth flows may clear them.
@@ -873,14 +876,20 @@ export function useSDUI() {
     // 1. Normalises platform_applicability — handles both string and array.
     // 2. Also checks platformFilterMatrix — if the active platform restricts
     //    to specific filter groups, only those groups are shown.
+    const isWildcardPlatformApplicability = (pa) =>
+        pa === 'all' ||
+        (Array.isArray(pa) && pa.some((item) => normalizeStoredValue(item) === 'all'));
+
     const matchesPlatform = (pa, groupId) => {
         const platforms = activePlatformsRef.current.map(normalizeStoredValue);
         const matrix = platformFilterMatrixRef.current;
+        const isToolbarGroup = groupId === 'sorting';
+        const normalizedPa = isWildcardPlatformApplicability(pa) ? 'all' : pa;
 
         // Check platform_applicability (string or array)
-        if (pa && pa !== 'all') {
+        if (normalizedPa && normalizedPa !== 'all') {
             if (!platforms.length) return true;
-            const list = (Array.isArray(pa) ? pa : [pa]).map(normalizeStoredValue);
+            const list = (Array.isArray(normalizedPa) ? normalizedPa : [normalizedPa]).map(normalizeStoredValue);
             if (!list.some(p => platforms.includes(p))) return false;
             // Explicit platform_applicability matched — skip matrix check.
             // platform_applicability is the more specific rule and takes priority.
@@ -888,7 +897,10 @@ export function useSDUI() {
         }
 
         // Check platformFilterMatrix — platforms that have a whitelist
-        if (groupId && Object.keys(matrix).length > 0) {
+        // Toolbar groups such as `sorting` are intentionally omitted from the
+        // sidebar matrix. Keep them visible even when the matrix does not
+        // list the group.
+        if (groupId && Object.keys(matrix).length > 0 && !isToolbarGroup) {
             const restrictedPlatforms = platforms.filter(p => matrix[p]);
             if (restrictedPlatforms.length > 0) {
                 // Show filter only if at least one active platform allows it
@@ -899,27 +911,35 @@ export function useSDUI() {
         return true;
     };
 
+    const optionMatchesPlatform = (option) => {
+        if (!option) return false;
+        if (matchesPlatform(option.platform_applicability, null)) return true;
+        const nestedOptions = option.children || option.sub_options || option.options;
+        return Array.isArray(nestedOptions)
+            && nestedOptions.some((child) => optionMatchesPlatform(child));
+    };
+
+    const childFilterMatchesPlatform = (childFilter) => {
+        if (!childFilter) return false;
+        return matchesPlatform(childFilter.platform_applicability, childFilter.group_id || childFilter._id);
+    };
+
     const shouldShowFilter = useCallback((filter) => {
         if (!filter || filter.visible === false) return false;
 
         // If any child filter has platform_applicability, use that to decide visibility.
-        // If a child explicitly matches the active platform, show the section (skip matrix check).
-        // If no child matches, hide the section.
+        // Options are intentionally not considered here: option-level "All"
+        // can only narrow/render choices after the parent filter is allowed.
         if (filter.filters?.length > 0) {
-            const childPAs = filter.filters
-                .map(f => f.platform_applicability)
-                .filter(pa => pa && pa !== 'all');
-            if (childPAs.length > 0) {
-                const platforms = activePlatformsRef.current;
-                const anyChildMatches = childPAs.some(pa => {
-                    const list = (Array.isArray(pa) ? pa : [pa]).map(normalizeStoredValue);
-                    return list.some(p =>
-                        platforms.some(platform => normalizeStoredValue(platform) === p)
-                    );
-                });
-                if (!anyChildMatches) return false;
-                // A child explicitly declared this platform — skip matrix check
+            const childHasExplicitApplicability = filter.filters.some((child) =>
+                child?.platform_applicability && !isWildcardPlatformApplicability(child.platform_applicability)
+            );
+
+            if (filter.filters.some(childFilterMatchesPlatform)) {
                 return true;
+            }
+            if (childHasExplicitApplicability) {
+                return false;
             }
         }
 
@@ -928,7 +948,7 @@ export function useSDUI() {
 
     const shouldShowOption = useCallback((option) => {
         if (!option) return false;
-        return matchesPlatform(option.platform_applicability, null);
+        return optionMatchesPlatform(option);
     }, [activePlatforms]);
 
     const isDependencySatisfied = useCallback((filter) => {

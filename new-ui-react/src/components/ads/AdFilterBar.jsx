@@ -40,6 +40,19 @@ const SORT_TO_PLAN_ACCESS_ID = {
   domain_reg: 'domain_reg_sort',
   domain_reg_sort: 'domain_reg_sort',
 };
+// added as fallback for the ad_types 
+const ADMOB_AD_TYPE_OPTIONS = [
+  { label: "Banner", value: "BANNER" },
+  { label: "Webview Banner", value: "WEBVIEW_BANNER" },
+  { label: "Interstitial Or Native", value: "INTERSTITIAL_OR_NATIVE" },
+  { label: "Interstitial Webview", value: "INTERSTITIAL_WEBVIEW" },
+  { label: "Native Or Unknown", value: "NATIVE_OR_UNKNOWN" },
+  { label: "Rewarded Or Video", value: "REWARDED_OR_VIDEO" },
+  { label: "Play Store Ad", value: "PLAY_STORE_AD" },
+  { label: "Visual Banner", value: "VISUAL_BANNER" },
+  { label: "Visual Native Ad", value: "VISUAL_NATIVE_AD" },
+];
+
 export const resolveSortPlanAccessId = (label, value) => {
   const normalize = (input) => String(input ?? '').toLowerCase().trim().replace(/[\s-]+/g, '_');
   const rawLabel = String(label ?? '').toLowerCase().trim();
@@ -106,7 +119,6 @@ const AdFilterBar = ({
   previewMode,
   setPreviewMode,
   sortTabs = [],
-  PRIMARY_SORT_LABELS = [],
   onDateChange,
   isFilterRestricted,
   onDateRestricted,
@@ -118,7 +130,6 @@ const AdFilterBar = ({
   isScrolled = false,
   disableTooltips = false,
   guest,
-  DROPDOWN_SORT_LABELS = [],
 }) => {
   const { t } = useTranslation();
   const { config, activePlatforms, selAdTypes, setSelAdTypes } = sdui;
@@ -145,7 +156,8 @@ const AdFilterBar = ({
         setShowAdTypeFilter(false);
     };
     const onScroll = (event) => {
-      if (adTypeFilterRef.current?.contains(event.target)) return;
+      const target = event.target;
+      if (target instanceof Node && adTypeFilterRef.current?.contains(target)) return;
       setShowAdTypeFilter(false);
     };
     document.addEventListener("mousedown", handler);
@@ -196,53 +208,83 @@ const AdFilterBar = ({
     setShowFilterTip(true);
   };
 
-  const activeLower = (activePlatforms || []).map((platform) => String(platform).toLowerCase());
+  const activeLower = useMemo(() => (activePlatforms || [])
+    .map((platform) => String(platform).trim().toLowerCase())
+    .filter(Boolean), [activePlatforms]);
   const isAdmobOnly = activeLower.length === 1 && activeLower[0] === "admob";
 
   const AD_TYPE_OPTIONS = useMemo(() => {
-    // Search all sections (sidebar + navbar) for the ad_type document
+    const isWildcardApplicability = (applicability) => {
+      if (!applicability) return true;
+      if (!Array.isArray(applicability) && String(applicability).trim().toLowerCase() === "all") {
+        return true;
+      }
+      return Array.isArray(applicability) &&
+        applicability.some((platform) => String(platform).trim().toLowerCase() === "all");
+    };
+
+    const matchesActivePlatforms = (applicability) => {
+      if (isWildcardApplicability(applicability)) return true;
+      const values = (Array.isArray(applicability) ? applicability : [applicability])
+        .map((platform) => String(platform).trim().toLowerCase())
+        .filter(Boolean);
+      if (values.length === 0) return false;
+      if (activeLower.length === 0) return true;
+      return values.some((platform) => activeLower.includes(platform));
+    };
+
+    const shouldShowAdTypeFilter = (filter) => {
+      if (!filter) return false;
+      if (typeof sdui.shouldShowFilter === "function") {
+        return sdui.shouldShowFilter(filter);
+      }
+      return matchesActivePlatforms(filter.platform_applicability);
+    };
+
+    const shouldShowAdTypeOption = (option) => {
+      if (!option) return false;
+      if (typeof sdui.shouldShowOption === "function") {
+        return sdui.shouldShowOption(option);
+      }
+      if (matchesActivePlatforms(option.platform_applicability)) return true;
+      const nestedOptions = option.children || option.sub_options || option.options;
+      return Array.isArray(nestedOptions) &&
+        nestedOptions.some((child) => shouldShowAdTypeOption(child));
+    };
+
+    const isAdTypeFilter = (filter) =>
+      filter?._id === "ad_types" ||
+      filter?._id === "ad_type_filter" ||
+      filter?._id === "ad_type" ||
+      filter?.query_param === "ad_type" ||
+      filter?.group_id === "ad_type";
+    // Search all sections (sidebar + navbar) for the authoritative ad_type filter.
     const allDocs = [...(config?.sidebar || []), ...(config?.navbar || [])];
-    // Find the doc that contains an ad_type filter
-    let opts = [];
+    let adTypeFilter = null;
     for (const doc of allDocs) {
-      const f = (doc.filters || []).find(
-        (f) =>
-          f._id === "ad_types" ||
-          f._id === "ad_type_filter" ||
-          f._id === "ad_type" ||
-          f.query_param === "ad_type" ||
-          f.group_id === "ad_type",
-      );
-      if (f?.options?.length > 0) {
-        opts = f.options;
+      const f = (doc.filters || []).find(isAdTypeFilter);
+      if (f) {
+        adTypeFilter = f;
         break;
       }
     }
-    if (opts.length === 0) {
-      // Fallback if config not loaded yet — admob intentionally gets no
-      // fallback here (its options must come from SDUI config; no local
-      // hardcode bypass).
-      if (isAdmobOnly) return opts;
-      return [
-        { label: "Image", value: "Image" },
-        { label: "Video", value: "Video" },
-        { label: "Carousel", value: "Carousel" },
-        { label: "Story", value: "Story" },
-        { label: "Reel", value: "Reel" },
-      ];
+    // AdMob-only uses a curated enum list so we never surface the generic
+    // cross-network labels that the live SDUI config may carry for other tabs.
+    if (isAdmobOnly) return ADMOB_AD_TYPE_OPTIONS;
+
+    // Filter-level applicability is authoritative; option "All" cannot widen it.
+    if (!adTypeFilter?.options?.length || !shouldShowAdTypeFilter(adTypeFilter)) {
+      return [];
     }
-    // Filter by active platforms — same as shouldShowOption in sidebar
-    return opts.filter((opt) => {
-      if (!opt.platform_applicability || opt.platform_applicability === "all")
-        return true;
-      if (Array.isArray(opt.platform_applicability)) {
-        return opt.platform_applicability.some((p) =>
-          activeLower.includes(p.toLowerCase()),
-        );
-      }
-      return true;
-    });
-  }, [config, activePlatforms, isAdmobOnly]);
+    // Options are scoped only after the parent filter has passed.
+    return adTypeFilter.options.filter(shouldShowAdTypeOption);
+  }, [config, activeLower, isAdmobOnly, sdui.shouldShowFilter, sdui.shouldShowOption]);
+
+  useEffect(() => {
+    if (AD_TYPE_OPTIONS.length === 0 && showAdTypeFilter) {
+      setShowAdTypeFilter(false);
+    }
+  }, [AD_TYPE_OPTIONS.length, showAdTypeFilter]);
 
   const toggleAdType = (type) => {
     if (guest?.showGuestWarning("Please login to filter by ad type")) return;
@@ -459,70 +501,30 @@ const AdFilterBar = ({
             </div>
             {showMoreTabs && (
               <div className="absolute top-full lg:right-0 mt-1 bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1 min-w-[220px]">
-                {(() => {
-                  const targetList =
-                    DROPDOWN_SORT_LABELS && DROPDOWN_SORT_LABELS.length > 0
-                      ? DROPDOWN_SORT_LABELS
-                      : [
-                          "newest",
-                          "ad running days",
-                          "domain registration date",
-                        ];
-
-                  const targets = targetList.map((l) =>
-                    l.toString().toLowerCase().trim(),
+                {sortTabs.map((tab) => {
+                  const tabValue = tab.value ?? tab.label ?? tab;
+                  const tabLabel = tab.label ?? tab;
+                  return (
+                    <button
+                      key={tabValue}
+                      onClick={() => {
+                        if (guest?.showGuestWarning("Please login to change sorting")) return;
+                        const planAccessId = resolveSortPlanAccessId(tabLabel, tabValue);
+                        if (planAccessId && isFilterRestricted?.(planAccessId)) { onSortRestricted?.(); return; }
+                        setActiveTab(tabLabel);
+                        sdui.setSortBy(tabValue);
+                        setShowMoreTabs(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 text-[13px] font-semibold transition-colors ${
+                        activeTab === tabLabel
+                          ? "text-[#6b99ff] bg-[#3762c1]/10"
+                          : "text-theme-text-secondary hover:text-theme-text hover:bg-theme-text/[0.04]"
+                      }`}
+                    >
+                      {tabLabel}
+                    </button>
                   );
-
-                  let filtered = sortTabs.filter((t) => {
-                    const l = (t.label || t || "").toString().toLowerCase().trim();
-                    const v = (t.value || "").toString().toLowerCase().trim();
-                    // Filter by platform_applicability
-                    const applicability = t.platform_applicability;
-                    if (Array.isArray(applicability) && applicability.length > 0) {
-                      const matches = activePlatforms.some((p) =>
-                        applicability.map((a) => a.toLowerCase()).includes(p.toLowerCase())
-                      );
-                      if (!matches) return false;
-                    }
-                    return targets.some(
-                      (target) =>
-                        l.includes(target) ||
-                        target.includes(l) ||
-                        v.includes(target.replace(/\s+/g, "_")) ||
-                        v.includes(target),
-                    );
-                  });
-
-                  // If filter failed but we have data, show all as emergency fallback
-                  if (filtered.length === 0 && sortTabs.length > 0) {
-                    filtered = sortTabs;
-                  }
-
-                  return filtered.map((tab) => {
-                    const tabValue = tab.value ?? tab.label ?? tab;
-                    const tabLabel = tab.label ?? tab;
-                    return (
-                      <button
-                        key={tabValue}
-                        onClick={() => {
-                          if (guest?.showGuestWarning("Please login to change sorting")) return;
-                          const planAccessId = resolveSortPlanAccessId(tabLabel, tabValue);
-                          if (planAccessId && isFilterRestricted?.(planAccessId)) { onSortRestricted?.(); return; }
-                          setActiveTab(tabLabel);
-                          sdui.setSortBy(tabValue);
-                          setShowMoreTabs(false);
-                        }}
-                        className={`w-full text-left px-4 py-2 text-[13px] font-semibold transition-colors ${
-                          activeTab === tabLabel
-                            ? "text-[#6b99ff] bg-[#3762c1]/10"
-                            : "text-theme-text-secondary hover:text-theme-text hover:bg-theme-text/[0.04]"
-                        }`}
-                      >
-                        {tabLabel}
-                      </button>
-                    );
-                  });
-                })()}
+                })}
               </div>
             )}
           </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import AdGrid from "../../src/components/ads/AdGrid";
+import AdGrid, { resolveSortChipLabel } from "../../src/components/ads/AdGrid";
 import { getDashboardAdNavigation } from "../../src/utils/dashboardAdNavigation";
 
 describe("getDashboardAdNavigation", () => {
@@ -57,5 +57,21 @@ describe("getDashboardAdNavigation", () => {
     expect(navigation.index).toBe(-1);
     expect(navigation.previous).toBeNull();
     expect(navigation.next).toBeNull();
+  });
+});
+
+describe("resolveSortChipLabel", () => {
+  const sortTabs = [
+    { label: "Newest", value: "created_at" },
+    { label: "Domain Registration Date", value: "domain_reg_date" },
+  ];
+
+  it("renders domain registration sort chips with the configured label", () => {
+    expect(resolveSortChipLabel("domain_reg_date", sortTabs)).toBe("Domain Registration Date");
+    expect(resolveSortChipLabel("domain_sort", sortTabs)).toBe("Domain Registration Date");
+  });
+
+  it("keeps the existing newest chip wording aligned with backend ordering", () => {
+    expect(resolveSortChipLabel("created_at", sortTabs)).toBe("Last Seen");
   });
 });

@@ -108,8 +108,6 @@ const Header = ({
   previewMode,
   setPreviewMode,
   sortTabs = [],
-  PRIMARY_SORT_LABELS = [],
-  DROPDOWN_SORT_LABELS = [],
   showMoreTabs,
   setShowMoreTabs,
   moreTabsRef,
@@ -686,8 +684,6 @@ const Header = ({
               previewMode={previewMode}
               setPreviewMode={setPreviewMode}
               sortTabs={sortTabs}
-              PRIMARY_SORT_LABELS={PRIMARY_SORT_LABELS}
-              DROPDOWN_SORT_LABELS={DROPDOWN_SORT_LABELS}
               showMoreTabs={showMoreTabsHeader}
               setShowMoreTabs={setShowMoreTabsHeader}
               moreTabsRef={moreTabsRefHeader}

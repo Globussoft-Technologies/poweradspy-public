@@ -97,6 +97,9 @@ describe("services/sduiNormalizer > normalizePlatformApplicability (via filter)"
   it("'all' stays 'all'", () => {
     expect(wrap("all")).toBe("all");
   });
+  it("['all'] also collapses to 'all'", () => {
+    expect(wrap(["all"])).toBe("all");
+  });
   it("array stays array", () => {
     expect(wrap(["facebook"])).toEqual(["facebook"]);
   });
