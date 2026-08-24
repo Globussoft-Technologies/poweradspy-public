@@ -150,10 +150,28 @@ async function getLinkedinAdCountry(req, db, logger) {
       return { code: 400, message: 'No data found.', data: null };
     }
 
-    const placeholders = countryNames.map(() => '?').join(',');
+    // The scraped `countries` array sometimes carries the SAME country twice —
+    // once from an English-locale scrape, once from a non-English LinkedIn UI
+    // locale (e.g. "Armenia" AND "Армения") — plus outright exact repeats.
+    // `country_data.nicename` is a latin1_swedish_ci column, so it can never
+    // contain (or match) a non-Latin name anyway — binding one into the
+    // IN(...) parameter list doesn't just fail to match, it throws
+    // ("Conversion from collation utf8mb4_unicode_ci into latin1_swedish_ci
+    // impossible for parameter") and takes the whole request down. Drop
+    // non-Latin names and de-dupe exact repeats before the lookup — every
+    // observed case already has an English twin in the same list, so nothing
+    // real is lost.
+    const isLatinName = (s) => /^[\x00-\x7FÀ-ɏ .'-]+$/.test(s || '');
+    const latinNames = [...new Set(countryNames.filter(isLatinName))];
+
+    if (latinNames.length === 0) {
+      return { code: 400, message: 'No data found.', data: null };
+    }
+
+    const placeholders = latinNames.map(() => '?').join(',');
     const rows = await db.sql.query(
       `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`,
-      countryNames
+      latinNames
     );
 
     const isoMap = {};
@@ -161,7 +179,7 @@ async function getLinkedinAdCountry(req, db, logger) {
       isoMap[row.nicename] = row.iso;
     });
 
-    const resArray = countryNames.map(country => ({
+    const resArray = latinNames.map(country => ({
       country: country ? country.replace(/\b\w/g, c => c.toUpperCase()) : country,
       iso: fixCountryIso(country, isoMap[country] || null),
     }));
