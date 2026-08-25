@@ -31,7 +31,11 @@ export const normalizeCountryIdentity = (country, suppliedIso) => {
 
   return {
     iso: iso || null,
-    name: (iso && COUNTRY_NAMES[iso]) || rawName || iso,
+    // Prefer the source's own name (e.g. LinkedIn's "Hong Kong SAR China") over the
+    // static dictionary's shorter canonical form ("Hong Kong") — only fall back to
+    // COUNTRY_NAMES when there's no name to show at all, i.e. the TikTok path below,
+    // which supplies bare ISO codes with no country string.
+    name: rawName || (iso && COUNTRY_NAMES[iso]) || iso,
   };
 };
 
@@ -86,6 +90,12 @@ function transformAdvertiserCountry(raw) {
   if (!raw || !Array.isArray(raw) || raw.length === 0) return null;
 
   const results = [];
+  // Dedupe by id (ISO, or region name for a no-single-ISO group like DACH) — a
+  // backend can send more than one row for the same country under different raw
+  // spellings (e.g. "Hong Kong SAR" and "Hong Kong SAR China" both resolving to
+  // HK); merge those into one row and sum their counts instead of showing
+  // duplicates, same as transformAdCountry already does for ad-level data.
+  const map = {};
 
   for (const item of raw) {
     const countryUpper = (item.country || '').toUpperCase();
@@ -104,18 +114,24 @@ function transformAdvertiserCountry(raw) {
       return 1;
     })();
 
-    if (!iso && countryUpper === 'ALL') {
-      results.push({ id: 'ALL', name: 'Worldwide', count });
-    } else if (iso) {
-      results.push({ id: iso, name, count });
-    } else if (countryUpper && REGION_ISO_MAP[countryUpper]) {
-      // Known named region with no single ISO (e.g. DACH) — use name as id, won't highlight on map but shows in list
-      results.push({ id: countryUpper, name: item.country, count });
-    }
+    const id = (!iso && countryUpper === 'ALL')
+      ? 'ALL'
+      : iso || (countryUpper && REGION_ISO_MAP[countryUpper] ? countryUpper : null);
     // Anything else — a country name we couldn't resolve to an ISO code
     // (typically the source recorded it in a non-English language/script,
     // e.g. "美国", "СШа", "États Unis" — untranslated duplicates of an
     // already-listed country) — is dropped rather than shown as its own row.
+    if (!id) continue;
+
+    const displayName = id === 'ALL' ? 'Worldwide' : name;
+    if (!map[id]) {
+      map[id] = { id, name: displayName, count: 0 };
+      results.push(map[id]);
+    }
+    map[id].count += count;
+    // Prefer the more complete raw name on a merge (matches the backend's
+    // own preference when it does this same merge).
+    if (displayName.length > map[id].name.length) map[id].name = displayName;
   }
   return results.length > 0 ? results : null;
 }
@@ -638,7 +654,7 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
                       )}
                       <span
                         title={c.name}
-                        className={`text-[14px] font-medium flex-1 min-w-0 truncate ${isSelected ? (isLight ? "text-gray-700" : "text-white/90") : isLight ? "text-gray-400" : "text-white/90"}`}
+                        className={`text-[14px] font-medium flex-1 min-w-0 leading-tight ${isSelected ? (isLight ? "text-gray-700" : "text-white/90") : isLight ? "text-gray-400" : "text-white/90"}`}
                       >
                         {c.name}
                       </span>

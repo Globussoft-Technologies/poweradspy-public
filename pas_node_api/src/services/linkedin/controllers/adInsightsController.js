@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeParams } = require('../helpers/paramParser');
+const { fixCountryIso, titleCase, isLatinCountryName } = require('../helpers/countryIso');
 
 // ─── 1. getLikeCommentFollowerCount ────────────────────────
 
@@ -88,30 +89,6 @@ const COUNTRY_SQL = `
     AND country_only.country IS NOT NULL
 `;
 
-function fixCountryIso(country, iso) {
-  const name = (country || '').toLowerCase();
-  if (country === 'Czechia') return 'CZ';
-  if (country === 'Russia') return 'RU';
-  // Republic of the Congo (Brazzaville) → CG; DR Congo (Kinshasa) → CD.
-  // Only override when the incoming iso is missing so DB values still win.
-  if (!iso || iso === 'null') {
-    if (
-      name === 'congo - brazzaville' ||
-      name === 'republic of the congo' ||
-      name === 'republic of congo' ||
-      name === 'congo republic' ||
-      name === 'congo'
-    ) return 'CG';
-    if (
-      name === 'congo - kinshasa' ||
-      name === 'dr congo' ||
-      name === 'democratic republic of the congo' ||
-      name === 'democratic republic of congo'
-    ) return 'CD';
-  }
-  return iso;
-}
-
 async function getLinkedinAdCountry(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
@@ -153,16 +130,10 @@ async function getLinkedinAdCountry(req, db, logger) {
     // The scraped `countries` array sometimes carries the SAME country twice —
     // once from an English-locale scrape, once from a non-English LinkedIn UI
     // locale (e.g. "Armenia" AND "Армения") — plus outright exact repeats.
-    // `country_data.nicename` is a latin1_swedish_ci column, so it can never
-    // contain (or match) a non-Latin name anyway — binding one into the
-    // IN(...) parameter list doesn't just fail to match, it throws
-    // ("Conversion from collation utf8mb4_unicode_ci into latin1_swedish_ci
-    // impossible for parameter") and takes the whole request down. Drop
-    // non-Latin names and de-dupe exact repeats before the lookup — every
-    // observed case already has an English twin in the same list, so nothing
-    // real is lost.
-    const isLatinName = (s) => /^[\x00-\x7FÀ-ɏ .'-]+$/.test(s || '');
-    const latinNames = [...new Set(countryNames.filter(isLatinName))];
+    // isLatinCountryName (countryIso.js) drops non-Latin names before they ever
+    // reach the DB — see that helper for the full explanation (collation crash +
+    // curly-quote handling).
+    const latinNames = [...new Set(countryNames.filter(isLatinCountryName))];
 
     if (latinNames.length === 0) {
       return { code: 400, message: 'No data found.', data: null };
@@ -174,17 +145,42 @@ async function getLinkedinAdCountry(req, db, logger) {
       latinNames
     );
 
+    // Keyed lower-cased: `nicename` is a case-INSENSITIVE (_ci) column, so MySQL's
+    // IN(...) can return a row under different casing than what was searched (e.g.
+    // input "North Macedonia" matched the DB's "North macedonia") — a plain JS object
+    // lookup below would otherwise miss that match since object keys ARE case-sensitive.
     const isoMap = {};
     (rows || []).forEach(row => {
-      isoMap[row.nicename] = row.iso;
+      isoMap[String(row.nicename).toLowerCase()] = row.iso;
     });
 
     const resArray = latinNames.map(country => ({
-      country: country ? country.replace(/\b\w/g, c => c.toUpperCase()) : country,
-      iso: fixCountryIso(country, isoMap[country] || null),
+      country: titleCase(country),
+      iso: fixCountryIso(country, isoMap[country.toLowerCase()] || null),
     }));
 
-    return { code: 200, message: 'Linkedin country data fetched.', data: resArray };
+    // Dedupe by resolved ISO — the aliasing above can now resolve two different
+    // LinkedIn spellings (e.g. "Hong Kong SAR" and "Hong Kong SAR China", or
+    // "Turkey" and "Türkiye") to the same country; without this they'd render as
+    // two separate pills for one place. Keep the more complete/longer spelling
+    // for display, not just whichever happened to come first in the raw ES
+    // array — same tie-break aggregateCountryData uses. Entries that still have
+    // no ISO (regions like "Africa"/"Middle East", or names country_data
+    // genuinely has no match for) are kept as-is and not deduped against each other.
+    const byIso = new Map();
+    const data = [];
+    for (const entry of resArray) {
+      if (!entry.iso) { data.push(entry); continue; }
+      const existing = byIso.get(entry.iso);
+      if (!existing) {
+        byIso.set(entry.iso, entry);
+        data.push(entry);
+      } else if (entry.country.length > existing.country.length) {
+        existing.country = entry.country;
+      }
+    }
+
+    return { code: 200, message: 'Linkedin country data fetched.', data };
   } catch (err) {
     logger.error('Error in getLinkedinAdCountry', { error: err.message });
     return { code: 500, message: 'Error fetching country data', error: err.message };
@@ -298,7 +294,7 @@ async function aggregateCountryData(db, hits) {
     if (!Array.isArray(countries)) countries = [countries];
 
     for (const country of countries) {
-      if (!country) continue;
+      if (!country || !isLatinCountryName(country)) continue;
       if (!countryMap[country]) countryMap[country] = new Set();
       countryMap[country].add(adId);
     }
@@ -309,21 +305,48 @@ async function aggregateCountryData(db, hits) {
   const allCountryNames = Object.keys(countryMap);
   const isoMap = await batchCountryLookup(db, allCountryNames);
 
+  // Pass 1 — resolve each raw name's ISO independently (same alias table as
+  // getLinkedinAdCountry, so "Hong Kong SAR"/"Hong Kong SAR China" both → HK).
+  const resolved = Object.entries(countryMap).map(([name, idSet]) => {
+    // Display name always comes from the scraped ES name, never country_data.name —
+    // that column turns out to be inconsistently cased per row (e.g. "TURKEY" in
+    // ALL CAPS for a row whose own nicename is "Turkey"), which titleCase() can't
+    // safely correct (it deliberately trusts any string that already has an
+    // uppercase letter — see its own comment — so an all-caps DB value passed
+    // through unfixed). getLinkedinAdCountry never had this bug because it never
+    // reads country_data.name either.
+    const lookup = isoMap.get(name.toLowerCase());
+    const country = titleCase(name);
+    const iso = fixCountryIso(name, lookup?.iso || null);
+    return { name, country, iso, idSet };
+  });
+
+  // Pass 2 — merge entries that resolved to the SAME iso into one row (union
+  // their ad ids) instead of showing separate, fragmented-count rows for what
+  // is really one country under two different raw spellings. Prefer the more
+  // complete spelling for display (e.g. "Hong Kong SAR China" over "Hong Kong
+  // SAR") so this matches the single-ad country view's naming.
+  const byIso = new Map();
   const result = [];
-  const countryEntries = Object.entries(countryMap).sort((a, b) => b[1].size - a[1].size);
-
-  for (const [name, idSet] of countryEntries) {
-    const adIds = [...idSet];
-    const lookup = isoMap.get(name);
-    let country = lookup?.country || name;
-    let iso = lookup?.iso || null;
-
-    iso = fixCountryIso(country, iso);
-    if (country) country = country.replace(/\b\w/g, c => c.toUpperCase());
-
-    result.push({ country, iso, ad_ids: adIds, ad_count: adIds.length });
+  for (const entry of resolved) {
+    if (entry.iso) {
+      const existing = byIso.get(entry.iso);
+      if (existing) {
+        for (const id of entry.idSet) existing.idSet.add(id);
+        if (entry.name.length > existing.name.length) {
+          existing.country = entry.country;
+          existing.name = entry.name;
+        }
+        continue;
+      }
+      byIso.set(entry.iso, entry);
+    }
+    result.push(entry);
   }
-  return result;
+
+  return result
+    .map(({ country, iso, idSet }) => ({ country, iso, ad_ids: [...idSet], ad_count: idSet.size }))
+    .sort((a, b) => b.ad_count - a.ad_count);
 }
 
 async function batchCountryLookup(db, names) {
@@ -331,13 +354,18 @@ async function batchCountryLookup(db, names) {
   const uniqueNames = [...new Set(names)];
   const placeholders = uniqueNames.map(() => '?').join(',');
   try {
+    // Only nicename+iso — country_data.name is inconsistently cased per row (see
+    // aggregateCountryData's comment) and is never used for display anyway.
     const rows = await db.sql.query(
-      `SELECT nicename, name AS country, iso FROM country_data WHERE nicename IN (${placeholders})`,
+      `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`,
       uniqueNames
     );
     const map = new Map();
     if (rows) {
-      for (const row of rows) map.set(row.nicename, { country: row.country, iso: row.iso });
+      // Keyed lower-cased — see getLinkedinAdCountry's isoMap for why (nicename
+      // is case-insensitive, `_ci`, so a plain-cased JS key can miss a match
+      // MySQL actually found under different casing).
+      for (const row of rows) map.set(String(row.nicename).toLowerCase(), { iso: row.iso });
     }
     return map;
   } catch {
