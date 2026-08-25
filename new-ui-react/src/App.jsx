@@ -2608,7 +2608,14 @@ const App = () => {
                 navigate('/');
                 dispatch(setActivePage('ads'));
                 dispatch(setShowSavedAdsPage(false));
-                handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword');
+                // resetFilters: true — a Market Trends drill-through must not inherit
+                // whatever filters were left applied from an earlier, unrelated Ads
+                // Library session (date range, category, CTA, budget, …). Without this
+                // the new search silently ANDs with those stale filters, so the results
+                // shown for the clicked advertiser/keyword can be wrong or empty even
+                // though the drill-through itself worked correctly. Same principle
+                // already applied to competitor drill-downs elsewhere in this file.
+                handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword', undefined, { resetFilters: true });
               }}
               allowedPlatforms={intelAccess.networks}
               onNetworkRestricted={() => dispatch(openModal('isPricingModalOpen'))}
