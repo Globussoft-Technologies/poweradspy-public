@@ -22,6 +22,21 @@ const SILENT_STRIP_FILTERS = new Set(['ad_position', 'language']);
  * legacy list here can produce a split decision: the request is allowed by
  * Plan Control, then the common search controller silently skips the network.
  */
+/**
+ * AdMob visibility override (config.admob.allowedUserIds — exclusive, not
+ * additive like the intelligence/keywordExplorer/aiSearch allow-lists).
+ * Empty list = no-op, AdMob keeps its normal plan-based visibility. Non-empty
+ * = only those user IDs keep 'admob' in their allowedPlatforms; everyone else
+ * has it stripped, so the tab disappears from the frontend exactly like a
+ * plan that never purchased AdMob.
+ */
+function applyAdmobUserGate(allowedPlatforms, userId) {
+  const allow = config.admob?.allowedUserIds || [];
+  if (!allow.length) return allowedPlatforms;
+  if (allow.includes(String(userId))) return allowedPlatforms;
+  return allowedPlatforms.filter((p) => p !== 'admob');
+}
+
 function overlayPlanControlAllowedPlatforms(req, legacyAllowedPlatforms) {
   const adsSearchDecision = Array.isArray(req.planControlDecisions)
     ? req.planControlDecisions.find((decision) => decision?.capabilityId === 'ads.search')
@@ -154,6 +169,7 @@ async function planAccessMiddleware(req, res, next) {
       if (hasPlanControlDecision) {
         allowedPlatforms = overlayPlanControlAllowedPlatforms(req, allowedPlatforms);
       }
+      allowedPlatforms = applyAdmobUserGate(allowedPlatforms, req.user?.id);
 
       let aMemberPlanRestricted = [];
       let aMemberPlatformRestricted = [];
@@ -238,6 +254,7 @@ async function planAccessMiddleware(req, res, next) {
     if (hasPlanControlDecision) {
       allowedPlatforms = overlayPlanControlAllowedPlatforms(req, allowedPlatforms);
     }
+    allowedPlatforms = applyAdmobUserGate(allowedPlatforms, req.user?.id);
 
     // Compute filter status for the requested platform(s)
     const filterStatus = planAccessService.getFilterStatus(planId, network, planConfig);
@@ -488,4 +505,5 @@ module.exports = {
   isKeywordExplorerUserAllowed,
   getAuthenticatedUserId,
   hasKeywordExplorerAccess,
+  applyAdmobUserGate,
 };

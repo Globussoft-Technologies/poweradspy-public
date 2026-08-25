@@ -17,6 +17,7 @@ const dbManager = require('../database/DatabaseManager');
 const config = require('../config');
 const logger = require('../logger');
 const planAccessService = require('../services/planAccess/planAccessService');
+const { applyAdmobUserGate } = require('../middleware/planAccess');
 const { overlayAiMetaLegacyDecision } = require('../services/planControl/legacyPlanAccessBridge');
 const { getCapabilityDecision } = require('../services/planControl/registries/routeClassification');
 const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
@@ -201,6 +202,8 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
       error: error.message,
     });
   }
+
+  allowedPlatforms = applyAdmobUserGate(allowedPlatforms, req.user?.id);
 
   const filters = planAccessService.getFilterStatus(planId, network, config2);
   await overlayAiMetaLegacyDecision(req, network, filters);

@@ -525,6 +525,23 @@ const config = {
     })(),
   },
 
+  // AdMob network visibility override. Unlike intelligence/keywordExplorer/
+  // aiSearch's allow-list (which is OR'd with plan entitlement — additive),
+  // this one is EXCLUSIVE: empty = no restriction (AdMob stays visible to
+  // everyone per their normal plan entitlement, today's behavior). Non-empty
+  // = ONLY these user IDs see AdMob at all — it's removed from every other
+  // user's `allowedPlatforms`, so the tab disappears from the frontend
+  // exactly like a plan that never purchased AdMob. Applied in
+  // planAccessMiddleware.
+  admob: {
+    allowedUserIds: (() => {
+      const raw = getVal(fileConfig.admob?.allowedUserIds, 'ADMOB_ALLOWED_USER_IDS');
+      if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return [];
+    })(),
+  },
+
   sendgrid: {
     enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
     apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),
