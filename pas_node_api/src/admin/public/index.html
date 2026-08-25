@@ -321,8 +321,21 @@
           </div>
           <div class="card-body">
             <p class="config-notice">Dynamic configuration system. Values with descriptions are grouped by category.</p>
+            <div class="config-search-toolbar" role="search">
+              <div class="config-search-box">
+                <span class="config-search-icon" aria-hidden="true">⌕</span>
+                <input type="search" id="config-search" class="config-search-input" placeholder="Search settings, categories, descriptions or values..." autocomplete="off" aria-label="Search configuration settings">
+                <button type="button" id="clear-config-search" class="config-search-clear hidden" aria-label="Clear configuration search">✕</button>
+              </div>
+              <span id="config-search-count" class="config-search-count" aria-live="polite"></span>
+            </div>
             <!-- Dynamic Form Container -->
             <div id="dynamic-config-form" class="config-form"></div>
+            <div id="config-empty-search" class="config-empty-search hidden">
+              <span aria-hidden="true">⌕</span>
+              <strong>No matching settings found</strong>
+              <small>Try a setting name, category, description, or value.</small>
+            </div>
             <p id="config-status" class="status-text"></p>
           </div>
         </div>

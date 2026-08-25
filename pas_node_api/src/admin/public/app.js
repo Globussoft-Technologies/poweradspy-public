@@ -47,6 +47,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Config save
   document.getElementById('save-config-btn').addEventListener('click', saveConfig);
   document.getElementById('refresh-backups-btn').addEventListener('click', loadConfigBackups);
+  document.getElementById('config-search').addEventListener('input', filterDynamicConfig);
+  document.getElementById('clear-config-search').addEventListener('click', () => {
+    const searchInput = document.getElementById('config-search');
+    searchInput.value = '';
+    filterDynamicConfig();
+    searchInput.focus();
+  });
 
   // Block IP
   document.getElementById('block-ip-btn').addEventListener('click', blockIp);
@@ -808,10 +815,19 @@ function renderDynamicConfig(config) {
     sectionDiv.className = 'config-section';
     
     const desc = sectionValue._description || '';
+    const fieldCount = Object.entries(sectionValue).filter(([key, value]) => (
+      !key.startsWith('_') && (typeof value !== 'object' || Array.isArray(value))
+    )).length;
+    sectionDiv.dataset.searchText = `${sectionKey} ${desc}`.toLowerCase();
     
     sectionDiv.innerHTML = `
-      <div class="config-section-title">${sectionKey}</div>
-      ${desc ? `<div class="config-section-desc">${desc}</div>` : ''}
+      <div class="config-section-heading">
+        <div>
+          <div class="config-section-title">${escapeHtml(sectionKey)}</div>
+          ${desc ? `<div class="config-section-desc">${escapeHtml(desc)}</div>` : ''}
+        </div>
+        <span class="config-section-count">${fieldCount} ${fieldCount === 1 ? 'setting' : 'settings'}</span>
+      </div>
       <div class="config-fields-container" id="cfg-sec-${sectionKey}"></div>
     `;
     
@@ -827,6 +843,8 @@ function renderDynamicConfig(config) {
       
       const fieldDiv = document.createElement('div');
       fieldDiv.className = 'config-field';
+      const searchableValue = Array.isArray(value) ? value.join(' ') : String(value);
+      fieldDiv.dataset.searchText = `${sectionKey} ${desc} ${key} ${fieldDesc} ${searchableValue}`.toLowerCase();
       
       let inputHtml = '';
       if (typeof value === 'boolean') {
@@ -844,13 +862,55 @@ function renderDynamicConfig(config) {
 
       fieldDiv.innerHTML = `
         <div class="config-field-header">
-          <div class="config-field-label">${key}</div>
-          <div class="config-field-desc">${fieldDesc}</div>
+          <div class="config-field-label">${escapeHtml(key)}</div>
+          <div class="config-field-desc">${escapeHtml(fieldDesc)}</div>
         </div>
         ${inputHtml}
       `;
       fieldsContainer.appendChild(fieldDiv);
     }
+  }
+
+  filterDynamicConfig();
+}
+
+function filterDynamicConfig() {
+  const searchInput = document.getElementById('config-search');
+  const query = (searchInput?.value || '').trim().toLowerCase();
+  const sections = document.querySelectorAll('#dynamic-config-form .config-section');
+  let visibleSections = 0;
+  let visibleFields = 0;
+  let totalFields = 0;
+
+  sections.forEach(section => {
+    const sectionMatches = query && section.dataset.searchText.includes(query);
+    let sectionVisibleFields = 0;
+
+    section.querySelectorAll('.config-field').forEach(field => {
+      totalFields += 1;
+      const isVisible = !query || sectionMatches || field.dataset.searchText.includes(query);
+      field.classList.toggle('config-filtered-out', !isVisible);
+      if (isVisible) sectionVisibleFields += 1;
+    });
+
+    const isSectionVisible = sectionVisibleFields > 0;
+    section.classList.toggle('config-filtered-out', !isSectionVisible);
+    if (isSectionVisible) {
+      visibleSections += 1;
+      visibleFields += sectionVisibleFields;
+    }
+  });
+
+  const clearButton = document.getElementById('clear-config-search');
+  const count = document.getElementById('config-search-count');
+  const emptyState = document.getElementById('config-empty-search');
+  clearButton?.classList.toggle('hidden', !query);
+  emptyState?.classList.toggle('hidden', !query || visibleFields > 0);
+
+  if (count) {
+    count.textContent = query
+      ? `${visibleFields} setting${visibleFields === 1 ? '' : 's'} in ${visibleSections} categor${visibleSections === 1 ? 'y' : 'ies'}`
+      : `${totalFields} setting${totalFields === 1 ? '' : 's'} in ${sections.length} categor${sections.length === 1 ? 'y' : 'ies'}`;
   }
 }
 
