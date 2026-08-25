@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { ExternalLink, ShieldCheck, Monitor } from "lucide-react"; // Monitor kept for section header
+import { createPortal } from "react-dom";
+import { ExternalLink, ShieldCheck, Monitor, Maximize2, X } from "lucide-react"; // Monitor kept for section header
 import { useTheme } from "../../../hooks/useTheme";
 import { resolveNasUrl } from "../../../services/api";
 
@@ -33,7 +34,16 @@ const LanderDetails = ({ screenshotUrl, pageUrl = null }) => {
   const resolvedScreenshotUrl = parseDisplayUrl(screenshotUrl);
   const resolvedPageUrl = parseDisplayUrl(pageUrl) || resolvedScreenshotUrl;
   const [hasError, setHasError] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const settledRef = useRef(false); // set by onLoad/onError once the image resolves
+
+  // Close the enlarged preview on Escape.
+  useEffect(() => {
+    if (!showPreview) return;
+    const onKeyDown = (e) => { if (e.key === "Escape") setShowPreview(false); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [showPreview]);
 
   // Set timeout to hide if image doesn't load within 15 seconds. A cold CDN
   // cache (cf-cache-status: MISS on first fetch) can take a few seconds past
@@ -68,14 +78,23 @@ const LanderDetails = ({ screenshotUrl, pageUrl = null }) => {
           Lander Details
         </h3>
         {!isProcessing && (
-          <a
-            href={resolvedPageUrl || "#"}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-[#3762c1]/10 hover:bg-[#3762c1]/20 text-[#6b99ff] rounded-lg text-[10px] font-bold border border-[#3759a3]/20 transition-all"
-          >
-            Visit <ExternalLink size={11} />
-          </a>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPreview(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-[#3762c1]/10 hover:bg-[#3762c1]/20 text-[#6b99ff] rounded-lg text-[10px] font-bold border border-[#3759a3]/20 transition-all"
+            >
+              Preview <Maximize2 size={11} />
+            </button>
+            <a
+              href={resolvedPageUrl || "#"}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-[#3762c1]/10 hover:bg-[#3762c1]/20 text-[#6b99ff] rounded-lg text-[10px] font-bold border border-[#3759a3]/20 transition-all"
+            >
+              Visit <ExternalLink size={11} />
+            </a>
+          </div>
         )}
       </div>
 
@@ -100,13 +119,14 @@ const LanderDetails = ({ screenshotUrl, pageUrl = null }) => {
         </div>
         {/* Scrollable screenshot */}
         <div
-          className="relative group"
+          className="relative cursor-zoom-in"
           style={{ height: "320px", overflowY: "auto", overflowX: "hidden" }}
+          onClick={() => setShowPreview(true)}
         >
           <img
             src={resolvedScreenshotUrl}
             alt="Lander Screenshot"
-            className="w-full opacity-90 group-hover:opacity-100 transition-opacity duration-300"
+            className="w-full"
             style={{ display: "block" }}
             onError={() => {
               settledRef.current = true;
@@ -118,6 +138,42 @@ const LanderDetails = ({ screenshotUrl, pageUrl = null }) => {
           />
         </div>
       </div>
+
+      {showPreview &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm"
+            onClick={() => setShowPreview(false)}
+          >
+            {/* Sized to match AnalyticsModal's own footprint (w-full max-w-[1240px], 94vh)
+                so the preview reads as "the same modal, filled with the lander" rather than
+                a full-viewport lightbox. The image renders at natural width and the container
+                scrolls — the full page height is reachable, not squeezed to fit. */}
+            <div
+              className="relative w-full max-w-[1240px] rounded-[32px] overflow-hidden bg-[#0e0e0e] border-2 border-white/30 shadow-2xl"
+              style={{ maxHeight: "94vh" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setShowPreview(false)}
+                aria-label="Close preview"
+                className="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+              <div className="overflow-y-auto overflow-x-hidden" style={{ maxHeight: "94vh" }}>
+                <img
+                  src={resolvedScreenshotUrl}
+                  alt="Lander Screenshot — enlarged"
+                  className="w-full"
+                  style={{ display: "block" }}
+                />
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

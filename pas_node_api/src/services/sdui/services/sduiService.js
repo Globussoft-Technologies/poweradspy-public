@@ -591,7 +591,6 @@ async function prepareAdmobSidebar(config) {
 
       return {
         ...doc,
-        title: doc._id === 'source' ? 'SOURCE' : doc.title,
         filters,
       };
     }),
