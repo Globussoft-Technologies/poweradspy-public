@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeParams, cleanAdsData } = require('../helpers/paramParser');
+const { normalizeParams, cleanAdsData, withCdn } = require('../helpers/paramParser');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 const AD_DETAIL_SQL = `
@@ -157,6 +157,13 @@ async function getAdDetails(req, db, logger) {
 
     adData.ad_status = computeAdStatus(adData.last_seen);
     adData.platform_network = 'Native';
+
+    // Prepend CDN domain to the lander screenshot URL (cleanAdsData() below
+    // only CDN-ifies post_owner_image/image_video_url/image_url/ad_image_video —
+    // screenshot_url needs the same treatment.)
+    if (adData.screenshot_url) {
+      adData.screenshot_url = withCdn(adData.screenshot_url);
+    }
 
     // Resolve country codes
     const countryNames = [];

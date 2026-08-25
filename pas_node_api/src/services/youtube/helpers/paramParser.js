@@ -148,4 +148,5 @@ module.exports = {
   parsePagination,
   parseSort,
   cleanAdsData,
+  withCdn,
 };

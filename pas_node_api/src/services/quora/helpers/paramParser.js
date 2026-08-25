@@ -97,4 +97,4 @@ function cleanAdsData(ads = []) {
   });
 }
 
-module.exports = { normalizeValue, normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData, CDN_BASE };
+module.exports = { normalizeValue, normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData, CDN_BASE, withCdn };

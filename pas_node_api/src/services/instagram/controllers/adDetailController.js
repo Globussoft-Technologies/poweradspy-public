@@ -1,5 +1,5 @@
 'use strict';
-const { normalizeParams, cleanAdsData } = require('../helpers/paramParser');
+const { normalizeParams, cleanAdsData, withCdn } = require('../helpers/paramParser');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 
 // SQL query to get ad details with all JOINs (mirrors PHP getJoindAds)
@@ -289,6 +289,13 @@ async function getAdDetails(req, db, logger) {
 
     // ─── Step 4: Compute ad status ──────────────────────
     adData.ad_status = computeAdStatus(adData.last_seen);
+
+    // ─── Step 4b: Prepend CDN domain to the whitehat lander screenshot URL ──
+    // (cleanAdsData() below only CDN-ifies post_owner_image/image_video_url/
+    // image_url/ad_image_video — screenshot_url needs the same treatment.)
+    if (adData.screenshot_url) {
+      adData.screenshot_url = withCdn(adData.screenshot_url);
+    }
 
     // ─── Step 5: Get country ISO data ───────────────────
     let countryIso = [];

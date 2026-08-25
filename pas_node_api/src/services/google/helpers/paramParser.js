@@ -144,5 +144,5 @@ function cleanAdsData(ads = []) {
 module.exports = {
   normalizeValue, normalizeParams, ensureArray, parsePagination, parseSort,
   parseDeliveryDate, parseDeliveryDateRange, parseCountryDeliveryFilters,
-  cleanAdsData, CDN_BASE,
+  cleanAdsData, CDN_BASE, withCdn,
 };
