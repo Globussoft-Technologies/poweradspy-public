@@ -8,6 +8,7 @@ describe('admob lander normalization', () => {
     const normalized = normalizeLanderPayload({
       ad_id: '393b2a99a0d23d76912d7dbf',
       platform: '12',
+      post_owner: 'Acme Logistics',
       destinations: 'https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336',
       html_path: '/pas-dev/stream/admob/whiteHatAd/202608/393b2a99a0d23d76912d7dbf.zip',
       screen_shot: '/pas-dev/stream/admob/whiteHatAd/202608/393b2a99a0d23d76912d7dbf.png',
@@ -57,6 +58,7 @@ describe('admob lander normalization', () => {
     expect(normalized.ad_id).toBe('393b2a99a0d23d76912d7dbf');
     expect(normalized.platform).toBe(12);
     expect(normalized.lander_status).toBe(1);
+    expect(normalized.post_owner).toBe('Acme Logistics');
     expect(normalized.source_app).toBe('crex');
     expect(JSON.parse(normalized.country_iso_json)).toEqual(['IN']);
     expect(JSON.parse(normalized.outgoing_url_json)).toEqual([
@@ -120,6 +122,21 @@ describe('admob lander normalization', () => {
         url: 'https://wa.link/legacyalias',
       }),
     ]);
+  });
+
+  it('drops placeholder post_owner values defensively during normalization', () => {
+    const normalized = normalizeLanderPayload({
+      ad_id: 'ad-owner-placeholder',
+      platform: 12,
+      post_owner: 'None',
+      destinations: 'https://example.com',
+      html_path: '/tmp/lander.zip',
+      screen_shot: '/tmp/lander.png',
+      html_content: '<html></html>',
+      source_app: 'crex',
+    });
+
+    expect(normalized.post_owner).toBe(null);
   });
 
   it('infers PAS-maintained WA rotator fields from distinct phone numbers', () => {

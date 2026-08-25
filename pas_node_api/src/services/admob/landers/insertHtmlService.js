@@ -6,6 +6,7 @@ const repo = require('./repository');
 const { normalizeLanderPayload } = require('./normalize');
 
 const PYTHON_CRAWLER_PLATFORM = 12;
+const INVALID_POST_OWNER_VALUES = new Set(['na', 'n/a', 'none', 'null', 'undefined']);
 
 function unwrapItem(item) {
   if (!item || typeof item !== 'object') return item;
@@ -16,6 +17,13 @@ function payloadItems(body) {
   if (Array.isArray(body)) return body.map(unwrapItem).filter(Boolean);
   if (Array.isArray(body?.ads)) return body.ads.map(unwrapItem).filter(Boolean);
   return [unwrapItem(body)];
+}
+
+function readOptionalPostOwner(payload) {
+  if (!payload || typeof payload !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(payload, 'post_owner')) return payload.post_owner;
+  if (Object.prototype.hasOwnProperty.call(payload, 'postOwner')) return payload.postOwner;
+  return undefined;
 }
 
 function validateLanderPayload(payload) {
@@ -39,6 +47,20 @@ function validateLanderPayload(payload) {
 
   if (payload.source_app === undefined || payload.source_app === null || String(payload.source_app).trim() === '') {
     errors.push({ field: 'source_app', reason: 'MISSING_REQUIRED_FIELD', message: 'source_app is required and cannot be empty.' });
+  }
+
+  const rawPostOwner = readOptionalPostOwner(payload);
+  if (rawPostOwner !== undefined && rawPostOwner !== null) {
+    if (typeof rawPostOwner !== 'string') {
+      errors.push({ field: 'post_owner', reason: 'INVALID_TYPE', message: 'post_owner must be a string when provided.' });
+    } else {
+      const normalizedPostOwner = rawPostOwner.trim();
+      if (!normalizedPostOwner) {
+        errors.push({ field: 'post_owner', reason: 'INVALID_VALUE', message: 'post_owner cannot be an empty string when provided.' });
+      } else if (INVALID_POST_OWNER_VALUES.has(normalizedPostOwner.toLowerCase())) {
+        errors.push({ field: 'post_owner', reason: 'INVALID_VALUE', message: 'post_owner must be a real advertiser name, not a placeholder such as NA, N/A, None, or null.' });
+      }
+    }
   }
 
   if ((payload.status !== undefined || payload.lander_status !== undefined) && ![1, 2, 3].includes(status)) {
@@ -120,6 +142,10 @@ async function processItem(rawItem, db, log, scraperName = '') {
       const redirectStatus = normalized.lander_status === 3
         ? (isPythonCrawler ? 6 : 3)
         : (isPythonCrawler ? 4 : 1);
+
+      // DS may optionally enrich the advertiser name during lander save, but
+      // only when the AdMob ad still has no owner attached in SQL.
+      await repo.backfillPostOwnerIfMissing(tx, existing, normalized.post_owner);
 
       await repo.updateRedirectStatus(tx, existing.id, redirectStatus);
 

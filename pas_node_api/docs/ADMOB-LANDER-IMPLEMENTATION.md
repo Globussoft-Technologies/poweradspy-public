@@ -143,6 +143,16 @@ DS may also send:
 
 - `status` or `lander_status`
 - `lead_campaign_tag`
+- `post_owner`
+
+If DS sends `post_owner`, it must be a real advertiser name.
+
+Do not send placeholder values such as:
+
+- `NA`
+- `N/A`
+- `None`
+- `null`
 
 DS should not send duplicate helper fields that represent the same thing.
 
@@ -161,6 +171,7 @@ PAS handles:
 - same-day pickup locking through `x-scraper-name`
 - ES document rebuild/index for the AdMob ad
 - `redirect_status` transitions on `mob_ads`
+- conditional AdMob owner backfill when DS sends `post_owner` and the ad still has no owner
 - WhatsApp rotator detection from stored phone numbers
 - `whatsapp_rotator_count`
 - `whatsapp_rotator_detected`
@@ -227,7 +238,33 @@ Examples:
 - we do not keep `source_website`
 - we do not keep `raw_payload_json`
 
-### 6. One ad can only be picked once per day
+### 6. Optional `post_owner` only backfills the actual ad owner
+
+DS may optionally send:
+
+- `post_owner`
+
+This field is not stored in `mob_ad_lander_content`.
+
+Instead, PAS uses it only to enrich the actual AdMob ad when the ad still has no owner attached.
+
+Current behavior:
+
+- if the AdMob ad has no owner yet:
+  - PAS creates or reuses the `mob_post_owners` row
+  - PAS sets `mob_ads.post_owner_id`
+  - PAS rebuilds ES so the ad document gets `post_owner`
+- if the AdMob ad already has an owner:
+  - PAS does not overwrite it
+  - lander insertion continues normally
+
+Validation rules:
+
+- if `post_owner` is omitted or `null`, PAS ignores it
+- if `post_owner` is sent, it must be a non-empty string
+- placeholder values such as `NA`, `N/A`, `None`, and `null` are rejected
+
+### 7. One ad can only be picked once per day
 
 PAS now prevents same-day duplicate pickup across multiple DS devices.
 
@@ -244,7 +281,7 @@ That means:
 - the same ad can be returned again on a later day
 - PAS records which scraper claimed it
 
-### 7. GET `status` meanings
+### 8. GET `status` meanings
 
 For `GET /landers/get_ads_for_blackhat`:
 
@@ -488,6 +525,7 @@ This is the finalized DS payload object.
     "https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336"
   ],
   "source_app": "crex",
+  "post_owner": "Acme Logistics",
   "whatsapp": [
     {
       "domain": "wa.link",
@@ -531,6 +569,7 @@ Usually sent when available:
 - `outgoing_url`
 - `redirects`
 - `whatsapp`
+- `post_owner`
 - `campaign_id`
 - `created`
 - `updated`
@@ -544,6 +583,7 @@ minor formatting differences:
 
 - `lander_status` as an alias of `status`
 - `sourceApp` as an alias of `source_app`
+- `postOwner` as an alias of `post_owner`
 - `countryIso` as an alias of `country_iso`
 - `outgoingUrls` as an alias of `outgoing_url`
 - `destination_url` or `destinationUrl` as an alias of `destinations`
@@ -1031,6 +1071,7 @@ Notes:
 
 - `country_iso_json`, `outgoing_url_json`, and `redirects_json` remain JSON-text SQL columns
 - `whatsapp_json` stores the normalized WhatsApp evidence array
+- optional `post_owner` does not live in `mob_ad_lander_content`; PAS uses it only to fill `mob_ads.post_owner_id` through `mob_post_owners` when that relation is still missing
 - top-level helper fields such as `whatsapp_url`, `whatsapp_phone`, `source_website`, and `raw_payload_json` are no longer part of the final schema
 - `mob_ad_lander_claims` is what prevents two DS crawlers from receiving the same ad on the same calendar day
 
@@ -1080,6 +1121,7 @@ Important note about `source_app` in ES:
 - `outgoing_url`
 - `redirects`
 - `source_app`
+- optional `post_owner`
 - `whatsapp`
 - `campaign_id`
 - `created`

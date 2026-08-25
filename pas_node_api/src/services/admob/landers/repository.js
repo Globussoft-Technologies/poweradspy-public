@@ -160,6 +160,51 @@ async function completeLanderClaim(tx, adId, scraperName, landerStatus) {
   return true;
 }
 
+async function backfillPostOwnerIfMissing(tx, adRow, postOwner) {
+  const ownerName = typeof postOwner === 'string' ? postOwner.trim() : '';
+  if (!ownerName) {
+    return {
+      updated: false,
+      postOwnerId: adRow?.post_owner_id ?? null,
+    };
+  }
+
+  // AdMob stores the owner on the ad row via post_owner_id, not as an inline
+  // mob_ads.post_owner text column. Lander enrichment may fill that relation
+  // once, but it must never overwrite an owner already attached to the ad.
+  if (adRow?.post_owner_id !== null && adRow?.post_owner_id !== undefined) {
+    return {
+      updated: false,
+      postOwnerId: Number(adRow.post_owner_id),
+    };
+  }
+
+  const owner = await insertionRepo.ensureOwner(tx, {
+    post_owner: ownerName,
+    post_owner_image: null,
+  }, true);
+
+  if (!owner?.id) {
+    return {
+      updated: false,
+      postOwnerId: null,
+    };
+  }
+
+  await tx.query(
+    `UPDATE mob_ads
+        SET post_owner_id = ?
+      WHERE id = ?
+        AND post_owner_id IS NULL`,
+    [owner.id, adRow.id]
+  );
+
+  return {
+    updated: true,
+    postOwnerId: Number(owner.id),
+  };
+}
+
 // AdMob landers reuse the insertion transaction helpers and ad/ES projection
 // queries so the lander and insertion pipelines stay aligned.
 module.exports = {
@@ -171,6 +216,7 @@ module.exports = {
   queueEs: insertionRepo.queueEs,
   completeEs: insertionRepo.completeEs,
   clampLimit,
+  backfillPostOwnerIfMissing,
   claimAdForToday,
   completeLanderClaim,
   getNeverProcessedAds,

@@ -1,5 +1,7 @@
 'use strict';
 
+const INVALID_POST_OWNER_VALUES = new Set(['na', 'n/a', 'none', 'null', 'undefined']);
+
 function nullable(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
@@ -122,6 +124,13 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function normalizePostOwner(value) {
+  if (typeof value !== 'string') return null;
+  const text = nullable(value);
+  if (!text) return null;
+  return INVALID_POST_OWNER_VALUES.has(text.toLowerCase()) ? null : text;
+}
+
 function toBoolean(value) {
   return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
 }
@@ -232,6 +241,10 @@ function normalizeLanderPayload(payload) {
     ad_id: String(payload.ad_id || '').trim(),
     platform: toNumber(payload.platform),
     lander_status: landerStatus,
+    // Keep this field defensive even though insert_html_content validates it
+    // earlier, so any future direct caller cannot stringify junk objects into
+    // a real post owner accidentally.
+    post_owner: normalizePostOwner(payload.post_owner ?? payload.postOwner),
     destinations: nullable(payload.destinations ?? payload.destination_url ?? payload.destinationUrl),
     html_path: nullable(payload.html_path),
     screen_shot: nullable(payload.screen_shot ?? payload.screenshot_url),
