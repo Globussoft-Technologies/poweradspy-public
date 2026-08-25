@@ -46,6 +46,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Config save
   document.getElementById('save-config-btn').addEventListener('click', saveConfig);
+  document.getElementById('restart-server-btn').addEventListener('click', restartServer);
+  document.getElementById('config-history-btn').addEventListener('click', openConfigHistory);
+  document.getElementById('config-history-close').addEventListener('click', closeConfigHistory);
+  document.getElementById('config-history-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'config-history-modal') closeConfigHistory();
+  });
   document.getElementById('refresh-backups-btn').addEventListener('click', loadConfigBackups);
   document.getElementById('config-search').addEventListener('input', filterDynamicConfig);
   document.getElementById('clear-config-search').addEventListener('click', () => {
@@ -224,10 +230,15 @@ function updateRoleUI() {
   const badge = document.getElementById('config-role-badge');
   const unlockPanel = document.getElementById('unlock-edit-panel');
   const saveBtn = document.getElementById('save-config-btn');
+  const restartBtn = document.getElementById('restart-server-btn');
   badge.textContent = isEditor ? 'Viewing as: Editor' : 'Viewing as: Viewer';
   badge.style.color = isEditor ? 'var(--success)' : 'var(--text-muted)';
   unlockPanel.classList.toggle('hidden', isEditor);
   saveBtn.classList.toggle('hidden', !isEditor);
+  restartBtn.disabled = !isEditor;
+  restartBtn.dataset.tip = isEditor
+    ? 'Restart all PM2 processes on this server'
+    : 'Unlock Editor access to restart the server';
   if (Object.keys(rawConfigData).length > 0) renderDynamicConfig(rawConfigData);
 
   // ── SDUI tab ────────────────────────────────────────────
@@ -1024,6 +1035,77 @@ async function loadConfigBackups() {
   } catch (err) {
     showToast('Failed to load config backups', 'error');
   }
+}
+
+function openConfigHistory() {
+  document.getElementById('config-history-modal').classList.remove('hidden');
+  loadConfigBackups();
+}
+
+function closeConfigHistory() {
+  document.getElementById('config-history-modal').classList.add('hidden');
+}
+
+async function restartServer() {
+  if (currentRole !== 'editor') return;
+  if (!confirm('Restart all PM2 processes on this server now?\n\nThe admin panel may be unavailable briefly.')) return;
+
+  const button = document.getElementById('restart-server-btn');
+  const statusEl = document.getElementById('config-status');
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Restarting…';
+  statusEl.textContent = '↻ Server restart requested. Waiting for PM2…';
+  statusEl.className = 'status-text';
+
+  try {
+    const res = await fetch(`${API}/server/restart`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.message || 'Unable to start PM2 restart');
+    await pollServerRestart(payload.data.operationId);
+  } catch (err) {
+    statusEl.textContent = `✕ Restart failed: ${err.message}`;
+    statusEl.className = 'status-text error';
+    showToast(`Server restart failed: ${err.message}`, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+async function pollServerRestart(operationId) {
+  const statusEl = document.getElementById('config-status');
+  const deadline = Date.now() + 90000;
+
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {
+      const res = await fetch(`${API}/server/restart-status?id=${encodeURIComponent(operationId)}`, {
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      if (!res.ok) continue;
+      const payload = await res.json();
+      const restart = payload.data;
+      if (restart.state === 'succeeded') {
+        statusEl.textContent = '✓ PM2 restart completed successfully';
+        statusEl.className = 'status-text success';
+        showToast('Server restarted successfully!', 'success');
+        return;
+      }
+      if (restart.state === 'failed') {
+        throw new Error(restart.message || 'PM2 restart command failed');
+      }
+    } catch (err) {
+      if (err.message && !err.message.toLowerCase().includes('fetch')) throw err;
+      // A short connection failure is expected while PM2 replaces the process.
+    }
+  }
+
+  throw new Error('Restart status timed out. Check PM2 logs on the server.');
 }
 
 async function restoreConfig(filename) {

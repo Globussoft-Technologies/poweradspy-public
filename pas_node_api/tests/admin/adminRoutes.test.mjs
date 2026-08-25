@@ -23,10 +23,14 @@ require.cache[expressPath] = {
 
 // ── Stub fs ──────────────────────────────────────────────────────────────────
 import fs from "node:fs";
+import childProcess from "node:child_process";
 const existsSpy = vi.spyOn(fs, "existsSync");
 const readdirSpy = vi.spyOn(fs, "readdirSync");
 const statSpy = vi.spyOn(fs, "statSync");
 const readFileSpy = vi.spyOn(fs, "readFileSync");
+const mkdirSpy = vi.spyOn(fs, "mkdirSync");
+const writeFileSpy = vi.spyOn(fs, "writeFileSync");
+const spawnSpy = vi.spyOn(childProcess, "spawn");
 
 // ── Stub config ──────────────────────────────────────────────────────────────
 const configFns = {
@@ -182,6 +186,9 @@ beforeEach(() => {
   readdirSpy.mockReset().mockReturnValue([]);
   statSpy.mockReset();
   readFileSpy.mockReset();
+  mkdirSpy.mockReset();
+  writeFileSpy.mockReset();
+  spawnSpy.mockReset().mockReturnValue({ unref: vi.fn() });
   configFns.getRawFileConfig.mockReset().mockReturnValue({});
   configFns.writeConfigFile.mockReset().mockReturnValue(true);
   metricsObj.getMetrics.mockReset();
@@ -583,6 +590,44 @@ describe("adminRoutes > /api/config/backups + restore", () => {
     const res = mkRes();
     h({ body: { filename: "config_1.json" }, adminSession: {} }, res);
     expect(res.statusCode).toBe(500);
+  });
+});
+
+describe("adminRoutes > PM2 restart", () => {
+  it("schedules a detached restart worker", () => {
+    const h = lastHandler("post", "/api/server/restart");
+    const res = mkRes();
+    h({}, res);
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body.data.operationId).toBeTruthy();
+    expect(writeFileSpy).toHaveBeenCalled();
+    expect(spawnSpy).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining([expect.stringContaining("pm2RestartWorker.js")]),
+      expect.objectContaining({ detached: true, stdio: "ignore" })
+    );
+  });
+
+  it("returns the recorded restart result", () => {
+    existsSpy.mockReturnValue(true);
+    readFileSpy.mockReturnValue(JSON.stringify({ operationId: "op-1", state: "failed", message: "pm2 missing" }));
+    const h = lastHandler("get", "/api/server/restart-status");
+    const res = mkRes();
+    h({ query: { id: "op-1" } }, res);
+
+    expect(res.body.data.state).toBe("failed");
+    expect(res.body.data.message).toBe("pm2 missing");
+  });
+
+  it("rejects a stale operation id", () => {
+    existsSpy.mockReturnValue(true);
+    readFileSpy.mockReturnValue(JSON.stringify({ operationId: "op-2", state: "succeeded" }));
+    const h = lastHandler("get", "/api/server/restart-status");
+    const res = mkRes();
+    h({ query: { id: "op-old" } }, res);
+
+    expect(res.statusCode).toBe(404);
   });
 });
 

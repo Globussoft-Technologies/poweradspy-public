@@ -3,6 +3,8 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 const config = require('../config');
 const metrics = require('../metrics/MetricsCollector');
 const { getWorkerHeartbeats } = require('../metrics/workerHeartbeat');
@@ -445,6 +447,58 @@ router.post('/api/config/restore', express.json(), requireEditorRole, (req, res)
     }
   } catch (err) {
     res.status(500).json({ code: 500, message: err.message });
+  }
+});
+
+// Restart runs in a detached helper so this request can finish before PM2
+// replaces the API process. The helper records the command result on disk;
+// the browser polls it after the server comes back online.
+const restartStatusPath = path.resolve(process.cwd(), 'data', 'admin_restart_status.json');
+
+router.post('/api/server/restart', requireEditorRole, (_req, res) => {
+  try {
+    const operationId = crypto.randomUUID();
+    fs.mkdirSync(path.dirname(restartStatusPath), { recursive: true });
+    fs.writeFileSync(restartStatusPath, JSON.stringify({
+      operationId,
+      state: 'scheduled',
+      message: 'PM2 restart scheduled',
+      updatedAt: Date.now()
+    }));
+
+    const worker = spawn(process.execPath, [
+      path.join(__dirname, 'pm2RestartWorker.js'),
+      restartStatusPath,
+      operationId
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    worker.unref();
+
+    res.status(202).json({
+      code: 202,
+      message: 'Server restart scheduled',
+      data: { operationId }
+    });
+  } catch (err) {
+    res.status(500).json({ code: 500, message: `Unable to schedule PM2 restart: ${err.message}` });
+  }
+});
+
+router.get('/api/server/restart-status', (req, res) => {
+  try {
+    if (!fs.existsSync(restartStatusPath)) {
+      return res.json({ code: 200, data: { state: 'idle' } });
+    }
+    const status = JSON.parse(fs.readFileSync(restartStatusPath, 'utf8'));
+    if (req.query?.id && status.operationId !== req.query.id) {
+      return res.status(404).json({ code: 404, message: 'Restart operation not found' });
+    }
+    res.json({ code: 200, data: status });
+  } catch (err) {
+    res.status(500).json({ code: 500, message: `Unable to read restart status: ${err.message}` });
   }
 });
 
