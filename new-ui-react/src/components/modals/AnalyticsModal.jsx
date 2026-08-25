@@ -2735,7 +2735,9 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                       isLight ? "border-gray-200" : "border-white/10"
                     }`}>
                       <div className={`mb-4 font-mono text-[10px] font-semibold tracking-[0.12em] ${
-                        isLight ? "text-gray-400" : "text-white/35"
+                        // Use a restrained gray in both themes; the global light
+                        // remap otherwise makes this near-black on white.
+                        isLight ? "text-[#9aa0ae]" : "text-[#8f95a3]"
                       }`}>
                         WHAT THE AI READ
                       </div>
@@ -2819,7 +2821,9 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                         : "border-white/10 bg-violet-500/[0.035]"
                     }`}>
                       <div className={`mb-4 font-mono text-[10px] font-semibold tracking-[0.12em] ${
-                        isLight ? "text-violet-500/70" : "text-violet-300/70"
+                        // Evidence is a restrained lavender accent, not the
+                        // brighter interactive violet used by buttons and chips.
+                        isLight ? "text-[#8b7fb0]" : "text-[#a99bc8]"
                       }`}>
                         EVIDENCE FROM THE CREATIVE
                       </div>

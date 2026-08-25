@@ -1789,7 +1789,10 @@ const AdDetailModal = ({
     </>
   )}
 
-  {ad.date && shouldShowDetailValue(ad.date) && (
+  {/* Google Transparency ads can carry a display fallback date for list/grid
+      sorting, but that value is not a real post date and should not be
+      surfaced as one in the detail modal. */}
+  {ad.date && !isGoogleTransparency && shouldShowDetailValue(ad.date) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"

@@ -654,7 +654,39 @@ describe("advertiserService > getAdCount date-source regression", () => {
     expect(googleCall.body.aggs.monthly_ads.date_histogram.script.params.fields).toEqual([
       "first_seen",
       "post_date",
+      "last_seen",
     ]);
     expect(fbCall.body.aggs.monthly_ads.date_histogram.script.source).toContain("LocalDateTime");
+  });
+
+  it("uses the shared Google displayability filter and normalized owner fallback in compare queries", async () => {
+    spies.esClient.server1.search.mockResolvedValue(emptyAggResult());
+    spies.esClient.server2.search.mockResolvedValue(emptyAggResult());
+    spies.esClient.server3.search.mockResolvedValue(emptyAggResult());
+
+    await svc.getAdCount({ body: { competitors: "Blinkit" } }, mockRes());
+
+    const googleCall = spies.esClient.server3.search.mock.calls[0][0];
+    expect(googleCall.body.query.bool.filter).toEqual(
+      expect.arrayContaining([
+        ...getDisplayableMediaFilter("google"),
+        expect.objectContaining({
+          terms: expect.objectContaining({
+            country: expect.any(Array),
+          }),
+        }),
+      ]),
+    );
+
+    const ownerClause = googleCall.body.query.bool.must[0];
+    expect(ownerClause).toEqual({
+      bool: {
+        should: [
+          { match: { post_owner_name: { query: "Blinkit", operator: "and" } } },
+          { prefix: { post_owner_lower: "blinkit" } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
   });
 });

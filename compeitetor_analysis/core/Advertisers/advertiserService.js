@@ -4,6 +4,7 @@ import logger from "../../resources/logs/logger.log.js";
 import { esClient, esServers, checkElasticsearchHealth } from "../../utils/Elasticsearch.js";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
+import { COUNTRIES as HANDLED_COUNTRIES } from "../../config/countries.js";
 // import {client} from "../../utils/Elasticsearch.js";
 import Response from "../../utils/response.js";
 
@@ -35,6 +36,104 @@ function cleanImagePath(url) {
   if (trimmed.startsWith("http")) return trimmed;
   trimmed = trimmed.replace(STORAGE_PREFIX_RE, "/");
   return trimmed.startsWith("/") ? trimmed : "/" + trimmed;
+}
+
+// Keep the comparison chart on the same country vocabulary as the project
+// list. This deliberately stays backend-owned so the compare endpoint does not
+// depend on the separately deployed frontend country file.
+const GLOBAL_COUNTRY_TERMS = ["all", "global", "global reach", "worldwide"];
+const COUNTRY_FIELD_BY_INDEX = {
+  [NETWORK_INDEXES.facebook]: "country_only.country",
+  [NETWORK_INDEXES.instagram]: "instagram_country_only.country",
+  [NETWORK_INDEXES.google]: "country",
+};
+
+function addCountryTermVariants(queryTerms, normalizedTerms, value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return;
+  queryTerms.add(raw);
+  queryTerms.add(raw.toLowerCase());
+  queryTerms.add(raw.toUpperCase());
+  normalizedTerms.add(raw.toLowerCase());
+}
+
+const SUPPORTED_COUNTRY_INFO = (() => {
+  const queryTerms = new Set();
+  const normalizedTerms = new Set();
+
+  for (const row of HANDLED_COUNTRIES) {
+    addCountryTermVariants(queryTerms, normalizedTerms, row.name);
+    addCountryTermVariants(queryTerms, normalizedTerms, row.code);
+  }
+  for (const globalTerm of GLOBAL_COUNTRY_TERMS) {
+    addCountryTermVariants(queryTerms, normalizedTerms, globalTerm);
+  }
+
+  return {
+    queryTerms: [...queryTerms],
+    normalizedTerms,
+  };
+})();
+
+function countryFieldForIndex(index, countryField) {
+  return index === NETWORK_INDEXES.google || countryField.endsWith(".keyword")
+    ? countryField
+    : `${countryField}.keyword`;
+}
+
+function buildCountryFilterClause(index, countryField) {
+  const terms = SUPPORTED_COUNTRY_INFO.queryTerms || [];
+  if (!terms.length) return null;
+  return {
+    terms: {
+      [countryFieldForIndex(index, countryField)]: terms,
+    },
+  };
+}
+
+/**
+ * Build the compare-graph owner matcher.
+ *
+ * This mirrors the list-view matching behavior closely enough to catch
+ * advertiser variants like `blinkit.com` / `Blinkit Private Limited` without
+ * widening the ES query or adding another read path.
+ */
+function buildAdCountOwnerClause(cfg, competitorName) {
+  const cleaned = String(competitorName || "").replace(/"/g, "").trim();
+  if (!cleaned) {
+    return { match_none: {} };
+  }
+
+  const words = cleaned.split(/\s+/).filter(Boolean);
+
+  // Google has a single owner field, so the comparison can safely use one
+  // ANDed match there. FB/IG keep the original phrase-across-fields behavior.
+  const phraseClause = (cfg.platform === "google" && cfg.fields.length === 1)
+    ? { match: { [cfg.fields[0]]: { query: cleaned, operator: "and" } } }
+    : (words.length === 1)
+      ? { multi_match: { query: words[0], type: "phrase", fields: cfg.fields } }
+      : {
+          bool: {
+            must: words.map((word) => ({
+              multi_match: { query: word, type: "phrase", fields: cfg.fields },
+            })),
+          },
+        };
+
+  // Google-only: the normalized keyword prefix is the cheap fallback that
+  // catches legal-suffix/domain variants while keeping the query bounded.
+  const GOOGLE_PREFIX_MIN_LENGTH = 4;
+  const skipPrefix = cfg.platform === "google" && cleaned.length < GOOGLE_PREFIX_MIN_LENGTH;
+  const prefixClause = skipPrefix
+    ? null
+    : { prefix: { [cfg.prefixFieldKeyword || cfg.prefixField]: cleaned.toLowerCase() } };
+
+  return {
+    bool: {
+      should: [phraseClause, prefixClause].filter(Boolean),
+      minimum_should_match: 1,
+    },
+  };
 }
 
 class AdvertiserService {
@@ -1949,8 +2048,8 @@ class AdvertiserService {
       const advertiserIndexConfigs = [
         {
           index: NETWORK_INDEXES.facebook,
-          field: "facebook_ad_post_owners.post_owner_name",
-          searchFields: [
+          platform: "facebook",
+          fields: [
             "facebook_ad_post_owners.post_owner_name",
             "facebook_ad_post_owners.post_owner_name_ru",
             "facebook_ad_post_owners.post_owner_name_fr",
@@ -1958,19 +2057,21 @@ class AdvertiserService {
             "facebook_ad_post_owners.post_owner_name_ge",
             "facebook_ad_post_owners.post_owner_name_exactly",
           ],
+          prefixField: "facebook_ad_post_owners.post_owner_name",
+          countryField: "country_only.country",
           dateFields: [
             // The competition graph should bucket by the ad's actual
             // first_seen timestamp, falling back to post_date when the
             // publisher-side first_seen value is missing or malformed.
             "facebook_ad.first_seen.keyword",
-            "facebook_ad.post_date"
+            "facebook_ad.post_date",
           ],
-          platform: "facebook"
+          mediaFilter: getDisplayableMediaFilter("facebook"),
         },
         {
           index: NETWORK_INDEXES.instagram,
-          field: "instagram_ad_post_owners.post_owner_name",
-          searchFields: [
+          platform: "instagram",
+          fields: [
             "instagram_ad_post_owners.post_owner_name",
             "instagram_ad_post_owners.post_owner_name_ru",
             "instagram_ad_post_owners.post_owner_name_fr",
@@ -1978,21 +2079,31 @@ class AdvertiserService {
             "instagram_ad_post_owners.post_owner_name_ge",
             "instagram_ad_post_owners.post_owner_name_exactly",
           ],
+          prefixField: "instagram_ad_post_owners.post_owner_name",
+          countryField: "instagram_country_only.country",
           dateFields: [
             "instagram_ad.first_seen.keyword",
-            "instagram_ad.post_date"
+            "instagram_ad.post_date",
           ],
-          platform: "instagram"
+          mediaFilter: getDisplayableMediaFilter("instagram"),
         },
         {
           index: NETWORK_INDEXES.google,
-          field: "post_owner_name",
-          searchFields: ["post_owner_name"],
+          platform: "google",
+          fields: ["post_owner_name"],
+          prefixField: "post_owner_name",
+          prefixFieldKeyword: "post_owner_lower",
+          countryField: "country",
           dateFields: [
             "first_seen",
             "post_date",
+            // Google Transparency rows can still be present in the same index
+            // even when the first_seen/post_date path is incomplete for the
+            // original ES doc. Keep last_seen as a final fallback so the
+            // comparison chart does not silently drop those transparency ads.
+            "last_seen",
           ],
-          platform: "google"
+          mediaFilter: getDisplayableMediaFilter("google"),
         },
       ];
   
@@ -2012,7 +2123,9 @@ class AdvertiserService {
       // Build an ES 6.8-safe fallback script:
       // 1) try the first_seen field first;
       // 2) if it is missing or invalid, fall back to post_date;
-      // 3) parse FB/IG keyword strings in the same `yyyy-MM-dd HH:mm:ss`
+      // 3) for Google, fall back to last_seen so transparency rows stay in the
+      //    chart even when their first_seen/post_date path is incomplete;
+      // 4) parse FB/IG keyword strings in the same `yyyy-MM-dd HH:mm:ss`
       //    format used by the stored documents.
       const buildMonthlyDateScript = (dateFields) => ({
         source: `
@@ -2053,35 +2166,6 @@ class AdvertiserService {
       // monthly counts match what users actually SEE (no-media / placeholder
       // ads and Google organic results are excluded). Exists-based, no
       // `*PowerAdspy*` wildcard — mirrors the builders / fixed dashboardService.
-      const mediaFilterFor = (index) => {
-        if (index === NETWORK_INDEXES.facebook) {
-          return { filter: [{ bool: { should: [
-            { bool: { filter: [{ term: { "facebook_ad.type.keyword": "IMAGE" } }, { exists: { field: "new_nas_image_url" } }] } },
-            { bool: { filter: [{ term: { "facebook_ad.type.keyword": "VIDEO" } }, { exists: { field: "Thumbnail" } }] } },
-            { bool: { must_not: [{ terms: { "facebook_ad.type.keyword": ["IMAGE", "VIDEO"] } }] } },
-          ], minimum_should_match: 1 } }], mustNot: [] };
-        }
-        if (index === NETWORK_INDEXES.instagram) {
-          return { filter: [{ bool: { should: [
-            { bool: { filter: [{ terms: { "instagram_ad.type.keyword": ["IMAGE", "STORIES"] } }, { exists: { field: "new_nas_image_url" } }] } },
-            { bool: { filter: [{ term: { "instagram_ad.type.keyword": "VIDEO" } }, { exists: { field: "thumbnail" } }] } },
-            { bool: { must_not: [{ terms: { "instagram_ad.type.keyword": ["IMAGE", "VIDEO", "STORIES"] } }] } },
-          ], minimum_should_match: 1 } }], mustNot: [] };
-        }
-        /* v8 ignore next -- search_mix/instagram return earlier, so this if is only evaluated for google (always true); getAdCount's config has no youtube, so the false branch is unreachable */
-        if (index === NETWORK_INDEXES.google) {
-          return { filter: [], mustNot: [
-            { bool: { filter: [{ term: { type: "IMAGE" } }, { bool: { should: [
-              { bool: { must_not: [{ exists: { field: "new_nas_image_url" } }] } },
-              { term: { "new_nas_image_url.keyword": "" } },
-            ], minimum_should_match: 1 } }] } },
-            { match_phrase: { type: "ORGANIC SEARCH" } },
-          ] };
-        }
-        /* v8 ignore next -- getAdCount's advertiserIndexConfigs has no youtube entry, so no index falls through to this default */
-        return { filter: [], mustNot: [] };
-      };
-
       for (const [serverName, serverData] of Object.entries(this.esServers)) {
         const client = this.esClient[serverName];
   
@@ -2089,9 +2173,15 @@ class AdvertiserService {
           serverData.indexes.includes(cfg.index)
         );
   
-        const aggPromises = relevantIndexes.map(async ({ index, searchFields, dateFields, platform }) => {
+        const aggPromises = relevantIndexes.map(async (cfg) => {
           try {
-            const media = mediaFilterFor(index);
+            const media = Array.isArray(cfg.mediaFilter) ? cfg.mediaFilter : [];
+            const advertiserClause = buildAdCountOwnerClause(cfg, competitor);
+            // Keep the compare chart on the same supported-country set that the
+            // competitor list uses so rows cannot overcount ads from hidden or
+            // unsupported country values.
+            const countryClause = buildCountryFilterClause(cfg.index, cfg.countryField);
+            const filter = countryClause ? [...media, countryClause] : media;
 
             // Elasticsearch query
             const body = {
@@ -2099,18 +2189,9 @@ class AdvertiserService {
               query: {
                 bool: {
                   must: [
-                    {
-                      query_string: {
-                        fields: searchFields,
-                        query: `(${competitor})`,
-                        type: "phrase",
-                        default_operator: "AND",
-                        auto_generate_synonyms_phrase_query: false
-                      }
-                    }
+                    advertiserClause,
                   ],
-                  ...(media.filter.length  && { filter:   media.filter }),
-                  ...(media.mustNot.length && { must_not: media.mustNot }),
+                  ...(filter.length && { filter }),
                 }
               },
               aggs: {
@@ -2120,13 +2201,13 @@ class AdvertiserService {
                     format: "MMMM",
                     time_zone: "+05:30",
                     min_doc_count: 1,
-                    script: buildMonthlyDateScript(dateFields)
+                    script: buildMonthlyDateScript(cfg.dateFields)
                   }
                 }
               }
             };
   
-            const result = await client.search({ index, body });
+            const result = await client.search({ index: cfg.index, body });
             const buckets = result.aggregations?.monthly_ads?.buckets || [];
   
             // Initialize month counts to 0
@@ -2139,13 +2220,13 @@ class AdvertiserService {
             }
   
             /* v8 ignore next -- every advertiserIndexConfig sets a platform and monthlyTotals is pre-initialised for all of them, so this is always true */
-            if (platform && monthlyTotals[platform]) {
-              monthlyTotals[platform] = monthCounts;
+            if (cfg.platform && monthlyTotals[cfg.platform]) {
+              monthlyTotals[cfg.platform] = monthCounts;
             }
   
           } catch (err) {
-            logger.error(`Error fetching monthly ad count from ${index}:`, err);
-            return res.send(Response.userFailResp(`Error fetching data for ${index}`, err));
+            logger.error(`Error fetching monthly ad count from ${cfg.index}:`, err);
+            return res.send(Response.userFailResp(`Error fetching data for ${cfg.index}`, err));
           }
         });
   
