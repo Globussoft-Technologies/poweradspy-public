@@ -1718,6 +1718,14 @@ export const buildSearchPayload = (filters = {}) => {
       ? (imageSize.length > 0 ? imageSize.join(',') : 'NA')
       : v(imageSize),
     language: ps(resolvedNetworks, 'language') ? (resolvedLang !== 'NA' ? resolvedLang : 'en') : 'NA',
+    // Additive metadata flag — `language` above always carries a value
+    // (silently defaulting to 'en') whenever any resolved network supports
+    // it, even if the user never touched the Language filter. This flag is
+    // the only reliable signal for "the user genuinely selected a language",
+    // used server-side to decide whether Language should narrow which
+    // networks are searched (e.g. exclude AdMob, which has no language data)
+    // without changing `language`'s existing behavior for anything else.
+    language_explicit: resolvedLang !== 'NA',
     ad_position_filter: v(adPositionFilter) !== 'NA' ? adPositionFilter : 'NA',
     userkeyword: false,
     country_session: 0,

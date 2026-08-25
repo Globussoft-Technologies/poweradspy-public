@@ -352,6 +352,30 @@ async function getApplicableNetworks(reqBody) {
     }
   }
 
+  // `language`/`lang` are excluded from the generic loop above (see
+  // NON_FILTER_BODY_KEYS) because the frontend always sends a language value
+  // — silently defaulting to 'en' — whenever any resolved network supports
+  // it, even if the user never touched the Language filter. Narrowing
+  // networks off that value would silently exclude AdMob (which has no
+  // language data) from every search where a language-supporting network is
+  // also selected, regardless of user intent. `language_explicit` is an
+  // additive flag the frontend only sets true when the user genuinely picked
+  // a language — only then does Language narrow which networks are searched.
+  if (reqBody.language_explicit === true) {
+    const langValue = reqBody.language ?? reqBody.lang;
+    if (isActiveValue(langValue)) {
+      const allowed = index['language'] || index['lang'];
+      if (allowed && allowed.length > 0 && allowed.length < ALL_NETWORKS.length) {
+        if (intersection === null) {
+          intersection = new Set(allowed);
+        } else {
+          const next = new Set(allowed.filter(n => intersection.has(n)));
+          if (next.size > 0) intersection = next;
+        }
+      }
+    }
+  }
+
   return intersection && intersection.size > 0 ? Array.from(intersection) : null;
 }
 

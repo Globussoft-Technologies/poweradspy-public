@@ -15,6 +15,7 @@ const ComboboxFilter = ({
   multiSelect = true,
   placeholder,
   valueKey = "value",
+  showSelectAll = false,
 }) => {
   const [search, setSearch] = useState("");
 
@@ -47,6 +48,28 @@ const ComboboxFilter = ({
     }
   };
 
+  // Preserve existing selections and add every currently-filtered option —
+  // mirrors FilterCheckboxList's selectAll so behavior stays consistent
+  // across filter types.
+  const selectAll = () => {
+    const nextSelected = [...selected];
+    const seen = new Set(nextSelected);
+    for (const opt of filtered) {
+      const value = getStoredValue(opt);
+      if (seen.has(value)) continue;
+      seen.add(value);
+      nextSelected.push(value);
+    }
+    onChange(nextSelected);
+  };
+
+  const clearAll = () => onChange([]);
+
+  const showBulkActions = showSelectAll && multiSelect && filtered.length > 1;
+  const allChecked =
+    filtered.length > 0 &&
+    filtered.every((opt) => selected.includes(getStoredValue(opt)));
+
   return (
     <div className="px-3 py-2">
       <div>
@@ -63,6 +86,32 @@ const ComboboxFilter = ({
             className="w-full bg-theme-card border border-theme-border rounded-md pl-7 pr-3 py-1.5 text-[11px] text-theme-text placeholder:text-theme-text-muted focus:outline-none focus:border-[#3759a3]/50 transition-colors"
           />
         </div>
+
+        {showBulkActions && (
+          <button
+            type="button"
+            onClick={selected.length > 0 ? clearAll : selectAll}
+            className="w-full flex items-center gap-2.5 py-1 mb-1 text-[11px] group"
+          >
+            <div
+              className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${allChecked ? "bg-[#335296] border-[#335296]" : "border-theme-text-secondary group-hover:border-theme-text"}`}
+            >
+              {allChecked && (
+                <Check size={8} strokeWidth={3} className="text-white" />
+              )}
+            </div>
+            <span
+              className={`transition-colors text-left ${allChecked ? "text-[#7899e0] font-medium" : "text-theme-text-muted group-hover:text-theme-text"}`}
+            >
+              Select all
+            </span>
+            {selected.length > 0 && (
+              <span className="ml-auto text-[9px] text-theme-text-muted">
+                {selected.length} selected
+              </span>
+            )}
+          </button>
+        )}
 
         <div className="max-h-[160px] overflow-y-auto scrollbar-hide space-y-0.5">
           {filtered.length > 0 ? (

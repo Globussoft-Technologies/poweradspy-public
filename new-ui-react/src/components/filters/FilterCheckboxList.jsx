@@ -14,6 +14,7 @@ const FilterCheckboxList = ({
   maxItems,
   showSearch = true,
   accented = false,
+  showSelectAll = false,
 }) => {
   const { theme = "dark" } = useTheme() || {};
   const isLightTheme = theme === "light";
@@ -93,39 +94,16 @@ const FilterCheckboxList = ({
   const optionsToUse = searchQuery.trim() ? filteredOptions : options;
   const displayOptions = expandedCount ? optionsToUse : optionsToUse.slice(0, 5);
   const hiddenCount = optionsToUse.length - 5;
-  // Only the AI Signals popup gets the extra bulk controls.
-  const showBulkActions = accented && optionsToUse.length > 1;
+  // Bulk controls show for the AI Signals popup (always accented) or any
+  // regular SDUI filter the admin has opted in via `select_all: true`.
+  const showBulkActions = (accented || showSelectAll) && optionsToUse.length > 1;
+  const allChecked =
+    optionsToUse.length > 0 &&
+    optionsToUse.every((opt) => selectedValues.includes(getOptValue(opt)));
 
   return (
     <div className={`px-3 py-2 rounded-xl border ${accented ? accentPalette.section : "border-transparent"}`}>
       <div>
-        {showBulkActions && (
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              {selectedCount > 0 && (
-                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${accented ? accentPalette.badge : "border-[#3759a3]/25 bg-[#3762c1]/8 text-[#6b99ff]/90"}`}>
-                  {selectedCount} selected
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={selectAll}
-                className={`rounded-md border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] transition-colors ${accented ? accentPalette.selectAllBtn : "border-[#3759a3]/30 bg-[#3762c1]/8 text-[#6b99ff] hover:border-[#3759a3]/50 hover:bg-[#3762c1]/12 hover:text-[#7fa8ff]"}`}
-              >
-                Select all
-              </button>
-            </div>
-            {selectedCount > 0 && (
-              <button
-                type="button"
-                onClick={clearAll}
-                className={`rounded-md border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] transition-colors ${accented ? accentPalette.destructiveBtn : "border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/15 hover:text-red-200"}`}
-              >
-                Deselect all
-              </button>
-            )}
-          </div>
-        )}
         {/* Search bar - only show if showSearch is true */}
         {showSearch && (
           <div className="relative mb-2">
@@ -141,6 +119,31 @@ const FilterCheckboxList = ({
               className={`w-full bg-theme-card border rounded-md pl-7 pr-3 py-1.5 text-[11px] text-theme-text placeholder:text-theme-text-muted focus:outline-none transition-colors ${accented ? accentPalette.input : "border-theme-border focus:border-[#3759a3]/50"}`}
             />
           </div>
+        )}
+        {showBulkActions && (
+          <button
+            type="button"
+            onClick={selectedCount > 0 ? clearAll : selectAll}
+            className={`w-full flex items-center gap-2.5 py-1 mb-1 text-[11px] group rounded-md px-1 transition-colors ${accented ? accentPalette.hover : ""}`}
+          >
+            <div
+              className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${allChecked ? (accented ? accentPalette.checkedBox : "bg-[#335296] border-[#335296]") : (accented ? accentPalette.uncheckedBox : "border-theme-text-secondary group-hover:border-theme-text")}`}
+            >
+              {allChecked && (
+                <Check size={8} strokeWidth={3} className="text-white" />
+              )}
+            </div>
+            <span
+              className={`transition-colors text-left ${allChecked ? (accented ? accentPalette.checkedText : "text-[#7899e0] font-medium") : "text-theme-text-muted group-hover:text-theme-text"}`}
+            >
+              Select all
+            </span>
+            {selectedCount > 0 && (
+              <span className={`ml-auto text-[9px] ${accented ? accentPalette.label : "text-theme-text-muted"}`}>
+                {selectedCount} selected
+              </span>
+            )}
+          </button>
         )}
 
         <div className="space-y-1">

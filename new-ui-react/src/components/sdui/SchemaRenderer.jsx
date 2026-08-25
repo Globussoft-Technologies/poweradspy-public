@@ -259,6 +259,12 @@ const SchemaRenderer = ({
         activePlatforms,
         accented: isAiMetaDocument,
         focused: isAiFocused,
+        // Per-filter opt-in for the "Select all / Deselect all" bulk-action row
+        // (supported by FilterCheckboxList and ComboboxFilter — checkbox,
+        // multiselect, and combobox-type filters, e.g. Language). Admin sets
+        // `select_all: true` on the filter doc to turn it on — no code change
+        // needed per filter.
+        showSelectAll: filter.select_all === true,
 
         // For geo filters, store the display label (e.g. "United States") not the ISO value
         valueKey: ["country_filter", "state_filter", "city_filter"].includes(

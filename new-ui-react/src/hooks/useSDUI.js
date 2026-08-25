@@ -438,7 +438,15 @@ export function useSDUI() {
 
         let cancelled = false;
         const mySeq = ++configFetchSeqRef.current;
-        const reload = async () => {
+        // The synchronous restore above intentionally shows the full (unscoped)
+        // schema for a moment — it MUST be corrected by this reload landing.
+        // A silent failure here used to leave that unscoped state (e.g. Language,
+        // which isn't an AdMob filter) stuck showing indefinitely, since nothing
+        // else ever re-requests the platform-scoped config. Retry a few times
+        // (short backoff) before giving up, so a transient network hiccup can't
+        // permanently leak inapplicable filters into the wrong platform's view.
+        const MAX_ATTEMPTS = 3;
+        const reload = async (attempt = 1) => {
             try {
                 const cfg = await fetchSDUIConfig({
                     skipCache: true,
@@ -453,8 +461,14 @@ export function useSDUI() {
                     });
                 }
             } catch (err) {
-                /* v8 ignore next -- cancelled-during-reload-error race is a defensive guard */
-                if (!cancelled) console.warn('Platform config re-fetch failed:', err.message);
+                if (cancelled) return;
+                if (attempt < MAX_ATTEMPTS) {
+                    setTimeout(() => {
+                        if (!cancelled && configFetchSeqRef.current === mySeq) reload(attempt + 1);
+                    }, attempt * 500);
+                } else {
+                    console.warn('Platform config re-fetch failed after retries:', err.message);
+                }
             }
         };
         reload();
