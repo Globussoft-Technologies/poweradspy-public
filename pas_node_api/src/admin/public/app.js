@@ -16,6 +16,8 @@ let refreshInterval = null;
 let currentLogFile = null;
 let currentRole = 'viewer';
 let rawConfigData = {};
+let restartMonitorPromise = null;
+const RESTART_OPERATION_KEY = 'pas_admin_restart_operation';
 let pv2PendingReviewItems = [];
 const tabLoaded = new Set(); // tracks which tabs have loaded data at least once
 
@@ -53,6 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.id === 'config-history-modal') closeConfigHistory();
   });
   document.getElementById('refresh-backups-btn').addEventListener('click', loadConfigBackups);
+  resumePendingServerRestart();
   document.getElementById('config-search').addEventListener('input', filterDynamicConfig);
   document.getElementById('clear-config-search').addEventListener('click', () => {
     const searchInput = document.getElementById('config-search');
@@ -1053,6 +1056,7 @@ async function restartServer() {
   const button = document.getElementById('restart-server-btn');
   const statusEl = document.getElementById('config-status');
   const originalText = button.textContent;
+  button.classList.remove('restart-success');
   button.disabled = true;
   button.textContent = 'Restarting…';
   statusEl.textContent = '↻ Server restart requested. Waiting for PM2…';
@@ -1065,15 +1069,74 @@ async function restartServer() {
     });
     const payload = await res.json();
     if (!res.ok) throw new Error(payload.message || 'Unable to start PM2 restart');
-    await pollServerRestart(payload.data.operationId);
+    localStorage.setItem(RESTART_OPERATION_KEY, payload.data.operationId);
+    await monitorServerRestart(payload.data.operationId);
   } catch (err) {
+    localStorage.removeItem(RESTART_OPERATION_KEY);
     statusEl.textContent = `✕ Restart failed: ${err.message}`;
     statusEl.className = 'status-text error';
     showToast(`Server restart failed: ${err.message}`, 'error');
-  } finally {
     button.disabled = false;
     button.textContent = originalText;
   }
+}
+
+function resumePendingServerRestart() {
+  const operationId = localStorage.getItem(RESTART_OPERATION_KEY);
+  if (!operationId) return;
+
+  const button = document.getElementById('restart-server-btn');
+  const statusEl = document.getElementById('config-status');
+  button.disabled = true;
+  button.textContent = 'Restarting…';
+  statusEl.textContent = '↻ Reconnecting and verifying PM2 processes…';
+  statusEl.className = 'status-text';
+  monitorServerRestart(operationId).catch(() => {});
+}
+
+function monitorServerRestart(operationId) {
+  if (restartMonitorPromise) return restartMonitorPromise;
+  restartMonitorPromise = pollServerRestart(operationId)
+    .then(restart => finishServerRestart(restart))
+    .catch(err => {
+      failServerRestart(err);
+      return null;
+    })
+    .finally(() => {
+      restartMonitorPromise = null;
+    });
+  return restartMonitorPromise;
+}
+
+function finishServerRestart(restart) {
+  const button = document.getElementById('restart-server-btn');
+  const statusEl = document.getElementById('config-status');
+  localStorage.removeItem(RESTART_OPERATION_KEY);
+  button.textContent = '✓ Restarted';
+  button.classList.add('restart-success');
+  button.disabled = currentRole !== 'editor';
+  statusEl.textContent = `✓ Server restarted successfully — ${restart.message || 'all PM2 processes are online'}`;
+  statusEl.className = 'status-text success';
+  showToast('Server restarted successfully!', 'success');
+
+  setTimeout(() => {
+    if (button.textContent === '✓ Restarted') {
+      button.textContent = '↻ Restart Server';
+      button.classList.remove('restart-success');
+    }
+  }, 5000);
+}
+
+function failServerRestart(err) {
+  const button = document.getElementById('restart-server-btn');
+  const statusEl = document.getElementById('config-status');
+  localStorage.removeItem(RESTART_OPERATION_KEY);
+  button.textContent = '↻ Restart Server';
+  button.classList.remove('restart-success');
+  button.disabled = currentRole !== 'editor';
+  statusEl.textContent = `✕ Restart failed: ${err.message}`;
+  statusEl.className = 'status-text error';
+  showToast(`Server restart failed: ${err.message}`, 'error');
 }
 
 async function pollServerRestart(operationId) {
@@ -1082,27 +1145,31 @@ async function pollServerRestart(operationId) {
 
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 2000));
+    let res;
     try {
-      const res = await fetch(`${API}/server/restart-status?id=${encodeURIComponent(operationId)}`, {
+      res = await fetch(`${API}/server/restart-status?id=${encodeURIComponent(operationId)}`, {
         credentials: 'include',
         cache: 'no-store'
       });
-      if (!res.ok) continue;
-      const payload = await res.json();
-      const restart = payload.data;
-      if (restart.state === 'succeeded') {
-        statusEl.textContent = '✓ PM2 restart completed successfully';
-        statusEl.className = 'status-text success';
-        showToast('Server restarted successfully!', 'success');
-        return;
-      }
-      if (restart.state === 'failed') {
-        throw new Error(restart.message || 'PM2 restart command failed');
-      }
-    } catch (err) {
-      if (err.message && !err.message.toLowerCase().includes('fetch')) throw err;
-      // A short connection failure is expected while PM2 replaces the process.
+    } catch (_networkError) {
+      // Any temporary network failure is expected while PM2 replaces the API.
+      continue;
     }
+
+    if (!res.ok) continue;
+    let payload;
+    try {
+      payload = await res.json();
+    } catch (_invalidResponse) {
+      continue;
+    }
+
+    const restart = payload.data;
+    if (restart.state === 'succeeded') return restart;
+    if (restart.state === 'failed') {
+      throw new Error(restart.message || 'PM2 restart command failed');
+    }
+    statusEl.textContent = restart.message || '↻ Reconnecting and verifying PM2 processes…';
   }
 
   throw new Error('Restart status timed out. Check PM2 logs on the server.');
