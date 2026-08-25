@@ -499,7 +499,10 @@ const mapAdType = (type) => {
   if (t === 'image') return 'image';
   if (t === 'video') return 'video';
   if (t === 'carousel') return 'carousel';
-  if (t === 'story') return 'story';
+  // DB value is plural ('STORIES', confirmed on instagram_ad.type) — 'story'
+  // (singular) was the only variant checked here, so every Stories ad fell
+  // through to the 'image' default below.
+  if (t === 'story' || t === 'stories') return 'stories';
   if (t === 'reel') return 'reel';
   if (t === 'text') return 'text';
   if (t === 'nativead' || t === 'native ad' || t === 'native_ad') return 'native_ad';

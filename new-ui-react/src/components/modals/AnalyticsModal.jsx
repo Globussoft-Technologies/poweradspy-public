@@ -126,6 +126,7 @@ import {
   Image,
   Film,
   Layers,
+  Circle,
   Clock,
   TrendingUp,
   BarChart3,
@@ -289,6 +290,15 @@ const AD_TYPE_CONFIG = {
     label: "IMAGE",
     icon: Image,
     cls: "text-blue-600 bg-blue-500/10 border-blue-500/20 dark:text-blue-300 dark:bg-blue-500/20 dark:border-blue-500/10",
+  },
+  // Instagram's native "Stories" ad format — a distinct `type` value in ES
+  // (instagram_ad.type: 'STORIES'), separate from image/video/carousel.
+  // Without an entry here, AD_TYPE_CONFIG's substring lookup falls through to
+  // its 'image' default, mislabeling every Stories ad as "IMAGE".
+  stories: {
+    label: "STORIES",
+    icon: Circle,
+    cls: "text-fuchsia-600 bg-fuchsia-500/10 border-fuchsia-500/20 dark:text-fuchsia-300 dark:bg-fuchsia-500/20 dark:border-fuchsia-500/10",
   },
   banner: {
     label: "BANNER",
@@ -1551,7 +1561,15 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
     const a = processedAd || ad || {};
     // Prefer platform_network from adDetails (backend canonical), then fall back to card network
     const platform = normalizePlatformSlug((adDetailsData?.platform_network) || a.network || a.platform || 'facebook');
-    const adType = String(a.adType || a.ad_type || 'image').toLowerCase();
+    // `ad_type` is NOT the media-type string on most networks' raw detail rows —
+    // e.g. Instagram's `instagram_ad.ad_type` SQL column is an unrelated numeric
+    // flag (0/1), while the real IMAGE/VIDEO/STORIES/CAROUSEL value lives in the
+    // `type` column (selected as `type` by every network's search controller).
+    // `adType` (camelCase) is the frontend's own card-level normalized field
+    // (services/api.js) and takes priority when present; `a.type` is the raw
+    // fallback so a detail-only fetch (which lacks that normalization) still
+    // resolves the real value instead of silently defaulting to 'image'.
+    const adType = String(a.adType || a.type || a.ad_type || 'image').toLowerCase();
     const position = String(a.ad_position || a.position || '').toLowerCase();
     const platformRules = ENGAGEMENT_RULES[platform] || ENGAGEMENT_RULES.facebook;
     let rules = platformRules[position] || platformRules[adType] || platformRules._default || {};
