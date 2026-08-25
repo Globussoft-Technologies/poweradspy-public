@@ -234,6 +234,56 @@ describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {
     expect(sourceApp.filters[0].options.length).toBeGreaterThan(0);
   });
 
+  it("does not rewrite the shared Traffic Source doc for mixed AdMob platform scopes", async () => {
+    mockAdmobSql();
+    const config = {
+      navbar: [{
+        _id: "platforms",
+        filters: [{
+          platform_filter_matrix: {
+            facebook: ["source"],
+            admob: ["source", "source_app"],
+          },
+        }],
+      }],
+      sidebar: [
+        {
+          _id: "source",
+          title: "TRAFFIC SOURCE",
+          filters: [{
+            _id: "source_filter",
+            platform_applicability: ["facebook", "instagram"],
+            options: [
+              { _id: "src_android", label: "Android", value: "android", platform_applicability: "all" },
+              { _id: "src_desktop", label: "Desktop", value: "desktop", platform_applicability: "all" },
+              { _id: "src_ios", label: "iOS", value: "ios", platform_applicability: "all" },
+              { _id: "src_all", label: "All", value: "all", platform_applicability: ["facebook", "instagram"] },
+            ],
+          }],
+        },
+        {
+          _id: "source_app",
+          title: "SOURCE APP",
+          filters: [{ _id: "source_app_filter", options: [] }],
+        },
+      ],
+    };
+
+    const out = await svc.filterConfigByPlatforms(config, ["facebook", "admob"]);
+    const source = out.sidebar.find((doc) => doc._id === "source");
+    const sourceApp = out.sidebar.find((doc) => doc._id === "source_app");
+
+    expect(source.title).toBe("TRAFFIC SOURCE");
+    expect(source.filters[0].platform_applicability).toEqual(["facebook", "instagram"]);
+    expect(source.filters[0].options.map((option) => option.value)).toEqual([
+      "android",
+      "desktop",
+      "ios",
+      "all",
+    ]);
+    expect(sourceApp.filters[0].options.length).toBeGreaterThan(0);
+  });
+
   it("uses AdMob live ad_position values without widening other platforms", async () => {
     mockAdmobSql();
     const config = {

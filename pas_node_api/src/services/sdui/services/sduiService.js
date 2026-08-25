@@ -551,7 +551,7 @@ function resolveAdmobFilterOptions(filter, liveOptions) {
   return fallbackAdmobOptions(filter);
 }
 
-async function prepareAdmobSidebar(config) {
+async function prepareAdmobSidebar(config, { admobOnly = false } = {}) {
   const liveOptions = await getAdmobLiveFilterOptions();
   let hasAdmobNetworkDocument = false;
   let hasSourceAppDocument = false;
@@ -577,6 +577,12 @@ async function prepareAdmobSidebar(config) {
       // the admin's curation entirely.
       if (doc._id === 'source_app' || doc._id === 'admob_source_app') hasSourceAppDocument = true;
       if (!ADMOB_SIDEBAR_IDS.includes(doc._id)) return doc;
+      if (doc._id === 'source' && !admobOnly) {
+        // `source` is shared with the normal Traffic Source filter. In mixed
+        // platform responses, keep the SDUI-authored doc so AdMob's live SQL
+        // values (often only "android") cannot replace Desktop/iOS/All.
+        return doc;
+      }
 
       const filters = (doc.filters || []).map((filter) => ({
         ...filter,
@@ -740,7 +746,7 @@ async function filterConfigByPlatforms(config, platforms) {
   const isAdmobOnly = normalizedPlatforms.length === 1 && normalizedPlatforms[0] === 'admob';
   const hasAdmob = normalizedPlatforms.includes('admob');
   const sourceConfig = hasAdmob
-    ? await prepareAdmobSidebar(config)
+    ? await prepareAdmobSidebar(config, { admobOnly: isAdmobOnly })
     : config;
 
   // Extract platform_filter_matrix from the navbar "platforms" document
