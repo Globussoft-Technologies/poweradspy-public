@@ -489,7 +489,7 @@ const Header = ({
         />
       </div>
 
-      {activePage !== "projects" && activePage !== "keywords-explorer" && isSearchOpenMobile && (
+      {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && isSearchOpenMobile && (
         <div
           className="fixed inset-0 bg-[#0a0a0a] backdrop-blur-sm z-40 md:hidden"
           onClick={() => setIsSearchOpenMobile(false)}
@@ -699,7 +699,7 @@ const Header = ({
       )}
 
       <div className="flex items-center gap-1.5 sm:gap-2">
-        {activePage !== "projects" && activePage !== "keywords-explorer" && (
+        {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
             className="md:hidden sm:p-1.5 text-theme-text-muted hover:text-theme-text transition-colors"
             onClick={() => setIsSearchOpenMobile(true)}
@@ -707,7 +707,7 @@ const Header = ({
             <Search size={20} />
           </button>
         )}
-        {sdui.totalActiveFilters > 0 && !guest?.isRestricted && activePage !== "projects" && activePage !== "keywords-explorer" && (
+        {sdui.totalActiveFilters > 0 && !guest?.isRestricted && activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
             onClick={() => {
               if (guest?.showGuestWarning("Please login to change filters")) return;
