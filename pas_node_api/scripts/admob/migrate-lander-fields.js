@@ -18,7 +18,9 @@
  *   - best-effort backfill from legacy lander columns into finalized columns
  *   - normalization of legacy WhatsApp data to the final `url` shape
  *   - recomputation of PAS-maintained rotator fields
- *   - dropping deprecated AdMob lander-only SQL columns
+ *   - dropping deprecated AdMob lander-only SQL columns, including the old
+ *     lander-side `source_app` column that can conflict with insertion-owned
+ *     AdMob source-app data in ES
  *
  * Important:
  *   - Dry-run is the default. Add `--commit` or `--apply` to actually write.
@@ -73,7 +75,6 @@ const LANDER_COLUMN_SPECS = [
   { name: 'country_iso_json', definition: '`country_iso_json` LONGTEXT NULL' },
   { name: 'outgoing_url_json', definition: '`outgoing_url_json` LONGTEXT NULL' },
   { name: 'redirects_json', definition: '`redirects_json` LONGTEXT NULL' },
-  { name: 'source_app', definition: '`source_app` VARCHAR(255) NULL' },
   { name: 'whatsapp_json', definition: '`whatsapp_json` LONGTEXT NULL' },
   { name: 'campaign_id', definition: '`campaign_id` VARCHAR(255) NULL' },
   { name: 'whatsapp_rotator_detected', definition: '`whatsapp_rotator_detected` TINYINT(1) NOT NULL DEFAULT 0' },
@@ -108,6 +109,7 @@ const CLAIMS_INDEX_SPECS = [
 const OBSOLETE_LANDER_COLUMNS = [
   'crawled_by',
   'ad_category',
+  'source_app',
   'source_website',
   'source_parameters_json',
   'whatsapp_url',
@@ -372,10 +374,6 @@ function computeCrawlerPlatform(row, payload) {
   return null;
 }
 
-function computeSourceApp(row, payload) {
-  return firstNonBlank(row.source_app, payload?.source_app, payload?.sourceApp);
-}
-
 function computeCreated(row, payload) {
   return formatDateTime(
     payload?.created
@@ -445,7 +443,6 @@ function buildLanderCreateTableSql() {
     '  `country_iso_json` LONGTEXT NULL,',
     '  `outgoing_url_json` LONGTEXT NULL,',
     '  `redirects_json` LONGTEXT NULL,',
-    '  `source_app` VARCHAR(255) NULL,',
     '  `whatsapp_json` LONGTEXT NULL,',
     '  `campaign_id` VARCHAR(255) NULL,',
     '  `whatsapp_rotator_detected` TINYINT(1) NOT NULL DEFAULT 0,',
@@ -551,7 +548,6 @@ async function cleanupObsoleteLanderData(sql, commit, existingColumns) {
       'ad_id',
       'platform',
       'crawled_by',
-      'source_app',
       'raw_payload_json',
       'whatsapp_json',
       'whatsapp_details_json',
@@ -599,7 +595,6 @@ async function cleanupObsoleteLanderData(sql, commit, existingColumns) {
 
     const normalized = {
       platform: computeCrawlerPlatform(row, payload),
-      source_app: computeSourceApp(row, payload),
       whatsapp_json: JSON.stringify(entries),
       whatsapp_rotator_count: uniquePhones.length,
       whatsapp_rotator_detected: uniquePhones.length > 1 ? 1 : 0,
@@ -622,7 +617,6 @@ async function cleanupObsoleteLanderData(sql, commit, existingColumns) {
     await sql.query(
       `UPDATE \`${LANDER_TABLE}\`
           SET \`platform\` = ?,
-              \`source_app\` = ?,
               \`whatsapp_json\` = ?,
               \`whatsapp_rotator_count\` = ?,
               \`whatsapp_rotator_detected\` = ?,
@@ -632,7 +626,6 @@ async function cleanupObsoleteLanderData(sql, commit, existingColumns) {
         WHERE \`ad_id\` = ?`,
       [
         normalized.platform,
-        normalized.source_app,
         normalized.whatsapp_json,
         normalized.whatsapp_rotator_count,
         normalized.whatsapp_rotator_detected,

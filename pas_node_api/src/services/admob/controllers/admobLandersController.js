@@ -9,7 +9,7 @@ async function getAds(req, db, log) {
 }
 
 async function uploadFiles(req, db, log) {
-  return uploadAdmobBlackhatContent(req, log);
+  return uploadAdmobBlackhatContent(req, db, log);
 }
 
 async function insertHtml(req, db, log) {

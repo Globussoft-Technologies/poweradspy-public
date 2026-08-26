@@ -19,12 +19,12 @@ node scripts/admob/migrate-lander-fields.js --drop-obsolete --commit
 `--drop-obsolete` is the strict AdMob cleanup mode. It rewrites existing
 lander rows into the finalized AdMob lander contract by:
 
-- backfilling `platform`, `source_app`, `created`, and `updated`
+- backfilling `platform`, `created`, and `updated`
 - normalizing legacy WhatsApp evidence into `whatsapp_json`
 - renaming legacy nested `path` values to stored `url`
 - recomputing PAS-maintained rotator fields
 - creating the daily claim table used by `get_ads_for_blackhat`
-- dropping obsolete lander-only columns after backfill
+- dropping obsolete lander-only columns after backfill, including the old lander-side `source_app`
 
 ## 2. `apply-es-mapping.js`
 

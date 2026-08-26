@@ -13,6 +13,13 @@ function candidateLimit(limit) {
   return Math.min(Math.max(clampLimit(limit) * 4, clampLimit(limit)), 200);
 }
 
+function parseInternalId(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  const id = Number(text);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 async function attachCountries(sql, rows) {
   if (!rows.length) return rows;
 
@@ -101,6 +108,53 @@ async function getPreviouslyProcessedAds(sql, limit = 50) {
   );
 
   return attachCountries(sql, rows || []);
+}
+
+async function getAdByPublicId(sql, publicAdId) {
+  const rows = await sql.query(
+    `SELECT id, ad_id, post_owner_id
+       FROM mob_ads
+      WHERE ad_id = ?
+      LIMIT 1`,
+    [publicAdId]
+  );
+  return rows[0] || null;
+}
+
+async function getAdByInternalId(sql, internalId) {
+  const rows = await sql.query(
+    `SELECT id, ad_id, post_owner_id
+       FROM mob_ads
+      WHERE id = ?
+      LIMIT 1`,
+    [internalId]
+  );
+  return rows[0] || null;
+}
+
+async function getAdByLanderApiId(sql, adIdValue) {
+  const internalId = parseInternalId(adIdValue);
+  if (internalId !== null) {
+    const byInternalId = await getAdByInternalId(sql, internalId);
+    if (byInternalId) return byInternalId;
+  }
+
+  const publicAdId = String(adIdValue ?? '').trim();
+  if (!publicAdId) return null;
+  return getAdByPublicId(sql, publicAdId);
+}
+
+async function getAdForLanderUpdate(tx, adIdValue) {
+  const internalId = parseInternalId(adIdValue);
+  if (internalId !== null) {
+    const rows = await tx.query('SELECT * FROM mob_ads WHERE id = ? LIMIT 1 FOR UPDATE', [internalId]);
+    if (rows[0]) return rows[0];
+  }
+
+  const publicAdId = String(adIdValue ?? '').trim();
+  if (!publicAdId) return null;
+  const rows = await tx.query('SELECT * FROM mob_ads WHERE ad_id = ? LIMIT 1 FOR UPDATE', [publicAdId]);
+  return rows[0] || null;
 }
 
 async function claimAdForToday(tx, adId, scraperName, requestedStatus) {
@@ -210,15 +264,20 @@ async function backfillPostOwnerIfMissing(tx, adRow, postOwner) {
 module.exports = {
   withTransaction: insertionRepo.withTransaction,
   getAdForUpdate: insertionRepo.getAdForUpdate,
+  getAdForLanderUpdate,
   updateRedirectStatus: insertionRepo.updateRedirectStatus,
   upsertLanderContent: insertionRepo.upsertLanderContent,
   getCompleteAd: insertionRepo.getCompleteAd,
+  getCompleteAdByInternalId: insertionRepo.getCompleteAdByInternalId,
   queueEs: insertionRepo.queueEs,
   completeEs: insertionRepo.completeEs,
   clampLimit,
   backfillPostOwnerIfMissing,
   claimAdForToday,
   completeLanderClaim,
+  getAdByPublicId,
+  getAdByInternalId,
+  getAdByLanderApiId,
   getNeverProcessedAds,
   getPreviouslyProcessedAds,
 };

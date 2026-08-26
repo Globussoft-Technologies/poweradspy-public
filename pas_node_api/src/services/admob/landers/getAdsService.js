@@ -171,7 +171,9 @@ async function getAdmobAdsWithCountry(req, db = {}, log) {
 
       result.push({
         id: row.id,
-        ad_id: row.ad_id,
+        // Keep the scraper contract field name stable, but send the PAS
+        // internal SQL id so DS never needs the public AdMob ad_id.
+        ad_id: row.id,
         destination_url: row.destination_url,
         country: String(row.country || '')
           .split(',')

@@ -24,7 +24,6 @@ describe('admob lander normalization', () => {
         },
       ],
       redirects: ['https://reddydelivery.store/?gad_source=5&gad_campaignid=24144585336'],
-      source_app: 'crex',
       whatsapp: [
         {
           domain: 'wa.link',
@@ -59,7 +58,6 @@ describe('admob lander normalization', () => {
     expect(normalized.platform).toBe(12);
     expect(normalized.lander_status).toBe(1);
     expect(normalized.post_owner).toBe('Acme Logistics');
-    expect(normalized.source_app).toBe('crex');
     expect(JSON.parse(normalized.country_iso_json)).toEqual(['IN']);
     expect(JSON.parse(normalized.outgoing_url_json)).toEqual([
       {
@@ -97,7 +95,7 @@ describe('admob lander normalization', () => {
     }));
   });
 
-  it('accepts the DS path field as a legacy alias for the stored WhatsApp url', () => {
+  it('accepts the DS path field as a legacy alias and unwraps markdown-style WhatsApp links', () => {
     const normalized = normalizeLanderPayload({
       ad_id: 'ad-path-alias',
       platform: 12,
@@ -105,11 +103,10 @@ describe('admob lander normalization', () => {
       html_path: '/tmp/lander.zip',
       screen_shot: '/tmp/lander.png',
       html_content: '<html></html>',
-      source_app: 'crex',
       whatsapp: [
         {
           domain: 'wa.link',
-          path: 'https://wa.link/legacyalias',
+          path: '[https://wa.link/legacyalias](https://wa.link/legacyalias)',
           phone: '918810993624',
         },
       ],
@@ -124,6 +121,34 @@ describe('admob lander normalization', () => {
     ]);
   });
 
+  it('rebuilds a full WhatsApp URL when only the domain and path fragment are available', () => {
+    const normalized = normalizeLanderPayload({
+      ad_id: 'ad-path-fragment',
+      platform: 12,
+      destinations: 'https://example.com',
+      html_path: '/tmp/lander.zip',
+      screen_shot: '/tmp/lander.png',
+      html_content: '<html></html>',
+      whatsapp: [
+        {
+          domain: 'wa.me',
+          path: '/+917340407207?text=Hi',
+          phone: '917340407207',
+          message: 'Hi',
+        },
+      ],
+    });
+
+    expect(JSON.parse(normalized.whatsapp_json)).toEqual([
+      expect.objectContaining({
+        domain: 'wa.me',
+        phone: '917340407207',
+        message: 'Hi',
+        url: 'https://wa.me/+917340407207?text=Hi',
+      }),
+    ]);
+  });
+
   it('drops placeholder post_owner values defensively during normalization', () => {
     const normalized = normalizeLanderPayload({
       ad_id: 'ad-owner-placeholder',
@@ -133,7 +158,6 @@ describe('admob lander normalization', () => {
       html_path: '/tmp/lander.zip',
       screen_shot: '/tmp/lander.png',
       html_content: '<html></html>',
-      source_app: 'crex',
     });
 
     expect(normalized.post_owner).toBe(null);
@@ -147,7 +171,6 @@ describe('admob lander normalization', () => {
       html_path: '/tmp/lander.zip',
       screen_shot: '/tmp/lander.png',
       html_content: '<html></html>',
-      source_app: 'crex',
       whatsapp: [
         { phone: '918810993624', message: 'A' },
         { phone: '919999999999', message: 'B' },
@@ -157,5 +180,19 @@ describe('admob lander normalization', () => {
     expect(normalized.whatsapp_rotator_detected).toBe(true);
     expect(normalized.whatsapp_rotator_count).toBe(2);
     expect(normalized.lead_campaign_tag).toBe('high-volume-lead-campaign');
+  });
+
+  it('ignores lander source_app when DS sends it because insertion owns that ES dimension', () => {
+    const normalized = normalizeLanderPayload({
+      ad_id: 'ad-ignore-source-app',
+      platform: 12,
+      destinations: 'https://example.com',
+      html_path: '/tmp/lander.zip',
+      screen_shot: '/tmp/lander.png',
+      html_content: '<html></html>',
+      source_app: 'crex',
+    });
+
+    expect(normalized).not.toHaveProperty('source_app');
   });
 });

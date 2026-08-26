@@ -1685,6 +1685,24 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
       ad?.destinationUrl,
     )
     : null;
+  const landerWhatsappEntries = ctx?.platform === "admob"
+    ? firstAvailable(
+      adDetailsData?.whatsapp,
+      processedAd?.whatsapp,
+      ad?.whatsapp,
+    )
+    : undefined;
+  const landerWhatsappRotatorCount = ctx?.platform === "admob"
+    ? firstAvailable(
+      adDetailsData?.whatsapp_rotator_count,
+      adDetailsData?.whatsappRotatorCount,
+      processedAd?.whatsapp_rotator_count,
+      processedAd?.whatsappRotatorCount,
+      ad?.whatsapp_rotator_count,
+      ad?.whatsappRotatorCount,
+      0,
+    )
+    : undefined;
   const analyticsRunningDays = calculateRunningDays({
     lastSeen: firstAvailable(
       d.last_seen,
@@ -2984,6 +3002,9 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
               <LanderDetails
                 screenshotUrl={landerScreenshotUrl}
                 pageUrl={landerVisitUrl}
+                downloadId={processedAd?.internalId ?? ad?.internalId ?? adDetailsData?.id ?? adDetailsData?.sql_id ?? null}
+                whatsappEntries={landerWhatsappEntries}
+                whatsappRotatorCount={landerWhatsappRotatorCount}
               />
             )}
 

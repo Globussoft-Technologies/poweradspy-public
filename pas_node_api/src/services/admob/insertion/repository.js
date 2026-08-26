@@ -131,14 +131,16 @@ async function updateRedirectStatus(tx, adId, redirectStatus) {
 
 async function upsertLanderContent(tx, id, data) {
   // Store only the finalized AdMob lander contract plus PAS-maintained
-  // rotator signals. Duplicate helper fields stay out of the schema.
+  // rotator signals. Duplicate helper fields stay out of the schema, and the
+  // lander pipeline never writes source_app because insertion already owns the
+  // top-level source_app dimensions for AdMob ads.
   await tx.query(
     `INSERT INTO mob_ad_lander_content
       (ad_id, platform, lander_status, destinations, html_path, screen_shot, html_content,
        domain_registered_date, domain_age, country_iso_json, outgoing_url_json, redirects_json,
-       source_app, whatsapp_json, campaign_id, whatsapp_rotator_detected, whatsapp_rotator_count,
+       whatsapp_json, campaign_id, whatsapp_rotator_detected, whatsapp_rotator_count,
        lead_campaign_tag, created, updated)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        platform = VALUES(platform),
        lander_status = VALUES(lander_status),
@@ -151,7 +153,6 @@ async function upsertLanderContent(tx, id, data) {
        country_iso_json = VALUES(country_iso_json),
        outgoing_url_json = VALUES(outgoing_url_json),
        redirects_json = VALUES(redirects_json),
-       source_app = VALUES(source_app),
        whatsapp_json = VALUES(whatsapp_json),
        campaign_id = VALUES(campaign_id),
        whatsapp_rotator_detected = VALUES(whatsapp_rotator_detected),
@@ -172,7 +173,6 @@ async function upsertLanderContent(tx, id, data) {
       data.country_iso_json,
       data.outgoing_url_json,
       data.redirects_json,
-      data.source_app,
       data.whatsapp_json,
       data.campaign_id,
       data.whatsapp_rotator_detected,
@@ -333,7 +333,7 @@ async function failEs(sql, id, error) {
   );
 }
 
-async function getCompleteAd(sql, publicAdId) {
+async function getCompleteAdWithClause(sql, whereClause, whereValue) {
   const ads = await sql.query(
     `SELECT a.*, o.name AS post_owner, o.image_url AS post_owner_image,
        u.ad_url, u.destination_url, u.redirect_url, u.placement_url,
@@ -346,7 +346,7 @@ async function getCompleteAd(sql, publicAdId) {
        lc.domain_registered_date AS lander_domain_registered_date,
        lc.domain_age AS lander_domain_age,
        lc.country_iso_json, lc.outgoing_url_json, lc.redirects_json,
-       lc.source_app AS lander_source_app, lc.whatsapp_json, lc.campaign_id,
+       lc.whatsapp_json, lc.campaign_id,
        lc.whatsapp_rotator_detected, lc.whatsapp_rotator_count, lc.lead_campaign_tag,
        lc.created AS lander_created, lc.updated AS lander_updated
      FROM mob_ads a
@@ -354,8 +354,8 @@ async function getCompleteAd(sql, publicAdId) {
      LEFT JOIN mob_ad_urls u ON u.ad_id = a.id
      LEFT JOIN mob_ad_media m ON m.ad_id = a.id AND m.media_kind = 'IMAGE' AND m.ordinal = 0
      LEFT JOIN mob_ad_lander_content lc ON lc.ad_id = a.id
-     WHERE a.ad_id = ? LIMIT 1`,
-    [publicAdId]
+     WHERE ${whereClause} LIMIT 1`,
+    [whereValue]
   );
   if (!ads[0]) return null;
   const ad = ads[0];
@@ -385,9 +385,18 @@ async function getCompleteAd(sql, publicAdId) {
   };
 }
 
+async function getCompleteAd(sql, publicAdId) {
+  return getCompleteAdWithClause(sql, 'a.ad_id = ?', publicAdId);
+}
+
+async function getCompleteAdByInternalId(sql, internalId) {
+  return getCompleteAdWithClause(sql, 'a.id = ?', internalId);
+}
+
 module.exports = {
   withTransaction, getAdForUpdate, getAdsForLander, ensureOwner, insertAd, updateAd, upsertUrls,
   upsertOriginalImage, updateRedirectStatus, upsertLanderContent, setNasImage, insertObservation,
   upsertDimension, resolveSourceAppId, bumpSourceAppCounters, queueEs, getPendingEs, completeEs,
   failEs, getCompleteAd,
+  getCompleteAdByInternalId,
 };

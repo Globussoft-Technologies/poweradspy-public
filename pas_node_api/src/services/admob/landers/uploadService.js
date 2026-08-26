@@ -1,7 +1,8 @@
 'use strict';
 
 const fs = require('fs');
-const { uploadToNAS, deleteTempFile } = require('../../../landers/helpers/nasService');
+const nasService = require('../../../landers/helpers/nasService');
+const repo = require('./repository');
 
 function parseStatus(value) {
   const status = Number(value);
@@ -14,12 +15,12 @@ function folderName(status) {
   return null;
 }
 
-async function uploadAdmobBlackhatContent(req, log) {
+async function uploadAdmobBlackhatContent(req, db, log) {
   const response = {};
   const files = req.files || {};
   const media = files.media && files.media[0];
   const zip = files.zip && files.zip[0];
-  const adId = req.body?.ad_id;
+  const requestAdId = req.body?.ad_id == null ? '' : String(req.body.ad_id).trim();
   const status = parseStatus(req.body?.status);
   const country = req.body?.country_iso ?? req.body?.country ?? '';
   const folder = folderName(status);
@@ -34,23 +35,40 @@ async function uploadAdmobBlackhatContent(req, log) {
       return { code: 400, message: 'status must be 1 (blackhat) or 2 (whitehat)' };
     }
 
+    if (!requestAdId) {
+      return { code: 400, message: 'ad_id is required' };
+    }
+
+    if (!db?.sql) {
+      return { code: 503, message: 'The AdMob MySQL connection is unavailable.' };
+    }
+
+    // Mirror primary AdMob media storage: NAS keys should be based on the PAS
+    // internal id, not the public crawler ad_id, so stored lander paths stay
+    // aligned with image_url/image_url_original handling and do not leak ad_id.
+    const adRow = await repo.getAdByLanderApiId(db.sql, requestAdId);
+    if (!adRow?.id) {
+      return { code: 400, message: 'ad not found' };
+    }
+    const internalId = Number(adRow.id);
+
     if (media) {
       tempPaths.push(media.path);
-      // The shared NAS helper generates a deterministic path per adId/network.
-      response.image_path = await uploadToNAS(media.path, adId, status, 'admob');
+      response.image_path = await nasService.uploadToNAS(media.path, internalId, status, 'admob');
     }
 
     if (zip) {
       tempPaths.push(zip.path);
-      response.html_path = await uploadToNAS(zip.path, adId, status, 'admob');
+      response.html_path = await nasService.uploadToNAS(zip.path, internalId, status, 'admob');
     }
 
     response.code = 200;
     response.message = 'files are stored successfully';
     response.country = country;
+    response.id = internalId;
     return response;
   } catch (error) {
-    log?.error?.('admob.landers.uploadBlackhatContent failed', { error: error.message });
+    log?.error?.('admob.landers.uploadBlackhatContent failed', { ad_id: requestAdId, error: error.message });
     return {
       code: 400,
       message: 'Error occured in the function uploadBlackhatContent',
@@ -59,7 +77,7 @@ async function uploadAdmobBlackhatContent(req, log) {
     for (const tempPath of tempPaths) {
       try {
         if (tempPath && fs.existsSync(tempPath)) {
-          await deleteTempFile(tempPath);
+          await nasService.deleteTempFile(tempPath);
         }
       } catch {
         // Temp-file cleanup should never block the HTTP response.

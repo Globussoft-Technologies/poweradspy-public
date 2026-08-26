@@ -7,6 +7,15 @@ const { normalizeLanderPayload } = require('./normalize');
 
 const PYTHON_CRAWLER_PLATFORM = 12;
 const INVALID_POST_OWNER_VALUES = new Set(['na', 'n/a', 'none', 'null', 'undefined']);
+const WHATSAPP_TRACE_FIELDS = [
+  { field: 'button', aliases: ['button', 'label', 'title'] },
+  { field: 'first_detected', aliases: ['first_detected', 'fisrt_detected'] },
+  { field: 'last_detected', aliases: ['last_detected', 'lastDetected'] },
+  { field: 'state', aliases: ['state'] },
+  { field: 'city', aliases: ['city'] },
+  { field: 'country', aliases: ['country', 'countrty', 'country_code'] },
+  { field: 'url', aliases: ['url', 'href', 'link', 'path', 'pathname', 'route'] },
+];
 
 function unwrapItem(item) {
   if (!item || typeof item !== 'object') return item;
@@ -26,6 +35,90 @@ function readOptionalPostOwner(payload) {
   return undefined;
 }
 
+function asDebugArray(value) {
+  if (value === undefined || value === null || value === '') return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return [value];
+    }
+  }
+  return [value];
+}
+
+function nonBlank(value) {
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+function previewEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+  return { ...entry };
+}
+
+function collectDroppedWhatsappFields(rawEntries, normalizedEntries) {
+  const dropped = new Set();
+  const pairCount = Math.min(rawEntries.length, normalizedEntries.length);
+
+  for (let index = 0; index < pairCount; index += 1) {
+    const raw = rawEntries[index];
+    const normalized = normalizedEntries[index];
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !normalized || typeof normalized !== 'object') {
+      continue;
+    }
+
+    for (const descriptor of WHATSAPP_TRACE_FIELDS) {
+      const rawHasValue = descriptor.aliases.some((alias) => nonBlank(raw[alias]));
+      if (!rawHasValue) continue;
+      if (!nonBlank(normalized[descriptor.field])) {
+        dropped.add(descriptor.field);
+      }
+    }
+  }
+
+  return [...dropped];
+}
+
+function logWhatsappNormalizationTrace(log, payload, normalized) {
+  if (!Object.prototype.hasOwnProperty.call(payload || {}, 'whatsapp')) {
+    return;
+  }
+
+  const rawEntries = asDebugArray(payload.whatsapp);
+  let normalizedEntries = [];
+
+  try {
+    normalizedEntries = JSON.parse(normalized.whatsapp_json || '[]');
+  } catch {
+    normalizedEntries = [];
+  }
+
+  const trace = {
+    ad_id: normalized.ad_id,
+    raw_entry_count: rawEntries.length,
+    normalized_entry_count: normalizedEntries.length,
+    raw_entry_keys: rawEntries[0] && typeof rawEntries[0] === 'object' && !Array.isArray(rawEntries[0])
+      ? Object.keys(rawEntries[0]).sort()
+      : [],
+    raw_whatsapp_preview: rawEntries.slice(0, 3).map(previewEntry),
+    normalized_whatsapp_preview: normalizedEntries.slice(0, 3).map(previewEntry),
+  };
+
+  const droppedFields = collectDroppedWhatsappFields(rawEntries, normalizedEntries);
+  if (droppedFields.length) {
+    log?.warn?.('admob.landers.insertHtml whatsapp fields dropped', {
+      ...trace,
+      dropped_fields: droppedFields,
+    });
+  }
+
+  // This intentionally traces only the WhatsApp slice so we can compare the
+  // raw DS payload with the stored lander contract without logging HTML blobs.
+  log?.info?.('admob.landers.insertHtml whatsapp trace', trace);
+}
+
 function validateLanderPayload(payload) {
   const errors = [];
   const status = Number(payload?.status ?? payload?.lander_status);
@@ -43,10 +136,6 @@ function validateLanderPayload(payload) {
     errors.push({ field: 'platform', reason: 'MISSING_REQUIRED_FIELD', message: 'platform is required and cannot be empty.' });
   } else if (!Number.isFinite(Number(payload.platform))) {
     errors.push({ field: 'platform', reason: 'INVALID_VALUE', message: 'platform must be a numeric crawler identifier.' });
-  }
-
-  if (payload.source_app === undefined || payload.source_app === null || String(payload.source_app).trim() === '') {
-    errors.push({ field: 'source_app', reason: 'MISSING_REQUIRED_FIELD', message: 'source_app is required and cannot be empty.' });
   }
 
   const rawPostOwner = readOptionalPostOwner(payload);
@@ -86,13 +175,13 @@ function validateLanderPayload(payload) {
   return errors;
 }
 
-async function updateElasticDoc(db, adId) {
+async function updateElasticDoc(db, internalId) {
   const elastic = db?.elastic;
   if (!elastic) {
     return { indexed: false };
   }
 
-  const complete = await repo.getCompleteAd(db.sql, adId);
+  const complete = await repo.getCompleteAdByInternalId(db.sql, internalId);
   if (!complete) {
     throw new Error('ad not found');
   }
@@ -130,10 +219,14 @@ async function processItem(rawItem, db, log, scraperName = '') {
   }
 
   const normalized = normalizeLanderPayload(payload);
+  logWhatsappNormalizationTrace(log, payload, normalized);
 
   try {
     const outcome = await repo.withTransaction(db.sql, async (tx) => {
-      const existing = await repo.getAdForUpdate(tx, normalized.ad_id);
+      // DS now receives the internal PAS id in the `ad_id` field from the GET
+      // API. Keep a public-ad_id fallback for older/manual callers, but resolve
+      // the DS-facing `ad_id` as an internal SQL id first.
+      const existing = await repo.getAdForLanderUpdate(tx, normalized.ad_id);
       if (!existing) {
         throw new Error('ad not found');
       }
@@ -180,7 +273,7 @@ async function processItem(rawItem, db, log, scraperName = '') {
     }
 
     try {
-      const esResult = await updateElasticDoc(db, normalized.ad_id);
+      const esResult = await updateElasticDoc(db, outcome.id);
       await repo.completeEs(db.sql, outcome.id);
       return ok(outcome.id, 'Destination Lander updated successfully.', {
         data: {
@@ -209,7 +302,7 @@ async function processItem(rawItem, db, log, scraperName = '') {
   } catch (error) {
     if (error.message === 'ad not found') {
       return rejected(400, 'ad not found', {
-        hint: 'Use an AdMob ad_id that already exists in mob_ads / mob_search_mix.',
+        hint: 'Use the ad_id value returned by get_ads_for_blackhat. PAS now sends the internal SQL id in that field.',
       });
     }
     log?.error?.('admob.landers.insertHtml failed', { ad_id: normalized.ad_id, error: error.message });

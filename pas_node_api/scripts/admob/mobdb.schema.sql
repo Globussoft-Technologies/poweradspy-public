@@ -93,7 +93,6 @@ CREATE TABLE IF NOT EXISTS `mob_ad_lander_content` (
   `country_iso_json` LONGTEXT NULL,
   `outgoing_url_json` LONGTEXT NULL,
   `redirects_json` LONGTEXT NULL,
-  `source_app` VARCHAR(255) NULL,
   `whatsapp_json` LONGTEXT NULL,
   `campaign_id` VARCHAR(255) NULL,
   `whatsapp_rotator_detected` TINYINT(1) NOT NULL DEFAULT 0,

@@ -80,7 +80,7 @@ describe('admob get_ads_for_blackhat service', () => {
     expect(result.data).toEqual([
       {
         id: 11,
-        ad_id: 'AD-1',
+        ad_id: 11,
         destination_url: 'https://a.example',
         country: ['US', 'CA'],
       },

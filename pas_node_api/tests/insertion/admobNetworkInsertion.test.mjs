@@ -78,7 +78,7 @@ describe('isolated AdMob insertion contract', () => {
     });
     expect(doc.type).toBe('BANNER');
     expect(doc.country).toEqual(['India']);
-    expect(doc.source_app_count).toBe(2);
+    expect(doc.source_app_count).toBe(1);
     expect(doc.image_url).toContain('/admob/adImage/');
   });
 
@@ -115,7 +115,6 @@ describe('isolated AdMob insertion contract', () => {
         },
       ]),
       redirects_json: JSON.stringify(['https://clickza.space/DDD/']),
-      lander_source_app: 'Crex',
       campaign_id: '24090156948',
       whatsapp_rotator_detected: 0,
       whatsapp_rotator_count: 1,
@@ -163,7 +162,7 @@ describe('isolated AdMob insertion contract', () => {
         url: 'https://wa.link/reddylive2',
       }),
     ]);
-    expect(doc.source_app).toEqual(['Crex']);
+    expect(doc.source_app).toEqual([]);
     expect(doc).not.toHaveProperty('source_website');
   });
 
@@ -333,23 +332,45 @@ describe('isolated AdMob insertion contract', () => {
         if (query.includes('COUNT(*) AS sessions_total')) {
           return [{ sessions_total: 3 }];
         }
-        if (query.includes('ORDER BY observed_at DESC')) {
+        if (query.includes('COUNT(DISTINCT session_id) AS sessions_total')) {
+          return [{ sessions_total: 3 }];
+        }
+        if (query.includes('SELECT SUM(repeat_count) AS total FROM mob_ad_observations WHERE ad_id = ? AND source_app_id IS NULL')) {
+          return [{ total: 0 }];
+        }
+        if (query.includes('SELECT SUM(repeat_count) AS total FROM mob_ad_observations WHERE ad_id = ?')) {
+          return [{ total: 3 }];
+        }
+        if (query.includes('SELECT source_app_id, SUM(repeat_count) AS total_repeats')) {
+          return [{ source_app_id: 77, total_repeats: 3 }];
+        }
+        if (query.includes('ORDER BY o.observed_at DESC')) {
           return [
             {
               session_id: 'session-3',
               system_id: 'system-3',
               observed_at: '2026-08-10 09:00:00',
+              repeat_count: 1,
             },
             {
               session_id: 'session-2',
               system_id: 'system-2',
               observed_at: '2026-08-09 09:00:00',
+              repeat_count: 2,
             },
           ];
         }
         if (query.includes('COUNT(DISTINCT o.session_id) AS total_sessions')) {
           expect(params).toEqual([77]);
           return [{ total_sessions: 10 }];
+        }
+        if (query.includes('SELECT s.id AS source_app_id, s.source_app AS name, x.appearance_count')) {
+          expect(params).toEqual([42]);
+          return [{ source_app_id: 77, name: 'CRM', appearance_count: 3 }];
+        }
+        if (query.includes('SELECT x.source_app_id, COUNT(DISTINCT o.session_id) AS tracked')) {
+          expect(params).toEqual([77]);
+          return [{ source_app_id: 77, tracked: 2 }];
         }
         throw new Error(`Unexpected query: ${query}`);
       },

@@ -336,7 +336,7 @@ export const shouldHideAdForBlockedMedia = (ad = {}) => {
 // Route a remote image through our backend so the browser sees same-origin-style
 // bytes with CORS headers — needed to embed CDN images in a canvas/PDF without
 // running into the cross-origin canvas-taint restriction.
-export const fetchImageAsDataUrl = async (imageUrl) => {
+export const fetchImageBlob = async (imageUrl) => {
   if (!imageUrl) return null;
   const proxyUrl = `${PAS_API_BASE}/api/v1/common/image-proxy?url=${encodeURIComponent(imageUrl)}`;
   const token = getPASToken();
@@ -345,7 +345,12 @@ export const fetchImageAsDataUrl = async (imageUrl) => {
   });
   await checkFor401(res);
   if (!res.ok) throw new Error(`image-proxy ${res.status}`);
-  const blob = await res.blob();
+  return res.blob();
+};
+
+export const fetchImageAsDataUrl = async (imageUrl) => {
+  if (!imageUrl) return null;
+  const blob = await fetchImageBlob(imageUrl);
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);

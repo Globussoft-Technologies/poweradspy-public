@@ -179,6 +179,81 @@ function firstText(...values) {
   return null;
 }
 
+function isAbsoluteUrl(value) {
+  try {
+    new URL(String(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractMarkdownUrl(value) {
+  const text = nullable(value);
+  if (!text) return null;
+
+  const match = text.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+  if (!match) return null;
+
+  const candidates = [match[2], match[1]];
+  for (const candidate of candidates) {
+    const normalized = nullable(candidate);
+    if (normalized && isAbsoluteUrl(normalized)) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function normalizeDomainHost(value) {
+  const text = nullable(value);
+  if (!text) return null;
+
+  if (isAbsoluteUrl(text)) {
+    try {
+      return new URL(text).host;
+    } catch {
+      return text;
+    }
+  }
+
+  return text
+    .replace(/^https?:\/\//i, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+}
+
+function normalizeWhatsappUrl(value, domain) {
+  const raw = nullable(value);
+  if (!raw) return null;
+
+  const directUrl = extractMarkdownUrl(raw) || raw;
+  if (isAbsoluteUrl(directUrl)) {
+    return directUrl;
+  }
+
+  const host = normalizeDomainHost(domain);
+  if (!host) {
+    return directUrl;
+  }
+
+  const trimmed = directUrl.trim();
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(trimmed)) {
+    return `https://${trimmed.replace(/^\/+/, '')}`;
+  }
+
+  if (/^[/?#]/.test(trimmed)) {
+    return `https://${host}${trimmed}`;
+  }
+
+  if (!/\s/.test(trimmed)) {
+    return `https://${host}/${trimmed.replace(/^\/+/, '')}`;
+  }
+
+  return trimmed;
+}
+
 function normalizeWhatsappEntry(entry) {
   const domain = firstText(entry.domain, entry.host);
   const phone = firstText(entry.phone, entry.phone_number, entry.msisdn);
@@ -189,9 +264,12 @@ function normalizeWhatsappEntry(entry) {
   const state = firstText(entry.state);
   const city = firstText(entry.city);
   const country = firstText(entry.country, entry.countrty, entry.country_code);
-  // DS historically used `path` for the final WhatsApp URL. We normalize that
-  // input into a single stored `url` field and do not synthesize another one.
-  const url = firstText(entry.url, entry.href, entry.link, entry.path, entry.pathname, entry.route);
+  // DS historically used `path` for the final WhatsApp URL and sometimes sends
+  // markdown-wrapped links or path-only fragments. Store one stable `url`.
+  const url = normalizeWhatsappUrl(
+    firstText(entry.url, entry.href, entry.link, entry.path, entry.pathname, entry.route),
+    domain
+  );
 
   const normalized = {
     domain,
@@ -254,7 +332,6 @@ function normalizeLanderPayload(payload) {
     country_iso_json: toJsonText(countryIso),
     outgoing_url_json: toJsonText(outgoingUrls),
     redirects_json: toJsonText(redirects),
-    source_app: nullable(payload.source_app ?? payload.sourceApp),
     whatsapp_json: toJsonText(normalizedWhatsappEntries),
     campaign_id: campaignId,
     whatsapp_rotator_detected: rotatorSignal,
