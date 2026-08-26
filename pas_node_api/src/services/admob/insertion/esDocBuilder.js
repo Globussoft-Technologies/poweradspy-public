@@ -98,10 +98,13 @@ function buildAdmobDocument(ad) {
     first_seen: iso(row.first_seen),
     last_seen: iso(row.last_seen),
   }));
+  // Only apps this ad was actually observed/scanned in (mob_ad_source_apps)
+  // count as a source app. `lander_source_app` just records which app the
+  // lander crawler happened to be running in when it captured the
+  // screenshot/URL — it does not mean the ad appeared there, so it must
+  // never be added to this list (was previously inflating the count/name
+  // list with an app the ad was never actually seen in).
   const sourceAppNames = sourceApps.map((row) => row.name);
-  if (ad.lander_source_app && !sourceAppNames.some((name) => String(name).toLowerCase() === String(ad.lander_source_app).toLowerCase())) {
-    sourceAppNames.push(ad.lander_source_app);
-  }
   const runningDays = daysRunning(ad.first_seen, ad.last_seen);
   const occurrenceCount = Number(ad.occurrence_count || 0);
   return {
@@ -129,6 +132,10 @@ function buildAdmobDocument(ad) {
     days_running: runningDays,
     occurrence_count: occurrenceCount,
     lead_score: occurrenceCount * (runningDays || 0),
+    // "Poster Intelligence" score — occurrences + active days, kept separate
+    // from lead_score (which multiplies the same two numbers for the
+    // "Top-Converting Rank Engine" instead).
+    poster_intelligence_score: occurrenceCount + (runningDays || 0),
     post_date: iso(ad.post_date),
     system_id: ad.system_id,
     version: ad.version,
@@ -178,7 +185,10 @@ function buildAdmobDocument(ad) {
     sub_network: ad.sub_networks.map((row) => row.name),
     source_app: sourceAppNames,
     source_app_pkg: sourceApps.map((row) => row.package),
-    source_app_count: sourceApps.reduce((sum, row) => sum + row.appearance_count, 0),
+    // Number of distinct source apps this ad is linked to — not a sum of
+    // appearance counts (that's a different, per-app strength metric shown
+    // alongside each app's name instead).
+    source_app_count: sourceApps.length,
     country_details: details(ad.countries),
     state_details: details(ad.states),
     sub_network_details: details(ad.sub_networks),

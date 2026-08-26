@@ -1,5 +1,6 @@
 {
   "properties": {
+    "poster_intelligence_score": { "type": "long" },
     "redirect_status": { "type": "byte" },
     "lander_status": { "type": "byte" },
     "lander_platform": { "type": "short" },

@@ -214,17 +214,20 @@ CREATE TABLE IF NOT EXISTS `mob_ad_observations` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `ad_id` BIGINT UNSIGNED NOT NULL,
   `session_id` VARCHAR(191) NOT NULL,
+  `source_app_id` BIGINT UNSIGNED NULL,
   `system_id` VARCHAR(191) NOT NULL,
   `payload_hash` BINARY(32) NOT NULL,
   `observed_at` DATETIME(3) NOT NULL,
   `repeat_count` INT UNSIGNED NOT NULL DEFAULT 1,
   `created_at` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_mob_observation_session` (`ad_id`, `session_id`),
+  UNIQUE KEY `uq_mob_observation_session` (`ad_id`, `session_id`, `source_app_id`),
   KEY `idx_mob_observations_session` (`session_id`, `observed_at`, `ad_id`),
   KEY `idx_mob_observations_observed` (`observed_at`, `ad_id`),
   KEY `idx_mob_observations_ad_observed` (`ad_id`, `observed_at`),
-  CONSTRAINT `fk_mob_observations_ad` FOREIGN KEY (`ad_id`) REFERENCES `mob_ads` (`id`) ON DELETE CASCADE
+  KEY `idx_mob_ad_observations_source_app` (`source_app_id`, `ad_id`),
+  CONSTRAINT `fk_mob_observations_ad` FOREIGN KEY (`ad_id`) REFERENCES `mob_ads` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_mob_ad_observations_source_app` FOREIGN KEY (`source_app_id`) REFERENCES `mob_source_apps` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS `mob_es_outbox` (

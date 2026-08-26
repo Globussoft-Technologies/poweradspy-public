@@ -37,6 +37,7 @@ const SORT_TO_PLAN_ACCESS_ID = {
   running_longest: 'ad_running_days_sort',
   // AdMob Poster Intelligence sort options are temporarily free for all plans.
   lead_score: 'admob_poster_intelligence',
+  poster_intelligence_score: 'admob_poster_intelligence',
   occurrence_count: 'admob_poster_intelligence',
   days_running: 'admob_poster_intelligence',
   'domain registration date': 'domain_reg_sort',

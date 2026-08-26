@@ -193,24 +193,35 @@ async function setNasImage(sql, id, originalUrl, nasPath) {
   );
 }
 
-async function insertObservation(tx, id, data, payloadHash) {
-  // ON DUPLICATE KEY (ad_id, session_id) means the scraper re-submitted this
-  // exact ad within the same session — bump repeat_count instead of the old
-  // INSERT IGNORE behavior of silently dropping the resubmission.
+async function insertObservation(tx, id, data, payloadHash, sourceAppId) {
+  // ON DUPLICATE KEY (ad_id, session_id, source_app_id) means the scraper
+  // re-submitted this exact ad within the same session AND through the same
+  // app — bump repeat_count instead of the old INSERT IGNORE behavior of
+  // silently dropping the resubmission. If the SAME session reports this ad
+  // through a DIFFERENT app, that's not a key collision — it becomes its own
+  // row with its own repeat_count, so per-app counts never get merged into
+  // whichever app happened to report first.
   //
   // The caller's `newObservation` flag must stay true ONLY for a genuinely
-  // new (ad_id, session_id) row — it gates whether country/state/sub_network/
-  // source_app appearance_count get incremented, and a same-session resubmit
-  // must NOT double-count those. MySQL reports affectedRows=1 for a fresh
-  // INSERT and =2 for a row that hit the UPDATE branch (values changed), so
-  // checking === 1 preserves the original "was this new" semantics exactly.
+  // new (ad_id, session_id, source_app_id) row — it gates whether
+  // country/state/sub_network/source_app appearance_count get incremented,
+  // and a same-session-same-app resubmit must NOT double-count those. MySQL
+  // reports affectedRows=1 for a fresh INSERT and =2 for a row that hit the
+  // UPDATE branch (values changed), so checking === 1 preserves the original
+  // "was this new" semantics exactly.
+  //
+  // source_app_id records which app this specific row's observation came
+  // through. COALESCE on the UPDATE branch is a no-op in practice now (a
+  // collision only happens when source_app_id already matches), kept only
+  // as a defensive no-overwrite guard.
   const result = await tx.query(
-    `INSERT INTO mob_ad_observations (ad_id, session_id, system_id, payload_hash, observed_at, repeat_count)
-     VALUES (?, ?, ?, UNHEX(?), ?, 1)
+    `INSERT INTO mob_ad_observations (ad_id, session_id, system_id, payload_hash, observed_at, repeat_count, source_app_id)
+     VALUES (?, ?, ?, UNHEX(?), ?, 1, ?)
      ON DUPLICATE KEY UPDATE
        repeat_count = repeat_count + 1,
-       observed_at = VALUES(observed_at)`,
-    [id, data.session_id, data.system_id, payloadHash, data.last_seen]
+       observed_at = VALUES(observed_at),
+       source_app_id = COALESCE(source_app_id, VALUES(source_app_id))`,
+    [id, data.session_id, data.system_id, payloadHash, data.last_seen, sourceAppId]
   );
   return result.affectedRows === 1;
 }
@@ -234,23 +245,41 @@ async function upsertDimension(tx, table, column, id, value, seenAt, increment) 
   );
 }
 
-async function upsertSourceApp(tx, id, data, increment) {
-  await tx.query(
+// Ensures the app's row in mob_source_apps exists and returns its id, without
+// touching appearance_count yet — called before insertObservation so the
+// resolved id can be stamped onto the observation row itself. The counter
+// bump (which needs `newObservation`, only known after insertObservation
+// runs) happens afterwards in bumpSourceAppCounters below.
+async function resolveSourceAppId(tx, data) {
+  const result = await tx.query(
     `INSERT INTO mob_source_apps
       (source_app, source_app_pkg, appearance_count, first_seen, last_seen)
      VALUES (?, ?, 1, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       id = LAST_INSERT_ID(id),
-       last_seen = GREATEST(last_seen, VALUES(last_seen)),
-       first_seen = LEAST(first_seen, VALUES(first_seen)),
-       appearance_count = appearance_count + ?`,
-    [data.source_app, data.source_app_pkg, data.last_seen, data.last_seen, increment ? 1 : 0]
+     ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+    [data.source_app, data.source_app_pkg, data.last_seen, data.last_seen]
   );
   const rows = await tx.query(
     'SELECT id FROM mob_source_apps WHERE source_app_key = LOWER(TRIM(?)) AND source_app_pkg = ? LIMIT 1',
     [data.source_app, data.source_app_pkg]
   );
-  const sourceAppId = rows[0].id;
+  // affectedRows === 1 means this app row was just created by the INSERT
+  // above (appearance_count already seeded to 1 via VALUES); anything else
+  // means an existing row was matched and its appearance_count still needs
+  // the increment below.
+  return { sourceAppId: rows[0].id, isNewApp: result.affectedRows === 1 };
+}
+
+async function bumpSourceAppCounters(tx, id, sourceAppId, isNewApp, data, increment) {
+  if (!isNewApp) {
+    await tx.query(
+      `UPDATE mob_source_apps SET
+         last_seen = GREATEST(last_seen, ?),
+         first_seen = LEAST(first_seen, ?),
+         appearance_count = appearance_count + ?
+       WHERE id = ?`,
+      [data.last_seen, data.last_seen, increment ? 1 : 0, sourceAppId]
+    );
+  }
   await tx.query(
     `INSERT INTO mob_ad_source_apps
       (ad_id, source_app_id, appearance_count, first_seen, last_seen)
@@ -339,8 +368,11 @@ async function getCompleteAd(sql, publicAdId) {
        FROM mob_ad_source_apps x JOIN mob_source_apps s ON s.id = x.source_app_id
        WHERE x.ad_id = ? ORDER BY s.source_app_key, s.source_app_pkg`, [ad.id]),
   ]);
+  // Total times this ad has been seen across all sessions, repeats included
+  // (e.g. session A saw it 1x, session B saw it 3x -> occurrence_count = 4) —
+  // not a count of distinct sessions (that's `sessions_seen`/session rows).
   const observationRows = await sql.query(
-    'SELECT COUNT(*) AS occurrence_count FROM mob_ad_observations WHERE ad_id = ?',
+    'SELECT SUM(repeat_count) AS occurrence_count FROM mob_ad_observations WHERE ad_id = ?',
     [ad.id]
   );
   return {
@@ -356,5 +388,6 @@ async function getCompleteAd(sql, publicAdId) {
 module.exports = {
   withTransaction, getAdForUpdate, getAdsForLander, ensureOwner, insertAd, updateAd, upsertUrls,
   upsertOriginalImage, updateRedirectStatus, upsertLanderContent, setNasImage, insertObservation,
-  upsertDimension, upsertSourceApp, queueEs, getPendingEs, completeEs, failEs, getCompleteAd,
+  upsertDimension, resolveSourceAppId, bumpSourceAppCounters, queueEs, getPendingEs, completeEs,
+  failEs, getCompleteAd,
 };

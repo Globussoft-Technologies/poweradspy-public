@@ -7,7 +7,6 @@ import {
   Globe,
   RefreshCw,
   BookOpen,
-  Layout,
   Network,
   MapPin,
   ArrowRight,
@@ -109,15 +108,16 @@ const BasicInfo = ({
         .filter(Boolean),
     ]),
   ];
-  const sourceAppCount = numericCount(adDetails?.source_app_count)
-    ?? numericCount(ad?.source_app_count)
-    ?? (() => {
-      const detailTotal = sourceAppDetails.reduce(
-        (sum, item) => sum + (Number(item?.appearance_count) || 0),
-        0,
-      );
-      return detailTotal > 0 ? detailTotal : numericCount(sourceAppNames.length);
-    })();
+  // Number of distinct source apps — counted directly from the per-app
+  // details/names arrays actually rendered as pills below, so the number
+  // always matches what's shown, even on an ES doc indexed before
+  // source_app_count's formula changed (that scalar field can go stale;
+  // the per-app array it's built from doesn't).
+  const sourceAppCount = sourceAppDetails.length > 0
+    ? sourceAppDetails.length
+    : sourceAppNames.length > 0
+      ? sourceAppNames.length
+      : numericCount(adDetails?.source_app_count) ?? numericCount(ad?.source_app_count);
 
   // Map outgoingLinks (array of { source_url, redirect_url, final_url })
   const outgoing = Array.isArray(outgoingLinks)
@@ -362,20 +362,6 @@ const BasicInfo = ({
         href: fbPostLink,
         hoverColor: "hover:text-emerald-400",
       },
-      {
-        label: "SOURCE APP COUNT",
-        icon: Layout,
-        value: sourceAppCount == null ? "" : String(sourceAppCount),
-        href: null,
-        hoverColor: "",
-      },
-      {
-        label: "SOURCE APP",
-        icon: Network,
-        value: sourceAppNames.join("||"),
-        href: null,
-        hoverColor: "",
-      },
     ];
   } else {
     basicRows = [
@@ -525,6 +511,59 @@ const BasicInfo = ({
               </div>
             );
           })}
+          {p === "admob" && (sourceAppCount != null || sourceAppDetails.length > 0) && (
+            <div
+              className={`flex items-start gap-3 px-4 py-3 flex-wrap ${
+                visibleBasicRows.length ? (isLight ? "border-t border-gray-200" : "border-t border-white/5") : ""
+              }`}
+            >
+              <div className="flex items-center gap-2 shrink-0 w-44">
+                <Network size={13} className="text-[#9f9f9f] opacity-70 shrink-0" />
+                <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
+                  SOURCE APP
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 justify-end flex-1">
+                {sourceAppCount != null && (
+                  <span
+                    title="Total number of distinct source apps this ad has been linked to."
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide cursor-default transition-colors ${
+                      isLight
+                        ? "bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800"
+                        : "bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 hover:text-blue-200"
+                    }`}
+                  >
+                    Count: {sourceAppCount}
+                  </span>
+                )}
+                {sourceAppDetails.length > 0
+                  ? sourceAppDetails.map((item, idx) => (
+                    <span
+                      key={`${item?.name || "app"}-${idx}`}
+                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold cursor-default transition-colors ${
+                        isLight
+                          ? "bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800"
+                          : "bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:text-violet-200"
+                      }`}
+                    >
+                      {item.name}
+                    </span>
+                  ))
+                  : sourceAppNames.map((name) => (
+                    <span
+                      key={name}
+                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold cursor-default transition-colors ${
+                        isLight
+                          ? "bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800"
+                          : "bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:text-violet-200"
+                      }`}
+                    >
+                      {name}
+                    </span>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       </div> : null}
 

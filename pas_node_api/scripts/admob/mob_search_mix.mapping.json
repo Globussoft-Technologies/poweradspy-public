@@ -39,6 +39,7 @@
         "days_running": { "type": "integer" },
         "occurrence_count": { "type": "long" },
         "lead_score": { "type": "long" },
+        "poster_intelligence_score": { "type": "long" },
         "post_date": { "type": "date", "format": "strict_date_optional_time||epoch_second||epoch_millis" },
         "system_id": { "type": "keyword" },
         "version": { "type": "keyword" },

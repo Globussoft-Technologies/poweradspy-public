@@ -30,6 +30,7 @@ erDiagram
     mob_ads ||--o{ mob_ad_source_apps : "source apps"
     mob_source_apps ||--o{ mob_ad_source_apps : "app catalog"
     mob_ads ||--o{ mob_ad_observations : "observations"
+    mob_source_apps ||--o{ mob_ad_observations : "app seen through (nullable)"
     mob_ads ||--o| mob_es_outbox : "ES retry queue"
     mob_post_owners ||--o{ mob_hidden_ads : "saved/hidden owner state"
     mob_ads ||--o{ mob_hidden_ads : "saved/hidden ad state"
@@ -167,6 +168,7 @@ erDiagram
         bigint id PK
         bigint ad_id FK
         string session_id
+        bigint source_app_id FK "nullable, app this session was seen through"
         string system_id
         binary payload_hash
         datetime observed_at
@@ -208,8 +210,15 @@ erDiagram
   independently for different users without touching the AdMob ingestion data.
 - `mob_hidden_ads` is not part of `mob_search_mix`; it is consulted only when the
   frontend asks for Saved / Hidden AdMob views.
-- `mob_ad_observations` records one AdMob sighting per `(ad_id, session_id)` so
-  the backend can count scan-run occurrences and session-level post-owner totals.
+- `mob_ad_observations` records one AdMob sighting per `(ad_id, session_id, source_app_id)`
+  so the backend can count scan-run occurrences and session-level post-owner totals.
+  The same `session_id` can have more than one row if different apps reported this
+  ad within that session — each app gets its own row and its own repeat_count,
+  instead of one app's count silently absorbing another's.
+- `mob_ad_observations.source_app_id` records which app that specific row was
+  seen through, resolved and stamped at insert time (`resolveSourceAppId` runs
+  before `insertObservation`). It is nullable — sessions recorded before this
+  column existed stay NULL and are handled via fallback logic in `getAdSessions`.
 
 ---
 

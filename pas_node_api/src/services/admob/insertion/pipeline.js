@@ -60,7 +60,11 @@ async function processAdmobAd(payload, ctx) {
         : await repo.insertAd(tx, data, owner?.id || null);
       if (existing) await repo.updateAd(tx, internalId, data, owner?.id || null);
 
-      const newObservation = await repo.insertObservation(tx, internalId, data, hashPayload(data));
+      // Resolved before the observation insert so the app can be stamped
+      // directly onto that observation row (source_app_id) — needed for
+      // accurate per-session, per-app breakdowns later.
+      const { sourceAppId, isNewApp } = await repo.resolveSourceAppId(tx, data);
+      const newObservation = await repo.insertObservation(tx, internalId, data, hashPayload(data), sourceAppId);
       await repo.upsertUrls(tx, internalId, data);
       await repo.upsertOriginalImage(tx, internalId, data.image_url_original);
       for (const country of data.country) {
@@ -68,7 +72,7 @@ async function processAdmobAd(payload, ctx) {
       }
       await repo.upsertDimension(tx, 'mob_ad_states', 'state', internalId, data.state, data.last_seen, newObservation);
       await repo.upsertDimension(tx, 'mob_ad_sub_networks', 'sub_network', internalId, data.sub_network, data.last_seen, newObservation);
-      await repo.upsertSourceApp(tx, internalId, data, newObservation);
+      await repo.bumpSourceAppCounters(tx, internalId, sourceAppId, isNewApp, data, newObservation);
       await repo.queueEs(tx, internalId);
       return { internalId, inserted: !existing, newObservation };
     });

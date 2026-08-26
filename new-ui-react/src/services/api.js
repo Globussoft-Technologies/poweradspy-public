@@ -1243,6 +1243,8 @@ export const buildSearchPayload = (filters = {}) => {
   const ADMOB_POSTER_SORT_MAP = {
     lead_score: 'lead_score',
     top_ranked: 'lead_score',
+    poster_intelligence_score: 'poster_intelligence_score',
+    poster_intelligence: 'poster_intelligence_score',
     occurrence_count: 'occurrence_count',
     most_seen: 'occurrence_count',
     active_days: 'days_running',
@@ -1258,6 +1260,7 @@ export const buildSearchPayload = (filters = {}) => {
     if (!admobSelected || explicitAdmobPosterSort) return '';
     const raw = String(sortBy ?? '').trim().toLowerCase();
     if (raw === 'lead_score' || raw === 'top_ranked') return 'lead_score';
+    if (raw === 'poster_intelligence_score' || raw === 'poster_intelligence') return 'poster_intelligence_score';
     if (raw === 'occurrence_count' || raw === 'most_seen') return 'occurrence_count';
     if (raw === 'active_days') return 'days_running';
     return '';
@@ -1475,6 +1478,7 @@ export const buildSearchPayload = (filters = {}) => {
     'Ad Running Days': 'days_running', 'Ad running days': 'days_running', 'Running Longest': 'days_running',
     // AdMob Poster Intelligence ranking
     lead_score: 'lead_score', top_ranked: 'lead_score',
+    poster_intelligence_score: 'poster_intelligence_score', poster_intelligence: 'poster_intelligence_score',
     occurrence_count: 'occurrence_count', most_seen: 'occurrence_count',
     active_days: 'days_running',
     // likes / engagement
@@ -2206,6 +2210,7 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     running_days: 'days_running', running_longest: 'days_running',
     days_running: 'days_running', longest_running: 'days_running',
     lead_score: 'lead_score', top_ranked: 'lead_score',
+    poster_intelligence_score: 'poster_intelligence_score', poster_intelligence: 'poster_intelligence_score',
     occurrence_count: 'occurrence_count', most_seen: 'occurrence_count',
     active_days: 'days_running',
     ad_budget: 'ad_budget', adbudget: 'ad_budget', budget: 'ad_budget',

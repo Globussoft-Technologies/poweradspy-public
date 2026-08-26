@@ -190,6 +190,7 @@ function buildCommonClauses(input) {
 
   let sortField = 'last_seen';
   if (sortInput === 'lead_score' || sortInput === 'top_ranked') sortField = 'lead_score';
+  else if (sortInput === 'poster_intelligence_score' || sortInput === 'poster_intelligence') sortField = 'poster_intelligence_score';
   else if (sortInput === 'occurrence_count' || sortInput === 'most_seen') sortField = 'occurrence_count';
   else if (sortInput === 'days_running' || sortInput === 'active_days' || input.running_longest_sort === 'running_longest_sort') sortField = 'days_running';
   else if (sortInput === 'first_seen') sortField = 'first_seen';
@@ -326,6 +327,7 @@ function toCardRow(hit) {
     days_running: daysRunningValue,
     occurrence_count: Number(source.occurrence_count || 0),
     lead_score: Number(source.lead_score || 0),
+    poster_intelligence_score: Number(source.poster_intelligence_score || 0),
     image_url: imageUrl,
     image_video_url: imageUrl,
     image_url_original: source.image_url_original,
@@ -401,15 +403,27 @@ async function getAdSessions(req, db, logger) {
       .map((row) => normalizeNumericId(row.source_app_id))
       .filter((value) => value !== null))];
 
+    // COUNT(DISTINCT session_id), not COUNT(*) — a single session can now
+    // have more than one row (one per source app that reported this ad
+    // within that session), so counting rows would overcount sessions.
     const occurrenceCountPromise = db.sql.query(
-      'SELECT COUNT(*) AS sessions_total FROM mob_ad_observations WHERE ad_id = ?',
+      'SELECT COUNT(DISTINCT session_id) AS sessions_total FROM mob_ad_observations WHERE ad_id = ?',
       [ad.id]
     );
+    // Total times this ad has been seen across all sessions, repeats
+    // included (session A saw it 1x, session B saw it 3x -> total = 4) —
+    // separate from sessions_total above, which stays a distinct-session
+    // count for Sessions Seen / the occurrence-rate denominator math.
+    const totalOccurrencesPromise = db.sql.query(
+      'SELECT SUM(repeat_count) AS total FROM mob_ad_observations WHERE ad_id = ?',
+      [ad.id]
+    ).then((rows) => Number(rows?.[0]?.total || 0));
     const sessionRowsPromise = db.sql.query(
-      `SELECT session_id, system_id, observed_at, repeat_count
-       FROM mob_ad_observations
-       WHERE ad_id = ?
-       ORDER BY observed_at DESC
+      `SELECT o.session_id, o.system_id, o.observed_at, o.repeat_count, s.source_app AS source_app_name
+       FROM mob_ad_observations o
+       LEFT JOIN mob_source_apps s ON s.id = o.source_app_id
+       WHERE o.ad_id = ?
+       ORDER BY o.observed_at DESC
        LIMIT ${size}
        OFFSET ${offset}`,
       [ad.id]
@@ -450,22 +464,59 @@ async function getAdSessions(req, db, logger) {
         sourceAppIds
       )
       : Promise.resolve([]);
+    // Each observation now records which app it was actually seen through
+    // (source_app_id, stamped at insert time) — this gives an exact per-app
+    // "how many times has this ad been found in this app" regardless of how
+    // many apps the ad is linked to, unlike mob_ad_source_apps.appearance_count
+    // (only counts distinct new sessions, ignores same-session resubmissions)
+    // or a global sum (can't be split across apps at all). Ads observed before
+    // this column existed have source_app_id = NULL and fall back below.
+    const perAppRepeatSumsPromise = db.sql.query(
+      `SELECT source_app_id, SUM(repeat_count) AS total_repeats
+       FROM mob_ad_observations
+       WHERE ad_id = ? AND source_app_id IS NOT NULL
+       GROUP BY source_app_id`,
+      [ad.id]
+    );
+    // Observations recorded before source_app_id existed are untagged
+    // (NULL). They can only be safely attributed to an app when the ad has
+    // exactly one linked app — otherwise which app they came from is
+    // genuinely unknown and they're left out rather than guessed.
+    const legacyUntaggedSumPromise = sourceAppIds.length === 1
+      ? db.sql.query(
+        'SELECT SUM(repeat_count) AS total FROM mob_ad_observations WHERE ad_id = ? AND source_app_id IS NULL',
+        [ad.id]
+      ).then((rows) => Number(rows?.[0]?.total || 0))
+      : 0;
 
-    const [occurrenceRows, sessionRows, totalSessionRows, sourceAppNameRows, trackedByAppRows] = await Promise.all([
+    const [occurrenceRows, sessionRows, totalSessionRows, sourceAppNameRows, trackedByAppRows, perAppRepeatSumRows, legacyUntaggedSum, totalOccurrences] = await Promise.all([
       occurrenceCountPromise,
       sessionRowsPromise,
       totalSessionsPromise,
       sourceAppNamesPromise,
       trackedByAppPromise,
+      perAppRepeatSumsPromise,
+      legacyUntaggedSumPromise,
+      totalOccurrencesPromise,
     ]);
 
     const trackedByAppId = new Map(
       (trackedByAppRows || []).map((row) => [normalizeNumericId(row.source_app_id), Number(row.tracked || 0)])
     );
-    const sessionsSeenByApp = (sourceAppNameRows || []).map((row) => ({
-      name: row.name,
-      count: Number(row.appearance_count || 0),
-    }));
+    const perAppRepeatSumId = new Map(
+      (perAppRepeatSumRows || []).map((row) => [normalizeNumericId(row.source_app_id), Number(row.total_repeats || 0)])
+    );
+    const sessionsSeenByApp = (sourceAppNameRows || []).map((row) => {
+      const appId = normalizeNumericId(row.source_app_id);
+      const taggedTotal = perAppRepeatSumId.get(appId) || 0;
+      // Legacy untagged observations only ever get folded in for a
+      // single-app ad, so this add is 0 for every other case.
+      const combined = taggedTotal + (sourceAppIds.length === 1 ? (legacyUntaggedSum || 0) : 0);
+      if (perAppRepeatSumId.has(appId) || combined > 0) {
+        return { name: row.name, count: combined };
+      }
+      return { name: row.name, count: Number(row.appearance_count || 0) };
+    });
     const trackedSessionsByApp = (sourceAppNameRows || []).map((row) => ({
       name: row.name,
       count: trackedByAppId.get(normalizeNumericId(row.source_app_id)) || 0,
@@ -489,14 +540,15 @@ async function getAdSessions(req, db, logger) {
         first_seen: ad.first_seen,
         last_seen: ad.last_seen,
         days_running: runningDays,
-        occurrence_count: occurrenceCount,
+        occurrence_count: totalOccurrences,
         sessions_total: occurrenceCount,
         total_sessions: safeTrackedSessionsTotal,
         sessions_seen_by_app: sessionsSeenByApp,
         tracked_sessions_by_app: trackedSessionsByApp,
         occurrence_rate: occurrenceRate == null ? null : Number(occurrenceRate.toFixed(6)),
         occurrence_rate_percent: occurrenceRate == null ? null : Number((occurrenceRate * 100).toFixed(2)),
-        lead_score: occurrenceCount * (runningDays || 0),
+        lead_score: totalOccurrences * (runningDays || 0),
+        poster_intelligence_score: totalOccurrences + (runningDays || 0),
         page,
         size,
         sessions: (sessionRows || []).map((row) => ({
@@ -504,6 +556,7 @@ async function getAdSessions(req, db, logger) {
           system_id: row.system_id,
           observed_at: row.observed_at,
           repeat_count: Number(row.repeat_count || 1),
+          source_app: row.source_app_name || null,
         })),
       },
     };
