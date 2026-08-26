@@ -162,7 +162,21 @@ const LanderDetails = ({ screenshotUrl, pageUrl = null }) => {
               >
                 <X size={18} />
               </button>
-              <div className="overflow-y-auto overflow-x-hidden" style={{ maxHeight: "94vh" }}>
+              {/* Address bar — sits outside the scrollable image container below,
+                  so it stays fixed at the top of the preview instead of scrolling
+                  away with the screenshot. */}
+              <div className="flex items-center gap-2 px-3 py-2.5 border-b bg-[#1a1a1a] border-white/10">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-400/60" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/60" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-green-400/60" />
+                </div>
+                <div className="flex-1 flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] truncate bg-white/10 text-white mr-10">
+                  <ShieldCheck size={11} className="text-emerald-400 shrink-0" />
+                  <span className="truncate">{resolvedPageUrl || "No URL"}</span>
+                </div>
+              </div>
+              <div className="overflow-y-auto overflow-x-hidden" style={{ maxHeight: "calc(94vh - 41px)" }}>
                 <img
                   src={resolvedScreenshotUrl}
                   alt="Lander Screenshot — enlarged"
