@@ -79,6 +79,21 @@ const NET_ICON = {
   native: natIcon, reddit: rdIcon, quora: quoraIcon, pinterest: pinIcon, gdn: gdnIcon, tiktok: tiktokIcon,
 };
 const TERM_COLORS = ['#4285F4', '#DB4437', '#0F9D58', '#F4B400', '#AB47BC'];
+// Recharts' <Tooltip> ships a hardcoded white content box and leaves the
+// label (the date/category/country row) with no explicit text color — it
+// just inherits whatever ambient `color` the app's dark theme sets on its
+// wrapper, which is near-white. White label text on Recharts' white box is
+// invisible in dark mode (the colored per-series value rows below it stay
+// readable only because Recharts gives each of THOSE its own inline series
+// color). Pin the whole tooltip to the theme's own card/border/text tokens
+// so it's readable in both themes instead of relying on inheritance.
+// (itemStyle is deliberately left alone — Recharts already colors each
+// payload row with that series' own line color, which is what makes them
+// distinguishable; overriding it would flatten every row to one color.)
+const CHART_TOOLTIP_STYLE = {
+  contentStyle: { fontSize: 11, borderRadius: 8, backgroundColor: 'var(--color-card)', border: '1px solid var(--color-border)', color: 'var(--color-text)' },
+  labelStyle: { color: 'var(--color-text)' },
+};
 const TOP_TYPES = [{ v: 'advertiser', label: 'Advertisers' }, { v: 'cta', label: 'CTAs' }];
 const shortLabel = (v) => (typeof v === 'string' && v.length > 18 ? `${v.slice(0, 17)}…` : v);
 
@@ -896,7 +911,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                       <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} />
                       <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'currentColor' }} interval="preserveStartEnd" minTickGap={28} />
                       <YAxis tick={{ fontSize: 9, fill: 'currentColor' }} domain={indexed ? [0, 100] : undefined} />
-                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} cursor={{ stroke: 'currentColor', strokeOpacity: 0.2 }}
+                      <Tooltip {...CHART_TOOLTIP_STYLE} cursor={{ stroke: 'currentColor', strokeOpacity: 0.2 }}
                         formatter={(v, name) => [indexed ? `${v}/100` : `${v} ads`, keyLabel(name)]} />
                       {chartKeys.map((k) => (
                         <Line key={k} type="monotone" dataKey={k} name={k} stroke={keyColor(k)} dot={false} strokeWidth={1.8} isAnimationActive={false} />
@@ -932,7 +947,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                         <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
                         <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} />
                         <YAxis type="category" dataKey="country" tick={{ fontSize: 9, fill: 'currentColor' }} width={110} interval={0} tickFormatter={shortLabel} />
-                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, name) => [`${Number(v).toLocaleString()} ads`, NET_LABEL[name] || name]} />
+                        <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v, name) => [`${Number(v).toLocaleString()} ads`, NET_LABEL[name] || name]} />
                         {countryNets.map((n, i) => (
                           <Bar key={n} dataKey={n} name={n} stackId="country" fill={NET_COLOR[n] || '#0ea5e9'}
                             radius={i === countryNets.length - 1 ? [0, 3, 3, 0] : 0}
@@ -965,7 +980,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                         <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
                         <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} allowDecimals={false} />
                         <YAxis type="category" dataKey="category" tick={{ fontSize: 9, fill: 'currentColor' }} width={132} interval={0} tickFormatter={shortLabel} />
-                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, name) => [`${Number(v).toLocaleString()} ads`, NET_LABEL[name] || name]} />
+                        <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v, name) => [`${Number(v).toLocaleString()} ads`, NET_LABEL[name] || name]} />
                         {catNets.map((n, i) => (
                           <Bar key={n} dataKey={n} name={n} stackId="cat" fill={NET_COLOR[n] || '#6366f1'}
                             radius={i === catNets.length - 1 ? [0, 3, 3, 0] : 0}
@@ -1045,7 +1060,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                       <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} horizontal={false} />
                       <XAxis type="number" tick={{ fontSize: 9, fill: 'currentColor' }} />
                       <YAxis type="category" dataKey="keyword" tick={{ fontSize: 9, fill: 'currentColor' }} width={132} interval={0} tickFormatter={shortLabel} />
-                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v) => [`${v} ads`, 'Ads']} />
+                      <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${v} ads`, 'Ads']} />
                       <Bar dataKey="count" name="ads" fill="#f59e0b" radius={[0, 3, 3, 0]} cursor="pointer" onClick={(d) => drill('keyword', d?.keyword)} />
                     </BarChart>
                   </ResponsiveContainer>
