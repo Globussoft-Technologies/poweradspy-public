@@ -241,7 +241,7 @@ const navLabelClass = (active) =>
                    
                  </>
               )}
-                {isOn && (
+                {/* {isOn && (
                 <Link to={"/pas/competitor-details"} className="block">
                   <li className={navItemClass(isActive("/pas/competitor-details"))}>
                     <img
@@ -254,7 +254,7 @@ const navLabelClass = (active) =>
                     </span>
                   </li>
                 </Link>
-              )}
+              )} */}
               {isOn && (
                 <Link to={"/pas/email-details"} className="block">
                   <li className={navItemClass(isActive("/pas/email-details"))}>

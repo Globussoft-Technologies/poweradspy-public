@@ -54,7 +54,7 @@ export const routes = createBrowserRouter(
 
       <Route path="/pas" element={<AuthCheck><Layout /></AuthCheck>}>
         <Route index element={<AuthCheck><PasDashboard /></AuthCheck>} />
-        <Route path="competitor-details" element={<AuthCheck><CompetitorDetails /></AuthCheck>} />
+        {/* <Route path="competitor-details" element={<AuthCheck><CompetitorDetails /></AuthCheck>} /> */}
         <Route path="email-details" element={<AuthCheck><EmailDetails /></AuthCheck>} />
         <Route path="competitor-tracker" element={<AuthCheck><CompetitorTracker /></AuthCheck>} />
         <Route path="search-intelligence" element={<AuthCheck><SearchIntelligence /></AuthCheck>} />
