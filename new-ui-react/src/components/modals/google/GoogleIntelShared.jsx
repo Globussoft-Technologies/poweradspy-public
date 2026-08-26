@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { X, Loader2, Info } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -32,9 +32,22 @@ const fmtCompact = (n) => {
 /** Full-screen modal shell with header + scrollable body.
  *  Defaults to z-[300] so it stacks ABOVE the analytics modal (z-[200], nav
  *  buttons z-[210]) it's typically launched from, but below toasts/tooltips (z-[400]+). */
-export const ModalShell = ({ icon, title, subtitle, onClose, zClass = "z-[300]", children }) => (
-  <div className={`fixed inset-0 ${zClass} flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm`}>
-    <div className="bg-theme-card border border-theme-border w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+export const ModalShell = ({ icon, title, subtitle, onClose, zClass = "z-[300]", children }) => {
+  useEffect(() => {
+    const onKeyDown = (e) => { if (e.key === "Escape") onClose?.(); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+  <div
+    className={`fixed inset-0 ${zClass} flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm`}
+    onClick={onClose}
+  >
+    <div
+      className="bg-theme-card border border-theme-border w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]"
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="px-5 py-4 border-b border-theme-border flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
           {icon}
@@ -54,7 +67,8 @@ export const ModalShell = ({ icon, title, subtitle, onClose, zClass = "z-[300]",
       <div className="p-5 overflow-y-auto">{children}</div>
     </div>
   </div>
-);
+  );
+};
 
 export const Loading = ({ label = "Loading…" }) => (
   <div className="py-16 flex flex-col items-center gap-3">
