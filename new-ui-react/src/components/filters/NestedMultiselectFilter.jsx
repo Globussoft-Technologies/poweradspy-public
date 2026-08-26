@@ -242,7 +242,7 @@ const NestedMultiselectFilter = ({
             )}
             {!hasChildren && (
               <div
-                className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${isSelected ? (accented ? accentPalette.checkedBox : "bg-[#335296] border-[#335296]") : (accented ? accentPalette.uncheckedBox : "border-white/30 group-hover:border-theme-text")}`}
+                className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${isSelected ? (accented ? accentPalette.checkedBox : "bg-[#335296] border-[#335296]") : (accented ? accentPalette.uncheckedBox : isLightTheme ? "border-gray-300 group-hover:border-gray-500" : "border-white/30 group-hover:border-theme-text")}`}
               >
                 {isSelected && (
                   <Check size={8} strokeWidth={3} className="text-white" />
@@ -277,11 +277,13 @@ const NestedMultiselectFilter = ({
                 className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
                   allLeavesSelected || someLeavesSelected
                     ? accented
-                      ? "bg-[#7f641f] border-[#f5c86a]/70"
+                      ? accentPalette.checkedBox
                       : "bg-[#335296] border-[#335296]"
                     : accented
-                      ? "border-[#f5c86a]/20 hover:border-[#f5c86a]/50"
-                      : "border-white/30 hover:border-theme-text"
+                      ? accentPalette.uncheckedBox
+                      : isLightTheme
+                        ? "border-gray-300 hover:border-gray-500"
+                        : "border-white/30 hover:border-theme-text"
                 }`}
               >
                 {allLeavesSelected && (
