@@ -1968,7 +1968,7 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
           value: String(analyticsPosterIntelligence),
           icon: TrendingUp,
           color: "text-violet-400",
-          tooltip: "How many times we've seen this ad, plus how many days it's been running. Higher means a stronger, longer-running ad.",
+          tooltip: "A score based on how often this ad shows up and how long it's stayed active. Higher means a stronger ad.",
         }] : []),
       ] : []),
       {
