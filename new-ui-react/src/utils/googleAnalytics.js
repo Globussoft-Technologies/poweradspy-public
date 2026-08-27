@@ -50,8 +50,8 @@ export function isGa4Enabled({
 } = {}) {
   const normalizedRollout = String(rollout).trim().toLowerCase();
   const runtimeEnvironment = resolveGa4RuntimeEnvironment(hostname);
-  // "prod" is intentionally a complete GA4 kill switch.
-  if (normalizedRollout === 'prod') return false;
+  // "prod" enables GA4 for local, development/staging, and production hosts.
+  if (normalizedRollout === 'prod') return true;
   if (normalizedRollout === 'dev') return runtimeEnvironment !== 'prod';
   if (normalizedRollout === 'local') return runtimeEnvironment === 'local';
   return false;

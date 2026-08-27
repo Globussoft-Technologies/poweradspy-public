@@ -119,9 +119,9 @@ describe("LanderDetails", () => {
         screenshotUrl="http://x.com/y.png"
         whatsappRotatorCount={2}
         whatsappEntries={[
-          { phone: "917340407207" },
+          { phone: "917340407207", countrty: "IN" },
           { url: "https://wa.me/+917340407207?text=Hi" },
-          { phone: "918810993624" },
+          { phone: "918810993624", country: "IN" },
         ]}
       />,
     );
@@ -129,8 +129,22 @@ describe("LanderDetails", () => {
     expect(getByText("WhatsApp Details")).toBeInTheDocument();
     expect(getByText("Rotator Count")).toBeInTheDocument();
     expect(getByText("2")).toBeInTheDocument();
-    expect(queryAllByText("917340407207")).toHaveLength(1);
-    expect(getByText("918810993624")).toBeInTheDocument();
+    expect(queryAllByText("+91 73404 07207")).toHaveLength(1);
+    expect(getByText("+91 88109 93624")).toBeInTheDocument();
+  });
+
+  it("falls back to a prefixed value when a number cannot be fully parsed", () => {
+    const { getByText } = render(
+      <LanderDetails
+        screenshotUrl="http://x.com/y.png"
+        whatsappRotatorCount={1}
+        whatsappEntries={[
+          { phone: "12345" },
+        ]}
+      />,
+    );
+
+    expect(getByText("+12345")).toBeInTheDocument();
   });
 
   it("hides the phone numbers field when the rotator count is zero", () => {

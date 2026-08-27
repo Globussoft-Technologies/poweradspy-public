@@ -15,8 +15,9 @@
         const isDevelopment = !isLocal && ['dev', 'staging', 'test', 'qa']
           .some((marker) => hostname.includes(marker));
         const runtimeEnvironment = isLocal ? 'local' : (isDevelopment ? 'dev' : 'prod');
-        // "prod" is the explicit kill switch: GA4 must not load or send data.
-        const enabled = (rollout === 'dev' && runtimeEnvironment !== 'prod')
+        // "prod" enables GA4 everywhere, including the production hostname.
+        const enabled = rollout === 'prod'
+          || (rollout === 'dev' && runtimeEnvironment !== 'prod')
           || (rollout === 'local' && runtimeEnvironment === 'local');
 
         window.__POWERADSPY_GA4_ENABLED__ = enabled;

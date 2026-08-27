@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, ShieldCheck, Monitor, Maximize2, Download, X, MessageCircle, Phone } from "lucide-react";
+import { parsePhoneNumberFromString } from "libphonenumber-js/min";
 import { useTheme } from "../../../hooks/useTheme";
 import { fetchImageBlob, resolveNasUrl } from "../../../services/api";
 
@@ -76,6 +77,24 @@ function normalizePhoneNumber(value) {
   return text || null;
 }
 
+function normalizeCountryHint(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(text) ? text : null;
+}
+
+function sanitizePhoneInput(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+
+  const compact = text.replace(/[^\d+]/g, "");
+  if (!compact) return null;
+  if (compact.startsWith("00")) return `+${compact.slice(2)}`;
+  if (compact.startsWith("+")) return `+${compact.slice(1).replace(/\D/g, "")}`;
+  return compact.replace(/\D/g, "");
+}
+
 function extractPhoneFromWhatsappUrl(url) {
   if (typeof url !== "string" || !url.trim()) return null;
   try {
@@ -85,6 +104,52 @@ function extractPhoneFromWhatsappUrl(url) {
   } catch {
     return null;
   }
+}
+
+function readWhatsappCountry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  return normalizeCountryHint(
+    entry.country ??
+    entry.country_iso ??
+    entry.countryIso ??
+    entry.country_code ??
+    entry.countryCode ??
+    entry.countrty
+  );
+}
+
+function formatWhatsappPhone(value, countryHint = null) {
+  const sanitized = sanitizePhoneInput(value);
+  if (!sanitized) return null;
+
+  const parsers = [];
+  if (sanitized.startsWith("+")) {
+    parsers.push(() => parsePhoneNumberFromString(sanitized));
+  } else {
+    const normalizedCountryHint = normalizeCountryHint(countryHint);
+    if (normalizedCountryHint) {
+      parsers.push(() => parsePhoneNumberFromString(sanitized, normalizedCountryHint));
+    }
+    // DS usually sends WhatsApp numbers as international digits without the "+".
+    // Try E.164-style parsing before falling back to raw display.
+    parsers.push(() => parsePhoneNumberFromString(`+${sanitized}`));
+  }
+
+  for (const parseCandidate of parsers) {
+    const parsed = parseCandidate();
+    if (parsed && parsed.isValid()) {
+      return {
+        key: parsed.number,
+        display: parsed.formatInternational(),
+      };
+    }
+  }
+
+  const fallback = sanitized.startsWith("+") ? sanitized : `+${sanitized}`;
+  return {
+    key: fallback,
+    display: fallback,
+  };
 }
 
 function collectWhatsappPhoneNumbers(value) {
@@ -97,12 +162,12 @@ function collectWhatsappPhoneNumbers(value) {
     );
     const fallbackPhone = extractPhoneFromWhatsappUrl(readWhatsappUrl(entry));
     const phone = directPhone || fallbackPhone;
-    if (!phone) continue;
+    const formattedPhone = formatWhatsappPhone(phone, readWhatsappCountry(entry));
+    if (!formattedPhone) continue;
+    if (seen.has(formattedPhone.key)) continue;
 
-    const key = phone.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    phoneNumbers.push(phone);
+    seen.add(formattedPhone.key);
+    phoneNumbers.push(formattedPhone);
   }
 
   return phoneNumbers;
@@ -297,10 +362,10 @@ const LanderDetails = ({
                   <div className="mt-3 flex flex-wrap gap-2">
                     {phoneNumbers.map((phone) => (
                       <span
-                        key={phone}
+                        key={phone.key}
                         className={`inline-flex items-center rounded-full border px-3 py-1 text-[12px] font-semibold ${isLight ? "bg-white border-gray-200 text-gray-700" : "bg-white/5 border-white/10 text-white/85"}`}
                       >
-                        {phone}
+                        {phone.display}
                       </span>
                     ))}
                   </div>
