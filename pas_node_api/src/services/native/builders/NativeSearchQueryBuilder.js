@@ -12,6 +12,7 @@ require('dotenv').config();
 const {
   flatBool,
   termFilter,
+  termFilterOrMissing,
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
@@ -285,7 +286,10 @@ class NativeSearchQueryBuilder {
   _getSubCategoryEnv() {
     const sub = this._params.subCategory;
     if (!sub || !sub.length) return null;
-    return asFilter(termFilter('native.subCategory.keyword', sub));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('native.subCategory.keyword', sub));
+    }
+    return asFilter(termFilterOrMissing('native.subCategory.keyword', sub));
   }
 
   _getCategoryEnv() {

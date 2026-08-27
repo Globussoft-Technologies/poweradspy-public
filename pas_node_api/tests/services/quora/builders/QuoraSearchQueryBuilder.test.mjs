@@ -162,10 +162,14 @@ describe("Quora builder > clause generators (filter)", () => {
     const filter = b.build().body.query.bool.filter;
     expect(filter.some(f => f.bool?.should?.length === 3)).toBe(true);
   });
-  it("source single platform → single exists clause", () => {
+  it("source single platform → platform-specific clause", () => {
     b.setSource(["ios"]);
     const filter = b.build().body.query.bool.filter;
-    expect(filter.some(f => f.exists?.field === "quora_ad_meta_data.firstSeenOnIos")).toBe(true);
+    const iosClause = filter.find((f) =>
+      f.bool?.filter?.some((clause) => clause.exists?.field === "quora_ad_meta_data.firstSeenOnIos")
+    );
+    expect(iosClause).toBeDefined();
+    expect(iosClause.bool.must_not).toBeDefined();
   });
   it("source desktop matches both current source and legacy first-seen data", () => {
     b.setSource(["desktop"]);

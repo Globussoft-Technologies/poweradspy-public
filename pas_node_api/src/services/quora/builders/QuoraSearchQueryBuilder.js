@@ -11,6 +11,7 @@ require('dotenv').config();
 const {
   flatBool,
   termFilter,
+  termFilterOrMissing,
   termFilterCI,
   matchFilter,
   multiFieldMatchFilter,
@@ -256,7 +257,10 @@ class QuoraSearchQueryBuilder {
   _getSubCategoryEnv() {
     const sub = this._params.subCategory;
     if (!sub || !sub.length) return null;
-    return asFilter(termFilter('quora.subCategory.keyword', sub));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('quora.subCategory.keyword', sub));
+    }
+    return asFilter(termFilterOrMissing('quora.subCategory.keyword', sub));
   }
 
   _getTypeEnv() {

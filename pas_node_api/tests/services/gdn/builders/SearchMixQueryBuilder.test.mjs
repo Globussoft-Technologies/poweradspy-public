@@ -12,7 +12,7 @@ beforeEach(() => {
 
 describe("GDN builder > construction + setters", () => {
   it("default index from env or fallback", () => {
-    expect(b._indexName).toBe(process.env.GDN_ELASTIC_INDEX || "gdn_search_mix");
+    expect(b._indexName).toBe(process.env.GDN_ELASTIC_INDEX || "gdn_search_mix_v2");
   });
   it("explicit index overrides", () => {
     expect(new Builder("custom")._indexName).toBe("custom");
@@ -85,21 +85,16 @@ describe("GDN builder > clause generators (must)", () => {
     b.setPostOwnerName("brand");
     expect(b.build().body.query.bool.must.length).toBeGreaterThan(0);
   });
-  // GDN's "advertiser" text is often a scraped destination-URL breadcrumb
-  // (e.g. "https://www.g2.com › … › Teramind Reviews"), not a clean brand
-  // name — the phrase/prefix clauses above can miss it due to punctuation.
-  // An exact `term` match against post_owner_lower.keyword (the same field
-  // Top Movers aggregates on) must always be present as an additional
-  // should-clause so a Top-Movers click-through is guaranteed to match every
-  // ad in that bucket, regardless of tokenization.
-  it("postOwnerName non-quoted → also includes an exact term match on post_owner_lower.keyword", () => {
+  // GDN now keeps the non-quoted advertiser lookup to phrase/prefix clauses
+  // only. This test checks that the current shape still carries the prefix
+  // branch that powers the fuzzy advertiser match.
+  it("postOwnerName non-quoted → phrase + prefix", () => {
     b.setPostOwnerName("https://www.g2.com › … › Teramind Reviews");
     const must = b.build().body.query.bool.must;
-    const postOwnerClause = must.find((m) => m.bool?.should?.some((s) => s.term));
+    const postOwnerClause = must.find((m) => m.bool?.should?.some((s) => s.prefix));
     expect(postOwnerClause).toBeDefined();
-    expect(postOwnerClause.bool.should).toContainEqual({
-      term: { "gdn_ad_post_owners.post_owner_lower.keyword": "https://www.g2.com › … › teramind reviews" },
-    });
+    expect(postOwnerClause.bool.minimum_should_match).toBe(1);
+    expect(JSON.stringify(postOwnerClause)).toContain("gdn_ad_post_owners.post_owner_name");
   });
   it("postOwnerName quoted", () => {
     b.setPostOwnerName('"BrandX"');

@@ -11,6 +11,7 @@ require('dotenv').config();
 const {
   flatBool,
   termFilter,
+  termFilterOrMissing,
   termFilterCI,
   matchFilter,
   multiFieldMatchFilter,
@@ -286,7 +287,10 @@ class RedditSearchQueryBuilder {
   _getSubCategoryEnv() {
     const sub = this._params.subCategory;
     if (!sub || !sub.length) return null;
-    return asFilter(termFilter('reddit.subCategory.keyword', sub));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('reddit.subCategory.keyword', sub));
+    }
+    return asFilter(termFilterOrMissing('reddit.subCategory.keyword', sub));
   }
 
   _getTypeEnv() {

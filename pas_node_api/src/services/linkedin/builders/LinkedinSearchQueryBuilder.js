@@ -27,6 +27,7 @@ const {
   multiFieldMatchFilter,
   phraseAcrossFields,
   termFilter,
+  termFilterOrMissing,
   termFilterCI,
   wrapWithCountryBoost,
   asFilter,
@@ -295,7 +296,10 @@ class LinkedinSearchQueryBuilder {
   _getSubCategoryEnv() {
     const sub = this._params.subCategory;
     if (!sub || !sub.length) return null;
-    return asFilter(termFilter('linkedin.subCategory.keyword', sub));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('linkedin.subCategory.keyword', sub));
+    }
+    return asFilter(termFilterOrMissing('linkedin.subCategory.keyword', sub));
   }
 
   _getTypeEnv() {

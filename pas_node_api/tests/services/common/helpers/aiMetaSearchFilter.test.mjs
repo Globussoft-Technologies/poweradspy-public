@@ -75,6 +75,27 @@ describe('aiMetaSearchFilter', () => {
     ]));
   });
 
+  it('keeps AI category rows with a null subcategory visible when a category branch is selected', () => {
+    config.env = 'development';
+    const clauses = getAiMetaFilterClauses('facebook', {
+      ai_category_id: ['1009'],
+      ai_subcategory_id: ['10090001', '10090002'],
+    });
+
+    expect(clauses).toEqual(expect.arrayContaining([
+      { terms: { 'ai.category_id': ['1009'] } },
+      {
+        bool: {
+          should: [
+            { terms: { 'ai.subcategory_id': ['10090001', '10090002'] } },
+            { bool: { must_not: [{ exists: { field: 'ai.subcategory_id' } }] } },
+          ],
+          minimum_should_match: 1,
+        },
+      },
+    ]));
+  });
+
   it('queries production offer_type through its keyword multi-field', () => {
     config.env = 'production';
     const clauses = getAiMetaFilterClauses('facebook', {

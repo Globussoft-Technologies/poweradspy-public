@@ -109,11 +109,19 @@ describe("Instagram builder > clause generators (must)", () => {
 
 describe("Instagram builder > clause generators (filter)", () => {
   it("url with/without protocol", () => {
-    expect(JSON.stringify(new Builder().setUrl("https://example.com/x").build())).toContain("*example.com*");
-    expect(JSON.stringify(new Builder().setUrl("bare/path").build())).toContain("*bare*");
+    const httpsQuery = JSON.stringify(new Builder().setUrl("https://example.com/x").build());
+    const bareQuery = JSON.stringify(new Builder().setUrl("bare/path").build());
+    expect(httpsQuery).toContain("instagram_ad_meta_data.destination_url.keyword");
+    expect(httpsQuery).toContain("http://example.com");
+    expect(httpsQuery).toContain("https://example.com");
+    expect(bareQuery).toContain("instagram_ad_meta_data.destination_url.keyword");
+    expect(bareQuery).toContain("http://bare");
+    expect(bareQuery).toContain("https://bare");
   });
   it("url that fails new URL() → falls back to split('/')[0] (line 585 catch)", () => {
-    expect(JSON.stringify(new Builder().setUrl("http://[invalid").build())).toContain("*http:*");
+    const query = JSON.stringify(new Builder().setUrl("http://[invalid").build());
+    expect(query).toContain("instagram_ad_meta_data.destination_url.keyword");
+    expect(query).toContain("prefix");
   });
   it("country/state/city/adCategory/subCategory filters", () => {
     b.setCountry(["US"]).setState(["CA"]).setCity(["LA"]).setAdCategory(["c"]).setSubCategory(["s"]);

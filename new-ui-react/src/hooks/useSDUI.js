@@ -561,9 +561,15 @@ export function useSDUI() {
             // Debounced per filterId — a slider drag calls this many times in a
             // row (see filterTrackTimersRef above); only the last value within
             // the window actually gets sent, so one user interaction = one hit.
-            clearTimeout(filterTrackTimersRef.current[filterId]);
-            filterTrackTimersRef.current[filterId] = setTimeout(() => {
-                delete filterTrackTimersRef.current[filterId];
+            // Value-bearing filters such as Ad Type must debounce each selected
+            // value independently. A shared filterId key caused rapid
+            // multi-select clicks to cancel all but the final GA4 event.
+            const timerKey = includeValues && normalizedValues.length
+                ? `${filterId}:${normalizedValues.join('|')}`
+                : filterId;
+            clearTimeout(filterTrackTimersRef.current[timerKey]);
+            filterTrackTimersRef.current[timerKey] = setTimeout(() => {
+                delete filterTrackTimersRef.current[timerKey];
                 trackProductEvent('filter_applied', {
                     filter_name: `${platformLabel}_${filterLabel}${includeValues && normalizedValues.length
                         ? `_${normalizedValues.join('_')}`

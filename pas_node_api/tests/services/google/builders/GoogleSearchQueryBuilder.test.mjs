@@ -139,18 +139,31 @@ describe("Google builder > clause generators", () => {
     const filters = b.build().body.query.bool.filter || [];
     expect(filters.length).toBeGreaterThanOrEqual(3);
   });
-  it("type/adPosition/adSubPosition/callToAction/gender filters", () => {
+  it("type/adPosition/adSubPosition filters", () => {
     b.setAdType(["IMG"]).setAdPosition(["A"]).setAdSubPosition(["B"]).setCallToAction(["BUY"]).setGender(["m"]);
-    expect((b.build().body.query.bool.filter || []).length).toBeGreaterThanOrEqual(5);
+    const filters = b.build().body.query.bool.filter || [];
+    const json = JSON.stringify(filters);
+    expect(json).toContain("\"type\"");
+    expect(json).toContain("ad_position");
+    expect(json).toContain("ad_sub_position");
+    // Google intentionally does not expose call-to-action or gender filters.
+    expect(json).not.toContain("\"action\"");
+    expect(json).not.toContain("\"gender\"");
   });
-  it("adCategory/subCategory/tags/targetKeyword filters", () => {
+  it("adCategory/subCategory/targetKeyword filters", () => {
     b.setAdCategory(["c"]).setSubCategory(["s"]).setTags(["t"]).setTargetKeyword(["tk"]);
-    expect((b.build().body.query.bool.filter || []).length).toBeGreaterThanOrEqual(4);
+    const filters = b.build().body.query.bool.filter || [];
+    const json = JSON.stringify(filters);
+    expect(json).toContain("\"category\"");
+    expect(json).toContain("\"subCategory\"");
+    expect(json).toContain("target_keyword");
+    // Google intentionally does not expose tags on this index.
+    expect(json).not.toContain("\"tags\"");
   });
-  it("lowerAgeSeen with bounds", () => {
+  it("lowerAgeSeen is a Google no-op", () => {
     b.setLowerAgeSeen({ lower_age: "18", upper_age: "30" });
     const filters = b.build().body.query.bool.filter || [];
-    expect(filters.some(f => f.range && JSON.stringify(f).includes("age"))).toBe(true);
+    expect(JSON.stringify(filters)).not.toContain("lower_age_seen");
   });
   it("date ranges with both bounds", () => {
     b.setLastSeen({ lower_date: "1", upper_date: "2" })
@@ -170,21 +183,35 @@ describe("Google builder > clause generators", () => {
     b.setNeedle("1").setIpBasedCountry("US").setFrom("0");
     expect(JSON.stringify(b.build())).not.toContain('"lt":"1"');
   });
-  it("range filters likes/comments/dislikes/views/adBudget", () => {
+  it("range filters likes/comments/dislikes/views/adBudget are no-ops on Google", () => {
     b.setLikes([1, 10]).setComments([1, 5]).setDislikes([1, 3]).setViews([1, 100]).setAdBudget([1, 50]);
-    expect((b.build().body.query.bool.filter || []).length).toBeGreaterThanOrEqual(5);
+    const filters = b.build().body.query.bool.filter || [];
+    const json = JSON.stringify(filters);
+    expect(json).not.toContain("reactions.likes");
+    expect(json).not.toContain("\"comments\"");
+    expect(json).not.toContain("\"dislikes\"");
+    expect(json).not.toContain("\"views\"");
+    expect(json).not.toContain("averagebudget");
   });
   it("range single-elem → skipped", () => {
     b.setLikes([1]);
     expect((b.build().body.query.bool.filter || []).some(f => f.range?.["reactions.likes"])).toBe(false);
   });
   it("builtWith/track/source/funnel/affiliate/langDetect filters", () => {
-    b.setBuiltWith(["bw"]).setTrack(["t"]).setSource(["s"]).setFunnel(["f"]).setAffiliate(["a"]).setLangDetect(["en"]);
-    expect((b.build().body.query.bool.filter || []).length).toBeGreaterThanOrEqual(6);
+    b.setBuiltWith(["builtwith"]).setTrack(["track"]).setSource(["source"]).setFunnel(["funnel"]).setAffiliate(["affiliate"]).setLangDetect(["english"]);
+    const filters = b.build().body.query.bool.filter || [];
+    const json = JSON.stringify(filters);
+    expect(json).toContain("\"built_with\"");
+    expect(json).toContain("\"source\"");
+    expect(json).toContain("\"built_with_analytics_tracking\"");
+    expect(json).toContain("\"affiliate_data\"");
+    expect(json).toContain("\"lang_detect\"");
+    expect(json).toContain("\"domain\"");
   });
   it("marketPlatform → bool.should wildcards", () => {
-    b.setMarketPlatform(["mp"]);
-    expect((b.build().body.query.bool.filter || []).some(f => f.bool?.should?.some(s => s.wildcard))).toBe(true);
+    b.setMarketPlatform(["mpx"]);
+    const filters = b.build().body.query.bool.filter || [];
+    expect(filters.some(f => f.bool?.should?.some(s => s.wildcard?.domain))).toBe(true);
   });
 
   it("setSize('bogus') → parseInt NaN falls back to 20 (line 78 || right operand)", () => {

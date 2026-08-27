@@ -34,6 +34,7 @@ const {
   wrapIfNeed,
   flatBool,
   termFilter,
+  termFilterOrMissing,
   termFilterCI,
   matchFilter,
   multiFieldMatchFilter,
@@ -418,7 +419,10 @@ class SearchMixQueryBuilder {
   _getSubCategoryEnv() {
     const sub = this._params.subCategory;
     if (!sub || !sub.length) return null;
-    return asFilter(termFilter('facebook.subCategory.keyword', sub));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('facebook.subCategory.keyword', sub));
+    }
+    return asFilter(termFilterOrMissing('facebook.subCategory.keyword', sub));
   }
 
   _getTypeEnv() {

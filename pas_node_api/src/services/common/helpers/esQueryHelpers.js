@@ -101,6 +101,33 @@ function termFilter(field, vals) {
 }
 
 /**
+ * Exact-match filter that also keeps documents where the field is missing.
+ *
+ * This is useful for hierarchical category filters where a parent category
+ * can still be a valid match even when the child subcategory was never
+ * populated on the ad document.
+ */
+function termFilterOrMissing(field, vals) {
+  const strict = termFilter(field, vals);
+  if (!strict) return null;
+  return {
+    bool: {
+      should: [
+        strict,
+        {
+          bool: {
+            must_not: [
+              { exists: { field } },
+            ],
+          },
+        },
+      ],
+      minimum_should_match: 1,
+    },
+  };
+}
+
+/**
  * Exact, case-INSENSITIVE value match on a keyword sub-field.
  *
  * Use for categorical values (e.g. Call-To-Action) where:
@@ -341,6 +368,7 @@ module.exports = {
   // builders
   flatBool,
   termFilter,
+  termFilterOrMissing,
   termFilterCI,
   matchFilter,
   multiFieldMatchFilter,

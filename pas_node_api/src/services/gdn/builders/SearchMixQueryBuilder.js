@@ -22,6 +22,7 @@
 const {
   flatBool,
   termFilter,
+  termFilterOrMissing,
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
@@ -299,7 +300,10 @@ class SearchMixQueryBuilder {
   _getSubCategoryEnv() {
     const c = this._params.subCategory;
     if (!c || !c.length) return null;
-    return asFilter(termFilter('gdn.subCategory.keyword', c));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('gdn.subCategory.keyword', c));
+    }
+    return asFilter(termFilterOrMissing('gdn.subCategory.keyword', c));
   }
 
   _getTagsEnv() {

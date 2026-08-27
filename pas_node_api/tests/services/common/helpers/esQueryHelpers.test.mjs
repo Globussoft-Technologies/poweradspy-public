@@ -85,6 +85,44 @@ describe("esQueryHelpers > termFilter", () => {
   });
 });
 
+describe("esQueryHelpers > termFilterOrMissing", () => {
+  it("wraps an exact filter with a missing-field fallback", () => {
+    expect(h.termFilterOrMissing("f", "v")).toEqual({
+      bool: {
+        should: [
+          { term: { f: "v" } },
+          {
+            bool: {
+              must_not: [{ exists: { field: "f" } }],
+            },
+          },
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  });
+
+  it("keeps array values inside the strict branch", () => {
+    expect(h.termFilterOrMissing("f", ["a", "b"])).toEqual({
+      bool: {
+        should: [
+          { terms: { f: ["a", "b"] } },
+          {
+            bool: {
+              must_not: [{ exists: { field: "f" } }],
+            },
+          },
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  });
+
+  it("returns null for empty input", () => {
+    expect(h.termFilterOrMissing("f", [null, ""])).toBeNull();
+  });
+});
+
 describe("esQueryHelpers > matchFilter", () => {
   it("null/undefined → null", () => {
     expect(h.matchFilter("f", null)).toBeNull();

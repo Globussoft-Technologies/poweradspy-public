@@ -31,7 +31,7 @@
  */
 
 const databaseManager = require('../../../database/DatabaseManager');
-const { matchFilter, multiFieldMatchFilter } = require('../../common/helpers/esQueryHelpers');
+const { matchFilter, multiFieldMatchFilter, termFilterOrMissing } = require('../../common/helpers/esQueryHelpers');
 const {
   getAiMetaFilterClauses,
   addAiMetaVisibleCountAgg,
@@ -147,7 +147,11 @@ function buildSharedFilters(p) {
   const cats = ensureArr(p.adcategory);
   if (cats.length) filter.push({ terms: { 'youtube.category.keyword': cats } });
   const subs = ensureArr(p.subCategory);
-  if (subs.length) filter.push({ terms: { 'youtube.subCategory.keyword': subs } });
+  if (subs.length) {
+    filter.push(cats.length
+      ? termFilterOrMissing('youtube.subCategory.keyword', subs)
+      : { terms: { 'youtube.subCategory.keyword': subs } });
+  }
   // Date-range filters. Each *_btn_sort arrives as [upperTs, lowerTs] in epoch
   // seconds. The GDN main query applies these to the GDN side; mirror them here
   // so the merged-in YouTube DISPLAY total is bounded by the same window —

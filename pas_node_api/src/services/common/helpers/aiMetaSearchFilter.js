@@ -1,6 +1,7 @@
 'use strict';
 
 const config = require('../../../config');
+const { termFilterOrMissing } = require('./esQueryHelpers');
 
 // AI-filtered search results are presented as a visible card count, not as the
 // raw ES hit total. On collapsed indices (Facebook / Instagram) the raw hit
@@ -117,6 +118,13 @@ function getAiMetaFilterClauses(network, params = {}) {
   for (const [param, suffix] of Object.entries(exactFields)) {
     const selected = values(params[param]);
     if (!selected.length) continue;
+    // Some legacy rows only stored the major AI category and left the
+    // subcategory null. When a category branch is selected, keep those rows
+    // visible by treating a missing subcategory as a valid parent-only match.
+    if (suffix === 'subcategory_id' && values(params.ai_category_id).length) {
+      clauses.push(termFilterOrMissing(`${field}.${suffix}`, selected));
+      continue;
+    }
     clauses.push(suffix === 'offering_type'
       ? buildOfferingTypeClause(field, selected)
       : suffix === 'offer_type'

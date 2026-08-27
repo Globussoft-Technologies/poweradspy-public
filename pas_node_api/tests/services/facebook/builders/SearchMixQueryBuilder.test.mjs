@@ -119,6 +119,19 @@ describe("Facebook builder > clause generators (filter)", () => {
     b.setCountry(["US"]).setState(["CA"]).setCity(["LA"]).setAdCategory(["c"]).setSubCategory(["s"]);
     expect(b.build().body.query.bool.filter.length).toBeGreaterThanOrEqual(6);
   });
+  it("adCategory/subCategory keeps rows with missing subCategory when a parent category is active", () => {
+    b.setAdCategory(["Computer Software"]).setSubCategory(["Enterprise Computer Software"]);
+    const filter = b.build().body.query.bool.filter;
+    expect(filter[1]).toEqual({
+      bool: {
+        should: [
+          { term: { "facebook.subCategory.keyword": "Enterprise Computer Software" } },
+          { bool: { must_not: [{ exists: { field: "facebook.subCategory.keyword" } }] } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  });
   it("range filters likes/comments/shares/impressions/popularity/adBudget", () => {
     b.setLikes([1, 10]).setComments([1, 5]).setShares([1, 3]).setImpressions([1, 100]).setPopularity([1, 50]).setAdBudget([1, 200]);
     expect(b.build().body.query.bool.filter.length).toBeGreaterThanOrEqual(6);

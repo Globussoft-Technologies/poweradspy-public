@@ -26,6 +26,7 @@ require("dotenv").config();
 const {
   flatBool,
   termFilter,
+  termFilterOrMissing,
   asFilter,
   asMust,
   bucketize,
@@ -287,7 +288,14 @@ class GoogleSearchQueryBuilder {
   _getStateEnv()        { const s = this._params.state;        return s && s.length ? asFilter(termFilter("state", s)) : null; }
   _getCityEnv()         { const c = this._params.city;         return c && c.length ? asFilter(termFilter("city", c)) : null; }
   _getAdCategoryEnv()   { const c = this._params.adCategory;   return c && c.length ? asFilter(termFilter("category", c)) : null; }
-  _getSubCategoryEnv()  { const s = this._params.subCategory;  return s && s.length ? asFilter(termFilter("subCategory", s)) : null; }
+  _getSubCategoryEnv()  {
+    const s = this._params.subCategory;
+    if (!s || !s.length) return null;
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter("subCategory", s));
+    }
+    return asFilter(termFilterOrMissing("subCategory", s));
+  }
   _getTypeEnv()         { const t = this._params.type;         return t && t.length ? asFilter(termFilter("type", t)) : null; }
   _getPlatformEnv()     { const p = this._params.platform;     return p && p.length ? asFilter(termFilter("platform", p)) : null; }
   _getSubnetworkEnv()   { const s = this._params.subnetwork;   return s && s.length ? asFilter(termFilter("subnetwork", s)) : null; }

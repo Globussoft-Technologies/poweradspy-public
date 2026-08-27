@@ -22,6 +22,7 @@ const { youtube: ytNet } = require('../../../config/networks');
 const {
   flatBool,
   termFilter,
+  termFilterOrMissing,
   termFilterCI,
   matchFilter,
   multiFieldMatchFilter,
@@ -311,7 +312,10 @@ class SearchMixQueryBuilder {
   _getSubCategoryEnv() {
     const sub = this._params.subCategory;
     if (!sub || !sub.length) return null;
-    return asFilter(termFilter('youtube.subCategory.keyword', sub));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('youtube.subCategory.keyword', sub));
+    }
+    return asFilter(termFilterOrMissing('youtube.subCategory.keyword', sub));
   }
 
   _getBuiltWithEnv() {

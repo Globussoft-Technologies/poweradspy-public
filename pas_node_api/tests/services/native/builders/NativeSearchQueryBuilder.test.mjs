@@ -12,7 +12,7 @@ beforeEach(() => {
 
 describe("Native builder > construction + setters", () => {
   it("default index from env or fallback", () => {
-    expect(b._indexName).toBe(process.env.NAT_ELASTIC_INDEX || "native_search_mix");
+    expect(b._indexName).toBe(process.env.NAT_ELASTIC_INDEX || "native_search_mix_v2");
   });
   it("explicit index overrides", () => {
     expect(new Builder("custom")._indexName).toBe("custom");

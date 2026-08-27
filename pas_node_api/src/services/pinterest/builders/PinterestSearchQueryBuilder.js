@@ -12,6 +12,7 @@ require('dotenv').config();
 const {
   flatBool,
   termFilter,
+  termFilterOrMissing,
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
@@ -251,7 +252,10 @@ class PinterestSearchQueryBuilder {
   _getSubCategoryEnv() {
     const s = this._params.subCategory;
     if (!s || !s.length) return null;
-    return asFilter(termFilter('pinterest.subCategory.keyword', s));
+    if (!this._params.adCategory || !this._params.adCategory.length) {
+      return asFilter(termFilter('pinterest.subCategory.keyword', s));
+    }
+    return asFilter(termFilterOrMissing('pinterest.subCategory.keyword', s));
   }
 
   _getTypeEnv() {
