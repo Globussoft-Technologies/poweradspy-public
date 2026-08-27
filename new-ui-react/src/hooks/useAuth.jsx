@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
 import { fetchPlanAccess, fetchEntitlements, fetchOnboardingStatus, trackEvent } from '../services/api';
 import { openModal } from '../store/uiSlice';
@@ -334,72 +334,15 @@ export function AuthProvider({ children }) {
   const [planAccess, setPlanAccess] = useState(null);
   const [entitlements, setEntitlements] = useState(null);
   const [planAccessResolved, setPlanAccessResolved] = useState(!token);
-  const tokenRef = useRef(token);
   const dispatch = useDispatch();
 
-  // Keep React state aligned with the shared browser storage. This lets a
-  // logout in one tab clear the other tabs without requiring a refresh.
-  useEffect(() => {
-    const syncAuthFromStorage = (event) => {
-      if (event.storageArea !== localStorage) return;
-      // localStorage.clear() emits a StorageEvent whose key is null.
-      if (event.key !== null && !['authToken', 'authUser', ENV_AUTH_FALLBACK_LOCK_KEY].includes(event.key)) return;
-
-      const nextToken = localStorage.getItem('authToken');
-      if (!nextToken) {
-        // sessionStorage belongs to each tab, so a logout in another tab cannot
-        // clear this tab's Ads Library state directly. Clear it when the shared
-        // authentication removal event arrives instead.
-        markFiltersForExpiry();
-        tokenRef.current = null;
-        setToken(null);
-        setUser(null);
-        setPlanAccess(null);
-        setEntitlements(null);
-        setPlanAccessResolved(true);
-        return;
-      }
-
-      try {
-        const rawUser = localStorage.getItem('authUser');
-        const nextUser = rawUser ? JSON.parse(rawUser) : JSON.parse(atob(nextToken.split('.')[1]));
-
-        // Opening another tab rewrites authUser during bootstrap even though the
-        // authenticated session did not change. Keep this tab's resolved plan
-        // access intact; otherwise token remains unchanged, its fetch effect does
-        // not rerun, and an already-open Projects page spins indefinitely.
-        if (event.key === 'authUser' || event.key === ENV_AUTH_FALLBACK_LOCK_KEY) {
-          setUser(nextUser);
-          return;
-        }
-
-        // A duplicate authToken event must also be harmless. Only a genuinely
-        // different token represents a new session that needs fresh access data.
-        if (nextToken === tokenRef.current) {
-          setUser(nextUser);
-          return;
-        }
-
-        tokenRef.current = nextToken;
-        setToken(nextToken);
-        setUser(nextUser);
-        setPlanAccess(null);
-        setEntitlements(null);
-        setPlanAccessResolved(false);
-      } catch {
-        markFiltersForExpiry();
-        tokenRef.current = null;
-        setToken(null);
-        setUser(null);
-        setPlanAccess(null);
-        setEntitlements(null);
-        setPlanAccessResolved(true);
-      }
-    };
-
-    window.addEventListener('storage', syncAuthFromStorage);
-    return () => window.removeEventListener('storage', syncAuthFromStorage);
-  }, []);
+  // No cross-tab instant-logout sync: a tab that isn't the one you clicked
+  // Logout in keeps its state until it next needs to talk to the API. At that
+  // point getAuthToken() reads localStorage fresh, finds the token the other
+  // tab already cleared, sends the request unauthenticated, the backend
+  // 401s, and the existing handle401() (services/api.js) ends that tab's
+  // session then — i.e. any action in the other tab lands it logged out too,
+  // just not the instant localStorage changes, without a proactive redirect.
 
   // Fetch plan access restrictions once user is authenticated (skip on public/guest routes)
   useEffect(() => {
