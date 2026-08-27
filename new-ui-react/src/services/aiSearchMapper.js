@@ -4,7 +4,8 @@
 //   - searchQuery / searchIn   (Redux)         ← keyword | advertiser | domain
 //   - activePlatforms          (useSDUI)       ← network[]
 //   - sortBy                   (useSDUI setter)← order_column + order_by
-//   - filterValues             (useSDUI map)   ← everything else, keyed by SDUI _id
+//   - exactSearch             (Redux)         ← exact_search
+//   - filterValues            (useSDUI map)   ← everything else, keyed by SDUI _id
 //
 // Every value is resolved against the LIVE SDUI config's own options (matched on
 // option value OR label, normalized) so it survives config changes and unknown
@@ -152,6 +153,7 @@ function mapSortValue(orderColumn) {
  *   searchIn: 'keyword'|'advertiser'|'domain'|null,
  *   activePlatforms: string[],
  *   sortBy: string|null,
+ *   exactSearch: boolean,
  *   filterValues: object,      // keyed by SDUI filter _id — ready for setAllFilters
  *   unmapped: string[],        // DS values we couldn't resolve (for logging/telemetry)
  * }}
@@ -163,6 +165,13 @@ export function mapArgsToFilters(args = {}, config = {}) {
   let searchIn = null;
   let activePlatforms = [];
   let sortBy = null;
+  // DS uses exact_search to protect explicit advertiser/domain matching. Keep
+  // that intent separate from the widget-mapped filters so App.jsx can forward
+  // it unchanged through the normal buildSearchPayload() path.
+  const exactSearch =
+    args.exact_search === 1 ||
+    args.exact_search === '1' ||
+    args.exact_search === true;
 
   const asArray = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [v]);
 
@@ -321,5 +330,5 @@ export function mapArgsToFilters(args = {}, config = {}) {
     unmapped.push(`age: ${args.lower_age ?? ''}-${args.upper_age ?? ''}`);
   }
 
-  return { searchQuery, searchIn, activePlatforms, sortBy, filterValues, unmapped };
+  return { searchQuery, searchIn, activePlatforms, exactSearch, sortBy, filterValues, unmapped };
 }

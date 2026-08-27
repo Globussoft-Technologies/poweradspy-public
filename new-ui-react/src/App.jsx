@@ -2010,7 +2010,9 @@ const App = () => {
       ...mapped.filterValues,
       searchQuery: mapped.searchQuery,
       searchIn: mapped.searchIn || 'keyword',
-      exactSearch: false,
+      // Preserve DS's explicit exact-match intent during the probe too, so the
+      // tier-selection request and the final committed request behave the same.
+      exactSearch: !!mapped.exactSearch,
       sortBy: mapped.sortBy || sdui.sortBy,
       activePlatforms: mapped.activePlatforms.length
         ? mapped.activePlatforms
@@ -2036,7 +2038,7 @@ const App = () => {
         dispatch(setSpecificPlatforms(mapped.activePlatforms));
       }
       if (mapped.sortBy && sdui.setSortBy) sdui.setSortBy(mapped.sortBy);
-      dispatch(setExactSearch(false));
+      dispatch(setExactSearch(!!mapped.exactSearch));
       if (mapped.searchIn) dispatch(setSearchIn(mapped.searchIn));
       dispatch(setSearchQuery(mapped.searchQuery || ''));
       setSearchTrigger((prev) => prev + 1);
