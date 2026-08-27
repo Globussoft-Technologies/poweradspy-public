@@ -621,23 +621,35 @@ const MasonryCard = ({
           style={lockedHeight ? { height: lockedHeight } : { minHeight: 220 }}
         >
           {isAdmob && (!currentImg || imgError || ad.previewUnavailable) ? (
-            <div className="w-full flex flex-col items-center justify-center p-6 bg-gradient-to-br from-indigo-950/40 to-slate-900/40 min-h-[240px]">
-              {(ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription) && (
-                <p className="text-[13px] font-bold text-white/90 text-center line-clamp-3 mb-2">
-                  {ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription}
+            ad.previewUnavailable ? (
+              <div className="w-full flex flex-col items-center justify-center p-6 bg-gradient-to-br from-indigo-950/40 to-slate-900/40 min-h-[240px]">
+                {(ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription) && (
+                  <p className="text-[13px] font-bold text-white/90 text-center line-clamp-3 mb-2">
+                    {ad.subtitle || ad.newsfeed_description || ad.newsfeeddescription}
+                  </p>
+                )}
+                {ad.adText && (
+                  <p className="text-[12px] text-zinc-300 text-center line-clamp-4 mb-2">
+                    {ad.adText}
+                  </p>
+                )}
+                {(currentTitle || ad.ad_title || ad.title) && (
+                  <p className="text-[11px] font-medium text-zinc-400 text-center line-clamp-1">
+                    {currentTitle || ad.ad_title || ad.title}
+                  </p>
+                )}
+              </div>
+            ) : (
+              // Screenshot not scraped yet — show a loader instead of the
+              // brand/creative text placeholder, since that text read as a
+              // finished state rather than "still fetching".
+              <div className="w-full flex flex-col items-center justify-center gap-2.5 p-6 bg-gradient-to-br from-indigo-950/40 to-slate-900/40 min-h-[240px]">
+                <div className="w-6 h-6 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                <p className="text-[11px] font-medium text-zinc-400 text-center">
+                  Fetching preview…
                 </p>
-              )}
-              {ad.adText && (
-                <p className="text-[12px] text-zinc-300 text-center line-clamp-4 mb-2">
-                  {ad.adText}
-                </p>
-              )}
-              {(currentTitle || ad.ad_title || ad.title) && (
-                <p className="text-[11px] font-medium text-zinc-400 text-center line-clamp-1">
-                  {currentTitle || ad.ad_title || ad.title}
-                </p>
-              )}
-            </div>
+              </div>
+            )
           ) : isBannerAd ? (
             currentImg && !imgError ? (
               <div className="relative w-full min-h-[240px] overflow-hidden bg-zinc-950">
