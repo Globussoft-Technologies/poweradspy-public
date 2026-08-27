@@ -393,10 +393,25 @@ async function getCompleteAdByInternalId(sql, internalId) {
   return getCompleteAdWithClause(sql, 'a.id = ?', internalId);
 }
 
+// Delete one ad and every dependent row. Ten child tables (mob_ad_urls,
+// mob_ad_media, mob_ad_lander_content, mob_ad_lander_claims, mob_ad_countries,
+// mob_ad_states, mob_ad_sub_networks, mob_ad_source_apps, mob_ad_observations,
+// mob_es_outbox) are ON DELETE CASCADE, so MySQL removes them automatically
+// once the mob_ads row goes. mob_hidden_ads is the one exception — its FK is
+// ON DELETE RESTRICT (per-user saved/hidden state must be an explicit,
+// deliberate delete, not a side effect), so it has to be cleared first or the
+// mob_ads DELETE fails with a FK error. mob_source_apps / mob_post_owners are
+// shared catalog tables other ads may still reference — never touched here.
+async function deleteAdCascade(tx, internalId) {
+  await tx.query('DELETE FROM mob_hidden_ads WHERE ad_id = (SELECT ad_id FROM mob_ads WHERE id = ?)', [internalId]);
+  const result = await tx.query('DELETE FROM mob_ads WHERE id = ?', [internalId]);
+  return result.affectedRows || 0;
+}
+
 module.exports = {
   withTransaction, getAdForUpdate, getAdsForLander, ensureOwner, insertAd, updateAd, upsertUrls,
   upsertOriginalImage, updateRedirectStatus, upsertLanderContent, setNasImage, insertObservation,
   upsertDimension, resolveSourceAppId, bumpSourceAppCounters, queueEs, getPendingEs, completeEs,
   failEs, getCompleteAd,
-  getCompleteAdByInternalId,
+  getCompleteAdByInternalId, deleteAdCascade,
 };
