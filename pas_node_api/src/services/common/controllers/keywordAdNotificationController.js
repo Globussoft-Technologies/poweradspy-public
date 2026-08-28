@@ -20,10 +20,18 @@ const { ObjectId } = require('mongodb');
 const dbManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
 const config = require('../../../config');
+const firebaseService = require('../../FirebaseService');
 const { PLATFORM_FIELD_MAPPINGS } = require('../helpers/platformSearchFields');
 const { withLimit, isEsUnderStress } = require('../helpers/esConcurrency');
 
 const log = logger.createChild('keyword-ad-notify');
+
+// FCM token lookup for the first-ad push (§4.3 of SEARCH_CRAWL_STATUS_MANIFEST.md) — same
+// table/network as pushNotificationController.js's send flow, so a token registered for
+// one push path works for the other.
+const identSafe = (s, def) => (/^[A-Za-z0-9_]+$/.test(String(s || '')) ? String(s) : def);
+const PUSH_TOKEN_NET = config.notifications?.tokenNetwork || 'facebook';
+const PUSH_TOKEN_TBL = identSafe(config.notifications?.tokenTable, 'am_user_action');
 
 // Both scan functions below call this once per (term, network) they check. With many
 // users active at once, the SAME popular term (e.g. "myntra", "flipkart") is very
@@ -267,7 +275,7 @@ async function runKeywordAdNotificationScan() {
 
   const docs = await source.find(
     { scrapping_status: { $elemMatch: { date: today, status: { $in: ['completed', 'no_ads_found'] } } } },
-    { projection: { type: 1, value: 1, valueNorm: 1, networks: 1, users: 1, userInfos: 1, scrapping_status: 1, notifyDismissed: 1 } }
+    { projection: { type: 1, value: 1, valueNorm: 1, networks: 1, users: 1, userInfos: 1, scrapping_status: 1, notifyDismissed: 1, adFoundPushed: 1 } }
   ).limit(ks.notify.scanBatch).toArray();
 
   let scanned = 0, matched = 0, notified = 0;
@@ -295,6 +303,17 @@ async function runKeywordAdNotificationScan() {
         const cacheKey = `${lookupNet}:${type}:${doc.valueNorm}:${today}`;
         const adsCount = await getAdsCountCached(lookupNet, index, query, cacheKey);
         if (adsCount == null) continue; // skipped this cycle (cache miss + cluster stressed) — retried next run
+
+        // First-ad push — independent of the bell's threshold below, fires once per
+        // user the moment this term+network has at least one ad today.
+        if (adsCount >= 1) {
+          for (const u of users) {
+            if (!isAdFoundPushedToday(doc, u, net, today)) {
+              await sendFirstAdPushSafe(source, doc, u, net, today);
+            }
+          }
+        }
+
         if (adsCount < threshold) continue;
         matched++;
 
@@ -368,6 +387,68 @@ function isDismissedToday(doc, user, net, today) {
   );
 }
 
+// ─── First-ad push (independent of the 20-ad bell threshold) ───────────────
+// Fires once per (user, term, network, day) the first time adsCount >= 1, via the SAME
+// 15-min cron / per-user poll that already computes adsCount — no separate cron. Dedup
+// marker lives on the source keyword_searches doc, mirroring notifyDismissed[]'s pattern.
+// See SEARCH_CRAWL_STATUS_MANIFEST.md §4.
+
+// True if this user was already pushed a "first ad found" notification for this
+// term+network TODAY. Marked only on a successful send (sendFirstAdPushSafe below), so a
+// failed send (no token, dead token, FCM error) can still retry on the next tick.
+function isAdFoundPushedToday(doc, user, net, today) {
+  const list = doc.adFoundPushed || [];
+  return list.some((d) =>
+    d && d.network === net && d.date === today &&
+    ((user.userId != null && d.userId === user.userId) || (user.email && d.email === user.email))
+  );
+}
+
+// Best-effort FCM token lookup — same table/pattern as pushNotificationController.js's
+// batch lookup, just single-row since this fires per (user, term, network) event.
+async function lookupFcmToken(userId) {
+  if (userId == null) return null;
+  const sql = dbManager.getSQL(PUSH_TOKEN_NET);
+  if (!sql) return null;
+  try {
+    const rows = await sql.query(
+      `SELECT fcm_token FROM ${PUSH_TOKEN_TBL} WHERE am_id = ? AND fcm_token IS NOT NULL LIMIT 1`,
+      [userId]
+    );
+    const row = Array.isArray(rows?.[0]) ? rows[0][0] : rows?.[0];
+    return row?.fcm_token || null;
+  } catch (err) {
+    log.warn('first-ad push: token lookup failed', { userId, error: err.message });
+    return null;
+  }
+}
+
+// Send the "first ad found" push for one (doc, user, network) and record the dedup
+// marker on success only. Never throws — every failure just means "try again next tick,"
+// matching the never-throw contract both scan functions already hold.
+async function sendFirstAdPushSafe(source, doc, user, net, today) {
+  if (config.keywordSearch?.notify?.firstAdPushEnabled === false) return;
+  try {
+    const fcmToken = await lookupFcmToken(user.userId);
+    if (!fcmToken) return; // no token on file yet — retried automatically next tick
+
+    await firebaseService.sendNotification(
+      fcmToken,
+       'New Ads Found!',
+        `We found new ads for "${doc.value}". Take a look at the latest results.`,
+      '',
+      '/'
+    );
+
+    await source.updateOne(
+      { type: doc.type, valueNorm: doc.valueNorm },
+      { $addToSet: { adFoundPushed: { userId: user.userId ?? null, email: user.email ?? null, network: net, date: today } } }
+    );
+  } catch (err) {
+    log.warn('first-ad push failed', { network: net, value: doc.value, user: user.email || user.userId, error: err.message });
+  }
+}
+
 /**
  * Per-user variant of the scan — scoped to ONE user's searched terms (by id/email)
  * instead of the whole collection. For every term this user searched that was scraped
@@ -393,7 +474,7 @@ async function runUserKeywordAdScan(user, source, notifyCol) {
         { scrapping_status: { $elemMatch: { date: today, status: { $in: ['completed', 'no_ads_found'] } } } },
       ],
     },
-    { projection: { type: 1, value: 1, valueNorm: 1, networks: 1, scrapping_status: 1, notifyDismissed: 1 } }
+    { projection: { type: 1, value: 1, valueNorm: 1, networks: 1, scrapping_status: 1, notifyDismissed: 1, adFoundPushed: 1 } }
   ).sort({ lastSearchedAt: -1 }).limit(ks.notify.userScanLimit).toArray();
 
   let scanned = 0, matched = 0, notified = 0;
@@ -418,6 +499,13 @@ async function runUserKeywordAdScan(user, source, notifyCol) {
         const cacheKey = `${lookupNet}:${doc.type}:${doc.valueNorm}:${today}`;
         const adsCount = await getAdsCountCached(lookupNet, index, query, cacheKey);
         if (adsCount == null) continue; // skipped this cycle (cache miss + cluster stressed) — retried next run
+
+        // First-ad push — independent of the bell's threshold below, fires once per
+        // user the moment this term+network has at least one ad today.
+        if (adsCount >= 1 && !isAdFoundPushedToday(doc, user, net, today)) {
+          await sendFirstAdPushSafe(source, doc, user, net, today);
+        }
+
         if (adsCount < threshold) continue;
         matched++;
 
@@ -562,4 +650,7 @@ module.exports = {
   runUserKeywordAdScan,
   getUserKeywordAdNotifications,
   markKeywordAdNotificationRead,
+  // exported for tests (SEARCH_CRAWL_STATUS_MANIFEST.md §4)
+  isAdFoundPushedToday,
+  sendFirstAdPushSafe,
 };

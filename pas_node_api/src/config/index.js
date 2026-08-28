@@ -446,6 +446,10 @@ const config = {
       // polling). pollIntervalSec is env-tunable so ops can change it without a deploy.
       userScanLimit: getVal(fileConfig.keywordSearch?.notify?.userScanLimit, 'KEYWORD_SEARCH_NOTIFY_USER_SCAN_LIMIT', toInt) || 100,
       pollIntervalSec: getVal(fileConfig.keywordSearch?.notify?.pollIntervalSec, 'KEYWORD_SEARCH_NOTIFY_POLL_SEC', toInt) || 60,
+      // First-ad push (SEARCH_CRAWL_STATUS_MANIFEST.md §4) — independent of
+      // adsCountThreshold, fires once per user/term/network/day the moment adsCount >= 1.
+      // Reuses this same scan/cron; no separate poll interval needed.
+      firstAdPushEnabled: getVal(fileConfig.keywordSearch?.notify?.firstAdPushEnabled, 'KEYWORD_SEARCH_NOTIFY_FIRST_AD_PUSH_ENABLED', toBool) !== false,
     },
   },
 

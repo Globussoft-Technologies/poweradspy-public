@@ -118,7 +118,7 @@ class FirebaseService {
           data: {
             title: header,
             body: text,
-            icon: '/assets/imgs/icon-192x192.png',
+            icon: '/assets/imgs/icon-192x192.webp',
             action_button: actionUrl,
             image: image
           }

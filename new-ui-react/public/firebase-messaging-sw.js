@@ -23,8 +23,8 @@ try {
       const title = d.title || 'PowerAdSpy';
       const options = {
         body: d.body || '',
-        icon: d.icon || '/assets/imgs/icon-192x192.png',
-        badge: '/assets/imgs/icon-192x192.png',
+        icon: d.icon || '/assets/imgs/icon-192x192.webp',
+        badge: '/assets/imgs/icon-192x192.webp',
         tag: 'pas-notification',
         data: { link: d.action_button || '/' },
       };

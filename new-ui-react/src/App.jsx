@@ -40,7 +40,7 @@ import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
-import { Check, X, Loader2 } from "lucide-react";
+import { Check, X, Loader2, Info } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
@@ -1723,12 +1723,27 @@ const App = () => {
             GT,              // true only when Google Transparency was ON for an all/google search
           }).then((res) => {
             if (res?.data?.status === 'skip') return;
+            // Update the SAME top "search underway" banner (source: 'search', fired at
+            // submit time in handleSearch) in place, rather than spawning a second toast.
+            // durationMs: null — stays up until the user clears the keyword (handleSearch
+            // dismisses source:'search' toasts on an empty query) or starts a new search.
             if (!adsFound) {
               showToast(
-                'Your request is now in motion — ads will be provided soon.',
-                'success',
-                3000,
-                'bottom',
+                "No ads yet for this — we're crawling now. Usually ready in 15–20 min; " +
+                "we'll notify you the moment new ads come in.",
+                'notice',
+                null,
+                'top',
+                'search',
+              );
+            } else {
+              showToast(
+                "Showing what we have — our crawler is still checking for new ads. " +
+                "We'll notify you if anything new shows up.",
+                'notice',
+                null,
+                'top',
+                'search',
               );
             }
           }).catch(() => {});
@@ -1945,6 +1960,12 @@ const App = () => {
       return;
     }
     const trimmedQuery = String(query || "").trim();
+    if (!trimmedQuery) {
+      // Clearing the keyword (X button, or backspacing to empty) means there's no
+      // search left to be "underway" — dismiss the search-status banner immediately
+      // instead of leaving it counting down against a query that's no longer active.
+      hideToastAfter("search", 0);
+    }
     if (trimmedQuery && options.showScraperToast) {
       const searchType = String(type || ui.searchIn || "keyword").toLowerCase();
       const searchLabel = ["keyword", "advertiser", "domain"].includes(searchType)
@@ -1991,7 +2012,7 @@ const App = () => {
     const si = type || ui.searchIn || 'keyword';
     const selected = (platform ? [platform] : ui.specificPlatforms) || [];
     armKeywordSearchTrack(query, si, selected);
-  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute, showToast]);
+  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute, showToast, hideToastAfter]);
 
   // Orchestrates AI search: prompt → DS plan → try each fallback payload
   // (most-specific first) until one returns results → commit that tier's filters
@@ -2941,9 +2962,11 @@ const App = () => {
           }`}>
             {toast.type === 'info'
               ? <Loader2 size={14} strokeWidth={3} className="animate-spin" />
-              : toast.type === 'success'
-                ? <Check size={14} strokeWidth={3} />
-                : <X size={14} strokeWidth={3} />}
+              : toast.type === 'notice'
+                ? <Info size={14} strokeWidth={3} />
+                : toast.type === 'success'
+                  ? <Check size={14} strokeWidth={3} />
+                  : <X size={14} strokeWidth={3} />}
           </div>
           <span className="font-semibold tracking-tight text-xs">{toast.message}</span>
         </div>
