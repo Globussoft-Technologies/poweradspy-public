@@ -478,6 +478,9 @@ const RESTORE_COMPARE_COMPETITOR_KEY = "pas_dashboard_compare_competitor_name";
 // Persist the in-progress Add New Advertiser flow so a refresh returns the user
 // to the same setup wizard instead of dumping them back to My Projects.
 const RESTORE_ADD_ADVERTISER_KEY = "pas_dashboard_add_advertiser_draft";
+// Keep the competitor search box stable across a refresh in the same tab, but
+// do not leak it into a fresh tab/window the way localStorage would.
+const RESTORE_COMPETITOR_SEARCH_KEY = "pas_dashboard_competitor_search";
 // Tagged same-URL history entries for the My Projects list/detail/comparison
 // flow. This keeps the browser Back button on the project pages instead of
 // skipping straight back to Ads Library.
@@ -505,6 +508,24 @@ const clearSessionItem = (key) => {
     sessionStorage.removeItem(key);
   } catch {
     /* sessionStorage unavailable — nothing to clear */
+  }
+};
+
+const readSessionStringItem = (key) => {
+  try {
+    return sessionStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+};
+
+const writeSessionStringItem = (key, value) => {
+  try {
+    const nextValue = String(value ?? "");
+    if (nextValue) sessionStorage.setItem(key, nextValue);
+    else sessionStorage.removeItem(key);
+  } catch {
+    /* sessionStorage unavailable — refresh persistence simply won't work */
   }
 };
 
@@ -1101,7 +1122,10 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
         autoFetchedProjectRef.current !== selectedProjectId
       ) {
         autoFetchedProjectRef.current = selectedProjectId;
-        openProject(selectedProjectId, project.advertiser, { switchView: false });
+        openProject(selectedProjectId, project.advertiser, {
+          switchView: false,
+          resetCompetitorSearch: false,
+        });
       }
     }
   }, [viewState, selectedProjectId, projects, isProjectLoading, competitorUserId]);
@@ -1580,6 +1604,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
 
       setProjects((prev) => [newProject, ...prev.filter((p) => p.id !== projectId)]);
       setSelectedProjectId(projectId);
+      setCompetitorSearch("");
+      clearSessionItem(RESTORE_COMPETITOR_SEARCH_KEY);
       setWebsiteLink("");
       setSelectedKeywords([]);
       setKeywordSuggestions([]);
@@ -1769,7 +1795,11 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     };
   };
 
-  const openProject = async (id, advertiserName, { switchView = true } = {}) => {
+  const openProject = async (
+    id,
+    advertiserName,
+    { switchView = true, resetCompetitorSearch = true } = {},
+  ) => {
     // Switching to another project ends any in-progress generate buffer.
     setIsPreparingCompetitors(false);
     if (projectHistoryInitRef.current) {
@@ -1780,6 +1810,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
       });
     }
     setSelectedProjectId(id);
+    if (resetCompetitorSearch) {
+      // Only clear on an intentional project switch; refresh restoration keeps
+      // the current brand's search term so the page feels stateful.
+      setCompetitorSearch("");
+      clearSessionItem(RESTORE_COMPETITOR_SEARCH_KEY);
+    }
     setOpenDropdownId(null);
     setOpenGeoId(null);
     // `switchView: false` lets a caller use this purely to fetch/hydrate a
@@ -2503,7 +2539,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     }
   };
 
-  const [competitorSearch, setCompetitorSearch] = useState("");
+  const [competitorSearch, setCompetitorSearch] = useState(() =>
+    readSessionStringItem(RESTORE_COMPETITOR_SEARCH_KEY),
+  );
   const visibleCompetitors = activeProject ? activeProject.competitors : [];
   const filteredCompetitors = visibleCompetitors.filter((c) =>
     (c.name || "").toLowerCase().includes(competitorSearch.toLowerCase()),
@@ -2514,6 +2552,13 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
     0,
   );
   const paginatedCompetitors = filteredCompetitors;
+
+  // Persist the current project's competitor search through a same-tab
+  // refresh. The term is explicitly cleared when the user opens a different
+  // project, so it never leaks across brands.
+  useEffect(() => {
+    writeSessionStringItem(RESTORE_COMPETITOR_SEARCH_KEY, competitorSearch);
+  }, [competitorSearch]);
 
   return (
     <div className="flex-1 h-full overflow-y-auto bg-theme-bg p-8 text-theme-text custom-scrollbar">
