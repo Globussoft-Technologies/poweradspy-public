@@ -43,6 +43,7 @@ import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 import { ctaHref, parseAdCtas } from "../../utils/cta";
 import { classifyError, trackAdAction, trackProductEvent, getCallToActionEventName } from "../../utils/googleAnalytics";
 import { useTheme } from "../../hooks/useTheme";
+import { resolveAnalyticsFilterValueLabel } from "../../hooks/useSDUI";
 
 import fbIcon from "../../assets/fb.png";
 import igIcon from "../../assets/ig.png";
@@ -293,6 +294,7 @@ const AdDetailModal = ({
   isAdvertiserHidden,
   onUnHideAd,
   guest,
+  sduiConfig,
 }) => {
   const theme = useTheme()?.theme ?? "light";
   const isLightTheme = theme === "light";
@@ -1738,7 +1740,9 @@ const AdDetailModal = ({
           color: "var(--color-text-secondary)",
         }}
       >
-        {formatPosition(ad.adType)}
+        {platform === "admob" && ad.rawAdType
+          ? resolveAnalyticsFilterValueLabel(sduiConfig, "ad_types", ad.rawAdType)
+          : formatPosition(ad.adType)}
       </span>
     </>
   )}

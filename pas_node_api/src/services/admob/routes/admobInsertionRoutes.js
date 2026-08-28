@@ -1,58 +1,26 @@
 'use strict';
 
+/**
+ * AdMob insertion routes (mirrors facebookInsertionRoutes.js — insertion-only,
+ * search/read endpoints moved out to admobRoutes.js).
+ *
+ *   POST /api/v1/admob/insertion/adsData
+ *   POST /api/v1/admob/insertion/delete
+ *
+ * Guards: insertionEnabled('admob') -> insertionAuth (x-signature / platform
+ * bypass) for adsData, deleteAuth (x-delete-token) for delete.
+ */
+
 const { Router } = require('express');
 const { asyncHandler } = require('../../../middleware/errorHandler');
 const { insertionAuth } = require('../../../middleware/insertionAuth');
 const { insertionEnabled } = require('../../../middleware/insertionEnabled');
 const { deleteAuth } = require('../../../middleware/deleteAuth');
-const { authMiddleware } = require('../../../middleware/auth');
 const controller = require('../controllers/admobInsertionController');
-const { searchAds, getAdSessions } = require('../controllers/adSearchController');
-const { hideAds, getHiddenPostOwners, unHide } = require('../controllers/hideAdsController');
 const { deleteAd } = require('../controllers/deleteAdController');
 
 function createAdmobRoutes(service) {
   const router = Router();
-  router.post(
-    '/ads/search',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await searchAds(req, service.db, service.log);
-      return res.status(result.code).json(result);
-    })
-  );
-  router.post(
-    '/ads/sessions',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getAdSessions(req, service.db, service.log);
-      return res.status(result.code).json(result);
-    })
-  );
-  router.post(
-    '/ads/hide_ads',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await hideAds(req, service.db, service.log);
-      return res.status(result.code).json(result);
-    })
-  );
-  router.post(
-    '/ads/getHiddenPostOwners',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await getHiddenPostOwners(req, service.db, service.log);
-      return res.status(result.code).json(result);
-    })
-  );
-  router.post(
-    '/ads/un-hide',
-    authMiddleware,
-    asyncHandler(async (req, res) => {
-      const result = await unHide(req, service.db, service.log);
-      return res.status(result.code).json(result);
-    })
-  );
   router.post(
     '/insertion/adsData',
     insertionEnabled('admob'),

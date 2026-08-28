@@ -21,7 +21,7 @@ const ADMOB_ADS_RULES = {
   country: 'required|array',
   destination_url: 'url|nullable',
   first_seen: 'epoch|nullable',
-  image_url_original: 'url|nullable',
+  image_url_original: 'required|url',
   ip_address: 'ip|nullable',
   last_seen: 'required|epoch',
   network: 'required|string|in:mob-network',

@@ -42,6 +42,7 @@ import {
 } from "../../services/api";
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { useTheme } from "../../hooks/useTheme";
+import { resolveAnalyticsFilterValueLabel } from "../../hooks/useSDUI";
 import { iconColorClass } from "../../utils/iconColors";
 import { normalizeEcommercePlatformKey } from "../../utils/helper";
 import { classifyError, trackAdAction, trackProductEvent } from "../../utils/googleAnalytics";
@@ -257,6 +258,7 @@ const MasonryCard = ({
   showCopyLink = false,
   isAiFilteredResult = false,
   guest,
+  sduiConfig,
 }) => {
   const platform = String(ad.network || "").toLowerCase();
   const isAdmob = platform === "admob";
@@ -267,6 +269,13 @@ const MasonryCard = ({
   const cornerNetwork = badgeNetwork;
   const adTypeLower = (ad.adType || "image").toLowerCase();
   const badge = AD_TYPE_BADGES[adTypeLower] || AD_TYPE_BADGES.image;
+  // AdMob's own type vocabulary (INTERSTITIAL_OR_NATIVE, PLAY_STORE_AD, etc.)
+  // doesn't fit the shared image/video/carousel badge map above and always
+  // fell back to "IMAGE" — read the real label from the SDUI `ad_types`
+  // filter (admin-curated) instead, keyed by the preserved raw type value.
+  const cornerBadgeLabel = isAdmob && ad.rawAdType
+    ? resolveAnalyticsFilterValueLabel(sduiConfig, "ad_types", ad.rawAdType)
+    : badge.label;
   const TypeIcon = AD_TYPE_ICONS[adTypeLower] || ImageIcon;
   const renderTypeLower = (ad.renderType || adTypeLower).toLowerCase();
   const isVideo = renderTypeLower === "video";
@@ -999,7 +1008,7 @@ const MasonryCard = ({
               className={`ad-type-badge inline-flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider border backdrop-blur-md shadow-[0_1px_4px_rgba(0,0,0,0.4)] !bg-black/60 ${badge.color}`}
             >
               <TypeIcon size={10} />
-              {badge.label}
+              {cornerBadgeLabel}
             </span>
 
             {/* Save / unsave */}

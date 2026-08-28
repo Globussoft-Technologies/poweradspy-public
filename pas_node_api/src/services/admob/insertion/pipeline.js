@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const crypto = require('crypto');
 const media = require('../../../insertion/helpers/mediaUpload');
 const { ok, updated, rejected, serverError } = require('../../../insertion/helpers/responses');
@@ -12,6 +13,32 @@ const { invalidateAdmobFilterOptionsCache } = require('../../sdui/services/sduiS
 
 function hashPayload(data) {
   return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
+}
+
+// AdMob-only guard: a "corrupted" image_url_original can still download as a
+// 200 + non-empty response (a dead CDN serving an HTML error page, or a
+// truncated file, with an image/* content-type) — fetchPrimaryMedia's ok:true
+// doesn't catch that. Checking the real magic-byte signature here rejects it
+// before the ad is ever saved. Scoped to this file only — the shared
+// mediaUpload.js (used by every other network) is untouched.
+function isValidImageFile(tmpPath) {
+  let fd;
+  try {
+    fd = fs.openSync(tmpPath, 'r');
+    const header = Buffer.alloc(12);
+    const bytesRead = fs.readSync(fd, header, 0, 12, 0);
+    if (bytesRead < 4) return false;
+    if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) return true; // JPEG
+    if (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47) return true; // PNG
+    if (header.toString('ascii', 0, 3) === 'GIF') return true; // GIF87a/89a
+    if (header.toString('ascii', 0, 2) === 'BM') return true; // BMP
+    if (bytesRead >= 12 && header.toString('ascii', 0, 4) === 'RIFF' && header.toString('ascii', 8, 12) === 'WEBP') return true;
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+  }
 }
 
 async function processAdmobAd(payload, ctx) {
@@ -40,6 +67,16 @@ async function processAdmobAd(payload, ctx) {
         return rejected(422, 'The AdMob image could not be downloaded from image_url_original.', {
           field: 'image_url_original',
           hint: 'Send a live HTTP(S) image URL. For tmpfiles, either its page URL or /dl/ URL is accepted.',
+        });
+      }
+      // Downloaded 200 + non-empty, but that alone doesn't mean it's a real
+      // image — a dead CDN can serve an HTML error page with an image/*
+      // content-type. Reject before it gets saved as if it were valid.
+      if (fetched.image && !isValidImageFile(fetched.image)) {
+        media.cleanupFetched(fetched);
+        return rejected(422, 'The AdMob image_url_original did not return a valid image file.', {
+          field: 'image_url_original',
+          hint: 'The URL responded, but the downloaded file is not a recognizable image (corrupted, truncated, or an error page served with an image content-type).',
         });
       }
     } catch (error) {

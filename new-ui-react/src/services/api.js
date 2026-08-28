@@ -740,6 +740,12 @@ export const mapAdToCard = (raw) => {
       }
       return mappedAdType;
     })(),
+    // AdMob's own type vocabulary (INTERSTITIAL_OR_NATIVE, PLAY_STORE_AD, etc.)
+    // doesn't fit the shared image/video/carousel `adType` above — mapAdType()
+    // has no matching case for it and silently falls back to 'image'. Keep the
+    // ORIGINAL raw value here so admob-only UI can look up its real label from
+    // the SDUI `ad_types` filter instead of showing the wrong badge.
+    rawAdType: isAdmob ? (raw.type || null) : null,
     // Preserve the payload type for the visible badge. Transparency creatives
     // can use a different renderer when image_video_url contains media.
     renderType: isGoogleTransparency

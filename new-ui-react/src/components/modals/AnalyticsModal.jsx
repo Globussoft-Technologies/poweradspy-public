@@ -148,6 +148,7 @@ import {
   Info,
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
+import { resolveAnalyticsFilterValueLabel } from "../../hooks/useSDUI";
 import { useAdInsights } from "../../hooks/useAdInsights";
 import { useInterestBehaviour } from "../../hooks/useInterestBehaviour";
 import { mapAdToCard, resolveNasUrl, fetchFreshTikTokVideoUrl, getVideoEmbedUrl } from '../../services/api';
@@ -304,6 +305,25 @@ const AD_TYPE_CONFIG = {
     label: "BANNER",
     icon: Monitor,
     cls: "text-purple-600 bg-purple-500/10 border-purple-500/20 dark:text-purple-300 dark:bg-purple-500/20 dark:border-purple-500/10",
+  },
+  // AdMob's own `type` vocabulary (INTERSTITIAL_OR_NATIVE, INTERSTITIAL_WEBVIEW,
+  // NATIVE_OR_UNKNOWN, PLAY_STORE_AD, VISUAL_NATIVE_AD) matched none of the
+  // keys above, so the substring lookup silently fell through to the 'image'
+  // default and mislabeled every one of those ad types as "IMAGE".
+  interstitial: {
+    label: "INTERSTITIAL",
+    icon: Monitor,
+    cls: "text-indigo-600 bg-indigo-500/10 border-indigo-500/20 dark:text-indigo-300 dark:bg-indigo-500/20 dark:border-indigo-500/10",
+  },
+  native: {
+    label: "NATIVE",
+    icon: Tag,
+    cls: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20 dark:text-emerald-300 dark:bg-emerald-500/20 dark:border-emerald-500/10",
+  },
+  play_store: {
+    label: "APP INSTALL",
+    icon: Star,
+    cls: "text-orange-600 bg-orange-500/10 border-orange-500/20 dark:text-orange-300 dark:bg-orange-500/20 dark:border-orange-500/10",
   },
   display: {
     label: "DISPLAY",
@@ -1415,6 +1435,7 @@ const AnalyticsModal = ({
   onOpenKeywordExplorer,
   onOpenAdvertiserProfile,
   onOpenKeywordsExplorer,
+  sduiConfig,
 }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
@@ -1906,7 +1927,12 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
         },
         {
           label: "AD TYPE",
-          value: ctx.typeBadge.label,
+          // AdMob's own type vocabulary (INTERSTITIAL_OR_NATIVE, PLAY_STORE_AD,
+          // etc.) doesn't map onto the shared image/video/carousel badge system
+          // below — read the label straight from the SDUI `ad_types` filter
+          // (admin-curated, already has a friendly label per raw value) so any
+          // future admob type value shows correctly without a code change.
+          value: isAdmob ? resolveAnalyticsFilterValueLabel(sduiConfig, 'ad_types', d.type) : ctx.typeBadge.label,
           icon: Monitor,
           color: "text-pink-400",
         },
@@ -1999,7 +2025,9 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
       },
       {
         label: "AD TYPE",
-        value: ctx.typeBadge.label,
+        // See the other "AD TYPE" row above — same SDUI-driven lookup so
+        // AdMob's own type vocabulary always shows its admin-curated label.
+        value: isAdmob ? resolveAnalyticsFilterValueLabel(sduiConfig, 'ad_types', d.type) : ctx.typeBadge.label,
         icon: Monitor,
         color: "text-pink-400",
       },

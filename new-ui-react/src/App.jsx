@@ -2849,6 +2849,7 @@ const App = () => {
       <AnalyticsModal
         ad={hasAdAnalyticsAccess ? selectedAdForAnalytics : null}
         categoryOptions={categoryOptions}
+        sduiConfig={sdui.config}
         onClose={closeAnalyticsModal}
         onPrev={() => {
           if (analyticsNavigation.previous) {

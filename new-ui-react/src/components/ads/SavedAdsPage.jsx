@@ -475,6 +475,7 @@ const SavedAdsPage = ({
                 <div className={`transition-opacity duration-200 ${isRemoving ? "opacity-40 pointer-events-none" : "opacity-100"}`}>
                   <MasonryCard
                     ad={item}
+                    sduiConfig={sdui?.config}
                     isFavourite={isFav}
                     isHidden={activeTab === "hidden"}
                     isAdvertiserHidden={isAdvHidden}
@@ -525,6 +526,7 @@ const SavedAdsPage = ({
 
       <AdDetailModal
         ad={selectedAd}
+        sduiConfig={sdui?.config}
         onClose={() => setSelectedAd(null)}
         isFavourite={selectedAd ? favouriteAdIds.has(Number(selectedAd.adId || selectedAd.id)) : false}
         isHidden={activeTab === "hidden"}

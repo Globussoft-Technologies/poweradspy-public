@@ -53,7 +53,9 @@ async function processDelete(delReq, ctx) {
     // direct id delete works — no search-then-delete needed like other networks.
     if (db.elastic) {
       try {
-        await db.elastic.delete({ index: 'mob_search_mix', id: String(internalId) });
+        const params = { index: db.elastic.indexName || 'mob_search_mix', id: String(internalId) };
+        if (Number(db.elastic.esMajor) <= 6) params.type = 'doc';
+        await db.elastic.delete(params);
       } catch (err) {
         if (err?.meta?.statusCode !== 404) {
           log.warn('ES delete failed', { error: err.message });

@@ -1,6 +1,7 @@
 'use strict';
 
-const { resolveMediaUrl } = require('../../../insertion/helpers/nasClient');
+// const { resolveMediaUrl } = require('../../../insertion/helpers/nasClient');
+const {withCdn} = require("../helpers/paramParser")
 
 function active(value) {
   return value !== undefined && value !== null && value !== '' && value !== 'NA';
@@ -140,7 +141,11 @@ function buildCommonClauses(input) {
   const type = values(input.type).map((value) => value.toLowerCase());
   const country = values(input.country).map((value) => value.toLowerCase());
   const state = values(input.state).map((value) => value.toLowerCase());
-  const source = values(input.source).map((value) => value.toLowerCase());
+  // Alias trafficSource — the "Traffic Source" SDUI filter's query_param is
+  // literally "trafficSource" (not "source"), so the real frontend request
+  // sends that key. Without this alias the filter was silently ignored
+  // (0 filter clauses applied, full unfiltered result set returned).
+  const source = values(input.source ?? input.trafficSource).map((value) => value.toLowerCase());
   const subNetwork = values(input.sub_network ?? input.subNetwork).map((value) => value.toLowerCase());
   const sourceApp = values(input.source_app ?? input.sourceApp).map((value) => value.toLowerCase());
   const adPosition = values(input.ad_position ?? input.ad_position_filter).map((value) => value.toLowerCase());
@@ -309,10 +314,10 @@ function attachHiddenMeta(ad, hiddenMeta) {
 
 function toCardRow(hit) {
   const source = hit._source || {};
-  const imageUrl = resolveMediaUrl(source.image_url);
+  const imageUrl = withCdn(source.image_url);
   // Reuse the same backend NAS/CDN resolver for lander screenshots so the
   // analytics modal receives a browser-ready URL exactly like the main creative.
-  const landerScreenshotUrl = resolveMediaUrl(source.lander_screen_shot);
+  const landerScreenshotUrl = withCdn(source.lander_screen_shot);
   const daysRunningValue = source.days_running ?? daysRunning(source.first_seen, source.last_seen);
   return {
     ...source,

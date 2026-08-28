@@ -1395,6 +1395,7 @@ const AdGrid = ({
                 <MasonryCard
                   ad={item}
                   isAiFilteredResult={isAiFilteredResult}
+                  sduiConfig={sdui.config}
                   isFavourite={favouriteAdIds.has(`${(item.network || '').toLowerCase()}:${Number(item.adId || item.id)}`)}
                   onToggleFavourite={onToggleFavourite}
                   onSearch={onSearch}
@@ -1455,6 +1456,7 @@ const AdGrid = ({
         <AdDetailModal
           ad={selectedAd}
           isAiFilteredResult={isAiFilteredResult}
+          sduiConfig={sdui.config}
           onClose={() => setSelectedAd(null)}
           isFavourite={
             selectedAd
