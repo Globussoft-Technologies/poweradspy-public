@@ -332,3 +332,28 @@ export function mapArgsToFilters(args = {}, config = {}) {
 
   return { searchQuery, searchIn, activePlatforms, exactSearch, sortBy, filterValues, unmapped };
 }
+
+/**
+ * DS payload tiers carry both a trimmed `args` object and a full `/ads/search`
+ * body. The UI maps editable filters from `args`, but some upstream builds may
+ * only surface `exact_search` in `full_payload`. Merge that single contract
+ * field in so the AI flow stays exact-match-safe without depending on a
+ * duplicated upstream shape.
+ *
+ * @param {{ args?: object, full_payload?: object }} payload
+ * @returns {object}
+ */
+export function normalizeAiSearchArgs(payload = {}) {
+  const args = payload?.args && typeof payload.args === 'object' ? payload.args : {};
+  const fullPayload = payload?.full_payload && typeof payload.full_payload === 'object'
+    ? payload.full_payload
+    : {};
+
+  if (args.exact_search != null) return args;
+  if (fullPayload.exact_search == null) return args;
+
+  return {
+    ...args,
+    exact_search: fullPayload.exact_search,
+  };
+}

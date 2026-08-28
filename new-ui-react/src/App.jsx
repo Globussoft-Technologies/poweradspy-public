@@ -38,7 +38,7 @@ import {
 import { useGuest } from "./hooks/useGuest";
 import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
-import { mapArgsToFilters } from "./services/aiSearchMapper";
+import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
 import { Check, X, Loader2 } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
@@ -2065,7 +2065,7 @@ const App = () => {
       let matchedMapped = null;
       // Probe each tier in order; stop at the first that returns results.
       for (let i = 0; i < payloads.length; i++) {
-        const mapped = mapArgsToFilters(payloads[i]?.args || {}, sdui.config);
+        const mapped = mapArgsToFilters(normalizeAiSearchArgs(payloads[i]), sdui.config);
         let data = null;
         try {
           data = await fetchAds(buildProbeParams(mapped), {});
@@ -2080,7 +2080,7 @@ const App = () => {
         // No tier had results — commit the initial tier so the user still sees its
         // filters + the normal empty state.
         matchedIndex = 0;
-        matchedMapped = mapArgsToFilters(payloads[0]?.args || {}, sdui.config);
+        matchedMapped = mapArgsToFilters(normalizeAiSearchArgs(payloads[0]), sdui.config);
       }
 
       commit(matchedMapped);

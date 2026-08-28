@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapArgsToFilters } from '../../src/services/aiSearchMapper';
+import { mapArgsToFilters, normalizeAiSearchArgs } from '../../src/services/aiSearchMapper';
 
 describe('aiSearchMapper', () => {
   it('forwards exact_search for explicit advertiser payloads', () => {
@@ -33,5 +33,26 @@ describe('aiSearchMapper', () => {
     expect(mapped.searchQuery).toBe('apple.com');
     expect(mapped.searchIn).toBe('domain');
     expect(mapped.exactSearch).toBe(false);
+  });
+
+  it('falls back to full_payload exact_search when args omits it', () => {
+    const args = normalizeAiSearchArgs({
+      args: {
+        advertiser: 'Apple',
+        network: ['facebook'],
+      },
+      full_payload: {
+        advertiser: 'Apple',
+        network: ['facebook'],
+        exact_search: 1,
+      },
+    });
+
+    const mapped = mapArgsToFilters(args, {});
+
+    expect(args.exact_search).toBe(1);
+    expect(mapped.searchIn).toBe('advertiser');
+    expect(mapped.searchQuery).toBe('Apple');
+    expect(mapped.exactSearch).toBe(true);
   });
 });
