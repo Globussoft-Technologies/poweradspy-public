@@ -34,6 +34,7 @@ const {
   paginationDefaults,
   shouldProfile,
 } = require('../../common/helpers/esQueryHelpers');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 const DEFAULT_IG_INDEX = igNet?.database?.elastic?.index || process.env.IG_ELASTIC_INDEX || 'search_mix';
 
@@ -136,6 +137,7 @@ class SearchMixQueryBuilder {
 
   setIpBasedCountry(v) { this._ipBasedCountry = (v && v !== 'NA') ? v : ''; return this; }
   setProfile(v) { this._profile = v; return this; }
+  setExactSearch(v) { this._params.exactSearch = !!v; return this; }
 
   setKeyword(v)            { this._params.keyword = v; return this; }
   setPostOwnerName(v)      { this._params.postOwnerName = v; return this; }
@@ -215,9 +217,25 @@ class SearchMixQueryBuilder {
     return asMust(phraseAcrossFields(this._kwFields(), kw));
   }
 
+  _isExactSearch() {
+    return !!this._params.exactSearch;
+  }
+
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const rawName = String(name);
+    const clean = rawName.replace(/"/g, '').trim();
+    if (!clean) return null;
+    if (this._isExactSearch()) {
+      // Match the normalized advertiser identity the ingestion pipeline writes,
+      // so "Apple" does not expand to partial-name or reseller matches.
+      return asFilter({
+        term: {
+          'instagram_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
+        },
+      });
+    }
     const fields = [
       'instagram_ad_post_owners.post_owner_name',
       'instagram_ad_post_owners.post_owner_name_ru',
@@ -226,10 +244,10 @@ class SearchMixQueryBuilder {
       'instagram_ad_post_owners.post_owner_name_ge',
       'instagram_ad_post_owners.post_owner_name_exactly',
     ];
-    if (name.includes('"')) {
+    if (rawName.includes('"')) {
       return asMust({
         multi_match: {
-          query: name.replace(/"/g, ''),
+          query: clean,
           type: 'phrase',
           fields: ['instagram_ad_post_owners.post_owner_name_exactly'],
         },
@@ -238,8 +256,8 @@ class SearchMixQueryBuilder {
     return asMust({
       bool: {
         should: [
-          phraseAcrossFields(fields, name),
-          { prefix: { 'instagram_ad_post_owners.post_owner_name': name.toLowerCase() } },
+          phraseAcrossFields(fields, clean),
+          { prefix: { 'instagram_ad_post_owners.post_owner_name': clean.toLowerCase() } },
         ],
         minimum_should_match: 1,
       },
@@ -814,6 +832,9 @@ SearchMixQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'instagram_ad.impression',
   'instagram_ad.days_running',
   'instagram_ad.popularity',
+  'instagram_ad_post_owners.post_owner_name',
+  'instagram_ad_post_owners.post_owner_name_exactly',
+  'instagram_ad_post_owners.post_owner_image',
   'instagram_ad_post_owners.verified',
   'instagram_call_to_action.call_to_action',
   'lang_detect',

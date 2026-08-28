@@ -9,6 +9,7 @@ const {
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
 } = require('../../common/helpers/aiMetaSearchFilter');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
@@ -144,6 +145,85 @@ function dedupeRows(rows) {
     seen.add(r.ad_id);
     return true;
   });
+}
+
+function getInstagramHitId(src = {}) {
+  return src['instagram_ad.id'] ?? src.id ?? src.ad_id ?? null;
+}
+
+// SQL hydration is still the preferred path because it gives the richest row
+// shape, but AI-filtered ES hits can occasionally point at ads whose SQL row is
+// temporarily missing or late. Build a minimal card-safe fallback from ES so we
+// do not report a nonzero total and then drop every visible record.
+function buildFallbackAdFromEs(src = {}, langMap = null) {
+  const adId = getInstagramHitId(src);
+  if (adId == null) return null;
+
+  const popularity = src['instagram_ad.popularity'];
+  const resolvedLanguage = src['lang_detect']
+    ? resolveLanguageName(langMap, src['lang_detect'])
+    : null;
+  const imageUrl = src.new_nas_image_url || src['instagram_ad_variants.image_url'] || '';
+
+  return {
+    ...src,
+    id: adId,
+    ad_id: adId,
+    adId: adId,
+    likes: src['instagram_ad.likes'] ?? 0,
+    comment: src['instagram_ad.comments'] ?? 0,
+    share: src['instagram_ad.shares'] ?? 0,
+    ad_position: src['instagram_ad.ad_position'] ?? null,
+    type: src['instagram_ad.type'] ?? null,
+    post_date: src['instagram_ad.post_date'] ?? null,
+    last_seen: src['instagram_ad.last_seen'] ?? null,
+    first_seen: src['instagram_ad.first_seen'] ?? null,
+    platform: src['instagram_ad_meta_data.platform'] ?? null,
+    impression: src['instagram_ad.impression'] ?? 0,
+    popularity: popularity && typeof popularity === 'object'
+      ? JSON.stringify({
+        max: popularity.max,
+        current: popularity.current,
+      })
+      : popularity ?? null,
+    views: src['instagram_ad.views'] ?? null,
+    post_owner_id: src['instagram_ad.post_owner_id'] ?? null,
+    post_owner_image: src['instagram_ad_post_owners.post_owner_image'] ?? null,
+    post_owner:
+      src['instagram_ad_post_owners.post_owner_name']
+      || src['instagram_ad_post_owners.post_owner_name_exactly']
+      || null,
+    verified: src['instagram_ad_post_owners.verified'] ?? null,
+    ad_url: src['instagram_ad_meta_data.ad_url'] ?? null,
+    destination_url: src['instagram_ad_meta_data.destination_url'] ?? null,
+    initial_url:
+      src['instagram_ad_analytics.initial_url']
+      ?? src['instagram_ad_meta_data.initial_url']
+      ?? null,
+    redirect_url: src['instagram_ad_outgoing_links.redirect_url'] ?? null,
+    image_video_url: imageUrl,
+    image_url_original: imageUrl || null,
+    ad_text: src['instagram_ad_variants.text'] ?? null,
+    ad_title: src['instagram_ad_variants.title'] ?? null,
+    news_feed_description: src['instagram_ad_variants.newsfeed_description'] ?? null,
+    ad_image_video: src.othermedia ?? null,
+    lowerBudget: src['instagram_meta_ad_budget.lowerBudget'] ?? null,
+    upperBudget: src['instagram_meta_ad_budget.upperBudget'] ?? null,
+    ad_type: src['instagram_ad.ad_type'] ?? null,
+    built_with_analytics_tracking: src['instagram_ad_meta_data.built_with_analytics_tracking'] ?? null,
+    built_with: src['instagram_ad_meta_data.built_with'] ?? null,
+    affiliate_data: src['instagram_ad_meta_data.affiliate_data'] ?? null,
+    affiliate_network_id: src['instagram_ad_meta_data.affiliate_network_id'] ?? null,
+    final_url: src['instagram_ad_outgoing_links.final_url'] ?? null,
+    source_url: src['instagram_ad_outgoing_links.source_url'] ?? null,
+    urlArray: src['instagram_ad_url.url']
+      ? [{ url: src['instagram_ad_url.url'] }]
+      : [],
+    call_to_action: src['instagram_call_to_action.call_to_action'] ?? null,
+    days_running: src['instagram_ad.days_running'] ?? null,
+    language: resolvedLanguage,
+    nas_video_url: src.nas_video_url ?? null,
+  };
 }
 
 // ─── Favorite / Hidden / Bug search helpers ─────────────
@@ -389,6 +469,12 @@ async function searchBugAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
+  const exactAdvertiserName = (
+    (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
+    && p.advertiser
+  )
+    ? normalizePostOwnerName(p.advertiser)
+    : '';
 
   // Validate required params
   if (!p.user_id) {
@@ -433,6 +519,9 @@ async function searchAds(req, db, logger) {
   }
 
   // ─── Search text fields ───────────────────────────────
+  // Preserve AI-mode exact advertiser intent instead of silently widening it
+  // back to the legacy fuzzy advertiser search.
+  builder.setExactSearch(!!exactAdvertiserName);
   if (p.keyword)     builder.setKeyword(p.keyword);
   if (p.advertiser)  builder.setPostOwnerName(p.advertiser);
   if (p.domain)      builder.setUrl(p.domain);
@@ -572,7 +661,7 @@ async function searchAds(req, db, logger) {
 
     // Step 2: Fetch detailed metadata from SQL
     const langMap = db.sql ? await getLanguageMap(db.sql) : new Map();
-    const adIds = esHits.map(hit => hit._source['instagram_ad.id']);
+    const adIds = esHits.map(hit => getInstagramHitId(hit._source)).filter(id => id != null);
     let finalAds = [];
     if (db.sql) {
   try {
@@ -635,6 +724,15 @@ ORDER BY FIELD(instagram_ad.id, ${placeholders})
       if (src['instagram_ad_post_owners.verified'] !== undefined) {
         row.verified = src['instagram_ad_post_owners.verified'];
       }
+      if (!row.post_owner) {
+        row.post_owner =
+          src['instagram_ad_post_owners.post_owner_name']
+          || src['instagram_ad_post_owners.post_owner_name_exactly']
+          || row.post_owner;
+      }
+      if (!row.post_owner_image && src['instagram_ad_post_owners.post_owner_image']) {
+        row.post_owner_image = src['instagram_ad_post_owners.post_owner_image'];
+      }
 
       if (src['instagram_ad.impression'] !== undefined) {
         row.impression = src['instagram_ad.impression'];
@@ -656,19 +754,43 @@ ORDER BY FIELD(instagram_ad.id, ${placeholders})
       return row;
     });
 
+    const hydratedIds = new Set(finalAds.map((ad) => String(ad.ad_id || ad.id)));
+    const fallbackAds = esHits
+      .map((hit) => hit?._source || {})
+      .filter((src) => {
+        const adId = getInstagramHitId(src);
+        return adId != null && !hydratedIds.has(String(adId));
+      })
+      .map((src) => buildFallbackAdFromEs(src, langMap))
+      .filter(Boolean);
+
+    if (fallbackAds.length > 0) {
+      logger.warn('Instagram SQL hydration missed ES hits; using ES fallback rows', {
+        missingRows: fallbackAds.length,
+        requestedRows: adIds.length,
+        from,
+        size,
+      });
+      finalAds = finalAds.concat(fallbackAds);
+    }
+
   } catch (sqlErr) {
 
     logger.warn('SQL fetch failed, falling back to ES raw data', {
       error: sqlErr.message,
     });
 
-    finalAds = esHits.map(hit => hit._source);
+    finalAds = esHits
+      .map((hit) => buildFallbackAdFromEs(hit?._source || {}, langMap))
+      .filter(Boolean);
 
   }
 } else {
 
 
-  finalAds = esHits.map(hit => hit._source);
+  finalAds = esHits
+    .map((hit) => buildFallbackAdFromEs(hit?._source || {}, langMap))
+    .filter(Boolean);
 
 
 }
@@ -678,6 +800,15 @@ ORDER BY FIELD(instagram_ad.id, ${placeholders})
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
         ...ad,
+        post_owner:
+          ad.post_owner
+          || src['instagram_ad_post_owners.post_owner_name']
+          || src['instagram_ad_post_owners.post_owner_name_exactly']
+          || null,
+        post_owner_image:
+          ad.post_owner_image
+          || src['instagram_ad_post_owners.post_owner_image']
+          || null,
         market_platform_urls: {
           url_destination: src['instagram_ad_url.url']                       || null,
           source_url:      src['instagram_ad_outgoing_links.source_url']     || null,
@@ -689,6 +820,19 @@ ORDER BY FIELD(instagram_ad.id, ${placeholders})
         },
       };
     });
+
+    if (exactAdvertiserName) {
+      const beforeCount = finalAds.length;
+      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      if (beforeCount !== finalAds.length) {
+        logger.warn('Filtered Instagram exact-search rows that lost advertiser identity after hydration', {
+          requestedAdvertiser: p.advertiser,
+          removedRows: beforeCount - finalAds.length,
+          from,
+          size,
+        });
+      }
+    }
 
     return {
       code: 200,

@@ -12,6 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus","setVerified",
+    "setExactSearch","setExactPostOwnerIds",
     "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
     "setState","setCity","setAdType","setTargetKeyword","setLangDetect","setAdPosition","setAdSubPosition",
     "setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
@@ -294,6 +295,65 @@ describe("services/linkedin/controllers/adSearchController > regular searchAds",
     expect(out.data[0].market_platform_urls.redirect_urls).toEqual(["r1"]);
   });
 
+  it("exact advertiser mode resolves LinkedIn owner ids before ES search", async () => {
+    const db = {
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) },
+      sql: {
+        query: vi.fn(async (sql) => {
+          if (sql.includes("FROM linkedin_ad_post_owners")) {
+            return [{ id: 17499 }];
+          }
+          return [];
+        }),
+      },
+    };
+    await searchAds({ body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls).toEqual(expect.arrayContaining([
+      ["setExactSearch", [true]],
+      ["setExactPostOwnerIds", [[17499]]],
+    ]));
+  });
+
+  it("exact advertiser mode backfills owner fields from ES and drops mismatched hydrated rows", async () => {
+    const esHits = [
+      { _id: "1", _source: { ad_id: 1, post_owner: "Apple", post_owner_id: 17499, post_owner_image: "/apple.jpg" } },
+      { _id: "2", _source: { ad_id: 2, post_owner: "Apple TV", post_owner_id: 17500 } },
+      { _id: "3", _source: { ad_id: 3, post_owner: "Apple" } },
+    ];
+    const db = {
+      elastic: { indexName: "linkedin_search_mix", search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: {
+        query: vi.fn(async (sql) => {
+          if (sql.includes("FROM linkedin_ad_post_owners")) {
+            return [{ id: 17499 }];
+          }
+          if (sql.includes("FROM languages")) {
+            return [];
+          }
+          return [
+            { ad_id: 1, id: 1, type: "TEXT" },
+            { ad_id: 2, id: 2, type: "TEXT" },
+            { ad_id: 3, id: 3, type: "TEXT", post_owner: "Apple" },
+          ];
+        }),
+      },
+    };
+    const out = await searchAds(
+      { body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} },
+      db,
+      fakeLogger
+    );
+    expect(out.code).toBe(200);
+    expect(out.data.map((row) => row.ad_id)).toEqual([1, 3]);
+    expect(out.data[0].post_owner).toBe("Apple");
+    expect(out.data[0].post_owner_id).toBe(17499);
+    expect(out.data[0].post_owner_image).toBe("/apple.jpg");
+    expect(fakeLogger.warn).toHaveBeenCalledWith(
+      "Filtered LinkedIn exact-search rows that lost advertiser identity after hydration",
+      expect.objectContaining({ removedRows: 1 })
+    );
+  });
+
   it("0 hits → returns 'No ads found'", async () => {
     const db = {
       elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) },
@@ -402,12 +462,13 @@ describe("services/linkedin/controllers/adSearchController > regular searchAds",
         likes: [10, 100], comments: [1, 50], popularity: [1, 10], impressions: [10, 1000],
         ocr: "txt", image_celebrity: "c", image_object: "o", image_logo: "l",
         html_content: "html", needle: "n", adDetail_id: "ad-detail", not_country: "RU",
-        ipBasedCountry: "US",
+        ipBasedCountry: "US", exact_search: 1,
       },
       query: {},
     }, db, fakeLogger);
     const setterCalls = builderCalls[0].calls.map(c => c[0]);
     expect(setterCalls).toEqual(expect.arrayContaining([
+      "setExactSearch",
       "setStatus","setVerified","setKeyword","setPostOwnerName","setUrl","setCallToAction",
       "setAdCategory","setSubCategory","setCountry","setState","setCity","setAdType",
       "setTargetKeyword","setLangDetect","setAdPosition","setAdSubPosition","setGender",

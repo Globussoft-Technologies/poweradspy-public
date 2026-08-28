@@ -51,6 +51,9 @@ describe("Quora builder > construction + setters", () => {
       .setAdDetailId("id").setOcr("o").setHtmlContent("html");
     expect(b._params.keyword).toBe("k");
   });
+  it("setExactSearch stores a boolean flag", () => {
+    expect(b.setExactSearch(true)._params.exactSearch).toBe(true);
+  });
   it("setNeedle handles NA → empty", () => {
     expect(b.setNeedle("NA")._params.needle).toBe("");
     expect(b.setNeedle("x")._params.needle).toBe("x");
@@ -92,6 +95,11 @@ describe("Quora builder > clause generators (must)", () => {
     b.setPostOwnerName('"BrandX"');
     const must = b.build().body.query.bool.must;
     expect(must.some(m => m.bool?.should?.some(s => s.multi_match?.query === "BrandX"))).toBe(true);
+  });
+  it("postOwnerName exact_search → normalized owner term filter", () => {
+    const out = new Builder().setExactSearch(true).setPostOwnerName("Apple").build();
+    expect(JSON.stringify(out.body.query.bool.filter)).toContain("quora_ad_post_owners.post_owner_lower.keyword");
+    expect(JSON.stringify(out.body.query.bool.filter)).toContain("apple");
   });
   it("ocr quoted/non-quoted work", () => {
     expect(new Builder().setOcr("text").build().body.query.bool.must.length).toBeGreaterThan(0);

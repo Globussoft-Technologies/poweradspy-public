@@ -24,6 +24,7 @@ const {
   shouldProfile,
   wrapIfNeed,
 } = require('../../common/helpers/esQueryHelpers');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 const DEFAULT_RED_INDEX = process.env.RED_ELASTIC_INDEX || 'reddit_search_mix';
 
@@ -92,6 +93,7 @@ class RedditSearchQueryBuilder {
   setSortMethod(v) { if (v === 'asc' || v === 'desc') this._sortMethod = v; return this; }
   setIpBasedCountry(v) { this._ipBasedCountry = (v && v !== 'NA') ? v : ''; return this; }
   setProfile(v) { this._profile = v; return this; }
+  setExactSearch(v) { this._params.exactSearch = !!v; return this; }
 
   setKeyword(v)            { this._params.keyword = v; return this; }
   setPostOwnerName(v)      { this._params.postOwnerName = v; return this; }
@@ -160,18 +162,34 @@ class RedditSearchQueryBuilder {
     return asMust(phraseAcrossFields(fields, kw));
   }
 
+  _isExactSearch() {
+    return !!this._params.exactSearch;
+  }
+
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const rawName = String(name);
+    const clean = rawName.replace(/"/g, '').trim();
+    if (!clean) return null;
+    if (this._isExactSearch()) {
+      // Use the normalized Reddit advertiser key for strict advertiser
+      // equality instead of the legacy fuzzy phrase/prefix lookup.
+      return asFilter({
+        term: {
+          'reddit_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
+        },
+      });
+    }
     const fields = [
       'reddit_ad_post_owners.post_owner_name', 'reddit_ad_post_owners.post_owner_name_ru',
       'reddit_ad_post_owners.post_owner_name_fr', 'reddit_ad_post_owners.post_owner_name_sp',
       'reddit_ad_post_owners.post_owner_name_ge', 'reddit_ad_post_owners.post_owner_name_exactly',
     ];
-    if (name.includes('"')) {
+    if (rawName.includes('"')) {
       return asMust({
         multi_match: {
-          query: name.replace(/"/g, ''),
+          query: clean,
           type: 'phrase',
           fields: ['reddit_ad_post_owners.post_owner_name_exactly', 'reddit_ad_post_owners.post_owner_name'],
         },
@@ -180,8 +198,8 @@ class RedditSearchQueryBuilder {
     return asMust({
       bool: {
         should: [
-          phraseAcrossFields(fields, name),
-          { prefix: { 'reddit_ad_post_owners.post_owner_name': name.toLowerCase() } },
+          phraseAcrossFields(fields, clean),
+          { prefix: { 'reddit_ad_post_owners.post_owner_name': clean.toLowerCase() } },
         ],
         minimum_should_match: 1,
       },
@@ -519,6 +537,9 @@ RedditSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'reddit_ad.likes',
   'reddit_ad.comments',
   'reddit_ad.shares',
+  'reddit_ad_post_owners.post_owner_name',
+  'reddit_ad_post_owners.post_owner_name_exactly',
+  'reddit_ad_post_owners.post_owner_image',
   'reddit_ad_meta_data.built_with',
   'reddit_ad_meta_data.built_with_analytics_tracking',
   'new_nas_image_url',

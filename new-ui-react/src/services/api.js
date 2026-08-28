@@ -542,6 +542,15 @@ const calcEngPerDay = (raw) => {
   return perDay > 0 ? formatNumber(perDay) : null;
 };
 
+const firstNonEmptyString = (...values) => {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+};
+
 export const mapAdToCard = (raw) => {
   const resolvedNetwork = (raw.platform_network || raw.network || PLATFORM_ID_TO_NETWORK[Number(raw.platform)] || '').toLowerCase();
   const isAdmob = resolvedNetwork === 'admob';
@@ -628,10 +637,32 @@ export const mapAdToCard = (raw) => {
     }
     return (lastSeenDay - firstSeenDay) + 1;
   })();
+  // Search responses usually hydrate `post_owner` from SQL, but ES-only
+  // fallbacks can still expose the same advertiser under network-specific
+  // dotted field names. Prefer any real owner value and never synthesize a
+  // fake "Unknown" label for ordinary search results.
+  const advertiserName = firstNonEmptyString(
+    raw.post_owner,
+    raw.post_owner_name,
+    raw['facebook_ad_post_owners.post_owner_name'],
+    raw['facebook_ad_post_owners.post_owner_name_exactly'],
+    raw['instagram_ad_post_owners.post_owner_name'],
+    raw['instagram_ad_post_owners.post_owner_name_exactly'],
+    raw['gdn_ad_post_owners.post_owner_name'],
+    raw['gdn_ad_post_owners.post_owner_name_exactly'],
+    raw['native_ad_post_owners.post_owner_name'],
+    raw['native_ad_post_owners.post_owner_name_exactly'],
+    raw['reddit_ad_post_owners.post_owner_name'],
+    raw['pinterest_ad_post_owners.post_owner_name'],
+    raw['pinterest_ad_post_owners.post_owner_name_exactly'],
+    raw['quora_ad_post_owners.post_owner_name'],
+    raw['linkedin_ad_post_owners.post_owner_name'],
+    raw['linkedin_ad_post_owners.post_owner_name_exactly'],
+  );
   const card = {
     id: raw.ad_id || raw.sql_id || raw.id,
     internalId: raw.id ?? raw.sql_id ?? null,
-    advertiser: isAdmob ? (raw.post_owner ?? null) : (raw.post_owner || 'Unknown'),
+    advertiser: isAdmob ? (raw.post_owner ?? null) : advertiserName,
     advertiserImage: raw.post_owner_image ? `${raw.post_owner_image}` : null,
     date: formatDate(
       isGoogleTransparency

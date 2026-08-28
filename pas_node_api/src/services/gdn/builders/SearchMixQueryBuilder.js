@@ -32,6 +32,7 @@ const {
   paginationDefaults,
   shouldProfile,
 } = require('../../common/helpers/esQueryHelpers');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 // IMPORTANT: If you change this displayable-media gate, you MUST update all 3
 // mirrored copies of `displayableMediaFilters.js`:
@@ -96,6 +97,7 @@ class SearchMixQueryBuilder {
   setSortField(f)  { this._sortField  = f;                return this; }
   setSortMethod(v) { if (v === 'asc' || v === 'desc') this._sortMethod = v; return this; }
   setProfile(v)    { this._profile = v;                   return this; }
+  setExactSearch(v){ this._params.exactSearch = !!v;      return this; }
 
   setKeyword(v)          { this._params.keyword       = v;                               return this; }
   setPostOwnerName(v)    { this._params.postOwnerName = v;                               return this; }
@@ -166,18 +168,34 @@ class SearchMixQueryBuilder {
     return asMust(phraseAcrossFields(fields, kw));
   }
 
+  _isExactSearch() {
+    return !!this._params.exactSearch;
+  }
+
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const rawName = String(name);
+    const clean = rawName.replace(/"/g, '').trim();
+    if (!clean) return null;
+    if (this._isExactSearch()) {
+      // Exact advertiser mode uses the normalized owner key written at
+      // ingestion time, which is stricter than the legacy phrase/prefix match.
+      return asFilter({
+        term: {
+          'gdn_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
+        },
+      });
+    }
     const fields = [
       'gdn_ad_post_owners.post_owner_name', 'gdn_ad_post_owners.post_owner_name_ru',
       'gdn_ad_post_owners.post_owner_name_fr', 'gdn_ad_post_owners.post_owner_name_sp',
       'gdn_ad_post_owners.post_owner_name_ge', 'gdn_ad_post_owners.post_owner_name_exactly',
     ];
-    if (name.includes('"')) {
+    if (rawName.includes('"')) {
       return asMust({
         multi_match: {
-          query: name.replace(/"/g, ''),
+          query: clean,
           type: 'phrase',
           fields: ['gdn_ad_post_owners.post_owner_name_exactly', 'gdn_ad_post_owners.post_owner_name'],
         },
@@ -186,8 +204,8 @@ class SearchMixQueryBuilder {
     return asMust({
       bool: {
         should: [
-          phraseAcrossFields(fields, name),
-          { prefix: { 'gdn_ad_post_owners.post_owner_name': name.toLowerCase() } },
+          phraseAcrossFields(fields, clean),
+          { prefix: { 'gdn_ad_post_owners.post_owner_name': clean.toLowerCase() } },
         ],
         minimum_should_match: 1,
       },
@@ -528,6 +546,7 @@ SearchMixQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'gdn_ad.post_date',
   'gdn_ad_post_owners.post_owner_image',
   'gdn_ad_post_owners.post_owner_name',
+  'gdn_ad_post_owners.post_owner_name_exactly',
   'gdn_ad_variants.text',
   'gdn_ad_variants.title',
   'gdn_ad_variants.image_url',

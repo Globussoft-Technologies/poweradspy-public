@@ -9,6 +9,7 @@ const {
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
 } = require('../../common/helpers/aiMetaSearchFilter');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 const AD_DETAIL_SELECT = `
     pinterest_ad.id                                     AS id,
@@ -164,6 +165,12 @@ async function searchHiddenAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
+  const exactAdvertiserName = (
+    (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
+    && p.advertiser
+  )
+    ? normalizePostOwnerName(p.advertiser)
+    : '';
   if (!p.user_id) return { code: 400, message: 'Missing params: user_id is required' };
   if (p.favorite === 'true') return searchFavoriteAds(p, db, logger);
   if (p.hiddenads === 'true' || p.hidden === 'true') return searchHiddenAds(p, db, logger);
@@ -175,6 +182,7 @@ async function searchAds(req, db, logger) {
   builder.setFrom(from).setSize(size).setSortField(sort.field).setSortMethod(sort.order).setIpBasedCountry(p.ipBasedCountry || 'NA');
   builder.setStatus([1]);
 
+  builder.setExactSearch(!!exactAdvertiserName);
   if (p.keyword)    builder.setKeyword(p.keyword);
   if (p.advertiser) builder.setPostOwnerName(p.advertiser);
   if (p.domain)     builder.setUrl(p.domain);
@@ -255,6 +263,15 @@ async function searchAds(req, db, logger) {
           const src = esHit._source || {};
           if (src.new_nas_image_url) row.image_video_url = src.new_nas_image_url;
           if (src['pinterest_ad.days_running'] !== undefined) row.days_running = src['pinterest_ad.days_running'];
+          if (!row.post_owner) {
+            row.post_owner =
+              src['pinterest_ad_post_owners.post_owner_name']
+              || src['pinterest_ad_post_owners.post_owner_name_exactly']
+              || row.post_owner;
+          }
+          if (!row.post_owner_image && src['pinterest_ad_post_owners.post_owner_image']) {
+            row.post_owner_image = src['pinterest_ad_post_owners.post_owner_image'];
+          }
           // Raw ISO code, kept alongside the resolved `language` name set below.
           if (src.lang_detect) row.lang_detect = src.lang_detect;
           return row;
@@ -268,6 +285,15 @@ async function searchAds(req, db, logger) {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
         ...ad,
+        post_owner:
+          ad.post_owner
+          || src['pinterest_ad_post_owners.post_owner_name']
+          || src['pinterest_ad_post_owners.post_owner_name_exactly']
+          || null,
+        post_owner_image:
+          ad.post_owner_image
+          || src['pinterest_ad_post_owners.post_owner_image']
+          || null,
         // Language is ES-only — must agree with the language FILTER, which
         // only ever matches `lang_detect`. Never fall back to the stale SQL
         // `languages` join (`ad.language`, inherited via the spread above).
@@ -282,6 +308,19 @@ async function searchAds(req, db, logger) {
         },
       };
     });
+
+    if (exactAdvertiserName) {
+      const beforeCount = finalAds.length;
+      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      if (beforeCount !== finalAds.length) {
+        logger.warn('Filtered Pinterest exact-search rows that lost advertiser identity after hydration', {
+          requestedAdvertiser: p.advertiser,
+          removedRows: beforeCount - finalAds.length,
+          from,
+          size,
+        });
+      }
+    }
 
     return {
       code: 200,

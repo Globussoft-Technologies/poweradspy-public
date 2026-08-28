@@ -29,6 +29,7 @@ require("dotenv").config();
  */
 
 const { facebook: fbNet } = require('../../../config/networks');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 const {
   relativeWords,
   wrapIfNeed,
@@ -165,6 +166,10 @@ class SearchMixQueryBuilder {
   // ─── Search parameter setters ─────────────────────────
 
   setKeyword(v)            { this._params.keyword = v; return this; }
+  // DS AI payloads mark explicit advertiser/domain prompts with exact_search=1.
+  // We keep the legacy broad advertiser search by default and only switch to
+  // normalized equality when the caller explicitly opts into exact matching.
+  setExactSearch(v)        { this._params.exactSearch = !!v; return this; }
   setPostOwnerName(v)      { this._params.postOwnerName = v; return this; }
   setUrl(v)                { this._params.url = v; return this; }
   setDomainMatchedIds(v)   { this._params.domainMatchedIds = Array.isArray(v) ? v : [v]; return this; }
@@ -247,9 +252,25 @@ class SearchMixQueryBuilder {
     return asMust(phraseAcrossFields(this._kwFields(), kw));
   }
 
+  _isExactSearch() {
+    return !!this._params.exactSearch;
+  }
+
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const clean = String(name).replace(/"/g, '').trim();
+    if (!clean) return null;
+    if (this._isExactSearch()) {
+      // facebook_ad_post_owners.post_owner_lower is indexed as the normalized
+      // advertiser form that insertion deduplicates on, so matching it keeps
+      // "Apple" from expanding to "Apple TV", resellers, or Applebee's.
+      return asFilter({
+        term: {
+          'facebook_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
+        },
+      });
+    }
     const fields = [
       'facebook_ad_post_owners.post_owner_name',
       'facebook_ad_post_owners.post_owner_name_ru',
@@ -261,7 +282,7 @@ class SearchMixQueryBuilder {
     if (name.includes('"')) {
       return asMust({
         multi_match: {
-          query: name.replace(/"/g, ''),
+          query: clean,
           type: 'phrase',
           fields: ['facebook_ad_post_owners.post_owner_name_exactly'],
         },
@@ -270,8 +291,8 @@ class SearchMixQueryBuilder {
     return asMust({
       bool: {
         should: [
-          phraseAcrossFields(fields, name),
-          { prefix: { 'facebook_ad_post_owners.post_owner_name': name.toLowerCase() } },
+          phraseAcrossFields(fields, clean),
+          { prefix: { 'facebook_ad_post_owners.post_owner_name': clean.toLowerCase() } },
         ],
         minimum_should_match: 1,
       },

@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus","setVerified",
-    "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory",
+    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory",
     "setCountry","setState","setCity","setAdType","setTags","setLangDetect","setPlatform",
     "setAdPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate","setPageCreation",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -150,7 +150,7 @@ describe("services/instagram/controllers/adSearchController > searchFavoriteAds"
     };
     expect((await searchAds({ body: { user_id: "u", favorite: "true" }, query: {} }, db, fakeLogger)).data).toHaveLength(1);
   });
-  it("enrichAndFilterRows drops IMAGE without PowerAdspy, keeps others", async () => {
+  it("enrichAndFilterRows keeps IMAGE rows without NAS and flags preview_unavailable", async () => {
     let call = 0;
     const db = {
       sql: { query: vi.fn(async () => {
@@ -172,7 +172,8 @@ describe("services/instagram/controllers/adSearchController > searchFavoriteAds"
       },
     };
     const out = await searchAds({ body: { user_id: "u", favorite: "true" }, query: {} }, db, fakeLogger);
-    expect(out.data.map(d => d.ad_id)).toEqual([1, 3]);
+    expect(out.data.map(d => d.ad_id)).toEqual([1, 2, 3]);
+    expect(out.data.find((d) => d.ad_id === 2)?.preview_unavailable).toBe(true);
   });
   it("enrich ES throw → rows returned as-is", async () => {
     let call = 0;
@@ -343,21 +344,80 @@ describe("services/instagram/controllers/adSearchController > regular searchAds"
   });
 
   it("SQL fetch failure → falls back to ES sources", async () => {
-    const esHits = [{ _source: { "instagram_ad.id": 1, foo: "bar" } }];
+    const esHits = [{ _source: {
+      "instagram_ad.id": 1,
+      "instagram_ad.type": "IMAGE",
+      "instagram_ad_post_owners.post_owner_name": "Fallback Owner",
+      new_nas_image_url: "https://x/nas.png",
+      foo: "bar",
+    } }];
     const db = {
       elastic: { search: vi.fn(async () => mkEsHits(esHits)) },
       sql: { query: vi.fn(async () => { throw new Error("sql-fail"); }) },
     };
     const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
     expect(out.code).toBe(200);
+    expect(out.data[0].id).toBe(1);
+    expect(out.data[0].ad_id).toBe(1);
+    expect(out.data[0].post_owner).toBe("Fallback Owner");
     expect(out.data[0].foo).toBe("bar");
     expect(fakeLogger.warn).toHaveBeenCalled();
   });
 
   it("no db.sql → uses ES sources directly", async () => {
-    const esHits = [{ _source: { "instagram_ad.id": 1, foo: "bar" } }];
+    const esHits = [{ _source: {
+      "instagram_ad.id": 1,
+      "instagram_ad_post_owners.post_owner_name": "Fallback Owner",
+      foo: "bar",
+    } }];
     const db = { elastic: { search: vi.fn(async () => mkEsHits(esHits)) } };
-    expect((await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger)).data[0].foo).toBe("bar");
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].ad_id).toBe(1);
+    expect(out.data[0].post_owner).toBe("Fallback Owner");
+    expect(out.data[0].foo).toBe("bar");
+  });
+
+  it("appends ES fallback rows when SQL hydration misses AI-filtered hits", async () => {
+    const esHits = [{ _source: {
+      "instagram_ad.id": 44,
+      "instagram_ad.type": "IMAGE",
+      "instagram_ad_post_owners.post_owner_name": "Glow Skin",
+      "instagram_call_to_action.call_to_action": "Shop Now",
+      new_nas_image_url: "https://x/glow.png",
+      lang_detect: "en",
+    } }];
+    const db = {
+      elastic: { search: vi.fn(async () => ({
+        hits: { hits: esHits, total: { value: 10 } },
+        aggregations: { total_ads: { value: 10 } },
+      })) },
+      sql: { query: vi.fn(async () => []) },
+    };
+
+    const out = await searchAds({
+      body: {
+        user_id: "u",
+        network: ["instagram"],
+        keyword: "skincare products",
+        has_ai_meta: true,
+        ai_ad_type: ["testimonial"],
+      },
+      query: {},
+    }, db, fakeLogger);
+
+    expect(out.code).toBe(200);
+    expect(out.total).toBe(10);
+    expect(out.data).toHaveLength(1);
+    expect(out.data[0]).toMatchObject({
+      ad_id: 44,
+      post_owner: "Glow Skin",
+      call_to_action: "Shop Now",
+      language: "English",
+    });
+    expect(fakeLogger.warn).toHaveBeenCalledWith(
+      "Instagram SQL hydration missed ES hits; using ES fallback rows",
+      expect.objectContaining({ missingRows: 1, requestedRows: 1 }),
+    );
   });
 
   it("deep page with cached cursor → search_after", async () => {
@@ -426,6 +486,12 @@ describe("services/instagram/controllers/adSearchController > regular searchAds"
       "setNeedle","setNotCountry","setAdDetailId","setDiscovererUserId","setCommentdata","setMixdata",
       "setIpBasedCountry",
     ]));
+  });
+
+  it("forwards exact_search to the builder", async () => {
+    const db = { elastic: { search: vi.fn(async () => mkEsHits([])) } };
+    await searchAds({ body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls.find(c => c[0] === "setExactSearch")?.[1][0]).toBe(true);
   });
 
   it("verified='0' is passed as numeric 0", async () => {

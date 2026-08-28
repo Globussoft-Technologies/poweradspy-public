@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
-    "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory",
+    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory",
     "setTags","setTargetKeyword","setCountry","setAdType","setLangDetect","setGender",
     "setAdPosition","setAdSubPosition","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
     "setBuiltWith","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -224,7 +224,7 @@ describe("services/gdn/controllers/adSearchController > searchHiddenAds", () => 
     expect(out.data[0].hiddenPostOwnerId).toBe("po1");
     expect(out.data[1].hideType).toBe(2);
   });
-  it("ads without meta default to hideType=2", async () => {
+  it("stale hidden ids with no hydrated ad row return no cards", async () => {
     let call = 0;
     const db = {
       sql: { query: vi.fn(async () => {
@@ -233,7 +233,7 @@ describe("services/gdn/controllers/adSearchController > searchHiddenAds", () => 
         return [{ id: 99, ad_id: 99, type: "TEXT" }];
       })},
     };
-    expect((await searchAds({ body: { user_id: "u", hidden: "true" }, query: {} }, db, fakeLogger)).data[0].hideType).toBe(2);
+    expect((await searchAds({ body: { user_id: "u", hidden: "true" }, query: {} }, db, fakeLogger)).data).toEqual([]);
   });
   it("500 when SQL throws", async () => {
     const db = { sql: { query: vi.fn(async () => { throw new Error("sql-fail"); }) } };
@@ -366,7 +366,7 @@ describe("services/gdn/controllers/adSearchController > regular searchAds", () =
         tags: "t", target_keyword: "tk",
         country: "US", state: "CA", city: "SF",
         type: "IMAGE", lang: "en",
-        ad_position: "FEED", ad_sub_position: "TOP", gender: "M",
+        gender: "M",
         lower_age: "18", upper_age: "65",
         seen_btn_sort: [1700000000, 1600000000],
         post_date_btn_sort: [1700000000, 1600000000],
@@ -383,12 +383,18 @@ describe("services/gdn/controllers/adSearchController > regular searchAds", () =
     expect(setters).toEqual(expect.arrayContaining([
       "setStatus","setKeyword","setPostOwnerName","setUrl","setCallToAction",
       "setAdCategory","setSubCategory","setTags","setTargetKeyword","setCountry",
-      "setAdType","setLangDetect","setGender","setAdPosition","setAdSubPosition",
+      "setAdType","setLangDetect","setGender",
       "setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
       "setBuiltWith","setSource","setFunnel","setAffiliate","setMarketPlatform",
       "setHtmlContent","setNeedle","setNotCountry",
       "setOcr","setCelebrity","setLogo","setImageObject","setAdImageSize",
     ]));
+  });
+
+  it("forwards exact_search to the builder", async () => {
+    const db = { elastic: { search: vi.fn(async () => mkEsHits([])) } };
+    await searchAds({ body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls.find(c => c[0] === "setExactSearch")?.[1][0]).toBe(true);
   });
 
   it("status: empty array does not call setStatus", async () => {

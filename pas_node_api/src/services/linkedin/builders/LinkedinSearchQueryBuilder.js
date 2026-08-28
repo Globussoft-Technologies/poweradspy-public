@@ -136,6 +136,8 @@ class LinkedinSearchQueryBuilder {
 
   setKeyword(v)            { this._params.keyword = v; return this; }
   setPostOwnerName(v)      { this._params.postOwnerName = v; return this; }
+  setExactSearch(v)        { this._params.exactSearch = !!v; return this; }
+  setExactPostOwnerIds(v)  { this._params.exactPostOwnerIds = Array.isArray(v) ? v : []; return this; }
   setUrl(v)                { this._params.url = v; return this; }
   setCountry(v)            { this._params.country = Array.isArray(v) ? v : [v]; return this; }
   setState(v)              { this._params.state = Array.isArray(v) ? v : [v]; return this; }
@@ -193,12 +195,20 @@ class LinkedinSearchQueryBuilder {
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const cleanName = name.replace(/"/g, '');
+    if (this._params.exactSearch) {
+      // LinkedIn's live index only exposes `post_owner` as a plain text field,
+      // so exact advertiser mode avoids the legacy prefix widener and lets the
+      // controller's exact post_owner_id filter plus final hydration guard do
+      // the strict matching.
+      return asMust({ match_phrase: { post_owner: cleanName } });
+    }
     if (name.includes('"')) {
       return asMust({
         multi_match: {
-          query: name.replace(/"/g, ''),
+          query: cleanName,
           type: 'phrase',
-          fields: ['linkedin_ad_post_owners.post_owner_name_exactly'],
+          fields: ['post_owner'],
         },
       });
     }
@@ -211,6 +221,16 @@ class LinkedinSearchQueryBuilder {
         minimum_should_match: 1,
       },
     });
+  }
+
+  _getExactPostOwnerIdsEnv() {
+    const ids = Array.isArray(this._params.exactPostOwnerIds)
+      ? this._params.exactPostOwnerIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+      : [];
+    if (!ids.length) return null;
+    return asFilter({ terms: { post_owner_id: ids } });
   }
 
   _getOcrEnv() {
@@ -450,6 +470,7 @@ class LinkedinSearchQueryBuilder {
       '_getFunnelEnv', '_getAffiliateEnv', '_getMarketPlatformEnv',
       '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv',
       '_getDomainDateEnv', '_getNeedleEnv',
+      '_getExactPostOwnerIdsEnv',
       '_getLikesEnv', '_getCommentsEnv', '_getImpressionsEnv', '_getPopularityEnv',
       '_getUrlEnv',
       '_getKeywordEnv', '_getPostOwnerNameEnv',
@@ -520,6 +541,9 @@ class LinkedinSearchQueryBuilder {
 
 LinkedinSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'ad_id',
+  'post_owner',
+  'post_owner_id',
+  'post_owner_image',
   'reactions',
   'comments',
   'impression',

@@ -9,6 +9,7 @@ const {
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
 } = require('../../common/helpers/aiMetaSearchFilter');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 const {
   isDisplayMergeApplicable,
   getYoutubeDisplayHits,
@@ -342,6 +343,15 @@ ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
         // Merge country from ES — supports both flat and nested
         const country = src['gdn_country_only.country'] ?? src['gdn_country_only']?.['country'];
         if (country !== undefined) row.country = country;
+        if (!row.post_owner) {
+          row.post_owner =
+            src['gdn_ad_post_owners.post_owner_name']
+            || src['gdn_ad_post_owners.post_owner_name_exactly']
+            || row.post_owner;
+        }
+        if (!row.post_owner_image && src['gdn_ad_post_owners.post_owner_image']) {
+          row.post_owner_image = src['gdn_ad_post_owners.post_owner_image'];
+        }
 
         return row;
       });
@@ -363,6 +373,15 @@ ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
     const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null;
     return {
       ...ad,
+      post_owner:
+        ad.post_owner
+        || src['gdn_ad_post_owners.post_owner_name']
+        || src['gdn_ad_post_owners.post_owner_name_exactly']
+        || null,
+      post_owner_image:
+        ad.post_owner_image
+        || src['gdn_ad_post_owners.post_owner_image']
+        || null,
       language,
       market_platform_urls: {
         url_destination: src['gdn_ad_url.url_destination']         || null,
@@ -445,6 +464,12 @@ async function searchWithDisplayMerge({ db, logger, esParams, p, from, size, sor
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p   = normalizeParams(raw);
+  const exactAdvertiserName = (
+    (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
+    && p.advertiser
+  )
+    ? normalizePostOwnerName(p.advertiser)
+    : '';
 
   if (!p.user_id) return { code: 400, message: 'Missing params: user_id is required' };
 
@@ -476,6 +501,7 @@ async function searchAds(req, db, logger) {
     .setSortMethod(sort.order);
 
   if (p.status && Array.isArray(p.status) && p.status.length > 0) builder.setStatus(p.status);
+  builder.setExactSearch(!!exactAdvertiserName);
   if (p.keyword)         builder.setKeyword(p.keyword);
   if (p.advertiser)      builder.setPostOwnerName(p.advertiser);
   if (p.domain)          builder.setUrl(p.domain);
@@ -530,7 +556,9 @@ async function searchAds(req, db, logger) {
   // the normal pagination window + a recency sort, interleave them here. Falls
   // through to the standard GDN-only path otherwise (deep pages, exotic sorts,
   // YouTube unavailable) — see helpers/youtubeDisplayMerge.js.
-  if (isDisplayMergeApplicable(p, sort, from, size)) {
+  // Exact advertiser queries should not be widened by the cross-store YouTube
+  // DISPLAY merge until that path supports the same strict advertiser contract.
+  if (!exactAdvertiserName && isDisplayMergeApplicable(p, sort, from, size)) {
     try {
       return await searchWithDisplayMerge({ db, logger, esParams, p, from, size, sort });
     } catch (mergeErr) {
@@ -574,7 +602,19 @@ async function searchAds(req, db, logger) {
     }
 
     // ─── Phase 2: enrich from SQL (shared with the DISPLAY merge path) ────
-    const finalAds = await enrichGdnHits(esHits, db, logger);
+    let finalAds = await enrichGdnHits(esHits, db, logger);
+    if (exactAdvertiserName) {
+      const beforeCount = finalAds.length;
+      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      if (beforeCount !== finalAds.length) {
+        logger.warn('Filtered GDN exact-search rows that lost advertiser identity after hydration', {
+          requestedAdvertiser: p.advertiser,
+          removedRows: beforeCount - finalAds.length,
+          from,
+          size,
+        });
+      }
+    }
 
     return {
       code: 200,

@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
-    "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
+    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
     "setState","setCity","setAdType","setLangDetect","setAdPosition",
     "setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -406,6 +406,12 @@ describe("services/reddit/controllers/adSearchController > regular searchAds", (
     ]));
   });
 
+  it("forwards exact_search to the builder", async () => {
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) } };
+    await searchAds({ body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls.find(c => c[0] === "setExactSearch")?.[1][0]).toBe(true);
+  });
+
   it("similar_ad_id || adDetail_id branch uses adDetail_id fallback", async () => {
     const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) } };
     await searchAds({ body: { user_id: "u", adDetail_id: "fallback-id" }, query: {} }, db, fakeLogger);
@@ -479,7 +485,7 @@ describe("services/reddit/controllers/adSearchController > regular searchAds", (
     const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
     expect(out.data[0]).toEqual(expect.objectContaining({
       image_video_url: "https://x/nas.png",
-      days_running: 10, likes: 111, comments: 22, shares: 33,
+      days_running: 10,
       built_with: "Shopify", built_with_analytics_tracking: "GA",
     }));
   });

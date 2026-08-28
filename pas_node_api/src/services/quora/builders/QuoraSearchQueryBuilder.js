@@ -23,6 +23,7 @@ const {
   paginationDefaults,
   shouldProfile,
 } = require('../../common/helpers/esQueryHelpers');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 const DEFAULT_QR_INDEX = process.env.QR_ELASTIC_INDEX || 'quora_search_mix';
 
@@ -76,6 +77,7 @@ class QuoraSearchQueryBuilder {
   setSortMethod(v) { if (v === 'asc' || v === 'desc') this._sortMethod = v; return this; }
   setIpBasedCountry(v) { this._ipBasedCountry = (v && v !== 'NA') ? v : ''; return this; }
   setProfile(v) { this._profile = v; return this; }
+  setExactSearch(v) { this._params.exactSearch = !!v; return this; }
 
   setKeyword(v)        { this._params.keyword = v; return this; }
   setPostOwnerName(v)  { this._params.postOwnerName = v; return this; }
@@ -140,15 +142,29 @@ class QuoraSearchQueryBuilder {
     return asMust(phraseAcrossFields(fields, kw));
   }
 
+  _isExactSearch() {
+    return !!this._params.exactSearch;
+  }
+
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const clean = String(name).replace(/"/g, '').trim();
+    if (!clean) return null;
+    if (this._isExactSearch()) {
+      // Quora exact advertiser matching should use the normalized owner field
+      // rather than the legacy phrase/prefix fallback logic.
+      return asFilter({
+        term: {
+          'quora_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
+        },
+      });
+    }
     const fields = [
       'quora_ad_post_owners.post_owner_name', 'quora_ad_post_owners.post_owner_name_ru',
       'quora_ad_post_owners.post_owner_name_fr', 'quora_ad_post_owners.post_owner_name_sp',
       'quora_ad_post_owners.post_owner_name_ge', 'quora_ad_post_owners.post_owner_name_exactly',
     ];
-    const clean = name.replace(/"/g, '');
     return asMust({
       bool: {
         should: [
@@ -512,6 +528,9 @@ QuoraSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'lang_detect',
   'new_nas_image_url',
   'quora_ad.type',
+  'quora_ad_post_owners.post_owner_name',
+  'quora_ad_post_owners.post_owner_name_exactly',
+  'quora_ad_post_owners.post_owner_image',
   'quora_call_to_action.call_to_action',
   'quora_ad_url.url_destination',
   'quora_ad_url.url_redirects',

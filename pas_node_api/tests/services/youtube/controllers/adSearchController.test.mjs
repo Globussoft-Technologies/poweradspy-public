@@ -12,6 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
+    "setIncludeDisplayAds","setExactSearch","setExactPostOwnerIds",
     "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory","setCountry",
     "setAdType","setLangDetect","setAdPosition","setVerified","setDiscovererUserId",
     "setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
@@ -144,7 +145,7 @@ describe("services/youtube/controllers/adSearchController > searchFavoriteAds", 
     expect(out.code).toBe(200);
     expect(out.data).toHaveLength(1);
   });
-  it("enrichAndFilterRows drops IMAGE without PowerAdspy, keeps others", async () => {
+  it("enrichAndFilterRows keeps sparse IMAGE rows and marks missing previews", async () => {
     let call = 0;
     const db = {
       sql: { query: vi.fn(async () => {
@@ -166,7 +167,8 @@ describe("services/youtube/controllers/adSearchController > searchFavoriteAds", 
       },
     };
     const out = await searchAds({ body: { user_id: "u", favorite: "true" }, query: {} }, db, fakeLogger);
-    expect(out.data.map(d => d.ad_id)).toEqual([1, 3]);
+    expect(out.data.map(d => d.ad_id)).toEqual([1, 2, 3]);
+    expect(out.data[1].preview_unavailable).toBe(true);
   });
   it("500 when SQL throws", async () => {
     const db = { sql: { query: vi.fn(async () => { throw new Error("sql-fail"); }) } };
@@ -276,6 +278,65 @@ describe("services/youtube/controllers/adSearchController > regular searchAds", 
     expect(out.code).toBe(200);
   });
 
+  it("exact advertiser mode resolves YouTube owner ids before ES search", async () => {
+    const db = {
+      elastic: { indexName: "youtube", search: vi.fn(async () => mkEsHits([])) },
+      sql: {
+        query: vi.fn(async (sql) => {
+          if (sql.includes("FROM youtube_ad_post_owners")) {
+            return [{ id: 130141 }];
+          }
+          return [];
+        }),
+      },
+    };
+    await searchAds({ body: { user_id: "u", advertiser: "Make", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls).toEqual(expect.arrayContaining([
+      ["setExactSearch", [true]],
+      ["setExactPostOwnerIds", [[130141]]],
+    ]));
+  });
+
+  it("exact advertiser mode backfills owner fields from ES and drops mismatched hydrated rows", async () => {
+    const esHits = [
+      { _source: { ad_id: 1, post_owner: "Make", post_owner_id: 130141, post_owner_image: "/owner.jpg" } },
+      { _source: { ad_id: 2, post_owner: "Make Pro", post_owner_id: 130142 } },
+      { _source: { ad_id: 3, post_owner: "Make" } },
+    ];
+    const db = {
+      elastic: { indexName: "youtube", search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: {
+        query: vi.fn(async (sql) => {
+          if (sql.includes("FROM youtube_ad_post_owners")) {
+            return [{ id: 130141 }];
+          }
+          if (sql.includes("FROM languages")) {
+            return [];
+          }
+          return [
+            { id: 1, ad_id: 1, type: "IMAGE" },
+            { id: 2, ad_id: 2, type: "IMAGE" },
+            { id: 3, ad_id: 3, type: "IMAGE", post_owner: "Make" },
+          ];
+        }),
+      },
+    };
+    const out = await searchAds(
+      { body: { user_id: "u", advertiser: "Make", exact_search: 1 }, query: {} },
+      db,
+      fakeLogger
+    );
+    expect(out.code).toBe(200);
+    expect(out.data.map((row) => row.ad_id)).toEqual([1, 3]);
+    expect(out.data[0].post_owner).toBe("Make");
+    expect(out.data[0].post_owner_id).toBe(130141);
+    expect(out.data[0].post_owner_image).toBe("/owner.jpg");
+    expect(fakeLogger.warn).toHaveBeenCalledWith(
+      "Filtered YouTube exact-search rows that lost advertiser identity after hydration",
+      expect.objectContaining({ removedRows: 1 })
+    );
+  });
+
   it("0 hits → No ads found", async () => {
     const db = { elastic: { search: vi.fn(async () => mkEsHits([])) } };
     expect((await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger)).message).toBe("No ads found");
@@ -351,12 +412,13 @@ describe("services/youtube/controllers/adSearchController > regular searchAds", 
         ocr: "txt", image_celebrity: "c", image_logo: "l", image_object: "o",
         html_content: "html", needle: "n", not_country: "RU",
         adDetail_id: "ad-detail",
-        ipBasedCountry: "US",
+        ipBasedCountry: "US", exact_search: 1,
       },
       query: {},
     }, db, fakeLogger);
     const setters = builderCalls[0].calls.map(c => c[0]);
     expect(setters).toEqual(expect.arrayContaining([
+      "setIncludeDisplayAds","setExactSearch",
       "setStatus","setKeyword","setPostOwnerName","setUrl","setCallToAction",
       "setAdCategory","setSubCategory","setCountry","setAdType","setLangDetect",
       "setAdPosition","setVerified","setDiscovererUserId",

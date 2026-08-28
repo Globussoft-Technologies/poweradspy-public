@@ -62,12 +62,15 @@ describe("YouTube SearchMixQueryBuilder > construction + setters", () => {
   it("simple value setters", () => {
     b.setKeyword("kw").setPostOwnerName("po").setUrl("u").setVerified("1").setDiscovererUserId("d");
     b.setNotCountry("RU").setAdDetailId("a1");
+    b.setExactSearch(true).setExactPostOwnerIds([11, "12"]);
     b.setNeedle("NA");
     expect(b._params.needle).toBe("");
     b.setNeedle("ndl");
     expect(b._params.needle).toBe("ndl");
     b.setOcr("o");
     b.setLastSeen({}).setPostDate({}).setDomainDate({}).setLowerAgeSeen({});
+    expect(b._params.exactSearch).toBe(true);
+    expect(b._params.exactPostOwnerIds).toEqual([11, "12"]);
   });
   it("range setters with non-array → null", () => {
     expect(b.setLikes("x")._params.likes).toBeNull();
@@ -136,6 +139,17 @@ describe("YouTube SearchMixQueryBuilder > clause generators", () => {
     b.setPostOwnerName('"Brand X"');
     const must = b.build().body.query.bool.must;
     expect(must.some(m => m.multi_match?.query === "Brand X")).toBe(true);
+  });
+  it("postOwnerName exact-search removes the prefix widener", () => {
+    b.setExactSearch(true).setPostOwnerName("Apple");
+    const must = b.build().body.query.bool.must;
+    expect(must.some(m => m.match_phrase?.post_owner === "Apple")).toBe(true);
+    expect(must.some(m => m.bool?.should?.some(s => s.prefix?.post_owner))).toBe(false);
+  });
+  it("exactPostOwnerIds adds a terms filter on post_owner_id", () => {
+    b.setExactPostOwnerIds([101, "202"]);
+    expect(b.build().body.query.bool.filter.some(f =>
+      JSON.stringify(f).includes('"post_owner_id":[101,202]'))).toBe(true);
   });
   it("ocr quoted/non-quoted both work", () => {
     b.setOcr("text");
@@ -282,5 +296,6 @@ describe("YouTube SearchMixQueryBuilder > SEARCH_SOURCE_FIELDS", () => {
   it("includes core fields", () => {
     expect(Builder.SEARCH_SOURCE_FIELDS).toContain("ad_id");
     expect(Builder.SEARCH_SOURCE_FIELDS).toContain("countries");
+    expect(Builder.SEARCH_SOURCE_FIELDS).toContain("post_owner");
   });
 });

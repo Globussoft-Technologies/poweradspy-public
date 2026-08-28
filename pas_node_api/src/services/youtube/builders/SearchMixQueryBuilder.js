@@ -121,6 +121,8 @@ class SearchMixQueryBuilder {
 
   setKeyword(v)          { this._params.keyword       = v;                               return this; }
   setPostOwnerName(v)    { this._params.postOwnerName = v;                               return this; }
+  setExactSearch(v)      { this._params.exactSearch   = !!v;                             return this; }
+  setExactPostOwnerIds(v){ this._params.exactPostOwnerIds = Array.isArray(v) ? v : [];  return this; }
   setUrl(v)              { this._params.url           = v;                               return this; }
   setCountry(v)          { this._params.country       = Array.isArray(v) ? v : [v];     return this; }
   setAdType(v)           { this._params.type          = Array.isArray(v) ? v : [v];     return this; }
@@ -173,9 +175,17 @@ class SearchMixQueryBuilder {
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const cleanName = name.replace(/"/g, '');
+    if (this._params.exactSearch) {
+      // YouTube's live index only exposes `post_owner` as analyzed text, so
+      // exact advertiser mode removes the legacy prefix widener and relies on
+      // the controller's exact `post_owner_id` filter plus the final hydrated
+      // owner equality guard for strict matching.
+      return asMust({ match_phrase: { post_owner: cleanName } });
+    }
     if (name.includes('"')) {
       return asMust({
-        multi_match: { query: name.replace(/"/g, ''), type: 'phrase', fields: ['post_owner'] },
+        multi_match: { query: cleanName, type: 'phrase', fields: ['post_owner'] },
       });
     }
     return asMust({
@@ -187,6 +197,16 @@ class SearchMixQueryBuilder {
         minimum_should_match: 1,
       },
     });
+  }
+
+  _getExactPostOwnerIdsEnv() {
+    const ids = Array.isArray(this._params.exactPostOwnerIds)
+      ? this._params.exactPostOwnerIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+      : [];
+    if (!ids.length) return null;
+    return asFilter({ terms: { post_owner_id: ids } });
   }
 
   _getOcrEnv() {
@@ -405,6 +425,7 @@ class SearchMixQueryBuilder {
       '_getAffiliateEnv', '_getMarketPlatformEnv',
       '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv',
       '_getDomainDateEnv', '_getNeedleEnv',
+      '_getExactPostOwnerIdsEnv',
       '_getLikesEnv', '_getCommentsEnv', '_getViewsEnv', '_getDislikesEnv', '_getAdBudgetEnv',
       '_getUrlEnv',
       '_getKeywordEnv', '_getPostOwnerNameEnv',
@@ -482,6 +503,9 @@ class SearchMixQueryBuilder {
 
 SearchMixQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'ad_id',
+  'post_owner',
+  'post_owner_id',
+  'post_owner_image',
   'ad_type',
   'ad_language',
   'reactions',

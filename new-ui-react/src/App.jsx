@@ -40,6 +40,7 @@ import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
+import { ADS_PAGE_SIZE, resolvePaginationState } from "./utils/adsPagination";
 import { Check, X, Loader2, Info } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -1486,6 +1487,7 @@ const App = () => {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchTrigger, setSearchTrigger] = useState(0);
+  const emptyPageStreakRef = useRef(0);
 
   // Auto-open pricing modal when guest on public landing reaches the end of ads
   useEffect(() => {
@@ -1503,6 +1505,7 @@ const App = () => {
     // below can still fill the count if a page-0 total is missing.
     setAdsMeta({});
     setHasMore(true);
+    emptyPageStreakRef.current = 0;
   }, [
     debouncedFilterKey,
     platformKey,
@@ -1806,15 +1809,28 @@ const App = () => {
         // Guest mode: stop loading when limit reached
         if (data.guestLimitReached) {
           setHasMore(false);
+          emptyPageStreakRef.current = 0;
         } else if (typeof meta?.hasMore === 'boolean') {
-          // Prefer the backend's ES-total-based signal so a short page (some ads
-          // dropped in SQL hydration/dedup) doesn't prematurely end pagination
-          // while thousands of ES matches remain. Guard with newAds.length > 0
-          // so a sparse/orphan network can't loop forever fetching empty pages.
-          setHasMore(meta.hasMore && newAds.length > 0);
+          // Trust the backend's ES-total-based `hasMore`, but recover across a
+          // few empty hydrated pages so one sparse slice cannot terminate a
+          // search that still has real results further down the cursor.
+          const paginationState = resolvePaginationState({
+            guestLimitReached: data.guestLimitReached,
+            metaHasMore: meta.hasMore,
+            pageAdsCount: newAds.length,
+            emptyPageStreak: emptyPageStreakRef.current,
+            page,
+            pageSize: ADS_PAGE_SIZE,
+          });
+          emptyPageStreakRef.current = paginationState.emptyPageStreak;
+          setHasMore(paginationState.hasMore);
+          if (paginationState.shouldAutoAdvance) {
+            setPage((prev) => prev + 1);
+          }
         } else {
           // Fallback for older backend responses without meta.hasMore.
-          setHasMore(newAds.length >= 9);
+          emptyPageStreakRef.current = newAds.length > 0 ? 0 : emptyPageStreakRef.current;
+          setHasMore(newAds.length >= ADS_PAGE_SIZE);
         }
       } catch (err) {
         // Aborted by a newer effect run (user switched tab/filter) — silently bail.

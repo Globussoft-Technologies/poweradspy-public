@@ -167,8 +167,14 @@ describe("api > mapAdToCard", () => {
     expect(mapAdToCard({ sql_id: 7 }).id).toBe(7);
     expect(mapAdToCard({ id: 9 }).id).toBe(9);
   });
-  it("unknown post_owner → 'Unknown'", () => {
-    expect(mapAdToCard({}).advertiser).toBe("Unknown");
+  it("missing post_owner stays null instead of manufacturing 'Unknown'", () => {
+    expect(mapAdToCard({}).advertiser).toBeNull();
+  });
+  it("recovers advertiser name from ES-style fallback fields", () => {
+    expect(mapAdToCard({
+      "facebook_ad_post_owners.post_owner_name": "Apple",
+      platform: 1,
+    }).advertiser).toBe("Apple");
   });
   it("network derived from platform numeric ID", () => {
     expect(mapAdToCard({ platform: 1 }).network).toBe("facebook");

@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus","setVerified",
-    "setKeyword","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory",
+    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setCallToAction","setAdCategory","setSubCategory",
     "setCountry","setState","setCity","setAdType","setTags","setLangDetect","setPlatform",
     "setAdPosition","setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate","setPageCreation",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -144,7 +144,7 @@ describe("services/facebook/controllers/adSearchController > searchFavoriteAds",
     expect(out.code).toBe(200);
     expect(out.data).toHaveLength(1);
   });
-  it("enrichAndFilterRows drops IMAGE without NAS url, keeps non-IMAGE + IMAGE-with-url", async () => {
+  it("enrichAndFilterRows keeps IMAGE rows without NAS url and flags them as preview_unavailable", async () => {
     let call = 0;
     const db = {
       sql: { query: vi.fn(async () => {
@@ -152,7 +152,7 @@ describe("services/facebook/controllers/adSearchController > searchFavoriteAds",
         if (call === 1) return [{ ad_id: 1 }, { ad_id: 2 }, { ad_id: 3 }];
         return [
           { id: 1, ad_id: 1, type: "IMAGE" }, // has NAS → keep
-          { id: 2, ad_id: 2, type: "IMAGE" }, // no NAS → drop
+          { id: 2, ad_id: 2, type: "IMAGE" }, // no NAS → keep with preview_unavailable
           { id: 3, ad_id: 3, type: "TEXT" },  // non-IMAGE → keep regardless
         ];
       })},
@@ -166,7 +166,8 @@ describe("services/facebook/controllers/adSearchController > searchFavoriteAds",
       },
     };
     const out = await searchAds({ body: { user_id: "u", favorite: "true" }, query: {} }, db, fakeLogger);
-    expect(out.data.map(d => d.ad_id)).toEqual([1, 3]);
+    expect(out.data.map(d => d.ad_id)).toEqual([1, 2, 3]);
+    expect(out.data.find((d) => d.ad_id === 2)?.preview_unavailable).toBe(true);
   });
   it("500 when SQL throws", async () => {
     const db = { sql: { query: vi.fn(async () => { throw new Error("sql-fail"); }) } };
@@ -296,7 +297,7 @@ describe("services/facebook/controllers/adSearchController > regular searchAds",
     expect(out.code).toBe(200);
   });
 
-  it("SQL empty for a valid ES hit returns zero results instead of inventing an ES-only row", async () => {
+  it("SQL empty for a valid ES hit keeps the ES total but returns no hydrated rows", async () => {
     const esHits = [
       {
         _source: {
@@ -316,12 +317,8 @@ describe("services/facebook/controllers/adSearchController > regular searchAds",
     const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
     expect(out.code).toBe(200);
     expect(out.data).toEqual([]);
-    expect(out.total).toBe(0);
-    expect(out.message).toBe("No ads found");
-    expect(fakeLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("SQL returned no rows for ES hits; returning empty result"),
-      expect.any(Object),
-    );
+    expect(out.total).toBe(1);
+    expect(out.message).toBe("Ads fetched successfully");
   });
 
   it("0 hits → No ads found", async () => {
@@ -411,6 +408,7 @@ describe("services/facebook/controllers/adSearchController > regular searchAds",
     const setters = builderCalls[0].calls.map(c => c[0]);
     expect(setters).toEqual(expect.arrayContaining([
       "setStatus","setVerified","setKeyword","setPostOwnerName","setUrl","setCallToAction",
+      "setExactSearch",
       "setAdCategory","setSubCategory","setCountry","setState","setCity","setAdType","setTags",
       "setLangDetect","setPlatform","setAdPosition","setGender",
       "setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate","setPageCreation",
@@ -420,6 +418,13 @@ describe("services/facebook/controllers/adSearchController > regular searchAds",
       "setNeedle","setNotCountry","setAdDetailId","setDiscovererUserId","setCommentdata","setMixdata",
       "setIpBasedCountry",
     ]));
+  });
+
+  it("exact_search is forwarded to the Facebook builder", async () => {
+    const db = { elastic: { search: vi.fn(async () => mkEsHits([])) } };
+    await searchAds({ body: { user_id: "u", exact_search: 1, advertiser: "Apple" }, query: {} }, db, fakeLogger);
+    const exactCall = builderCalls[0].calls.find(c => c[0] === "setExactSearch");
+    expect(exactCall?.[1]?.[0]).toBe(true);
   });
 
   it("verified='0' is passed as numeric 0", async () => {
@@ -534,5 +539,45 @@ describe("services/facebook/controllers/adSearchController > ES overlay merge in
     // None of the ES overlay fields applied:
     expect(out.data[0].share).toBeUndefined();
     expect(out.data[0].image_video_url).toBeUndefined();
+  });
+
+  it("exact advertiser search drops hydrated rows that still have no visible advertiser name", async () => {
+    const esHits = [{
+      _source: {
+        "facebook_ad.id": 121288,
+        "facebook_ad_post_owners.post_owner_lower.keyword": "apple",
+      },
+    }];
+    const db = {
+      elastic: { indexName: "facebook", search: vi.fn(async () => mkEsHits(esHits, 1)) },
+      sql: { query: vi.fn(async () => [{ id: 121288, ad_id: 121288, type: "VIDEO", post_owner: null }]) },
+    };
+    const out = await searchAds({ body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(out.code).toBe(200);
+    expect(out.data).toEqual([]);
+    expect(fakeLogger.warn).toHaveBeenCalledWith(
+      "Filtered Facebook exact-search rows that lost advertiser identity after hydration",
+      expect.objectContaining({ requestedAdvertiser: "Apple", removedRows: 1 }),
+    );
+  });
+
+  it("exact advertiser search keeps rows when ES can backfill the missing advertiser name", async () => {
+    const esHits = [{
+      _source: {
+        "facebook_ad.id": 121288,
+        "facebook_ad_post_owners.post_owner_name": "Apple",
+        "facebook_ad_post_owners.post_owner_image": "https://cdn.example/apple.png",
+      },
+    }];
+    const db = {
+      elastic: { indexName: "facebook", search: vi.fn(async () => mkEsHits(esHits, 1)) },
+      sql: { query: vi.fn(async () => [{ id: 121288, ad_id: 121288, type: "VIDEO", post_owner: null, post_owner_image: null }]) },
+    };
+    const out = await searchAds({ body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(out.code).toBe(200);
+    expect(out.data[0]).toEqual(expect.objectContaining({
+      post_owner: "Apple",
+      post_owner_image: "https://cdn.example/apple.png",
+    }));
   });
 });

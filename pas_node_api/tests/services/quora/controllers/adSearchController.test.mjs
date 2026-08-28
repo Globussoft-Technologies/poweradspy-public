@@ -12,7 +12,7 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
-    "setKeyword","setPostOwnerName","setUrl","setAdCategory","setSubCategory","setCountry",
+    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setAdCategory","setSubCategory","setCountry",
     "setState","setCity","setAdType","setCallToAction","setTags","setLangDetect","setAdPosition",
     "setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -437,6 +437,12 @@ describe("services/quora/controllers/adSearchController > regular searchAds", ()
       "setOcr","setCelebrity","setImageObject","setLogo","setHtmlContent","setNeedle",
       "setAdDetailId","setNotCountry","setIpBasedCountry",
     ]));
+  });
+
+  it("forwards exact_search to the builder", async () => {
+    const db = { elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) } };
+    await searchAds({ body: { user_id: "u", advertiser: "Apple", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls.find(c => c[0] === "setExactSearch")?.[1][0]).toBe(true);
   });
 
   it("similar_ad_id || adDetail_id branch uses adDetail_id fallback", async () => {

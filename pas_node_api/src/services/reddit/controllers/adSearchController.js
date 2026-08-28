@@ -9,6 +9,7 @@ const {
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
 } = require('../../common/helpers/aiMetaSearchFilter');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 const AD_DETAIL_SELECT = `
     reddit_ad.id                                    AS id,
@@ -208,6 +209,12 @@ async function searchHiddenAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
+  const exactAdvertiserName = (
+    (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
+    && p.advertiser
+  )
+    ? normalizePostOwnerName(p.advertiser)
+    : '';
 
   if (!p.user_id) return { code: 400, message: 'Missing params: user_id is required' };
 
@@ -226,6 +233,7 @@ async function searchAds(req, db, logger) {
   builder.setStatus([1]);
 
   // Search text fields
+  builder.setExactSearch(!!exactAdvertiserName);
   if (p.keyword)     builder.setKeyword(p.keyword);
   if (p.advertiser)  builder.setPostOwnerName(p.advertiser);
   if (p.domain)      builder.setUrl(p.domain);
@@ -336,6 +344,15 @@ ORDER BY FIELD(reddit_ad.id, ${placeholders})`;
           const src = esHit._source || {};
           if (src.new_nas_image_url) row.image_video_url = src.new_nas_image_url;
           if (src['reddit_ad.days_running'] !== undefined) row.days_running = src['reddit_ad.days_running'];
+          if (!row.post_owner) {
+            row.post_owner =
+              src['reddit_ad_post_owners.post_owner_name']
+              || src['reddit_ad_post_owners.post_owner_name_exactly']
+              || row.post_owner;
+          }
+          if (!row.post_owner_image && src['reddit_ad_post_owners.post_owner_image']) {
+            row.post_owner_image = src['reddit_ad_post_owners.post_owner_image'];
+          }
           // if (src['reddit_ad.likes'] !== undefined) row.likes = src['reddit_ad.likes'];
           // if (src['reddit_ad.comments'] !== undefined) row.comments = src['reddit_ad.comments'];
           // if (src['reddit_ad.shares'] !== undefined) row.shares = src['reddit_ad.shares'];
@@ -362,6 +379,15 @@ ORDER BY FIELD(reddit_ad.id, ${placeholders})`;
       const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null;
       return {
         ...ad,
+        post_owner:
+          ad.post_owner
+          || src['reddit_ad_post_owners.post_owner_name']
+          || src['reddit_ad_post_owners.post_owner_name_exactly']
+          || null,
+        post_owner_image:
+          ad.post_owner_image
+          || src['reddit_ad_post_owners.post_owner_image']
+          || null,
         language,
         market_platform_urls: {
           url_destination: src['reddit_ad_url.url_destination']         || null,
@@ -373,6 +399,19 @@ ORDER BY FIELD(reddit_ad.id, ${placeholders})`;
         },
       };
     });
+
+    if (exactAdvertiserName) {
+      const beforeCount = finalAds.length;
+      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      if (beforeCount !== finalAds.length) {
+        logger.warn('Filtered Reddit exact-search rows that lost advertiser identity after hydration', {
+          requestedAdvertiser: p.advertiser,
+          removedRows: beforeCount - finalAds.length,
+          from,
+          size,
+        });
+      }
+    }
 
     return {
       code: 200,

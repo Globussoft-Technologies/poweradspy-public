@@ -5,6 +5,7 @@ const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData }
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
@@ -327,6 +328,12 @@ async function searchBugAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
+  const exactAdvertiserName = (
+    (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
+    && p.advertiser
+  )
+    ? normalizePostOwnerName(p.advertiser)
+    : '';
 
   // Validate required params
   if (!p.user_id) {
@@ -371,6 +378,9 @@ async function searchAds(req, db, logger) {
   }
 
   // ─── Search text fields ───────────────────────────────
+  // Preserve DS exact advertiser/domain intent for AI-mode execution. Facebook
+  // keeps legacy broad matching unless exact_search is explicitly enabled.
+  builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true);
   if (p.keyword)     builder.setKeyword(p.keyword);
   if (p.advertiser)  builder.setPostOwnerName(p.advertiser);
   if (p.domain)      builder.setUrl(p.domain);
@@ -559,6 +569,20 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
           if (src['facebook_ad.days_running'] !== undefined) row.days_running = src['facebook_ad.days_running'];
           if (src['facebook_call_to_actions.action'] !== undefined) row.call_to_action = src['facebook_call_to_actions.action'];
 
+          // SQL is the primary source of truth for advertiser presentation, but
+          // when an owner row is missing we can still recover the display name
+          // from the matched ES document instead of surfacing a blank/Unknown
+          // advertiser on the frontend.
+          if (!row.post_owner) {
+            row.post_owner =
+              src['facebook_ad_post_owners.post_owner_name']
+              || src['facebook_ad_post_owners.post_owner_name_exactly']
+              || row.post_owner;
+          }
+          if (!row.post_owner_image && src['facebook_ad_post_owners.post_owner_image']) {
+            row.post_owner_image = src['facebook_ad_post_owners.post_owner_image'];
+          }
+
           // Language is ES-only — must agree with the language FILTER, which only
           // ever matches `lang_detect`. Never fall back to the stale SQL
           // `languages` join: showing a language the filter wouldn't match on
@@ -615,6 +639,22 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
         },
       };
     });
+
+    if (exactAdvertiserName) {
+      const beforeCount = finalAds.length;
+      finalAds = finalAds.filter((ad) => {
+        const visibleOwner = normalizePostOwnerName(ad?.post_owner);
+        return visibleOwner && visibleOwner === exactAdvertiserName;
+      });
+      if (beforeCount !== finalAds.length) {
+        logger.warn('Filtered Facebook exact-search rows that lost advertiser identity after hydration', {
+          requestedAdvertiser: p.advertiser,
+          removedRows: beforeCount - finalAds.length,
+          from,
+          size,
+        });
+      }
+    }
 
 
 

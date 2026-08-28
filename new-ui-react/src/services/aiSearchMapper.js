@@ -52,6 +52,15 @@ const FILTER_IDS = {
   popularity: ['popularity', 'popularity_score', 'popularity_range'],
   ctr: ['ctr', 'ctr_filter', 'ctr_range'],
   adBudget: ['adBudget', 'ad_budget', 'avg_ad_budget'],
+  hasAiMeta: ['has_ai_meta', 'hasAiMeta', 'ai_meta'],
+  aiAdType: ['ai_ad_type'],
+  aiIntent: ['ai_intent'],
+  aiHook: ['ai_hook'],
+  aiOfferingType: ['ai_offering_type'],
+  aiOfferType: ['ai_offer_type'],
+  aiColors: ['ai_colors'],
+  aiCategoryId: ['ai_category_id'],
+  aiSubcategoryId: ['ai_subcategory_id'],
 };
 
 // Filters whose widget stores the option LABEL rather than its value (the Country
@@ -131,6 +140,27 @@ function applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel) {
   }
   if (!resolved.length) return;
   filterValues[filter._id] = isMulti(filter) ? resolved : resolved[0];
+}
+
+// DS AI planner fields are part of the stable PAS request contract, and the
+// AI modal/chips already read these exact keys directly. When a live SDUI
+// filter exists we still resolve against its options, but if a reduced/older
+// config omits that filter we preserve the raw contract key so the generated
+// AI payload remains visible and executable instead of disappearing in UI state.
+function applyStableField(filter, stateKey, rawValues, filterValues, unmapped, fieldLabel) {
+  if (filter) {
+    applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel);
+    return;
+  }
+
+  const deduped = [];
+  for (const raw of rawValues) {
+    if (raw == null || raw === '' || raw === 'NA') continue;
+    const value = String(raw);
+    if (!deduped.includes(value)) deduped.push(value);
+  }
+  if (!deduped.length) return;
+  filterValues[stateKey] = deduped;
 }
 
 // order_column (+ order_by) → our semantic sort value. Then we still verify the
@@ -330,6 +360,35 @@ export function mapArgsToFilters(args = {}, config = {}) {
     unmapped.push(`age: ${args.lower_age ?? ''}-${args.upper_age ?? ''}`);
   }
 
+  // DS AI-plan payloads use stable top-level PAS keys. Hydrate them into the
+  // same frontend state that powers the AI Filters modal/chips so a generated
+  // plan is visible to the user and round-trips unchanged through search.
+  const hasAiMetaEnabled =
+    args.has_ai_meta === true ||
+    args.has_ai_meta === 1 ||
+    args.has_ai_meta === '1' ||
+    String(args.has_ai_meta).toLowerCase() === 'true';
+  if (hasAiMetaEnabled) {
+    const hasAiMetaFilter = findFilter(config, FILTER_IDS.hasAiMeta);
+    filterValues[hasAiMetaFilter?._id || 'has_ai_meta'] = true;
+  }
+
+  const AI_META_VOCAB = [
+    ['ai_ad_type', FILTER_IDS.aiAdType],
+    ['ai_intent', FILTER_IDS.aiIntent],
+    ['ai_hook', FILTER_IDS.aiHook],
+    ['ai_offering_type', FILTER_IDS.aiOfferingType],
+    ['ai_offer_type', FILTER_IDS.aiOfferType],
+    ['ai_colors', FILTER_IDS.aiColors],
+    ['ai_category_id', FILTER_IDS.aiCategoryId],
+    ['ai_subcategory_id', FILTER_IDS.aiSubcategoryId],
+  ];
+  for (const [field, ids] of AI_META_VOCAB) {
+    const raw = asArray(args[field]);
+    if (!raw.length) continue;
+    applyStableField(findFilter(config, ids), field, raw, filterValues, unmapped, field);
+  }
+
   return { searchQuery, searchIn, activePlatforms, exactSearch, sortBy, filterValues, unmapped };
 }
 
@@ -348,12 +407,26 @@ export function normalizeAiSearchArgs(payload = {}) {
   const fullPayload = payload?.full_payload && typeof payload.full_payload === 'object'
     ? payload.full_payload
     : {};
+  const passthroughKeys = [
+    'exact_search',
+    'has_ai_meta',
+    'ai_ad_type',
+    'ai_intent',
+    'ai_hook',
+    'ai_offering_type',
+    'ai_offer_type',
+    'ai_colors',
+    'ai_category_id',
+    'ai_subcategory_id',
+  ];
 
-  if (args.exact_search != null) return args;
-  if (fullPayload.exact_search == null) return args;
+  let changed = false;
+  const merged = { ...args };
+  for (const key of passthroughKeys) {
+    if (merged[key] != null || fullPayload[key] == null) continue;
+    merged[key] = fullPayload[key];
+    changed = true;
+  }
 
-  return {
-    ...args,
-    exact_search: fullPayload.exact_search,
-  };
+  return changed ? merged : args;
 }

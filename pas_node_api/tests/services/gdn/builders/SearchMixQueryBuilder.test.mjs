@@ -49,6 +49,9 @@ describe("GDN builder > construction + setters", () => {
     expect(b._params.keyword).toBe("k");
     expect(b._params.adImageSize).toBe("300x250");
   });
+  it("setExactSearch stores a boolean flag", () => {
+    expect(b.setExactSearch(true)._params.exactSearch).toBe(true);
+  });
   it("setNeedle handles NA → empty", () => {
     expect(b.setNeedle("NA")._params.needle).toBe("");
     expect(b.setNeedle("x")._params.needle).toBe("x");
@@ -99,6 +102,11 @@ describe("GDN builder > clause generators (must)", () => {
   it("postOwnerName quoted", () => {
     b.setPostOwnerName('"BrandX"');
     expect(b.build().body.query.bool.must.length).toBeGreaterThan(0);
+  });
+  it("postOwnerName exact_search → normalized owner term filter", () => {
+    const out = new Builder().setExactSearch(true).setPostOwnerName("Apple").build();
+    expect(JSON.stringify(out.body.query.bool.filter)).toContain("gdn_ad_post_owners.post_owner_lower.keyword");
+    expect(JSON.stringify(out.body.query.bool.filter)).toContain("apple");
   });
   it("ocr quoted/non-quoted both", () => {
     expect(new Builder().setOcr("text").build().body.query.bool.must.length).toBeGreaterThan(0);

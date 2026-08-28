@@ -9,6 +9,7 @@ const {
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
 } = require('../../common/helpers/aiMetaSearchFilter');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 // Shared SQL fragment for fetching full ad details by IDs
 const AD_DETAIL_SELECT = `
@@ -73,6 +74,28 @@ function dedupeRows(rows) {
     seen.add(r.ad_id);
     return true;
   });
+}
+
+async function resolveExactPostOwnerIds(advertiser, db, logger) {
+  if (!db.sql || !advertiser) return [];
+
+  try {
+    const rows = await db.sql.query(
+      `SELECT id
+       FROM linkedin_ad_post_owners
+       WHERE LOWER(post_owner_name) = ?`,
+      [advertiser]
+    );
+    return rows
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id));
+  } catch (err) {
+    logger.warn('Failed to resolve LinkedIn exact advertiser ids from SQL', {
+      advertiser,
+      error: err.message,
+    });
+    return [];
+  }
 }
 
 // ─── Favorite / Hidden search helpers ───────────────────
@@ -248,6 +271,12 @@ async function searchHiddenAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
+  const exactAdvertiserName = (
+    (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
+    && p.advertiser
+  )
+    ? normalizePostOwnerName(p.advertiser)
+    : '';
 
   if (!p.user_id) {
     return { code: 400, message: 'Missing params: user_id is required' };
@@ -278,6 +307,17 @@ async function searchAds(req, db, logger) {
   }
 
   // ─── Search text fields ───────────────────────────────
+  // LinkedIn's ES mapping stores the stable advertiser id on `post_owner_id`.
+  // Use that for exact advertiser mode so we don't widen strict AI searches
+  // through the analyzed `post_owner` text field.
+  builder.setExactSearch(!!exactAdvertiserName);
+  if (exactAdvertiserName) {
+    const exactPostOwnerIds = await resolveExactPostOwnerIds(exactAdvertiserName, db, logger);
+    if (exactPostOwnerIds.length) {
+      builder.setExactPostOwnerIds(exactPostOwnerIds);
+    }
+  }
+
   if (p.keyword)     builder.setKeyword(p.keyword);
   if (p.advertiser)  builder.setPostOwnerName(p.advertiser);
   if (p.domain)      builder.setUrl(p.domain);
@@ -446,6 +486,13 @@ ORDER BY FIELD(linkedin_ad.id, ${placeholders})
           if (src['verified'] !== undefined)         row.verified = src['verified'];
           if (src['first_seen'] !== undefined)       row.first_seen = src['first_seen'];
           if (src['duration'] !== undefined)         row.days_running = src['duration'];
+          if (!row.post_owner && src['post_owner'])  row.post_owner = src['post_owner'];
+          if (!row.post_owner_image && src['post_owner_image']) {
+            row.post_owner_image = src['post_owner_image'];
+          }
+          if (!row.post_owner_id && src['post_owner_id'] !== undefined) {
+            row.post_owner_id = src['post_owner_id'];
+          }
 
           // Popularity from ES
           if (src.popularity?.current !== undefined) {
@@ -471,11 +518,27 @@ ORDER BY FIELD(linkedin_ad.id, ${placeholders})
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
         ...ad,
+        post_owner: ad.post_owner || src['post_owner'] || null,
+        post_owner_id: ad.post_owner_id || src['post_owner_id'] || null,
+        post_owner_image: ad.post_owner_image || src['post_owner_image'] || null,
         market_platform_urls: {
           redirect_urls: src['redirect_urls'] || null,
         },
       };
     });
+
+    if (exactAdvertiserName) {
+      const beforeCount = finalAds.length;
+      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      if (beforeCount !== finalAds.length) {
+        logger.warn('Filtered LinkedIn exact-search rows that lost advertiser identity after hydration', {
+          requestedAdvertiser: p.advertiser,
+          removedRows: beforeCount - finalAds.length,
+          from,
+          size,
+        });
+      }
+    }
 
     return {
       code: 200,

@@ -9,6 +9,7 @@ const {
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
 } = require('../../common/helpers/aiMetaSearchFilter');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 // ─── SQL fragments ───────────────────────────────────────────────────────────
 //
@@ -84,6 +85,28 @@ function dedupeRows(rows) {
     seen.add(r.ad_id);
     return true;
   });
+}
+
+async function resolveExactPostOwnerIds(advertiser, db, logger) {
+  if (!db.sql || !advertiser) return [];
+
+  try {
+    const rows = await db.sql.query(
+      `SELECT id
+       FROM youtube_ad_post_owners
+       WHERE LOWER(post_owner_name) = ?`,
+      [advertiser]
+    );
+    return rows
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id));
+  } catch (err) {
+    logger.warn('Failed to resolve YouTube exact advertiser ids from SQL', {
+      advertiser,
+      error: err.message,
+    });
+    return [];
+  }
 }
 
 // ─── Special search modes ─────────────────────────────────────────────────────
@@ -251,6 +274,12 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p   = normalizeParams(raw);
+  const exactAdvertiserName = (
+    (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
+    && p.advertiser
+  )
+    ? normalizePostOwnerName(p.advertiser)
+    : '';
 
   if (!p.user_id) return { code: 400, message: 'Missing params: user_id is required' };
 
@@ -275,6 +304,17 @@ async function searchAds(req, db, logger) {
     .setIncludeDisplayAds(raw.youtube_display_ads);
 
   if (p.status && Array.isArray(p.status) && p.status.length > 0) builder.setStatus(p.status);
+
+  // YouTube's live index stores the stable advertiser id on `post_owner_id`.
+  // Use it in exact advertiser mode so strict AI searches are not widened by
+  // the analyzed `post_owner` text field.
+  builder.setExactSearch(!!exactAdvertiserName);
+  if (exactAdvertiserName) {
+    const exactPostOwnerIds = await resolveExactPostOwnerIds(exactAdvertiserName, db, logger);
+    if (exactPostOwnerIds.length) {
+      builder.setExactPostOwnerIds(exactPostOwnerIds);
+    }
+  }
 
   const adPositionArr = p.ad_position ? ensureArray(p.ad_position) : [];
   if (adPositionArr.length > 0 && adPositionArr.length < 4) builder.setAdPosition(adPositionArr);
@@ -424,6 +464,13 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
           if (src['duration']  !== undefined) row.days_running = src['duration'];
           if (src['call_to_action'] !== undefined) row.call_to_action = src['call_to_action'];
           if (src['text_image_title'] !== undefined) row.text_image_title = src['text_image_title'];
+          if (!row.post_owner && src['post_owner']) row.post_owner = src['post_owner'];
+          if (!row.post_owner_image && src['post_owner_image']) {
+            row.post_owner_image = src['post_owner_image'];
+          }
+          if (!row.post_owner_id && src['post_owner_id'] !== undefined) {
+            row.post_owner_id = src['post_owner_id'];
+          }
           if (src['youtube.lowerBudget']   !== undefined) row.lowerBudget   = src['youtube.lowerBudget'];
           if (src['youtube.upperBudget']   !== undefined) row.upperBudget   = src['youtube.upperBudget'];
           if (src['youtube.averageBudget'] !== undefined) row.averageBudget = src['youtube.averageBudget'];
@@ -451,11 +498,27 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       return {
         ...ad,
         language,
+        post_owner: ad.post_owner || src['post_owner'] || null,
+        post_owner_id: ad.post_owner_id || src['post_owner_id'] || null,
+        post_owner_image: ad.post_owner_image || src['post_owner_image'] || null,
         market_platform_urls: {
           redirect_urls: src['redirect_urls'] || null,
         },
       };
     });
+
+    if (exactAdvertiserName) {
+      const beforeCount = finalAds.length;
+      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      if (beforeCount !== finalAds.length) {
+        logger.warn('Filtered YouTube exact-search rows that lost advertiser identity after hydration', {
+          requestedAdvertiser: p.advertiser,
+          removedRows: beforeCount - finalAds.length,
+          from,
+          size,
+        });
+      }
+    }
 
     return {
       code: 200,

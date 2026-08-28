@@ -24,6 +24,7 @@ const {
   shouldProfile,
   wrapIfNeed,
 } = require('../../common/helpers/esQueryHelpers');
+const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 const DEFAULT_PIN_INDEX = process.env.PIN_ELASTIC_INDEX || 'pinterest_search_mix';
 
@@ -76,6 +77,7 @@ class PinterestSearchQueryBuilder {
   setSortMethod(v) { if (v === 'asc' || v === 'desc') this._sortMethod = v; return this; }
   setIpBasedCountry(v) { this._ipBasedCountry = (v && v !== 'NA') ? v : ''; return this; }
   setProfile(v) { this._profile = v; return this; }
+  setExactSearch(v) { this._params.exactSearch = !!v; return this; }
 
   setKeyword(v)        { this._params.keyword = v; return this; }
   setPostOwnerName(v)  { this._params.postOwnerName = v; return this; }
@@ -137,18 +139,34 @@ class PinterestSearchQueryBuilder {
     return asMust(phraseAcrossFields(fields, kw));
   }
 
+  _isExactSearch() {
+    return !!this._params.exactSearch;
+  }
+
   _getPostOwnerNameEnv() {
     const name = this._params.postOwnerName;
     if (!name) return null;
+    const rawName = String(name);
+    const clean = rawName.replace(/"/g, '').trim();
+    if (!clean) return null;
+    if (this._isExactSearch()) {
+      // Pinterest stores a normalized owner key at ingestion time; use it when
+      // exact_search is requested so strict advertiser matching survives AI mode.
+      return asFilter({
+        term: {
+          'pinterest_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
+        },
+      });
+    }
     const fields = [
       'pinterest_ad_post_owners.post_owner_name','pinterest_ad_post_owners.post_owner_name_ru',
       'pinterest_ad_post_owners.post_owner_name_fr','pinterest_ad_post_owners.post_owner_name_sp',
       'pinterest_ad_post_owners.post_owner_name_ge','pinterest_ad_post_owners.post_owner_name_exactly',
     ];
-    if (name.includes('"')) {
+    if (rawName.includes('"')) {
       return asMust({
         multi_match: {
-          query: name.replace(/"/g, ''),
+          query: clean,
           type: 'phrase',
           fields: ['pinterest_ad_post_owners.post_owner_name_exactly'],
         },
@@ -157,8 +175,8 @@ class PinterestSearchQueryBuilder {
     return asMust({
       bool: {
         should: [
-          phraseAcrossFields(fields, name),
-          { prefix: { 'pinterest_ad_post_owners.post_owner_name': name.toLowerCase() } },
+          phraseAcrossFields(fields, clean),
+          { prefix: { 'pinterest_ad_post_owners.post_owner_name': clean.toLowerCase() } },
         ],
         minimum_should_match: 1,
       },
@@ -467,6 +485,9 @@ PinterestSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'pinterest_ad.days_running',
   'new_nas_image_url',
   'nas_video_url',
+  'pinterest_ad_post_owners.post_owner_name',
+  'pinterest_ad_post_owners.post_owner_name_exactly',
+  'pinterest_ad_post_owners.post_owner_image',
   'pinterest_ad_url.url_destination',
   'pinterest_ad_url.url_redirects',
   'pinterest_ad_outgoing_links.source_url',

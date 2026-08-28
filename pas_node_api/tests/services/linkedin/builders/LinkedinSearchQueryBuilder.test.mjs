@@ -50,9 +50,12 @@ describe("Linkedin builder > construction + setters", () => {
   });
   it("simple value setters", () => {
     b.setKeyword("k").setPostOwnerName("po").setUrl("u").setVerified("1")
-      .setNotCountry("RU").setAdDetailId("id").setOcr("o").setHtmlContent("html");
+      .setNotCountry("RU").setAdDetailId("id").setOcr("o").setHtmlContent("html")
+      .setExactSearch(true).setExactPostOwnerIds([11, "12"]);
     expect(b._params.keyword).toBe("k");
     expect(b._params.htmlContent).toBe("html");
+    expect(b._params.exactSearch).toBe(true);
+    expect(b._params.exactPostOwnerIds).toEqual([11, "12"]);
   });
   it("setNeedle handles NA → empty", () => {
     expect(b.setNeedle("NA")._params.needle).toBe("");
@@ -98,10 +101,21 @@ describe("Linkedin builder > clause generators", () => {
     const must = b.build().body.query.bool.must;
     expect(must.some(m => m.bool?.should?.some(s => s.prefix?.post_owner === "brand"))).toBe(true);
   });
+  it("postOwnerName exact-search → match_phrase without prefix widener", () => {
+    b.setExactSearch(true).setPostOwnerName("Apple");
+    const must = b.build().body.query.bool.must;
+    expect(must.some(m => m.match_phrase?.post_owner === "Apple")).toBe(true);
+    expect(must.some(m => m.bool?.should?.some(s => s.prefix?.post_owner))).toBe(false);
+  });
   it("postOwnerName quoted → multi_match phrase only", () => {
     b.setPostOwnerName('"BrandX"');
     const must = b.build().body.query.bool.must;
     expect(must.some(m => m.multi_match?.query === "BrandX")).toBe(true);
+  });
+  it("exactPostOwnerIds → terms filter on top-level post_owner_id", () => {
+    b.setExactPostOwnerIds([101, "202"]);
+    expect(b.build().body.query.bool.filter.some(f =>
+      JSON.stringify(f).includes('"post_owner_id":[101,202]'))).toBe(true);
   });
   it("ocr quoted/non-quoted both work", () => {
     expect(new Builder().setOcr("text").build().body.query.bool.must.length).toBeGreaterThan(0);
@@ -226,5 +240,6 @@ describe("Linkedin builder > ip-based country boost", () => {
 describe("Linkedin builder > SEARCH_SOURCE_FIELDS", () => {
   it("static class property", () => {
     expect(Builder.SEARCH_SOURCE_FIELDS).toContain("ad_id");
+    expect(Builder.SEARCH_SOURCE_FIELDS).toContain("post_owner");
   });
 });

@@ -47,9 +47,10 @@ describe("Facebook builder > construction + setters", () => {
     }
   });
   it("simple value setters", () => {
-    b.setKeyword("k").setPostOwnerName("po").setUrl("u").setNotCountry("RU")
+    b.setKeyword("k").setExactSearch(true).setPostOwnerName("po").setUrl("u").setNotCountry("RU")
       .setAdDetailId("id").setOcr("o").setHtmlContent("html");
     expect(b._params.keyword).toBe("k");
+    expect(b._params.exactSearch).toBe(true);
   });
   it("setNeedle handles NA → empty", () => {
     expect(b.setNeedle("NA")._params.needle).toBe("");
@@ -92,6 +93,14 @@ describe("Facebook builder > clause generators (must)", () => {
     b.setPostOwnerName('"BrandX"');
     const must = b.build().body.query.bool.must;
     expect(must.some(m => m.multi_match?.query === "BrandX")).toBe(true);
+  });
+  it("exact_search advertiser → normalized exact term filter instead of broad prefix matching", () => {
+    b.setExactSearch(true).setPostOwnerName(" Apple ");
+    const out = b.build().body.query.bool;
+    expect(out.filter).toContainEqual({
+      term: { "facebook_ad_post_owners.post_owner_lower.keyword": "apple" },
+    });
+    expect(JSON.stringify(out.must || [])).not.toContain("prefix");
   });
   it("ocr quoted/non-quoted work", () => {
     expect(new Builder().setOcr("text").build().body.query.bool.must.length).toBeGreaterThan(0);
