@@ -5,9 +5,11 @@ const require = createRequire(import.meta.url);
 const config = require('../../../../src/config');
 const {
   applyAiMetaFilters,
+  addAiMetaVisibleCountAgg,
   getAiMetaFilterClauses,
   getAiMetaEsField,
   getAiMetaOfferTypeEsField,
+  readAiMetaVisibleCount,
 } = require('../../../../src/services/common/helpers/aiMetaSearchFilter');
 const originalEnv = config.env;
 
@@ -53,6 +55,24 @@ describe('aiMetaSearchFilter', () => {
     const esParams = { body: { query: { match_all: {} } } };
     applyAiMetaFilters(esParams, 'facebook', { has_ai_meta: false });
     expect(esParams.body.query).toEqual({ match_all: {} });
+  });
+
+  it('counts LinkedIn AI-filtered cards through the flat ad_id field', () => {
+    const esParams = { body: { query: { bool: { filter: [] } } } };
+
+    addAiMetaVisibleCountAgg(esParams, 'linkedin', { has_ai_meta: true });
+
+    expect(esParams.body.aggs).toEqual({
+      total_ads: {
+        cardinality: {
+          field: 'ad_id',
+          precision_threshold: 40000,
+        },
+      },
+    });
+    expect(readAiMetaVisibleCount({
+      aggregations: { total_ads: { value: 9 } },
+    })).toBe(9);
   });
 
   it('maps fixed contract fields and offer_type to the resolved ES object', () => {

@@ -44,7 +44,7 @@ import { Check, X, Loader2, Info } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
-import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
+import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setAiPrompt, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
 import { useBrowserHistoryState, coalesceNextHistoryWrite } from './hooks/useBrowserHistoryState';
 import { ADMOB_FRONTEND_ENABLED } from './constants';
 
@@ -388,6 +388,7 @@ const App = () => {
   // Browser back/forward: push a history snapshot on reversible state changes;
   // restore on popstate. URL stays unchanged (Option C).
   const historySnapshot = useMemo(() => ({
+    aiPrompt: ui.aiPrompt,
     searchQuery: ui.searchQuery,
     searchIn: ui.searchIn,
     exactSearch: ui.exactSearch,
@@ -395,9 +396,10 @@ const App = () => {
     specificPlatforms: ui.specificPlatforms,
     filterValues: sdui.filterValues,
     activePlatforms: sdui.activePlatforms,
-  }), [ui.searchQuery, ui.searchIn, ui.exactSearch, ui.activeTab, ui.specificPlatforms, sdui.filterValues, sdui.activePlatforms]);
+  }), [ui.aiPrompt, ui.searchQuery, ui.searchIn, ui.exactSearch, ui.activeTab, ui.specificPlatforms, sdui.filterValues, sdui.activePlatforms]);
 
   useBrowserHistoryState(historySnapshot, (snap) => {
+    if (snap.aiPrompt !== undefined) dispatch(setAiPrompt(snap.aiPrompt));
     if (snap.searchQuery !== undefined) dispatch(setSearchQuery(snap.searchQuery));
     if (snap.searchIn !== undefined) dispatch(setSearchIn(snap.searchIn));
     if (snap.exactSearch !== undefined) dispatch(setExactSearch(snap.exactSearch));
@@ -1949,6 +1951,35 @@ const App = () => {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiRunIdRef = useRef(0);
 
+  // Keep every Ask AI reset path consistent: clear the DS-applied payload,
+  // forget the user-visible prompt, restore the All-networks view, and cancel
+  // any in-flight AI run so late responses cannot repopulate the dashboard.
+  const resetAiSearchState = useCallback(() => {
+    aiRunIdRef.current += 1;
+    setAiSearchLoading(false);
+    dispatch(setSearchQuery(''));
+    dispatch(setAiPrompt(''));
+    dispatch(setSearchIn('keyword'));
+    dispatch(setExactSearch(false));
+    dispatch(setSpecificPlatforms([]));
+    sdui.clearAll?.();
+    const permitted = Array.isArray(planAllowedPlatforms)
+      ? allPlatformValues.filter((network) => (
+          isCustomPlan
+            ? isPlanNetworkAllowed(planAllowedPlatforms, network)
+            : isAdsSearchNetworkAllowed(planAllowedPlatforms, network)
+        ))
+      : allPlatformValues;
+    sdui.setActivePlatforms(permitted);
+    setSearchTrigger((prev) => prev + 1);
+  }, [
+    allPlatformValues,
+    dispatch,
+    isCustomPlan,
+    planAllowedPlatforms,
+    sdui,
+  ]);
+
   const handleSearch = useCallback((query, type, platform, options = {}) => {
     if (guest?.isPublicLanding && guest?.isRestricted) {
       trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'header', feature_name: 'ad_search', ...getNetworkContext(platform ? [platform] : ui.specificPlatforms), request_context: 'search', search_mode: 'standard', search_type: String(type || ui.searchIn || 'keyword').toLowerCase() });
@@ -2020,8 +2051,14 @@ const App = () => {
   // The applied filters remain fully visible and manually editable afterward.
   const runAiSearch = useCallback(async (prompt) => {
     const trimmed = (prompt || '').trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      resetAiSearchState();
+      return;
+    }
     if (guestGuard("Please login to search", { searchQuery: trimmed })) return;
+    // Store the raw user prompt separately so Ask AI keeps showing exactly what
+    // the user typed even when the DS payload rewrites the internal query.
+    dispatch(setAiPrompt(trimmed));
 
     const runId = ++aiRunIdRef.current;
     setAiSearchLoading(true);
@@ -2120,7 +2157,7 @@ const App = () => {
     } finally {
       if (runId === aiRunIdRef.current) setAiSearchLoading(false);
     }
-  }, [guestGuard, dispatch, sdui, showToast]);
+  }, [guestGuard, dispatch, resetAiSearchState, sdui, showToast]);
 
   // Explicitly turning the AI toggle OFF abandons the AI search: clear the
   // AI-applied query + filters so nothing lingers on screen or gets restored on
@@ -2129,11 +2166,8 @@ const App = () => {
   // input mode, and from the auto-reset when the upstream goes unhealthy (which
   // keeps results — a failed health probe isn't a "leave AI search" intent).
   const exitAiSearch = useCallback(() => {
-    dispatch(setSearchQuery(''));
-    dispatch(setExactSearch(false));
-    sdui.clearAll?.();
-    setSearchTrigger((prev) => prev + 1);
-  }, [dispatch, sdui]);
+    resetAiSearchState();
+  }, [resetAiSearchState]);
 
   // Recent Activity ("Today / Yesterday / Last Week / Last Month") click on the
   // competitor analytics table → land on the ads library searching that
@@ -2492,6 +2526,7 @@ const App = () => {
         isSidebarOpen={ui.isSidebarOpen}
         setIsSidebarOpen={(val) => dispatch(setSidebarOpen(val))}
         committedQuery={ui.searchQuery}
+        aiPrompt={ui.aiPrompt}
         onSearch={(query, type, platform) =>
           handleSearch(query, type, platform, { showScraperToast: true })
         }

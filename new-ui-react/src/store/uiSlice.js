@@ -17,6 +17,7 @@ const uiSlice = createSlice({
     isSidebarOpen: true,
     // Search
     searchQuery: '',
+    aiPrompt: '',
     searchIn: 'keyword',
     exactSearch: false,
     activeTab: '',
@@ -43,6 +44,9 @@ const uiSlice = createSlice({
     },
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
+    },
+    setAiPrompt: (state, action) => {
+      state.aiPrompt = action.payload;
     },
     setSearchIn: (state, action) => {
       state.searchIn = action.payload;
@@ -72,6 +76,7 @@ export const {
   setShowSavedAdsPage,
   setSidebarOpen,
   setSearchQuery,
+  setAiPrompt,
   setSearchIn,
   setExactSearch,
   setActiveTab,

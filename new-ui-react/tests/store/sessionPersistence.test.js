@@ -4,6 +4,7 @@ import { persistReducer, persistStore } from 'redux-persist';
 import sessionStorageAdapter from 'redux-persist/lib/storage/session';
 import uiReducer, {
   setActivePage,
+  setAiPrompt,
   setSearchQuery,
   setSpecificPlatforms,
 } from '../../src/store/uiSlice';
@@ -66,6 +67,7 @@ describe('tab-scoped Redux persistence', () => {
   it('restores and writes the complete UI state only in the current tab', async () => {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
       activePage: '"projects"',
+      aiPrompt: '"this-tab-ai-prompt"',
       searchQuery: '"this-tab-search"',
       specificPlatforms: '["google"]',
     }));
@@ -73,16 +75,19 @@ describe('tab-scoped Redux persistence', () => {
     const { store, persistor } = await createPersistedUiStore();
     try {
       expect(store.getState().activePage).toBe('projects');
+      expect(store.getState().aiPrompt).toBe('this-tab-ai-prompt');
       expect(store.getState().searchQuery).toBe('this-tab-search');
       expect(store.getState().specificPlatforms).toEqual(['google']);
 
       store.dispatch(setActivePage('ads'));
+      store.dispatch(setAiPrompt('updated-ai-prompt'));
       store.dispatch(setSearchQuery('updated-search'));
       store.dispatch(setSpecificPlatforms(['youtube']));
       await persistor.flush();
 
       const tabState = JSON.parse(sessionStorage.getItem(STORAGE_KEY));
       expect(tabState.activePage).toBe('"ads"');
+      expect(tabState.aiPrompt).toBe('"updated-ai-prompt"');
       expect(tabState.searchQuery).toBe('"updated-search"');
       expect(tabState.specificPlatforms).toBe('["youtube"]');
       expect(localStorage.getItem(STORAGE_KEY)).toBeNull();

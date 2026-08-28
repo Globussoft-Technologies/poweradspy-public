@@ -12,7 +12,9 @@ const AI_VISIBLE_COUNT_FIELDS = {
   instagram: 'instagram_ad.id',
   youtube: 'ad_id',
   gdn: 'gdn_ad.id',
-  linkedin: 'linkedin_ad.id',
+  // LinkedIn search docs are indexed as flat objects, so the internal
+  // `linkedin_ad.id` value is exposed on the top-level `ad_id` field.
+  linkedin: 'ad_id',
   native: 'native_ad.id',
   reddit: 'reddit_ad.id',
   quora: 'quora_ad.id',

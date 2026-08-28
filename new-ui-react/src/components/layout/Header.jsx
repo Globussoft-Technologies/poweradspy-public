@@ -87,6 +87,7 @@ const Header = ({
   isSidebarOpen,
   setIsSidebarOpen,
   searchQuery,
+  aiPrompt = "",
   setSearchQuery,
   searchIn,
   setSearchIn,
@@ -155,15 +156,19 @@ const Header = ({
   const [langOpen, setLangOpen] = useState(false);
   const langRef = useRef(null);
 
-  // Local input state — only syncs to Redux on Enter/button click via onSearch
-  const [localQuery, setLocalQuery] = useState(searchQuery || "");
+  // Local input state — standard search mirrors the committed Redux query,
+  // while Ask AI mirrors the user's raw prompt so DS payload rewrites never
+  // leak back into the visible prompt box.
+  const [localQuery, setLocalQuery] = useState(
+    aiMode ? (aiPrompt || "") : (searchQuery || "")
+  );
   // When a category is selected we clear Redux searchQuery (category-only search)
   // but must NOT wipe the visible input — this ref suppresses that one sync.
   const skipQuerySyncRef = useRef(false);
   useEffect(() => {
     if (skipQuerySyncRef.current) { skipQuerySyncRef.current = false; return; }
-    setLocalQuery(searchQuery || "");
-  }, [searchQuery]);
+    setLocalQuery(aiMode ? (aiPrompt || "") : (searchQuery || ""));
+  }, [aiMode, aiPrompt, searchQuery]);
 
   // Local search type — only syncs to Redux on submit
   const [localSearchIn, setLocalSearchIn] = useState(searchIn || "keyword");
@@ -580,7 +585,11 @@ const Header = ({
                     }
                   }}
                   onClear={() => {
-                    if (!aiMode && onSearch) onSearch("", localSearchIn);
+                    if (aiMode) {
+                      if (onAiSearch) onAiSearch("");
+                      return;
+                    }
+                    if (onSearch) onSearch("", localSearchIn);
                   }}
                   onSearch={(val) => {
                     if (aiMode) {

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import reducer, {
   openModal, closeModal,
   setActivePage, setShowSavedAdsPage, setSidebarOpen,
-  setSearchQuery, setSearchIn, setExactSearch, setActiveTab,
+  setSearchQuery, setAiPrompt, setSearchIn, setExactSearch, setActiveTab,
   setPreviewMode, setSpecificPlatforms, setSavedAdsTab,
 } from "../../src/store/uiSlice.js";
 
@@ -19,6 +19,7 @@ describe("store/uiSlice > initial state", () => {
       showSavedAdsPage: false,
       isSidebarOpen: true,
       searchQuery: "",
+      aiPrompt: "",
       searchIn: "keyword",
       exactSearch: false,
       activeTab: "",
@@ -47,6 +48,7 @@ describe("store/uiSlice > setters", () => {
     [setShowSavedAdsPage, "showSavedAdsPage", true],
     [setSidebarOpen, "isSidebarOpen", false],
     [setSearchQuery, "searchQuery", "hello"],
+    [setAiPrompt, "aiPrompt", "show me linkedin video ads"],
     [setSearchIn, "searchIn", "domain"],
     [setExactSearch, "exactSearch", true],
     [setActiveTab, "activeTab", "Oldest"],
