@@ -4,6 +4,7 @@ const ANALYTICS_PLATFORM_TITLES = {
   facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube',
   google: 'Google', gdn: 'GDN', native: 'Native', linkedin: 'LinkedIn',
   reddit: 'Reddit', quora: 'Quora', pinterest: 'Pinterest', tiktok: 'TikTok',
+  admob: 'AdMob',
 };
 
 const KNOWN_PLAN_TIERS = ['free', 'starter', 'basic', 'standard', 'pro', 'premium', 'enterprise'];

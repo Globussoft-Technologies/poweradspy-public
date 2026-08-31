@@ -222,16 +222,27 @@ export function useSDUI() {
     const [activePlatforms, setActivePlatformsState] = useState(() =>
         withoutDisabledPlatforms(loadTabState(PLATFORMS_STORAGE_KEY, []))
     );
-    const setActivePlatforms = useCallback((nextValue) => {
-        setActivePlatformsState(previous => withoutDisabledPlatforms(
-            typeof nextValue === 'function' ? nextValue(previous) : nextValue
-        ));
-    }, []);
-    const [platformFilterMatrix, setPlatformFilterMatrix] = useState({});
-
     // Refs to avoid circular deps — always up to date
     const activePlatformsRef = useRef(activePlatforms);
     activePlatformsRef.current = activePlatforms;
+    const setActivePlatforms = useCallback((nextValue) => {
+        setActivePlatformsState(previous => {
+            const resolved = withoutDisabledPlatforms(
+                typeof nextValue === 'function' ? nextValue(previous) : nextValue
+            );
+            // Keep the ref in lockstep synchronously. Programmatic flows that
+            // switch platforms and then read platform context in the SAME tick
+            // — e.g. the Projects "Recent Activity" drill-down, which selects the
+            // competitor's platforms and immediately applies a seen-date filter
+            // whose filter_applied GA event resolves its network context from
+            // this ref — would otherwise attribute the event to the previous
+            // page's platforms. Mirrors setFilter's synchronous
+            // filterValuesRef update below.
+            activePlatformsRef.current = resolved;
+            return resolved;
+        });
+    }, []);
+    const [platformFilterMatrix, setPlatformFilterMatrix] = useState({});
 
     // The UI owns the authoritative meaning of the visible "All" tab. A
     // platform-array comparison is not reliable because plan restrictions can

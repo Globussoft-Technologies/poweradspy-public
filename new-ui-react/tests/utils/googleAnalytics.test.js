@@ -8,6 +8,7 @@ import {
   resolveGa4RuntimeEnvironment,
   resolvePlanTier,
   trackAdAction,
+  trackAnalyticsPageView,
 } from '../../src/utils/googleAnalytics';
 
 describe('trackAdAction', () => {
@@ -61,6 +62,38 @@ describe('trackAdAction', () => {
     expect(resolvePlanTier({ userSubscriptionType: 'Pro Annual' })).toBe('pro');
     expect(resolvePlanTier({ userSubscriptionType: 'Customer-specific plan' })).toBe('other');
     expect(classifyError({ status: 503 })).toBe('server_error');
+  });
+});
+
+describe('trackAnalyticsPageView', () => {
+  afterEach(() => {
+    delete window.gtag;
+    vi.unstubAllEnvs();
+  });
+
+  it('rewrites the ID-bearing URL to a clean /{network}/adanalytics page view', () => {
+    vi.stubEnv('GOOGLE_GA4_ENABLED', 'local'); // jsdom hostname is localhost
+    window.gtag = vi.fn();
+
+    expect(trackAnalyticsPageView('quora')).toBe(true);
+
+    // gtag('set', ...) persists the clean path so every *subsequent* event
+    // (from the analytics modal, ad grid, search, ...) stops leaking the ID.
+    expect(window.gtag).toHaveBeenCalledWith('set', {
+      page_path: '/quora/adanalytics',
+      page_location: `${window.location.origin}/quora/adanalytics`,
+      page_title: 'Ad Analytics for Quora',
+    });
+    expect(window.gtag).toHaveBeenCalledWith('event', 'page_view', {
+      page_path: '/quora/adanalytics',
+      page_location: `${window.location.origin}/quora/adanalytics`,
+      page_title: 'Ad Analytics for Quora',
+    });
+  });
+
+  it('does nothing when gtag is unavailable', () => {
+    vi.stubEnv('GOOGLE_GA4_ENABLED', 'local');
+    expect(trackAnalyticsPageView('quora')).toBe(false);
   });
 });
 

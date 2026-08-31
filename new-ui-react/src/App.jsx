@@ -540,6 +540,15 @@ const App = () => {
       });
     }, delayMs);
   }, []);
+  // Dismiss the "search underway"/crawl-status banner (source: 'search') on navigating
+  // to a different top-level page — e.g. clicking "All Projects" in the sidebar. Keyed
+  // off ui.activePage (not raw location.pathname) so opening an ad-detail deep link
+  // (/facebook/<id> etc., which changes the URL but stays on the Ads Library page)
+  // doesn't dismiss it — only an actual section change does.
+  useEffect(() => {
+    hideToastAfter("search", 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ui.activePage, ui.showSavedAdsPage]);
 
   // Landing State (from URL)
   const [landingAd, setLandingAd] = useState(() => {
@@ -762,6 +771,22 @@ const App = () => {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  // A deep link, page refresh, or browser Back/Forward can open the analytics
+  // modal straight from the URL (e.g. /quora/124725) without going through
+  // openAnalyticsModal(), so trackAnalyticsPageView() never ran and GA4 keeps
+  // the raw, ID-bearing URL as page_location for every subsequent event. Fire
+  // the clean /{network}/adanalytics page view for those URL-driven opens too.
+  // Gated on _fromUrl so the click path (which already calls it) isn't doubled.
+  useEffect(() => {
+    if (selectedAdForAnalytics?._fromUrl && selectedAdForAnalytics.network) {
+      trackAnalyticsPageView(selectedAdForAnalytics.network);
+    }
+  }, [
+    selectedAdForAnalytics?._fromUrl,
+    selectedAdForAnalytics?.id,
+    selectedAdForAnalytics?.network,
+  ]);
 
   // Sync SDUI platform with URL network if landing directly on an ad
   useEffect(() => {
@@ -1938,6 +1963,12 @@ const App = () => {
   const guestSetSearchQuery = (val) => {
     if (guest?.isPublicLanding && guest?.isRestricted) { guest.showGuestWarning("Please login to search"); return; }
     if (guestGuard("Please login to search", { searchQuery: val, searchIn: ui.searchIn })) return;
+    // Clearing the query this way (e.g. the "Clear filter(s)" pill in Header.jsx, which
+    // calls setSearchQuery("") directly) bypasses handleSearch entirely, so it needs its
+    // own dismiss for the "search underway"/crawl-status banner (source: 'search').
+    if (!String(val || "").trim()) {
+      hideToastAfter("search", 0);
+    }
     dispatch(setSearchQuery(val));
   };
   const guestSetSearchIn = (val) => {
@@ -2234,6 +2265,13 @@ const App = () => {
     if (pls.length) {
       sdui.setActivePlatforms(pls);
       dispatch(setSpecificPlatforms(pls));
+      // A specific competitor platform set is being selected — not the "All"
+      // tab. The seen-date filter_applied event fired synchronously by the
+      // handleDateChange call below resolves its network context from this ref,
+      // and the effect that keeps it in sync only runs after this render, so
+      // set it now or the event inherits the previous page's "all" scope
+      // instead of the platforms the user just drilled into.
+      sdui.setAnalyticsAllPlatformsSelected(false);
     }
 
     // This click is meaningful even when the selected period contains zero ads,
