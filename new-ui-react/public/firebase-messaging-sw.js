@@ -23,10 +23,14 @@ try {
       const title = d.title || 'PowerAdSpy';
       const options = {
         body: d.body || '',
-        icon: d.icon || '/assets/imgs/icon-192x192.webp',
-        badge: '/assets/imgs/icon-192x192.webp',
+        icon: d.icon || '/assets/favicon.png',
+        badge: '/assets/favicon.png',
         tag: 'pas-notification',
         data: { link: d.action_button || '/' },
+        actions: [
+          { action: 'open', title: 'Open' },
+          { action: 'close', title: 'Close' },
+        ],
       };
       if (d.image) options.image = d.image;
       self.registration.showNotification(title, options);
@@ -40,6 +44,7 @@ try {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  if (event.action === 'close') return; // "Close" action button — just dismiss, no navigation
   const link = (event.notification.data && event.notification.data.link) || '/';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

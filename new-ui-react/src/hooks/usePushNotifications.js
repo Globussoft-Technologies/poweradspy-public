@@ -60,10 +60,14 @@ export const usePushNotifications = () => {
               const reg = await navigator.serviceWorker.ready;
               reg.showNotification(d.title || 'PowerAdSpy', {
                 body: d.body || '',
-                icon: d.icon || '/assets/imgs/icon-192x192.webp',
-                badge: '/assets/imgs/icon-192x192.webp',
+                icon: d.icon || '/assets/favicon.png',
+                badge: '/assets/favicon.png',
                 tag: 'pas-notification',
                 data: { link: d.action_button || '/' },
+                actions: [
+                  { action: 'open', title: 'Open' },
+                  { action: 'close', title: 'Close' },
+                ],
               });
             } catch (e) {
               console.warn('[usePushNotifications] showNotification failed:', e);

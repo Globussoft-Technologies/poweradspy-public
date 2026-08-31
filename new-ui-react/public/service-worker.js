@@ -8,8 +8,8 @@ self.addEventListener('push', event => {
 
     const options = {
       body: body,
-      icon: icon || '/assets/imgs/icon-192x192.webp',
-      badge: badge || '/assets/imgs/icon-192x192.webp',
+      icon: icon || '/assets/favicon.png',
+      badge: badge || '/assets/favicon.png',
       image: image,
       tag: 'notification',
       requireInteraction: false,
@@ -17,7 +17,7 @@ self.addEventListener('push', event => {
         {
           action: 'open',
           title: 'Open',
-          icon: '/assets/imgs/icon-192x192.webp'
+          icon: '/assets/favicon.png'
         },
         {
           action: 'close',
