@@ -61,12 +61,84 @@ src/services/instagram/
 
 ---
 
+## 3a. `POST /landers/insert_html_lander` — request payload & error contract
+
+### Request payload (per lander / `insertData` object)
+
+The scraper posts either `{ ad_id, insertData: { …fields } }` or a bare flat
+object, optionally inside a top-level array for a batch. `insertData` fields:
+
+| Field | Rule | Notes |
+|-------|------|-------|
+| `ad_id` | required | also accepted on the outer wrapper |
+| `status` | required, `1` (blackhat) or `2` (whitehat) | |
+| `crawled_by` | required, `.net` or `python` | |
+| `country_iso` | present, string or null | e.g. `"us"`, `"in"` |
+| `destinations` | present, string or null | full destination URL |
+| `html_path` | present, string or null | NAS zip path |
+| `screen_shot` | present, string or null | NAS png path |
+| `html_content` | present, string or null | rendered lander text (also read as `html`) |
+| `domain_registered_date` | present, may be null | `YYYY-MM-DD` |
+| `redirects` | optional array | |
+| `outgoing_url` | optional array of `{ redirect_urls, destination_url, … }` | |
+| `domain_age`, `IsDataCenterProxy`, `ad_category` | optional | not validated |
+
+> Field contract is **identical to the Facebook landers validator**
+> (`insertHtmlService.js`). Example (verified):
+> ```json
+> { "ad_id": 149710, "insertData": {
+>     "ad_id": 149710, "redirects": [], "outgoing_url": [],
+>     "destinations": "https://takedownshop.com/pages/wholesale",
+>     "country_iso": "us", "html_path": "/pas-dev/.../149710_us_2_..._html.zip",
+>     "html_content": "…", "screen_shot": "/pas-dev/.../149710_us_2_....png",
+>     "status": 2, "domain_age": 1, "domain_registered_date": "2007-01-30",
+>     "IsDataCenterProxy": 1, "crawled_by": "python", "ad_category": [] } }
+> ```
+
+> **Known gap (not yet aligned with Facebook):** the service derives the domain
+> from `data.domain_name`, but the scraper sends the URL as `destinations`. With
+> real payloads `domain_name` is absent, so the `instagram_ad_domain` upsert and
+> the `instagram_ad.domain_id` link are skipped. Facebook derives this from
+> `destinations` via `extractDomain()`.
+
+### Error contract
+
+Mirrors the Facebook landers behaviour: every failure returns a professional,
+specific message instead of a generic string.
+
+```
+LandersController.insertHtmlContent(req, res, service)
+  ├─ body guard        → empty body / array → { code:400, "Request body is empty ..." }
+  ├─ normalizeLanderItems → accepts { insertData:{} } | { insertData:[{}] } | flat { ad_id, … }
+  │                         | [ … ] (top-level array); ad_id read from wrapper OR lander object
+  │      malformed item  → { code:400, "No lander details were found for payload item(s) at index N ..." }
+  ├─ dependency guard   → db.sql | db.elastic missing → { code:500, "A backend dependency is not available ..." }
+  ├─ validateRequest(item) per item → names every offending field, e.g.
+  │      rules (same field contract as the Facebook landers validator):
+  │             ad_id required · status required|in:1,2 · crawled_by required|in:.net,python
+  │             country_iso | destinations | html_path | screen_shot | html_content = present|string|nullable
+  │             domain_registered_date = present|nullable
+  │      one missing:  { code:400, 'The "insertData.<field>" field is missing from the payload and is required.' }
+  │      many missing: { code:400, 'The following required fields are missing from insertData: "a", "b".' }
+  │      bad value:    { code:400, 'The "insertData.crawled_by" field is invalid ... must be exactly ".net" or "python".' }
+  │      (multi-item payloads prefix the message with "... for payload item at index N")
+  └─ InsertHtmlContentService.insertHtmlContent(items, db)  → per-item result in data[]:
+         ES miss           → { code:400, 'Ad "<id>" was not found in the search index (instagram_search_mix) ...' }
+         domain insert 0   → { code:400, 'Insert failed: could not add domain "<d>" to instagram_ad_domain ...' }
+         meta update 0 rows→ { code:400, 'Update failed: the instagram_ad_meta_data update for ad "<id>" affected 0 rows ...' }
+         any thrown error  → { code:400, 'Failed to store the destination lander for ad "<id>": <actual DB/validation error>' }
+         success           → { code:200, 'HTML content inserted successfully' }
+     Envelope stays { code:200, message:"Processing complete", data:[…], exe_time }.
+```
+
+---
+
 ## 4. Database Tables
 
 | Table | Ad-id Column | Role |
 |-------|--------------|------|
 | `instagram_ad_meta_data` | `instagram_ad_id` | status machine, paths, dates |
-| `instagram_ad_domains` | `id` (PK) | domain + registration date |
+| `instagram_ad_domain` | `id` (PK) | domain + registration date (singular table name in `repository.js`) |
 | `instagram_ad_url` | `instagram_ad_id` | redirect + destination urls |
 | `instagram_ad_outgoing_links` | `instagram_ad_id` | source/redirect/final chains |
 | `instagram_ad_html_lander_content` | `instagram_ad_id` | HTML lander content |
@@ -82,7 +154,13 @@ src/services/instagram/
 - ✅ Multi-table transactional updates
 - ✅ JSON array path storage
 - ✅ NAS file upload integration
+- ✅ `insert_html_lander` error contract aligned with Facebook (§3a) — specific
+  messages for missing/invalid fields, malformed body, missing dependency,
+  ES miss, failed domain insert, and 0-row meta update
+- ⚠️ Domain derivation still reads `domain_name` instead of `destinations` (§3a Known gap)
 
 ---
 
-**Version: v1.0** – Instagram landers fully implemented with per-ad validation.
+**Version: v1.1** – Instagram landers with per-ad validation and the Facebook-parity
+`insert_html_lander` error contract (§3a). Validator field contract matches
+`facebook/landers/insertHtmlService.js`.

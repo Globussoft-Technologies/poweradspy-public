@@ -264,6 +264,10 @@ const PageAccessError = ({ onRetry }) => (
   </div>
 );
 
+// sessionStorage key for restoring the search crawl-status banner across a page
+// refresh — see the restore effect and hideToastAfter in the App component below.
+const SEARCH_TOAST_STORAGE_KEY = 'pas_search_crawl_toast';
+
 const App = () => {
   const ui = useSelector(state => state.ui);
   const dispatch = useDispatch();
@@ -503,6 +507,10 @@ const App = () => {
   });
   const toastTimerRef = useRef(null);
   const searchToastStartedAtRef = useRef(0);
+  // Tracks the (locally-owned-in-AdGrid) ad detail popup's open state, purely so the
+  // crawl-status banner below can hide WHILE it's open and reappear once it closes —
+  // see the toast's render condition further down.
+  const [adDetailModalOpen, setAdDetailModalOpen] = useState(false);
   const showToast = useCallback((
     message,
     type = "success",
@@ -530,6 +538,9 @@ const App = () => {
     toastTimerRef.current = setTimeout(() => {
       setToast((current) => {
         if (source && current.source !== source) return current;
+        if (source === 'search') {
+          try { sessionStorage.removeItem(SEARCH_TOAST_STORAGE_KEY); } catch { /* unavailable */ }
+        }
         return {
           show: false,
           message: "",
@@ -540,15 +551,34 @@ const App = () => {
       });
     }, delayMs);
   }, []);
-  // Dismiss the "search underway"/crawl-status banner (source: 'search') on navigating
-  // to a different top-level page — e.g. clicking "All Projects" in the sidebar. Keyed
-  // off ui.activePage (not raw location.pathname) so opening an ad-detail deep link
-  // (/facebook/<id> etc., which changes the URL but stays on the Ads Library page)
-  // doesn't dismiss it — only an actual section change does.
+  // The "search underway"/crawl-status banner (source: 'search') should HIDE while on
+  // a different top-level page (e.g. "All Projects") and REAPPEAR on coming back to the
+  // Ads Library — not be dismissed for good. Handled as a render-gate at the toast's
+  // JSX further down (onAdsDashboardPage), not by clearing state here — same
+  // hide-vs-dismiss distinction as the modal handling below.
+  const onAdsDashboardPage = ui.activePage === 'ads' && !ui.showSavedAdsPage;
+
+  // Restore the crawl-status banner across a full page refresh (all React state is
+  // lost on reload; sessionStorage survives it). Written by the two showToast(...)
+  // calls in the saveKeywordSearch().then() block below, cleared by hideToastAfter
+  // whenever a 'search' toast is genuinely dismissed (query cleared). Expires after
+  // 2h so a stale message can't resurface in some later, unrelated session.
   useEffect(() => {
-    hideToastAfter("search", 0);
+    try {
+      const raw = sessionStorage.getItem(SEARCH_TOAST_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!saved?.message || Date.now() - (saved.savedAt || 0) > 2 * 60 * 60 * 1000) {
+        sessionStorage.removeItem(SEARCH_TOAST_STORAGE_KEY);
+        return;
+      }
+      showToast(saved.message, saved.type || 'notice', null, 'top', 'search');
+    } catch {
+      // corrupt/unavailable storage — nothing to restore
+    }
+    // Mount-only: this is a one-time restore, not a live sync.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ui.activePage, ui.showSavedAdsPage]);
+  }, []);
 
   // Landing State (from URL)
   const [landingAd, setLandingAd] = useState(() => {
@@ -1019,6 +1049,7 @@ const App = () => {
     // cannot produce a false empty result.
     sdui.clearAll?.();
     dispatch(setSearchQuery(''));
+    hideToastAfter("search", 0);
     dispatch(setExactSearch(false));
     dispatch(setSpecificPlatforms([]));
     sdui.setActivePlatforms(purchasedNetworks);
@@ -1649,6 +1680,7 @@ const App = () => {
         }))) {
           dispatch(setSearchQuery(''));
           sdui.clearAll?.();
+          hideToastAfter("search", 0);
           setLoadingMore(false);
           guest?.showGuestWarning?.("Please login to search and filter ads");
           return;
@@ -1741,7 +1773,12 @@ const App = () => {
         if (page === 0 && lastDailyKeywordRef.current) {
           const { query, si, userEmail, network, country, GT } = lastDailyKeywordRef.current;
           lastDailyKeywordRef.current = null; // clear immediately so filter changes don't re-trigger
-          const adsCount = data?.meta?.total?.facebook ?? data?.ads?.filter(a => a.network === 'facebook')?.length ?? 0;
+          // Was hardcoded to data.meta.total.facebook regardless of which platform tab
+          // was actually active — searching on TikTok/LinkedIn/etc. always checked
+          // Facebook's count, so "No ads yet" showed even with hundreds of cached ads on
+          // the platform actually being viewed. Use the ads actually returned for THIS
+          // search instead, whatever platform(s) that covers.
+          const adsCount = data?.ads?.length ?? 0;
           const adsFound = adsCount > 0;
           saveKeywordSearch({
             value: query,
@@ -1757,23 +1794,25 @@ const App = () => {
             // submit time in handleSearch) in place, rather than spawning a second toast.
             // durationMs: null — stays up until the user clears the keyword (handleSearch
             // dismisses source:'search' toasts on an empty query) or starts a new search.
+            // Persisted to sessionStorage too (see the mount-time restore effect above)
+            // so this survives a full page refresh, not just in-memory navigation.
+            const showSearchStatusToast = (message) => {
+              showToast(message, 'notice', null, 'top', 'search');
+              try {
+                sessionStorage.setItem(SEARCH_TOAST_STORAGE_KEY, JSON.stringify({
+                  message, type: 'notice', savedAt: Date.now(),
+                }));
+              } catch { /* unavailable — in-memory toast still works this session */ }
+            };
             if (!adsFound) {
-              showToast(
+              showSearchStatusToast(
                 "No ads yet for this — we're crawling now. Usually ready in 15–20 min; " +
-                "we'll notify you the moment new ads come in.",
-                'notice',
-                null,
-                'top',
-                'search',
+                "we'll notify you the moment new ads come in."
               );
             } else {
-              showToast(
+              showSearchStatusToast(
                 "Showing what we have — our crawler is still checking for new ads. " +
-                "We'll notify you if anything new shows up.",
-                'notice',
-                null,
-                'top',
-                'search',
+                "We'll notify you if anything new shows up."
               );
             }
           }).catch(() => {});
@@ -2005,6 +2044,7 @@ const App = () => {
     aiRunIdRef.current += 1;
     setAiSearchLoading(false);
     dispatch(setSearchQuery(''));
+    hideToastAfter("search", 0);
     dispatch(setAiPrompt(''));
     dispatch(setSearchIn('keyword'));
     dispatch(setExactSearch(false));
@@ -2836,6 +2876,8 @@ const App = () => {
             activeTab={ui.activeTab}
             setActiveTab={(val) => dispatch(setActiveTab(val))}
             onAnalyzeAd={handleAnalyzeAd}
+            onAdDetailOpen={() => setAdDetailModalOpen(true)}
+            onAdDetailClose={() => setAdDetailModalOpen(false)}
             onAnalyticsAd={(ad, navigationContext) => {
               if (guest?.isRestricted) {
                 dispatch(openModal('isPricingModalOpen'));
@@ -2870,6 +2912,10 @@ const App = () => {
             onClearAll={() => {
               if (sdui.clearAll) sdui.clearAll();
               dispatch(setSearchQuery(""));
+              // Clearing here bypasses handleSearch/guestSetSearchQuery entirely (a
+              // direct Redux dispatch), so it needs its own dismiss for the
+              // crawl-status banner (source: 'search'), same as those two paths.
+              hideToastAfter("search", 0);
             }}
             onPlatformRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onToggleSidebar={() => dispatch(setSidebarOpen(!ui.isSidebarOpen))}
@@ -3004,17 +3050,24 @@ const App = () => {
         </div>
       )}
 
-      {/* Toast Notification */}
-      {toast.show && (
-        <div 
-          className={`fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 ${
+      {/* Toast Notification — hidden (not dismissed) while an ad detail/analytics
+          modal covers the page, so it doesn't render on top of the modal; state is
+          untouched, so it reappears automatically once the modal closes. */}
+      {toast.show && !adDetailModalOpen && !selectedAdForAnalytics && (toast.source !== 'search' || onAdsDashboardPage) && (
+        <div
+          className={`fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 ${
             toast.source === 'search'
-              ? 'lg:left-[65%] top-[90px] slide-in-from-top-4'
+              ? 'lg:left-[64%] top-[90px] slide-in-from-top-4'
               : toast.position === 'bottom'
               ? 'bottom-16 slide-in-from-bottom-4'
               : 'top-[140px] slide-in-from-top-4'
           }`}
-          style={{ 
+          style={{
+            // Narrower than the generic max-w cap above — the search-sourced banner
+            // is centered on a fixed left:% point, so at its old width it could
+            // overlap the platform icon row to its left. Text just wraps onto an
+            // extra line instead.
+            maxWidth: toast.source === 'search' ? 'min(calc(100vw - 2rem), 650px)' : undefined,
             backgroundColor: toast.source === 'search'
               ? 'rgba(238, 242, 250, 0.96)'
               : toast.type === 'info'

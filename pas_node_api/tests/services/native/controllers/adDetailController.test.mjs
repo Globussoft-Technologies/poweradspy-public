@@ -186,6 +186,30 @@ describe("services/native/controllers/adDetailController > ES overlay", () => {
     expect(getLanguageMap).not.toHaveBeenCalled();
   });
 
+  it("lang_detect='Eb' (bad value) → language stays null, resolveLanguageName not called", async () => {
+    const db = {
+      sql: { query: vi.fn(adQueryImpl()) },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: { lang_detect: "Eb" } }] } })) },
+    };
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].language).toBeNull();
+    expect(getLanguageMap).not.toHaveBeenCalled();
+    expect(resolveLanguageName).not.toHaveBeenCalled();
+  });
+
+  it("lang_detect='eb'/'EB' casing also filtered", async () => {
+    for (const bad of ["eb", "EB"]) {
+      getLanguageMap.mockClear();
+      const db = {
+        sql: { query: vi.fn(adQueryImpl()) },
+        elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: { lang_detect: bad } }] } })) },
+      };
+      const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+      expect(out.data[0].language).toBeNull();
+      expect(getLanguageMap).not.toHaveBeenCalled();
+    }
+  });
+
   it("language requested but key missing → branch skipped", async () => {
     const db = {
       sql: { query: vi.fn(adQueryImpl()) },

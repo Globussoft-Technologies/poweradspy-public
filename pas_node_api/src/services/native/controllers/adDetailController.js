@@ -113,10 +113,12 @@ async function getAdDetails(req, db, logger) {
           if (src['native.category'] !== undefined) adData.category = src['native.category'];
           if (src['native.subCategory'] !== undefined) adData.subCategory = src['native.subCategory'];
 
-          // Language from ES lang_detect ISO
-          if (src['lang_detect']) {
+          // Language from ES lang_detect ISO. 'Eb' is a known bad detection
+          // value — treat it as unknown so the frontend hides the field.
+          if (src['lang_detect'] && String(src['lang_detect']).toLowerCase() !== 'eb') {
             const langMap = await getLanguageMap(db.sql);
-            adData.language = resolveLanguageName(langMap, src['lang_detect']);
+            const langName = resolveLanguageName(langMap, src['lang_detect']);
+            adData.language = String(langName).toLowerCase() === 'eb' ? null : langName;
           }
 
           // Market platform URL fields

@@ -56,10 +56,13 @@ class InsertHtmlContentService {
     
 
         const existsInEs = await repository.checkAdInEs(data.ad_id, esWrapper);
-      
+
 
         if (!existsInEs) {
-          throw new Error('ad not found');
+          throw new Error(
+            `Ad "${data.ad_id}" was not found in the search index (instagram_search_mix). `
+              + 'The ad must be indexed before its destination lander can be stored.'
+          );
         }
 
         const domain = data.domain_name ? data.domain_name.split('/')[0] : null;
@@ -70,7 +73,11 @@ class InsertHtmlContentService {
             domain,
             data.domain_registered_date
           );
-        
+          if (!domainId) {
+            throw new Error(
+              `Insert failed: could not add domain "${domain}" to instagram_ad_domain (no row id returned).`
+            );
+          }
         }
 
         if (data.outgoing_url && Array.isArray(data.outgoing_url)) {
@@ -198,9 +205,18 @@ class InsertHtmlContentService {
           metadataUpdate.blackhat_status = 1;
         }
 
-       
-        await repository.updateMetadata(data.ad_id, metadataUpdate);
-       
+        const metaUpdated = await repository.updateMetadata(data.ad_id, metadataUpdate);
+        if (!metaUpdated) {
+          results.push({
+            ad_id: data.ad_id,
+            code: 400,
+            message:
+              `Update failed: the instagram_ad_meta_data update for ad "${data.ad_id}" affected 0 rows. `
+              + 'Either no meta record exists for this ad or the submitted values were already current — '
+              + 'nothing was changed, and the search index was not updated.',
+          });
+          continue;
+        }
 
         if (domainId) {
           const updateAdSql = `UPDATE instagram_ad SET domain_id = ? WHERE id = ?`;
@@ -230,8 +246,8 @@ class InsertHtmlContentService {
         console.error(`Error processing ad ${data.ad_id}:`, error);
         results.push({
           ad_id: data.ad_id,
-          code: 500,
-          message: error.message,
+          code: 400,
+          message: `Failed to store the destination lander for ad "${data.ad_id}": ${error.message}`,
         });
       }
     }
@@ -243,21 +259,120 @@ class InsertHtmlContentService {
     };
   }
 
+  /**
+   * Validate one lander (insertData) object. Same field contract as the Facebook
+   * landers validator. Returns { isValid, errors } where `errors` holds
+   * professional, specific messages that name exactly which field is missing /
+   * of the wrong type / carrying an invalid value.
+   *
+   *   ad_id                  => required
+   *   status                 => required|in:1,2
+   *   crawled_by             => required|in:.net,python
+   *   country_iso            => present|string|nullable
+   *   destinations           => present|string|nullable
+   *   html_path              => present|string|nullable
+   *   screen_shot            => present|string|nullable
+   *   html_content           => present|string|nullable
+   *   domain_registered_date => present|nullable
+   */
   static validateRequest(data) {
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+      return {
+        isValid: false,
+        errors: ['The "insertData" object is missing or malformed. Expected a JSON object containing the lander details.'],
+      };
+    }
+
     const errors = [];
 
-    if (!data.ad_id) errors.push('ad_id is required');
-    if (!data.status) errors.push('status is required');
-    if (!data.crawled_by) errors.push('crawled_by is required');
+    // required: key present AND value not null/undefined/empty-string.
+    const REQUIRED_VALUE_KEYS = ['ad_id', 'status', 'crawled_by'];
+    // present|string|nullable: key must exist; if the value is not null, it must be a string.
+    const PRESENT_STRING_NULLABLE_KEYS = [
+      'country_iso', 'destinations', 'html_path', 'screen_shot', 'html_content',
+    ];
+    // present|nullable: key must exist; value may be anything (incl. null).
+    const PRESENT_NULLABLE_KEYS = ['domain_registered_date'];
 
-    if (data.status && ![1, 2].includes(parseInt(data.status))) {
-      errors.push('status must be 1 (blackhat) or 2 (whitehat)');
+    // 1. required — must be present and non-empty.
+    const missingRequired = REQUIRED_VALUE_KEYS.filter(
+      (k) => data[k] === undefined || data[k] === null || data[k] === ''
+    );
+    // 2. present — key must exist in the payload (value may be null).
+    const missingPresent = [...PRESENT_STRING_NULLABLE_KEYS, ...PRESENT_NULLABLE_KEYS].filter(
+      (k) => !(k in data)
+    );
+    const missing = [...missingRequired, ...missingPresent];
+    if (missing.length === 1) {
+      errors.push(`The "insertData.${missing[0]}" field is missing from the payload and is required.`);
+    } else if (missing.length > 1) {
+      errors.push(
+        `The following required fields are missing from insertData: ${missing.map((k) => `"${k}"`).join(', ')}.`
+      );
+    }
+
+    // 3. string|nullable — when present and not null, the value must be a string.
+    for (const k of PRESENT_STRING_NULLABLE_KEYS) {
+      if (data[k] !== null && data[k] !== undefined && typeof data[k] !== 'string') {
+        errors.push(`The "insertData.${k}" field must be a string or null (received ${typeof data[k]}).`);
+      }
+    }
+
+    // 4. status => in:1,2
+    if (
+      data.status !== undefined && data.status !== null && data.status !== '' &&
+      ![1, 2].includes(parseInt(data.status, 10))
+    ) {
+      errors.push(
+        `The "insertData.status" field is invalid (received ${JSON.stringify(data.status)}). `
+          + 'It must be 1 (blackhat) or 2 (whitehat).'
+      );
+    }
+
+    // 5. crawled_by => in:.net,python
+    if (
+      data.crawled_by !== undefined && data.crawled_by !== null && data.crawled_by !== '' &&
+      data.crawled_by !== '.net' && data.crawled_by !== 'python'
+    ) {
+      errors.push(
+        `The "insertData.crawled_by" field is invalid (received ${JSON.stringify(data.crawled_by)}). `
+          + 'It must be exactly ".net" or "python".'
+      );
     }
 
     return {
       isValid: errors.length === 0,
       errors,
     };
+  }
+
+  /**
+   * Normalise the incoming request body into an array of flat lander objects.
+   * Accepts every shape the scrapers send:
+   *   - { ad_id, insertData: { ... } }
+   *   - { ad_id, insertData: [ { ... } ] }
+   *   - [ { ad_id, insertData: { ... } }, ... ]
+   *   - { ad_id, country_iso, ... }            (flat body — fields at the top level)
+   *   - [ { ... }, ... ]                        (top-level array of flat objects)
+   * An element that carries no usable object becomes `null` so the caller can
+   * report exactly which payload item is malformed.
+   */
+  static normalizeLanderItems(rawBody) {
+    if (rawBody === undefined || rawBody === null) return [];
+    const rawArray = Array.isArray(rawBody) ? rawBody : [rawBody];
+    return rawArray.map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      let lander = 'insertData' in item ? item.insertData : item;
+      if (Array.isArray(lander)) lander = lander[0];
+      if (!lander || typeof lander !== 'object' || Array.isArray(lander)) return null;
+      // ad_id may sit on the wrapper rather than on the lander object.
+      const hasAdId = lander.ad_id !== undefined && lander.ad_id !== null && lander.ad_id !== '';
+      const wrapperAdId = item.ad_id;
+      if (!hasAdId && wrapperAdId !== undefined && wrapperAdId !== null && wrapperAdId !== '') {
+        lander = { ...lander, ad_id: wrapperAdId };
+      }
+      return lander;
+    });
   }
 }
 

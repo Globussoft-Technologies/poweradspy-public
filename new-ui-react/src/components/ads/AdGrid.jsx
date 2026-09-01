@@ -155,6 +155,8 @@ const AdGrid = ({
   setActiveTab,
   onAnalyzeAd,
   onAnalyticsAd,
+  onAdDetailOpen,
+  onAdDetailClose,
   analyticsAllowed = true,
   setPage,
   hasMore = true,
@@ -774,7 +776,8 @@ const AdGrid = ({
       request_context: "ad_open",
     });
     setSelectedAd(ad);
-  }, [guest]);
+    onAdDetailOpen?.();
+  }, [guest, onAdDetailOpen]);
   const [showAllChips, setShowAllChips] = useState(false);
 
   // Scroll to Top state
@@ -1457,7 +1460,7 @@ const AdGrid = ({
           ad={selectedAd}
           isAiFilteredResult={isAiFilteredResult}
           sduiConfig={sdui.config}
-          onClose={() => setSelectedAd(null)}
+          onClose={() => { setSelectedAd(null); onAdDetailClose?.(); }}
           isFavourite={
             selectedAd
               ? favouriteAdIds.has(`${(selectedAd.network || '').toLowerCase()}:${Number(selectedAd.adId || selectedAd.id)}`)
