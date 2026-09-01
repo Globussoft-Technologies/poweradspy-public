@@ -569,7 +569,11 @@ async function searchAds(req, db, logger) {
   // ─── Lander properties ────────────────────────────────
   if (p.ecommerce)        builder.setBuiltWith(ensureArray(p.ecommerce));
   if (p.track)            builder.setTrack(ensureArray(p.track));
-  if (p.source)           builder.setSource(ensureArray(p.source));
+  // Alias trafficSource -- the "Traffic Source" SDUI filter's query_param is
+  // literally "trafficSource" (not "source"), so the real frontend request
+  // sends that key. Without this alias the filter was silently ignored (0
+  // filter clauses applied, full unfiltered result set returned).
+  if (p.source || p.trafficSource) builder.setSource(ensureArray(p.source || p.trafficSource));
   if (p.funnel)           builder.setFunnel(ensureArray(p.funnel));
   if (p.affiliate)        builder.setAffiliate(ensureArray(p.affiliate));
   if (p.market_platform)  builder.setMarketPlatform(ensureArray(p.market_platform));
