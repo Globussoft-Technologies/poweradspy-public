@@ -81,6 +81,7 @@ const AD_TYPE_ICONS = {
   discovery: Search,
   "text-image": Type,
   text: Type,
+  stories: Film,
 };
 
 const BRAND_COLOR = "rgb(51, 82, 150)";

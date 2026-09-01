@@ -176,6 +176,7 @@ const AD_TYPE_ICONS = {
   discovery: Search,
   "text-image": Type,
   text: Type,
+  stories: Film,
 };
 
 const StarRating = ({ rating }) => {

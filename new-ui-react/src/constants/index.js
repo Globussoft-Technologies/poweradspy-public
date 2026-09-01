@@ -120,7 +120,11 @@ export const AD_TYPE_BADGES = {
     discovery:   { color: 'bg-sky-500/15 text-sky-400 border-sky-500/20',       label: 'Discovery' },
     'text-image': { color: 'bg-gray-500/15 text-gray-400 border-gray-500/20',   label: 'Text-Image' },
     text:           { color: 'bg-gray-500/15 text-gray-400 border-gray-500/20',         label: 'Text' },
-    story:          { color: 'bg-pink-500/15 text-pink-400 border-pink-500/20',          label: 'Story' },
+    // Keyed 'stories' (plural) to match mapAdType()'s output in services/api.js —
+    // the DB value is 'STORIES', so a singular 'story' key here never matched and
+    // every Stories ad silently fell back to the 'image' badge/icon everywhere
+    // this map is used (MasonryCard, AdDetailModal, AdCard, SharedAdView).
+    stories:        { color: 'bg-pink-500/15 text-pink-400 border-pink-500/20',          label: 'Stories' },
     reel:           { color: 'bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/20', label: 'Reel' },
     native_ad:      { color: 'bg-orange-500/15 text-orange-400 border-orange-500/20',    label: 'Native Ad' },
     organic_search: { color: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20', label: 'Organic Search' },
