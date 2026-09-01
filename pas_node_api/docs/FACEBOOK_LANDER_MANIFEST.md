@@ -83,17 +83,36 @@ uploadService.uploadFileToServer(req)
 ### POST `/landers/insertHtmlRedirectCountry`  (JSON: `{ ad_id, insertData }`)
 ```
 insertHtmlService.insertHtmlRedirectCountry(req, db)
-  ├─ ES check search_mix (must exist) → else { code:400, "ad not found" }
-  ├─ validate insertData (present|nullable fields; ad_id/status/crawled_by required)
+  ├─ normalizeBody   → accepts { ad_id, insertData:{} } | { ad_id, insertData:[{}] }
+  │                    | [ {…} ] (top-level array) | flat { ad_id, country_iso, … };
+  │                    ad_id read from top level OR from the lander object
+  ├─ body guard      → empty body / no lander details / missing ad_id → { code:400, <specific message> }
+  ├─ dependency guard → sql|elastic not initialised → { code:500, "A backend dependency is not available ..." }
+  ├─ ES check search_mix (must exist) → else { code:400, "Ad \"<id>\" was not found in the search index ..." }
+  ├─ validate insertData (Laravel-parity rules) → names the offending field, e.g.
+  │     rules: ad_id required · status required · crawled_by required|in:.net,python
+  │            country_iso|destinations|html_path|screen_shot|html_content = present|string|nullable
+  │            domain_registered_date = present|nullable
+  │     one missing:  { code:400, 'The "insertData.<field>" field is missing from the payload and is required.' }
+  │     many missing: { code:400, 'The following required fields are missing from insertData: "a", "b".' }
+  │     wrong type:   { code:400, 'The "insertData.country_iso" field must be a string or null (received number).' }
+  │     bad crawled_by: { code:400, 'The "insertData.crawled_by" field is invalid ... must be exactly ".net" or "python".' }
   ├─ status=3 → flip redirect_status (3=.net / 5=python) and RETURN
   ├─ domain upsert (facebook_ad_domains) + dod_date stamp + facebook_ad.domain_id
+  │     domain_registered_date: "" / "0" / "0000-00-00[ 00:00:00]" → coerced to NULL (cleanDate)
+  │       so a strict-mode DATE column never sees ''. New row → inserted as NULL. Existing row
+  │       → date column only rewritten when a REAL date is supplied (a blank must not clobber an
+  │       existing date), but `id` (the domain link → facebook_ad.domain_id) is ALWAYS resolved
+  │     insert with no row id → throw "Insert failed: could not add domain \"<d>\" to facebook_ad_domains ..."
   ├─ country normalize ("us,gb" → "US||GB")
   ├─ blackhat(1)/whitehat(2) bookkeeping (screenshots/zips JSON arrays, dates, statuses)
-  ├─ outgoing upsert (facebook_ad_outgoing_links)
-  ├─ ad_url upsert: R rows (redirects) + D row (destination)
-  ├─ html_lander upsert (facebook_ad_html_lander_content)
+  ├─ outgoing upsert (facebook_ad_outgoing_links)   — insert with no row id → throw "Insert failed: ... outgoing-link row ..."
+  ├─ ad_url upsert: R rows (redirects) + D row (destination) — insert with no row id → throw "Insert failed: ... facebook_ad_url ..."
+  ├─ html_lander upsert (facebook_ad_html_lander_content) — insert with no row id → throw "Insert failed: ... facebook_ad_html_lander_content ..."
   ├─ meta update (facebook_ad_meta_data)
-  └─ if meta updated → ES update search_mix (DOTTED fields, see §5)
+  │     0 rows affected → { code:400, 'Update failed: the facebook_ad_meta_data update for ad "<id>" affected 0 rows ...' }
+  ├─ if meta updated → ES update search_mix (DOTTED fields, see §5)
+  └─ any thrown error is caught → { code:400, 'Failed to store the destination lander for ad "<id>": <actual DB/validation error>' }
      Response: { code, message, exe_time }
 ```
 

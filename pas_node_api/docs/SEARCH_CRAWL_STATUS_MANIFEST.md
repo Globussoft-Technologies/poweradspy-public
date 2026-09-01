@@ -7,9 +7,10 @@
 >
 > **Status: IMPLEMENTED AND VERIFIED.** Parts A/B (frontend banner) and Part C (first-ad
 > push) are both live in the codebase. Part C has been tested end-to-end against real dev
-> Mongo/SQL/ES, and — as of this session — against **real Firebase credentials**, including
-> an actual push delivered to a real device. See §5 for what was found during that testing
-> and §6 for the current known gaps.
+> Mongo/SQL/ES, and against **real Firebase credentials**, including several actual pushes
+> delivered to a real device. As of this update, the push also fires **while a term is
+> still mid-scrape** (§3), not just after the session closes. See §5 for what was found
+> during that testing and §6 for the current known gaps.
 
 ---
 
@@ -107,26 +108,61 @@ cron/poll rather than a new one, independent of the 20-ad bell threshold. Implem
   explicitly present in `config.json` (not just the code default), with its own
   `_firstAdPushEnabled_description`.
 
+**Update — fires mid-scrape, not just after the session closes.** Both scan functions'
+Mongo `find()` originally restricted the doc-selection query to
+`scrapping_status: { $elemMatch: { date: today, status: { $in: ['completed',
+'no_ads_found'] } } }` — a term still actively `scrapping` was invisible to the scan
+entirely, so even if ads had already started landing in ES, nothing fired until the
+scraper closed the session (another `/work` hit, or `/keyword-search/scraping-history`).
+Confirmed this gap with a real claimed-but-open session (via Postman against
+`/keyword-search/work`) before fixing it. Fix: dropped the `status` restriction from both
+queries — `{ scrapping_status: { $elemMatch: { date: today } } }` — so any status today
+(`scrapping`, `processing`, `completed`, `no_ads_found`, `failed`) gets scanned.
+**Side effect, intentional**: the 20-ad bell notification runs off this same doc
+selection, so it too can now fire mid-scrape once its threshold is crossed, instead of
+only after the session finishes — a strict improvement, not a separate behavior change.
+
 ---
 
 ## 4. Notification branding (icon)
 
-The push payload and both service workers already referenced a themed icon path
-(`/assets/imgs/icon-192x192.webp`) — [FirebaseService.js](../src/services/FirebaseService.js)
-(send side), [usePushNotifications.js](../../new-ui-react/src/hooks/usePushNotifications.js)
-and [firebase-messaging-sw.js](../../new-ui-react/public/firebase-messaging-sw.js) (display
-side) all point at the same file. The file itself didn't exist in the repo until this
-session — `public/assets/imgs/` was created and populated with the current PowerAdSpy logo
-(`src/assets/poweradspy-logo.webp` — the up-to-date one; `poweradspy-logo.png` in the same
-folder turned out to be a stale asset with an old tagline and was **not** used). Kept as
-`.webp` (not converted to `.png`) per explicit direction — a WebP file mislabeled with a
-`.png` extension would risk the browser failing to decode it, since static file servers
-typically set `Content-Type` from the extension, not the actual bytes.
+**Current state**: every reference — [FirebaseService.js](../src/services/FirebaseService.js)
+(send side), [usePushNotifications.js](../../new-ui-react/src/hooks/usePushNotifications.js),
+[firebase-messaging-sw.js](../../new-ui-react/public/firebase-messaging-sw.js), and
+`public/service-worker.js` (dead code — no `navigator.serviceWorker.register(...)` call
+targets it anywhere in the frontend, confirmed by grep; kept in sync for consistency only)
+— now points at **`/assets/favicon.png`**, backed by a direct, unmodified copy of
+`src/assets/favicon.png` placed at `public/assets/favicon.png`. Same file, same path
+convention, applied identically across three separate systems that all send push via the
+same Firebase project: `new-ui-react`, `api_youtube`, and the legacy PHP backend at
+`power-ad-spy-tool/api` (a local working copy — needs its own deploy to take effect there).
 
-`public/service-worker.js` also references this same icon path but is **dead code** — grepped
-the whole frontend for any `navigator.serviceWorker.register(...)` call targeting it and found
-none; the only registered service worker is `firebase-messaging-sw.js`. Updated its icon
-references too for consistency, but it isn't part of the live push pipeline.
+The original path (`/assets/imgs/icon-192x192.png` / `.webp`) never had a backing file at
+all in any of these three, which is why every notification showed a blank/default icon
+before this. That path went through several iterations before landing here — the full
+PowerAdSpy wordmark logo (illegible when squeezed into a small circular slot), then a
+hand-cropped square "AD" badge mark (cut from the wordmark via Windows' built-in .NET
+`System.Drawing`, no new dependency), before the final direction to just use
+`favicon.png` (the blue lightning-bolt/speech-bubble mark) as-is, unmodified — matching
+what a fourth, unrelated legacy system (`power-ad-spy-tool/web`, a *different* Firebase
+project entirely — see below) already shows in production. Mid-session, all of this work
+reverted once on disk for unknown reasons (not this session) and had to be redone
+identically — flagged plainly rather than silently reapplied.
+
+**A fourth, separate push-sending system was found**: `power-ad-spy-tool/web`
+(`public/assets/js/firebase-conf.js` + `firebase-messaging-sw.js`) — an older Laravel
+frontend on a **different Firebase project** (`poweradspy-firebase-prod`, no suffix,
+Firebase SDK v8 compat API) from the one this session's work uses
+(`poweradspy-firebase-prod-dea66`). This is what actually produces the "Lander Data
+Retrieval Failed"-style notifications seen live on `app-dev.poweradspy.com` — a
+completely separate codebase, not something this manifest's feature touches. Two things
+copied from reading it, not yet applied to our implementation:
+- `requireInteraction: true` in its `showNotification()` options — keeps the notification
+  on screen until dismissed, instead of Chrome's default auto-dismiss after a few
+  seconds. Not currently set anywhere in our `firebase-messaging-sw.js`/
+  `usePushNotifications.js`.
+- Per-action icons on the Open/Close buttons (`/assets/imgs/open.png` / `cancel.png`).
+  Ours currently sends text-only actions.
 
 ---
 
@@ -147,6 +183,14 @@ references too for consistency, but it isn't part of the live push pipeline.
    OAuth2 token exchange with Google succeeded, and a real push was sent via
    `firebaseService.sendNotification()` to a real registered token in dev's `am_user_action`
    table, confirmed received on a real device.
+4. **Mid-scrape trigger, confirmed both broken and fixed with the same test**: before the
+   §3 update, a synthetic doc with an open (`status: 'scrapping'`) session and ES already
+   showing 1 matching ad produced `scanned: 0, push sent: 0` — the doc-selection query
+   excluded it entirely. After dropping the `status` filter, the identical setup produces
+   `scanned: 1, push sent: 1`, with the dedup marker correctly set. Also re-confirmed the
+   real, live case this was reported from: a term claimed via a real `/keyword-search/work`
+   call (status `scrapping`, no `endTime`) does not get scanned until the session is
+   explicitly closed — that's the exact gap now fixed.
 
 ---
 
@@ -165,3 +209,6 @@ references too for consistency, but it isn't part of the live push pipeline.
   if/when the "Today's Searches" piece gets built.
 - `"Yem"` truncation and a handful of other data-quality items are LinkedIn-country-specific,
   tracked separately (not in this doc).
+- **Not yet applied**: `requireInteraction: true` and per-action button icons, found while
+  reading the unrelated `power-ad-spy-tool/web` system (§4) — offered, not yet actioned as
+  of this update.

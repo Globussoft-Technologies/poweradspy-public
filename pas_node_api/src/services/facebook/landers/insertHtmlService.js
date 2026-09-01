@@ -53,6 +53,20 @@ function splitDbList(dbValue) {
 
 const uniq = (arr) => [...new Set(arr)];
 
+/**
+ * Coerce a "date-ish" input to a real value or null.
+ * The scrapers frequently send "" (or the MySQL zero-date sentinels) when they
+ * could not resolve a registration date. On a strict-mode connection an empty
+ * string in a DATE column throws `Incorrect date value: ''`, so treat every blank
+ * form as "no date supplied".
+ */
+function cleanDate(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (s === '' || s === '0' || s === '0000-00-00' || s === '0000-00-00 00:00:00') return null;
+  return v;
+}
+
 /** Registrable domain from a destination URL (PHP parse_url + regex). */
 function extractDomain(destinations) {
   if (!destinations) return null;
@@ -67,23 +81,96 @@ function extractDomain(destinations) {
   return m ? m[1] : null;
 }
 
-// ── lightweight validator (mirrors the Laravel rules) ────────────────────────────
+// ── validator (faithful port of the Laravel rules) ──────────────────────────────
+//
+//   ad_id                  => required
+//   country_iso            => present|string|nullable
+//   destinations           => present|string|nullable
+//   html_path              => present|string|nullable
+//   screen_shot            => present|string|nullable
+//   html_content           => present|string|nullable
+//   status                 => required
+//   domain_registered_date => present|nullable
+//   crawled_by             => required|in:.net,python
 
+// required: key present AND value not null/undefined/empty-string.
+const REQUIRED_VALUE_KEYS = ['ad_id', 'status'];
+// present|string|nullable: key must exist; if the value is not null, it must be a string.
+const PRESENT_STRING_NULLABLE_KEYS = [
+  'country_iso', 'destinations', 'html_path', 'screen_shot', 'html_content',
+];
+// present|nullable: key must exist; value may be anything (incl. null).
+const PRESENT_NULLABLE_KEYS = ['domain_registered_date'];
+
+/**
+ * Validate the insertData payload.
+ * Returns null when valid, otherwise a professional, specific message that names
+ * exactly which field is missing, of the wrong type, or has an invalid value.
+ */
 function validate(value) {
-  const presentKeys = ['country_iso', 'destinations', 'html_path', 'screen_shot', 'html_content', 'domain_registered_date'];
-  if (value === null || typeof value !== 'object') return 'The insert data is invalid.';
-  if (value.ad_id === undefined || value.ad_id === null || value.ad_id === '') return 'The ad id field is required.';
-  if (value.status === undefined || value.status === null || value.status === '') return 'The status field is required.';
-  for (const k of presentKeys) {
-    if (!(k in value)) return `The ${k} field must be present.`;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return 'The "insertData" object is missing or malformed. Expected a JSON object containing the lander details.';
+  }
+
+  // 1. required — must be present and non-empty.
+  const missingRequired = REQUIRED_VALUE_KEYS.filter(
+    (k) => value[k] === undefined || value[k] === null || value[k] === ''
+  );
+  // 2. present — key must exist in the payload (value may be null).
+  const missingPresent = [...PRESENT_STRING_NULLABLE_KEYS, ...PRESENT_NULLABLE_KEYS].filter(
+    (k) => !(k in value)
+  );
+  const missing = [...missingRequired, ...missingPresent];
+  if (missing.length === 1) {
+    return `The "insertData.${missing[0]}" field is missing from the payload and is required.`;
+  }
+  if (missing.length > 1) {
+    return `The following required fields are missing from insertData: ${missing.map((k) => `"${k}"`).join(', ')}.`;
+  }
+
+  // 3. string|nullable — when present and not null, the value must be a string.
+  for (const k of PRESENT_STRING_NULLABLE_KEYS) {
+    if (value[k] !== null && value[k] !== undefined && typeof value[k] !== 'string') {
+      return `The "insertData.${k}" field must be a string or null (received ${typeof value[k]}).`;
+    }
+  }
+
+  // 4. crawled_by => required|in:.net,python
+  if (value.crawled_by === undefined || value.crawled_by === null || value.crawled_by === '') {
+    return 'The "insertData.crawled_by" field is missing from the payload and is required.';
   }
   if (value.crawled_by !== '.net' && value.crawled_by !== 'python') {
-    return 'The selected crawled by is invalid.';
+    return `The "insertData.crawled_by" field is invalid (received ${JSON.stringify(value.crawled_by)}). `
+      + 'It must be exactly ".net" or "python".';
   }
   return null;
 }
 
 const ES_DOC_TYPE = 'doc';
+
+/**
+ * Normalise the incoming request body into { ad_id, value } where `value` is the
+ * flat lander-detail object. Accepts every shape the legacy scrapers send:
+ *   - { ad_id, insertData: { ... } }        (documented Node shape)
+ *   - { ad_id, insertData: [ { ... } ] }    (PHP wraps insertData in a 1-element array)
+ *   - [ { ad_id, ... } ]                     (PHP destinationLander job — top-level array)
+ *   - { ad_id, country_iso, ... }            (flat body — fields at the top level)
+ */
+function normalizeBody(rawBody) {
+  let raw = rawBody;
+  if (Array.isArray(raw)) raw = raw[0];
+  if (raw === null || typeof raw !== 'object') return { ad_id: undefined, value: null };
+
+  let value = raw.insertData;
+  if (Array.isArray(value)) value = value[0];
+  // No insertData wrapper → the body itself carries the lander fields.
+  if (value === undefined || value === null) {
+    value = ('insertData' in raw) ? value : raw;
+  }
+
+  const ad_id = raw.ad_id ?? (value && typeof value === 'object' ? value.ad_id : undefined);
+  return { ad_id, value };
+}
 
 async function insertHtmlRedirectCountry(req, db, log) {
   const started = Date.now();
@@ -92,9 +179,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
   const elastic = db?.elastic;
   const ES_INDEX = elastic?.indexName || 'search_mix';
 
-  const body = req.body || {};
-  const ad_id = body.ad_id;
-  const value = body.insertData;
+  const { ad_id, value } = normalizeBody(req.body);
   const date = new Date().toISOString().slice(0, 10);
 
   // Accumulators (mirror PHP locals).
@@ -112,15 +197,31 @@ async function insertHtmlRedirectCountry(req, db, log) {
   const update_meta_table = {};
 
   try {
-    if (value === undefined || value === null) {
+    if (!req.body || typeof req.body !== 'object' || Object.keys(req.body).length === 0) {
       response.code = 400;
-      response.message = 'Some Error occurred';
+      response.message = 'Request body is empty. Expected a JSON body with the lander fields '
+        + '(either flat, or nested under an "insertData" object).';
+      response.exe_time = (Date.now() - started) / 1000;
+      return response;
+    }
+    if (value === undefined || value === null || typeof value !== 'object' || Array.isArray(value)) {
+      response.code = 400;
+      response.message = 'No lander details were found in the request body. Send the fields either at the top '
+        + 'level or nested under a non-null "insertData" object.';
+      response.exe_time = (Date.now() - started) / 1000;
+      return response;
+    }
+    if (ad_id === undefined || ad_id === null || ad_id === '') {
+      response.code = 400;
+      response.message = 'The "ad_id" field is missing. Provide it at the top level of the request body '
+        + 'or inside "insertData".';
       response.exe_time = (Date.now() - started) / 1000;
       return response;
     }
     if (!sql || !elastic) {
-      response.code = 400;
-      response.message = 'Some Error occurred';
+      response.code = 500;
+      response.message = `A backend dependency is not available (${!sql ? 'database' : 'search'} connection not initialised). `
+        + 'The request was not processed; please retry shortly.';
       response.exe_time = (Date.now() - started) / 1000;
       return response;
     }
@@ -130,7 +231,8 @@ async function insertHtmlRedirectCountry(req, db, log) {
     const esId = firstHitId(esFound);
     if (!esId) {
       response.code = 400;
-      response.message = 'ad not found';
+      response.message = `Ad "${ad_id}" was not found in the search index (${ES_INDEX}). `
+        + 'The ad must be indexed before its destination lander can be stored.';
       response.exe_time = (Date.now() - started) / 1000;
       return response;
     }
@@ -181,20 +283,26 @@ async function insertHtmlRedirectCountry(req, db, log) {
     domain_name = extractDomain(value.destinations);
     if (domain_name) {
       const domainRows = await repo.getDomainId(sql, domain_name);
-      domain_registered_date = value.domain_registered_date ?? null;
-      const domain_registerd = value.domain_registered_date;
+      // "" / "0" / "0000-00-00" from the scraper → store an explicit NULL, never ''.
+      const domain_registerd = cleanDate(value.domain_registered_date);
+      domain_registered_date = domain_registerd;
 
       if (domainRows[0] && domainRows[0].id != null) {
-        if (value.domain_registered_date !== undefined && value.domain_registered_date !== null) {
-          id = domainRows[0].id;
+        // Always resolve the domain link so facebook_ad.domain_id is set correctly.
+        id = domainRows[0].id;
+        // Only write the date column when the scraper actually resolved one — a blank
+        // value must not overwrite an existing real registration date with NULL.
+        if (domain_registerd !== null) {
           await repo.updateDomainRegisterDate(sql, id, domain_registerd);
         }
       } else {
-        const insert_domain = { domain: domain_name };
-        if (value.domain_registered_date !== undefined && value.domain_registered_date !== null) {
-          insert_domain.domain_registered_date = value.domain_registered_date;
-        }
+        // New domain row: pass the date through as-is (null when blank). The repository
+        // strips null keys, so the column falls back to its NULL default.
+        const insert_domain = { domain: domain_name, domain_registered_date: domain_registerd };
         id = await repo.insertDomainName(sql, insert_domain);
+        if (!id) {
+          throw new Error(`Insert failed: could not add domain "${domain_name}" to facebook_ad_domains (no row id returned).`);
+        }
       }
       // ACK that insertHtmlRedirectCountry touched this domain.
       await repo.setDomainDodDate(sql, domain_name, new Date().toISOString().slice(0, 19).replace('T', ' '));
@@ -263,7 +371,10 @@ async function insertHtmlRedirectCountry(req, db, log) {
 
       const get_details = await repo.getOutgoingDetails(sql, where_urls);
       if (!get_details[0] || get_details[0].country_code === undefined || get_details[0].country_code === null) {
-        await repo.insertOutgoing(sql, where_urls);
+        const outId = await repo.insertOutgoing(sql, where_urls);
+        if (!outId) {
+          throw new Error('Insert failed: could not add the outgoing-link row to facebook_ad_outgoing_links (no row id returned).');
+        }
       } else {
         let multiple = String(get_details[0].country_code).split('||');
         const post_country = country.split('||');
@@ -286,7 +397,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
           'facebook_ad_id'
         );
         if (existing.length === 0) {
-          await repo.insertAdUrl(sql, {
+          const rId = await repo.insertAdUrl(sql, {
             facebook_ad_id: ad_id,
             url_type: 'R',
             country_code: country,
@@ -294,6 +405,9 @@ async function insertHtmlRedirectCountry(req, db, log) {
             url: rval,
             proxy_lander_status: value.status,
           });
+          if (!rId) {
+            throw new Error(`Insert failed: could not add redirect URL "${rval}" to facebook_ad_url (no row id returned).`);
+          }
           url_redirect = url_redirect === null ? rval : `${url_redirect}||${rval}`;
         }
       }
@@ -323,7 +437,10 @@ async function insertHtmlRedirectCountry(req, db, log) {
       if (value.ad_category !== undefined && value.ad_category !== null) {
         destination_url_data.cat_status = 1;
       }
-      await repo.insertAdUrl(sql, destination_url_data);
+      const dId = await repo.insertAdUrl(sql, destination_url_data);
+      if (!dId) {
+        throw new Error(`Insert failed: could not add destination URL "${value.destinations}" to facebook_ad_url (no row id returned).`);
+      }
     } else {
       const destination_url_data = { country_code: country };
       if (value.ad_category !== undefined && value.ad_category !== null && destRows[0].cat_status != 1) {
@@ -344,7 +461,10 @@ async function insertHtmlRedirectCountry(req, db, log) {
       const { facebook_ad_id, ...htmlUpdate } = insert_html_content;
       await repo.updateHtmlFile(sql, ad_id, htmlUpdate);
     } else {
-      await repo.insertHtmlFile(sql, insert_html_content);
+      const hId = await repo.insertHtmlFile(sql, insert_html_content);
+      if (!hId) {
+        throw new Error(`Insert failed: could not add the lander HTML row for ad "${ad_id}" to facebook_ad_html_lander_content (no row id returned).`);
+      }
     }
 
     // 12. facebook_ad.domain_id.
@@ -401,12 +521,14 @@ async function insertHtmlRedirectCountry(req, db, log) {
       response.message = 'Destination Lander updated successfully';
     } else {
       response.code = 400;
-      response.message = 'Destination Lander not updated';
+      response.message = `Update failed: the facebook_ad_meta_data update for ad "${ad_id}" affected 0 rows. `
+        + 'Either no meta record exists for this ad or the submitted values were already current — nothing was changed, '
+        + 'and the search index was not updated.';
     }
   } catch (e) {
-    log?.error?.('landers.insertHtmlRedirectCountry failed', { ad_id, error: e.message });
+    log?.error?.('landers.insertHtmlRedirectCountry failed', { ad_id, error: e.message, stack: e.stack });
     response.code = 400;
-    response.message = 'Some Error occurred';
+    response.message = `Failed to store the destination lander for ad "${ad_id}": ${e.message}`;
   }
 
   response.exe_time = (Date.now() - started) / 1000;

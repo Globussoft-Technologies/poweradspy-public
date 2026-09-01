@@ -273,8 +273,14 @@ async function runKeywordAdNotificationScan() {
   const threshold = ks.notify.adsCountThreshold;
   const dateScoped = ks.notify.dateScoped;
 
+  // Any status today — not just completed/no_ads_found. A term still mid-scrape
+  // (status: 'scrapping') needs to be scanned too, so the first-ad push (below) can
+  // fire the moment ads start appearing instead of waiting for the session to close.
+  // Side effect (intentional): the 20-ad bell notification, which runs off this same
+  // doc set, can now also fire slightly earlier — mid-scrape, the moment its threshold
+  // is crossed — rather than only after the session finishes.
   const docs = await source.find(
-    { scrapping_status: { $elemMatch: { date: today, status: { $in: ['completed', 'no_ads_found'] } } } },
+    { scrapping_status: { $elemMatch: { date: today } } },
     { projection: { type: 1, value: 1, valueNorm: 1, networks: 1, users: 1, userInfos: 1, scrapping_status: 1, notifyDismissed: 1, adFoundPushed: 1 } }
   ).limit(ks.notify.scanBatch).toArray();
 
@@ -468,10 +474,12 @@ async function runUserKeywordAdScan(user, source, notifyCol) {
   if (orUser.length === 0) return { scanned: 0, matched: 0, notified: 0 };
 
   const docs = await source.find(
+    // Same broadening as runKeywordAdNotificationScan above — any status today, so a
+    // term still mid-scrape gets checked too, not just ones whose session already closed.
     {
       $and: [
         { $or: orUser },
-        { scrapping_status: { $elemMatch: { date: today, status: { $in: ['completed', 'no_ads_found'] } } } },
+        { scrapping_status: { $elemMatch: { date: today } } },
       ],
     },
     { projection: { type: 1, value: 1, valueNorm: 1, networks: 1, scrapping_status: 1, notifyDismissed: 1, adFoundPushed: 1 } }
