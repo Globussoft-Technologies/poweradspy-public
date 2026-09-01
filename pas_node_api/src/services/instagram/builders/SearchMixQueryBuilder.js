@@ -603,6 +603,13 @@ class SearchMixQueryBuilder {
     const mp = this._params.marketPlatform;
     if (!mp || !mp.length) return null;
     const fields = [
+      // The Ad Analytics "Marketing Platform" badge (AnalyticsModal.jsx) is
+      // detected from `instagram_ad_url.url` (the raw click-tracking URL,
+      // exposed to the frontend as `market_platform_urls.url_destination`)
+      // -- that's a DIFFERENT ES field from `.url_destination` below. Without
+      // it, ads whose only doubleclick/branch/etc. reference lives in the raw
+      // tracking URL never matched this filter even though the badge showed.
+      'instagram_ad_url.url',
       'instagram_ad_url.url_destination',
       'instagram_ad_outgoing_links.source_url',
       'instagram_ad_outgoing_links.redirect_url',

@@ -441,6 +441,14 @@ class NativeSearchQueryBuilder {
     const mp = this._params.marketPlatform;
     if (!mp || !mp.length) return null;
     const fields = [
+      // The Ad Analytics "Marketing Platform" badge (AnalyticsModal.jsx) reads
+      // this field via `market_platform_urls.redirect_urls` (adSearchController.js) --
+      // a DIFFERENT ES field from `native_ad_outgoing_links.redirect_url` below.
+      // Without it, ads whose only doubleclick/etc. reference lives in the
+      // meta-data redirect URL never matched this filter even though the
+      // badge showed (confirmed: native ad 112519's doubleclick URL lives
+      // only here).
+      'native_ad_meta_data.redirect_url',
       'native_ad_url.url_destination',
       'native_ad_outgoing_links.source_url',
       'native_ad_outgoing_links.redirect_url',
