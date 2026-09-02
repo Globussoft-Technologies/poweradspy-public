@@ -180,6 +180,43 @@ describe("advertiserService > getLongestAd + getTopLikes outer catches (lines 13
     expect(googleCall?.[0]?.body?.query?.bool?.filter).toEqual(
       expect.arrayContaining(getDisplayableMediaFilter("google")),
     );
+    expect(googleCall?.[0]?.body?.query?.bool?.filter).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          bool: expect.objectContaining({
+            should: expect.arrayContaining([
+              expect.objectContaining({
+                bool: expect.objectContaining({
+                  filter: expect.arrayContaining([
+                    { terms: { type: ["image", "IMAGE"] } },
+                    { exists: { field: "new_nas_image_url" } },
+                  ]),
+                  must_not: [{ term: { platform: 18 } }],
+                }),
+              }),
+              expect.objectContaining({
+                bool: expect.objectContaining({
+                  filter: expect.arrayContaining([
+                    { terms: { type: ["image", "IMAGE"] } },
+                    { term: { platform: 18 } },
+                    expect.objectContaining({
+                      bool: expect.objectContaining({
+                        should: expect.arrayContaining([
+                          { exists: { field: "image_video_url" } },
+                          { exists: { field: "image_url_original" } },
+                          { exists: { field: "image_url" } },
+                        ]),
+                      }),
+                    }),
+                  ]),
+                }),
+              }),
+            ]),
+            minimum_should_match: 1,
+          }),
+        }),
+      ]),
+    );
   });
 
   it("getLongestAd outer catch: null esServers → 'Internal server error'", async () => {

@@ -38,6 +38,63 @@ function cleanImagePath(url) {
   return trimmed.startsWith("/") ? trimmed : "/" + trimmed;
 }
 
+const GOOGLE_CREATIVE_IMAGE_FILTER = [
+  {
+    bool: {
+      should: [
+        {
+          bool: {
+            filter: [
+              { terms: { type: ["image", "IMAGE"] } },
+              { exists: { field: "new_nas_image_url" } },
+            ],
+            must_not: [{ term: { platform: 18 } }],
+          },
+        },
+        {
+          bool: {
+            filter: [
+              { terms: { type: ["image", "IMAGE"] } },
+              { term: { platform: 18 } },
+              {
+                bool: {
+                  should: [
+                    { exists: { field: "image_video_url" } },
+                    { exists: { field: "image_url_original" } },
+                    { exists: { field: "image_url" } },
+                  ],
+                  minimum_should_match: 1,
+                },
+              },
+            ],
+          },
+        },
+      ],
+      minimum_should_match: 1,
+    },
+  },
+];
+
+function cleanCreativeMediaFields(source) {
+  const cleanFields = [
+    "new_nas_image_url",
+    "image_video_url",
+    "image_url_original",
+    "image_url",
+    "thumbnail",
+  ];
+
+  for (const field of cleanFields) {
+    if (source[field]) source[field] = cleanImagePath(source[field]);
+  }
+  if (source.new_nas_image_url && !source.image_video_url) {
+    source.image_video_url = source.new_nas_image_url;
+  } else if (Number(source.platform) === 18 && !source.image_video_url) {
+    source.image_video_url = source.image_url_original || source.image_url || null;
+  }
+  return source;
+}
+
 // Keep the comparison chart on the same country vocabulary as the project
 // list. This deliberately stays backend-owned so the compare endpoint does not
 // depend on the separately deployed frontend country file.
@@ -1490,6 +1547,8 @@ class AdvertiserService {
               // a "longest" ad whose creative is already hidden / broken in
               // the main search experience.
               const displayableMediaFilter = getDisplayableMediaFilter(platform);
+              const displayableFilters = Array.isArray(displayableMediaFilter) ? displayableMediaFilter : [];
+              const creativeImageFilter = platform === "google" ? GOOGLE_CREATIVE_IMAGE_FILTER : [];
               const params = {
                 index,
                 body: {
@@ -1512,8 +1571,8 @@ class AdvertiserService {
                           },
                         },
                       ],
-                      ...(Array.isArray(displayableMediaFilter) && displayableMediaFilter.length
-                        ? { filter: displayableMediaFilter }
+                      ...(displayableFilters.length || creativeImageFilter.length
+                        ? { filter: [...displayableFilters, ...creativeImageFilter] }
                         : {}),
                     },
                   },
@@ -1524,10 +1583,7 @@ class AdvertiserService {
               const longestAds =
                 result.hits?.hits?.map((hit) => {
                   const source = { ...hit._source };
-                  if (source.new_nas_image_url) {
-                    source.new_nas_image_url = cleanImagePath(source.new_nas_image_url);
-                  }
-                  return source;
+                  return cleanCreativeMediaFields(source);
                 }) || [];
 
               /* v8 ignore start -- the per-server index list is exhaustively dispatched here; the non-matching branch is unreachable */

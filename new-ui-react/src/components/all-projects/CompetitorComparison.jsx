@@ -671,36 +671,55 @@ export const extractImages = (longestData) => {
   const images = [];
   const seen = new Set();
 
-  const getImageAdImages = (ads, platform) => {
-    for (const ad of ads) {
-      let url = null;
-      if (platform === "facebook" && ad["facebook_ad.type"] === "IMAGE") {
-        url = ad["new_nas_image_url"];
-      } else if (
-        platform === "instagram" &&
-        ad["instagram_ad.type"] === "IMAGE"
-      ) {
-        url = ad["new_nas_image_url"];
-      } else if (platform === "google" && ad["type"] === "IMAGE") {
-        url = ad["new_nas_image_url"];
-      }
-      const resolvedUrl = normalizeCreativeImageUrl(url);
+  const googleImageCandidates = (ad) => [
+    ad["image_video_url"],
+    ad["image_url_original"],
+    ad["image_url"],
+    ad["thumbnail"],
+  ];
+
+  const pickFirstCreativeUrl = (candidates) => {
+    for (const candidate of candidates) {
+      const resolved = normalizeCreativeImageUrl(candidate);
+      if (resolved) return resolved;
+    }
+    return "";
+  };
+
+  const getImageAdImage = (ad, platform) => {
+    let url = null;
+    if (platform === "facebook" && ad["facebook_ad.type"] === "IMAGE") {
+      url = ad["new_nas_image_url"];
+    } else if (
+      platform === "instagram" &&
+      ad["instagram_ad.type"] === "IMAGE"
+    ) {
+      url = ad["new_nas_image_url"];
+    } else if (platform === "google" && String(ad["type"] || "").toUpperCase() === "IMAGE") {
+      url = pickFirstCreativeUrl(googleImageCandidates(ad));
+    }
+    return platform === "google" ? url : normalizeCreativeImageUrl(url);
+  };
+
+  const platformQueues = [
+    { platform: "facebook", ads: longestData?.facebook?.longestRunningAds || [] },
+    { platform: "instagram", ads: longestData?.instagram?.longestRunningAds || [] },
+    { platform: "google", ads: longestData?.google?.longestRunningAds || [] },
+  ].map(({ platform, ads }) => ({
+    platform,
+    urls: ads.map((ad) => getImageAdImage(ad, platform)).filter(Boolean),
+  }));
+
+  const maxQueueLength = Math.max(0, ...platformQueues.map((queue) => queue.urls.length));
+  for (let i = 0; images.length < 5 && i < maxQueueLength; i += 1) {
+    for (const queue of platformQueues) {
+      const resolvedUrl = queue.urls[i];
       if (resolvedUrl && !seen.has(resolvedUrl)) {
         seen.add(resolvedUrl);
         images.push(resolvedUrl);
       }
       if (images.length >= 5) break;
     }
-  };
-
-  if (images.length < 5 && longestData?.facebook?.longestRunningAds?.length) {
-    getImageAdImages(longestData.facebook.longestRunningAds, "facebook");
-  }
-  if (images.length < 5 && longestData?.instagram?.longestRunningAds?.length) {
-    getImageAdImages(longestData.instagram.longestRunningAds, "instagram");
-  }
-  if (images.length < 5 && longestData?.google?.longestRunningAds?.length) {
-    getImageAdImages(longestData.google.longestRunningAds, "google");
   }
 
   return images;
