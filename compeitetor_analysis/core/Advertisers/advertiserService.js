@@ -48,7 +48,10 @@ const GOOGLE_CREATIVE_IMAGE_FILTER = [
               { terms: { type: ["image", "IMAGE"] } },
               { exists: { field: "new_nas_image_url" } },
             ],
-            must_not: [{ term: { platform: 18 } }],
+            must_not: [
+              { term: { platform: 18 } },
+              { term: { new_nas_image_url: "" } },
+            ],
           },
         },
         {
@@ -56,16 +59,6 @@ const GOOGLE_CREATIVE_IMAGE_FILTER = [
             filter: [
               { terms: { type: ["image", "IMAGE"] } },
               { term: { platform: 18 } },
-              {
-                bool: {
-                  should: [
-                    { exists: { field: "image_video_url" } },
-                    { exists: { field: "image_url_original" } },
-                    { exists: { field: "image_url" } },
-                  ],
-                  minimum_should_match: 1,
-                },
-              },
             ],
           },
         },
@@ -74,14 +67,13 @@ const GOOGLE_CREATIVE_IMAGE_FILTER = [
     },
   },
 ];
+const LONGEST_AD_SAMPLE_SIZE = 5;
+const GOOGLE_LONGEST_IMAGE_SAMPLE_SIZE = 30;
 
 function cleanCreativeMediaFields(source) {
   const cleanFields = [
     "new_nas_image_url",
     "image_video_url",
-    "image_url_original",
-    "image_url",
-    "thumbnail",
   ];
 
   for (const field of cleanFields) {
@@ -89,8 +81,6 @@ function cleanCreativeMediaFields(source) {
   }
   if (source.new_nas_image_url && !source.image_video_url) {
     source.image_video_url = source.new_nas_image_url;
-  } else if (Number(source.platform) === 18 && !source.image_video_url) {
-    source.image_video_url = source.image_url_original || source.image_url || null;
   }
   return source;
 }
@@ -1552,7 +1542,12 @@ class AdvertiserService {
               const params = {
                 index,
                 body: {
-                  size: 5,
+                  // Google has many historical IMAGE rows whose stored media
+                  // exists but still renders as unavailable. Pull a small
+                  // candidate window so valid Google creatives are not crowded
+                  // out by the first few longest rows; other networks keep the
+                  // legacy 5-row payload.
+                  size: platform === "google" ? GOOGLE_LONGEST_IMAGE_SAMPLE_SIZE : LONGEST_AD_SAMPLE_SIZE,
                   sort: [
                     {
                       [sortField]: "desc",

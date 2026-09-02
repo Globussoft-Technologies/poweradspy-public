@@ -671,21 +671,6 @@ export const extractImages = (longestData) => {
   const images = [];
   const seen = new Set();
 
-  const googleImageCandidates = (ad) => [
-    ad["image_video_url"],
-    ad["image_url_original"],
-    ad["image_url"],
-    ad["thumbnail"],
-  ];
-
-  const pickFirstCreativeUrl = (candidates) => {
-    for (const candidate of candidates) {
-      const resolved = normalizeCreativeImageUrl(candidate);
-      if (resolved) return resolved;
-    }
-    return "";
-  };
-
   const getImageAdImage = (ad, platform) => {
     let url = null;
     if (platform === "facebook" && ad["facebook_ad.type"] === "IMAGE") {
@@ -696,9 +681,12 @@ export const extractImages = (longestData) => {
     ) {
       url = ad["new_nas_image_url"];
     } else if (platform === "google" && String(ad["type"] || "").toUpperCase() === "IMAGE") {
-      url = pickFirstCreativeUrl(googleImageCandidates(ad));
+      // Match Ads Library's Google card image path. Transparency image cards
+      // do not render from image_url_original/image_url, so those fallbacks
+      // would reintroduce "Preview unavailable" examples here.
+      url = ad["image_video_url"];
     }
-    return platform === "google" ? url : normalizeCreativeImageUrl(url);
+    return normalizeCreativeImageUrl(url);
   };
 
   const platformQueues = [
