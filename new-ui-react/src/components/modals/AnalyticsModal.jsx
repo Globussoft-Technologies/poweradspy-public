@@ -1799,17 +1799,51 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
   const admobOccurrenceRatePercent = Number(
     admobSessionsData?.occurrence_rate_percent ?? 0,
   );
-  const admobTrackedSessionsByApp = Array.isArray(admobSessionsData?.tracked_sessions_by_app)
-    ? admobSessionsData.tracked_sessions_by_app.filter((row) => row?.name)
-    : [];
+  // Same source_app_id-vs-name mismatch as sessions_seen_by_app below — collapse
+  // by name so the same app doesn't appear twice with its count split across
+  // two internal source_app_id rows.
+  const admobTrackedSessionsByApp = Array.from(
+    (Array.isArray(admobSessionsData?.tracked_sessions_by_app)
+      ? admobSessionsData.tracked_sessions_by_app
+      : []
+    )
+      .filter((row) => row?.name)
+      .reduce((map, row) => {
+        const existing = map.get(row.name);
+        if (existing) {
+          existing.count = (existing.count || 0) + (row.count || 0);
+        } else {
+          map.set(row.name, { ...row });
+        }
+        return map;
+      }, new Map())
+      .values()
+  );
   // Per-app "how many times THIS ad was seen in THIS app" — sourced from
   // mob_ad_source_apps.appearance_count, which is recorded per (ad, app)
   // pair at ingestion time. Unlike tracked_sessions_by_app (session count
   // scoped by app-wide activity, not this ad specifically), this stays
   // accurate even when an ad is linked to multiple source apps.
-  const admobSessionsSeenByApp = Array.isArray(admobSessionsData?.sessions_seen_by_app)
-    ? admobSessionsData.sessions_seen_by_app.filter((row) => row?.name)
-    : [];
+  // The backend can emit multiple source_app_id rows for the same app name
+  // (e.g. differing package values across observations) — collapse by name
+  // so the summary shows one "App: Nx" entry per distinct app, counts merged.
+  const admobSessionsSeenByApp = Array.from(
+    (Array.isArray(admobSessionsData?.sessions_seen_by_app)
+      ? admobSessionsData.sessions_seen_by_app
+      : []
+    )
+      .filter((row) => row?.name)
+      .reduce((map, row) => {
+        const existing = map.get(row.name);
+        if (existing) {
+          existing.count = (existing.count || 0) + (row.count || 0);
+        } else {
+          map.set(row.name, { ...row });
+        }
+        return map;
+      }, new Map())
+      .values()
+  );
   const hasAdmobSessionHistory =
     isAdmob && (admobSessionRows.length > 0 || admobSessionsTotal > 0);
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;

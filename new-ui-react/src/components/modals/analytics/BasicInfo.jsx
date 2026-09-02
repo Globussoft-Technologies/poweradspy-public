@@ -89,11 +89,27 @@ const BasicInfo = ({
   // Native: network field
   const nativeNetwork =
     adDetails?.network || ad?.network_name || ad?.network || "";
-  const sourceAppDetails = Array.isArray(adDetails?.source_app_details)
+  const rawSourceAppDetails = Array.isArray(adDetails?.source_app_details)
     ? adDetails.source_app_details
     : Array.isArray(ad?.source_app_details)
       ? ad.source_app_details
       : [];
+  // The backend can emit multiple rows for the same app name (e.g. differing
+  // package values across observations) — collapse by name so the UI shows
+  // one pill per distinct app, with appearance counts merged.
+  const sourceAppDetails = Array.from(
+    rawSourceAppDetails.reduce((map, item) => {
+      const name = String(item?.name || "").trim();
+      if (!name) return map;
+      const existing = map.get(name);
+      if (existing) {
+        existing.appearance_count = (existing.appearance_count || 0) + (item?.appearance_count || 0);
+      } else {
+        map.set(name, { ...item, name });
+      }
+      return map;
+    }, new Map()).values()
+  );
   const sourceAppNames = [
     ...new Set([
       ...sourceAppDetails
@@ -410,7 +426,12 @@ const BasicInfo = ({
       className={`grid grid-cols-1 ${showOutgoingLinks ? "lg:grid-cols-2" : ""} gap-4 px-6`}
     >
       {/* Basic URLs */}
-      {visibleBasicRows.length ? <div>
+      {/* Source App must be able to render even when there are no URL rows
+          (e.g. a fresh ad with no destination_url captured yet) — the outer
+          gate used to check visibleBasicRows.length alone, which hid the
+          whole Basic Info block, Source App included, whenever URL rows
+          were empty even though source-app data was already available. */}
+      {(visibleBasicRows.length || (p === "admob" && (sourceAppCount != null || sourceAppDetails.length > 0))) ? <div>
         <h3
           className={`flex items-center gap-2 text-[18px] font-bold tracking-[0.1em] mb-4 ${isLight ? "text-gray-800" : "text-white/90"}`}
         >

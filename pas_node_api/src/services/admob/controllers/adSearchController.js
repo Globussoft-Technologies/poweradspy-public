@@ -408,6 +408,28 @@ async function getAdSessions(req, db, logger) {
       .map((row) => normalizeNumericId(row.source_app_id))
       .filter((value) => value !== null))];
 
+    // The same real-world app can be split across multiple mob_source_apps
+    // rows (same name, different source_app_pkg — see the unique key on
+    // (source_app_key, source_app_pkg)). This ad might only be directly
+    // linked to ONE of those fragments, but "Tracked Sessions" is meant to
+    // be a stable, app-wide number that reads the same no matter which ad
+    // (or which fragment) you're viewing it from — not something that swings
+    // wildly between ads that happen to link different fragments of the same
+    // app. Expand to every source_app_id sharing the same normalized name so
+    // totalSessionsPromise/trackedByAppPromise below see the app's full
+    // history, not just the slice this one ad happens to be linked to.
+    const expandedSourceAppIds = sourceAppIds.length > 0
+      ? [...new Set((await db.sql.query(
+        `SELECT s2.id
+         FROM mob_source_apps s1
+         JOIN mob_source_apps s2 ON s2.source_app_key = s1.source_app_key
+         WHERE s1.id IN (${sourceAppIds.map(() => '?').join(', ')})`,
+        sourceAppIds
+      ) || [])
+        .map((row) => normalizeNumericId(row.id))
+        .filter((value) => value !== null))]
+      : [];
+
     // COUNT(DISTINCT session_id), not COUNT(*) — a single session can now
     // have more than one row (one per source app that reported this ad
     // within that session), so counting rows would overcount sessions.
@@ -435,13 +457,20 @@ async function getAdSessions(req, db, logger) {
     );
     // No linked source app to scope by — fall back to this ad's own session
     // count instead of an unbounded, unfiltered scan of the whole table.
-    const totalSessionsPromise = sourceAppIds.length > 0
+    // Deliberately NOT scoped to o.ad_id: "total_sessions" is the app-wide
+    // session volume tracked through this ad's linked source app(s), across
+    // every ad that app has reported — the denominator for occurrence_rate
+    // ("what fraction of that app's total tracked activity showed THIS ad").
+    // COUNT(DISTINCT ...) over the IN-list already unions/dedupes overlap
+    // across multiple linked source_app_ids, so this figure is correct even
+    // when an app has fragmented source_app_id rows (see trackedByAppPromise).
+    const totalSessionsPromise = expandedSourceAppIds.length > 0
       ? db.sql.query(
         `SELECT COUNT(DISTINCT o.session_id) AS total_sessions
          FROM mob_ad_observations o
          INNER JOIN mob_ad_source_apps x ON x.ad_id = o.ad_id
-         WHERE x.source_app_id IN (${sourceAppIds.map(() => '?').join(', ')})`,
-        sourceAppIds
+         WHERE x.source_app_id IN (${expandedSourceAppIds.map(() => '?').join(', ')})`,
+        expandedSourceAppIds
       )
       : occurrenceCountPromise.then((rows) => [
         { total_sessions: Number(rows?.[0]?.sessions_total || 0) },
@@ -459,14 +488,24 @@ async function getAdSessions(req, db, logger) {
         [ad.id]
       )
       : Promise.resolve([]);
-    const trackedByAppPromise = sourceAppIds.length > 0
+    // Same app-wide semantics as totalSessionsPromise (NOT scoped to this
+    // ad), but grouped by the app's NAME rather than raw source_app_id. The
+    // same app can exist as multiple mob_source_apps rows (e.g. differing
+    // package values across observations — see mob_source_apps' unique key
+    // on (source_app_key, source_app_pkg), not name alone), which used to
+    // split one app's tracked-session volume across two disconnected rows
+    // (e.g. "Cricket Guru" showing 262x and 34x instead of one true count).
+    // Grouping by s.source_app merges those fragments back into a single,
+    // correctly-deduped COUNT(DISTINCT session_id) per real-world app.
+    const trackedByAppPromise = expandedSourceAppIds.length > 0
       ? db.sql.query(
-        `SELECT x.source_app_id, COUNT(DISTINCT o.session_id) AS tracked
+        `SELECT s.source_app AS name, COUNT(DISTINCT o.session_id) AS tracked
          FROM mob_ad_observations o
          INNER JOIN mob_ad_source_apps x ON x.ad_id = o.ad_id
-         WHERE x.source_app_id IN (${sourceAppIds.map(() => '?').join(', ')})
-         GROUP BY x.source_app_id`,
-        sourceAppIds
+         INNER JOIN mob_source_apps s ON s.id = x.source_app_id
+         WHERE x.source_app_id IN (${expandedSourceAppIds.map(() => '?').join(', ')})
+         GROUP BY s.source_app`,
+        expandedSourceAppIds
       )
       : Promise.resolve([]);
     // Each observation now records which app it was actually seen through
@@ -505,8 +544,8 @@ async function getAdSessions(req, db, logger) {
       totalOccurrencesPromise,
     ]);
 
-    const trackedByAppId = new Map(
-      (trackedByAppRows || []).map((row) => [normalizeNumericId(row.source_app_id), Number(row.tracked || 0)])
+    const trackedByAppName = new Map(
+      (trackedByAppRows || []).map((row) => [String(row.name || '').trim(), Number(row.tracked || 0)])
     );
     const perAppRepeatSumId = new Map(
       (perAppRepeatSumRows || []).map((row) => [normalizeNumericId(row.source_app_id), Number(row.total_repeats || 0)])
@@ -522,9 +561,16 @@ async function getAdSessions(req, db, logger) {
       }
       return { name: row.name, count: Number(row.appearance_count || 0) };
     });
-    const trackedSessionsByApp = (sourceAppNameRows || []).map((row) => ({
-      name: row.name,
-      count: trackedByAppId.get(normalizeNumericId(row.source_app_id)) || 0,
+    // Dedupe by name first — sourceAppNameRows has one row per linked
+    // source_app_id, and the same app name can span more than one id (see
+    // trackedByAppPromise above), so without this a fragmented app would
+    // produce two identical "App: 270x" entries instead of one.
+    const distinctSourceAppNames = [
+      ...new Set((sourceAppNameRows || []).map((row) => String(row.name || '').trim()).filter(Boolean)),
+    ];
+    const trackedSessionsByApp = distinctSourceAppNames.map((name) => ({
+      name,
+      count: trackedByAppName.get(name) || 0,
     }));
 
     const occurrenceCount = Number(occurrenceRows?.[0]?.sessions_total || 0);
