@@ -445,6 +445,25 @@ async function getAdSessions(req, db, logger) {
       'SELECT SUM(repeat_count) AS total FROM mob_ad_observations WHERE ad_id = ?',
       [ad.id]
     ).then((rows) => Number(rows?.[0]?.total || 0));
+    // Daily bucket counts for the Session History sparkline. The
+    // observed_at >= ... bound is applied BEFORE the GROUP BY so MySQL only
+    // scans/aggregates the last 30 days of this ad's rows instead of its
+    // full history (some ads run for months) — ad_id already hits the
+    // leading column of the (ad_id, session_id, source_app_id) unique key
+    // from insertObservation, so this stays an index range scan either way.
+    // DATE_FORMAT (not DATE()) so MySQL hands back a plain 'YYYY-MM-DD'
+    // string — mysql2 turns a DATE column into a JS Date at local midnight,
+    // and reading that back with .toISOString() shifts it a day in any
+    // timezone ahead of UTC (IST here), same class of bug already caught in
+    // the Native last_seen resync script this session.
+    const dailyCountsPromise = db.sql.query(
+      `SELECT DATE_FORMAT(observed_at, '%Y-%m-%d') AS day, SUM(repeat_count) AS count
+       FROM mob_ad_observations
+       WHERE ad_id = ? AND observed_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+       GROUP BY DATE_FORMAT(observed_at, '%Y-%m-%d')
+       ORDER BY day ASC`,
+      [ad.id]
+    );
     const sessionRowsPromise = db.sql.query(
       `SELECT o.session_id, o.system_id, o.observed_at, o.repeat_count, s.source_app AS source_app_name
        FROM mob_ad_observations o
@@ -533,7 +552,7 @@ async function getAdSessions(req, db, logger) {
       ).then((rows) => Number(rows?.[0]?.total || 0))
       : 0;
 
-    const [occurrenceRows, sessionRows, totalSessionRows, sourceAppNameRows, trackedByAppRows, perAppRepeatSumRows, legacyUntaggedSum, totalOccurrences] = await Promise.all([
+    const [occurrenceRows, sessionRows, totalSessionRows, sourceAppNameRows, trackedByAppRows, perAppRepeatSumRows, legacyUntaggedSum, totalOccurrences, dailyCountRows] = await Promise.all([
       occurrenceCountPromise,
       sessionRowsPromise,
       totalSessionsPromise,
@@ -542,6 +561,7 @@ async function getAdSessions(req, db, logger) {
       perAppRepeatSumsPromise,
       legacyUntaggedSumPromise,
       totalOccurrencesPromise,
+      dailyCountsPromise,
     ]);
 
     const trackedByAppName = new Map(
@@ -598,6 +618,13 @@ async function getAdSessions(req, db, logger) {
         tracked_sessions_by_app: trackedSessionsByApp,
         occurrence_rate: occurrenceRate == null ? null : Number(occurrenceRate.toFixed(6)),
         occurrence_rate_percent: occurrenceRate == null ? null : Number((occurrenceRate * 100).toFixed(2)),
+        // Last 30 days of daily sighting counts, chronological — feeds the
+        // Session History sparkline. Empty when the ad has no observations
+        // in that window (e.g. it's older than 30 days or was just found).
+        daily_counts: (dailyCountRows || []).map((row) => ({
+          day: String(row.day),
+          count: Number(row.count || 0),
+        })),
         lead_score: totalOccurrences * (runningDays || 0),
         poster_intelligence_score: totalOccurrences + (runningDays || 0),
         page,

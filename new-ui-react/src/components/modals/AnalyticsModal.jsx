@@ -146,6 +146,8 @@ import {
   Youtube,
   Megaphone,
   Info,
+  Copy,
+  Check,
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import { resolveAnalyticsFilterValueLabel } from "../../hooks/useSDUI";
@@ -1423,6 +1425,206 @@ const OwnerAvatar = ({ imageUrl, ownerName, isLight }) => {
   );
 };
 
+// ── AdMob Session History card helpers ──────────────────────────────────
+// Scoped to the AdMob-only "Session History" block below; no other network
+// renders through these. Presentation-only — they never touch fetched data,
+// just format/color what's already resolved into admobSession* variables.
+const ADMOB_APP_PALETTE = [
+  { fg: { light: "text-fuchsia-600", dark: "text-fuchsia-400" }, bg: { light: "bg-fuchsia-50", dark: "bg-fuchsia-500/10" }, dot: { light: "bg-fuchsia-500", dark: "bg-fuchsia-400" } },
+  { fg: { light: "text-violet-600", dark: "text-violet-300" }, bg: { light: "bg-violet-50", dark: "bg-violet-500/10" }, dot: { light: "bg-violet-500", dark: "bg-violet-400" } },
+  { fg: { light: "text-blue-600", dark: "text-blue-300" }, bg: { light: "bg-blue-50", dark: "bg-blue-500/10" }, dot: { light: "bg-blue-500", dark: "bg-blue-400" } },
+  { fg: { light: "text-emerald-600", dark: "text-emerald-300" }, bg: { light: "bg-emerald-50", dark: "bg-emerald-500/10" }, dot: { light: "bg-emerald-500", dark: "bg-emerald-400" } },
+  { fg: { light: "text-amber-600", dark: "text-amber-300" }, bg: { light: "bg-amber-50", dark: "bg-amber-500/10" }, dot: { light: "bg-amber-500", dark: "bg-amber-400" } },
+  { fg: { light: "text-rose-600", dark: "text-rose-300" }, bg: { light: "bg-rose-50", dark: "bg-rose-500/10" }, dot: { light: "bg-rose-500", dark: "bg-rose-400" } },
+];
+const admobAppColor = (index) => ADMOB_APP_PALETTE[index % ADMOB_APP_PALETTE.length];
+// Thousands-separated display for counts that can grow large at scale
+// (tracked sessions, per-app totals) — purely a display format, the
+// underlying number is untouched.
+const admobFmtNumber = (n) => {
+  const num = Number(n);
+  return Number.isFinite(num) ? num.toLocaleString("en-US") : String(n ?? "");
+};
+// Single source of truth for "which app gets which color" — used both by the
+// proportion bar/chip breakdown and by the per-sighting-row app chips below,
+// so the same app is never shown in two different colors on the same screen.
+const admobSortAppsByCount = (apps) => [...apps].sort((a, b) => (b.count || 0) - (a.count || 0));
+
+// Same "viewed Nx" number as before — just mapped to a severity tier so an
+// outlier session (e.g. 300+ sightings) reads as an outlier instead of
+// sitting in the exact same blue pill as a 2x session.
+const admobSightingSeverity = (count) => {
+  if (count >= 200) return "high";
+  if (count >= 50) return "mid";
+  return "low";
+};
+const ADMOB_SEVERITY_CLASSES = {
+  high: { light: "bg-rose-50 text-rose-700", dark: "bg-rose-500/10 text-rose-300" },
+  mid: { light: "bg-amber-50 text-amber-700", dark: "bg-amber-500/10 text-amber-300" },
+  low: { light: "bg-blue-50 text-blue-700", dark: "bg-blue-500/10 text-blue-300" },
+};
+const ADMOB_SEVERITY_DOT_CLASSES = {
+  high: "bg-rose-500",
+  mid: "bg-amber-500",
+  low: "bg-blue-500",
+};
+
+// Builds an SVG line+area path from daily_counts values for the Occurrence
+// Rate sparkline. Pure/presentational — takes whatever numbers it's given,
+// never fetches or fabricates data itself.
+const admobSparkPath = (values) => {
+  const w = 100;
+  const h = 26;
+  const pad = 2;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  const stepX = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
+  const pts = values.map((v, i) => [
+    pad + i * stepX,
+    pad + (1 - (v - min) / range) * (h - pad * 2),
+  ]);
+  const line = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)},${h} L${pts[0][0].toFixed(1)},${h} Z`;
+  const [lastX, lastY] = pts[pts.length - 1];
+  return { line, area, lastX, lastY };
+};
+
+const admobRelativeTime = (val) => {
+  if (!val) return null;
+  const date = new Date(val);
+  if (Number.isNaN(date.getTime())) return null;
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return null;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return null;
+};
+
+// Session IDs are long technical strings (device/ip-bearing) — truncate for
+// display but keep the full value available via title + copy-to-clipboard.
+const AdmobSessionIdChip = ({ sessionId, isLight }) => {
+  const [copied, setCopied] = useState(false);
+  if (!sessionId) {
+    return (
+      <div className={`mt-1 font-mono text-[11px] ${isLight ? "text-gray-400" : "text-white/30"}`}>
+        Unknown session
+      </div>
+    );
+  }
+  const handleCopy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(sessionId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Clipboard API unavailable (older browser, non-secure context) —
+      // the id is still visible/selectable via the title/text itself.
+    }
+  };
+  return (
+    <div
+      className={`mt-1.5 inline-flex items-center gap-1.5 rounded-md border pl-2 pr-1 py-1 ${
+        isLight ? "bg-gray-50 border-gray-200" : "bg-white/[0.03] border-white/10"
+      }`}
+    >
+      <span
+        title={sessionId}
+        className={`font-mono text-[10.5px] truncate max-w-[200px] ${isLight ? "text-gray-500" : "text-white/40"}`}
+      >
+        {sessionId}
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label="Copy session id"
+        className={`shrink-0 p-0.5 rounded transition-colors ${
+          copied
+            ? isLight ? "text-emerald-600" : "text-emerald-400"
+            : isLight ? "text-gray-400 hover:text-gray-700 hover:bg-gray-200" : "text-white/30 hover:text-white/70 hover:bg-white/10"
+        }`}
+      >
+        {copied ? <Check size={11} /> : <Copy size={11} />}
+      </button>
+    </div>
+  );
+};
+
+// Per-app "how many times this ad showed up in App X" breakdown. Same
+// admobSessionsSeenByApp rows the old flat text row used — this just sorts
+// them, adds a proportion bar when there's more than one app, and collapses
+// beyond 4 chips so an ad linked to many apps doesn't wrap into a wall of text.
+const ADMOB_APP_CHIP_VISIBLE = 4;
+const AdmobAppBreakdown = ({ apps, isLight }) => {
+  const [expanded, setExpanded] = useState(false);
+  const themeKey = isLight ? "light" : "dark";
+  const sorted = admobSortAppsByCount(apps);
+  const total = sorted.reduce((sum, a) => sum + (a.count || 0), 0);
+  const visible = expanded ? sorted : sorted.slice(0, ADMOB_APP_CHIP_VISIBLE);
+  const hiddenCount = sorted.length - visible.length;
+
+  return (
+    <div className="px-4 pt-4 pb-2">
+      {sorted.length > 1 && total > 0 && (
+        <div className={`flex w-full h-1.5 rounded-full overflow-hidden mb-2 ${isLight ? "bg-gray-200" : "bg-white/10"}`}>
+          {sorted.map((row, i) => {
+            const pct = ((row.count || 0) / total) * 100;
+            if (pct <= 0) return null;
+            return (
+              <div
+                key={`bar-${row.name || i}`}
+                title={`${row.name}: ${admobFmtNumber(row.count)}x (${pct.toFixed(1)}%)`}
+                className={admobAppColor(i).dot[themeKey]}
+                style={{ width: `${pct}%` }}
+              />
+            );
+          })}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        {visible.map((row, i) => (
+          <span
+            key={`sighting-app-${row.name}`}
+            title={`Total number of times this ad has shown up in ${row.name}, added up across every session.`}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium cursor-default ${admobAppColor(i).bg[themeKey]} ${admobAppColor(i).fg[themeKey]}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${admobAppColor(i).dot[themeKey]}`} />
+            {row.name}: <span className="font-bold">{admobFmtNumber(row.count)}x</span>
+          </span>
+        ))}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border border-dashed ${
+              isLight ? "border-gray-300 text-gray-400 hover:text-gray-700 hover:border-gray-400" : "border-white/20 text-white/40 hover:text-white/80 hover:border-white/40"
+            }`}
+          >
+            +{hiddenCount} more
+          </button>
+        )}
+        {expanded && sorted.length > ADMOB_APP_CHIP_VISIBLE && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border border-dashed ${
+              isLight ? "border-gray-300 text-gray-400 hover:text-gray-700 hover:border-gray-400" : "border-white/20 text-white/40 hover:text-white/80 hover:border-white/40"
+            }`}
+          >
+            Show less
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const AnalyticsModal = ({
   ad,
   categoryOptions = [],
@@ -1799,6 +2001,12 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
   const admobOccurrenceRatePercent = Number(
     admobSessionsData?.occurrence_rate_percent ?? 0,
   );
+  // Last-30-days daily sighting counts for the sparkline — only real
+  // server-aggregated numbers, never fabricated. Needs 2+ points to draw a
+  // line at all.
+  const admobDailyCounts = Array.isArray(admobSessionsData?.daily_counts)
+    ? admobSessionsData.daily_counts
+    : [];
   // Same source_app_id-vs-name mismatch as sessions_seen_by_app below — collapse
   // by name so the same app doesn't appear twice with its count split across
   // two internal source_app_id rows.
@@ -1846,6 +2054,10 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
   );
   const hasAdmobSessionHistory =
     isAdmob && (admobSessionRows.length > 0 || admobSessionsTotal > 0);
+  // Highest-count-first app name order, shared between the breakdown bar/chips
+  // and each sighting row's per-app chips so the same app always gets the
+  // same color on this screen.
+  const admobSortedAppNames = admobSortAppsByCount(admobSessionsSeenByApp).map((row) => row.name);
   const postOwnerId = processedAd.postOwnerId || ad?.postOwnerId || insights.advertiserLCSDataMeta?.post_owner_id || insights.advertiserCountryDataMeta?.post_owner_id || insights.advertiserUserDataMeta?.post_owner_id;
   const availableYears = insights.advertiserLCSDataMeta?.available_years || insights.advertiserCountryDataMeta?.available_years || insights.advertiserUserDataMeta?.available_years || [];
 
@@ -2084,6 +2296,33 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
           const value = d.sub_network || d.subnetwork || ad?.subnetwork || processedAd?.subnetwork;
           return value ? String(value).toUpperCase() : "—";
         })(),
+        // Multiple sub-networks arrive as one comma-joined string (e.g.
+        // "GDN,META AUDIENCE NETWORK") — split into small pill chips instead
+        // of one long line of text so each network reads on its own.
+        renderValue: (value) => {
+          if (!value || value === "—") {
+            return (
+              <span className={`text-[14px] font-semibold truncate max-w-[60%] ${isLight ? "text-gray-900" : "text-white/85"}`}>
+                {value}
+              </span>
+            );
+          }
+          const names = value.split(",").map((n) => n.trim()).filter(Boolean);
+          return (
+            <div className="flex flex-wrap justify-end gap-1 max-w-[60%]">
+              {names.map((name, i) => (
+                <span
+                  key={`subnet-${name}-${i}`}
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${
+                    isLight ? "bg-fuchsia-50 text-fuchsia-700" : "bg-fuchsia-500/10 text-fuchsia-300"
+                  }`}
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          );
+        },
         icon: Share2,
         color: "text-fuchsia-400",
       }] : []),
@@ -2606,86 +2845,121 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                 <div
                   className={`rounded-2xl border-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/10"}`}
                 >
-                  <div className="px-4 pt-4 flex flex-col gap-2.5">
-                    {/* Sessions Seen — how many times we've actually found this ad. */}
+                  {/* Stat cards — same three figures as before (Sessions Seen /
+                      Tracked Sessions / Occurrence Rate), same source variables,
+                      just laid out as scannable cards instead of stacked pills. */}
+                  <div className="px-4 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     {admobSessionsTotal > 0 && (
-                      <div className="relative group/sessionsSeen inline-flex items-center w-fit">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
-                            isLight ? "bg-blue-50 text-blue-700" : "bg-blue-500/10 text-blue-300"
-                          }`}
-                        >
-                          Sessions Seen: {admobSessionsTotal}
-                          <Info size={11} className="opacity-60 cursor-default" />
-                        </span>
-                        <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50 opacity-0 group-hover/sessionsSeen:opacity-100 pointer-events-none transition-opacity">
-                          This ad has been found {admobSessionsTotal}x so far.
+                      <div
+                        className={`relative group/sessionsSeen rounded-xl border border-l-[3px] p-3 ${
+                          isLight ? "bg-blue-50/60 border-blue-100 border-l-blue-500" : "bg-blue-500/[0.06] border-blue-500/10 border-l-blue-400"
+                        }`}
+                      >
+                        <div className={`flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide ${isLight ? "text-blue-700/80" : "text-blue-300/80"}`}>
+                          Sessions Seen
+                          <Info size={10} className="opacity-60 cursor-default" />
+                        </div>
+                        <div className={`mt-1 text-[22px] font-extrabold tabular-nums leading-none ${isLight ? "text-blue-800" : "text-blue-200"}`}>
+                          {admobFmtNumber(admobSessionsTotal)}
+                        </div>
+                        <div className={`mt-1 text-[11px] ${isLight ? "text-blue-700/60" : "text-blue-300/50"}`}>
+                          times this ad was found, total
+                        </div>
+                        <div className="absolute top-full left-0 mt-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50 opacity-0 group-hover/sessionsSeen:opacity-100 pointer-events-none transition-opacity">
+                          This ad has been found {admobFmtNumber(admobSessionsTotal)}x so far.
                         </div>
                       </div>
                     )}
 
-                    {/* Tracked Sessions — same pattern: labeled total first, then a chip per
-                        app. If this ad gets linked to more apps later, each one shows up here
-                        as its own chip automatically, no code change needed. */}
-                    {(() => {
-                    const trackedTooltip = admobTrackedSessionsByApp.length > 0
-                      ? admobTrackedSessionsByApp
-                          .map((row) => `${row.name} has been scanned ${row.count}x`)
-                          .join(", ")
-                          + "."
-                      : "How many times we've scanned the app(s) this ad appears in.";
-                    return (admobTrackedSessionsByApp.length > 0 || admobTrackedSessionsTotal > 0) && (
-                      <div
-                        className={`relative group/trackedSessions inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-full px-3 py-1 w-fit ${
-                          isLight ? "bg-violet-50" : "bg-violet-500/10"
-                        }`}
-                      >
-                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide shrink-0 ${isLight ? "text-violet-700" : "text-violet-300"}`}>
-                          Tracked Sessions: {admobTrackedSessionsTotal}
-                          <Info size={11} className="opacity-60 cursor-default" />
-                        </span>
-                        {admobTrackedSessionsByApp.map((row) => (
-                          <span
-                            key={`tracked-${row.name}`}
-                            className={`text-[11px] font-semibold ${isLight ? "text-violet-700/70" : "text-violet-300/70"}`}
-                          >
-                            · {row.name} {row.count}x
-                          </span>
-                        ))}
-                        <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50 opacity-0 group-hover/trackedSessions:opacity-100 pointer-events-none transition-opacity">
-                          {trackedTooltip}
-                        </div>
-                      </div>
-                    );
-                    })()}
-
-                    {/* Occurrence Rate — bar reveals on hover instead of always sitting on screen */}
-                    {admobOccurrenceRatePercent > 0 && (
-                      <div className="relative group/rate inline-flex items-center gap-2 w-fit">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide cursor-default ${
-                            isLight ? "bg-emerald-50 text-emerald-700" : "bg-emerald-500/10 text-emerald-300"
+                    {(admobTrackedSessionsByApp.length > 0 || admobTrackedSessionsTotal > 0) && (() => {
+                      const trackedTooltip = admobTrackedSessionsByApp.length > 0
+                        ? admobTrackedSessionsByApp
+                            .map((row) => `${row.name} has been scanned ${admobFmtNumber(row.count)}x`)
+                            .join(", ")
+                            + "."
+                        : "How many times we've scanned the app(s) this ad appears in.";
+                      return (
+                        <div
+                          className={`relative group/trackedSessions rounded-xl border border-l-[3px] p-3 ${
+                            isLight ? "bg-violet-50/60 border-violet-100 border-l-violet-500" : "bg-violet-500/[0.06] border-violet-500/10 border-l-violet-400"
                           }`}
                         >
-                          Occurrence Rate: {admobOccurrenceRatePercent}%
-                          <Info size={11} className="opacity-60" />
-                        </span>
-                        <div className="grid grid-cols-[0fr] group-hover/rate:grid-cols-[1fr] transition-[grid-template-columns] duration-200 ease-out">
-                          <div className="overflow-hidden">
-                            <div className={`h-1.5 w-28 rounded-full overflow-hidden ${isLight ? "bg-gray-200" : "bg-white/10"}`}>
-                              <div
-                                className={`h-full rounded-full ${isLight ? "bg-emerald-500" : "bg-emerald-400"}`}
-                                style={{ width: `${Math.min(100, Math.max(2, admobOccurrenceRatePercent))}%` }}
-                              />
+                          <div className={`flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide ${isLight ? "text-violet-700/80" : "text-violet-300/80"}`}>
+                            Tracked Sessions
+                            <Info size={10} className="opacity-60 cursor-default" />
+                          </div>
+                          <div className={`mt-1 text-[22px] font-extrabold tabular-nums leading-none ${isLight ? "text-violet-800" : "text-violet-200"}`}>
+                            {admobFmtNumber(admobTrackedSessionsTotal)}
+                          </div>
+                          {admobTrackedSessionsByApp.length > 0 && (
+                            <div className={`mt-1 text-[11px] truncate ${isLight ? "text-violet-700/60" : "text-violet-300/50"}`}>
+                              {admobTrackedSessionsByApp.length === 1
+                                ? admobTrackedSessionsByApp[0].name
+                                : `across ${admobTrackedSessionsByApp.length} apps`}
                             </div>
+                          )}
+                          <div className="absolute top-full left-0 mt-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50 opacity-0 group-hover/trackedSessions:opacity-100 pointer-events-none transition-opacity">
+                            {trackedTooltip}
                           </div>
                         </div>
-                        <div className="absolute bottom-full left-0 mb-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50 opacity-0 group-hover/rate:opacity-100 pointer-events-none transition-opacity">
-                          Out of {admobTrackedSessionsTotal} times we scanned, this ad showed up {admobSessionsTotal}x — that's {admobOccurrenceRatePercent}%.
+                      );
+                    })()}
+
+                    {admobOccurrenceRatePercent > 0 && (
+                      <div
+                        className={`relative group/rate rounded-xl border border-l-[3px] p-3 ${
+                          isLight ? "bg-emerald-50/60 border-emerald-100 border-l-emerald-500" : "bg-emerald-500/[0.06] border-emerald-500/10 border-l-emerald-400"
+                        }`}
+                      >
+                        <div className={`flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide ${isLight ? "text-emerald-700/80" : "text-emerald-300/80"}`}>
+                          Occurrence Rate
+                          <Info size={10} className="opacity-60 cursor-default" />
+                        </div>
+                        <div className={`mt-1 text-[22px] font-extrabold tabular-nums leading-none ${isLight ? "text-emerald-800" : "text-emerald-200"}`}>
+                          {admobOccurrenceRatePercent}%
+                        </div>
+                        {/* Bar stays visible (no hover-reveal) — it's the same
+                            number as above, just given a visual scale. */}
+                        <div className={`mt-2 h-1.5 rounded-full overflow-hidden ${isLight ? "bg-emerald-200/50" : "bg-white/10"}`}>
+                          <div
+                            className={`h-full rounded-full ${isLight ? "bg-emerald-500" : "bg-emerald-400"}`}
+                            style={{ width: `${Math.min(100, Math.max(2, admobOccurrenceRatePercent))}%` }}
+                          />
+                        </div>
+                        {/* 30-day sighting trend — only drawn when the server
+                            actually returned 2+ daily buckets; a flat/empty
+                            window (new ad, or one older than 30 days) just
+                            shows the bar above with no invented line. */}
+                        {admobDailyCounts.length > 1 && (() => {
+                          const sp = admobSparkPath(admobDailyCounts.map((d) => d.count));
+                          const lineColor = isLight ? "#10b981" : "#34d399";
+                          const areaColor = isLight ? "rgba(16,185,129,0.15)" : "rgba(52,211,153,0.15)";
+                          return (
+                            <div className="mt-2 h-[26px]" title={`Sightings over the last ${admobDailyCounts.length} day${admobDailyCounts.length === 1 ? "" : "s"}`}>
+                              <svg viewBox="0 0 100 26" preserveAspectRatio="none" className="w-full h-full">
+                                <path d={sp.area} fill={areaColor} stroke="none" />
+                                <path d={sp.line} fill="none" stroke={lineColor} strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+                                <circle cx={sp.lastX} cy={sp.lastY} r="2" fill={lineColor} />
+                              </svg>
+                            </div>
+                          );
+                        })()}
+                        <div className="absolute top-full left-0 mt-1.5 w-52 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg z-50 opacity-0 group-hover/rate:opacity-100 pointer-events-none transition-opacity">
+                          Out of {admobFmtNumber(admobTrackedSessionsTotal)} times we scanned, this ad showed up {admobFmtNumber(admobSessionsTotal)}x — that's {admobOccurrenceRatePercent}%.
                         </div>
                       </div>
                     )}
                   </div>
+
+                  {/* Per-app breakdown — how many times THIS ad has specifically been
+                      seen in each linked source app individually. Same
+                      admobSessionsSeenByApp data as before; scales from one app (no bar
+                      shown) up to many (proportion bar + collapsible chips) instead of a
+                      flat row that gets unreadable past a few apps. Sits above Sighting
+                      Log so it reads as a summary of the log, not part of it. */}
+                  {admobSessionsSeenByApp.length > 0 && (
+                    <AdmobAppBreakdown apps={admobSessionsSeenByApp} isLight={isLight} />
+                  )}
 
                   {admobSessionRows.length > 0 ? (
                     <div className="group/sightings">
@@ -2716,26 +2990,10 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                         </button>
                         {admobSessionGroups.length < admobSessionsTotal && (
                           <span className={`text-[11px] font-medium ${isLight ? "text-gray-400" : "text-white/30"}`}>
-                            Showing {admobSessionGroups.length} of {admobSessionsTotal}
+                            Showing {admobFmtNumber(admobSessionGroups.length)} of {admobFmtNumber(admobSessionsTotal)}
                           </span>
                         )}
                       </div>
-
-                      {/* Per-app breakdown — how many times THIS ad has specifically
-                          been seen in each linked source app individually. */}
-                      {admobSessionsSeenByApp.length > 0 && (
-                        <div className="px-4 pb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                          {admobSessionsSeenByApp.map((row) => (
-                            <span
-                              key={`sighting-app-${row.name}`}
-                              title={`Total number of times this ad has shown up in ${row.name}, added up across every session.`}
-                              className={`text-[11px] font-medium cursor-default ${isLight ? "text-gray-500" : "text-white/40"}`}
-                            >
-                              {row.name}: <span className={`font-bold ${isLight ? "text-fuchsia-600" : "text-fuchsia-400"}`}>{row.count}x</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
 
                       {/* Always expanded — stays inside the Session History block instead of
                           floating outside it, capped + scrollable past max-h-96. */}
@@ -2749,52 +3007,63 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                             >
                               {admobSessionGroups.map((group, index) => {
                                 const groupTotal = group.apps.reduce((sum, a) => sum + a.count, 0);
+                                const severity = admobSightingSeverity(groupTotal);
+                                const severityCls = ADMOB_SEVERITY_CLASSES[severity][isLight ? "light" : "dark"];
+                                const relTime = admobRelativeTime(group.observed_at);
+                                const isLast = index === admobSessionGroups.length - 1;
                                 return (
                                 <div
                                   key={`${group.session_id || "session"}-${index}-${group.observed_at || ""}`}
-                                  className={`flex items-start justify-between gap-4 px-4 py-3 ${
-                                    index < admobSessionGroups.length - 1
-                                      ? isLight
-                                        ? "border-b border-gray-200"
-                                        : "border-b border-white/10"
-                                      : ""
-                                  }`}
+                                  className="relative flex items-start gap-3 px-4 py-3"
                                 >
-                                  <div className="min-w-0">
+                                  {/* Timeline rail — dot colored by severity, connecting
+                                      line down to the next row (omitted on the last row). */}
+                                  <div className="relative flex flex-col items-center w-2.5 pt-1 shrink-0">
+                                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${ADMOB_SEVERITY_DOT_CLASSES[severity]}`} />
+                                    {!isLast && (
+                                      <span className={`absolute top-4 bottom-[-12px] w-px ${isLight ? "bg-gray-200" : "bg-white/10"}`} />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1 pb-1">
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className={`text-[13px] font-semibold ${isLight ? "text-gray-900" : "text-white/85"}`}>
                                         {fmtFriendlyDateTime(group.observed_at)}
                                       </span>
-                                      <span className="relative group/repeat shrink-0 inline-flex items-center">
+                                      {relTime && (
+                                        <span className={`text-[11px] ${isLight ? "text-gray-400" : "text-white/30"}`}>
+                                          {relTime}
+                                        </span>
+                                      )}
+                                      <span className="relative group/repeat shrink-0 inline-flex items-center ml-auto">
                                         <span
-                                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide cursor-default ${
-                                            isLight ? "bg-blue-50 text-blue-700" : "bg-blue-500/10 text-blue-300"
-                                          }`}
+                                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide cursor-default ${severityCls}`}
                                         >
-                                          viewed {groupTotal}x
+                                          {severity === "high" && <span className="mr-1">🔥</span>}
+                                          viewed {admobFmtNumber(groupTotal)}x
                                         </span>
                                         <div className="absolute top-full right-0 mt-1.5 w-48 px-2.5 py-1.5 bg-white text-gray-800 text-[11px] leading-snug font-normal normal-case rounded-md border border-gray-200 shadow-lg opacity-0 group-hover/repeat:opacity-100 pointer-events-none transition-opacity z-50">
-                                          We saw this ad {groupTotal} time{groupTotal === 1 ? "" : "s"} during this particular session.
+                                          We saw this ad {admobFmtNumber(groupTotal)} time{groupTotal === 1 ? "" : "s"} during this particular session.
                                         </div>
                                       </span>
                                     </div>
                                     {group.apps.some((a) => a.name) && (
                                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                                        {group.apps.map((a, i) => (
-                                          <span
-                                            key={`${a.name || "app"}-${i}`}
-                                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide cursor-default ${
-                                              isLight ? "bg-violet-50 text-violet-700" : "bg-violet-500/10 text-violet-300"
-                                            }`}
-                                          >
-                                            {a.name || "Unknown app"}: {a.count}x
-                                          </span>
-                                        ))}
+                                        {group.apps.map((a, i) => {
+                                          const paletteIdx = admobSortedAppNames.indexOf(a.name);
+                                          const palette = admobAppColor(paletteIdx < 0 ? i : paletteIdx);
+                                          const themeKey = isLight ? "light" : "dark";
+                                          return (
+                                            <span
+                                              key={`${a.name || "app"}-${i}`}
+                                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide cursor-default ${palette.bg[themeKey]} ${palette.fg[themeKey]}`}
+                                            >
+                                              {a.name || "Unknown app"}: {admobFmtNumber(a.count)}x
+                                            </span>
+                                          );
+                                        })}
                                       </div>
                                     )}
-                                    <div className={`mt-1 text-[11px] font-mono break-all ${isLight ? "text-gray-400" : "text-white/30"}`}>
-                                      {group.session_id || "Unknown session"}
-                                    </div>
+                                    <AdmobSessionIdChip sessionId={group.session_id} isLight={isLight} />
                                   </div>
                                 </div>
                                 );
