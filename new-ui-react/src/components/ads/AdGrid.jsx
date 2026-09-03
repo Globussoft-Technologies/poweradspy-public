@@ -1399,7 +1399,7 @@ const AdGrid = ({
                   ad={item}
                   isAiFilteredResult={isAiFilteredResult}
                   sduiConfig={sdui.config}
-                  isFavourite={favouriteAdIds.has(`${(item.network || '').toLowerCase()}:${Number(item.adId || item.id)}`)}
+                  isFavourite={favouriteAdIds.has(`${(item.network || '').toLowerCase()}:${String(item.adId || item.id || '').trim()}`)}
                   onToggleFavourite={onToggleFavourite}
                   onSearch={onSearch}
                   onOpenAdvertiserProfile={onOpenAdvertiserProfile}
@@ -1463,7 +1463,7 @@ const AdGrid = ({
           onClose={() => { setSelectedAd(null); onAdDetailClose?.(); }}
           isFavourite={
             selectedAd
-              ? favouriteAdIds.has(`${(selectedAd.network || '').toLowerCase()}:${Number(selectedAd.adId || selectedAd.id)}`)
+              ? favouriteAdIds.has(`${(selectedAd.network || '').toLowerCase()}:${String(selectedAd.adId || selectedAd.id || '').trim()}`)
               : false
           }
           onToggleFavourite={onToggleFavourite}

@@ -1220,9 +1220,12 @@ const App = () => {
         const allFavourites = new Set();
         for (const r of results) {
           const pl = r.platform;
-          r.hiddenAdIds.forEach((id) => allHiddenAds.add(`${pl}:${id}`));
+          // String(id): matches the String()-based ad keys used everywhere
+          // else (visibleAds filter, hide/unhide/favourite). AdMob's ad_id
+          // column is a non-numeric string, so this must stay consistent.
+          r.hiddenAdIds.forEach((id) => allHiddenAds.add(`${pl}:${String(id).trim()}`));
           r.hiddenAdvertiserIds.forEach((id) => allHiddenAdvertisers.add(`${pl}:${id}`));
-          r.favouriteAdIds.forEach((id) => allFavourites.add(`${pl}:${id}`));
+          r.favouriteAdIds.forEach((id) => allFavourites.add(`${pl}:${String(id).trim()}`));
         }
         setHiddenAdIds(allHiddenAds);
         setHiddenAdvertiserIds(allHiddenAdvertisers);
@@ -1251,7 +1254,10 @@ const App = () => {
   const visibleAds = useMemo(() => {
     const filtered = ads.filter((ad) => {
       const platform = (ad.network || '').toLowerCase();
-      const adId = Number(ad.adId || ad.id);
+      // String key, not Number(): AdMob's ad_id is an alphanumeric string
+      // (e.g. "Eluz2LDCFcjgxQKV"), so Number() collapsed every AdMob ad to
+      // the same NaN key, matching all of them once any one was hidden.
+      const adId = String(ad.adId || ad.id || '').trim();
       const ownerId = Number(ad.postOwnerId);
       if (hiddenAdIds.has(`${platform}:${adId}`)) return false;
       if (hiddenAdvertiserIds.has(`${platform}:${ownerId}`)) return false;
@@ -1351,7 +1357,7 @@ const App = () => {
         postOwnerId: ad.postOwnerId,
         type: 2,
       });
-      const hideKey = `${(ad.network || '').toLowerCase()}:${Number(ad.adId)}`;
+      const hideKey = `${(ad.network || '').toLowerCase()}:${String(ad.adId || '').trim()}`;
       setHiddenAdIds((prev) => new Set(prev).add(hideKey));
       // The backend auto-unfavourites an ad when it's hidden, so mirror that in
       // local state: drop it from favourites so the heart un-fills and it leaves
@@ -1395,7 +1401,7 @@ const App = () => {
       } else {
         setHiddenAdIds((prev) => {
           const next = new Set(prev);
-          next.delete(`${platform}:${Number(ad.adId)}`);
+          next.delete(`${platform}:${String(ad.adId || '').trim()}`);
           return next;
         });
         showToast("Ad unhidden successfully", "success");
@@ -1447,7 +1453,7 @@ const App = () => {
   const handleToggleFavourite = useCallback(async (ad) => {
     try {
       const platform = (ad.network || '').toLowerCase();
-      const favKey = `${platform}:${Number(ad.adId)}`;
+      const favKey = `${platform}:${String(ad.adId || '').trim()}`;
       const isFavourited = favouriteAdIds.has(favKey);
 
       if (isFavourited) {
