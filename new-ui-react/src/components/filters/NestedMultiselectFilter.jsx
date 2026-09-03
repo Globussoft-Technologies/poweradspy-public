@@ -203,7 +203,6 @@ const NestedMultiselectFilter = ({
   const renderOption = (option, level = 0, parentValue = null) => {
     const optValue = option.value ?? option.label;
     const optId = option._id ?? optValue;
-    const isSelected = selected.includes(optValue);
     // Use _searchChildren when searching so only matching children show
     const childOptions = option._searchChildren || option.children || option.sub_options || [];
     const hasChildren = childOptions.length > 0;
@@ -217,6 +216,14 @@ const NestedMultiselectFilter = ({
       allLeavesSelected = leaves.length > 0 && leaves.every((v) => selected.includes(v));
       someLeavesSelected = !allLeavesSelected && leaves.some((v) => selected.includes(v));
     }
+    // A parent's own row highlight should track its leaves, not `optValue`
+    // membership in `selected` — the parent's own value only lands there as
+    // bookkeeping (see SchemaRenderer's handleChildChange) once ANY leaf is
+    // picked, which previously made a partially-selected parent look fully
+    // selected while its still-unchecked siblings stayed dim, and made a
+    // parent whose leaves were selected via a route that skipped that
+    // bookkeeping look like nothing was selected at all.
+    const isSelected = hasChildren ? allLeavesSelected : selected.includes(optValue);
 
     // Every parent with at least one child gets a "Select all" checkbox —
     // visual consistency across the list matters more than the slight

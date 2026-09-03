@@ -2,7 +2,7 @@
 require("dotenv").config()
 const { instagram: igNet } = require('../../../config/networks');
 const { cleanAdsData } = require('../helpers/paramParser');
-const { AD_DETAIL_SELECT, AD_DETAIL_JOINS } = require('./adSearchController');
+const { AD_DETAIL_SELECT, getAdDetailJoins } = require('./adSearchController');
 
 async function getAdsByAdvertiser(req, db, logger) {
   try {
@@ -16,14 +16,17 @@ async function getAdsByAdvertiser(req, db, logger) {
     const skipNum = Number(skip) || 0;
     const offset = skipNum * takeNum;
 
+    // getAdDetailJoins' urls subquery is filtered by the same id(s) as the
+    // outer WHERE (see adSearchController.js) — bind ad_id twice.
+    const placeholders = '?';
     const sql = `
       SELECT ${AD_DETAIL_SELECT}
-      ${AD_DETAIL_JOINS}
+      ${getAdDetailJoins(placeholders)}
       WHERE instagram_ad.id = ?
       LIMIT ${takeNum} OFFSET ${offset}
     `;
 
-    const result = await db.sql.query(sql, [Number(ad_id)]);
+    const result = await db.sql.query(sql, [Number(ad_id), Number(ad_id)]);
     const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
 
     if (!rows || rows.length === 0) {

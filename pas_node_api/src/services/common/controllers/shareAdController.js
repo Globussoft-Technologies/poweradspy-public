@@ -15,6 +15,7 @@ const { getAdsByAdvertiser: qrAdsByAdvertiser }   = require('../../quora/control
 const { getAdsByAdvertiser: natAdsByAdvertiser }  = require('../../native/controllers/getAdsByAdvertiserController');
 const { getAdsByAdvertiser: gdnAdsByAdvertiser }  = require('../../gdn/controllers/getAdsByAdvertiserController');
 const { getAdsByAdvertiser: ttAdsByAdvertiser }   = require('../../tiktok/controllers/getAdsByAdvertiserController');
+const { getAdsByAdvertiser: admobAdsByAdvertiser } = require('../../admob/controllers/getAdsByAdvertiserController');
 
 const adHandlers = {
   facebook:  fbAdsByAdvertiser,
@@ -28,6 +29,7 @@ const adHandlers = {
   native:    natAdsByAdvertiser,
   gdn:       gdnAdsByAdvertiser,
   tiktok:    ttAdsByAdvertiser,
+  admob:     admobAdsByAdvertiser,
 };
 
 const COLLECTION_NAME = 'shared_ad_links';
