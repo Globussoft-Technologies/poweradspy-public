@@ -1547,6 +1547,16 @@ const App = () => {
     setAdsMeta({});
     setHasMore(true);
     emptyPageStreakRef.current = 0;
+    // The actual fetch (loadAds, below) is deliberately debounced ~120ms past
+    // this point so a burst of rapid context changes only sends the final one.
+    // Setting loadingMore here rather than waiting for that fetch to actually
+    // start closes the gap where ads is already [] but nothing has flagged
+    // itself as loading yet — searchBannerMessage (above) reads that gap as
+    // "No ads yet, crawling" instead of the correct "search is underway"
+    // spinner, which showed up as the crawl-status banner jumping briefly to
+    // the wrong text right when a redirect (Market Trends, Projects, ...) lands
+    // on the Ads Library, before the real fetch even starts.
+    setLoadingMore(true);
   }, [
     debouncedFilterKey,
     platformKey,
