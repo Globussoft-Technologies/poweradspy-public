@@ -94,6 +94,10 @@ async function getAdDetails(req, db, logger) {
           body: { query: { bool: { filter: { terms: { 'native_ad.id': [parseInt(p.ad_id, 10)] } } } } },
         });
         const hits = esResult.hits || esResult.body?.hits;
+        logger.info('ES overlay data (native adDetail)', {
+          ad_id: p.ad_id,
+          data: JSON.stringify(hits?.hits?.[0]?._source ?? null),
+        });
         if (hits?.hits?.length > 0) {
           const src = hits.hits[0]._source;
           const lang = p.language || 'en';
@@ -113,12 +117,14 @@ async function getAdDetails(req, db, logger) {
           if (src['native.category'] !== undefined) adData.category = src['native.category'];
           if (src['native.subCategory'] !== undefined) adData.subCategory = src['native.subCategory'];
 
-          // Language from ES lang_detect ISO. 'Eb' is a known bad detection
-          // value — treat it as unknown so the frontend hides the field.
-          if (src['lang_detect'] && String(src['lang_detect']).toLowerCase() !== 'eb') {
+          // Language from ES lang_detect ISO. 'eb' and 'un' are known bad /
+          // undetermined values — treat them as unknown so the frontend hides
+          // the field.
+          const BAD_LANG_VALUES = ['eb', 'un'];
+          if (src['lang_detect'] && !BAD_LANG_VALUES.includes(String(src['lang_detect']).toLowerCase())) {
             const langMap = await getLanguageMap(db.sql);
             const langName = resolveLanguageName(langMap, src['lang_detect']);
-            adData.language = String(langName).toLowerCase() === 'eb' ? null : langName;
+            adData.language = BAD_LANG_VALUES.includes(String(langName).toLowerCase()) ? null : langName;
           }
 
           // Market platform URL fields

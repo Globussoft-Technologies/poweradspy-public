@@ -264,9 +264,6 @@ const PageAccessError = ({ onRetry }) => (
   </div>
 );
 
-// sessionStorage key for restoring the search crawl-status banner across a page
-// refresh — see the restore effect and hideToastAfter in the App component below.
-const SEARCH_TOAST_STORAGE_KEY = 'pas_search_crawl_toast';
 
 const App = () => {
   const ui = useSelector(state => state.ui);
@@ -506,10 +503,9 @@ const App = () => {
     source: null,
   });
   const toastTimerRef = useRef(null);
-  const searchToastStartedAtRef = useRef(0);
   // Tracks the (locally-owned-in-AdGrid) ad detail popup's open state, purely so the
   // crawl-status banner below can hide WHILE it's open and reappear once it closes —
-  // see the toast's render condition further down.
+  // see the banner's render condition further down.
   const [adDetailModalOpen, setAdDetailModalOpen] = useState(false);
   const showToast = useCallback((
     message,
@@ -533,52 +529,20 @@ const App = () => {
       );
     }
   }, []);
-  const hideToastAfter = useCallback((source, delayMs = 0) => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => {
-      setToast((current) => {
-        if (source && current.source !== source) return current;
-        if (source === 'search') {
-          try { sessionStorage.removeItem(SEARCH_TOAST_STORAGE_KEY); } catch { /* unavailable */ }
-        }
-        return {
-          show: false,
-          message: "",
-          type: "success",
-          position: "top",
-          source: null,
-        };
-      });
-    }, delayMs);
-  }, []);
-  // The "search underway"/crawl-status banner (source: 'search') should HIDE while on
-  // a different top-level page (e.g. "All Projects") and REAPPEAR on coming back to the
-  // Ads Library — not be dismissed for good. Handled as a render-gate at the toast's
-  // JSX further down (onAdsDashboardPage), not by clearing state here — same
-  // hide-vs-dismiss distinction as the modal handling below.
+  // The crawl-status banner ("your search is underway" / "Showing what we have" /
+  // "No ads yet") used to be a `source: 'search'` entry in the generic `toast`
+  // state above, shown/updated imperatively from several places (handleSearch's
+  // submit-time spinner, saveKeywordSearch's async callback, a couple of
+  // reactive-sync effects added to chase races between them). That kept losing
+  // races — entry points that fire several other state changes ahead of
+  // handleSearch in the same click (Market Trends' onDrill, Projects' competitor
+  // platform clicks, ...) could end up with the banner stuck on stale text, or
+  // never shown at all if its one triggering showToast() call got lost. It's
+  // rendered as its own independent block below instead (see `searchBannerVisible`/
+  // `searchBannerMessage`), computed fresh every render straight from
+  // ui.searchQuery/ads/loadingMore — nothing left to race or lose.
   const onAdsDashboardPage = ui.activePage === 'ads' && !ui.showSavedAdsPage;
-
-  // Restore the crawl-status banner across a full page refresh (all React state is
-  // lost on reload; sessionStorage survives it). Written by the two showToast(...)
-  // calls in the saveKeywordSearch().then() block below, cleared by hideToastAfter
-  // whenever a 'search' toast is genuinely dismissed (query cleared). Expires after
-  // 2h so a stale message can't resurface in some later, unrelated session.
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(SEARCH_TOAST_STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (!saved?.message || Date.now() - (saved.savedAt || 0) > 2 * 60 * 60 * 1000) {
-        sessionStorage.removeItem(SEARCH_TOAST_STORAGE_KEY);
-        return;
-      }
-      showToast(saved.message, saved.type || 'notice', null, 'top', 'search');
-    } catch {
-      // corrupt/unavailable storage — nothing to restore
-    }
-    // Mount-only: this is a one-time restore, not a live sync.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const hasActiveSearchQuery = String(ui.searchQuery || '').trim().length > 0;
 
   // Landing State (from URL)
   const [landingAd, setLandingAd] = useState(() => {
@@ -1049,7 +1013,6 @@ const App = () => {
     // cannot produce a false empty result.
     sdui.clearAll?.();
     dispatch(setSearchQuery(''));
-    hideToastAfter("search", 0);
     dispatch(setExactSearch(false));
     dispatch(setSpecificPlatforms([]));
     sdui.setActivePlatforms(purchasedNetworks);
@@ -1545,6 +1508,28 @@ const App = () => {
   const [searchTrigger, setSearchTrigger] = useState(0);
   const emptyPageStreakRef = useRef(0);
 
+  // The crawl-status banner is fully derived, not driven by any imperative
+  // showToast() call — see the comment by hasActiveSearchQuery above for why.
+  // Visible whenever there's a live search on the Ads Library page and no modal
+  // covering it; while loading it reads as the submit-time "underway" message,
+  // and the instant `loadingMore` clears (set in the fetch's own `finally`,
+  // so it can't be skipped or raced) it reads off however many ads actually
+  // came back — no separate state to fall out of sync with what's on screen.
+  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics;
+  const searchBannerLabel = ["keyword", "advertiser", "domain"].includes(String(ui.searchIn || '').toLowerCase())
+    ? ui.searchIn
+    : "keyword";
+  // `loadingMore` also goes true for background pagination (scrolling for more
+  // pages of an already-showing search), not just a fresh page-0 search — check
+  // `ads.length` first so scrolling doesn't flash the "underway" spinner icon/text
+  // back on over results that are already on screen.
+  const searchBannerLoading = ads.length === 0 && loadingMore;
+  const searchBannerMessage = ads.length > 0
+    ? "Showing what we have — our crawler is still checking for new ads. We'll notify you if anything new shows up."
+    : searchBannerLoading
+      ? `Your ${searchBannerLabel} search is underway. We’re scanning for the newest matching ads.`
+      : "No ads yet for this — we're crawling now. Usually ready in 15–20 min; we'll notify you the moment new ads come in.";
+
   // Auto-open pricing modal when guest on public landing reaches the end of ads
   useEffect(() => {
     if (!hasMore && guest?.isPublicLanding && ads.length > 0) {
@@ -1680,7 +1665,6 @@ const App = () => {
         }))) {
           dispatch(setSearchQuery(''));
           sdui.clearAll?.();
-          hideToastAfter("search", 0);
           setLoadingMore(false);
           guest?.showGuestWarning?.("Please login to search and filter ads");
           return;
@@ -1779,7 +1763,9 @@ const App = () => {
           // the platform actually being viewed. Use the ads actually returned for THIS
           // search instead, whatever platform(s) that covers.
           const adsCount = data?.ads?.length ?? 0;
-          const adsFound = adsCount > 0;
+          // Backend tracking write only — the crawl-status banner itself is now
+          // derived (see searchBannerVisible/searchBannerMessage above), so this
+          // no longer needs to imperatively set any toast on success.
           saveKeywordSearch({
             value: query,
             type: si,        // 'keyword' | 'advertiser' | 'domain'
@@ -1788,33 +1774,6 @@ const App = () => {
             ads_count: adsCount,
             country,         // selected country code(s) or null
             GT,              // true only when Google Transparency was ON for an all/google search
-          }).then((res) => {
-            if (res?.data?.status === 'skip') return;
-            // Update the SAME top "search underway" banner (source: 'search', fired at
-            // submit time in handleSearch) in place, rather than spawning a second toast.
-            // durationMs: null — stays up until the user clears the keyword (handleSearch
-            // dismisses source:'search' toasts on an empty query) or starts a new search.
-            // Persisted to sessionStorage too (see the mount-time restore effect above)
-            // so this survives a full page refresh, not just in-memory navigation.
-            const showSearchStatusToast = (message) => {
-              showToast(message, 'notice', null, 'top', 'search');
-              try {
-                sessionStorage.setItem(SEARCH_TOAST_STORAGE_KEY, JSON.stringify({
-                  message, type: 'notice', savedAt: Date.now(),
-                }));
-              } catch { /* unavailable — in-memory toast still works this session */ }
-            };
-            if (!adsFound) {
-              showSearchStatusToast(
-                "No ads yet for this — we're crawling now. Usually ready in 15–20 min; " +
-                "we'll notify you the moment new ads come in."
-              );
-            } else {
-              showSearchStatusToast(
-                "Showing what we have — our crawler is still checking for new ads. " +
-                "We'll notify you if anything new shows up."
-              );
-            }
           }).catch(() => {});
         }
 
@@ -1824,6 +1783,7 @@ const App = () => {
           noDataMessage: msg,
           meta,
         } = data;
+
         setAds((prev) => {
           if (page === 0) return newAds;
           const existingIds = new Set(prev.map((a) => a.id));
@@ -1928,11 +1888,9 @@ const App = () => {
         }
       } finally {
         if (!controller.signal.aborted) {
+          // The crawl-status banner reads this flip directly (searchBannerVisible/
+          // searchBannerMessage above) — nothing else to do here for it now.
           setLoadingMore(false);
-          if (page === 0 && searchToastStartedAtRef.current > 0) {
-            hideToastAfter("search", 2000);
-            searchToastStartedAtRef.current = 0;
-          }
         }
       }
     };
@@ -1970,7 +1928,6 @@ const App = () => {
     guest?.loading,
     location.pathname,
     projectContextTrigger,
-    hideToastAfter,
     selectedPlanAccessNetworkKey,
     planAllowedPlatformKey,
     planAccessResolved,
@@ -2002,12 +1959,6 @@ const App = () => {
   const guestSetSearchQuery = (val) => {
     if (guest?.isPublicLanding && guest?.isRestricted) { guest.showGuestWarning("Please login to search"); return; }
     if (guestGuard("Please login to search", { searchQuery: val, searchIn: ui.searchIn })) return;
-    // Clearing the query this way (e.g. the "Clear filter(s)" pill in Header.jsx, which
-    // calls setSearchQuery("") directly) bypasses handleSearch entirely, so it needs its
-    // own dismiss for the "search underway"/crawl-status banner (source: 'search').
-    if (!String(val || "").trim()) {
-      hideToastAfter("search", 0);
-    }
     dispatch(setSearchQuery(val));
   };
   const guestSetSearchIn = (val) => {
@@ -2044,7 +1995,6 @@ const App = () => {
     aiRunIdRef.current += 1;
     setAiSearchLoading(false);
     dispatch(setSearchQuery(''));
-    hideToastAfter("search", 0);
     dispatch(setAiPrompt(''));
     dispatch(setSearchIn('keyword'));
     dispatch(setExactSearch(false));
@@ -2077,27 +2027,11 @@ const App = () => {
       trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'header', feature_name: 'ad_search', ...getNetworkContext(platform ? [platform] : ui.specificPlatforms), request_context: 'search', search_mode: 'standard', search_type: String(type || ui.searchIn || 'keyword').toLowerCase() });
       return;
     }
-    const trimmedQuery = String(query || "").trim();
-    if (!trimmedQuery) {
-      // Clearing the keyword (X button, or backspacing to empty) means there's no
-      // search left to be "underway" — dismiss the search-status banner immediately
-      // instead of leaving it counting down against a query that's no longer active.
-      hideToastAfter("search", 0);
-    }
-    if (trimmedQuery && options.showScraperToast) {
-      const searchType = String(type || ui.searchIn || "keyword").toLowerCase();
-      const searchLabel = ["keyword", "advertiser", "domain"].includes(searchType)
-        ? searchType
-        : "keyword";
-      searchToastStartedAtRef.current = Date.now();
-      showToast(
-        `Your ${searchLabel} search is underway. We’re scanning for the newest matching ads.`,
-        "info",
-        null,
-        "top",
-        "search",
-      );
-    }
+    // The crawl-status banner (both "search is underway" and the later
+    // "Showing what we have"/"No ads yet" text) is now derived straight from
+    // ui.searchQuery/loadingMore/ads — see searchBannerVisible/searchBannerMessage
+    // above — so clearing the query here is all this needs to do to make it
+    // disappear, and submitting a non-empty one is all it needs to make it appear.
     if (options.resetFilters) {
       // Competitor drill-downs should not inherit stale ad-library filters from
       // the previous page/session; start the search from a blank filter state so
@@ -2130,7 +2064,7 @@ const App = () => {
     const si = type || ui.searchIn || 'keyword';
     const selected = (platform ? [platform] : ui.specificPlatforms) || [];
     armKeywordSearchTrack(query, si, selected);
-  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute, showToast, hideToastAfter]);
+  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
 
   // Orchestrates AI search: prompt → DS plan → try each fallback payload
   // (most-specific first) until one returns results → commit that tier's filters
@@ -2912,10 +2846,6 @@ const App = () => {
             onClearAll={() => {
               if (sdui.clearAll) sdui.clearAll();
               dispatch(setSearchQuery(""));
-              // Clearing here bypasses handleSearch/guestSetSearchQuery entirely (a
-              // direct Redux dispatch), so it needs its own dismiss for the
-              // crawl-status banner (source: 'search'), same as those two paths.
-              hideToastAfter("search", 0);
             }}
             onPlatformRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             onToggleSidebar={() => dispatch(setSidebarOpen(!ui.isSidebarOpen))}
@@ -3050,54 +2980,66 @@ const App = () => {
         </div>
       )}
 
+      {/* Search crawl-status banner — fully derived (searchBannerVisible/
+          searchBannerMessage above), not tied to the generic toast state below,
+          so there's no imperative trigger that can be lost or raced. Hidden
+          (not dismissed) while an ad detail/analytics modal covers the page —
+          state nothing depends on here, so it just reappears once the modal
+          closes or the user navigates back to the Ads Library. */}
+      {searchBannerVisible && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] lg:left-[66%] top-[90px] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4"
+          style={{
+            // Narrower than the generic toast's max-w cap — this banner is
+            // centered on a fixed left:% point, so at its old width it could
+            // overlap the platform icon row to its left. Text just wraps onto
+            // an extra line instead.
+            maxWidth: 'min(calc(100vw - 2rem), 600px)',
+            backgroundColor: 'rgba(238, 242, 250, 0.96)',
+            borderColor: 'rgba(51, 82, 150, 0.28)',
+            color: '#335296',
+            boxShadow: '0 4px 12px rgba(51, 82, 150, 0.14)',
+          }}
+        >
+          <div className="w-6 h-6 rounded-full flex items-center justify-center text-white bg-[#335296]">
+            {searchBannerLoading
+              ? <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+              : <Info size={14} strokeWidth={3} />}
+          </div>
+          <span className="font-semibold tracking-tight text-xs">{searchBannerMessage}</span>
+        </div>
+      )}
+
       {/* Toast Notification — hidden (not dismissed) while an ad detail/analytics
           modal covers the page, so it doesn't render on top of the modal; state is
           untouched, so it reappears automatically once the modal closes. */}
-      {toast.show && !adDetailModalOpen && !selectedAdForAnalytics && (toast.source !== 'search' || onAdsDashboardPage) && (
+      {toast.show && !adDetailModalOpen && !selectedAdForAnalytics && (
         <div
           className={`fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 ${
-            toast.source === 'search'
-              ? 'lg:left-[64%] top-[90px] slide-in-from-top-4'
-              : toast.position === 'bottom'
+            toast.position === 'bottom'
               ? 'bottom-16 slide-in-from-bottom-4'
               : 'top-[140px] slide-in-from-top-4'
           }`}
           style={{
-            // Narrower than the generic max-w cap above — the search-sourced banner
-            // is centered on a fixed left:% point, so at its old width it could
-            // overlap the platform icon row to its left. Text just wraps onto an
-            // extra line instead.
-            maxWidth: toast.source === 'search' ? 'min(calc(100vw - 2rem), 650px)' : undefined,
-            backgroundColor: toast.source === 'search'
-              ? 'rgba(238, 242, 250, 0.96)'
-              : toast.type === 'info'
+            backgroundColor: toast.type === 'info'
               ? 'rgba(59, 130, 246, 0.15)'
               : toast.type === 'success'
                 ? 'rgba(34, 197, 94, 0.15)'
                 : 'rgba(239, 68, 68, 0.15)',
-            borderColor: toast.source === 'search'
-              ? 'rgba(51, 82, 150, 0.28)'
-              : toast.type === 'info'
+            borderColor: toast.type === 'info'
               ? 'rgba(59, 130, 246, 0.35)'
               : toast.type === 'success'
                 ? 'rgba(34, 197, 94, 0.3)'
                 : 'rgba(239, 68, 68, 0.3)',
-            color: toast.source === 'search'
-              ? '#335296'
-              : toast.type === 'info'
+            color: toast.type === 'info'
               ? '#60a5fa'
               : toast.type === 'success'
                 ? '#4ade80'
                 : '#f87171',
-            boxShadow: toast.source === 'search'
-              ? '0 4px 12px rgba(51, 82, 150, 0.14)'
-              : undefined
           }}
         >
           <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white ${
-            toast.source === 'search'
-              ? 'bg-[#335296]'
-              : toast.type === 'info'
+            toast.type === 'info'
               ? 'bg-blue-500'
               : toast.type === 'success'
                 ? 'bg-green-500'
