@@ -136,6 +136,13 @@ function isBlankValue(v) {
   return v === null || v === undefined || v === '';
 }
 
+// Search-mix documents exist in both legacy flat-dotted and newer nested
+// source shapes. Read either shape so pagination does not discard real ads.
+function readSourceField(source, field) {
+  if (Object.prototype.hasOwnProperty.call(source, field)) return source[field];
+  return field.split('.').reduce((value, key) => value == null ? undefined : value[key], source);
+}
+
 function firstDefined(...values) {
   for (const value of values) {
     if (!isBlankValue(value)) return value;
@@ -839,41 +846,64 @@ function normalizeDescriptionHit(hit, cfg, platform, pageField) {
   const row = {};
   const wantsTextFields = !cfg.suppressTextFields;
 
-  row.id = src[pageField];
-  row.cursor = src[pageField];
-  if (cfg.adIdField) row.ad_id = src[cfg.adIdField] ?? null;
+  row.id = readSourceField(src, pageField);
+  row.cursor = readSourceField(src, pageField);
+  if (cfg.adIdField) row.ad_id = readSourceField(src, cfg.adIdField) ?? null;
   if (wantsTextFields) {
-    row.ad_text = src[cfg.textField] ?? null;
-    row.ad_title = src[cfg.titleField] ?? null;
-    row.news_feed_description = src[cfg.newsFeedField] ?? null;
+    row.ad_text = readSourceField(src, cfg.textField) ?? null;
+    row.ad_title = readSourceField(src, cfg.titleField) ?? null;
+    row.news_feed_description = readSourceField(src, cfg.newsFeedField) ?? null;
   }
-  row.post_owner_name = src[cfg.ownerField] ?? null;
-  row.category = src[`${platform}.category`] ?? null;
-  row.sub_category = src[`${platform}.subCategory`] ?? null;
+  row.post_owner_name = readSourceField(src, cfg.ownerField) ?? null;
+  row.category = readSourceField(src, `${platform}.category`) ?? null;
+  row.sub_category = readSourceField(src, `${platform}.subCategory`) ?? null;
   row.category_id = src.category_id ?? null;
   row.subcategory_id = src.subCategory_id ?? null;
   if (src.confidence_score !== undefined) row.confidence_score = src.confidence_score;
   row.ai_meta = readAiMetaFromSource(src, platform);
 
-  if (src[cfg.ocrField] !== undefined) row.ocr = src[cfg.ocrField];
-  if (cfg.destPageField && src[cfg.destPageField] !== undefined) {
-    row.destination_page_text = src[cfg.destPageField];
+  const ocr = readSourceField(src, cfg.ocrField);
+  if (ocr !== undefined) row.ocr = ocr;
+  const destinationPageText = cfg.destPageField ? readSourceField(src, cfg.destPageField) : undefined;
+  if (destinationPageText !== undefined) {
+    row.destination_page_text = destinationPageText;
   }
 
-  const adType = src[cfg.typeField] || '';
-  if (platform === 'native') row.native_creative_type = src[cfg.typeField] ?? null;
-  const nasValue = src[cfg.imageNasField] || '';
-  const origValue = cfg.imageOrigField ? (src[cfg.imageOrigField] || '') : '';
+  const adType = readSourceField(src, cfg.typeField) || '';
+  if (platform === 'native') row.native_creative_type = readSourceField(src, cfg.typeField) ?? null;
+  const nasValue = readSourceField(src, cfg.imageNasField) || '';
+  const origValue = cfg.imageOrigField ? (readSourceField(src, cfg.imageOrigField) || '') : '';
   if (cfg.imageOrigField) row.image_url_original = resolveCreativeUrl(origValue);
 
   if (adType === 'IMAGE' || cfg.alwaysEmitImage || platform === 'native') {
     row.ad_image = resolveCreativeUrl(nasValue) ?? resolveCreativeUrl(origValue) ?? null;
   }
   if (adType === 'VIDEO' && cfg.thumbField) {
-    row.thumbnail = served(src[cfg.thumbField] || '') ?? null;
+    row.thumbnail = served(readSourceField(src, cfg.thumbField) || '') ?? null;
   }
 
   return row;
+}
+
+/**
+ * Reddit's classifier consumer persists each page atomically and cannot accept
+ * a row without a durable numeric cursor. Keep malformed ES hits out of the
+ * response instead of turning them into a null-ID placeholder.
+ */
+function filterRedditDescriptionRows(rows, exVal, log) {
+  let previousCursor = exVal;
+  return rows.filter((row) => {
+    const cursor = Number(row.cursor);
+    const valid = Number.isSafeInteger(cursor) && cursor > previousCursor;
+    if (!valid) {
+      log?.warn?.(`[getDescriptionDetails] dropping malformed Reddit row: cursor=${row.cursor ?? 'null'}`);
+      return false;
+    }
+    row.id = cursor;
+    row.cursor = cursor;
+    previousCursor = cursor;
+    return true;
+  });
 }
 
 /**
@@ -1005,7 +1035,12 @@ async function getDescriptionDetails(req, res) {
     // an undisplayable ad is pure wasted classification spend.
     const mediaFilter = getDisplayableMediaFilter(platform);
     // Filter context avoids score calculation for cursor and visibility clauses.
-    const boolQuery = { filter: [{ range: { [pageField]: { gt: exVal } } }, ...(mediaFilter || [])] };
+    const cursorFilters = platform === 'reddit'
+      ? [{ exists: { field: pageField } }]
+      : [];
+    const boolQuery = {
+      filter: [{ range: { [pageField]: { gt: exVal } } }, ...cursorFilters, ...(mediaFilter || [])],
+    };
 
     let esResult;
     try {
@@ -1032,7 +1067,10 @@ async function getDescriptionDetails(req, res) {
     }
 
     const hits = (esResult.hits || esResult.body?.hits)?.hits || [];
-    const finalArray = hits.map(hit => normalizeDescriptionHit(hit, cfg, platform, pageField));
+    const normalizedRows = hits.map(hit => normalizeDescriptionHit(hit, cfg, platform, pageField));
+    const finalArray = platform === 'reddit'
+      ? filterRedditDescriptionRows(normalizedRows, exVal, service.log)
+      : normalizedRows;
 
     // SQL fallback: ES is a downstream sync of MySQL, so an ad whose ES doc hasn't
     // (yet) received text/title/description/owner/image carries the real value in

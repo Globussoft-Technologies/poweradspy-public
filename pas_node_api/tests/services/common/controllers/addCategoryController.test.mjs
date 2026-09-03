@@ -305,6 +305,24 @@ describe("addCategoryController > getDescriptionDetails", () => {
     expect(res.body[0].cursor).toBe(9);
     expect(res.body[0].ad_id).toBeUndefined();
   });
+  it("reddit drops malformed null-cursor hits and keeps numeric advancing rows", async () => {
+    const search = vi.fn(async (params) => {
+      expect(params.body.query.bool.filter).toContainEqual({ exists: { field: "reddit_ad.id" } });
+      return { hits: { hits: [
+      { _source: { "reddit_ad.id": 569138, "reddit_ad.type": "TEXT" } },
+      { _source: { ad_title: "" } },
+      { _source: { reddit_ad: { id: 569139, type: "TEXT" } } },
+      ] } };
+    });
+    const warn = vi.fn();
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, log: { warn, info: vi.fn(), error: vi.fn() } }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "reddit", exVal: 569137, limit: 5 }, body: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.map((row) => row.cursor)).toEqual([569138, 569139]);
+    expect(res.body.every((row) => Number.isSafeInteger(row.id) && Number.isSafeInteger(row.cursor))).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
   it("VIDEO row with thumb containing 'PowerAdspy' → keeps thumb", async () => {
     const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
       "facebook_ad.id": 1, "facebook_ad.type": "VIDEO",
