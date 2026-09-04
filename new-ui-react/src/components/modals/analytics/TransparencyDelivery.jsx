@@ -138,7 +138,7 @@ const InfoTip = ({ text, isLight, align = "right" }) => (
     </button>
     <span
       role="tooltip"
-      className={`pointer-events-none absolute top-full z-[100] mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border px-3 py-2 text-left text-[11px] font-medium normal-case leading-relaxed tracking-normal opacity-0 shadow-xl transition-opacity group-hover/info:opacity-100 group-focus-within/info:opacity-100 ${
+      className={`pointer-events-none absolute top-full z-[100] mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border px-3 py-2 text-left text-[11px] font-medium normal-case leading-relaxed tracking-normal opacity-0 shadow-xl transition-opacity group-hover/info:opacity-100 ${
         align === "left" ? "left-0" : "right-0"
       } ${
         isLight
