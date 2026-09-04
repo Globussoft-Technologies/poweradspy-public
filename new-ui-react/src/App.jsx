@@ -507,6 +507,11 @@ const App = () => {
   // crawl-status banner below can hide WHILE it's open and reappear once it closes —
   // see the banner's render condition further down.
   const [adDetailModalOpen, setAdDetailModalOpen] = useState(false);
+  // Tracks the (locally-owned-in-Header) notifications dropdown's open state, purely so
+  // the crawl-status banner below can shrink its max-width WHILE it's open — the dropdown
+  // sits just left of the bell, and at full width the banner (centered further left) can
+  // overlap it. Reported up via Header's onNotifOpenChange prop.
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const showToast = useCallback((
     message,
     type = "success",
@@ -1521,7 +1526,12 @@ const App = () => {
   // and the instant `loadingMore` clears (set in the fetch's own `finally`,
   // so it can't be skipped or raced) it reads off however many ads actually
   // came back — no separate state to fall out of sync with what's on screen.
-  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics;
+  // Excluded for an AI search (ui.aiPrompt non-empty): AI search queries ads already
+  // indexed via the DS planning service, not the scraper — nothing is "crawling," so the
+  // "we're crawling now, ready in 15-20 min" message would be actively misleading there.
+  // handleSearch clears aiPrompt on every genuine non-AI search, so this can't stay
+  // stuck stale and suppress the banner for a real search made right after an AI one.
+  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt;
   const searchBannerLabel = ["keyword", "advertiser", "domain"].includes(String(ui.searchIn || '').toLowerCase())
     ? ui.searchIn
     : "keyword";
@@ -2054,6 +2064,13 @@ const App = () => {
       // the clicked advertiser/platform is the only active context.
       sdui.clearAll?.();
     }
+    // Every handleSearch call is a genuine keyword/advertiser/domain search, never an AI
+    // one (runAiSearch is a separate path) — clear any leftover ui.aiPrompt so it can't
+    // stay stale from an earlier AI search the user didn't explicitly exit. searchBannerVisible
+    // (below) treats a non-empty aiPrompt as "this is an AI search, don't show the crawl-status
+    // banner" — without this, submitting a normal search right after an AI one (without
+    // toggling Ask AI off first) would incorrectly keep the banner suppressed.
+    dispatch(setAiPrompt(''));
     dispatch(setSearchQuery(query));
     if (type) dispatch(setSearchIn(type));
     if (platform) {
@@ -2588,6 +2605,7 @@ const App = () => {
         aiSearchAvailable={aiSearchAvailable}
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}
+        onNotifOpenChange={setNotificationsOpen}
         searchIn={ui.searchIn}
         setSearchIn={guestSetSearchIn}
         searchQuery={ui.searchQuery}
@@ -3013,13 +3031,22 @@ const App = () => {
           closes or the user navigates back to the Ads Library. */}
       {searchBannerVisible && (
         <div
-          className="fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] lg:left-[66%] top-[90px] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4"
+          className={`fixed z-[600] max-w-[calc(100vw-2rem)] ${
+            // Anchored differently depending on the notifications dropdown: centered
+            // (left-1/2 + -translate-x-1/2) normally, but that centers growth on both
+            // sides — widening it while the dropdown is open kept pushing the right edge
+            // further right, into the bell icon. Right-anchored instead while open, so
+            // changing the width only ever grows it leftward, never past the bell.
+            notificationsOpen ? 'right-4 lg:right-[516px]' : 'left-1/2 -translate-x-1/2 lg:left-[65%]'
+          } top-[90px] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4`}
           style={{
             // Narrower than the generic toast's max-w cap — this banner is
             // centered on a fixed left:% point, so at its old width it could
             // overlap the platform icon row to its left. Text just wraps onto
-            // an extra line instead.
-            maxWidth: 'min(calc(100vw - 2rem), 600px)',
+            // an extra line instead. Shrunk further still while the notifications
+            // dropdown is open — that sits just left of the bell and would otherwise
+            // overlap the banner's right edge at the wider width.
+            maxWidth: notificationsOpen ? 'min(calc(100vw - 2rem), 460px)' : 'min(calc(100vw - 2rem), 600px)',
             backgroundColor: 'rgba(238, 242, 250, 0.96)',
             borderColor: 'rgba(51, 82, 150, 0.28)',
             color: '#335296',

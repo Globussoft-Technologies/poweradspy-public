@@ -127,6 +127,7 @@ const Header = ({
   aiSearchAvailable = false,
   aiSearchChecked = false,
   aiSearchLoading = false,
+  onNotifOpenChange,
 }) => {
   const { config } = sdui;
   const { user, logout } = useAuth();
@@ -184,6 +185,12 @@ const Header = ({
   const { notifications, unreadCount, newNotifications, markAllRead } = useNotifications();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
+  // Report open/close to the parent so it can shrink the crawl-status banner's width
+  // while the notifications dropdown is open — the dropdown sits to the left of the bell
+  // and the banner is centered further left still, so at full width they can overlap.
+  useEffect(() => {
+    onNotifOpenChange?.(notifOpen);
+  }, [notifOpen, onNotifOpenChange]);
 
   // Click a notification → search its term on its network. The bell's type is 0=keyword,
   // 1=advertiser, 2=domain; map it to the search-in value. onSearch is App's handleSearch,
