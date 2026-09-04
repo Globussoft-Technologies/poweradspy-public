@@ -116,14 +116,17 @@ touched at all, matching "if disabled, skip this step entirely."
 `startFirstAdPushWatcher({ docId, scrapeId, type, value, network })`
 ([keywordAdNotificationController.js](../src/services/common/controllers/keywordAdNotificationController.js)):
 
-1. Waits **3 seconds** (fixed, not configurable — the ask was specifically "3s once, then
-   every N minutes").
+1. Waits **1 minute** (fixed, not configurable — originally 3 seconds, changed to 1 minute
+   after real staging testing made the check cadence hard to distinguish from log noise at
+   3s; the ask was "wait once, then check every N minutes").
 2. Checks Elasticsearch for the current ad count (uncached — bypasses the existing 5-min
    `getAdsCountCached` cache, since a watcher's whole point is a fresh read every tick).
 3. **Ads found (≥1)**: sends the push to every searcher not yet pushed today for this
    (term, network), marks the dedup flag, **stops** — no more checks for this claim.
-4. **Still 0**: looks up whether the specific session (by `scrapeId`) is still `'scrapping'`.
-   Closed → stop, nothing left to check. Still open → wait
+4. **Still 0**: looks up whether the specific session (by `scrapeId`) is still `'scrapping'`
+   **or `'processing'`** — both count as "still in progress," matching
+   `keywordSearchController.js`'s own `STALE_RECOVERABLE_STATUSES`. Closed (any other
+   status) → stop, nothing left to check. Still open → wait
    `config.keywordSearch.notify.firstAdPushCheckIntervalSec` (default `300` = 5 min) and
    repeat from step 2.
 
@@ -184,6 +187,47 @@ for the §3.1 restart-loss trade-off (they'd eventually re-check any term scrape
 regardless of whether its watcher survived a restart). Removing the old push logic from them
 removed that incidental coverage too — the restart-loss gap is now uncushioned, matching what
 was explicitly asked for.
+
+### 3.5 A second scraper-reporting endpoint, missed initially — real bug, reported in production
+
+`POST /keyword-search/work` (`scraperWork()`, §3.1) is not the only way a scraper reports its
+work. `POST /keyword-search/scraping-history` (`addScrapingHistory()`, same controller file) is
+a separate endpoint whose own doc comment notes some scrapers call it "once per ad found,"
+independent of `/work`'s claim-and-close cycle. §3.1's watcher was originally only wired into
+`scraperWork()` — a scraper reporting exclusively through `addScrapingHistory()` never spawned
+a watcher at all, so it silently never got a first-ad push. This shipped, then surfaced as a
+real report: "previously in the cron I used to get [it] if the adsCount is >=1, now it is not
+getting notification" — the old, removed cron (§3.2) scanned the whole `keyword_searches`
+collection regardless of which endpoint updated it, so it never had this gap; the new
+per-endpoint hook did. Confirmed via a real staging log line (`first-ad push failed`,
+`Firebase credentials file not found` — a *separate*, deployment-only issue on that box, not
+this bug) that the mechanism per se was sound; the actual missing-watcher case surfaced once
+that unrelated credentials gap was worked around.
+
+Fixed with two changes, both in `addScrapingHistory()`:
+
+1. **Watcher now also spawns from this endpoint** — mirroring §3.1's hook, gated the same way
+   (`notify.enabled`/`firstAdPushEnabled`), only on a genuinely new session (`!updatedExisting`)
+   so a scraper re-reporting the same session repeatedly doesn't pile up redundant watchers.
+2. **`sendFirstAdPushForKnownCount()`** (new function, `keywordAdNotificationController.js`) —
+   some scrapers (Google Transparency) report `ads_count` directly in this same call. When
+   that's true, send immediately instead of spawning a watcher to poll ES for a count already
+   known — verified in testing to land in well under a second, vs. the watcher's 1-minute-plus
+   delay. Not gated on `!updatedExisting`: a scraper reporting incrementally (0 → 1 → 3 ads
+   across several calls) gets each new count checked, and per-user dedup (the same
+   `isAdFoundPushedToday`/`adFoundPushed` marker §3.1 uses) makes repeat calls safe.
+
+Also fixed as part of the same investigation: `startFirstAdPushWatcher`'s "is the session still
+open" check only recognized `status: 'scrapping'` — but a session reported via
+`addScrapingHistory()` with its own non-terminal `status: 'processing'` never carries
+`'scrapping'` at all, so the watcher gave up after exactly one check for every session reported
+that way, even while genuinely still running. Now recognizes both (§3.1 step 4).
+
+Verified end-to-end against real dev Mongo/ES/SQL/Firebase
+(`tests/firstAdPushViaScrapingHistory.manual.js`): a `'processing'` report with no count yet →
+watcher spawns → correctly keeps re-checking past the first tick (this exact scenario failed
+before the `stillOpen` fix, confirming it as the real cause) → push once ES shows ads. A
+separate `ads_count: 3` report → push lands in the same test run with no watcher wait at all.
 
 ---
 
@@ -279,7 +323,7 @@ copied from reading it, not yet applied to our implementation:
   incidental catch-all was removed along with its push logic — nothing else picks up the
   slack. A term whose watcher was lost this way gets no first-ad push for that scrape.
 - **Production-scale concurrent-watcher count is unverified.** Each watcher is cheap
-  individually (one indexed Mongo lookup + a gated ES count, at most every 3s then every 5
+  individually (one indexed Mongo lookup + a gated ES count, at most every 1 min then every 5
   min), but there's no explicit cap on how many can exist at once — bounded only by how many
   terms are actually mid-scrape in real traffic, which hasn't been measured. Recommended
   before a full production rollout: a canary (single network or low-traffic period) with

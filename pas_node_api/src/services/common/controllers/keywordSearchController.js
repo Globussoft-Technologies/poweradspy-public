@@ -24,7 +24,7 @@ const config = require('../../../config');
 const { parseJsonKeywords, parseCsvFile } = require('../helpers/keywordInput');
 const { enqueueFailedScrapeRequest } = require('../helpers/scrapeRequestQueue');
 // Spawns the first-ad push watcher per claimed term — see scraperWork() below.
-const { startFirstAdPushWatcher } = require('./keywordAdNotificationController');
+const { startFirstAdPushWatcher, sendFirstAdPushForKnownCount } = require('./keywordAdNotificationController');
 
 const log = logger.createChild('keyword-search');
 
@@ -1119,6 +1119,31 @@ async function addScrapingHistory(req, res) {
         message: `keyword '${value}' (type:${type}) not found — store it first via /keyword-search or /keyword-search/synthetic`,
         data: null,
       });
+    }
+
+    // First-ad push — this endpoint is a SEPARATE way scrapers report progress (some
+    // report "once per ad found" via THIS endpoint instead of via /keyword-search/work's
+    // claim-and-close cycle, per the comment above), so without this the push would only
+    // ever fire for scrapers using /work — exactly the gap that showed up as "not getting
+    // the notification anymore."
+    if (config.keywordSearch.notify?.enabled !== false && config.keywordSearch.notify?.firstAdPushEnabled !== false) {
+      if (finalAdsCount != null && finalAdsCount >= 1) {
+        // Count already known THIS call (e.g. Google Transparency reports ads_count
+        // directly) — send right now instead of spawning a watcher to poll ES for
+        // something we already have the answer to. Not gated on !updatedExisting: a
+        // scraper reporting incrementally (0 → 1 → 3 ads across several calls) gets each
+        // new count checked, and per-user dedup makes repeat calls safe either way.
+        sendFirstAdPushForKnownCount({ docId: result._id, value, network, adsCount: finalAdsCount });
+        log.info('First-ad push sent immediately from reported ads_count', { owner, value, network, type, adsCount: finalAdsCount });
+      } else if (!updatedExisting) {
+        // Count not known/zero this call — fall back to watching ES for the rest of this
+        // session's lifetime. Only on a genuinely NEW session; a repeat report for the
+        // same session doesn't need a second watcher — the one spawned on its first
+        // report (or the branch above, once a count IS eventually reported) already
+        // covers it.
+        startFirstAdPushWatcher({ docId: result._id, scrapeId, type, value, network });
+        log.info('First-ad push watcher started for scraping-history report', { owner, value, network, type, status: finalStatus });
+      }
     }
 
     return res.json({

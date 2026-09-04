@@ -5,8 +5,9 @@
  * value/userId/token so no unrelated real doc or user can ever be touched (see
  * firstAdPushFastScan.manual.js's history for why that scoping matters).
  *
- * Uses REAL timers (the watcher's own 3s initial delay + a short overridden recheck
- * interval) rather than faking time, so this takes ~15-20s to run.
+ * Uses REAL timers (the watcher's own 1-minute initial delay, fixed/not configurable, +
+ * a short overridden recheck interval) rather than faking time, so this takes a few
+ * minutes to run — most of it spent waiting out that fixed 1-minute delay 3 times over.
  * Run: node tests/firstAdPushWatcher.manual.js
  */
 const { MongoClient, ObjectId } = require('mongodb');
@@ -42,7 +43,7 @@ function todayStr() {
     const testUserId = 999998;
     const testEmail = 'watcher-test@example.com';
 
-    // Recheck interval overridden short (2s) for a fast test — the fixed 3s initial
+    // Recheck interval overridden short (2s) for a fast test — the fixed 1-minute initial
     // delay is unaffected, that's intentionally not configurable.
     realCheckInterval = config.keywordSearch.notify.firstAdPushCheckIntervalSec;
     config.keywordSearch.notify.firstAdPushCheckIntervalSec = 2;
@@ -105,10 +106,10 @@ function todayStr() {
       lastSearchedAt: new Date(),
     });
 
-    console.log(`\n--- Scenario A: watcher starts, 0 ads → 2s later ads appear → push + stop (docId=${docA.insertedId}) ---`);
+    console.log(`\n--- Scenario A: watcher starts, 0 ads → ads appear before the 2nd check → push + stop (docId=${docA.insertedId}) ---`);
     startFirstAdPushWatcher({ docId: docA.insertedId, scrapeId: scrapeIdA, type: 2, value: valueA, network });
 
-    await sleep(3500); // past the fixed 3s initial check
+    await sleep(61000); // past the fixed 1-minute initial check
     ok(sentPushes.length === 0, 'no push yet right after the first (0-ads) check');
     let afterFirst = await col.findOne({ _id: docA.insertedId });
     ok(!(afterFirst.adFoundPushed || []).length, 'adFoundPushed still empty after first check');
@@ -146,7 +147,7 @@ function todayStr() {
     console.log(`\n--- Scenario B: session closes with 0 ads → watcher must stop, no push (docId=${docB.insertedId}) ---`);
     startFirstAdPushWatcher({ docId: docB.insertedId, scrapeId: scrapeIdB, type: 2, value: valueB, network });
 
-    await sleep(3500); // past the first check — still 0 ads, session still open
+    await sleep(61000); // past the first check — still 0 ads, session still open
     const pushCountBeforeClose = sentPushes.length;
     // Close the session now, still with 0 ads.
     await col.updateOne(
@@ -190,7 +191,9 @@ function todayStr() {
     const pushCountBeforeC = sentPushes.length;
     startFirstAdPushWatcher({ docId: docC.insertedId, scrapeId: scrapeIdC, type: 2, value: valueC, network });
 
-    await sleep(4000); // past the first check AND one recheck interval
+    // Short wait is enough here — startFirstAdPushWatcher returns immediately when
+    // disabled, before scheduling any timer at all, so there's nothing to "wait out."
+    await sleep(4000);
     ok(sentPushes.length === pushCountBeforeC, 'no push sent while firstAdPushEnabled=false, despite ads being present');
     let afterC = await col.findOne({ _id: docC.insertedId });
     ok(!(afterC.adFoundPushed || []).length, 'adFoundPushed still empty — watcher never ran at all while disabled');

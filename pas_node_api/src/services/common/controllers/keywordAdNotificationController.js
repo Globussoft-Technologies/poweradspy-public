@@ -130,8 +130,22 @@ function normalizePlatformKey(net) {
   return n === 'google_transparency' ? 'google' : n;
 }
 
-// type → which PLATFORM_FIELD_MAPPINGS key to read.
+// type → which PLATFORM_FIELD_MAPPINGS key to read. Reused below as the deep-link query
+// param name too (?keyword=/?advertiser=/?domain=) — same three values either way.
 const TYPE_FIELD_KEY = { 1: 'keyword', 2: 'advertiser', 3: 'domain' };
+
+// Human-readable network name for the push notification body — proper casing for the
+// handful that aren't just "capitalize the slug" (GDN, LinkedIn, TikTok, AdMob).
+const NETWORK_LABEL = {
+  facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube', google: 'Google',
+  google_transparency: 'Google Transparency', gdn: 'GDN', native: 'Native',
+  linkedin: 'LinkedIn', reddit: 'Reddit', quora: 'Quora', pinterest: 'Pinterest',
+  tiktok: 'TikTok', admob: 'AdMob',
+};
+function networkLabel(net) {
+  const n = String(net || '').toLowerCase();
+  return NETWORK_LABEL[n] || (n ? n.charAt(0).toUpperCase() + n.slice(1) : '');
+}
 
 // YYYY-MM-DD in the configured timezone (same formatter as keywordSearchController).
 function todayStr() {
@@ -456,12 +470,23 @@ async function sendFirstAdPushSafe(source, doc, user, net, today) {
     const fcmToken = await lookupFcmToken(user.userId);
     if (!fcmToken) return; // no token on file yet — retried automatically next tick
 
+    // typeParam doubles as both the human label source and the deep-link query param
+    // name (?keyword=/?advertiser=/?domain=) the frontend's deep-link effect (App.jsx)
+    // already reads. platform in the URL is always the ES-lookup-normalized network
+    // (google_transparency → google) — the frontend has no notion of "google_transparency"
+    // as a selectable platform, only the underlying network + a separate GT filter flag,
+    // so passing the raw scraped value through unmodified would silently not match any
+    // known platform.
+    const typeParam = TYPE_FIELD_KEY[doc.type] || 'keyword';
+    const typeLabel = typeParam.charAt(0).toUpperCase() + typeParam.slice(1);
+    const actionUrl = `/?${typeParam}=${encodeURIComponent(doc.value)}&platform=${encodeURIComponent(normalizePlatformKey(net))}`;
+
     await firebaseService.sendNotification(
       fcmToken,
-       'New Ads Found!',
-        `We found new ads for "${doc.value}". Take a look at the latest results.`,
+      'New Ads Found!',
+      `We found new ads for "${doc.value}" (${typeLabel} · ${networkLabel(net)}). Tap to view.`,
       '',
-      '/'
+      actionUrl
     );
 
     await source.updateOne(
@@ -474,9 +499,38 @@ async function sendFirstAdPushSafe(source, doc, user, net, today) {
   }
 }
 
+// Called when a caller already KNOWS the ad count at report time — e.g. Google
+// Transparency reports ads_count directly in its addScrapingHistory() call
+// (keywordSearchController.js), rather than leaving this feature to find out by polling
+// ES later. Sends immediately to every pending searcher instead of spawning a watcher for
+// something we already have the answer to. Never throws, matching every other push path
+// here; a failure just means the next report (or a watcher, if one is also running for
+// this session) gets another chance.
+async function sendFirstAdPushForKnownCount({ docId, value, network, adsCount }) {
+  if (adsCount == null || adsCount < 1) return;
+  const ks = config.keywordSearch;
+  if (!ks.enabled || !ks.notify?.enabled || ks.notify?.firstAdPushEnabled === false) return;
+  try {
+    const source = getMongoCollection(ks.collection);
+    if (!source) return;
+    const today = todayStr();
+    const doc = await source.findOne(
+      { _id: docId },
+      { projection: { type: 1, value: 1, valueNorm: 1, users: 1, userInfos: 1, adFoundPushed: 1 } }
+    );
+    if (!doc) return;
+    const pendingUsers = resolveUsers(doc).filter((u) => !isAdFoundPushedToday(doc, u, network, today));
+    for (const u of pendingUsers) {
+      await sendFirstAdPushSafe(source, doc, u, network, today);
+    }
+  } catch (err) {
+    log.warn('first-ad push (known count) failed', { docId: String(docId), network, value, error: err.message });
+  }
+}
+
 // Per-claim watcher — one of these is spawned (fire-and-forget, from scraperWork() in
-// keywordSearchController.js) for every term a scraper claims. Waits 3s, then checks ES
-// every config.keywordSearch.notify.firstAdPushCheckIntervalSec (default 300s = 5 min)
+// keywordSearchController.js) for every term a scraper claims. Waits 1 minute, then checks
+// ES every config.keywordSearch.notify.firstAdPushCheckIntervalSec (default 300s = 5 min)
 // until either ads show up (push sent, watcher stops) or the session closes (nothing
 // left to check, watcher stops) — matching "from the moment the scraper takes the term
 // until it's done, keep checking; the moment ads are found, push and disconnect."
@@ -508,7 +562,15 @@ function startFirstAdPushWatcher({ docId, scrapeId, type, value, network }) {
       if (!doc) return; // doc gone — nothing to watch anymore
 
       const session = (doc.scrapping_status || []).find((s) => String(s._id) === String(scrapeId));
-      stillOpen = !!session && session.status === 'scrapping';
+      // Both count as "still in progress" — matches keywordSearchController.js's own
+      // STALE_RECOVERABLE_STATUSES (kept as a separate literal here, not imported, to
+      // avoid a circular require: that file already imports startFirstAdPushWatcher from
+      // this one). 'scrapping' is scraperWork()'s claim status; 'processing' is
+      // addScrapingHistory()'s own non-terminal report — a session reported via THAT
+      // endpoint never has a 'scrapping' status at all, so checking only for 'scrapping'
+      // made the watcher give up after just one check for every session reported that
+      // way, even while it was genuinely still running.
+      stillOpen = !!session && (session.status === 'scrapping' || session.status === 'processing');
 
       const pendingUsers = resolveUsers(doc).filter((u) => !isAdFoundPushedToday(doc, u, network, today));
       if (pendingUsers.length > 0) {
@@ -548,7 +610,7 @@ function startFirstAdPushWatcher({ docId, scrapeId, type, value, network }) {
     log.warn('first-ad push watcher tick threw unexpectedly', { docId: String(docId), scrapeId: String(scrapeId), network, value, error: err.message });
   }); }, ms);
 
-  scheduleTick(3000); // first check 3s after the claim, per the requested flow
+  scheduleTick(60000); // first check 1 min after the claim
 }
 
 /**
@@ -753,6 +815,9 @@ module.exports = {
   markKeywordAdNotificationRead,
   // called from keywordSearchController.js's scraperWork(), once per claimed term
   startFirstAdPushWatcher,
+  // called from keywordSearchController.js's addScrapingHistory() when ads_count is
+  // already known at report time (e.g. Google Transparency)
+  sendFirstAdPushForKnownCount,
   // exported for tests (SEARCH_CRAWL_STATUS_MANIFEST.md §4)
   isAdFoundPushedToday,
   sendFirstAdPushSafe,

@@ -453,8 +453,8 @@ const config = {
       // startFirstAdPushWatcher in keywordAdNotificationController.js.
       firstAdPushEnabled: getVal(fileConfig.keywordSearch?.notify?.firstAdPushEnabled, 'KEYWORD_SEARCH_NOTIFY_FIRST_AD_PUSH_ENABLED', toBool) !== false,
       // How often (seconds) the watcher re-checks ES while a claimed term is still being
-      // scraped. First check is always 3s after the claim (not configurable — the ask was
-      // specifically "3s once, then every N minutes"); this is that recurring N.
+      // scraped. First check is always 1 min after the claim (not configurable); this is
+      // that recurring interval after the first check.
       firstAdPushCheckIntervalSec: getVal(fileConfig.keywordSearch?.notify?.firstAdPushCheckIntervalSec, 'KEYWORD_SEARCH_NOTIFY_FIRST_AD_PUSH_CHECK_INTERVAL_SEC', toInt) || 300,
     },
   },

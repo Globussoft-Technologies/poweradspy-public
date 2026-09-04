@@ -2402,6 +2402,15 @@ const App = () => {
       window.history.replaceState({}, '', '/');
       return;
     }
+    // Domain deep link (e.g. from a first-ad push notification for a domain search):
+    //   /?domain=example.com  → run a domain search for that value. Optional
+    // &platform= pre-selects a network; omitted → search across all networks.
+    const domainParam = params.get('domain');
+    if (domainParam) {
+      handleSearch(domainParam, 'domain', platform || undefined);
+      window.history.replaceState({}, '', '/');
+      return;
+    }
     // Platform-only deep link (e.g. from the daily data-report email):
     //   /?platform=instagram  → pre-select Instagram, land on the default
     // ads view. No advertiser is searched; we just set the network filter.
