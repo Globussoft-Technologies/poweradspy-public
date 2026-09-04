@@ -448,8 +448,14 @@ const config = {
       pollIntervalSec: getVal(fileConfig.keywordSearch?.notify?.pollIntervalSec, 'KEYWORD_SEARCH_NOTIFY_POLL_SEC', toInt) || 60,
       // First-ad push (SEARCH_CRAWL_STATUS_MANIFEST.md §4) — independent of
       // adsCountThreshold, fires once per user/term/network/day the moment adsCount >= 1.
-      // Reuses this same scan/cron; no separate poll interval needed.
+      // Driven by a per-claim watcher spawned from scraperWork() (keywordSearchController.js)
+      // the moment a term is claimed, NOT this section's cron/poll — see
+      // startFirstAdPushWatcher in keywordAdNotificationController.js.
       firstAdPushEnabled: getVal(fileConfig.keywordSearch?.notify?.firstAdPushEnabled, 'KEYWORD_SEARCH_NOTIFY_FIRST_AD_PUSH_ENABLED', toBool) !== false,
+      // How often (seconds) the watcher re-checks ES while a claimed term is still being
+      // scraped. First check is always 3s after the claim (not configurable — the ask was
+      // specifically "3s once, then every N minutes"); this is that recurring N.
+      firstAdPushCheckIntervalSec: getVal(fileConfig.keywordSearch?.notify?.firstAdPushCheckIntervalSec, 'KEYWORD_SEARCH_NOTIFY_FIRST_AD_PUSH_CHECK_INTERVAL_SEC', toInt) || 300,
     },
   },
 

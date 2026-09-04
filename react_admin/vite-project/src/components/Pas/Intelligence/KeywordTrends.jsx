@@ -41,7 +41,12 @@ const KeywordTrends = ({ onDataReady }) => {
   const [typeTab,       setTypeTab]       = useState("keywords");  // Default to keywords instead of "all"
   const [data,          setData]          = useState({ keywords: [], advertisers: [], domains: [] });
   const [meta,          setMeta]          = useState(null);
-  const [loading,       setLoading]       = useState(false);
+  // Two independent loading flags, one per fetch, so a plain pagination/filter click
+  // (which only re-runs the table fetch) doesn't blank out the summary cards and chart
+  // too — only the table area shows a loader in that case. A tab switch re-triggers both
+  // fetches, so both sections show their own loader for the duration.
+  const [sectionsLoading, setSectionsLoading] = useState(false); // top-keywords + summary-stats
+  const [tableLoading,    setTableLoading]    = useState(false); // paginated table fetch
   const [error,         setError]         = useState(null);
   const [searchTerm,    setSearchTerm]    = useState("");
   const [openDropdown,  setOpenDropdown]  = useState(false);
@@ -63,6 +68,7 @@ const KeywordTrends = ({ onDataReady }) => {
       if (!requireAuthOrRedirect()) return;
       const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
 
+      setSectionsLoading(true);
       try {
         // Fetch top keywords
         const topRes = await authFetch(`${NODE_API}/intelligence/top-keywords?type=${typeParam}`);
@@ -98,26 +104,23 @@ const KeywordTrends = ({ onDataReady }) => {
         }
       } catch (err) {
         console.error('Failed to fetch keyword trends data:', err);
+      } finally {
+        setSectionsLoading(false);
       }
     };
 
     fetchAllData();
   }, [typeTab]);
 
-  // Track if typeTab changed (to show loading only on tab change, not pagination)
-  const prevTypeTabRef = useRef(typeTab);
-  useEffect(() => {
-    if (prevTypeTabRef.current !== typeTab) {
-      setLoading(true);
-      prevTypeTabRef.current = typeTab;
-    }
-  }, [typeTab]);
-
-  // Fetch table data with pagination (only when page, typeTab, statusFilter, or selectedFilterValue changes)
+  // Fetch table data with pagination (whenever page, typeTab, statusFilter, or
+  // selectedFilterValue changes). Only tableLoading gates this — summary cards and the
+  // chart stay put and keep showing their last data while just the table area loads,
+  // which matters most for plain pagination clicks (page changes, tab doesn't).
   useEffect(() => {
     const fetchTableData = async () => {
       if (!NODE_API) { setError("API URL not configured"); return; }
       setError(null);
+      setTableLoading(true);
       try {
         if (!requireAuthOrRedirect()) return;
         const typeParam = typeTab === "keywords" ? "keyword" : typeTab === "advertisers" ? "advertiser" : "domain";
@@ -168,7 +171,7 @@ const KeywordTrends = ({ onDataReady }) => {
       } catch (err) {
         setError(err.message || "Failed to load trends");
       } finally {
-        setLoading(false);
+        setTableLoading(false);
       }
     };
     fetchTableData();
@@ -261,7 +264,10 @@ const KeywordTrends = ({ onDataReady }) => {
   );
 
   const renderContent = () => {
-    if (loading) return (
+    // sectionsLoading only flips on a tab switch (top-keywords + summary-stats refetch),
+    // so this full-panel loader never fires for pagination/filter clicks — those are
+    // handled by tableLoading further down, scoped to just the table area.
+    if (sectionsLoading) return (
       <div style={{ padding: "60px 0", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>
         Loading trends...
       </div>
@@ -389,7 +395,13 @@ const KeywordTrends = ({ onDataReady }) => {
                 </tr>
               </thead>
               <tbody>
-                {fullList.map((row, idx) => {
+                {tableLoading ? (
+                  <tr>
+                    <td colSpan="9" style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>
+                      Loading…
+                    </td>
+                  </tr>
+                ) : fullList.map((row, idx) => {
                   // Crawled/failed/scrapping counts are per RUN (flattened across every
                   // group's scrapping_time[]); ads count is per GROUP (one adsCount per
                   // network+date, not per run — see enrichKeywordsWithAds on the backend).
@@ -574,7 +586,7 @@ const KeywordTrends = ({ onDataReady }) => {
                     </tr>
                   );
                 })}
-                {fullList.length === 0 && (
+                {!tableLoading && fullList.length === 0 && (
                   <tr>
                     <td colSpan="9" style={{ padding: "40px 12px", textAlign: "center", color: "#9ca3af", fontSize: "13px" }}>
                       No data found for this category.
@@ -593,18 +605,18 @@ const KeywordTrends = ({ onDataReady }) => {
               Showing {fullList.length > 0 ? page * 10 + 1 : 0}–{Math.min((page + 1) * 10, meta?.total || 0)} of {meta?.total || 0}
             </p>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "12px", color: "#6b7280" }}>Page {page + 1} / {meta?.total_pages || 1}</span>
+              <span style={{ fontSize: "12px", color: "#6b7280" }}>Page {page + 1} / {meta?.total_pages || 1}{tableLoading ? " · loading…" : ""}</span>
               <button
-                disabled={page === 0}
+                disabled={page === 0 || tableLoading}
                 onClick={() => setPage(p => p - 1)}
-                style={{ fontSize: "12px", color: page === 0 ? "#d1d5db" : "#6b7280", padding: "4px 8px", cursor: page === 0 ? "not-allowed" : "pointer", background: "none", border: "none", fontWeight: 500 }}
+                style={{ fontSize: "12px", color: (page === 0 || tableLoading) ? "#d1d5db" : "#6b7280", padding: "4px 8px", cursor: (page === 0 || tableLoading) ? "not-allowed" : "pointer", background: "none", border: "none", fontWeight: 500 }}
               >
                 ‹ Prev
               </button>
               <button
-                disabled={page >= (meta?.total_pages || 1) - 1}
+                disabled={page >= (meta?.total_pages || 1) - 1 || tableLoading}
                 onClick={() => setPage(p => p + 1)}
-                style={{ fontSize: "12px", color: page >= (meta?.total_pages || 1) - 1 ? "#d1d5db" : "#6b7280", padding: "4px 8px", cursor: page >= (meta?.total_pages || 1) - 1 ? "not-allowed" : "pointer", background: "none", border: "none", fontWeight: 500 }}
+                style={{ fontSize: "12px", color: (page >= (meta?.total_pages || 1) - 1 || tableLoading) ? "#d1d5db" : "#6b7280", padding: "4px 8px", cursor: (page >= (meta?.total_pages || 1) - 1 || tableLoading) ? "not-allowed" : "pointer", background: "none", border: "none", fontWeight: 500 }}
               >
                 Next ›
               </button>

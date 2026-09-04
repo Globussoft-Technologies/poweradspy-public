@@ -23,6 +23,8 @@ const logger = require('../../../logger');
 const config = require('../../../config');
 const { parseJsonKeywords, parseCsvFile } = require('../helpers/keywordInput');
 const { enqueueFailedScrapeRequest } = require('../helpers/scrapeRequestQueue');
+// Spawns the first-ad push watcher per claimed term — see scraperWork() below.
+const { startFirstAdPushWatcher } = require('./keywordAdNotificationController');
 
 const log = logger.createChild('keyword-search');
 
@@ -643,6 +645,30 @@ async function scraperWork(req, res) {
       }
       if (!item) break; // every pair exhausted
       claimed.push(item);
+    }
+
+    // Fire-and-forget: one first-ad-push watcher per claimed term, independent of the
+    // response below. Never awaited — a watcher's own errors are caught and logged
+    // inside startFirstAdPushWatcher, so nothing here can affect the scraper's response.
+    // Gated explicitly here (not just inside startFirstAdPushWatcher itself) so that with
+    // the feature off, this claim path does zero extra work per item — no function call,
+    // no watcher, no ES/Mongo/MySQL touched at all — matching "if disabled, skip this
+    // step entirely" rather than merely "the watcher no-ops once spawned."
+    // keywordSearch.enabled is already guaranteed true here (featureGuard, top of this
+    // function, 503s otherwise) — only the notify-specific flags need checking.
+    if (config.keywordSearch.notify?.enabled !== false && config.keywordSearch.notify?.firstAdPushEnabled !== false) {
+      for (const item of claimed) {
+        startFirstAdPushWatcher(item);
+      }
+      if (claimed.length) {
+        // info, not debug — this app's configured log level is 'info' (config.json),
+        // so a debug-level line here would never actually appear anywhere.
+        log.info('First-ad push watcher(s) started for claimed terms', {
+          owner,
+          count: claimed.length,
+          terms: claimed.map((c) => ({ value: c.value, network: c.network, type: c.type })),
+        });
+      }
     }
 
     return res.json({

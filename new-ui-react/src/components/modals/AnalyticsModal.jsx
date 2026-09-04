@@ -1907,7 +1907,24 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
       processedAd?.destinationUrl,
       ad?.destinationUrl,
     )
-    : null;
+    // Facebook, Instagram, and every other non-admob platform that reaches LanderDetails —
+    // reuse the same destination/redirect/ad URL fields already resolved for
+    // BasicInfoSection below, so "Visit" opens the real landing page instead of falling
+    // back to the screenshot image (LanderDetails' pageUrl fallback).
+    : firstAvailable(
+      d?.destination_url,
+      processedAd?.destinationUrl,
+      ad?.destinationUrl,
+      d?.redirect_url,
+      processedAd?.redirectUrl,
+      ad?.redirectUrl,
+      d?.ad_url,
+      processedAd?.adUrl,
+      ad?.adUrl,
+      d?.url,
+      d?.final_url,
+      d?.source_url,
+    );
   const landerWhatsappEntries = ctx?.platform === "admob"
     ? firstAvailable(
       adDetailsData?.whatsapp,

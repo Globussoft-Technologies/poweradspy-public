@@ -439,6 +439,9 @@ const STATUS_BADGE_STYLES = {
   success:   { bg: "#d1fae5", color: "#065f46", text: "✓ Completed" },
   no_ads_found: { bg: "#fee2e2", color: "#991b1b", text: "✗ No Ads" },
   scrapping: { bg: "#fef3c7", color: "#92400e", text: "⟳ Scrapping" },
+  // 'processing' is the report-based path's equivalent of 'scrapping' (e.g. google_transparency) —
+  // both are non-terminal, in-progress states, not failures.
+  processing: { bg: "#fef3c7", color: "#92400e", text: "⟳ Processing" },
 };
 
 function formatStatusTime(ts) {
@@ -1449,7 +1452,9 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                   const groupKey = `${group.network}|${group.date}|${idx}`;
                   const isExpanded = !!expandedStatusGroups[groupKey];
                   const hasFailedRun = runs.some(r => !r.status || r.status === 'no_ads_found' || r.status === 'failed' || r.status === 'error');
-                  const overallStatus = hasFailedRun ? 'failed' : runs.some(r => r.status === 'scrapping') ? 'scrapping' : 'completed';
+                  // 'processing' (used by report-based paths like google_transparency) is the same
+                  // non-terminal in-progress state as 'scrapping' — neither counts as failed.
+                  const overallStatus = hasFailedRun ? 'failed' : runs.some(r => r.status === 'scrapping' || r.status === 'processing') ? runs.find(r => r.status === 'scrapping' || r.status === 'processing').status : 'completed';
 
                   return (
                     <div key={groupKey} style={{ borderBottom: idx === statusHistory.length - 1 ? "none" : "1px solid #f1f5f9" }}>

@@ -81,6 +81,26 @@ async function getAdsCountCached(lookupNet, index, query, cacheKey) {
   return count;
 }
 
+// Same as getAdsCountCached but skips the 5-min cache — used only by the first-ad push
+// watcher (startFirstAdPushWatcher, below), whose whole point is a fresh read on every
+// tick. Reusing the cache there would mean a watcher on a short check interval mostly
+// re-reads a value up to 5 minutes stale. Safe to skip: a watcher only exists for a
+// term that's actively being scraped right now, so the volume this adds is bounded by
+// how many scrapes are in flight at once, not by how many users have ever searched a
+// popular term — the scenario the cache exists for.
+async function getAdsCountFresh(lookupNet, index, query) {
+  if (await isEsUnderStress(lookupNet)) {
+    log.debug('first-ad push watcher: skipping — ES already under stress this cycle', { network: lookupNet });
+    return null;
+  }
+  const es = dbManager.getElastic(lookupNet);
+  if (!es) return null;
+  return withLimit(lookupNet, async () => {
+    const res = await es.count({ index, body: { query } });
+    return readCount(res);
+  }, ES_MAX_CONCURRENT_PER_NETWORK);
+}
+
 // Per-network ES timestamp field used to scope the count to "today" (companion to the
 // per-network search fields in helpers/platformSearchFields.js).
 const TIMESTAMP_FIELD = {
@@ -310,15 +330,11 @@ async function runKeywordAdNotificationScan() {
         const adsCount = await getAdsCountCached(lookupNet, index, query, cacheKey);
         if (adsCount == null) continue; // skipped this cycle (cache miss + cluster stressed) — retried next run
 
-        // First-ad push — independent of the bell's threshold below, fires once per
-        // user the moment this term+network has at least one ad today.
-        if (adsCount >= 1) {
-          for (const u of users) {
-            if (!isAdFoundPushedToday(doc, u, net, today)) {
-              await sendFirstAdPushSafe(source, doc, u, net, today);
-            }
-          }
-        }
+        // First-ad push no longer sent from here — the per-claim watcher
+        // (startFirstAdPushWatcher, spawned from scraperWork()) is now the only thing
+        // that sends it, so it goes out close to when ads actually appear instead of
+        // waiting for this scan's 15-min cadence. This scan still exists purely for the
+        // 20-ad bell threshold below.
 
         if (adsCount < threshold) continue;
         matched++;
@@ -394,10 +410,12 @@ function isDismissedToday(doc, user, net, today) {
 }
 
 // ─── First-ad push (independent of the 20-ad bell threshold) ───────────────
-// Fires once per (user, term, network, day) the first time adsCount >= 1, via the SAME
-// 15-min cron / per-user poll that already computes adsCount — no separate cron. Dedup
-// marker lives on the source keyword_searches doc, mirroring notifyDismissed[]'s pattern.
-// See SEARCH_CRAWL_STATUS_MANIFEST.md §4.
+// Fires once per (user, term, network, day) the first time adsCount >= 1. Driven by a
+// per-claim watcher (startFirstAdPushWatcher, below), spawned from scraperWork() the
+// moment the scraper claims a term — not by the slower 15-min bell scan, which never
+// checks ES more than once every 15 min and only for terms that are already scraped.
+// Dedup marker lives on the source keyword_searches doc, mirroring notifyDismissed[]'s
+// pattern. See SEARCH_CRAWL_STATUS_MANIFEST.md §4.
 
 // True if this user was already pushed a "first ad found" notification for this
 // term+network TODAY. Marked only on a successful send (sendFirstAdPushSafe below), so a
@@ -450,9 +468,87 @@ async function sendFirstAdPushSafe(source, doc, user, net, today) {
       { type: doc.type, valueNorm: doc.valueNorm },
       { $addToSet: { adFoundPushed: { userId: user.userId ?? null, email: user.email ?? null, network: net, date: today } } }
     );
+    log.info('First-ad push sent', { network: net, value: doc.value, type: doc.type, user: user.email || user.userId });
   } catch (err) {
     log.warn('first-ad push failed', { network: net, value: doc.value, user: user.email || user.userId, error: err.message });
   }
+}
+
+// Per-claim watcher — one of these is spawned (fire-and-forget, from scraperWork() in
+// keywordSearchController.js) for every term a scraper claims. Waits 3s, then checks ES
+// every config.keywordSearch.notify.firstAdPushCheckIntervalSec (default 300s = 5 min)
+// until either ads show up (push sent, watcher stops) or the session closes (nothing
+// left to check, watcher stops) — matching "from the moment the scraper takes the term
+// until it's done, keep checking; the moment ads are found, push and disconnect."
+//
+// Lives entirely in memory: if this process restarts mid-scrape, an in-flight watcher is
+// lost and that specific claim won't be checked again (a deliberately accepted trade-off
+// — see SEARCH_CRAWL_STATUS_MANIFEST.md §4 for the reasoning). No cron, no cross-worker
+// lock needed: each watcher only ever runs in the same process that served the claim it
+// belongs to, so there's nothing for two workers to duplicate.
+function startFirstAdPushWatcher({ docId, scrapeId, type, value, network }) {
+  const ks = config.keywordSearch;
+  if (!ks.enabled || !ks.notify?.enabled || ks.notify?.firstAdPushEnabled === false) return;
+
+  const dateScoped = ks.notify.dateScoped;
+  const intervalMs = (ks.notify.firstAdPushCheckIntervalSec || 300) * 1000;
+  const lookupNet = normalizePlatformKey(network);
+
+  const tick = async () => {
+    let stillOpen = true;
+    try {
+      const source = getMongoCollection(ks.collection);
+      if (!source) return; // Mongo unavailable — give up silently, this is one watcher among many
+
+      const today = todayStr(); // re-derived each tick in case a watcher spans midnight
+      const doc = await source.findOne(
+        { _id: docId },
+        { projection: { type: 1, value: 1, valueNorm: 1, users: 1, userInfos: 1, scrapping_status: 1, adFoundPushed: 1 } }
+      );
+      if (!doc) return; // doc gone — nothing to watch anymore
+
+      const session = (doc.scrapping_status || []).find((s) => String(s._id) === String(scrapeId));
+      stillOpen = !!session && session.status === 'scrapping';
+
+      const pendingUsers = resolveUsers(doc).filter((u) => !isAdFoundPushedToday(doc, u, network, today));
+      if (pendingUsers.length > 0) {
+        const query = buildQuery(lookupNet, type, value, dateScoped, today);
+        const es = query ? dbManager.getElastic(lookupNet) : null;
+        const index = es?.indexName || config.networks?.[lookupNet]?.elastic?.index;
+        if (query && es && index) {
+          const adsCount = await getAdsCountFresh(lookupNet, index, query);
+          if (adsCount != null && adsCount >= 1) {
+            for (const u of pendingUsers) {
+              await sendFirstAdPushSafe(source, doc, u, network, today);
+            }
+            return; // found + pushed — done watching this claim
+          }
+        }
+      } else {
+        return; // everyone who searched this has already been pushed today — nothing left to do
+      }
+    } catch (err) {
+      log.warn('first-ad push watcher tick failed', { docId: String(docId), scrapeId: String(scrapeId), network, value, error: err.message });
+      // fall through to reschedule — a transient Mongo/ES hiccup shouldn't permanently
+      // stop watching a term that's still actively being scraped.
+    }
+
+    if (stillOpen) scheduleTick(intervalMs);
+    // else: session closed with no ads found for the remaining pending users — stop.
+  };
+
+  // tick() is async; setTimeout never looks at (let alone awaits) what its callback
+  // returns, so a bare `setTimeout(tick, ms)` would leave any rejection that somehow
+  // escaped the try/catch above unhandled. In practice nothing outside that try/catch
+  // can realistically throw, and this app's global unhandledRejection handler
+  // (server.js) only logs rather than crashing the process either way — but wrapping
+  // it costs nothing and keeps the error, with this watcher's own context (docId/
+  // network/value), inside tick()'s own log line instead of a bare global one.
+  const scheduleTick = (ms) => setTimeout(() => { tick().catch((err) => {
+    log.warn('first-ad push watcher tick threw unexpectedly', { docId: String(docId), scrapeId: String(scrapeId), network, value, error: err.message });
+  }); }, ms);
+
+  scheduleTick(3000); // first check 3s after the claim, per the requested flow
 }
 
 /**
@@ -508,11 +604,8 @@ async function runUserKeywordAdScan(user, source, notifyCol) {
         const adsCount = await getAdsCountCached(lookupNet, index, query, cacheKey);
         if (adsCount == null) continue; // skipped this cycle (cache miss + cluster stressed) — retried next run
 
-        // First-ad push — independent of the bell's threshold below, fires once per
-        // user the moment this term+network has at least one ad today.
-        if (adsCount >= 1 && !isAdFoundPushedToday(doc, user, net, today)) {
-          await sendFirstAdPushSafe(source, doc, user, net, today);
-        }
+        // First-ad push no longer sent from here — see the matching comment in
+        // runKeywordAdNotificationScan above. This poll now only feeds the 20-ad bell.
 
         if (adsCount < threshold) continue;
         matched++;
@@ -658,6 +751,8 @@ module.exports = {
   runUserKeywordAdScan,
   getUserKeywordAdNotifications,
   markKeywordAdNotificationRead,
+  // called from keywordSearchController.js's scraperWork(), once per claimed term
+  startFirstAdPushWatcher,
   // exported for tests (SEARCH_CRAWL_STATUS_MANIFEST.md §4)
   isAdFoundPushedToday,
   sendFirstAdPushSafe,
