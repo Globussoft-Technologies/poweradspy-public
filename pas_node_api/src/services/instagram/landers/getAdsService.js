@@ -6,6 +6,16 @@ const InstagramRepository = require('./repository');
 const PENDING = 0;
 const IN_PROCESSING = 2;
 
+// A destination_url is usable only if it is a non-empty string that is not the
+// literal token "null"/"undefined" (some upstream writes store those as text
+// rather than a real SQL NULL). Mirrors the SQL filter in getDataForLander.
+function isUsableDestinationUrl(value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '') return false;
+  return !['null', 'undefined'].includes(trimmed.toLowerCase());
+}
+
 class GetAdsService {
   static async fetchAdsForScraping(db) {
     const { sql, elastic } = db;
@@ -25,8 +35,9 @@ class GetAdsService {
 
       // Process each row (PHP style: one row per country per ad)
       for (const ad of ads) {
-        // PHP filter: destination_url != null OR destination_url != ""
-        if (ad.destination_url == null || ad.destination_url === "") continue;
+        // Never serve an ad without a usable destination_url (defence-in-depth —
+        // getDataForLander already excludes these at the SQL level).
+        if (!isUsableDestinationUrl(ad.destination_url)) continue;
 
         // Convert country name to ISO code
         if (ad.iso) {

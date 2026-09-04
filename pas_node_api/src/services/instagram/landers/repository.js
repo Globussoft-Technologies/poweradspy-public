@@ -17,6 +17,11 @@ async function executeQuery(sql, params = []) {
 class InstagramRepository {
   // GET endpoint: fetch up to 100 ads at the given redirect_status
   // (called with PENDING=0 first, falling back to IN_PROCESSING=2 when PENDING is drained).
+  //
+  // Ads with an unusable destination_url are excluded here so they are never leased,
+  // never flipped to IN_PROCESSING, and therefore never re-served on the drain fallback.
+  // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+  // (some upstream writes store the string, not a real NULL).
   static async getDataForLander(status) {
     const sql = `
       SELECT
@@ -28,6 +33,9 @@ class InstagramRepository {
       LEFT JOIN instagram_ad_countries_only ON instagram_ad_countries_only.instagram_ad_id = instagram_ad_meta_data.instagram_ad_id
       LEFT JOIN instagram_country_only ON instagram_country_only.id = instagram_ad_countries_only.country_only_id
       WHERE instagram_ad_meta_data.redirect_status = ?
+        AND instagram_ad_meta_data.destination_url IS NOT NULL
+        AND TRIM(instagram_ad_meta_data.destination_url) <> ''
+        AND LOWER(TRIM(instagram_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
       ORDER BY instagram_ad_meta_data.instagram_ad_id DESC
       LIMIT 100
     `;

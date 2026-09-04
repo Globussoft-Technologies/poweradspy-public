@@ -63,10 +63,15 @@ src/
 getAdsService.getAdwithCountryCode(db)
   ├─ repository.getDataForLander(0)         → ≤50 ads at redirect_status=0
   │    (join facebook_ad_users → facebook_users → country_only for the user's country)
+  │    WHERE also excludes an unusable destination_url — NULL, ''/whitespace, or the
+  │    literal strings 'null'/'undefined' (some upstream writes store the token, not a
+  │    real NULL). Excluding them here means they are never leased, never flipped to
+  │    redirect_status=2, and never re-served on the drain fallback.
   ├─ for each ad:
   │    ├─ ES search search_mix (term facebook_ad.id)
   │    ├─ present → updateMeta redirect_status=2 ; resolve ISO (per-ad, see §7) ; emit
   │    └─ absent  → updateMeta redirect_status=5
+  │    (belt-and-braces: isUsableDestinationUrl(row.destination_url) re-checked before emit)
   └─ Response: { code, message, data:[{ id, ad_url, iso, destination_url }], exe_time }
 ```
 
@@ -198,6 +203,9 @@ Dependency added: `multer` (multipart upload parsing).
 
 - ✅ All referenced tables/columns exist in `pasdev_facebook`.
 - ✅ `getAdwithCountryCode` returns pending ads and flips `redirect_status`.
+- ✅ `getDataForLander` excludes an unusable `destination_url` (NULL / empty / `'null'` /
+  `'undefined'`) in SQL, so invalid ads are never leased or re-served on the drain
+  fallback (see §3). Instagram lander carries the identical filter + `isUsableDestinationUrl` guard.
 - ✅ `insertHtmlRedirectCountry` (status 1/2/3) — all MySQL writes persist (incl. accumulate/dedup).
 - ✅ ES `search_mix` write-back matches MySQL (with the ISO→nicename transform).
 
@@ -220,5 +228,8 @@ Dependency added: `multer` (multipart upload parsing).
 ---
 
 ## Document Version
+- **v1.1** — `getDataForLander` lease query now excludes an unusable `destination_url`
+  (NULL / empty / `'null'` / `'undefined'`) at the SQL level, plus an `isUsableDestinationUrl`
+  guard in `getAdsService.js` (§3). Instagram lander mirrors it.
 - **v1.0** — Facebook landers, faithful port from `api` BlackHatController.
 - **DB/ES verified:** `pasdev_facebook` + `search_mix`.

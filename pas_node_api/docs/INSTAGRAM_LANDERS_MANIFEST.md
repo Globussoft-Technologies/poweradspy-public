@@ -133,6 +133,43 @@ LandersController.insertHtmlContent(req, res, service)
 
 ---
 
+## 3b. `GET /landers/get-ads-for-blackhat` — lease query
+
+```
+getAdsService.fetchAdsForScraping(db)
+  ├─ repository.getDataForLander(0)          → ≤100 ads at redirect_status=0 (PENDING)
+  │    └─ if none, getDataForLander(2)       → drain fallback: re-lease redirect_status=2
+  │       (IN_PROCESSING) rows so a crashed worker's batch is not stranded
+  ├─ for each row: resolve ISO per-ad, emit { id, ad_url, destination_url, iso, country }
+  └─ every fetched ad → updateRedirectStatus(2)  (claimed)
+```
+
+**`destination_url` filter (added to stop invalid ads being re-leased forever).**
+`getDataForLander` excludes any row whose `destination_url` is unusable, at the SQL level:
+
+```sql
+AND instagram_ad_meta_data.destination_url IS NOT NULL
+AND TRIM(instagram_ad_meta_data.destination_url) <> ''
+AND LOWER(TRIM(instagram_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+```
+
+Why SQL-level and not just a JS guard: an unusable row that reaches the loop still gets
+flipped to `redirect_status=2`, then the worker rejects the URL (`[INVALID URL] … reason=malformed_url`)
+and never reports back, so the drain fallback re-serves it on every poll. Excluding it from
+the `SELECT` means it is never leased, never claimed, never re-served.
+
+The `'null'`/`'undefined'` tokens matter because some upstream writes store the **string**
+`"null"`, not a real SQL `NULL` — so `IS NOT NULL` alone lets them through.
+
+`getAdsService.js` also keeps a matching guard, `isUsableDestinationUrl(value)` (non-empty
+string, not `null`/`undefined` token), applied before a row is pushed to the response —
+defence-in-depth mirroring the SQL filter.
+
+> The Facebook lander (`facebook/landers/repository.js` `getDataForLander`,
+> `facebook/landers/getAdsService.js`) carries the identical filter + guard.
+
+---
+
 ## 4. Database Tables
 
 | Table | Ad-id Column | Role |
@@ -157,9 +194,16 @@ LandersController.insertHtmlContent(req, res, service)
 - ✅ `insert_html_lander` error contract aligned with Facebook (§3a) — specific
   messages for missing/invalid fields, malformed body, missing dependency,
   ES miss, failed domain insert, and 0-row meta update
+- ✅ `get-ads-for-blackhat` lease query excludes unusable `destination_url`
+  (NULL / empty / `'null'` / `'undefined'`) at the SQL level, so invalid ads are
+  never leased or re-served (§3b) — Facebook lander carries the same filter
 - ⚠️ Domain derivation still reads `domain_name` instead of `destinations` (§3a Known gap)
 
 ---
+
+**Version: v1.2** – Adds the `get-ads-for-blackhat` lease-query `destination_url`
+filter (§3b): unusable URLs (NULL / empty / `'null'` / `'undefined'`) are excluded
+in SQL so invalid ads are never leased or re-served. Facebook lander mirrors it.
 
 **Version: v1.1** – Instagram landers with per-ad validation and the Facebook-parity
 `insert_html_lander` error contract (§3a). Validator field contract matches

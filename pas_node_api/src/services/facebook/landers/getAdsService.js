@@ -36,6 +36,16 @@ function esHits(res) {
   return res?.hits?.hits || res?.body?.hits?.hits || [];
 }
 
+// A destination_url is usable only if it is a non-empty string that is not the
+// literal token "null"/"undefined" (some upstream writes store those as text
+// rather than a real SQL NULL). Mirrors the SQL filter in getDataForLander.
+function isUsableDestinationUrl(value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '') return false;
+  return !['null', 'undefined'].includes(trimmed.toLowerCase());
+}
+
 async function getAdwithCountryCode(db, log) {
   const started = Date.now();
   const sql = db?.sql;
@@ -116,7 +126,9 @@ async function getAdwithCountryCode(db, log) {
         destination_url: row.destination_url,
       };
 
-      if (row.destination_url !== null && row.destination_url !== undefined) {
+      // Never serve an ad without a usable destination_url (defence-in-depth —
+      // getDataForLander already excludes these at the SQL level).
+      if (isUsableDestinationUrl(row.destination_url)) {
         newarr.push(resp);
       }
     }

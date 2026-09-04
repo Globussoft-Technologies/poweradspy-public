@@ -45,6 +45,10 @@ const stripNulls = (obj) =>
 async function getDataForLander(exec, redirectStatus) {
   const statuses = Array.isArray(redirectStatus) ? redirectStatus : [redirectStatus];
   const placeholders = statuses.map(() => '?').join(',');
+  // Ads with an unusable destination_url are excluded here so they are never leased,
+  // never flipped to IN_PROCESSING, and therefore never re-served on the drain fallback.
+  // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+  // (some upstream writes store the string, not a real NULL).
   const sql = `
     SELECT facebook_ad_meta_data.facebook_ad_id AS id,
            facebook_ad_meta_data.ad_url,
@@ -56,6 +60,9 @@ async function getDataForLander(exec, redirectStatus) {
       LEFT JOIN country_only      ON country_only.id = facebook_users.current_country_id
       LEFT JOIN facebook_ad       ON facebook_ad.id = facebook_ad_meta_data.facebook_ad_id
      WHERE facebook_ad_meta_data.redirect_status IN (${placeholders})
+       AND facebook_ad_meta_data.destination_url IS NOT NULL
+       AND TRIM(facebook_ad_meta_data.destination_url) <> ''
+       AND LOWER(TRIM(facebook_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
      GROUP BY facebook_ad_meta_data.facebook_ad_id
      ORDER BY facebook_ad_meta_data.facebook_ad_id DESC
      LIMIT 50`;
