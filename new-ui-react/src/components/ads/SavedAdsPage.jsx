@@ -373,7 +373,19 @@ const SavedAdsPage = ({
               {(platformOptions.length > 0
                 ? platformOptions
                 : PLATFORMS.map((p) => ({ value: p.id.toLowerCase(), label: p.label, _fallback: p }))
-              ).map((opt) => {
+              )
+                // AdMob's UI-only gate (App.jsx's ADMOB_UI_ACCESS) hides the tab
+                // completely for excluded users elsewhere — unlike ordinary tier
+                // restrictions, which stay visible and only block the click. This
+                // tab list is unfiltered SDUI config, so mirror that here: drop
+                // 'admob' unless it actually made it into permittedPlatformValues
+                // (which already reflects the gate via the allowedPlatforms prop).
+                .filter((opt) => {
+                  const value = String(opt.value ?? opt.label ?? '').toLowerCase();
+                  return value !== 'admob' ||
+                    permittedPlatformValues.some((p) => String(p).toLowerCase() === 'admob');
+                })
+                .map((opt) => {
                 const value = opt.value ?? opt.label;
                 const fallback = opt._fallback || PLATFORMS.find((f) => f.id.toLowerCase() === value.toLowerCase()) || {};
                 return (

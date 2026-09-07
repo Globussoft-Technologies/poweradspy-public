@@ -2838,15 +2838,21 @@ const App = () => {
         ) : ui.showSavedAdsPage ? (
           <SavedAdsPage
             sdui={sdui}
-            allowedPlatforms={(adsAllowedPlatforms || []).filter(
-              (network) =>
-                normalizePlanNetwork(network) === 'admob' ||
-                !entitlements ||
-                (
-                  canUseCapabilityOnNetwork('ads.search', network) &&
-                  canUseCapabilityOnNetwork('legacy.bookmark', network)
-                ),
-            )}
+            allowedPlatforms={(adsAllowedPlatforms || [])
+              // ADMOB_UI_ACCESS gate: the clause below always keeps 'admob'
+              // once it reaches this filter, so it must be stripped first for
+              // anyone the UI-only gate excludes — otherwise /saved would
+              // still show the AdMob tab/icon and its saved ads.
+              .filter((network) => admobUIEnabled || normalizePlanNetwork(network) !== 'admob')
+              .filter(
+                (network) =>
+                  normalizePlanNetwork(network) === 'admob' ||
+                  !entitlements ||
+                  (
+                    canUseCapabilityOnNetwork('ads.search', network) &&
+                    canUseCapabilityOnNetwork('legacy.bookmark', network)
+                  ),
+              )}
             onPlatformRestricted={() => dispatch(openModal('isPricingModalOpen'))}
             favouriteAdIds={favouriteAdIds}
             hiddenAdIds={hiddenAdIds}
