@@ -24,7 +24,7 @@ const NORMALIZED = {
  * substring of the SQL to the [rows|result] it should resolve to; the ad-id lookup
  * and category-name lookup are matched by substring.
  */
-function mkConn({ adRow = [{ id: 42 }], catRows = [], insertId = 99, throwOn } = {}) {
+function mkConn({ adRow = [{ id: 42 }], catRows = [], insertId = 99, throwOn, lastSeen = "2026-01-01 00:00:00" } = {}) {
   const calls = [];
   const conn = {
     calls,
@@ -35,6 +35,7 @@ function mkConn({ adRow = [{ id: 42 }], catRows = [], insertId = 99, throwOn } =
     execute: vi.fn(async (sql, params) => {
       calls.push({ sql, params });
       if (throwOn && sql.includes(throwOn)) throw new Error("sql-boom");
+      if (/SELECT `last_seen` FROM/.test(sql)) return [[{ last_seen: lastSeen }]];
       if (/FROM `\w+_ad`|FROM `\w+_ads`|FROM `google_text_ad`/.test(sql) && /WHERE `(id|ad_id)`/.test(sql)) {
         return [adRow];
       }
@@ -90,11 +91,12 @@ describe("aiMetaSqlWriter > persistAiMeta", () => {
     expect(upsert.params).toContain("promotional");    // ad_type scalar
     expect(upsert.params).toContain(JSON.stringify(["conversion"])); // intent JSON
 
-    // category resolve → insert → UPDATE facebook_ad.category_id = 555
+    // category resolve → insert → UPDATE facebook_ad.category_id = 555, last_seen preserved
     const catInsert = conn.calls.find((c) => c.sql.startsWith("INSERT INTO `facebook_category`"));
     expect(catInsert.params).toEqual(["Retail"]);
     const adUpdate = conn.calls.find((c) => c.sql.includes("UPDATE `facebook_ad` SET category_id"));
-    expect(adUpdate.params).toEqual([555, 42]);
+    expect(adUpdate.sql).toContain("last_seen = ?");
+    expect(adUpdate.params).toEqual([555, "2026-01-01 00:00:00", 42]);
   });
 
   it("reuses existing category id when the name already exists (no insert)", async () => {
@@ -103,7 +105,26 @@ describe("aiMetaSqlWriter > persistAiMeta", () => {
     expect(r.category_synced).toBe(true);
     expect(conn.calls.some((c) => c.sql.startsWith("INSERT INTO `native_category`"))).toBe(false);
     const adUpdate = conn.calls.find((c) => c.sql.includes("UPDATE `native_ad` SET category_id"));
-    expect(adUpdate.params).toEqual([300, 7]);
+    expect(adUpdate.params).toEqual([300, "2026-01-01 00:00:00", 7]);
+  });
+
+  it("category dual-write preserves last_seen across every network with a category table (locks the row, re-asserts current value)", async () => {
+    const networksWithCategoryTable = ["facebook", "instagram", "youtube", "native", "linkedin", "reddit", "quora"];
+    for (const network of networksWithCategoryTable) {
+      const conn = mkConn({ adRow: [{ id: 1 }], catRows: [{ id: 10 }], lastSeen: `${network}-last-seen` });
+      const r = await persistAiMeta({ sql: mkSql(conn), network, adId: "pub-x", normalized: NORMALIZED });
+      expect(r.category_synced).toBe(true);
+
+      const lockingSelect = conn.calls.find((c) => /SELECT `last_seen` FROM/.test(c.sql));
+      expect(lockingSelect).toBeTruthy();
+      expect(lockingSelect.sql).toContain("FOR UPDATE");
+
+      const adUpdate = conn.calls.find((c) => c.sql.includes(`UPDATE \`${NET_SQL[network].adTable}\` SET category_id`));
+      expect(adUpdate.sql).toContain("last_seen = ?");
+      // last_seen re-asserted with the value read back for THIS network, never a
+      // fresh timestamp — the whole point is that last_seen doesn't move here.
+      expect(adUpdate.params).toEqual([10, `${network}-last-seen`, 1]);
+    }
   });
 
   it("network WITHOUT a category table (google) → meta upsert only, no category write", async () => {

@@ -158,9 +158,20 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
     let categorySynced = false;
     if (cfg.categoryTable && normalized.category) {
       const catId = await resolveCategoryId(conn, cfg.categoryTable, normalized.category);
+      // `<net>_ad.last_seen` must only move on crawler insertion, never on this
+      // classification-triggered write. MySQL auto-bumps a DATETIME/TIMESTAMP column
+      // defined ON UPDATE CURRENT_TIMESTAMP whenever ANY column in the row changes -
+      // so writing category_id alone was silently touching last_seen too. Lock the
+      // row (FOR UPDATE, same transaction) and re-assert its current last_seen value
+      // in the same statement, which neutralizes MySQL's auto-touch for that column.
+      const [lastSeenRows] = await conn.execute(
+        `SELECT \`last_seen\` FROM \`${cfg.adTable}\` WHERE \`id\` = ? FOR UPDATE`,
+        [adRowId],
+      );
+      const currentLastSeen = lastSeenRows[0]?.last_seen ?? null;
       await conn.execute(
-        `UPDATE \`${cfg.adTable}\` SET category_id = ? WHERE id = ?`,
-        [catId, adRowId],
+        `UPDATE \`${cfg.adTable}\` SET category_id = ?, last_seen = ? WHERE id = ?`,
+        [catId, currentLastSeen, adRowId],
       );
       categorySynced = true;
     }
