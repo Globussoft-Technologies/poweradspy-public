@@ -309,11 +309,18 @@ const App = () => {
   // const MARKET_TRENDS_UI_ACCESS = new Set(['147251', '28477', '150355', '163479', '168106']); // production allow-list — uncomment to restrict
   const KEYWORD_EXPLORER_UI_ACCESS = true;
   // const KEYWORD_EXPLORER_UI_ACCESS = new Set(['147251', '28477', '150355', '163479', '168106']); // production allow-list — uncomment to restrict
+  // AdMob tab/filters — same pattern, but purely a UI-only quick gate. It has
+  // NO relation to plan/entitlement checks (unlike the other two above, which
+  // still defer to a real backend allowed/enabled flag): whoever's ID isn't in
+  // this set never sees the AdMob tab at all, full stop, regardless of plan.
+  // const ADMOB_UI_ACCESS = new Set(['147251','28477', '150355', '163479', '168106']);
+  const ADMOB_UI_ACCESS = true; // uncomment (and comment out the Set above) to enable AdMob for everyone
   const resolveUIAccess = (setting, userId) =>
     typeof setting === 'boolean' ? setting : setting.has(String(userId));
   const currentUserId = user?.user_id ?? user?.id ?? '';
   const intelUIEnabled = INTEL_ENV_ON && resolveUIAccess(MARKET_TRENDS_UI_ACCESS, currentUserId);
   const keywordExplorerUIEnabled = GOOGLE_INTEL_ON && resolveUIAccess(KEYWORD_EXPLORER_UI_ACCESS, currentUserId);
+  const admobUIEnabled = resolveUIAccess(ADMOB_UI_ACCESS, currentUserId);
 
   // ── Guest Mode ────────────────────────────────────────────────────────
   const guest = useGuest();
@@ -933,8 +940,18 @@ const App = () => {
     else
       allOpts = [...opts, { value: "tiktok", label: "TT", icon_url: null }];
 
+    // Quick UI-only gate (ADMOB_UI_ACCESS above) — drop the tab entirely for
+    // everyone not on the list. allPlatformValues (below) derives from this
+    // list, so "All" and the sidebar's platform-applicability filters never
+    // see 'admob' either — no plan/entitlement code touched.
+    if (!admobUIEnabled) {
+      allOpts = allOpts.filter(
+        (o) => String(o.value ?? o.label ?? '').toLowerCase() !== 'admob'
+      );
+    }
+
     return allOpts;
-  }, [platformFilter]);
+  }, [platformFilter, admobUIEnabled]);
 
   const sortingDoc = sdui.config?.navbar?.find((d) => d._id === "sorting");
   const sortFilter = sortingDoc?.filters?.[0];
@@ -1267,6 +1284,14 @@ const App = () => {
       if (hiddenAdIds.has(`${platform}:${adId}`)) return false;
       if (hiddenAdvertiserIds.has(`${platform}:${ownerId}`)) return false;
       if (shouldHideAdForBlockedMedia(ad)) return false;
+      // The "All" tab's search request sends the network as the literal
+      // 'all' sentinel and lets the backend resolve which networks that
+      // covers — it never goes through platformOptions/allPlatformValues
+      // (which is where ADMOB_UI_ACCESS drops admob for excluded users), so
+      // an "All" search still returns admob ads from the backend for them.
+      // Since this gate is UI-only by design (no backend/plan change), strip
+      // those ads here at render time instead.
+      if (!admobUIEnabled && platform === 'admob') return false;
       return true;
     });
 
@@ -1280,7 +1305,7 @@ const App = () => {
     // now sorts each page (and, for popularity, excludes score-less docs via an
     // `exists` filter), so a render-time re-sort is no longer needed.
     return filtered;
-  }, [ads, hiddenAdIds, hiddenAdvertiserIds]);
+  }, [ads, hiddenAdIds, hiddenAdvertiserIds, admobUIEnabled]);
 
   const hiddenCount = useMemo(
     () => ads.length - visibleAds.length,
