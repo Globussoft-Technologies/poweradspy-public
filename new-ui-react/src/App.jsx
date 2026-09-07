@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 
 // Hooks & Services
 import { useSDUI } from "./hooks/useSDUI";
@@ -1578,7 +1578,11 @@ const App = () => {
     }
   }, [hasMore, guest?.isPublicLanding, ads.length, dispatch]);
 
-  useEffect(() => {
+  // Clear stale cards before the browser paints the new filter context. A
+  // normal effect runs after paint, which briefly let existing non-AI ads
+  // receive the AI-refined card treatment while the filtered request was in
+  // flight.
+  useLayoutEffect(() => {
     setPage(0);
     setAds([]);
     // Clear the old count when the search/filter context changes. Without this,
@@ -1599,6 +1603,9 @@ const App = () => {
     // on the Ads Library, before the real fetch even starts.
     setLoadingMore(true);
   }, [
+    // Use the live key for the visual reset so stale cards disappear
+    // immediately; the fetch effect below still uses the debounced key.
+    filterKey,
     debouncedFilterKey,
     platformKey,
     selectedPlanAccessNetworkKey,

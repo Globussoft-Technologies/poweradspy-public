@@ -162,20 +162,31 @@ describe("YouTube SearchMixQueryBuilder > clause generators", () => {
     const must = b.build().body.query.bool.must;
     expect(must.length).toBeGreaterThanOrEqual(3);
   });
-  it("url with protocol → wildcard on extracted hostname", () => {
+  it("url with protocol → match_phrase on destination_url text", () => {
     b.setUrl("https://example.com/path");
     const filters = b.build().body.query.bool.filter;
-    expect(filters.some(f => f.wildcard?.ad_url === "*example.com*")).toBe(true);
+    const urlFilter = filters.find(f => f.bool?.should?.some(s => s.match_phrase?.destination_url));
+    expect(urlFilter).toEqual({
+      bool: {
+        should: [
+          { match_phrase: { destination_url: "example.com" } },
+          { match_phrase: { destination_url: "www.example.com" } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
   });
-  it("url without protocol → wildcard on first path segment", () => {
+  it("url without protocol → match_phrase on normalized hostname", () => {
     b.setUrl("bare-url");
     const filters = b.build().body.query.bool.filter;
-    expect(filters.some(f => f.wildcard?.ad_url === "*bare-url*")).toBe(true);
+    expect(filters.some(f => f.bool?.should?.some(s =>
+      s.match_phrase?.destination_url === "bare-url"))).toBe(true);
   });
-  it("url that fails new URL() → falls back to split('/')[0] (line 162 catch)", () => {
+  it("url that fails new URL() → falls back to split('/')[0]", () => {
     b.setUrl("http://[invalid");
     const filters = b.build().body.query.bool.filter;
-    expect(filters.some(f => f.wildcard?.ad_url === "*http:*")).toBe(true);
+    expect(filters.some(f => f.bool?.should?.some(s =>
+      s.match_phrase?.destination_url === "http:"))).toBe(true);
   });
   it("country (multi-field match)", () => {
     b.setCountry(["US", "IN"]);

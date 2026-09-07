@@ -244,7 +244,19 @@ class SearchMixQueryBuilder {
     let domain;
     try { domain = new URL(url.startsWith('http') ? url : `http://${url}`).hostname; }
     catch { domain = url.split('/')[0]; }
-    return asFilter({ wildcard: { ad_url: `*${domain}*` } });
+    domain = String(domain || '').replace(/^www\./i, '').toLowerCase().trim();
+    if (!domain) return null;
+    // destination_url is analyzed text, so use indexed phrase lookups rather
+    // than a leading wildcard, which forces ES to scan the term dictionary.
+    return asFilter({
+      bool: {
+        should: [
+          { match_phrase: { destination_url: domain } },
+          { match_phrase: { destination_url: `www.${domain}` } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
   }
 
   _getCountryEnv() {
