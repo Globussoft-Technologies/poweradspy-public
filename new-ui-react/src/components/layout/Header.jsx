@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from "react";
+import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   Menu,
   ChevronDown,
@@ -128,6 +128,7 @@ const Header = ({
   aiSearchChecked = false,
   aiSearchLoading = false,
   onNotifOpenChange,
+  onSearchDropdownOpenChange,
 }) => {
   const { config } = sdui;
   const { user, logout } = useAuth();
@@ -191,6 +192,30 @@ const Header = ({
   useEffect(() => {
     onNotifOpenChange?.(notifOpen);
   }, [notifOpen, onNotifOpenChange]);
+
+  // The search suggestions/categories dropdown (rendered inside AutocompleteFilter)
+  // is exactly as wide as this box — reporting its live right edge (rather than a
+  // guessed percentage/offset) lets the crawl-status banner in App start precisely
+  // where the dropdown ends, at any sidebar/window width, instead of drifting into
+  // a gap or an overlap as the layout changes.
+  const searchBarBoxRef = useRef(null);
+  const [searchDropdownOpenLocal, setSearchDropdownOpenLocal] = useState(false);
+  const reportSearchDropdownState = useCallback((isOpen) => {
+    setSearchDropdownOpenLocal(isOpen);
+    const rect = isOpen ? searchBarBoxRef.current?.getBoundingClientRect() : null;
+    onSearchDropdownOpenChange?.(isOpen, rect ? rect.right : null);
+  }, [onSearchDropdownOpenChange]);
+  // Re-measure on resize while it's open — the dropdown stays open across a resize,
+  // but a one-time measurement taken only when it opened would go stale.
+  useEffect(() => {
+    if (!searchDropdownOpenLocal) return;
+    const handleResize = () => {
+      const rect = searchBarBoxRef.current?.getBoundingClientRect();
+      onSearchDropdownOpenChange?.(true, rect ? rect.right : null);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [searchDropdownOpenLocal, onSearchDropdownOpenChange]);
 
   // Click a notification → search its term on its network. The bell's type is 0=keyword,
   // 1=advertiser, 2=domain; map it to the search-in value. onSearch is App's handleSearch,
@@ -532,6 +557,7 @@ const Header = ({
             )}
 
             <div
+              ref={searchBarBoxRef}
               className={`relative flex flex-1 items-center gap-0 rounded-lg border bg-theme-text/[0.04] transition-all ${
                 aiMode
                   ? "border-[#6b99ff] ring-2 ring-[#6b99ff]/60 shadow-[0_0_18px_rgba(107,153,255,0.45)]"
@@ -623,6 +649,11 @@ const Header = ({
                   minLength={searchFilter?.min_length || 3}
                   onSelectCategory={aiMode ? undefined : handleCategorySelect}
                   minimal={true}
+                  // Lets the parent shrink/reposition the crawl-status banner
+                  // while this suggestions dropdown is open — it renders
+                  // directly under the search bar and otherwise overlaps the
+                  // banner's default centered position.
+                  onOpenChange={reportSearchDropdownState}
                 />
               </div>
             </div>

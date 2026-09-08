@@ -1730,6 +1730,12 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
     creativeInitialWidth -
       Math.min(scrollProgress / 8, creativeInitialWidth - 10),
   );
+  // The floating creative only overlaps page content once the user scrolls and it
+  // shrinks into the corner — that's the only moment a dismiss control is useful.
+  // Back at rest (scrollProgress 0) it sits in its own space, so the close button
+  // is hidden then; scrolling back to the top also re-shows the preview (the
+  // scroll handler clears `creativeClosed` at scrollTop 0).
+  const creativeIsFloating = scrollProgress > 24;
   const transparencyPreviewSpace = creativeClosed
     ? "0%"
     : `${floatingCreativeWidth + 3}%`;
@@ -2587,6 +2593,23 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                 activeIndex={activeIndex}
                 setActiveIndex={setActiveIndex}
               />
+              {/* Dismiss control — only while the preview is floating over the
+                  scrolled content. Hidden when it's back at rest at the top;
+                  scrolling back to the top re-shows the preview. */}
+              {creativeIsFloating && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCreativeClosed(true);
+                  }}
+                  className={`absolute top-1.5 right-1.5 z-30 w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors ${isLight ? "bg-white/85 text-gray-700 border border-black/10 hover:bg-white hover:text-red-500" : "bg-black/55 text-white/80 border border-white/15 hover:bg-black/75 hover:text-red-400"}`}
+                  title="Hide preview"
+                  aria-label="Hide creative preview"
+                >
+                  <X size={13} />
+                </button>
+              )}
             </div>
           </div>
         )}

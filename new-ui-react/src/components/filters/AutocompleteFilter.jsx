@@ -21,6 +21,7 @@ const AutocompleteFilter = ({
   minLength = 3,
   onSelectCategory,
   minimal = false,
+  onOpenChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState(value || "");
   const [wordSuggestions, setWordSuggestions] = useState([]);
@@ -189,6 +190,14 @@ const AutocompleteFilter = ({
 
     fetchAll();
   }, [debouncedLastWord]);
+
+  // Report the dropdown's actual visibility (same condition as the JSX render
+  // below) to the parent, so it can move things that would otherwise sit
+  // under it — e.g. App's crawl-status banner — out of the way while it's open.
+  const isDropdownOpen = showSuggestions && (wordSuggestions.length > 0 || catSuggestions.length > 0);
+  useEffect(() => {
+    onOpenChange?.(isDropdownOpen);
+  }, [isDropdownOpen, onOpenChange]);
 
   // Close on outside click
   useEffect(() => {

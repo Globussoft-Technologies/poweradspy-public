@@ -523,6 +523,20 @@ const App = () => {
   // sits just left of the bell, and at full width the banner (centered further left) can
   // overlap it. Reported up via Header's onNotifOpenChange prop.
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  // Same idea as notificationsOpen above, but for the search bar's own suggestions/
+  // categories dropdown — it renders directly under the search input, which the
+  // banner's default centered position sat on top of while the dropdown was open.
+  // Header measures the search bar box itself (the dropdown is exactly as wide as
+  // it) and reports both its open state and its live right edge in viewport px,
+  // via Header -> AutocompleteFilter's onOpenChange prop — so the banner below can
+  // start exactly where the dropdown ends instead of guessing a fixed offset that
+  // drifts at other sidebar/window widths.
+  const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
+  const [searchDropdownRightEdge, setSearchDropdownRightEdge] = useState(null);
+  const handleSearchDropdownOpenChange = useCallback((isOpen, rightEdgePx) => {
+    setSearchDropdownOpen(isOpen);
+    setSearchDropdownRightEdge(isOpen ? rightEdgePx : null);
+  }, []);
   const showToast = useCallback((
     message,
     type = "success",
@@ -2688,6 +2702,7 @@ const App = () => {
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}
         onNotifOpenChange={setNotificationsOpen}
+        onSearchDropdownOpenChange={handleSearchDropdownOpenChange}
         searchIn={ui.searchIn}
         setSearchIn={guestSetSearchIn}
         searchQuery={ui.searchQuery}
@@ -3120,28 +3135,51 @@ const App = () => {
       {searchBannerVisible && (
         <div
           className={`fixed z-[600] max-w-[calc(100vw-2rem)] ${
-            // Anchored differently depending on the notifications dropdown: centered
-            // (left-1/2 + -translate-x-1/2) normally, but that centers growth on both
-            // sides — widening it while the dropdown is open kept pushing the right edge
-            // further right, into the bell icon. Right-anchored instead while open, so
-            // changing the width only ever grows it leftward, never past the bell.
-            notificationsOpen ? 'right-4 lg:right-[516px]' : 'left-1/2 -translate-x-1/2 lg:left-[65%]'
+            // Anchored differently depending on what else is open. Centered
+            // (left-1/2 + -translate-x-1/2) by default, but that centers growth
+            // on both sides:
+            // - Notifications dropdown open: widening it kept pushing the right
+            //   edge further right, into the bell icon, so it's right-anchored
+            //   instead — changing the width only ever grows it leftward.
+            // - Search suggestions/categories dropdown open: rather than guess a
+            //   fixed offset (which drifted into a gap or an overlap depending on
+            //   sidebar/window width), Header measures that dropdown's actual live
+            //   right edge and reports it as searchDropdownRightEdge — an inline
+            //   `left` below positions the banner exactly against it. No Tailwind
+            //   left/right class here in that case; only the `right-4` fallback
+            //   below covers the one render before that measurement lands.
+            notificationsOpen
+              ? 'right-4 lg:right-[516px]'
+              : (searchDropdownOpen && searchDropdownRightEdge != null)
+                ? ''
+                : searchDropdownOpen
+                  ? 'right-4'
+                  : 'left-1/2 -translate-x-1/2 lg:left-[65%]'
           } top-[90px] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4`}
           style={{
+            ...(searchDropdownOpen && searchDropdownRightEdge != null
+              ? { left: `${searchDropdownRightEdge + 12}px` }
+              : {}),
             // Narrower than the generic toast's max-w cap — this banner is
             // centered on a fixed left:% point, so at its old width it could
             // overlap the platform icon row to its left. Text just wraps onto
             // an extra line instead. Shrunk further still while the notifications
-            // dropdown is open — that sits just left of the bell and would otherwise
-            // overlap the banner's right edge at the wider width.
-            maxWidth: notificationsOpen ? 'min(calc(100vw - 2rem), 460px)' : 'min(calc(100vw - 2rem), 600px)',
+            // dropdown is open, to match the narrower corner it's anchored to
+            // above; capped to whatever room is actually left of the viewport
+            // edge while the search dropdown is open, since `left` above is a
+            // measured pixel value rather than a corner with known clearance.
+            maxWidth: notificationsOpen
+              ? 'min(calc(100vw - 2rem), 460px)'
+              : (searchDropdownOpen && searchDropdownRightEdge != null)
+                ? `min(calc(100vw - ${searchDropdownRightEdge + 12}px - 1rem), 420px)`
+                : 'min(calc(100vw - 2rem), 600px)',
             backgroundColor: 'rgba(238, 242, 250, 0.96)',
             borderColor: 'rgba(51, 82, 150, 0.28)',
             color: '#335296',
             boxShadow: '0 4px 12px rgba(51, 82, 150, 0.14)',
           }}
         >
-          <div className="w-6 h-6 rounded-full flex items-center justify-center text-white bg-[#335296]">
+          <div className="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-white bg-[#335296]">
             {searchBannerLoading
               ? <Loader2 size={14} strokeWidth={3} className="animate-spin" />
               : <Info size={14} strokeWidth={3} />}
@@ -3178,7 +3216,7 @@ const App = () => {
                 : '#f87171',
           }}
         >
-          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white ${
+          <div className={`w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-white ${
             toast.type === 'info'
               ? 'bg-blue-500'
               : toast.type === 'success'
