@@ -9,7 +9,7 @@ import { useTheme } from "../../hooks/useTheme";
  * load so a server-side presentation hint cannot unexpectedly open the whole
  * filter sidebar.
  */
-const DocumentSection = ({ document: doc, children, clickOnly = false, onHeaderClick }) => {
+const DocumentSection = ({ document: doc, children, clickOnly = false, onHeaderClick, isRestricted = false, onRestrictedClick }) => {
   const { theme } = useTheme();
   const isLightTheme = theme === "light";
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -24,6 +24,13 @@ const DocumentSection = ({ document: doc, children, clickOnly = false, onHeaderC
     doc._id === "ai_meta" || /ai signals/i.test(String(doc.title || ""));
 
   const handleToggle = () => {
+    // Gate the section header itself — a restricted group (e.g. Language,
+    // Gender) must prompt login/upgrade the moment it's clicked, not only
+    // once the user expands it and tries to pick an option inside.
+    if (isRestricted) {
+      onRestrictedClick?.();
+      return;
+    }
     if (clickOnly) {
       onHeaderClick?.(doc);
       return;

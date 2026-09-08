@@ -181,6 +181,10 @@ const Sidebar = ({
               label={t("all_projects")}
               active={activePage === "projects"}
               onClick={() => {
+                if (guest?.isRestricted) {
+                  onRestricted?.();
+                  return;
+                }
                 // Loading/missing access data is not a subscription denial.
                 // Navigate to the neutral Projects state and let App resolve it.
                 if (!projectsAccessResolved || projectsAccessUnavailable) {
@@ -210,7 +214,13 @@ const Sidebar = ({
                 icon={<TrendingUp size={isOpen ? 16 : 18} />}
                 label={t("market_trends", "Market Trends")}
                 active={activePage === "intelligence"}
-                onClick={() => onPageChange?.("intelligence")}
+                onClick={() => {
+                  if (guest?.isRestricted) {
+                    onRestricted?.();
+                    return;
+                  }
+                  onPageChange?.("intelligence");
+                }}
                 collapsed={!isOpen}
                 badge={intelligenceStage === "beta" ? "Beta" : null}
               />
@@ -294,6 +304,7 @@ const Sidebar = ({
                             isFilterRestricted={isFilterRestricted}
                             filterHasPlanEntry={filterHasPlanEntry}
                             onRestricted={onRestricted}
+                            guest={guest}
                           />
                           {idx < visible.length - 1 && <SidebarDivider />}
                         </React.Fragment>

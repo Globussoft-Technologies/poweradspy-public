@@ -62,6 +62,16 @@ export function GuestProvider({ guestToken, shareToken, publicLanding, children 
           window.location.href = LOGIN_URL;
           return;
         }
+        // Stay on this page either way — a logged-in visitor just gets it
+        // rendered with full access instead of guest restrictions
+        // (guest.isRestricted is already false for them), matching
+        // staging's behavior. Only the address bar text changes for them,
+        // via replaceState (no navigation/reload, no state loss) — showing
+        // "guest" in the URL for an authenticated session reads as wrong
+        // even though the page itself is already fully unlocked.
+        if (isLoggedIn) {
+          window.history.replaceState({}, '', '/');
+        }
         setUiState(result.uiState);
         trackEvent('guestView', { user_id: 'guest', network: 'NA' });
       } catch (err) {
@@ -92,7 +102,9 @@ export function GuestProvider({ guestToken, shareToken, publicLanding, children 
         }
         const ad = result.ad;
         const network = ad?.network || 'facebook';
-        // Set UI state to select the right platform
+        // Stay on this /share/:token URL either way — a logged-in visitor
+        // just gets it rendered with full access (guest.isRestricted is
+        // already false for them), matching staging. No redirect elsewhere.
         setUiState({
           searchQuery: '',
           searchIn: 'keyword',

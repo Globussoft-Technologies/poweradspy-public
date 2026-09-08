@@ -26,6 +26,7 @@ const SchemaRenderer = ({
   isFilterRestricted,
   filterHasPlanEntry,
   onRestricted,
+  guest,
 }) => {
   // Stable ref for the callback — prevents children from seeing new onChange every render
   const onFilterChangeRef = useRef(onFilterChange);
@@ -45,6 +46,34 @@ const SchemaRenderer = ({
   ) {
     return null;
   }
+
+  // Shared with handleChange below and the section-header gate at the bottom —
+  // one definition of "is this filter restricted" so both stay in sync. If the
+  // filter has its own explicit plan-access entry, use only that — don't
+  // cascade to group_id / doc._id (prevents a misconfigured section-level
+  // restriction like 'engagement' from blocking filters that have their own
+  // allowed status, e.g. avg_ad_budget → ad_budget_sort).
+  const isFilterEntryRestricted = (filter) => {
+    if (!isFilterRestricted) return false;
+    const hasOwnEntry = filterHasPlanEntry?.(filter._id);
+    return hasOwnEntry
+      ? isFilterRestricted(filter._id)
+      : (isFilterRestricted(filter._id) ||
+         isFilterRestricted(filter.group_id) ||
+         isFilterRestricted(doc._id));
+  };
+
+  // The filters actually shown to this user — same visibility/dependency
+  // checks renderFilters applies per-filter below. Used to compute section
+  // restriction so a hidden/inapplicable filter (which was never going to be
+  // marked restricted, since nothing lets the user reach it) can't make an
+  // otherwise-fully-restricted section look openable.
+  const visibleFilters = (doc.filters || []).filter((filter) => {
+    if (filter.visible === false) return false;
+    if (shouldShowFilter && !shouldShowFilter(filter)) return false;
+    if (isDependencySatisfied && !isDependencySatisfied(filter)) return false;
+    return true;
+  });
 
   const renderFilters = () => {
     if (!doc.filters || doc.filters.length === 0) return null;
@@ -122,21 +151,9 @@ const SchemaRenderer = ({
       // Stable onChange per filter ID — uses ref, never changes identity
       // If filter is restricted by plan, show subscription popup instead
       const handleChange = (newValue) => {
-        if (isFilterRestricted && onRestricted) {
-          // If the filter has its own explicit plan-access entry, use only that —
-          // don't cascade to group_id / doc._id. This prevents a misconfigured
-          // section-level restriction (e.g. 'engagement') from blocking filters
-          // that have their own allowed status (e.g. avg_ad_budget → ad_budget_sort).
-          const hasOwnEntry = filterHasPlanEntry?.(filter._id);
-          const restricted = hasOwnEntry
-            ? isFilterRestricted(filter._id)
-            : (isFilterRestricted(filter._id) ||
-               isFilterRestricted(filter.group_id) ||
-               isFilterRestricted(doc._id));
-          if (restricted) {
-            onRestricted();
-            return;
-          }
+        if (isFilterRestricted && onRestricted && isFilterEntryRestricted(filter)) {
+          onRestricted();
+          return;
         }
         // Traffic Source: "All" is an umbrella option and mutually exclusive
         // with narrower options — selecting one should deselect the other.
@@ -319,12 +336,25 @@ const SchemaRenderer = ({
     );
   }
 
+  // A guest can't apply ANY filter change at all — guestSetFilter (see
+  // Sidebar.jsx) unconditionally blocks every filter regardless of plan, so
+  // every section must gate on click for a guest, not just plan-restricted
+  // ones. For a logged-in user, fall back to the plan-based check: a section
+  // gates only when EVERY filter inside it is restricted (so a
+  // partially-restricted section like Engagement, where some filters remain
+  // usable, still opens normally).
+  const isGroupRestricted = guest?.isRestricted
+    ? true
+    : (visibleFilters.length > 0 && visibleFilters.every(isFilterEntryRestricted));
+
   return (
     <div className="px-2.5">
       <DocumentSection
         document={doc}
         clickOnly={doc._id === "ai_meta" && Boolean(onDocumentClick)}
         onHeaderClick={onDocumentClick}
+        isRestricted={isGroupRestricted}
+        onRestrictedClick={onRestricted}
       >
         {renderFilters()}
       </DocumentSection>

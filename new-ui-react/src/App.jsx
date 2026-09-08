@@ -334,47 +334,51 @@ const App = () => {
   // subcategory belongs to, not just the single one stored on the ad.
   const categoryOptions = useMemo(() => findCategoryOptions(sdui.config), [sdui.config]);
 
-  // Apply guest UI state to SDUI once loaded
+  // Shared restore logic — used both when a guest page has its own uiState to
+  // apply directly, and when a logged-in user's shared-dashboard state was
+  // handed off via sessionStorage and must be applied on the real dashboard.
+  const applyRestoredDashboardState = useCallback((gs) => {
+    if (!gs) return;
+    if (gs.filterValues) {
+      Object.entries(gs.filterValues).forEach(([key, val]) => {
+        if (val != null) sdui.setFilter(key, val);
+      });
+    }
+    if (gs.activePlatforms?.length) sdui.setActivePlatforms(gs.activePlatforms);
+    if (gs.specificPlatforms?.length) dispatch(setSpecificPlatforms(gs.specificPlatforms));
+    if (gs.searchQuery) dispatch(setSearchQuery(gs.searchQuery));
+    if (gs.searchIn) dispatch(setSearchIn(gs.searchIn));
+    if (gs.exactSearch != null) dispatch(setExactSearch(gs.exactSearch));
+    if (gs.activeTab) dispatch(setActiveTab(gs.activeTab));
+  }, [sdui.setFilter, sdui.setActivePlatforms, dispatch]);
+
+  // Apply guest UI state to SDUI once loaded (true anonymous guest only —
+  // an already-logged-in visitor is redirected before this ever renders).
   const guestInitApplied = useRef(false);
   useEffect(() => {
     if (guest?.uiState && !guest.loading && sdui.config && !guestInitApplied.current) {
       guestInitApplied.current = true;
-      const gs = guest.uiState;
-      // Restore filter values
-      if (gs.filterValues) {
-        Object.entries(gs.filterValues).forEach(([key, val]) => {
-          if (val != null) sdui.setFilter(key, val);
-        });
-      }
-      // Restore active platforms
-      if (gs.activePlatforms?.length) {
-        sdui.setActivePlatforms(gs.activePlatforms);
-      }
-      // Restore specific platform selection (individual tabs)
-      if (gs.specificPlatforms?.length) {
-        dispatch(setSpecificPlatforms(gs.specificPlatforms));
-      }
-      // Restore search state
-      if (gs.searchQuery) dispatch(setSearchQuery(gs.searchQuery));
-      if (gs.searchIn) dispatch(setSearchIn(gs.searchIn));
-      if (gs.exactSearch != null) dispatch(setExactSearch(gs.exactSearch));
-      if (gs.activeTab) dispatch(setActiveTab(gs.activeTab));
+      applyRestoredDashboardState(guest.uiState);
     }
-  }, [guest?.uiState, guest?.loading, sdui.config, dispatch]);
+  }, [guest?.uiState, guest?.loading, sdui.config, applyRestoredDashboardState]);
 
-  // Pick up state from guest/share page redirect (logged-in user interacted)
+  // Pick up state handed off from a guest/share link — either the immediate
+  // redirect for an already-logged-in visitor (useGuest.jsx), or the older
+  // fallback where a logged-in user interacted with something on the guest
+  // page first (guestGuard). Carries the FULL shared state (filters,
+  // platforms, search), not just search fields, so it must wait for
+  // sdui.config to be ready before calling sdui.setFilter/setActivePlatforms.
+  const pendingGuestStateApplied = useRef(false);
   useEffect(() => {
+    if (pendingGuestStateApplied.current || !sdui.config) return;
     const pending = sessionStorage.getItem('guestToDashboard');
     if (!pending) return;
+    pendingGuestStateApplied.current = true;
     sessionStorage.removeItem('guestToDashboard');
     try {
-      const s = JSON.parse(pending);
-      if (s.searchQuery != null) dispatch(setSearchQuery(s.searchQuery));
-      if (s.searchIn) dispatch(setSearchIn(s.searchIn));
-      if (s.exactSearch != null) dispatch(setExactSearch(s.exactSearch));
-      if (s.activeTab) dispatch(setActiveTab(s.activeTab));
+      applyRestoredDashboardState(JSON.parse(pending));
     } catch {}
-  }, [dispatch]);
+  }, [sdui.config, applyRestoredDashboardState]);
 
   // Keep the quick-filter (sort) pill highlight in sync with the actual active
   // sort. The pill highlight is driven by `activeTab`, but the real sort lives in
@@ -624,7 +628,11 @@ const App = () => {
         network_scope: network === 'all' ? 'all' : 'single',
         request_context: 'analytics',
       });
-      dispatch(openModal('isPricingModalOpen'));
+      if (guest?.isRestricted) {
+        guest?.showGuestWarning?.("Please login to view ad analytics");
+      } else {
+        dispatch(openModal('isPricingModalOpen'));
+      }
       return;
     }
     if (ad) {
@@ -676,7 +684,11 @@ const App = () => {
   const hasKeywordAnalyticsAccess = isKeywordAnalyticsAllowed(entitlements, planAccess);
   const canAccessIntel = () => {
     if (guest?.isRestricted) {
-      dispatch(openModal('isPricingModalOpen'));
+      if (guest?.isPublicLanding) {
+        dispatch(openModal('isPricingModalOpen'));
+      } else {
+        guest?.showGuestWarning?.("Please login to view advertiser/domain intelligence");
+      }
       return false;
     }
     if (!entitlements && !planAccess) return false;
@@ -689,7 +701,15 @@ const App = () => {
   const openKeywordExplorer = (keyword) => {
     if (!(keywordExplorerUIEnabled && keywordExplorerAllowed)) return;
     if (!keyword) return;
-    if (guest?.isRestricted || !hasKeywordAnalyticsAccess) {
+    if (guest?.isRestricted) {
+      if (guest?.isPublicLanding) {
+        dispatch(openModal('isPricingModalOpen'));
+      } else {
+        guest?.showGuestWarning?.("Please login to use Keyword Explorer");
+      }
+      return;
+    }
+    if (!hasKeywordAnalyticsAccess) {
       dispatch(openModal('isPricingModalOpen'));
       return;
     }
@@ -707,6 +727,10 @@ const App = () => {
     // pattern as Market Trends (onPageChange('intelligence') above): the page body
     // decides real content vs. locked preview based on keywordExplorerAllowed.
     if (!keywordExplorerUIEnabled) return;
+    if (guest?.isRestricted) {
+      showUpgradeOrLoginPrompt("Please login to use Keyword Explorer");
+      return;
+    }
     setKeywordExplorer(null);
     setAdvertiserProfile(null);
     if (selectedAdForAnalytics) closeAnalyticsModal();
@@ -1014,7 +1038,13 @@ const App = () => {
   // while the effective search selection contains only invoice-purchased
   // networks. Other tabs remain visible and open pricing when clicked.
   useEffect(() => {
-    if (!isAuthenticated || !planAccessResolved || !isCustomPlan || !Array.isArray(planAllowedPlatforms)) return;
+    // Defensive backstop: this must never fire while a shared-dashboard
+    // guest's restored state is present/pending — it would silently wipe
+    // filters and platform selection the guest link just applied. In the
+    // common case a logged-in visitor never lingers on a guest page long
+    // enough for this to matter (useGuest.jsx redirects immediately), but
+    // this guard closes the race entirely if that timing ever shifts.
+    if (!isAuthenticated || !planAccessResolved || !isCustomPlan || !Array.isArray(planAllowedPlatforms) || guest?.uiState || sessionStorage.getItem('guestToDashboard')) return;
     const customKey = customPlanExpectedKey;
     if (customPlanDefaultAppliedRef.current === customKey) return;
     customPlanDefaultAppliedRef.current = customKey;
@@ -1047,6 +1077,7 @@ const App = () => {
     allPlatformValues,
     customPlanExpectedKey,
     dispatch,
+    guest?.uiState,
     isAuthenticated,
     isCustomPlan,
     planAccessResolved,
@@ -1551,12 +1582,7 @@ const App = () => {
   // and the instant `loadingMore` clears (set in the fetch's own `finally`,
   // so it can't be skipped or raced) it reads off however many ads actually
   // came back — no separate state to fall out of sync with what's on screen.
-  // Excluded for an AI search (ui.aiPrompt non-empty): AI search queries ads already
-  // indexed via the DS planning service, not the scraper — nothing is "crawling," so the
-  // "we're crawling now, ready in 15-20 min" message would be actively misleading there.
-  // handleSearch clears aiPrompt on every genuine non-AI search, so this can't stay
-  // stuck stale and suppress the banner for a real search made right after an AI one.
-  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt;
+  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt && !guest?.isRestricted;
   const searchBannerLabel = ["keyword", "advertiser", "domain"].includes(String(ui.searchIn || '').toLowerCase())
     ? ui.searchIn
     : "keyword";
@@ -2014,20 +2040,44 @@ const App = () => {
     return true; // will redirect
   }, [guest, dispatch]);
 
+  // Shared restriction-callback used by filters/sort/network tabs/etc. (props
+  // like onRestricted, onDateRestricted, onPlatformRestricted, onUpgrade) that
+  // fire for BOTH a plan-restricted logged-in user and a guest — those callers
+  // have no way to tell which case they're in, so route the decision here:
+  // a restricted guest gets the "Unlock Full Access" login prompt (matching
+  // guestGuard's own convention) instead of the paid plan comparison table,
+  // which only ever makes sense for an actual logged-in account.
+  const showUpgradeOrLoginPrompt = useCallback((message = "Please login to access this feature") => {
+    if (guest?.isRestricted) {
+      if (guest?.isPublicLanding) {
+        dispatch(openModal('isPricingModalOpen'));
+      } else {
+        guest?.showGuestWarning?.(message);
+      }
+      return;
+    }
+    dispatch(openModal('isPricingModalOpen'));
+  }, [guest, dispatch]);
+
   const guestSetSearchQuery = (val) => {
     if (guest?.isPublicLanding && guest?.isRestricted) { guest.showGuestWarning("Please login to search"); return; }
     if (guestGuard("Please login to search", { searchQuery: val, searchIn: ui.searchIn })) return;
     dispatch(setSearchQuery(val));
   };
+  // Returns whether the change actually applied (false when blocked) — callers
+  // like Header's search-type dropdown must know this before updating their
+  // own local "selected" display, otherwise the UI shows a mode as selected
+  // even though the guest was blocked from switching to it.
   const guestSetSearchIn = (val) => {
-    if (guest?.isPublicLanding && guest?.isRestricted) { guest.showGuestWarning("Please login to search"); return; }
-    if (guestGuard("Please login to search", { searchQuery: ui.searchQuery, searchIn: val })) return;
+    if (guest?.isPublicLanding && guest?.isRestricted) { guest.showGuestWarning("Please login to search"); return false; }
+    if (guestGuard("Please login to search", { searchQuery: ui.searchQuery, searchIn: val })) return false;
     dispatch(setSearchIn(val));
     // Clear category filters when switching away from keyword — they don't apply to advertiser/domain search
     if (val !== 'keyword') {
       sdui.setFilter('subcategory', []);
       sdui.setFilter('adcategory', []);
     }
+    return true;
   };
   const guestSetExactSearch = (val) => {
     if (guestGuard("Please login to search", { exactSearch: val })) return;
@@ -2660,9 +2710,9 @@ const App = () => {
         handlePlatformClick={handlePlatformClick}
         onDateChange={handleDateChange}
         isFilterRestricted={isFilterRestricted}
-        onDateRestricted={() => dispatch(openModal('isPricingModalOpen'))}
-        onSortRestricted={() => dispatch(openModal('isPricingModalOpen'))}
-        onAiFilterRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+        onDateRestricted={() => showUpgradeOrLoginPrompt("Please login to filter by date")}
+        onSortRestricted={() => showUpgradeOrLoginPrompt("Please login to change sorting")}
+        onAiFilterRestricted={() => showUpgradeOrLoginPrompt("Please login to use AI filters")}
         guest={guest}
         showOnlyFavourites={ui.showSavedAdsPage}
         onShowFavourites={() => dispatch(setShowSavedAdsPage(!ui.showSavedAdsPage))}
@@ -2691,7 +2741,7 @@ const App = () => {
           isFilterRestricted={isFilterRestricted}
           filterHasPlanEntry={filterHasPlanEntry}
           onRestricted={() => {
-            dispatch(openModal('isPricingModalOpen'));
+            showUpgradeOrLoginPrompt("Please login to use this filter");
           }}
           canAccessProjects={canAccessProjects}
           projectsAccessResolved={projectsAccess.resolved}
@@ -2779,7 +2829,7 @@ const App = () => {
                 handleSearch(value, kind === 'advertiser' ? 'advertiser' : 'keyword', undefined, { resetFilters: true });
               }}
               allowedPlatforms={intelAccess.networks}
-              onNetworkRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+              onNetworkRestricted={() => showUpgradeOrLoginPrompt("Please login to search this network")}
             />
           </div>
         )}
@@ -2798,7 +2848,7 @@ const App = () => {
             <LockedFeaturePreview
               title="Market Trends isn't enabled for your account yet"
               description="See network comparisons, top advertisers, and category trends across all your tracked ad data. Upgrade your plan to unlock it."
-              onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+              onUpgrade={() => showUpgradeOrLoginPrompt("Please login to unlock this feature")}
             />
           )
         ) : ui.activePage === "keywords-explorer" && keywordExplorerUIEnabled ? (
@@ -2809,13 +2859,13 @@ const App = () => {
           ) : keywordExplorerAllowed ? (
             <KeywordsExplorerPage
               onOpenKeyword={openKeywordExplorer}
-              onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+              onUpgrade={() => showUpgradeOrLoginPrompt("Please login to unlock this feature")}
             />
           ) : (
             <LockedFeaturePreview
               title="Keyword Explorer isn't enabled for your account yet"
               description="Browse keyword volume, competition, and growth trends with drill-down into advertisers and landing domains. Upgrade your plan to unlock it."
-              onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+              onUpgrade={() => showUpgradeOrLoginPrompt("Please login to unlock this feature")}
             />
           )
         ) : ui.activePage === "projects" ? (
@@ -2839,7 +2889,7 @@ const App = () => {
               onRecentActivityClick={handleRecentActivityClick}
               onCountryClick={handleCountryClick}
               setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}
-              onBrandLimitReached={() => dispatch(openModal('isPricingModalOpen'))}
+              onBrandLimitReached={() => showUpgradeOrLoginPrompt("Please login to track more brands")}
             />
           )
         ) : ui.showSavedAdsPage ? (
@@ -2860,7 +2910,7 @@ const App = () => {
                     canUseCapabilityOnNetwork('legacy.bookmark', network)
                   ),
               )}
-            onPlatformRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+            onPlatformRestricted={() => showUpgradeOrLoginPrompt("Please login to switch platforms")}
             favouriteAdIds={favouriteAdIds}
             hiddenAdIds={hiddenAdIds}
             hiddenAdvertiserIds={hiddenAdvertiserIds}
@@ -2895,7 +2945,7 @@ const App = () => {
             onAdDetailClose={() => setAdDetailModalOpen(false)}
             onAnalyticsAd={(ad, navigationContext) => {
               if (guest?.isRestricted) {
-                dispatch(openModal('isPricingModalOpen'));
+                guest?.showGuestWarning?.("Please login to view ad analytics");
                 return;
               }
               if (!entitlements && !planAccess) return;
@@ -2928,7 +2978,7 @@ const App = () => {
               if (sdui.clearAll) sdui.clearAll();
               dispatch(setSearchQuery(""));
             }}
-            onPlatformRestricted={() => dispatch(openModal('isPricingModalOpen'))}
+            onPlatformRestricted={() => showUpgradeOrLoginPrompt("Please login to switch platforms")}
             onToggleSidebar={() => dispatch(setSidebarOpen(!ui.isSidebarOpen))}
             theme={theme}
             guest={guest}
@@ -2945,11 +2995,11 @@ const App = () => {
             handlePlatformClick={handlePlatformClick}
             onDateChange={handleDateChange}
             isFilterRestricted={isFilterRestricted}
-            onDateRestricted={() => dispatch(openModal('isPricingModalOpen'))}
-            onSortRestricted={() => dispatch(openModal('isPricingModalOpen'))}
-            onAdTypeRestricted={() => dispatch(openModal('isPricingModalOpen'))}
-            onAiFilterRestricted={() => dispatch(openModal('isPricingModalOpen'))}
-            onGuestLimit={() => dispatch(openModal('isPricingModalOpen'))}
+            onDateRestricted={() => showUpgradeOrLoginPrompt("Please login to filter by date")}
+            onSortRestricted={() => showUpgradeOrLoginPrompt("Please login to change sorting")}
+            onAdTypeRestricted={() => showUpgradeOrLoginPrompt("Please login to filter by ad type")}
+            onAiFilterRestricted={() => showUpgradeOrLoginPrompt("Please login to use AI filters")}
+            onGuestLimit={() => showUpgradeOrLoginPrompt("Please login to see more ads")}
             hiddenCount={hiddenCount}
             isSearchActive={!!(ui.searchQuery && ui.searchQuery.trim() && ui.searchQuery !== 'NA')}
             closeDetailSignal={closeDetailSignal}
@@ -2992,7 +3042,7 @@ const App = () => {
           onClose={() => setKeywordExplorer(null)}
           onAdvertiserClick={handleIntelAdvertiserClick}
           onOpenKeyword={openKeywordExplorer}
-          onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+          onUpgrade={() => showUpgradeOrLoginPrompt("Please login to unlock this feature")}
         />
       )}
 

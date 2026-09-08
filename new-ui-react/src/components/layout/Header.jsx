@@ -556,8 +556,13 @@ const Header = ({
                         <button
                           key={opt.value}
                           onClick={() => {
-                            setLocalSearchIn(opt.value);
-                            if (setSearchIn) setSearchIn(opt.value);
+                            // setSearchIn (guestSetSearchIn) returns false when a
+                            // guest is blocked — only reflect the new mode as
+                            // "selected" once it actually applied, otherwise the
+                            // dropdown shows e.g. Advertiser as chosen even though
+                            // the login prompt fired and nothing really changed.
+                            const applied = setSearchIn ? setSearchIn(opt.value) : true;
+                            if (applied !== false) setLocalSearchIn(opt.value);
                             setSearchTypeOpen(false);
                           }}
                           className={`notranslate w-full text-left px-3 py-1.5 text-[13px] transition-colors ${

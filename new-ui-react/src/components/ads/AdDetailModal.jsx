@@ -1118,6 +1118,7 @@ const AdDetailModal = ({
             {platform !== "admob" && (
               <button
                 onClick={() => {
+                  if (guest?.showGuestWarning("Please login to view the original ad preview")) return;
                   if (!showOriginal) {
                     const network = String(platform || ad.network || 'facebook').toLowerCase();
                     trackEvent('showOriginal', { ad_id: ad.adId ?? ad.id, network });
@@ -1259,6 +1260,7 @@ const AdDetailModal = ({
                   the MasonryCard hover Download button — see services/adPdf.js. */}
               <button
                 onClick={async () => {
+                  if (guest?.showGuestWarning("Please login to download ad reports")) return;
                   await downloadAdAsPdf(ad);
                   const network = String(ad.network || platform || 'unknown').toLowerCase();
                   trackAdAction('download_ad', { entry_point: 'ad_detail_modal', feature_name: 'ad_download', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
@@ -1275,6 +1277,7 @@ const AdDetailModal = ({
               <button
                 ref={hideButtonRef}
                 onClick={() => {
+                    if (guest?.showGuestWarning("Please login to hide ads or advertisers")) return;
                     if (!showHideMenu && hideButtonRef.current) {
                       const rect = hideButtonRef.current.getBoundingClientRect();
                       setHideMenuPos({

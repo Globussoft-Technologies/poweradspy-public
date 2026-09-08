@@ -760,10 +760,9 @@ const AdGrid = ({
   // Stable card click handler so the memoized MasonryCard sees the same fn ref
   // across AdGrid re-renders triggered by unrelated state.
   const handleCardClick = useCallback((ad) => {
-    if (guest?.isRestricted || guest?.isPublicLanding) {
-      guest?.showGuestWarning?.("Please login to view ad details");
-      return;
-    }
+    // Guests may freely open the Ad Detail modal — every gated action inside
+    // it (Analytics, Save, Copy Link, Download, Hide/Unhide) is guarded
+    // individually via guest?.showGuestWarning at the point of use instead.
     const network = String(ad?.network || ad?.platform || ad?.badgeNetwork || "unknown")
       .trim()
       .toLowerCase();
