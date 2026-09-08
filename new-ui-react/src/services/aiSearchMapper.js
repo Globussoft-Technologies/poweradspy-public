@@ -20,7 +20,9 @@
 //   affiliate[], ecommerce[], funnel[], market_platform[], source[],
 //   ad_position[], nativeNetwork[], budget[] (low/medium/high),
 //   likes|shares|comments|impressions|popularity|ctr|adBudget ([min,max]),
-//   lower_age|upper_age (numbers). DS resolves any "except X" phrasing into an
+//   lower_age|upper_age (numbers), lang, platform, google_transparency_subnetwork,
+//   ad_sub_position, size, and AdMob-specific fields/ranges. DS resolves any
+//   "except X" phrasing into an
 //   explicit include list, so we just resolve whatever list arrives.
 
 // Candidate SDUI _id / query_param aliases per logical field (mirrors the pick()
@@ -52,6 +54,18 @@ const FILTER_IDS = {
   popularity: ['popularity', 'popularity_score', 'popularity_range'],
   ctr: ['ctr', 'ctr_filter', 'ctr_range'],
   adBudget: ['adBudget', 'ad_budget', 'avg_ad_budget'],
+  language: ['language_filter', 'language', 'lang'],
+  metaAdsLib: ['meta_ads_lib_filter', 'meta_ads_lib', 'meta_ads_library'],
+  googleTransparencyAds: ['google_transparency_ads', 'google_transparency_filter'],
+  googleTransparencySubnetwork: ['google_transparency_subnetwork', 'google_transparency_platform'],
+  adSubPosition: ['ad_sub_position_filter', 'ad_sub_position', 'adSubPosition'],
+  imageSize: ['image_size_filter', 'image_size', 'size'],
+  admobNetwork: ['admob_network_filter', 'sub_network_filter', 'sub_network'],
+  admobSourceApp: ['admob_source_app_filter', 'source_app_filter', 'source_app'],
+  admobPosterSort: ['admob_poster_rank_filter', 'admob_poster_sort', 'admobPosterSort'],
+  leadScoreRange: ['admob_lead_score_range', 'leadScoreRange'],
+  occurrenceCountRange: ['admob_occurrence_count_range', 'occurrenceCountRange'],
+  activeDaysRange: ['admob_active_days_range', 'activeDaysRange'],
   hasAiMeta: ['has_ai_meta', 'hasAiMeta', 'ai_meta'],
   aiAdType: ['ai_ad_type'],
   aiIntent: ['ai_intent'],
@@ -69,7 +83,7 @@ const FILTER_IDS = {
 const LABEL_KEYED_IDS = new Set(['country_filter']);
 
 const MULTI_SELECT_TYPES = new Set([
-  'chip_multi_select', 'multi_select', 'combobox', 'nested_select', 'checkbox_group',
+  'chip_multi_select', 'multi_select', 'combobox', 'nested_select', 'checkbox', 'checkbox_group',
 ]);
 
 // Normalize a value for tolerant matching: lowercase, collapse "_" / whitespace
@@ -131,11 +145,14 @@ function resolveOption(filter, rawValue) {
 
 // Store one-or-many resolved values under a filter, respecting its arity.
 // `rawValues` is always an array of raw DS values.
-function applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel) {
+function applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel, onUnmapped) {
   const resolved = [];
   for (const raw of rawValues) {
     const r = resolveOption(filter, raw);
-    if (r === undefined) unmapped.push(`${fieldLabel}: ${raw}`);
+    if (r === undefined) {
+      if (onUnmapped) onUnmapped(fieldLabel, raw, 'value is not present in live SDUI options');
+      else unmapped.push(`${fieldLabel}: ${raw}`);
+    }
     else if (!resolved.includes(r)) resolved.push(r);
   }
   if (!resolved.length) return;
@@ -147,9 +164,9 @@ function applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel) {
 // filter exists we still resolve against its options, but if a reduced/older
 // config omits that filter we preserve the raw contract key so the generated
 // AI payload remains visible and executable instead of disappearing in UI state.
-function applyStableField(filter, stateKey, rawValues, filterValues, unmapped, fieldLabel) {
+function applyStableField(filter, stateKey, rawValues, filterValues, unmapped, fieldLabel, onUnmapped) {
   if (filter) {
-    applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel);
+    applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel, onUnmapped);
     return;
   }
 
@@ -186,11 +203,13 @@ function mapSortValue(orderColumn) {
  *   exactSearch: boolean,
  *   filterValues: object,      // keyed by SDUI filter _id — ready for setAllFilters
  *   unmapped: string[],        // DS values we couldn't resolve (for logging/telemetry)
+ *   unmappedDetails: object[], // field/value/network/reason diagnostics
  * }}
  */
 export function mapArgsToFilters(args = {}, config = {}) {
   const filterValues = {};
   const unmapped = [];
+  const unmappedDetails = [];
   let searchQuery = '';
   let searchIn = null;
   let activePlatforms = [];
@@ -204,10 +223,34 @@ export function mapArgsToFilters(args = {}, config = {}) {
     args.exact_search === true;
 
   const asArray = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [v]);
+  const meaningfulValues = (v) => asArray(v).filter(
+    (value) => value != null && value !== '' && String(value).toLowerCase() !== 'na',
+  );
+  const describeValue = (value) => {
+    if (Array.isArray(value)) return value.join(', ');
+    if (value && typeof value === 'object') return JSON.stringify(value);
+    return String(value ?? '');
+  };
+  const recordUnmapped = (field, value, reason) => {
+    unmapped.push(`${field}: ${describeValue(value)}`);
+    unmappedDetails.push({
+      field,
+      value,
+      network: [...activePlatforms],
+      reason,
+    });
+  };
+  const hasPlatform = (...platforms) => activePlatforms.some(
+    (active) => platforms.includes(String(active).toLowerCase()),
+  );
+  const hasOnlyPlatforms = (...platforms) => activePlatforms.length > 0 && activePlatforms.every(
+    (active) => platforms.includes(String(active).toLowerCase()),
+  );
 
   // ── Search scope + query (mutually exclusive) ──────────────────────────────
+  const advertiserValue = args.advertiser ?? args.page ?? args.brand;
   if (args.keyword) { searchQuery = String(args.keyword); searchIn = 'keyword'; }
-  else if (args.advertiser) { searchQuery = String(args.advertiser); searchIn = 'advertiser'; }
+  else if (advertiserValue) { searchQuery = String(advertiserValue); searchIn = 'advertiser'; }
   else if (args.domain) { searchQuery = String(args.domain); searchIn = 'domain'; }
 
   // ── network → activePlatforms (resolve against platform_selector options) ──
@@ -218,7 +261,7 @@ export function mapArgsToFilters(args = {}, config = {}) {
       if (platformFilter) {
         const r = resolveOption(platformFilter, raw);
         if (r !== undefined) { if (!activePlatforms.includes(r)) activePlatforms.push(r); continue; }
-        unmapped.push(`network: ${raw}`);
+        recordUnmapped('network', raw, 'network is not present in live SDUI platform options');
       } else {
         // No platform filter in config → trust the DS slug as-is (lowercased).
         const slug = String(raw).toLowerCase();
@@ -230,8 +273,8 @@ export function mapArgsToFilters(args = {}, config = {}) {
   // ── type → ad_type ─────────────────────────────────────────────────────────
   const adTypeFilter = findFilter(config, FILTER_IDS.adType);
   if (args.type != null && args.type !== '') {
-    if (adTypeFilter) applyResolved(adTypeFilter, asArray(args.type), filterValues, unmapped, 'type');
-    else unmapped.push(`type: ${args.type}`);
+    if (adTypeFilter) applyResolved(adTypeFilter, asArray(args.type), filterValues, unmapped, 'type', recordUnmapped);
+    else recordUnmapped('type', args.type, 'filter is not available in live SDUI');
   }
 
   // ── country → country_filter (label-keyed; falls back to the raw name since
@@ -248,7 +291,7 @@ export function mapArgsToFilters(args = {}, config = {}) {
       }
       filterValues[countryFilter._id] = isMulti(countryFilter) ? resolved : resolved[0];
     } else {
-      unmapped.push(`country: ${countries.join(', ')}`);
+      recordUnmapped('country', countries, 'filter is not available in live SDUI');
     }
   }
 
@@ -256,22 +299,178 @@ export function mapArgsToFilters(args = {}, config = {}) {
   //    resolve to real options; DS taxonomy often won't match ours) ───────────
   const categoriesFilter = findFilter(config, FILTER_IDS.categories);
   if (args.adcategory && categoriesFilter) {
-    applyResolved(categoriesFilter, [args.adcategory], filterValues, unmapped, 'adcategory');
+    applyResolved(categoriesFilter, asArray(args.adcategory), filterValues, unmapped, 'adcategory', recordUnmapped);
   } else if (args.adcategory) {
-    unmapped.push(`adcategory: ${args.adcategory}`);
+    recordUnmapped('adcategory', args.adcategory, 'filter is not available in live SDUI');
   }
   const subcategoryFilter = findFilter(config, FILTER_IDS.subcategory);
   if (args.subCategory && subcategoryFilter) {
-    applyResolved(subcategoryFilter, [args.subCategory], filterValues, unmapped, 'subCategory');
+    applyResolved(subcategoryFilter, asArray(args.subCategory), filterValues, unmapped, 'subCategory', recordUnmapped);
   } else if (args.subCategory) {
-    unmapped.push(`subCategory: ${args.subCategory}`);
+    recordUnmapped('subCategory', args.subCategory, 'filter is not available in live SDUI');
+  }
+
+  // Standard AI Search fields with special request shaping in api.js. Keep
+  // these in ordinary SDUI state so visible controls/chips and the final
+  // manual-style search request remain synchronized with the AI plan.
+  const languageValue = args.lang !== undefined ? args.lang : args.language;
+  const languageValues = meaningfulValues(languageValue);
+  if (languageValues.length) {
+    const languageFilter = findFilter(config, FILTER_IDS.language);
+    if (languageFilter) {
+      applyResolved(languageFilter, languageValues, filterValues, unmapped, 'lang', recordUnmapped);
+    } else {
+      recordUnmapped('lang', languageValues, 'language filter is not available in live SDUI');
+    }
+  }
+
+  const plannerPlatform = Number(args.platform);
+  const metaAdsLibRequested = plannerPlatform === 15;
+  if (metaAdsLibRequested) {
+    const metaAdsFilter = findFilter(config, FILTER_IDS.metaAdsLib);
+    if (!hasOnlyPlatforms('facebook', 'instagram')) {
+      recordUnmapped('platform', args.platform, 'Meta Ads Library mode requires only Facebook and/or Instagram');
+    } else if (metaAdsFilter) {
+      filterValues[metaAdsFilter._id] = true;
+    } else {
+      recordUnmapped('platform', args.platform, 'Meta Ads Library filter is not available in live SDUI');
+    }
+  }
+
+  const transparencyEnabled =
+    args.google_transparency_ads === true ||
+    args.google_transparency_ads === 1 ||
+    args.google_transparency_ads === '1' ||
+    String(args.google_transparency_ads).toLowerCase() === 'true' ||
+    plannerPlatform === 18;
+  const transparencyFilter = findFilter(config, FILTER_IDS.googleTransparencyAds);
+  if (transparencyEnabled) {
+    if (!hasOnlyPlatforms('google')) {
+      recordUnmapped('google_transparency_ads', true, 'Google Transparency mode requires only the Google network');
+    } else if (transparencyFilter) {
+      filterValues[transparencyFilter._id] = true;
+    } else {
+      recordUnmapped('google_transparency_ads', true, 'Google Transparency filter is not available in live SDUI');
+    }
+  }
+
+  const transparencySubnetworkValues = meaningfulValues(args.google_transparency_subnetwork);
+  if (transparencySubnetworkValues.length) {
+    const subnetworkFilter = findFilter(config, FILTER_IDS.googleTransparencySubnetwork);
+    if (!transparencyEnabled) {
+      recordUnmapped(
+        'google_transparency_subnetwork',
+        transparencySubnetworkValues,
+        'subnetwork requires Google Transparency mode to be enabled',
+      );
+    } else if (!hasOnlyPlatforms('google')) {
+      recordUnmapped(
+        'google_transparency_subnetwork',
+        transparencySubnetworkValues,
+        'Google Transparency mode requires only the Google network',
+      );
+    } else if (subnetworkFilter) {
+      applyResolved(
+        subnetworkFilter,
+        transparencySubnetworkValues.slice(0, 1),
+        filterValues,
+        unmapped,
+        'google_transparency_subnetwork',
+        recordUnmapped,
+      );
+    } else {
+      recordUnmapped(
+        'google_transparency_subnetwork',
+        transparencySubnetworkValues,
+        'Google Transparency subnetwork filter is not available in live SDUI',
+      );
+    }
+  }
+
+  const specialCategoricalFields = [
+    ['ad_sub_position', FILTER_IDS.adSubPosition, ['google'], 'Google ad sub-position requires only the Google network'],
+    ['size', FILTER_IDS.imageSize, ['gdn', 'admob'], 'Image size requires only the GDN and/or AdMob network'],
+    ['sub_network', FILTER_IDS.admobNetwork, ['admob'], 'AdMob filter requires the AdMob network'],
+    ['source_app', FILTER_IDS.admobSourceApp, ['admob'], 'AdMob filter requires the AdMob network'],
+  ];
+  for (const [field, ids, supportedNetworks, unsupportedReason] of specialCategoricalFields) {
+    const rawValues = meaningfulValues(args[field]);
+    if (!rawValues.length) continue;
+    const filter = findFilter(config, ids);
+    if (!hasOnlyPlatforms(...supportedNetworks)) {
+      recordUnmapped(field, rawValues, unsupportedReason);
+    } else if (filter) {
+      applyResolved(filter, rawValues, filterValues, unmapped, field, recordUnmapped);
+    } else {
+      recordUnmapped(field, rawValues, 'filter is not available in live SDUI');
+    }
+  }
+
+  const admobPosterSortValue = args.admobPosterSort ?? args.admob_poster_sort;
+  const admobPosterSortValues = meaningfulValues(admobPosterSortValue);
+  if (admobPosterSortValues.length) {
+    const filter = findFilter(config, FILTER_IDS.admobPosterSort);
+    if (!hasPlatform('admob')) {
+      recordUnmapped('admobPosterSort', admobPosterSortValues, 'AdMob Poster Intelligence requires the AdMob network');
+    } else if (filter) {
+      applyResolved(filter, admobPosterSortValues.slice(0, 1), filterValues, unmapped, 'admobPosterSort', recordUnmapped);
+    } else {
+      recordUnmapped('admobPosterSort', admobPosterSortValues, 'AdMob Poster Intelligence is not available in live SDUI');
+    }
+  }
+
+  const admobRanges = [
+    ['leadScoreRange', FILTER_IDS.leadScoreRange],
+    ['occurrenceCountRange', FILTER_IDS.occurrenceCountRange],
+    ['activeDaysRange', FILTER_IDS.activeDaysRange],
+  ];
+
+  // DS may express an AdMob range as { min, max } (with either bound
+  // optional), while SliderFilter uses a numeric [min, max] state tuple.
+  // Fill an omitted bound from the live SDUI slider rather than inventing a
+  // limit, so open-ended planner constraints remain visible and executable.
+  const normalizeAdmobRange = (raw, filter) => {
+    let bounds = null;
+    if (Array.isArray(raw)) {
+      bounds = raw.length === 2 ? raw : null;
+    } else if (raw && typeof raw === 'object') {
+      const lower = raw.min ?? raw.lower ?? raw.lower_bound;
+      const upper = raw.max ?? raw.upper ?? raw.upper_bound;
+      if (lower != null || upper != null) {
+        bounds = [
+          lower ?? filter.min ?? filter.default_min,
+          upper ?? filter.max ?? filter.default_max,
+        ];
+      }
+    }
+    if (!bounds || bounds.some((value) => value == null || value === '')) return null;
+    const nums = bounds.map(Number);
+    if (nums.some((value) => !Number.isFinite(value)) || nums[0] > nums[1]) return null;
+    return nums;
+  };
+
+  for (const [field, ids] of admobRanges) {
+    const raw = args[field];
+    if (raw == null || raw === '' || String(raw).toLowerCase() === 'na') {
+      continue;
+    }
+    const filter = findFilter(config, ids);
+    if (!hasPlatform('admob')) {
+      recordUnmapped(field, raw, 'AdMob range requires the AdMob network');
+    } else if (filter) {
+      const nums = normalizeAdmobRange(raw, filter);
+      if (nums) filterValues[filter._id] = nums;
+      else recordUnmapped(field, raw, 'range must contain valid numeric bounds');
+    } else {
+      recordUnmapped(field, raw, 'AdMob range filter is not available in live SDUI');
+    }
   }
 
   // ── gender ───────────────────────────────────────────────────────────────
   const genderFilter = findFilter(config, FILTER_IDS.gender);
   if (args.gender != null && args.gender !== '') {
-    if (genderFilter) applyResolved(genderFilter, [args.gender], filterValues, unmapped, 'gender');
-    else unmapped.push(`gender: ${args.gender}`);
+    if (genderFilter) applyResolved(genderFilter, [args.gender], filterValues, unmapped, 'gender', recordUnmapped);
+    else recordUnmapped('gender', args.gender, 'filter is not available in live SDUI');
   }
 
   // ── verified ("1") — toggle-style; store true when the filter exists ───────
@@ -283,7 +482,7 @@ export function mapArgsToFilters(args = {}, config = {}) {
       const matched = opts.length ? resolveOption(verifiedFilter, '1') : undefined;
       filterValues[verifiedFilter._id] = matched !== undefined ? matched : true;
     } else {
-      unmapped.push('verified: 1');
+      recordUnmapped('verified', 1, 'filter is not available in live SDUI');
     }
   }
 
@@ -291,8 +490,8 @@ export function mapArgsToFilters(args = {}, config = {}) {
   const ctaFilter = findFilter(config, FILTER_IDS.cta);
   const ctaValues = asArray(args.call_to_action);
   if (ctaValues.length) {
-    if (ctaFilter) applyResolved(ctaFilter, ctaValues, filterValues, unmapped, 'call_to_action');
-    else unmapped.push(`call_to_action: ${ctaValues.join(', ')}`);
+    if (ctaFilter) applyResolved(ctaFilter, ctaValues, filterValues, unmapped, 'call_to_action', recordUnmapped);
+    else recordUnmapped('call_to_action', ctaValues, 'filter is not available in live SDUI');
   }
 
   // ── order_column / order_by → sortBy (verified against sort options) ───────
@@ -303,12 +502,12 @@ export function mapArgsToFilters(args = {}, config = {}) {
       if (sortFilter) {
         const r = resolveOption(sortFilter, semantic);
         if (r !== undefined) sortBy = r;
-        else unmapped.push(`sort: ${args.order_column} ${args.order_by || ''}`.trim());
+        else recordUnmapped('sort', `${args.order_column} ${args.order_by || ''}`.trim(), 'sort value is not present in live SDUI options');
       } else {
         sortBy = semantic; // no sort filter in config — trust the semantic value
       }
     } else {
-      unmapped.push(`sort: ${args.order_column} ${args.order_by || ''}`.trim());
+      recordUnmapped('sort', `${args.order_column} ${args.order_by || ''}`.trim(), 'sort value is not supported by the frontend mapper');
     }
   }
 
@@ -328,8 +527,8 @@ export function mapArgsToFilters(args = {}, config = {}) {
     const raw = asArray(args[field]);
     if (!raw.length) continue;
     const filter = findFilter(config, ids);
-    if (filter) applyResolved(filter, raw, filterValues, unmapped, field);
-    else unmapped.push(`${field}: ${raw.join(', ')}`);
+    if (filter) applyResolved(filter, raw, filterValues, unmapped, field, recordUnmapped);
+    else recordUnmapped(field, raw, 'filter is not available in live SDUI');
   }
 
   // ── Numeric range sliders ([min, max]) — stored verbatim under the filter _id;
@@ -347,17 +546,20 @@ export function mapArgsToFilters(args = {}, config = {}) {
     const raw = args[field];
     if (!Array.isArray(raw) || raw.length !== 2) continue;
     const nums = raw.map(Number);
-    if (nums.some((n) => Number.isNaN(n))) { unmapped.push(`${field}: ${raw.join('-')}`); continue; }
+    if (nums.some((n) => Number.isNaN(n))) {
+      recordUnmapped(field, raw, 'range must contain exactly two numeric bounds');
+      continue;
+    }
     const filter = findFilter(config, ids);
     if (filter) filterValues[filter._id] = nums;
-    else unmapped.push(`${field}: ${raw.join('-')}`);
+    else recordUnmapped(field, raw, 'filter is not available in live SDUI');
   }
 
   // ── Continuous age (lower_age/upper_age) — our widget is discrete brackets,
   //    which DS itself confirmed don't filter, so this doesn't round-trip. Leave
   //    it unmapped rather than force a lossy conversion. ─────────────────────────
   if (args.lower_age != null || args.upper_age != null) {
-    unmapped.push(`age: ${args.lower_age ?? ''}-${args.upper_age ?? ''}`);
+    recordUnmapped('age', `${args.lower_age ?? ''}-${args.upper_age ?? ''}`, 'frontend uses discrete age brackets and cannot safely convert continuous bounds');
   }
 
   // DS AI-plan payloads use stable top-level PAS keys. Hydrate them into the
@@ -386,10 +588,19 @@ export function mapArgsToFilters(args = {}, config = {}) {
   for (const [field, ids] of AI_META_VOCAB) {
     const raw = asArray(args[field]);
     if (!raw.length) continue;
-    applyStableField(findFilter(config, ids), field, raw, filterValues, unmapped, field);
+    applyStableField(findFilter(config, ids), field, raw, filterValues, unmapped, field, recordUnmapped);
   }
 
-  return { searchQuery, searchIn, activePlatforms, exactSearch, sortBy, filterValues, unmapped };
+  return {
+    searchQuery,
+    searchIn,
+    activePlatforms,
+    exactSearch,
+    sortBy,
+    filterValues,
+    unmapped,
+    unmappedDetails,
+  };
 }
 
 /**

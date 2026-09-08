@@ -2262,7 +2262,7 @@ const App = () => {
     };
 
     try {
-      const { payloads } = await planAiSearch(trimmed);
+      const { payloads, ref_id: refId } = await planAiSearch(trimmed);
       if (runId !== aiRunIdRef.current) return; // superseded by a newer AI search
       if (!Array.isArray(payloads) || payloads.length === 0) {
         showToast("AI couldn't interpret that prompt. Try rephrasing.", "error");
@@ -2271,17 +2271,32 @@ const App = () => {
 
       let matchedIndex = -1;
       let matchedMapped = null;
+      const probeDiagnostics = [];
       // Probe each tier in order; stop at the first that returns results.
       for (let i = 0; i < payloads.length; i++) {
-        const mapped = mapArgsToFilters(normalizeAiSearchArgs(payloads[i]), sdui.config);
+        const tier = payloads[i] || {};
+        const mapped = mapArgsToFilters(normalizeAiSearchArgs(tier), sdui.config);
+        const diagnostic = {
+          tier: i,
+          label: tier.label || null,
+          argsFields: Object.keys(tier.args || {}),
+          fullPayloadFields: Object.keys(tier.full_payload || {}),
+          mappedFields: Object.keys(mapped.filterValues || {}),
+          unmapped: mapped.unmappedDetails || [],
+        };
         let data = null;
         try {
           data = await fetchAds(buildProbeParams(mapped), {});
         } catch {
+          diagnostic.result = 'probe_failed';
+          probeDiagnostics.push(diagnostic);
           continue; // probe failure → treat as no results, fall through to next tier
         }
         if (runId !== aiRunIdRef.current) return; // superseded mid-probe
-        if (totalFromData(data) > 0) { matchedIndex = i; matchedMapped = mapped; break; }
+        diagnostic.total = totalFromData(data);
+        diagnostic.result = diagnostic.total > 0 ? 'selected' : 'empty';
+        probeDiagnostics.push(diagnostic);
+        if (diagnostic.total > 0) { matchedIndex = i; matchedMapped = mapped; break; }
       }
 
       if (matchedIndex === -1) {
@@ -2294,8 +2309,32 @@ const App = () => {
       commit(matchedMapped);
 
       if (matchedIndex > 0) showToast("Broadened your search to find results", "success");
-      if (matchedMapped.unmapped?.length) {
-        console.debug('[ai-search] dropped unmapped filters:', matchedMapped.unmapped);
+      if (matchedMapped.unmappedDetails?.length) {
+        console.warn('[ai-search] unmapped planner fields were not applied', {
+          fields: matchedMapped.unmappedDetails,
+          network: matchedMapped.activePlatforms,
+        });
+      }
+      // Diagnostics are field-level by design: staging can compare planner,
+      // probe, committed, and final-request shapes without logging prompt
+      // values, ad data, tokens, or other user content.
+      if (import.meta.env.DEV || import.meta.env.VITE_AI_SEARCH_DIAGNOSTICS === 'true') {
+        const finalRequestFields = Object.keys(buildProbeParams(matchedMapped));
+        console.info('[ai-search] plan diagnostics', {
+          ref_id: refId || null,
+          tiers: payloads.map((tier, tierIndex) => ({
+            tier: tierIndex,
+            label: tier?.label || null,
+            argsFields: Object.keys(tier?.args || {}),
+            fullPayloadFields: Object.keys(tier?.full_payload || {}),
+          })),
+          probes: probeDiagnostics,
+          selectedTier: matchedIndex,
+          committedFields: Object.keys(matchedMapped.filterValues || {}),
+          visibleControlFields: Object.keys(matchedMapped.filterValues || {}),
+          finalRequestFields,
+          committedNetworks: matchedMapped.activePlatforms,
+        });
       }
     } catch (err) {
       trackProductEvent('feature_error', { entry_point: 'header', error_type: classifyError(err), feature_name: 'ad_search', ...getNetworkContext(sdui.activePlatforms), request_context: 'search', search_mode: 'ai', search_type: 'keyword' });
