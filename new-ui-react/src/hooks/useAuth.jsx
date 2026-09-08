@@ -347,7 +347,8 @@ export function AuthProvider({ children }) {
   // Fetch plan access restrictions once user is authenticated (skip on public/guest routes)
   useEffect(() => {
     const path = window.location.pathname;
-    if (!token || path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')) {
+    const isRealLogin = !!token && token !== import.meta.env.VITE_PAS_API_TOKEN;
+    if (!token || (!isRealLogin && (path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')))) {
       setPlanAccessResolved(true);
       return;
     }
