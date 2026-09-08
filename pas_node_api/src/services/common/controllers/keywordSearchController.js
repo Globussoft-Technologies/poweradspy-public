@@ -1127,20 +1127,25 @@ async function addScrapingHistory(req, res) {
     // ever fire for scrapers using /work — exactly the gap that showed up as "not getting
     // the notification anymore."
     if (config.keywordSearch.notify?.enabled !== false && config.keywordSearch.notify?.firstAdPushEnabled !== false) {
-      if (finalAdsCount != null && finalAdsCount >= 1) {
-        // Count already known THIS call (e.g. Google Transparency reports ads_count
-        // directly) — send right now instead of spawning a watcher to poll ES for
-        // something we already have the answer to. Not gated on !updatedExisting: a
-        // scraper reporting incrementally (0 → 1 → 3 ads across several calls) gets each
-        // new count checked, and per-user dedup makes repeat calls safe either way.
-        sendFirstAdPushForKnownCount({ docId: result._id, value, network, adsCount: finalAdsCount });
-        log.info('First-ad push sent immediately from reported ads_count', { owner, value, network, type, adsCount: finalAdsCount });
+      if (network === 'google_transparency') {
+        // Google Transparency ONLY — it re-reports its own ads_count on every call, so
+        // there's never a need to watch/poll ES ourselves for it; the scraper is already
+        // doing that job ambient to its own reporting. === 1, not >= 1: only the report
+        // that FIRST crosses the threshold sends — a later report with a higher count
+        // (2, 3, ...) is a deliberate no-op here, not just a redundant-but-harmless dedup
+        // catch. No watcher fallback for GT at all, by design: if this exact report
+        // isn't the ads_count:1 one, nothing happens for it — GT's own next call is what
+        // covers it, not a watcher on our side.
+        if (finalAdsCount === 1) {
+          sendFirstAdPushForKnownCount({ docId: result._id, value, network, adsCount: finalAdsCount });
+          log.info('First-ad push sent immediately from reported ads_count', { owner, value, network, type, adsCount: finalAdsCount });
+        }
       } else if (!updatedExisting) {
-        // Count not known/zero this call — fall back to watching ES for the rest of this
-        // session's lifetime. Only on a genuinely NEW session; a repeat report for the
-        // same session doesn't need a second watcher — the one spawned on its first
-        // report (or the branch above, once a count IS eventually reported) already
-        // covers it.
+        // Every OTHER network reporting via this endpoint — unlike Google Transparency,
+        // these scrapers aren't guaranteed to keep re-reporting an updated ads_count, so
+        // we still watch ES ourselves rather than trusting any count they do send. Only
+        // on a genuinely new session; a repeat report for the same session doesn't need
+        // a second watcher — the one spawned on its first report already covers it.
         startFirstAdPushWatcher({ docId: result._id, scrapeId, type, value, network });
         log.info('First-ad push watcher started for scraping-history report', { owner, value, network, type, status: finalStatus });
       }

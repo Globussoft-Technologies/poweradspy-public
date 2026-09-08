@@ -481,6 +481,7 @@ async function sendFirstAdPushSafe(source, doc, user, net, today) {
     const typeLabel = typeParam.charAt(0).toUpperCase() + typeParam.slice(1);
     const actionUrl = `/?${typeParam}=${encodeURIComponent(doc.value)}&platform=${encodeURIComponent(normalizePlatformKey(net))}`;
 
+    log.info('Sending first-ad push', { network: net, value: doc.value, type: doc.type, user: user.email || user.userId });
     await firebaseService.sendNotification(
       fcmToken,
       'New Ads Found!',
@@ -507,6 +508,7 @@ async function sendFirstAdPushSafe(source, doc, user, net, today) {
 // here; a failure just means the next report (or a watcher, if one is also running for
 // this session) gets another chance.
 async function sendFirstAdPushForKnownCount({ docId, value, network, adsCount }) {
+  log.info('First-ad push watcher: ads count checked', { network, value, adsCount });
   if (adsCount == null || adsCount < 1) return;
   const ks = config.keywordSearch;
   if (!ks.enabled || !ks.notify?.enabled || ks.notify?.firstAdPushEnabled === false) return;
@@ -579,6 +581,8 @@ function startFirstAdPushWatcher({ docId, scrapeId, type, value, network }) {
         const index = es?.indexName || config.networks?.[lookupNet]?.elastic?.index;
         if (query && es && index) {
           const adsCount = await getAdsCountFresh(lookupNet, index, query);
+          log.info('First-ad push watcher: ads count checked', { network, value, adsCount });
+
           if (adsCount != null && adsCount >= 1) {
             for (const u of pendingUsers) {
               await sendFirstAdPushSafe(source, doc, u, network, today);

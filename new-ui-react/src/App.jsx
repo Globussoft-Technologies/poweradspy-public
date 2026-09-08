@@ -3155,7 +3155,7 @@ const App = () => {
                 : searchDropdownOpen
                   ? 'right-4'
                   : 'left-1/2 -translate-x-1/2 lg:left-[65%]'
-          } top-[90px] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4`}
+          } top-[87px] px-3 py-2 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4`}
           style={{
             ...(searchDropdownOpen && searchDropdownRightEdge != null
               ? { left: `${searchDropdownRightEdge + 12}px` }
