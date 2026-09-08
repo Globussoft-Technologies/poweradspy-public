@@ -19,6 +19,27 @@ import { COUNTRY_NAMES } from "../../../utils/countries";
 
 const EMPTY = "--";
 
+// ISO code → full language name (e.g. "en" → "English"), mirroring
+// AnalyticsModal.jsx's formatLanguage — duplicated locally (not imported)
+// since AnalyticsModal.jsx already imports this component, and importing
+// back would create a circular import.
+const formatLanguage = (raw) => {
+  const s = (raw == null ? '' : String(raw)).trim();
+  if (!s) return '—';
+  try {
+    const names = new Intl.DisplayNames(['en'], { type: 'language' });
+    const name = names.of(s);
+    if (
+      name &&
+      name.toLowerCase() !== s.toLowerCase() &&
+      name.length > s.length
+    ) {
+      return name;
+    }
+  } catch {}
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
 const finiteNumber = (value) => {
   if (value == null || value === "") return null;
   const number = Number(value);
@@ -699,7 +720,7 @@ const TransparencyDelivery = ({
     ...(language ? [{
       icon: Globe2,
       label: "Language",
-      value: String(language),
+      value: formatLanguage(language),
       accent: "bg-indigo-500/10 text-indigo-500",
       help: "Detected language, when translation detection returned a value.",
     }] : []),

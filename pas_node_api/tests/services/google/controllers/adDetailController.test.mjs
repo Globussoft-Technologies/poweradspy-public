@@ -88,8 +88,8 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
       image_ocr: "ocr",
       source: "g-src",
       new_nas_image_url: "https://nas.x/img.png",
-      category: "cat",
-      subCategory: "sub",
+      "google.category": "cat",
+      "google.subCategory": "sub",
       ad_position: 1,
       days_running: 42,
       last_seen: "2024-01-15T12:00:00Z",
@@ -124,6 +124,39 @@ describe("services/google/controllers/adDetailController > ES overlay", () => {
     expect(out.data[0].domain_registered_date).toBe("2020-01-01");
     expect(out.data[0].language).toBe("Spanish");
     expect(out.data[0].market_platform_urls.source_url).toBe("src");
+  });
+
+  it("reads category fields only from Google-qualified ES keys", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [adRow()]) },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
+        category: "legacy-flat-category",
+        subCategory: "legacy-flat-subcategory",
+        "google.category": "Education",
+        "google.subCategory": "Higher education",
+      } }] } })) },
+    };
+
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+
+    expect(out.data[0].category).toBe("Education");
+    expect(out.data[0].subCategory).toBe("Higher education");
+  });
+
+  it("falls back to the nested AI category fields", async () => {
+    const db = {
+      sql: { query: vi.fn(async () => [adRow()]) },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
+        category: "legacy-flat-category",
+        subCategory: "legacy-flat-subcategory",
+        ai: { category: "AI Education", sub_category: "AI Higher education" },
+      } }] } })) },
+    };
+
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+
+    expect(out.data[0].category).toBe("AI Education");
+    expect(out.data[0].subCategory).toBe("AI Higher education");
   });
 
   it("ES body.hits fallback", async () => {

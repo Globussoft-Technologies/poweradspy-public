@@ -158,8 +158,12 @@ async function getAdDetails(req, db, logger) {
           if (src.image_ocr) adData.imageOcr = src.image_ocr;
           if (src.source) adData.source = src.source;
           if (src.new_nas_image_url) adData.image_url = src.new_nas_image_url;
-          if (src.category !== undefined) adData.category = src.category;
-          if (src.subCategory !== undefined) adData.subCategory = src.subCategory;
+          // Google categories live under the platform-qualified ES keys or the
+          // nested AI metadata object; ignore legacy flat fields here.
+          const category = src['google.category'] ?? src.ai?.category;
+          const subCategory = src['google.subCategory'] ?? src.ai?.sub_category;
+          if (category !== undefined) adData.category = category;
+          if (subCategory !== undefined) adData.subCategory = subCategory;
           if (src.ad_position !== undefined) adData.ad_position = src.ad_position;
           if (src['days_running'] !== undefined) adData.days_running = src['days_running'];
           if (src.last_seen != null) adData.last_seen = dateOnly(src.last_seen);
