@@ -67,6 +67,12 @@ async function getJoinedAd(exec, whereVal) {
            -- The ES doc field stays named instagram_ad_meta_data.initial_url (see esColumns)
            -- so no ES mapping/reindex is needed — only the SQL source moved to analytics.
            ANY_VALUE(instagram_ad_analytics.initial_url) AS initial_url,
+           -- likes/comments/shares: instagram_ad.* above already carries these (always 0,
+           -- unpopulated legacy columns) — override with the real counts stored on the
+           -- default analytics row so the ES doc (and thus the frontend) reflects them.
+           ANY_VALUE(instagram_ad_analytics.likes) AS likes,
+           ANY_VALUE(instagram_ad_analytics.comments) AS comments,
+           ANY_VALUE(instagram_ad_analytics.shares) AS shares,
            ANY_VALUE(instagram_ad_meta_data.built_with) AS built_with,
            ANY_VALUE(instagram_ad_meta_data.built_with_analytics_tracking) AS built_with_analytics_tracking,
            ANY_VALUE(instagram_ad_meta_data.affiliate_data) AS affiliate_data,

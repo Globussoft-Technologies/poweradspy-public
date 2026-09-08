@@ -63,6 +63,12 @@ function normalizeLibrary(ad) {
   n.views = toInt(n.views, 0);
   n.impressions_low = toInt(n.impressions_low, 0);
   n.impressions_high = toInt(n.impressions_high, 0);
+  // Real engagement counts, when the caller sends them (payload uses the singular
+  // `comment`/`share` field names) — previously hardcoded to 0 at the analytics
+  // insert below regardless of what was sent.
+  n.likes = toInt(n.likes, 0);
+  n.comments = toInt(n.comment, 0);
+  n.shares = toInt(n.share, 0);
   if (n.platform === undefined || n.platform === null || n.platform === '') n.platform = 15;
   return n;
 }
@@ -163,7 +169,7 @@ async function insertPathInner(ctx, n, { translation, fetched }) {
     if (!instagramAdId) { const e = new Error(`This ad_id "${n.ad_id}" already exists (duplicate).`); e.insertionCode = 402; throw e; }
 
     const variantId = await repo.insertVariant(tx, { instagram_ad_id: instagramAdId, title: n.ad_title, text: n.ad_text, newsfeed_description: n.news_feed_description, image_url_original: n.image_video_url ?? n.ad_image });
-    const analyticsId = await repo.insertAnalytics(tx, { instagram_ad_id: instagramAdId, likes: 0, comments: 0, shares: 0, popularity: null, impression: finalImpression, date: today(), hits: 1, initial_url: n.initial_url ?? null });
+    const analyticsId = await repo.insertAnalytics(tx, { instagram_ad_id: instagramAdId, likes: n.likes, comments: n.comments, shares: n.shares, popularity: null, impression: finalImpression, date: today(), hits: 1, initial_url: n.initial_url ?? null });
     await repo.updateInstagramAd(tx, { default_variant_id: variantId, default_analytics_id: analyticsId }, instagramAdId);
 
     // cost-usage (audience/EUT)
