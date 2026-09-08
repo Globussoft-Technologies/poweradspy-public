@@ -1305,6 +1305,11 @@ const MasonryCard = ({
               mpUrlObj.final_url,
               ...mpRedirects,
               ...redirectUrlsArr,
+              // Google's Marketing Platform filter itself matches on the ad's
+              // domain (not these destination/redirect URLs, which are often
+              // null) — so an ad can match the filter server-side yet have
+              // nothing here for the badge to match against without this.
+              mpUrlObj.domain,
             ];
             const seen = new Set();
             const mpLogos = [];

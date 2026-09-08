@@ -25,7 +25,13 @@ try {
         body: d.body || '',
         icon: d.icon || '/assets/favicon.png',
         badge: '/assets/favicon.png',
+        // Same tag on every push so a new "ads found" alert replaces the last
+        // one in the OS notification center instead of piling them up — but
+        // without `renotify`, a same-tag replacement is SILENT (no popup/sound),
+        // it just updates the existing entry, which is why a push could show
+        // up in the notification center with no toast ever appearing.
         tag: 'pas-notification',
+        renotify: true,
         data: { link: d.action_button || '/' },
         actions: [
           { action: 'open', title: 'Open' },

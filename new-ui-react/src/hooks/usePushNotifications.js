@@ -62,7 +62,10 @@ export const usePushNotifications = () => {
                 body: d.body || '',
                 icon: d.icon || '/assets/favicon.png',
                 badge: '/assets/favicon.png',
+                // Kept in sync with firebase-messaging-sw.js's background handler —
+                // see the comment there on why `renotify` has to travel with this tag.
                 tag: 'pas-notification',
+                renotify: true,
                 data: { link: d.action_button || '/' },
                 actions: [
                   { action: 'open', title: 'Open' },

@@ -457,6 +457,12 @@ async function searchAds(req, db, logger) {
           final_url:       src['final_url']       || null,
           url_redirects:   src['url_redirects']   || null,
           destination_url: src['destination_url'] || null,
+          // The Marketing Platform filter itself wildcard-matches ES's top-level
+          // `domain` field (e.g. domain: "*branch*") — the destination/redirect
+          // URLs above are frequently null for a given ad even when it matched
+          // that filter on its domain, which left the frontend badge with
+          // nothing to match against. Send the same field the filter used.
+          domain:          src['domain']          || null,
         },
       };
       if (isTransparency) {
