@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Loader2, Sparkles, ChevronDown, Play, X } from "lucide-react";
+import { ArrowUp, Search, Sparkles, ChevronDown, Play, Square, X } from "lucide-react";
 import { useDebounce } from "../../hooks/useDebounce";
 
 /**
@@ -21,12 +21,16 @@ const AutocompleteFilter = ({
   minLength = 3,
   onSelectCategory,
   minimal = false,
+  fullHeight = false,
+  submitIcon = false,
+  isSubmitting = false,
+  onCancelSubmit,
+  onInputInteract,
   onOpenChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState(value || "");
   const [wordSuggestions, setWordSuggestions] = useState([]);
   const [catSuggestions, setCatSuggestions] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionRef = useRef(null);
   const suppressNextFetchRef = useRef(false);
@@ -67,7 +71,6 @@ const AutocompleteFilter = ({
     }
 
     const fetchAll = async () => {
-      setIsLoading(true);
       try {
         const sortedSources = [...suggestionSources].sort(
           (a, b) => (a.rank ?? 0) - (b.rank ?? 0),
@@ -183,8 +186,6 @@ const AutocompleteFilter = ({
       } catch {
         setWordSuggestions([]);
         setCatSuggestions([]);
-      } finally {
-        setIsLoading(false);
       }
     };
 
@@ -258,11 +259,11 @@ const AutocompleteFilter = ({
   };
 
   return (
-    <div className="" ref={suggestionRef}>
+    <div className={fullHeight ? "h-full" : ""} ref={suggestionRef}>
       <div
         className={
           minimal
-            ? "flex-1 flex items-center"
+            ? `flex-1 flex items-center ${fullHeight ? "h-full" : ""}`
             : "flex items-center bg-theme-card border border-theme-border rounded-xl overflow-hidden focus-within:border-[#3759a3]/50 transition-all"
         }
       >
@@ -271,22 +272,22 @@ const AutocompleteFilter = ({
           value={searchQuery}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          onFocus={() =>
-            (wordSuggestions.length > 0 || catSuggestions.length > 0) &&
-            setShowSuggestions(true)
-          }
+          onClick={onInputInteract}
+          onFocus={() => {
+            onInputInteract?.();
+            if (wordSuggestions.length > 0 || catSuggestions.length > 0) {
+              setShowSuggestions(true);
+            }
+          }}
           onBlur={() => setTimeout(() => {
             setWordSuggestions([]);
             setCatSuggestions([]);
             setShowSuggestions(false);
           }, 150)}
           placeholder={placeholder || "Search..."}
-          className="w-full bg-transparent px-3 py-1.5 2xl:py-2 outline-none text-xs 2xl:text-sm placeholder:text-white/60 text-gray-200"
+          className={`w-full bg-transparent px-3 py-1.5 2xl:py-2 outline-none text-xs 2xl:text-sm placeholder:text-white/60 text-gray-200 ${fullHeight ? "h-full px-3.5 py-0 text-[13.5px]" : ""}`}
         />
         <div className="flex items-center gap-1 pr-2">
-          {isLoading && (
-            <Loader2 size={14} className="animate-spin text-[#3759a3]" />
-          )}
           {searchQuery.trim().length > 0 && (
             <button
               type="button"
@@ -309,20 +310,40 @@ const AutocompleteFilter = ({
           <button
             type="button"
             onClick={() => {
+              if (isSubmitting) {
+                onCancelSubmit?.();
+                return;
+              }
               onChange(searchQuery.trim());
               setShowSuggestions(false);
               if (onSearch) onSearch(searchQuery.trim());
             }}
-            className={`p-1.5 rounded-md transition-all duration-200 ${
-              searchQuery.trim().length > 0
-                ? "bg-[#335296] text-white shadow-md shadow-[#3759a3]/30 hover:bg-[#3f63b3] animate-pulse"
-                : "text-theme-text-muted hover:text-[#6b99ff]"
+            aria-label={isSubmitting ? "Stop AI analysis" : "Search"}
+            title={isSubmitting ? "Stop AI analysis" : undefined}
+            className={`transition-all duration-200 ${
+              submitIcon
+                ? `mr-1 flex h-9 w-9 items-center justify-center rounded-full border bg-theme-card transition-colors ${
+                    isSubmitting
+                      ? "border-[#7c3aed] bg-[#7c3aed]/10 text-[#7c3aed] hover:bg-[#7c3aed]/20 dark:text-[#c4b5fd]"
+                      : "border-theme-border text-theme-text hover:border-[#7c3aed] hover:bg-[#f7f5ff] hover:text-[#4f46e5] dark:hover:bg-[#30234a] dark:hover:text-[#c4b5fd]"
+                  }`
+                : `p-1.5 rounded-md ${
+                    searchQuery.trim().length > 0
+                      ? "bg-[#335296] text-white shadow-md shadow-[#3759a3]/30 hover:bg-[#3f63b3] animate-pulse"
+                      : "text-theme-text-muted hover:text-[#6b99ff]"
+                  }`
             }`}
           >
-            <Search
-              size={16}
-              className={searchQuery.trim().length > 0 ? "text-white" : "text-theme-text-muted hover:text-[#6b99ff]"}
-            />
+            {submitIcon && isSubmitting ? (
+              <Square size={13} strokeWidth={2.8} fill="currentColor" aria-hidden="true" />
+            ) : submitIcon ? (
+              <ArrowUp size={16} strokeWidth={2.4} aria-hidden="true" />
+            ) : (
+              <Search
+                size={16}
+                className={searchQuery.trim().length > 0 ? "text-white" : "text-theme-text-muted hover:text-[#6b99ff]"}
+              />
+            )}
           </button>
         </div>
       </div>

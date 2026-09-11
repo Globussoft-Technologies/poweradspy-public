@@ -2109,11 +2109,14 @@ const App = () => {
   });
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiRunIdRef = useRef(0);
+  const aiAbortRef = useRef(null);
 
   // Keep every Ask AI reset path consistent: clear the DS-applied payload,
   // forget the user-visible prompt, restore the All-networks view, and cancel
   // any in-flight AI run so late responses cannot repopulate the dashboard.
   const resetAiSearchState = useCallback(() => {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
     aiRunIdRef.current += 1;
     setAiSearchLoading(false);
     dispatch(setSearchQuery(''));
@@ -2210,7 +2213,12 @@ const App = () => {
     // the user typed even when the DS payload rewrites the internal query.
     dispatch(setAiPrompt(trimmed));
 
+    // Abort a previous run before starting another one; the run id remains a
+    // second guard for responses that already crossed the network boundary.
+    aiAbortRef.current?.abort();
     const runId = ++aiRunIdRef.current;
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
     setAiSearchLoading(true);
 
     // Build a fetchAds param set from a mapped payload (mirrors loadAds' _searchParams).
@@ -2262,7 +2270,9 @@ const App = () => {
     };
 
     try {
-      const { payloads, ref_id: refId } = await planAiSearch(trimmed);
+      const { payloads, ref_id: refId } = await planAiSearch(trimmed, {
+        signal: controller.signal,
+      });
       if (runId !== aiRunIdRef.current) return; // superseded by a newer AI search
       if (!Array.isArray(payloads) || payloads.length === 0) {
         showToast("AI couldn't interpret that prompt. Try rephrasing.", "error");
@@ -2286,8 +2296,11 @@ const App = () => {
         };
         let data = null;
         try {
-          data = await fetchAds(buildProbeParams(mapped), {});
-        } catch {
+          data = await fetchAds(buildProbeParams(mapped), {
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (controller.signal.aborted || runId !== aiRunIdRef.current) return;
           diagnostic.result = 'probe_failed';
           probeDiagnostics.push(diagnostic);
           continue; // probe failure → treat as no results, fall through to next tier
@@ -2337,14 +2350,17 @@ const App = () => {
         });
       }
     } catch (err) {
+      if (controller.signal.aborted || runId !== aiRunIdRef.current) return;
       trackProductEvent('feature_error', { entry_point: 'header', error_type: classifyError(err), feature_name: 'ad_search', ...getNetworkContext(sdui.activePlatforms), request_context: 'search', search_mode: 'ai', search_type: 'keyword' });
-      if (runId !== aiRunIdRef.current) return;
       const msg = /unauthor/i.test(err?.message || '')
         ? 'Please login to search'
         : 'AI search failed. Please try again.';
       showToast(msg, "error");
     } finally {
-      if (runId === aiRunIdRef.current) setAiSearchLoading(false);
+      if (runId === aiRunIdRef.current) {
+        setAiSearchLoading(false);
+        aiAbortRef.current = null;
+      }
     }
   }, [guestGuard, dispatch, resetAiSearchState, sdui, showToast]);
 
@@ -2737,6 +2753,7 @@ const App = () => {
         }
         onAiSearch={runAiSearch}
         onExitAiSearch={exitAiSearch}
+        onCancelAiSearch={exitAiSearch}
         aiSearchAvailable={aiSearchAvailable}
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}
@@ -2989,6 +3006,8 @@ const App = () => {
           <AdGrid
             ads={visibleAds}
             sdui={sdui}
+            aiPrompt={ui.aiPrompt}
+            aiSearchLoading={aiSearchLoading}
             searchQuery={ui.searchQuery}
             searchIn={ui.searchIn}
             exactSearch={ui.exactSearch}

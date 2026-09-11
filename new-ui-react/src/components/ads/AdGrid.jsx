@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar } from "lucide-react";
+import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles } from "lucide-react";
 
 // PRD FR-11 — networks with materially lower crawled ad volume than the rest of
 // the platform today. When every currently-active platform is one of these, the
@@ -202,6 +202,8 @@ const AdGrid = ({
   searchQuery,
   searchIn,
   exactSearch,
+  aiPrompt = "",
+  aiSearchLoading = false,
 }) => {
   const {
     activePlatforms,
@@ -226,6 +228,9 @@ const AdGrid = ({
     () => hasActiveAiFilters(filterValues, aiFiltersDoc),
     [filterValues, aiFiltersDoc],
   );
+  // Only label filters as inferred when the current result came from an AI
+  // prompt. Manually opening the AI Filters panel should not claim inference.
+  const isAiSearchResult = Boolean(String(aiPrompt || "").trim()) && isAiFilteredResult;
 
   // "Total Ads" = the ES match total from the backend (`adsMeta` is per-network
   // `meta.total`, captured once at page 0 in App.jsx, stable across pages). The
@@ -1016,6 +1021,35 @@ const AdGrid = ({
   return (
     <div className="flex-1 overflow-hidden relative bg-fixed flex flex-col">
       <div className="pb-2 pt-3 sm:px-5">
+        {aiSearchLoading && (
+          <div
+            className="mb-3 flex items-center gap-3 rounded-2xl border border-[#7c3aed]/35 bg-theme-surface px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.16)]"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#7c3aed]/15 text-[#6d28d9] dark:text-[#c4b5fd]">
+              <RefreshCw size={16} className="animate-spin" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-theme-text">
+                AI is analyzing your request
+              </p>
+              <p className="mt-0.5 truncate text-[10px] text-theme-text-muted">
+                Reading your prompt and matching relevant ads
+              </p>
+            </div>
+            <span className="ml-auto flex gap-1" aria-hidden="true">
+              {[0, 1, 2].map((dot) => (
+                <span
+                  key={dot}
+                  className="h-1.5 w-1.5 rounded-full bg-[#7c3aed] animate-pulse"
+                  style={{ animationDelay: `${dot * 180}ms` }}
+                />
+              ))}
+            </span>
+          </div>
+        )}
+
         {/* Dynamic Filter Bar Wrapper */}
         <div
           className={`transition-all duration-300 ease-in-out ${
@@ -1082,6 +1116,13 @@ const AdGrid = ({
               <span className="text-[14px] font-bold whitespace-nowrap text-theme-text capitalize tracking-widest mr-1">
                 {isAllActive || specificPlatforms.length > 1 ? "Total Ads" : activePlatformLabel}
                 {`: ${adsCount}`}
+              </span>
+            )}
+
+            {isAiSearchResult && chipGroups.length > 0 && (
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#8b5cf6]/30 bg-[#8b5cf6]/10 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-theme-text">
+                <Sparkles size={11} className="text-[#8b5cf6]" />
+                Filters AI inferred
               </span>
             )}
 

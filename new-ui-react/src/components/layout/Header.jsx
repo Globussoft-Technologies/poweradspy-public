@@ -20,7 +20,7 @@ import {
   Globe,
   ArrowLeftRight,
   Sparkles,
-  Loader2,
+  Plus,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { createDashboardShare, buildSearchPayload, trackEvent } from "../../services/api";
@@ -42,6 +42,16 @@ const LANGUAGES = [
   { code: "ar", label: "عربى", flag: "🇸🇦" },
   { code: "fr", label: "Français", flag: "🇫🇷" },
   { code: "pt", label: "Português", flag: "🇧🇷" },
+];
+
+// Keep the first-use suggestions local to the search UI so choosing one uses
+// the same AI search path as a prompt typed by the user.
+export const AI_SEARCH_PROMPTS = [
+  "Find ads promoting mobile app installs.",
+  "Show me ads for weight-loss products.",
+  "What ads are trending in the beauty industry?",
+  "Find recently launched ads in India.",
+  "Show me high-engagement video ads.",
 ];
 
 // Programmatically trigger Google Translate widget for full-page translation.
@@ -127,19 +137,26 @@ const Header = ({
   aiSearchAvailable = false,
   aiSearchChecked = false,
   aiSearchLoading = false,
+  onCancelAiSearch,
   onNotifOpenChange,
   onSearchDropdownOpenChange,
 }) => {
   const { config } = sdui;
   const { user, logout } = useAuth();
+  const { theme = "light" } = useTheme() || {};
   const { t, i18n } = useTranslation();
+  const aiSearchIdleClass =
+    theme === "light"
+      ? "h-[46px] rounded-[23px] border border-[#dfe2ee] bg-theme-card focus-within:border-[#c7cbf5]"
+      : "h-[46px] rounded-[23px] border border-theme-border bg-theme-card focus-within:border-[#7c3aed]/70";
   const [searchTypeOpen, setSearchTypeOpen] = useState(false);
+  const [showAiPrompts, setShowAiPrompts] = useState(false);
   // AI search mode — free-form prompt instead of keyword/advertiser/domain.
   // Persisted to sessionStorage so it survives the full page reload the English
   // language switch performs (Google Translate reset), matching the no-reload
   // behaviour of the other languages.
   const [aiMode, setAiMode] = useState(() => {
-    try { return sessionStorage.getItem("ai_search_mode") === "1"; } catch { return false; }
+    try { return sessionStorage.getItem("ai_search_mode") !== "0"; } catch { return true; }
   });
   useEffect(() => {
     try {
@@ -216,6 +233,23 @@ const Header = ({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [searchDropdownOpenLocal, onSearchDropdownOpenChange]);
+
+  // Keep the prompt suggestions opt-in so they do not cover the feed while the
+  // user is browsing; the panel is opened by interacting with the AI input.
+  useEffect(() => {
+    if (!showAiPrompts) return;
+    const handlePromptOutside = (event) => {
+      if (searchBarBoxRef.current && !searchBarBoxRef.current.contains(event.target)) {
+        setShowAiPrompts(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePromptOutside);
+    return () => document.removeEventListener("mousedown", handlePromptOutside);
+  }, [showAiPrompts]);
+
+  useEffect(() => {
+    if (!aiMode || aiSearchLoading || localQuery.trim()) setShowAiPrompts(false);
+  }, [aiMode, aiSearchLoading, localQuery]);
 
   // Click a notification → search its term on its network. The bell's type is 0=keyword,
   // 1=advertiser, 2=domain; map it to the search-in value. onSearch is App's handleSearch,
@@ -416,6 +450,11 @@ const Header = ({
 
   // Get search input filter config (autocomplete)
   const searchFilter = searchInputDoc?.filters?.[0];
+  const normalSearchPlaceholder = {
+    keyword: t("search_keyword_placeholder", "Search by keyword..."),
+    advertiser: t("search_advertiser_placeholder", "Search by advertiser..."),
+    domain: t("search_domain_placeholder", "Search by domain..."),
+  }[localSearchIn] || searchFilter?.placeholder || t("search_placeholder");
 
   // Fallback suggestion sources
   const defaultSuggestionSources = [
@@ -456,10 +495,15 @@ const Header = ({
   const searchTypeFilter = searchTypeDoc?.filters?.[0];
   const allowedSearchTypes = ["keyword", "advertiser", "domain"];
   const searchTypeOptions = useMemo(() => {
-    if (!searchTypeFilter?.options)
-      return [{ label: "Keyword", value: "keyword" }];
-    return searchTypeFilter.options.filter((opt) =>
-      allowedSearchTypes.includes(opt.value),
+    const fallbackOptions = [
+      { label: "Keyword", value: "keyword" },
+      { label: "Advertiser", value: "advertiser" },
+      { label: "Domain", value: "domain" },
+    ];
+    const configuredOptions = searchTypeFilter?.options || [];
+    return allowedSearchTypes.map((value) =>
+      configuredOptions.find((opt) => opt.value === value) ||
+      fallbackOptions.find((opt) => opt.value === value),
     );
   }, [searchTypeFilter]);
 
@@ -468,6 +512,29 @@ const Header = ({
     const raw = opt?.label || localSearchIn || "keyword";
     return t(localSearchIn, raw);
   }, [searchTypeOptions, localSearchIn, t]);
+
+  const handleSearchModeSelect = (mode) => {
+    const wasAiMode = aiMode;
+    setSearchTypeOpen(false);
+    setShowAiPrompts(false);
+    if (mode === "ai") {
+      if (!aiSearchAvailable) return;
+      setAiMode(true);
+      setLocalQuery(aiPrompt || "");
+      return;
+    }
+
+    // Keep guest restrictions consistent with the existing search-type menu:
+    // do not leave the UI in a new mode when the guarded update is rejected.
+    const applied = setSearchIn ? setSearchIn(mode) : true;
+    if (applied === false) return;
+    setLocalSearchIn(mode);
+    setAiMode(false);
+    if (wasAiMode) {
+      setLocalQuery("");
+      onExitAiSearch?.();
+    }
+  };
 
   const handleCategorySelect = (cat) => {
     if (guest?.isPublicLanding && guest?.isRestricted) {
@@ -516,6 +583,13 @@ const Header = ({
     return () => document.removeEventListener("mousedown", handler);
   }, [showMoreTabsHeader]);
 
+  const isAdsLibraryPage =
+    activePage !== "projects" &&
+    activePage !== "intelligence" &&
+    activePage !== "keywords-explorer";
+  const showClearFilters =
+    isAdsLibraryPage && !guest?.isRestricted && sdui.totalActiveFilters > 0;
+
   return (
     <header className="h-16 2xl:h-20 py-2 px-3 sm:px-5 flex items-center justify-between sticky top-0 z-40 bg-theme-bg/95 backdrop-blur-md border-b border-theme-border">
       <div className="flex items-center gap-4">
@@ -538,7 +612,7 @@ const Header = ({
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div
             className={`
-               inset-0 transition-all duration-300 ease-in-out max-w-2xl mx-auto
+               inset-0 transition-all duration-300 ease-in-out ${aiMode ? "max-w-4xl" : "max-w-2xl"} mx-auto
               ${
                 isSearchOpenMobile
                   ? "fixed inset-0 z-50 bg-theme-bg/98 backdrop-blur-xl flex items-center px-4 gap-3 pointer-events-auto"
@@ -558,21 +632,25 @@ const Header = ({
 
             <div
               ref={searchBarBoxRef}
-              className={`relative flex flex-1 items-center gap-0 rounded-lg border bg-theme-text/[0.04] transition-all ${
+              className={`relative flex flex-1 items-center gap-0 transition-all ${
                 aiMode
-                  ? "border-[#6b99ff] ring-2 ring-[#6b99ff]/60 shadow-[0_0_18px_rgba(107,153,255,0.45)]"
-                  : "border-theme-border focus-within:border-[#6b99ff]/50"
+                  ? "h-[50px] rounded-[26px] bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] p-0.5"
+                  : aiSearchIdleClass
               }`}
             >
-              {!aiMode && searchTypeDoc?.visible !== false && (
+              {/* Legacy normal-mode selector replaced by the unified + menu.
+              {false && !aiMode && searchTypeDoc?.visible !== false && (
                 <div
                   className="relative group/si border-r border-theme-border"
                   ref={searchTypeRef}
                   data-search-type-ref
                 >
                   <button
-                    className="notranslate flex items-center gap-1 pl-4 pr-3 py-2.5 text-xs 2xl:text-[14px] font-bold text-theme-text whitespace-nowrap hover:text-[#6b99ff] hover:bg-theme-text/[0.04] rounded-l-lg transition-colors"
-                    onClick={() => setSearchTypeOpen(!searchTypeOpen)}
+                    className="notranslate flex h-full items-center gap-1 rounded-l-[22px] px-4 py-0 text-xs font-bold text-theme-text whitespace-nowrap transition-colors hover:bg-theme-text/[0.04] hover:text-[#6b99ff] 2xl:text-[14px]"
+                    onClick={() => {
+                      setSearchTypeOpen(!searchTypeOpen);
+                      setShowAiPrompts(false);
+                    }}
                   >
                     {currentSearchTypeLabel} <ChevronDown size={10} />
                   </button>
@@ -605,7 +683,82 @@ const Header = ({
                 </div>
               )}
 
-              <div className="flex-1">
+              */}
+
+              {searchTypeDoc?.visible !== false && searchTypeOptions.length > 0 && (
+                <div
+                  className="relative flex h-full shrink-0 items-center rounded-l-[24px] bg-theme-card"
+                  ref={searchTypeRef}
+                  data-search-type-ref
+                >
+                  <button
+                    type="button"
+                    className={`flex h-full items-center gap-1.5 rounded-l-[24px] px-3.5 text-xs font-semibold transition-colors 2xl:text-[14px] ${
+                      aiMode
+                        ? "text-[#7c3aed] hover:bg-[#7c3aed]/10"
+                        : "text-theme-text hover:bg-theme-text/[0.04] hover:text-[#6b99ff]"
+                    }`}
+                    onClick={() => {
+                      setSearchTypeOpen(!searchTypeOpen);
+                      setShowAiPrompts(false);
+                    }}
+                    aria-label="Choose search mode"
+                    aria-expanded={searchTypeOpen}
+                  >
+                    <Plus size={18} strokeWidth={2.2} />
+                    {!aiMode && (
+                      <>
+                        <span>{currentSearchTypeLabel}</span>
+                        <ChevronDown size={10} />
+                      </>
+                    )}
+                  </button>
+                  {searchTypeOpen && (
+                    <div
+                      className="notranslate absolute left-0 top-full z-[100] mt-2 w-44 rounded-xl border border-theme-border bg-theme-surface p-1 shadow-2xl"
+                      role="menu"
+                      aria-label="Search mode"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!aiSearchAvailable}
+                        onClick={() => handleSearchModeSelect("ai")}
+                        className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          aiMode
+                            ? theme === "dark"
+                              ? "bg-[#342d40] text-[#d8b4fe] hover:bg-[#3d344b]"
+                              : "bg-[#7c3aed]/12 text-[#7c3aed]"
+                            : "text-theme-text-muted hover:bg-theme-text/[0.05] hover:text-theme-text"
+                        }`}
+                      >
+                        <Sparkles size={14} />
+                        <span className="flex-1">{t("ai_search_mode_label", "AI search")}</span>
+                        {aiMode && <Check size={14} />}
+                      </button>
+                      <div className="my-1 border-t border-theme-border" />
+                      {searchTypeOptions.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleSearchModeSelect(opt.value)}
+                          className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] transition-colors ${
+                            !aiMode && localSearchIn === opt.value
+                              ? "bg-theme-text/[0.05] text-[#6b99ff]"
+                              : "text-theme-text-muted hover:bg-theme-text/[0.05] hover:text-theme-text"
+                          }`}
+                        >
+                          <span className="flex-1">{t(opt.value, opt.label) || opt.label}</span>
+                          {!aiMode && localSearchIn === opt.value && <Check size={14} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className={`flex-1 ${aiMode ? "h-full min-w-0 overflow-hidden rounded-r-[24px] bg-theme-card" : ""}`}>
                 <AutocompleteFilter
                   placeholder={
                     aiMode
@@ -613,11 +766,12 @@ const Header = ({
                           "ai_search_placeholder",
                           "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US"
                         )
-                      : (searchFilter?.placeholder || t("search_placeholder"))
+                      : normalSearchPlaceholder
                   }
                   value={localQuery}
                   onChange={(val) => {
                     setLocalQuery(val);
+                    if (val.length > 0) setShowAiPrompts(false);
                     if (val === "") {
                       if (!aiMode && onSearch) onSearch("", localSearchIn);
                     }
@@ -649,6 +803,15 @@ const Header = ({
                   minLength={searchFilter?.min_length || 3}
                   onSelectCategory={aiMode ? undefined : handleCategorySelect}
                   minimal={true}
+                  fullHeight={aiMode}
+                  submitIcon={aiMode}
+                  isSubmitting={aiMode && aiSearchLoading}
+                  onCancelSubmit={onCancelAiSearch}
+                  onInputInteract={() => {
+                    if (aiMode && !aiSearchLoading && !localQuery.trim()) {
+                      setShowAiPrompts(true);
+                    }
+                  }}
                   // Lets the parent shrink/reposition the crawl-status banner
                   // while this suggestions dropdown is open — it renders
                   // directly under the search bar and otherwise overlaps the
@@ -656,9 +819,46 @@ const Header = ({
                   onOpenChange={reportSearchDropdownState}
                 />
               </div>
+
+              {aiMode && showAiPrompts && !searchTypeOpen && !aiSearchLoading && !localQuery.trim() && (
+                <div
+                  className="absolute left-0 right-0 top-full z-[80] mt-3 rounded-2xl border border-[#8b5cf6]/30 bg-theme-surface p-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] animate-in fade-in slide-in-from-top-2 duration-200"
+                  role="dialog"
+                  aria-label="AI search prompts"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                    <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6]">
+                      Try asking
+                    </span>
+                    <span className="text-[10px] text-theme-text-muted">
+                      Describe the ads you want to explore
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {AI_SEARCH_PROMPTS.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() => {
+                          setShowAiPrompts(false);
+                          setLocalQuery(prompt);
+                          onAiSearch?.(prompt);
+                        }}
+                        className="group flex min-h-9 min-w-0 items-center gap-2 rounded-xl border border-theme-border bg-theme-text/[0.025] px-3 py-2 text-left text-[11px] font-medium text-theme-text transition-colors hover:border-[#8b5cf6]/45 hover:bg-[#8b5cf6]/10"
+                      >
+                        <Sparkles
+                          size={13}
+                          className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
+                        />
+                        <span className="min-w-0 truncate whitespace-nowrap">{prompt}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {aiSearchAvailable && (
+            {/* Legacy external AI toggle removed; mode switching now lives in the + menu.
               <button
                 type="button"
                 onClick={() => {
@@ -674,20 +874,38 @@ const Header = ({
                 disabled={aiSearchLoading}
                 title={aiMode ? t("ai_search_off", "Switch to normal search") : t("ai_search_on", "Search with AI")}
                 aria-pressed={aiMode}
-                className={`notranslate inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-xs font-semibold whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6b99ff]/30 2xl:text-[13px] ${
+                className={`group notranslate inline-flex h-[46px] shrink-0 items-center justify-center gap-[9px] rounded-full border px-[17px] text-[13px] font-semibold whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7c3aed]/40 ${
                   aiMode
-                    ? "border-[#6b99ff] bg-[#3762c1]/15 text-[#6b99ff] shadow-[0_0_0_1px_rgba(107,153,255,0.08)]"
-                    : "border-[#6b99ff]/45 bg-[#3762c1]/[0.06] text-[#6b99ff] hover:border-[#6b99ff]/70 hover:bg-[#3762c1]/10"
+                    ? "border-0 bg-gradient-to-r from-[#4f46e5] via-[#5b21b6] to-[#7c3aed] !text-white hover:brightness-105"
+                    : `${aiModeToggleIdleClass} ${aiModeToggleTextClass}`
                 } ${aiSearchLoading ? "opacity-70 cursor-wait" : ""}`}
               >
-                {aiSearchLoading ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Sparkles size={16} />
+                <Sparkles
+                  size={14}
+                  className={`shrink-0 ${aiMode ? "!text-white" : aiModeToggleTextClass}`}
+                />
+                <span className={aiMode ? "!text-white" : aiModeToggleTextClass}>
+                  {t("ai_search_mode_label", "AI mode")}
+                </span>
+                {aiMode && (
+                  <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-extrabold tracking-[0.1em] !text-white">
+                    ON
+                  </span>
                 )}
-                <span className="hidden sm:inline">{t("ai_search_button_label", "Ask AI")}</span>
+                <span
+                  className={`relative inline-block h-[15px] w-[26px] shrink-0 rounded-full transition-colors ${
+                    aiMode ? "bg-white/30" : aiModeSwitchIdleClass
+                  }`}
+                  aria-hidden="true"
+                >
+                  <span
+                    className={`absolute left-0.5 top-0.5 h-[11px] w-[11px] rounded-full bg-white shadow-sm transition-transform ${
+                      aiMode ? "translate-x-[11px]" : "translate-x-0"
+                    }`}
+                  />
+                </span>
               </button>
-            )}
+            */}
 
             {!aiMode && localQuery.trim().length > 0 && localSearchIn === "keyword" && (
               <label
@@ -750,7 +968,7 @@ const Header = ({
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 sm:gap-2">
+      <div className="relative flex items-center gap-1.5 sm:gap-2">
         {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
             className="md:hidden sm:p-1.5 text-theme-text-muted hover:text-theme-text transition-colors"
@@ -759,7 +977,7 @@ const Header = ({
             <Search size={20} />
           </button>
         )}
-        {sdui.totalActiveFilters > 0 && !guest?.isRestricted && activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
+        {showClearFilters && (
           <button
             onClick={() => {
               if (guest?.showGuestWarning("Please login to change filters")) return;
@@ -767,13 +985,12 @@ const Header = ({
               if (setSearchQuery) setSearchQuery("");
               if (setActiveTab) setActiveTab("Newest");
             }}
-            className="flex items-center gap-0.5 md:gap-1.5 px-1.5 md:px-3 whitespace-nowrap py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 hover:border-red-500/40 rounded-lg text-[9px] md:text-[11px] font-bold transition-all animate-pulse-glow"
+            className="flex items-center gap-0.5 px-1.5 py-1.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow md:absolute md:right-full md:top-1/2 md:mr-2 md:-translate-y-1/2 md:gap-1.5 md:px-3 md:text-[11px]"
           >
             <X size={12} />
             {sdui.totalActiveFilters === 1 ? t("clear_x_filters", { count: sdui.totalActiveFilters }) : t("clear_x_filters_plural", { count: sdui.totalActiveFilters })}
           </button>
         )}
-
         {/* Share Dashboard button — only for logged-in users, not on guest/share routes.
             `order-1` pulls it to the right side of the flex row (next to the
             now-hidden fullscreen toggle) without moving the JSX in source. */}
