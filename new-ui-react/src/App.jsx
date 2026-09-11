@@ -80,6 +80,11 @@ const INTEL_ENV_ON = import.meta.env.VITE_ENABLE_INTELLIGENCE_FEATURE === "true"
 const KEYWORD_EXPLORER_ON = import.meta.env.VITE_ENABLE_KEYWORD_EXPLORER === "true";
 const GOOGLE_INTEL_ON = KEYWORD_EXPLORER_ON;
 
+// Search crawl-status banner ("Showing what we have — our crawler is still checking...").
+// Opt-out (default ON, matching current shipped behavior) so this only ever needs a flip
+// to "false" to kill the banner without a code change/deploy.
+const SEARCH_CRAWL_BANNER_ON = import.meta.env.VITE_ENABLE_SEARCH_CRAWL_BANNER !== "false";
+
 const SAVED_HIDDEN_SNAPSHOT_KEY = 'pas.savedHiddenAdSnapshots.v1';
 const MAX_SAVED_HIDDEN_SNAPSHOTS = 120;
 
@@ -1570,6 +1575,12 @@ const App = () => {
   }, [favouriteAdIds, showToast]);
 
   const [debouncedFilterKey, setDebouncedFilterKey] = useState(filterKey);
+  // Mirrors Header's `aiMode` toggle so the crawl-status banner can hide the
+  // moment "Ask AI" is switched on — before any AI prompt is actually submitted.
+  // Seeded from the same sessionStorage key Header uses so there's no flash on reload.
+  const [aiModeActive, setAiModeActive] = useState(() => {
+    try { return sessionStorage.getItem("ai_search_mode") === "1"; } catch { return false; }
+  });
   const debounceTimer = useRef(null);
   const lastDailyKeywordRef = useRef(null);
   const projectContextRef = useRef(null);
@@ -1596,15 +1607,20 @@ const App = () => {
   // and the instant `loadingMore` clears (set in the fetch's own `finally`,
   // so it can't be skipped or raced) it reads off however many ads actually
   // came back — no separate state to fall out of sync with what's on screen.
-  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt && !guest?.isRestricted;
-  const searchBannerLabel = ["keyword", "advertiser", "domain"].includes(String(ui.searchIn || '').toLowerCase())
-    ? ui.searchIn
-    : "keyword";
   // `loadingMore` also goes true for background pagination (scrolling for more
   // pages of an already-showing search), not just a fresh page-0 search — check
   // `ads.length` first so scrolling doesn't flash the "underway" spinner icon/text
   // back on over results that are already on screen.
   const searchBannerLoading = ads.length === 0 && loadingMore;
+  // SEARCH_CRAWL_BANNER_ON only gates the "ads found, still checking for more"
+  // message (ads.length > 0) — the zero-results "underway"/"no ads yet" message
+  // always shows regardless of the flag, since that's the only feedback the user
+  // has that anything is happening at all while there's nothing on screen yet.
+  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt && !aiModeActive && !guest?.isRestricted
+    && (ads.length === 0 || SEARCH_CRAWL_BANNER_ON);
+  const searchBannerLabel = ["keyword", "advertiser", "domain"].includes(String(ui.searchIn || '').toLowerCase())
+    ? ui.searchIn
+    : "keyword";
   const searchBannerMessage = ads.length > 0
     ? "Showing what we have — our crawler is still checking for new ads. We'll notify you if anything new shows up."
     : searchBannerLoading
@@ -2754,6 +2770,7 @@ const App = () => {
         onAiSearch={runAiSearch}
         onExitAiSearch={exitAiSearch}
         onCancelAiSearch={exitAiSearch}
+        onAiModeChange={setAiModeActive}
         aiSearchAvailable={aiSearchAvailable}
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}

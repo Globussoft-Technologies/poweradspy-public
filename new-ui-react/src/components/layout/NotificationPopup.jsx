@@ -5,7 +5,7 @@ import { Search, User, Globe, CheckCheck, Bell } from "lucide-react";
  * Map keyword request type (0=keyword, 1=advertiser, 2=domain) to a label + icon.
  */
 const TYPE_MAP = {
-  0: { label: "Keyword", icon: Search, color: "#6b99ff" },
+  0: { label: "Keyword", icon: Search, color: "#185FA5" },
   1: { label: "Advertiser", icon: User, color: "#a78bfa" },
   2: { label: "Domain", icon: Globe, color: "#34d399" },
 };
@@ -37,7 +37,7 @@ const NotificationPopup = ({ notifications, onMarkAllRead, onNotificationClick, 
       style={{ animation: "notifSlideIn 0.2s ease-out" }}
     >
       {/* Spinning neon gradient border — mirrors the ad-card hover treatment */}
-      <div className="absolute inset-[-100%] z-0 bg-[conic-gradient(from_0deg,transparent_0_180deg,#335296_240deg,#244a94_300deg,transparent_360deg)] opacity-0 group-hover:opacity-100 animate-[spin_3s_linear_infinite] transition-opacity duration-500 pointer-events-none" />
+      <div className="absolute inset-[-100%] z-0 bg-[conic-gradient(from_0deg,transparent_0_180deg,#185FA5_240deg,#1e78c8_300deg,transparent_360deg)] opacity-0 group-hover:opacity-100 animate-[spin_3s_linear_infinite] transition-opacity duration-500 pointer-events-none" />
       <div className="relative z-10 max-h-96 bg-theme-card border border-theme-border group-hover:border-transparent rounded-[10px] overflow-hidden transition-colors duration-300">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-theme-border">
@@ -55,7 +55,7 @@ const NotificationPopup = ({ notifications, onMarkAllRead, onNotificationClick, 
         {notifications.length > 0 && (
           <button
             onClick={onMarkAllRead}
-            className="flex items-center gap-1 text-[10px] font-semibold text-[#6b99ff] hover:text-[#5a88ee] transition-colors"
+            className="flex items-center gap-1 text-[10px] font-semibold text-[#185FA5] hover:text-[#134a80] transition-colors"
           >
             <CheckCheck size={12} />
             Mark all read
@@ -129,7 +129,7 @@ const NotificationPopup = ({ notifications, onMarkAllRead, onNotificationClick, 
                 </div>
 
                 {/* Unread indicator */}
-                <div className="w-2 h-2 rounded-full bg-[#6b99ff] shrink-0 mt-2" />
+                <div className="w-2 h-2 rounded-full bg-[#185FA5] shrink-0 mt-2" />
               </div>
             );
           })

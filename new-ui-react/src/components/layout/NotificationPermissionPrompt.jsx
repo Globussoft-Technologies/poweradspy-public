@@ -35,17 +35,17 @@ const NotificationPermissionPrompt = () => {
 
   return (
     <div className="fixed bottom-4 right-4 z-50 w-[450px] animate-[slideUp_0.4s_ease-out]">
-      <div className="bg-gradient-to-br from-[#4f46e5] via-[#7c3aed] to-[#ec4899] border-2 border-white rounded-xl shadow-2xl p-4 relative overflow-hidden">
+      <div className="bg-[#eef4fb] border-2 border-[#185FA5] rounded-xl shadow-[0_0_0_2px_rgba(24,95,165,0.12),0_0_10px_1px_rgba(24,95,165,0.4),0_4px_16px_rgba(0,0,0,0.1)] p-4 relative overflow-hidden">
         {/* Decorative blur background */}
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-white/10 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-20 -left-20 w-60 h-60 bg-white/10 rounded-full blur-3xl"></div>
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-[#185FA5]/5 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-20 -left-20 w-60 h-60 bg-[#185FA5]/5 rounded-full blur-3xl"></div>
 
         {/* Content wrapper */}
         <div className="relative z-10">
           {/* Close button */}
           <button
             onClick={handleDismiss}
-            className="absolute top-2 right-2 bg-white/20 hover:bg-white/30 text-white p-1 rounded-lg transition-all"
+            className="absolute top-2 right-2 text-[#185FA5]/50 hover:bg-[#185FA5]/10 hover:text-[#185FA5] p-1 rounded-lg transition-all"
             disabled={isRequesting}
           >
             <X size={16} />
@@ -53,22 +53,22 @@ const NotificationPermissionPrompt = () => {
 
           {/* Icon and Header */}
           <div className="flex items-start gap-2 mb-2 pr-6">
-            <div className="w-8 h-8 rounded-lg bg-white/20 backdrop-blur flex items-center justify-center shrink-0 mt-0.5">
-              <Bell size={18} className="text-white" />
+            <div className="w-8 h-8 rounded-lg bg-[#185FA5]/10 flex items-center justify-center shrink-0 mt-0.5">
+              <Bell size={18} className="text-[#185FA5]" />
             </div>
-            <h3 className="text-base font-bold text-white">
+            <h3 className="text-base font-bold text-[#185FA5]">
               Get Instant Notifications
             </h3>
           </div>
 
           {/* Description */}
-          <p className="text-white/90 text-xs leading-tight mb-3 font-medium ml-10">
+          <p className="text-slate-600 text-xs leading-tight mb-3 font-medium ml-10">
             Enable browser notifications to receive instant alerts when new ads are found for your keywords.
           </p>
 
           {/* Error message */}
           {error && (
-            <p className="text-xs text-yellow-200 mb-3 bg-red-500/20 px-2 py-1 rounded">
+            <p className="text-xs text-red-700 mb-3 bg-red-100 px-2 py-1 rounded">
               ⚠️ {error}
             </p>
           )}
@@ -78,11 +78,11 @@ const NotificationPermissionPrompt = () => {
             <button
               onClick={handleEnable}
               disabled={isRequesting}
-              className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-white text-[#7c3aed] hover:bg-white/95 disabled:opacity-50 disabled:cursor-not-allowed rounded font-bold text-xs transition-all shadow-lg"
+              className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-[#185FA5] text-white hover:bg-[#134a80] disabled:opacity-50 disabled:cursor-not-allowed rounded font-bold text-xs transition-all shadow-lg"
             >
               {isRequesting ? (
                 <>
-                  <span className="inline-block w-3 h-3 border-2 border-[#7c3aed] border-t-transparent rounded-full animate-spin" />
+                  <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   Enabling...
                 </>
               ) : (
@@ -95,7 +95,7 @@ const NotificationPermissionPrompt = () => {
             <button
               onClick={handleDismiss}
               disabled={isRequesting}
-              className="flex-1 px-3 py-2 bg-white/20 text-white font-bold hover:bg-white/30 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs"
+              className="flex-1 px-3 py-2 bg-white text-[#185FA5] border border-[#185FA5]/30 font-bold hover:bg-[#185FA5]/5 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs"
             >
               Later
             </button>

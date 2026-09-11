@@ -1,3 +1,16 @@
+// Lazy require, not a static import: services/api.js imports from
+// hooks/useAuth.jsx, which imports syncGa4PlanTierUserProperty from this
+// module — a static import here would close a 3-way circular dependency.
+// resolvePlanTier() only needs the function reference at call time, so pull
+// it in on demand instead.
+let _fetchPlanAccess;
+async function getFetchPlanAccess() {
+  if (!_fetchPlanAccess) {
+    ({ fetchPlanAccess: _fetchPlanAccess } = await import('../services/api'));
+  }
+  return _fetchPlanAccess;
+}
+
 const AD_ACTION_EVENT = 'ad_action';
 
 const ANALYTICS_PLATFORM_TITLES = {
@@ -6,8 +19,6 @@ const ANALYTICS_PLATFORM_TITLES = {
   reddit: 'Reddit', quora: 'Quora', pinterest: 'Pinterest', tiktok: 'TikTok',
   admob: 'AdMob',
 };
-
-const KNOWN_PLAN_TIERS = ['free', 'starter', 'basic', 'standard', 'pro', 'premium', 'enterprise'];
 
 // Short, GA4-friendly platform codes used to prefix per-platform ad_action
 // event names (e.g. `fb_call_to_action_clicked`, `insta_call_to_action_clicked`).
@@ -101,9 +112,50 @@ export function classifyError(error) {
   return 'client_error';
 }
 
-export function resolvePlanTier(storedUser) {
-  let user = storedUser;
-  if (user === undefined && typeof window !== 'undefined') {
+// Normalize a raw plan label into a stable, low-cardinality GA4 dimension value:
+// lowercased, every run of non-alphanumerics collapsed to a single underscore,
+// ends trimmed. "Palladium" -> "palladium", "Basic (2026)" -> "basic_2026".
+function normalizePlanTierValue(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Resolve the plan tier reported on GA4 events.
+ *
+ * - Called with no argument (the runtime path): anyone who is not a real
+ *   logged-in user — guest links, shared links, the guest landing page, or a
+ *   plain anonymous visitor — is reported as `free`, no request made. A
+ *   logged-in user's real PowerAdSpy plan name is fetched fresh from
+ *   /auth/plan-access on every call (no localStorage/in-memory cache —
+ *   deliberate: keeps this in sync with the account's current plan without
+ *   any persisted copy), falling back to the JWT's own subscription field if
+ *   the request fails, then `free`.
+ * - Called with an explicit user object (tests / callers that already have it):
+ *   just normalizes that object's subscription label, no auth/route gating,
+ *   no request.
+ */
+export async function resolvePlanTier(storedUser) {
+  if (storedUser !== undefined) {
+    return normalizePlanTierValue(storedUser?.userSubscriptionType || storedUser?.planTier) || 'free';
+  }
+
+  if (resolveAuthenticationState() !== 'authenticated') return 'free';
+
+  try {
+    const fetchPlanAccess = await getFetchPlanAccess();
+    const planAccess = await fetchPlanAccess();
+    if (planAccess?.planTier) return normalizePlanTierValue(planAccess.planTier) || 'free';
+  } catch {
+    // Falling back to the JWT copy is intentional — a plan-access lookup can
+    // legitimately fail (offline, transient 5xx) and GA4 tracking must not
+    // throw over it.
+  }
+
+  let user = null;
+  if (typeof window !== 'undefined') {
     try {
       const raw = window.localStorage.getItem('authUser');
       user = raw ? JSON.parse(raw) : null;
@@ -111,8 +163,22 @@ export function resolvePlanTier(storedUser) {
       user = null;
     }
   }
-  const rawTier = String(user?.userSubscriptionType || user?.planTier || '').toLowerCase();
-  return KNOWN_PLAN_TIERS.find((tier) => rawTier.includes(tier)) || (rawTier ? 'other' : 'free');
+  return normalizePlanTierValue(user?.userSubscriptionType || user?.planTier) || 'free';
+}
+
+/**
+ * Register plan_tier as a GA4 *user property* (not just a per-event parameter).
+ * Once set, GA4 stamps it onto EVERY event for this user — page_view, scroll,
+ * session_start, and all the custom events — so plan-tier breakdowns work on
+ * metrics the per-event `plan_tier` on trackProductEvent/trackAdAction never
+ * reaches. Idempotent; call it once the plan tier is known (after
+ * /auth/plan-access resolves) and on any auth reset. Value is derived the same
+ * way as the event parameter, so anonymous/guest visitors report `free`.
+ */
+export async function syncGa4PlanTierUserProperty() {
+  if (!canTrackWithGa4()) return false;
+  window.gtag('set', 'user_properties', { plan_tier: await resolvePlanTier() });
+  return true;
 }
 
 export function resolveAuthenticationState({
@@ -143,7 +209,7 @@ export function resolveAuthenticationState({
  * Calls are safely ignored when gtag is unavailable (for example in tests or
  * when an analytics/content blocker prevents the Google script from loading).
  */
-export function trackAdAction(actionName, details = {}) {
+export async function trackAdAction(actionName, details = {}) {
   if (!actionName || !canTrackWithGa4()) {
     return false;
   }
@@ -158,19 +224,19 @@ export function trackAdAction(actionName, details = {}) {
     network: actionPlatform,
     platform: actionPlatform,
     auth_state: resolveAuthenticationState(),
-    plan_tier: resolvePlanTier(),
+    plan_tier: await resolvePlanTier(),
   });
   return true;
 }
 
-export function trackProductEvent(eventName, details = {}) {
+export async function trackProductEvent(eventName, details = {}) {
   if (!eventName || !canTrackWithGa4()) {
     return false;
   }
   window.gtag('event', eventName, {
     ...details,
     auth_state: resolveAuthenticationState(),
-    plan_tier: resolvePlanTier(),
+    plan_tier: await resolvePlanTier(),
   });
   return true;
 }

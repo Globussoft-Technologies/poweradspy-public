@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
 import { fetchPlanAccess, fetchEntitlements, fetchOnboardingStatus, trackEvent } from '../services/api';
+import { syncGa4PlanTierUserProperty } from '../utils/googleAnalytics';
 import { openModal } from '../store/uiSlice';
 import {
   isCapabilityAllowed,
@@ -350,15 +351,25 @@ export function AuthProvider({ children }) {
     const isRealLogin = !!token && token !== import.meta.env.VITE_PAS_API_TOKEN;
     if (!token || (!isRealLogin && (path === '/guest-landing' || path.startsWith('/guest/') || path.startsWith('/share/')))) {
       setPlanAccessResolved(true);
+      // Anonymous / guest / shared-link visitor — no plan to fetch; report `free`
+      // as the GA4 user property so plan-tier breakdowns bucket them correctly.
+      syncGa4PlanTierUserProperty();
       return;
     }
     let active = true;
     setPlanAccessResolved(false);
     Promise.allSettled([fetchPlanAccess(), fetchEntitlements()]).then(([legacy, unified]) => {
       if (!active) return;
-      if (legacy.status === 'fulfilled' && legacy.value) setPlanAccess(legacy.value);
+      if (legacy.status === 'fulfilled' && legacy.value) {
+        setPlanAccess(legacy.value);
+      }
       if (unified.status === 'fulfilled' && unified.value) setEntitlements(unified.value);
       setPlanAccessResolved(true);
+      // Now that the real plan name is known + persisted, register it as the
+      // GA4 user property so it rides on every subsequent event (page_view,
+      // auto events, custom events) — not just the ones the tracking helpers
+      // decorate with a per-event plan_tier parameter.
+      syncGa4PlanTierUserProperty();
     });
     return () => { active = false; };
   }, [token]);

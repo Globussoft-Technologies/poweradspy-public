@@ -134,6 +134,7 @@ const Header = ({
   onSearch,
   onAiSearch,
   onExitAiSearch,
+  onAiModeChange,
   aiSearchAvailable = false,
   aiSearchChecked = false,
   aiSearchLoading = false,
@@ -164,6 +165,11 @@ const Header = ({
       else sessionStorage.removeItem("ai_search_mode");
     } catch { /* storage unavailable — non-fatal */ }
   }, [aiMode]);
+  // Let the parent know the moment "Ask AI" is toggled (before any prompt is
+  // submitted) so it can hide the crawl-status banner right away.
+  useEffect(() => {
+    onAiModeChange?.(aiMode);
+  }, [aiMode, onAiModeChange]);
   // Drop AI mode only once a health check has COMPLETED and reports unavailable —
   // never during the initial "not checked yet" window, or a restored aiMode would
   // be wiped on every reload before the first poll returns.
