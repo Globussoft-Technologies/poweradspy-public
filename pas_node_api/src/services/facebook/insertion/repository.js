@@ -543,14 +543,27 @@ async function getUserCountries(exec, facebookAdId) {
   return csv ? String(csv).split(',') : [];
 }
 async function getAdCountries(exec, facebookAdId) {
-  const r = rows(await exec.query(
+  // Updates write the *_only relation, while older records may only have the
+  // legacy relation. Prefer the update-safe source and retain a read fallback
+  // so reindexing legacy ads does not lose their country values.
+  const onlyRows = rows(await exec.query(
+    `SELECT country_only.country AS country
+       FROM facebook_ad_countries_only
+       LEFT JOIN country_only ON facebook_ad_countries_only.country_only_id = country_only.id
+      WHERE facebook_ad_countries_only.facebook_ad_id = ?`,
+    [facebookAdId]
+  ));
+  const onlyCountries = onlyRows.map((row) => row.country).filter(Boolean);
+  if (onlyCountries.length) return onlyCountries;
+
+  const legacyRows = rows(await exec.query(
     `SELECT country_only.country AS country
        FROM facebook_ad_countries
        LEFT JOIN country_only ON facebook_ad_countries.country_only_id = country_only.id
       WHERE facebook_ad_countries.facebook_ad_id = ?`,
     [facebookAdId]
   ));
-  return r.map((row) => row.country).filter(Boolean);
+  return legacyRows.map((row) => row.country).filter(Boolean);
 }
 
 // ── Users_Request (updateRequestedStatus) ───────────────────────────────────────

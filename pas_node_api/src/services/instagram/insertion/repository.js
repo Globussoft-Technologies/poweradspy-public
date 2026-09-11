@@ -493,14 +493,27 @@ async function getUserCountries(exec, adId) {
   return csv ? String(csv).split(',') : [];
 }
 async function getAdCountries(exec, adId) {
-  const r = rows(await exec.query(
+  // Updates write the *_only relation, while older records may only have the
+  // legacy relation. Prefer the update-safe source and retain a read fallback
+  // so reindexing legacy ads does not lose their country values.
+  const onlyRows = rows(await exec.query(
+    `SELECT instagram_country_only.country AS country
+       FROM instagram_ad_countries_only
+       LEFT JOIN instagram_country_only ON instagram_ad_countries_only.country_only_id = instagram_country_only.id
+      WHERE instagram_ad_countries_only.instagram_ad_id = ?`,
+    [adId]
+  ));
+  const onlyCountries = onlyRows.map((row) => row.country).filter(Boolean);
+  if (onlyCountries.length) return onlyCountries;
+
+  const legacyRows = rows(await exec.query(
     `SELECT instagram_country_only.country AS country
        FROM instagram_ad_countries
        LEFT JOIN instagram_country_only ON instagram_ad_countries.country_only_id = instagram_country_only.id
       WHERE instagram_ad_countries.instagram_ad_id = ?`,
     [adId]
   ));
-  return r.map((row) => row.country).filter(Boolean);
+  return legacyRows.map((row) => row.country).filter(Boolean);
 }
 
 module.exports = {
