@@ -28,9 +28,14 @@ const stripNulls = (obj) =>
 // ── youtube_ad_meta_data ────────────────────────────────────────────────────────
 
 /**
- * PHP getDataForLanderWithCountry(): up to 100 ads at redirect_status with a non-null
+ * PHP getDataForLanderWithCountry(): up to 100 ads at redirect_status with a usable
  * destination_url, joined to country names. ad_url/destination_url wrapped in ANY_VALUE()
  * for only_full_group_by.
+ *
+ * "Usable" = not SQL NULL, not empty/whitespace, and not the literal strings
+ * 'null'/'undefined' (some upstream writes store the string, not a real NULL). Ads
+ * with an unusable destination_url are excluded here so they are never leased, never
+ * flipped to redirect_status=5, and therefore never re-served on a later poll.
  *
  * NOTE (faithful to PHP): the join is `youtube_ad_countries_only.id = meta.youtube_ad_id`
  * exactly as the legacy Laravel query wrote it.
@@ -48,6 +53,8 @@ async function getDataForLander(exec, redirectStatus) {
              ON youtube_country_only.id = youtube_ad_countries_only.country_only_id
      WHERE youtube_ad_meta_data.redirect_status = ?
        AND youtube_ad_meta_data.destination_url IS NOT NULL
+       AND TRIM(youtube_ad_meta_data.destination_url) <> ''
+       AND LOWER(TRIM(youtube_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
      GROUP BY youtube_ad_meta_data.youtube_ad_id
      ORDER BY youtube_ad_meta_data.youtube_ad_id DESC
      LIMIT 100`;

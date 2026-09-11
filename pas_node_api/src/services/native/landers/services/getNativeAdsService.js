@@ -3,6 +3,16 @@ const NativeCountryData = require('../models/NativeCountryData');
 const databaseManager = require('../../../../database/DatabaseManager');
 
 // Helper to search ad in Elasticsearch
+// A destination_url is usable only if it is a non-empty string that is not the
+// literal token "null"/"undefined" (some upstream writes store those as text
+// rather than a real SQL NULL). Mirrors the SQL filter in NativeAdMetaData.getAdsByStatus.
+function isUsableDestinationUrl(value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '') return false;
+  return !['null', 'undefined'].includes(trimmed.toLowerCase());
+}
+
 async function searchAd(adId) {
   try {
     const esWrapper = databaseManager.getElastic('native');
@@ -71,7 +81,9 @@ class GetNativeAdsService {
 
       // Step 6: Build result
       ads.forEach((ad, index) => {
-        if (ad.destination_url) {
+        // Never serve an ad without a usable destination_url (defence-in-depth —
+        // getAdsByStatus already excludes these at the SQL level).
+        if (isUsableDestinationUrl(ad.destination_url)) {
           const isoCodes = this.mapCountriesToIso(ad.countries, countryToIsoMap);
           resultAds.push({
             id: ad.id,

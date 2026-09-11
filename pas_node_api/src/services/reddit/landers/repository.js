@@ -21,6 +21,10 @@ async function executeQuery(sql, params = []) {
 }
 
 // ─── getAdsForBlackhat ─────────────────────────────────────────
+// Ads with an unusable destination_url are excluded here so they are never leased,
+// never flipped to redirect_status 2/5, and therefore never re-served on a later poll.
+// "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+// (some upstream writes store the string, not a real NULL).
 async function getDataForLander(status = 0) {
   const sql = `
     SELECT reddit_ad_meta_data.reddit_ad_id as id,
@@ -30,6 +34,9 @@ async function getDataForLander(status = 0) {
     LEFT JOIN reddit_ad ON reddit_ad.id = reddit_ad_meta_data.reddit_ad_id
     LEFT JOIN reddit_country_only ON reddit_country_only.id = reddit_ad.country_only_id
     WHERE reddit_ad_meta_data.redirect_status = ?
+      AND reddit_ad_meta_data.destination_url IS NOT NULL
+      AND TRIM(reddit_ad_meta_data.destination_url) <> ''
+      AND LOWER(TRIM(reddit_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
     GROUP BY reddit_ad_meta_data.reddit_ad_id
     ORDER BY reddit_ad_meta_data.reddit_ad_id DESC
     LIMIT 100

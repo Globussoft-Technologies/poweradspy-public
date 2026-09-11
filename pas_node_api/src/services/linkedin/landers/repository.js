@@ -26,6 +26,10 @@ const stripNulls = (obj) =>
   Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 
 // ── linkedin_ad_meta_data ────────────────────────────────────────────────────────
+// Ads with an unusable destination_url are excluded here so they are never leased,
+// never flipped to redirect_status=5, and therefore never re-served on a later poll.
+// "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+// (some upstream writes store the string, not a real NULL).
 async function getDataForLander(exec, redirectStatus) {
   const sql = `
     SELECT linkedin_ad_meta_data.linkedin_ad_id AS id,
@@ -39,6 +43,8 @@ async function getDataForLander(exec, redirectStatus) {
              ON country_only.id = linkedin_ad_countries_only.country_only_id
      WHERE linkedin_ad_meta_data.redirect_status = ?
        AND linkedin_ad_meta_data.destination_url IS NOT NULL
+       AND TRIM(linkedin_ad_meta_data.destination_url) <> ''
+       AND LOWER(TRIM(linkedin_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
      GROUP BY linkedin_ad_meta_data.linkedin_ad_id
      ORDER BY linkedin_ad_meta_data.linkedin_ad_id DESC
      LIMIT 100`;

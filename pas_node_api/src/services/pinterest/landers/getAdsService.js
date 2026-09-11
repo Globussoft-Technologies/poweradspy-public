@@ -2,6 +2,16 @@
 
 const repo = require('./repository');
 
+// A destination_url is usable only if it is a non-empty string that is not the
+// literal token "null"/"undefined" (some upstream writes store those as text
+// rather than a real SQL NULL). Mirrors the SQL filter in getDataForLander.
+function isUsableDestinationUrl(value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '') return false;
+  return !['null', 'undefined'].includes(trimmed.toLowerCase());
+}
+
 /**
  * getAdsForBlackhat — fetches Pinterest ads with redirect_status=0,
  * validates presence in ES (pinterest_search_mix), transitions status to 2,
@@ -30,6 +40,10 @@ async function getAdsForBlackhat(db, log) {
     let isoAccumulator = [];
 
     for (const ad of ads) {
+      // Never serve an ad without a usable destination_url (defence-in-depth —
+      // getDataForLander already excludes these at the SQL level).
+      if (!isUsableDestinationUrl(ad.destination_url)) continue;
+
       // Check if ad exists in Elasticsearch
       let esFound = false;
       try {

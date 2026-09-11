@@ -2,11 +2,23 @@
 
 const repo = require('./repository');
 
+// A destination_url is usable only if it is a non-empty string that is not the
+// literal token "null"/"undefined" (some upstream writes store those as text
+// rather than a real SQL NULL). Mirrors the SQL filter in getDataForLander.
+function isUsableDestinationUrl(value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '') return false;
+  return !['null', 'undefined'].includes(trimmed.toLowerCase());
+}
+
 async function getAdwithCountryCode(db, log) {
   const startTime = Date.now();
   try {
-    // Fetch ads with redirect_status = 0
-    const ads = await repo.getDataForLander(0);
+    // Fetch ads with redirect_status = 0. Never lease an ad without a usable
+    // destination_url (defence-in-depth — getDataForLander already excludes these
+    // at the SQL level).
+    const ads = (await repo.getDataForLander(0)).filter((a) => isUsableDestinationUrl(a.destination_url));
 
     log?.info(`Fetched ${ads.length} ads`);
 

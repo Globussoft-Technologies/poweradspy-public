@@ -38,6 +38,10 @@ const stripNulls = (obj) =>
  * Returns [{ id, destination_url, country }] (country = comma-joined names).
  */
 async function getDataForLander(exec, redirectStatus) {
+  // Ads with an unusable destination_url are excluded here so they are never leased,
+  // never flipped to redirect_status=2, and therefore never re-served on a later poll.
+  // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+  // (some upstream writes store the string, not a real NULL).
   const sql = `
     SELECT google_text_ad_meta_data.google_text_ad_id AS id,
            ANY_VALUE(google_text_ad_meta_data.destination_url) AS destination_url,
@@ -48,6 +52,9 @@ async function getDataForLander(exec, redirectStatus) {
       LEFT JOIN google_text_country_only
              ON google_text_country_only.id = google_text_ad_countries_only.country_only_id
      WHERE google_text_ad_meta_data.redirect_status = ?
+       AND google_text_ad_meta_data.destination_url IS NOT NULL
+       AND TRIM(google_text_ad_meta_data.destination_url) <> ''
+       AND LOWER(TRIM(google_text_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
      GROUP BY google_text_ad_meta_data.google_text_ad_id
      ORDER BY google_text_ad_meta_data.google_text_ad_id DESC
      LIMIT 50`;

@@ -21,6 +21,10 @@ async function executeQuery(sql, params = []) {
 }
 
 // ─── getAdsForBlackhat ─────────────────────────────────────────
+// Ads with an unusable destination_url are excluded here so they are never leased,
+// never flipped to redirect_status=2, and therefore never re-served on a later poll.
+// "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+// (some upstream writes store the string, not a real NULL).
 async function getDataForLander(status = 0) {
   const sql = `
     SELECT pinterest_ad_meta_data.pinterest_ad_id as id,
@@ -30,6 +34,9 @@ async function getDataForLander(status = 0) {
     LEFT JOIN pinterest_ad ON pinterest_ad.id = pinterest_ad_meta_data.pinterest_ad_id
     LEFT JOIN pinterest_country_only ON pinterest_country_only.id = pinterest_ad.country_only_id
     WHERE pinterest_ad_meta_data.redirect_status = ?
+      AND pinterest_ad_meta_data.destination_url IS NOT NULL
+      AND TRIM(pinterest_ad_meta_data.destination_url) <> ''
+      AND LOWER(TRIM(pinterest_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
     GROUP BY pinterest_ad_meta_data.pinterest_ad_id
     ORDER BY pinterest_ad_meta_data.pinterest_ad_id DESC
     LIMIT 100

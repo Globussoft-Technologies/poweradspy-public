@@ -21,6 +21,16 @@ const repo = require('./repository');
 const PENDING = 0;
 const FOUND = 2;
 
+// A destination_url is usable only if it is a non-empty string that is not the
+// literal token "null"/"undefined" (some upstream writes store those as text
+// rather than a real SQL NULL). Mirrors the SQL filter in getDataForLander.
+function isUsableDestinationUrl(value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '') return false;
+  return !['null', 'undefined'].includes(trimmed.toLowerCase());
+}
+
 async function getGdnAdsWithCountry(db, log) {
   const started = Date.now();
   const sql = db?.sql;
@@ -30,7 +40,10 @@ async function getGdnAdsWithCountry(db, log) {
       return { code: 401, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
     }
 
-    const ads = await repo.getDataForLander(sql, PENDING);
+    const fetched = await repo.getDataForLander(sql, PENDING);
+    // Never lease an ad without a usable destination_url (defence-in-depth —
+    // getDataForLander already excludes these at the SQL level).
+    const ads = fetched.filter((a) => isUsableDestinationUrl(a.destination_url));
     if (!ads.length) {
       return { code: 400, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
     }

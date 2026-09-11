@@ -13,7 +13,12 @@ async function executeQuery(sql, params = []) {
 }
 
 class NativeAdMetaData {
-  // Get all ads with status = 0 (pending)
+  // Get all ads with status = 0 (pending).
+  //
+  // Ads with an unusable destination_url are excluded here so they are never leased,
+  // never flipped to redirect_status 2/5, and therefore never re-served on a later poll.
+  // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+  // (some upstream writes store the string, not a real NULL).
   static async getAdsByStatus(status) {
     const sql = `
       SELECT
@@ -24,6 +29,9 @@ class NativeAdMetaData {
       LEFT JOIN native_ad ON native_ad.id = native_ad_meta_data.native_ad_id
       LEFT JOIN native_country_only ON native_country_only.id = native_ad.country_only_id
       WHERE native_ad_meta_data.redirect_status = ?
+        AND native_ad_meta_data.destination_url IS NOT NULL
+        AND TRIM(native_ad_meta_data.destination_url) <> ''
+        AND LOWER(TRIM(native_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
       GROUP BY native_ad_meta_data.native_ad_id
       ORDER BY native_ad_meta_data.native_ad_id DESC
       LIMIT 100

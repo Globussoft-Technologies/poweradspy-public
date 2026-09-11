@@ -21,6 +21,10 @@ async function executeQuery(sql, params = []) {
   }
 }
 
+// Ads with an unusable destination_url are excluded here so they are never leased,
+// never flipped to redirect_status=2, and therefore never re-served on a later poll.
+// "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
+// (some upstream writes store the string, not a real NULL).
 async function getDataForLander(status = 0) {
   const sql = `
     SELECT quora_ad_meta_data.quora_ad_id as id,
@@ -30,6 +34,9 @@ async function getDataForLander(status = 0) {
     LEFT JOIN quora_ad ON quora_ad.id = quora_ad_meta_data.quora_ad_id
     LEFT JOIN quora_country_only ON quora_country_only.id = quora_ad.country_only_id
     WHERE quora_ad_meta_data.redirect_status = ?
+      AND quora_ad_meta_data.destination_url IS NOT NULL
+      AND TRIM(quora_ad_meta_data.destination_url) <> ''
+      AND LOWER(TRIM(quora_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
     GROUP BY quora_ad_meta_data.quora_ad_id
     ORDER BY quora_ad_meta_data.quora_ad_id DESC
     LIMIT 100

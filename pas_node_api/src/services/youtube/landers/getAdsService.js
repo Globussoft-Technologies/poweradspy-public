@@ -20,6 +20,16 @@ const { esHits } = require('./transforms');
 const PENDING = 0;
 const NOT_FOUND = 5;
 
+// A destination_url is usable only if it is a non-empty string that is not the
+// literal token "null"/"undefined" (some upstream writes store those as text
+// rather than a real SQL NULL). Mirrors the SQL filter in getDataForLander.
+function isUsableDestinationUrl(value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '') return false;
+  return !['null', 'undefined'].includes(trimmed.toLowerCase());
+}
+
 async function getYoutubeAdsWithCountry(db, log) {
   const started = Date.now();
   const sql = db?.sql;
@@ -39,6 +49,10 @@ async function getYoutubeAdsWithCountry(db, log) {
     const newarr = [];
 
     for (const row of ads) {
+      // Never serve an ad without a usable destination_url (defence-in-depth —
+      // getDataForLander already excludes these at the SQL level).
+      if (!isUsableDestinationUrl(row.destination_url)) continue;
+
       let hits = [];
       try {
         hits = esHits(await elastic.search({
