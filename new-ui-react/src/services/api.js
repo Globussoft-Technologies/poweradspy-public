@@ -329,6 +329,11 @@ export const shouldHideAdForBlockedMedia = (ad = {}) => {
 
   if (!hasBlockedMedia) return false;
 
+  // Pinterest: old ads still carry the legacy "pasimages/..." folder name in
+  // image_url_original — that's the migrated storage path, not a dead link
+  // (unlike bydefault_ads placeholders). Render it instead of hiding the ad.
+  if (ad.network === 'pinterest' && ad.imageOriginalUrl) return false;
+
   const embedUrl = getVideoEmbedUrl(ad.videoOriginalUrl || ad.adUrl);
   return !embedUrl;
 };
@@ -812,7 +817,9 @@ export const mapAdToCard = (raw) => {
           : [])
       : [],
     language: isGoogleTransparency ? raw.language || null : null,
-    imageOriginalUrl: isGoogleTransparency ? gtOriginalImageUrl || null : null,
+    imageOriginalUrl: isGoogleTransparency
+      ? gtOriginalImageUrl || null
+      : (resolvedNetwork === 'pinterest' ? (resolveNasUrl(raw.image_url_original || '') || null) : null),
     videoOriginalUrl: isGoogleTransparency ? liveVideoUrl || null : null,
     // YouTube DISPLAY ads are surfaced under GDN. Show the GDN badge while
     // keeping network:'youtube' so ad-detail / insights still route to YouTube.
