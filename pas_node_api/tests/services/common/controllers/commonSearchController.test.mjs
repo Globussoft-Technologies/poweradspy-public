@@ -176,6 +176,51 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(res.json.mock.calls[0][0].data.length).toBe(1);
   });
 
+  it("normalizes AI posted-date presets before network fan-out", async () => {
+    registryReturns({ facebook: svc("fb") });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { network: ["facebook"], datePreset: "last_30_days" },
+      query: {},
+    }, res);
+
+    const forwardedBody = searchAds.facebook.mock.calls[0][0].body;
+    expect(forwardedBody.post_date_btn_sort).toEqual(expect.arrayContaining([
+      expect.any(Number),
+      expect.any(Number),
+    ]));
+    expect(forwardedBody.post_date_btn_sort[0]).toBeGreaterThan(forwardedBody.post_date_btn_sort[1]);
+    expect(forwardedBody).not.toHaveProperty("datePreset");
+  });
+
+  it("does not suggest TikTok from an unfiltered discovery query for posted-date searches", async () => {
+    registryReturns({ facebook: svc("fb"), tiktok: svc("tt") });
+    searchAds.tiktok.mockResolvedValue({ code: 200, data: [{ id: 2 }], total: 1 });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { network: ["facebook"], datePreset: "last_30_days" },
+      query: {},
+    }, res);
+
+    expect(searchAds.tiktok).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].meta.suggestedNetworks).toEqual([]);
+  });
+
+  it("does not query AdMob for posted-date searches because Post Date is unsupported there", async () => {
+    registryReturns({ facebook: svc("fb"), admob: svc("admob") });
+    admobSearchAds.mockResolvedValue({ code: 200, data: [{ id: 2 }], total: 1 });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { network: "all", datePreset: "last_30_days" },
+      query: {},
+    }, res);
+
+    expect(admobSearchAds).not.toHaveBeenCalled();
+  });
+
   it("planAccess.allowedPlatforms restricts networks", async () => {
     registryReturns({ facebook: svc("fb"), instagram: svc("ig") });
     searchAds.facebook.mockResolvedValue({ code: 200, data: [{ id: 1 }], total: 1 });

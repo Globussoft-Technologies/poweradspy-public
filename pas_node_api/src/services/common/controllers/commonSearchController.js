@@ -17,6 +17,7 @@ const { searchAds: admobSearchAds } = require('../../admob/controllers/adSearchC
 const { getClientIp, getLocation, detectCountry } = require('../../../utils/geoip');
 const { mergeNetworkResults }        = require('../../../utils/resultMerger');
 const { getApplicableNetworks }      = require('../helpers/filterApplicability');
+const { normalizePostedDateFilter }  = require('../helpers/postedDateFilter');
 const { getAdsByAdvertiser: fbAdsByAdvertiser } = require('../../facebook/controllers/getAdsByAdvertiserController');
 const { getAdsByAdvertiser: igAdsByAdvertiser } = require('../../instagram/controllers/getAdsByAdvertiserController');
 const { getAdsByAdvertiser: ytAdsByAdvertiser } = require('../../youtube/controllers/getAdsByAdvertiserController');
@@ -45,6 +46,14 @@ const NETWORK_SEARCH = {
   admob:     admobSearchAds,
 };
 
+// Every network below has a real post_date field in its search index. TikTok
+// is intentionally absent: its index only exposes first_seen, so allowing it
+// through would return unfiltered ads for a posted-date request.
+const POST_DATE_NETWORKS = new Set([
+  'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
+  'reddit', 'quora', 'pinterest', 'google',
+]);
+
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
 
 function withTimeout(promise, ms, name) {
@@ -67,6 +76,11 @@ function withTimeout(promise, ms, name) {
 
 async function searchAllNetworks(req, res) {
   const tStart = Date.now();
+  // AI Search can send a date preset/custom range, while the network search
+  // controllers already share the numeric [end, start] timestamp contract.
+  // Normalize once at the common boundary so every network receives the same
+  // posted-date filter without duplicating date parsing in each controller.
+  const body = normalizePostedDateFilter(req.body || {});
 
   // ── 1. IP-country detection ─────────────────────────────────────────────
   //
@@ -82,8 +96,8 @@ async function searchAllNetworks(req, res) {
   // Previously we hit ip-api.com on every request (uncached, ~100–500ms). With
   // the cache + header fallback, this branch is typically ~0ms now.
   const clientIp = getClientIp(req);
-  const userSentCountry = !!(req.body?.country || req.query?.country) &&
-    (req.body?.country || req.query?.country) !== 'NA';
+  const userSentCountry = !!(body?.country || req.query?.country) &&
+    (body?.country || req.query?.country) !== 'NA';
 
   let ipcountry = null;
   let geoPromise = null;
@@ -97,7 +111,7 @@ async function searchAllNetworks(req, res) {
   // }
 
   // ── 2. Which networks the user wants data from ──────────────────────────
-  let reqNetworks = req.body?.network || req.query?.network || 'all';
+  let reqNetworks = body?.network || req.query?.network || 'all';
   if (typeof reqNetworks === 'string' && reqNetworks !== 'all') {
     reqNetworks = reqNetworks.split(',').map(n => n.trim().toLowerCase());
   } else if (Array.isArray(reqNetworks)) {
@@ -109,16 +123,16 @@ async function searchAllNetworks(req, res) {
   // query Facebook and Instagram, regardless of which networks the user selected.
   // This ensures Meta Ads Library ads only come from Meta's native platforms.
   const isGoogleTransparency =
-    req.body?.google_transparency_ads === true ||
-    req.body?.google_transparency_ads === 1 ||
-    req.body?.google_transparency_ads === 'true' ||
-    req.body?.platform === 18 ||
-    req.body?.platform === '18';
+    body?.google_transparency_ads === true ||
+    body?.google_transparency_ads === 1 ||
+    body?.google_transparency_ads === 'true' ||
+    body?.platform === 18 ||
+    body?.platform === '18';
   if (isGoogleTransparency) {
     reqNetworks = ['google'];
   }
 
-  const isMetaAdsLibrary = req.body?.platform === 15 || req.body?.platform === '15';
+  const isMetaAdsLibrary = body?.platform === 15 || body?.platform === '15';
   if (!isGoogleTransparency && isMetaAdsLibrary && reqNetworks !== 'all') {
     // Intersect user's selected networks with Meta platforms only
     reqNetworks = reqNetworks.filter(n => ['facebook', 'instagram'].includes(n));
@@ -160,7 +174,7 @@ async function searchAllNetworks(req, res) {
   // Both are independent of each other — chaining them serially used to add
   // their latencies; awaiting them together hides the slower one.
   const [sduiApplicable, geoCountry] = await Promise.all([
-    getApplicableNetworks(req.body || {}),
+    getApplicableNetworks(body),
     geoPromise || Promise.resolve(null),
   ]);
   if (!ipcountry && geoCountry) ipcountry = geoCountry;
@@ -168,8 +182,8 @@ async function searchAllNetworks(req, res) {
   // Default request — carries ipBasedCountry so country boosting works for
   // every network (this is important product behaviour for relevance).
   const searchReq = ipcountry
-    ? { ...req, body: { ...(req.body || {}), ipBasedCountry: ipcountry } }
-    : req;
+    ? { ...req, body: { ...body, ipBasedCountry: ipcountry } }
+    : body === req.body ? req : { ...req, body };
 
   // Google-only override: skip the ipBasedCountry injection for Google.
   // Reason: Google's index size + the `_score: desc` priority sort the boost
@@ -178,10 +192,13 @@ async function searchAllNetworks(req, res) {
   // don't show this regression, so they keep the boost for relevance.
   // Google falls back to the original (un-augmented) req — same as the
   // /api/v1/google/ads/search route.
-  const googleSearchReq = req;
+  const googleSearchReq = body === req.body ? req : { ...req, body };
   // Hard restriction: ad budget data only exists on Facebook, Instagram, YouTube.
   // Apply directly here so it works regardless of SDUI config or cache state.
-  const _body = req.body || {};
+  const _body = body;
+  const _postDateFilterActive = Array.isArray(_body.post_date_btn_sort) &&
+    _body.post_date_btn_sort.length === 2 &&
+    _body.post_date_btn_sort.every(value => Number.isFinite(Number(value)));
   const _isActiveBudgetVal = (v) => {
     if (!v || v === 'NA') return false;
     if (Array.isArray(v)) return v.length > 0 && !v.every(x => x === 'NA' || x === '' || x == null);
@@ -217,6 +234,7 @@ async function searchAllNetworks(req, res) {
     (!sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&
     (!_popularitySortActive || _POPULARITY_NETWORKS.has(net)) &&
+    (!_postDateFilterActive || POST_DATE_NETWORKS.has(net)) &&
     isUserRequested(net);
 
   const ms = config.apiTimeouts.networkSearchTimeoutMs;
@@ -308,7 +326,7 @@ async function searchAllNetworks(req, res) {
   // network's results are already sorted by ES; running a second sort here
   // wasted CPU on every single-network search.
   let data = merged;
-  const b = req.body || {};
+  const b = body;
   const admobPosterSortActive = (() => {
     const raw = String(
       b.admobPosterSort ||
@@ -437,13 +455,17 @@ async function searchAllNetworks(req, res) {
       n => isAllowed(n) && NETWORK_FNS[n][0]
     ));
     // Minimal-payload request — only the count matters here
-    const discoveryBody = { ...(req.body || {}), take: 1, page_size: 1, skip: 0 };
+    const discoveryBody = { ...body, take: 1, page_size: 1, skip: 0 };
     const discoveryReq = { ...searchReq, body: { ...searchReq.body, ...discoveryBody } };
     const discoveryGoogReq = { ...googleSearchReq, body: { ...googleSearchReq.body, ...discoveryBody } };
     const discoveryMs = Math.min(ms, 3000); // tighter cap so a slow net can't drag the suggestion
     const discoveryTasks = [];
     for (const [net, [svc, fn, baseReq]] of Object.entries(NETWORK_FNS)) {
       if (!svc || alreadyQueried.has(net)) continue;
+      // Never use an unsupported network as an empty-result suggestion for a
+      // posted-date search; TikTok would ignore the shared date field and
+      // return matches based on first_seen instead.
+      if (_postDateFilterActive && !POST_DATE_NETWORKS.has(net)) continue;
       if (allowedPlatforms && !allowedPlatforms.includes(net)) continue;
       if (sduiApplicable && !sduiApplicable.includes(net)) continue;
       const reqForNet = net === 'google' ? discoveryGoogReq : discoveryReq;
@@ -507,8 +529,8 @@ async function searchAllNetworks(req, res) {
   // hydration on this page. A short page (SQL-hydration/dedup dropped a row)
   // must not stop pagination while thousands of ES matches remain — that was
   // the bug where the grid showed ~7/858 and said "No more ads".
-  const _pageNum = parseInt(req.body?.skip ?? req.query?.skip ?? 0, 10) || 0;
-  const _take = parseInt(req.body?.take ?? req.query?.take ?? 9, 10) || 9;
+  const _pageNum = parseInt(body?.skip ?? req.query?.skip ?? 0, 10) || 0;
+  const _take = parseInt(body?.take ?? req.query?.take ?? 9, 10) || 9;
   const _netsToCheck = reqNetworks === 'all' ? Object.keys(totals) : reqNetworks;
   const hasMore = _netsToCheck.some(net => ((_pageNum + 1) * _take) < (totals[net] || 0));
 

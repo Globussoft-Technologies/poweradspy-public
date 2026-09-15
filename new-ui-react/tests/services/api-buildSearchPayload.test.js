@@ -62,6 +62,17 @@ describe("buildSearchPayload > AI-Meta", () => {
     expect(payload.ai_offer_type).toEqual(["percentage_discount"]);
   });
 
+  it("preserves an AI custom date range for common-search normalization", () => {
+    const payload = buildSearchPayload({
+      post_date_btn_sort: { startDate: "2026-08-13", endDate: "2026-09-11" },
+    });
+
+    expect(payload.post_date_btn_sort).toEqual({
+      startDate: "2026-08-13",
+      endDate: "2026-09-11",
+    });
+  });
+
   it("drops AdMob from the network list when AI-only filters are active in all-network mode", () => {
     const payload = buildSearchPayload({
       activePlatforms: ["facebook", "admob"],

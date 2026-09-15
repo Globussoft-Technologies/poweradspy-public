@@ -127,6 +127,27 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('carries AI posted-date presets through the regular date filter state', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook'],
+      datePreset: 'last_30_days',
+    }, {});
+
+    expect(mapped.filterValues.post_date_btn_sort).toBe('last_30_days');
+  });
+
+  it('prefers an AI custom posted-date range over a preset', () => {
+    const mapped = mapArgsToFilters({
+      datePreset: 'last_30_days',
+      dateRange: { startDate: '2026-08-13', endDate: '2026-09-11' },
+    }, {});
+
+    expect(mapped.filterValues.post_date_btn_sort).toEqual({
+      startDate: '2026-08-13',
+      endDate: '2026-09-11',
+    });
+  });
+
   it('hydrates standard mode-specific fields into live SDUI state', () => {
     const mapped = mapArgsToFilters({
       network: ['google'],

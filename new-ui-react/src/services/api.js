@@ -1404,6 +1404,18 @@ export const buildSearchPayload = (filters = {}) => {
   const post_date_btn_sort = pick('post_date_btn_sort');
   const seen_btn_sort = pick('seen_btn_sort');
   const domain_date_btn_sort = pick('domain_date_btn_sort');
+
+  // Date presets/custom ranges are carried through post_date_btn_sort for AI
+  // Search. Unlike numeric/range filters, a custom date object must not be
+  // collapsed to "NA" by the generic value helper; the common API normalizes
+  // it into the canonical timestamp pair.
+  const dateFilterValue = (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value) && (
+      value.startDate !== undefined || value.start_date !== undefined ||
+      value.endDate !== undefined || value.end_date !== undefined
+    )) return value;
+    return v(value);
+  };
   const imageSize = pick('image_size_filter', 'image_size', 'size');
   const hasAiMeta = pick('has_ai_meta', 'hasAiMeta');
   const hasAiMetaRequested = hasAiMeta === true || hasAiMeta === 1 || hasAiMeta === '1' || hasAiMeta === 'true';
@@ -1615,7 +1627,7 @@ export const buildSearchPayload = (filters = {}) => {
     views_sort: order_column === 'views' ? 'views_sort' : 'NA',
     adBudget_sort: order_column === 'ad_budget' ? 'adBudget_sort' : 'NA',
     seen_btn_sort: v(seen_btn_sort),
-    post_date_btn_sort: v(post_date_btn_sort),
+    post_date_btn_sort: dateFilterValue(post_date_btn_sort),
     domain_date_btn_sort: v(domain_date_btn_sort),
     // Per-platform filter skipping: only include filter fields that at least one
     // resolved network supports. Unsupported fields are sent as 'NA' so the backend

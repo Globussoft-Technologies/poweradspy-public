@@ -16,6 +16,7 @@
 // DS `args` field reference (see PAYLOAD_API_GUIDE.md):
 //   keyword | advertiser | domain (mutually exclusive, ALL may be absent for a
 //   category-only search), network[], type, country[], adcategory, subCategory,
+//   datePreset/dateRange (posted-date search),
 //   gender, verified, order_column, order_by, call_to_action[] (array),
 //   affiliate[], ecommerce[], funnel[], market_platform[], source[],
 //   ad_position[], nativeNetwork[], budget[] (low/medium/high),
@@ -591,6 +592,34 @@ export function mapArgsToFilters(args = {}, config = {}) {
     applyStableField(findFilter(config, ids), field, raw, filterValues, unmapped, field, recordUnmapped);
   }
 
+  // Keep AI posted-date intent in the same state slot used by the regular date
+  // picker. The common API turns presets/custom ranges into its canonical
+  // [endUnixSeconds, startUnixSeconds] form before querying each network.
+  const dateRange = args.dateRange ?? args.date_range;
+  const customDateRange = dateRange ?? (
+    args.startDate != null && args.endDate != null
+      ? { startDate: args.startDate, endDate: args.endDate }
+      : null
+  );
+  const datePreset = args.datePreset ?? args.date_preset;
+  const isActiveDateValue = (value) => {
+    if (value == null || value === '') return false;
+    if (typeof value === 'string') {
+      return !['na', 'all', 'all_time'].includes(value.trim().toLowerCase());
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return [value.startDate, value.start_date, value.endDate, value.end_date]
+        .some((entry) => entry != null && entry !== '');
+    }
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  };
+  const dateValue = isActiveDateValue(customDateRange)
+    ? customDateRange
+    : (isActiveDateValue(datePreset) ? datePreset : args.post_date_btn_sort);
+  const dateIsActive = isActiveDateValue(dateValue);
+  if (dateIsActive) filterValues.post_date_btn_sort = dateValue;
+
   return {
     searchQuery,
     searchIn,
@@ -629,6 +658,13 @@ export function normalizeAiSearchArgs(payload = {}) {
     'ai_colors',
     'ai_category_id',
     'ai_subcategory_id',
+    'datePreset',
+    'date_preset',
+    'dateRange',
+    'date_range',
+    'startDate',
+    'endDate',
+    'post_date_btn_sort',
   ];
 
   let changed = false;

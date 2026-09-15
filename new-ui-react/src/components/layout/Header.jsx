@@ -597,12 +597,12 @@ const Header = ({
     isAdsLibraryPage && !guest?.isRestricted && sdui.totalActiveFilters > 0;
 
   return (
-    <header className="h-16 2xl:h-20 py-2 px-3 sm:px-5 flex items-center justify-between sticky top-0 z-40 bg-theme-bg/95 backdrop-blur-md border-b border-theme-border">
-      <div className="flex items-center gap-4">
+    <header className="relative flex h-16 min-w-0 shrink-0 items-center justify-between gap-2 overflow-visible border-b border-theme-border bg-theme-bg/95 px-3 py-2 backdrop-blur-md sticky top-0 z-40 2xl:h-20 sm:px-5">
+      <div className="flex min-w-0 shrink-0 items-center gap-4">
         <img
           src={powerAdSpyLogo}
           alt="PowerAdSpy"
-          className="h-8 sm:h-9 2xl:h-12 cursor-pointer"
+          className="h-8 w-auto max-w-[126px] cursor-pointer sm:h-9 sm:max-w-none 2xl:h-12"
         />
       </div>
 
@@ -614,11 +614,18 @@ const Header = ({
       )}
 
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
-        <div className="flex-1 relative h-full flex items-center mx-2 xl:mx-4">
+        <div className="relative mx-1 flex h-full min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div
             className={`
-               inset-0 transition-all duration-300 ease-in-out ${aiMode ? "max-w-4xl" : "max-w-2xl"} mx-auto
+              inset-0 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out
+              ${
+                isSearchOpenMobile
+                  ? "max-w-none"
+                  : aiMode
+                    ? "max-w-none md:max-w-[560px] lg:max-w-[720px] xl:max-w-4xl"
+                    : "max-w-none md:max-w-[440px] lg:max-w-[560px] xl:max-w-2xl"
+              }
               ${
                 isSearchOpenMobile
                   ? "fixed inset-0 z-50 bg-theme-bg/98 backdrop-blur-xl flex items-center px-4 gap-3 pointer-events-auto"
@@ -974,7 +981,8 @@ const Header = ({
         </div>
       )}
 
-      <div className="relative flex items-center gap-1.5 sm:gap-2">
+      {/* Keep actions in normal flow so the search slot shrinks instead of overlapping them. */}
+      <div className="relative flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
         {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
             className="md:hidden sm:p-1.5 text-theme-text-muted hover:text-theme-text transition-colors"
@@ -991,17 +999,21 @@ const Header = ({
               if (setSearchQuery) setSearchQuery("");
               if (setActiveTab) setActiveTab("Newest");
             }}
-            className="flex items-center gap-0.5 px-1.5 py-1.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow md:absolute md:right-full md:top-1/2 md:mr-2 md:-translate-y-1/2 md:gap-1.5 md:px-3 md:text-[11px]"
+            title={t("clear_filters", "Clear filters")}
+            aria-label={t("clear_filters", "Clear filters")}
+            className="flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 px-1.5 py-1.5 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow sm:gap-1.5 sm:px-3 sm:text-[11px]"
           >
             <X size={12} />
-            {sdui.totalActiveFilters === 1 ? t("clear_x_filters", { count: sdui.totalActiveFilters }) : t("clear_x_filters_plural", { count: sdui.totalActiveFilters })}
+            <span className="hidden sm:inline">
+              {sdui.totalActiveFilters === 1 ? t("clear_x_filters", { count: sdui.totalActiveFilters }) : t("clear_x_filters_plural", { count: sdui.totalActiveFilters })}
+            </span>
           </button>
         )}
         {/* Share Dashboard button — only for logged-in users, not on guest/share routes.
             `order-1` pulls it to the right side of the flex row (next to the
             now-hidden fullscreen toggle) without moving the JSX in source. */}
         {!isLanding && !isGuestMode && !guest?.isGuest && (
-          <div className="relative group/share order-1">
+          <div className="relative hidden group/share order-1 lg:block">
             <button
               onClick={handleShareDashboard}
               disabled={shareLoading}
@@ -1039,7 +1051,7 @@ const Header = ({
 
         {/* Notification bell — logged-in users only */}
         {!isLanding && !isGuestMode && !guest?.isGuest && (
-          <div className="relative" ref={notifRef}>
+          <div className="relative hidden sm:block" ref={notifRef}>
             <button
               id="notification-bell"
               onClick={() => setNotifOpen((prev) => !prev)}
@@ -1065,7 +1077,7 @@ const Header = ({
         )}
 
         {/* Language Switcher */}
-        <div className="relative" ref={langRef}>
+        <div className="relative hidden sm:block" ref={langRef}>
           <button
             onClick={() => setLangOpen((prev) => !prev)}
             title={t("language")}
@@ -1106,7 +1118,7 @@ const Header = ({
             --color-* vars updates in lockstep. */}
         <AnimatedThemeToggler
           title={t("toggle_theme", "Toggle theme")}
-          className="w-7 h-7 2xl:w-9 2xl:h-9 flex items-center justify-center rounded-lg text-theme-text-muted hover:text-theme-text hover:bg-theme-text/[0.08] transition-all shrink-0 [&_svg]:w-4 [&_svg]:h-4 2xl:[&_svg]:w-[18px] 2xl:[&_svg]:h-[18px]"
+          className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg text-theme-text-muted transition-all hover:bg-theme-text/[0.08] hover:text-theme-text sm:flex [&_svg]:h-4 [&_svg]:w-4 2xl:h-9 2xl:w-9 2xl:[&_svg]:h-[18px] 2xl:[&_svg]:w-[18px]"
         />
 
         {/* Fullscreen toggle — currently hidden via `hidden` class; the
