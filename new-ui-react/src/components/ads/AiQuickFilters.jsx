@@ -57,17 +57,23 @@ const AiQuickFilters = ({
   searchIn,
   exactSearch,
   filterPlatformSupport,
+  aiPrompt = "",
+  activeQuickFilterId,
+  onQuickFilterChange,
 }) => {
   const presets = useMemo(() => resolveAiQuickFilterPresets(doc), [doc]);
   // `null` means that the batch probe has not answered for this search context.
   // An empty object is a completed response where no preset is eligible.
   const [presetAvailability, setPresetAvailability] = useState(null);
 
-  const activePreset = findActiveAiQuickFilterPreset(
-    filterValues,
-    doc,
-    presets,
-  );
+  // A natural-language AI result must not light up a preset merely because
+  // its AI fields happen to be equivalent. Only an explicit planner value or
+  // a direct quick-filter interaction may select the visible shortcut.
+  const activePreset = activeQuickFilterId !== undefined
+    ? presets.find((preset) => preset.id === activeQuickFilterId) || null
+    : String(aiPrompt || '').trim()
+      ? null
+      : findActiveAiQuickFilterPreset(filterValues, doc, presets);
   const hasAiFilters = hasActiveAiFilters(filterValues, doc);
 
   useEffect(() => {
@@ -145,6 +151,7 @@ const AiQuickFilters = ({
       return;
     }
     discardAiFilterDraft();
+    onQuickFilterChange?.(presetId);
     onApply?.(
       replaceAiFilters(filterValues, doc, replacement),
       presetId

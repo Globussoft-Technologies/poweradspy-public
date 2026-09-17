@@ -148,6 +148,94 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('maps open-ended likes ranges without turning the missing bound into zero', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook'],
+      likes: { min: 500 },
+    }, {
+      sidebar: [{
+        filters: [{
+          _id: 'likes_range',
+          type: 'range_slider',
+          min: 0,
+          max: 1000000,
+        }],
+      }],
+    });
+
+    expect(mapped.filterValues.likes_range).toEqual([500, 1000000]);
+  });
+
+  it('keeps the subject keyword when a bounded likes range is also requested', () => {
+    const mapped = mapArgsToFilters({
+      keyword: 'shoe',
+      likes: { max: 4500 },
+    }, {
+      sidebar: [{
+        filters: [{
+          _id: 'likes_range',
+          type: 'range_slider',
+          min: 0,
+          max: 1000000,
+        }],
+      }],
+    });
+
+    expect(mapped.searchQuery).toBe('shoe');
+    expect(mapped.filterValues.likes_range).toEqual([0, 4500]);
+  });
+
+  it('maps a closed likes range without changing either boundary', () => {
+    const mapped = mapArgsToFilters({
+      likes: [500, 2000],
+    }, {
+      sidebar: [{
+        filters: [{
+          _id: 'likes_range',
+          type: 'range_slider',
+          min: 0,
+          max: 1000000,
+        }],
+      }],
+    });
+
+    expect(mapped.filterValues.likes_range).toEqual([500, 2000]);
+  });
+
+  it('keeps impressions sorting distinct from popularity sorting', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook'],
+      order_column: 'impressions',
+      order_by: 'desc',
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'sort_by',
+          type: 'radio',
+          options: [{ label: 'Impressions', value: 'impression' }],
+        }],
+      }],
+    });
+
+    expect(mapped.sortBy).toBe('impression');
+    expect(mapped.sortBy).not.toBe('popular');
+  });
+
+  it('does not copy planner metadata into mapped search arguments', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: { network: ['facebook'] },
+      planning: {
+        search_term_role: 'unsupported',
+        consumed_phrases: ['highest views'],
+        unsupported: [{ operation: 'sort', field: 'view', reason: 'unsupported' }],
+        quick_filter: '',
+      },
+    });
+
+    expect(normalized).not.toHaveProperty('planning');
+    expect(mapArgsToFilters(normalized, {}).filterValues).toEqual({});
+  });
+
   it('hydrates standard mode-specific fields into live SDUI state', () => {
     const mapped = mapArgsToFilters({
       network: ['google'],

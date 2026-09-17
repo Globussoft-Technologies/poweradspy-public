@@ -39,6 +39,12 @@ import { useGuest } from "./hooks/useGuest";
 import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
+import {
+  formatPlanningUnsupportedMessage,
+  getPlanningQuickFilterId,
+  getPlanningUnsupported,
+  hasExecutableMappedSearch,
+} from "./utils/aiSearchPlanning";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
 import { ADS_PAGE_SIZE, resolvePaginationState } from "./utils/adsPagination";
 import { Check, X, Loader2, Info } from "lucide-react";
@@ -495,6 +501,10 @@ const App = () => {
   const [adsMeta, setAdsMeta] = useState({});
   const [availableNetworks, setAvailableNetworks] = useState([]);
   const [noDataMessage, setNoDataMessage] = useState(null);
+  // Explains planner requests that contain only an unsupported operation. This
+  // is separate from the ordinary empty-search state so the UI never says
+  // "No ads found" when no search was actually executed.
+  const [aiCapabilityMessage, setAiCapabilityMessage] = useState(null);
   const [useSample, setUseSample] = useState(USE_SAMPLE_DATA);
 
   const [isHeaderScrolled, setIsHeaderScrolled] = useState(false);
@@ -1646,6 +1656,7 @@ const App = () => {
     // 25) before the real France+Réunion request settles (24). Page > 0 responses
     // below can still fill the count if a page-0 total is missing.
     setAdsMeta({});
+    setAiCapabilityMessage(null);
     setHasMore(true);
     emptyPageStreakRef.current = 0;
     // The actual fetch (loadAds, below) is deliberately debounced ~120ms past
@@ -2126,6 +2137,9 @@ const App = () => {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiRunIdRef = useRef(0);
   const aiAbortRef = useRef(null);
+  // `undefined` keeps legacy/manual preset inference available; null means an
+  // AI plan explicitly selected no visible Quick Filter preset.
+  const [aiQuickFilterId, setAiQuickFilterId] = useState(undefined);
 
   // Keep every Ask AI reset path consistent: clear the DS-applied payload,
   // forget the user-visible prompt, restore the All-networks view, and cancel
@@ -2135,6 +2149,8 @@ const App = () => {
     aiAbortRef.current = null;
     aiRunIdRef.current += 1;
     setAiSearchLoading(false);
+    setAiQuickFilterId(undefined);
+    setAiCapabilityMessage(null);
     dispatch(setSearchQuery(''));
     dispatch(setAiPrompt(''));
     dispatch(setSearchIn('keyword'));
@@ -2179,6 +2195,8 @@ const App = () => {
       // the clicked advertiser/platform is the only active context.
       sdui.clearAll?.();
     }
+    setAiQuickFilterId(undefined);
+    setAiCapabilityMessage(null);
     // Every handleSearch call is a genuine keyword/advertiser/domain search, never an AI
     // one (runAiSearch is a separate path) — clear any leftover ui.aiPrompt so it can't
     // stay stale from an earlier AI search the user didn't explicitly exit. searchBannerVisible
@@ -2228,6 +2246,7 @@ const App = () => {
     // Store the raw user prompt separately so Ask AI keeps showing exactly what
     // the user typed even when the DS payload rewrites the internal query.
     dispatch(setAiPrompt(trimmed));
+    setAiCapabilityMessage(null);
 
     // Abort a previous run before starting another one; the run id remains a
     // second guard for responses that already crossed the network boundary.
@@ -2263,7 +2282,11 @@ const App = () => {
 
     // Commit a mapped payload to app state; the debounced loadAds effect refetches.
     // setAllFilters replaces the whole filter map, clearing any stale manual filters.
-    const commit = (mapped) => {
+    const commit = (mapped, planning = null) => {
+      setAiCapabilityMessage(null);
+      // Quick-filter highlighting is driven only by the planner's explicit
+      // preset marker. Equivalent AI fields must remain ordinary AI filters.
+      setAiQuickFilterId(getPlanningQuickFilterId(planning));
       sdui.setAllFilters?.(mapped.filterValues || {});
       if (mapped.activePlatforms?.length) {
         sdui.setActivePlatforms?.(mapped.activePlatforms);
@@ -2297,19 +2320,58 @@ const App = () => {
 
       let matchedIndex = -1;
       let matchedMapped = null;
+      let matchedPlanning = null;
+      let firstExecutableCandidate = null;
+      const unsupportedOnlyItems = [];
       const probeDiagnostics = [];
-      // Probe each tier in order; stop at the first that returns results.
-      for (let i = 0; i < payloads.length; i++) {
-        const tier = payloads[i] || {};
+      const plannedTiers = payloads.map((tierValue) => {
+        const tier = tierValue || {};
         const mapped = mapArgsToFilters(normalizeAiSearchArgs(tier), sdui.config);
+        const unsupported = getPlanningUnsupported(tier.planning);
+        return {
+          tier,
+          mapped,
+          unsupported,
+          hasExecutableSearch: hasExecutableMappedSearch(mapped),
+        };
+      });
+      // If any fallback tier explicitly reports an unsupported operation, do
+      // not probe empty tiers: an empty/default tier would otherwise become a
+      // broad search for an instruction-only prompt.
+      const hasPlanningUnsupported = plannedTiers.some(
+        ({ unsupported }) => unsupported.length > 0,
+      );
+
+      // Probe each executable tier in order; stop at the first that returns results.
+      for (let i = 0; i < plannedTiers.length; i++) {
+        const {
+          tier,
+          mapped,
+          unsupported,
+          hasExecutableSearch,
+        } = plannedTiers[i];
         const diagnostic = {
           tier: i,
           label: tier.label || null,
           argsFields: Object.keys(tier.args || {}),
           fullPayloadFields: Object.keys(tier.full_payload || {}),
+          planningFields: Object.keys(tier.planning || {}),
+          unsupportedCount: unsupported.length,
+          quickFilterRequested: Boolean(getPlanningQuickFilterId(tier.planning)),
           mappedFields: Object.keys(mapped.filterValues || {}),
           unmapped: mapped.unmappedDetails || [],
         };
+
+        if (hasPlanningUnsupported && !hasExecutableSearch) {
+          diagnostic.result = 'unsupported_only';
+          unsupportedOnlyItems.push(...unsupported);
+          probeDiagnostics.push(diagnostic);
+          continue;
+        }
+        if (hasExecutableSearch && !firstExecutableCandidate) {
+          firstExecutableCandidate = { index: i, mapped, planning: tier.planning || null };
+        }
+
         let data = null;
         try {
           data = await fetchAds(buildProbeParams(mapped), {
@@ -2325,19 +2387,56 @@ const App = () => {
         diagnostic.total = totalFromData(data);
         diagnostic.result = diagnostic.total > 0 ? 'selected' : 'empty';
         probeDiagnostics.push(diagnostic);
-        if (diagnostic.total > 0) { matchedIndex = i; matchedMapped = mapped; break; }
+        if (diagnostic.total > 0) {
+          matchedIndex = i;
+          matchedMapped = mapped;
+          matchedPlanning = tier.planning || null;
+          break;
+        }
       }
 
       if (matchedIndex === -1) {
-        // No tier had results — commit the initial tier so the user still sees its
-        // filters + the normal empty state.
-        matchedIndex = 0;
-        matchedMapped = mapArgsToFilters(normalizeAiSearchArgs(payloads[0]), sdui.config);
+        if (firstExecutableCandidate) {
+          // A valid subject/filter had no results. Commit that supported tier so
+          // the existing empty-result behavior remains unchanged.
+          matchedIndex = firstExecutableCandidate.index;
+          matchedMapped = firstExecutableCandidate.mapped;
+          matchedPlanning = firstExecutableCandidate.planning;
+        } else if (hasPlanningUnsupported) {
+          const message = formatPlanningUnsupportedMessage(unsupportedOnlyItems);
+          // No Common Ads Search call was made, so show a capability state rather
+          // than the generic empty-search copy or a stale result list.
+          setAds([]);
+          setAdsMeta({});
+          setAvailableNetworks([]);
+          setHasMore(false);
+          setLoadingMore(false);
+          setNoDataMessage(null);
+          setAiQuickFilterId(null);
+          setAiCapabilityMessage(message);
+          setError(null);
+          showToast(message, "notice", 8000);
+          return;
+        } else {
+          // Preserve the pre-planning behavior for an unrecognized prompt that
+          // contains no unsupported metadata.
+          matchedIndex = 0;
+          matchedMapped = plannedTiers[0].mapped;
+          matchedPlanning = plannedTiers[0].tier.planning || null;
+        }
       }
 
-      commit(matchedMapped);
+      commit(matchedMapped, matchedPlanning);
 
       if (matchedIndex > 0) showToast("Broadened your search to find results", "success");
+      const selectedUnsupported = getPlanningUnsupported(matchedPlanning);
+      if (selectedUnsupported.length > 0) {
+        showToast(
+          formatPlanningUnsupportedMessage(selectedUnsupported),
+          "notice",
+          8000,
+        );
+      }
       if (matchedMapped.unmappedDetails?.length) {
         console.warn('[ai-search] unmapped planner fields were not applied', {
           fields: matchedMapped.unmappedDetails,
@@ -3025,6 +3124,9 @@ const App = () => {
             sdui={sdui}
             aiPrompt={ui.aiPrompt}
             aiSearchLoading={aiSearchLoading}
+            aiQuickFilterId={aiQuickFilterId}
+            onAiQuickFilterChange={setAiQuickFilterId}
+            aiCapabilityMessage={aiCapabilityMessage}
             searchQuery={ui.searchQuery}
             searchIn={ui.searchIn}
             exactSearch={ui.exactSearch}
@@ -3274,17 +3376,17 @@ const App = () => {
               : 'top-[140px] slide-in-from-top-4'
           }`}
           style={{
-            backgroundColor: toast.type === 'info'
+            backgroundColor: toast.type === 'info' || toast.type === 'notice'
               ? 'rgba(59, 130, 246, 0.15)'
               : toast.type === 'success'
                 ? 'rgba(34, 197, 94, 0.15)'
                 : 'rgba(239, 68, 68, 0.15)',
-            borderColor: toast.type === 'info'
+            borderColor: toast.type === 'info' || toast.type === 'notice'
               ? 'rgba(59, 130, 246, 0.35)'
               : toast.type === 'success'
                 ? 'rgba(34, 197, 94, 0.3)'
                 : 'rgba(239, 68, 68, 0.3)',
-            color: toast.type === 'info'
+            color: toast.type === 'info' || toast.type === 'notice'
               ? '#60a5fa'
               : toast.type === 'success'
                 ? '#4ade80'
@@ -3292,7 +3394,7 @@ const App = () => {
           }}
         >
           <div className={`w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-white ${
-            toast.type === 'info'
+            toast.type === 'info' || toast.type === 'notice'
               ? 'bg-blue-500'
               : toast.type === 'success'
                 ? 'bg-green-500'

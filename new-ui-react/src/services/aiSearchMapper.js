@@ -186,7 +186,13 @@ function applyStableField(filter, stateKey, rawValues, filterValues, unmapped, f
 function mapSortValue(orderColumn) {
   const c = norm(orderColumn);
   if (/post ?date|date|created|newest|recent/.test(c)) return 'newest';
-  if (/popular|popularity|likes|engagement|impression/.test(c)) return 'popular';
+  // Keep metric sorts distinct. Mapping impressions to Popular silently
+  // changed the user's requested ordering and sent popularity_sort instead.
+  if (/impression/.test(c)) return 'impressions';
+  if (/like/.test(c)) return 'likes';
+  if (/comment/.test(c)) return 'comments';
+  if (/share/.test(c)) return 'shares';
+  if (/popular|popularity|engagement/.test(c)) return 'popular';
   if (/running|duration|active|longest/.test(c)) return 'running_longest';
   return null;
 }
@@ -543,17 +549,51 @@ export function mapArgsToFilters(args = {}, config = {}) {
     ['ctr', FILTER_IDS.ctr],
     ['adBudget', FILTER_IDS.adBudget],
   ];
+  const normalizeNumericRange = (raw) => {
+    let lower;
+    let upper;
+    if (Array.isArray(raw) && raw.length === 2) {
+      [lower, upper] = raw;
+    } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      lower = raw.min ?? raw.lower ?? raw.lower_bound ?? raw.gte;
+      upper = raw.max ?? raw.upper ?? raw.upper_bound ?? raw.lte;
+    } else {
+      return null;
+    }
+
+    // Common Ads Search consumes inclusive numeric pairs. Use open numeric
+    // bounds for planner phrases such as "likes higher than 500" instead of
+    // turning a missing upper bound into zero or dropping the filter.
+    const isOpenBound = (value) => value == null || ['na', ''].includes(String(value).trim().toLowerCase());
+    const normalizedLower = isOpenBound(lower) ? null : Number(lower);
+    const normalizedUpper = isOpenBound(upper) ? null : Number(upper);
+    if ((normalizedLower !== null && !Number.isFinite(normalizedLower)) ||
+      (normalizedUpper !== null && !Number.isFinite(normalizedUpper))) {
+      return null;
+    }
+    return { lower: normalizedLower, upper: normalizedUpper };
+  };
+
   for (const [field, ids] of RANGES) {
     const raw = args[field];
-    if (!Array.isArray(raw) || raw.length !== 2) continue;
-    const nums = raw.map(Number);
-    if (nums.some((n) => Number.isNaN(n))) {
+    if (raw == null || raw === '') continue;
+    const nums = normalizeNumericRange(raw);
+    if (!nums) {
       recordUnmapped(field, raw, 'range must contain exactly two numeric bounds');
       continue;
     }
     const filter = findFilter(config, ids);
-    if (filter) filterValues[filter._id] = nums;
-    else recordUnmapped(field, raw, 'filter is not available in live SDUI');
+    if (filter) {
+      const filterMin = Number(filter.min ?? 0);
+      const filterMax = Number(filter.max ?? 1000000);
+      const lower = nums.lower ?? (Number.isFinite(filterMin) ? filterMin : 0);
+      const upper = nums.upper ?? (Number.isFinite(filterMax) ? filterMax : lower);
+      if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower > upper) {
+        recordUnmapped(field, raw, 'range is outside the live filter bounds');
+        continue;
+      }
+      filterValues[filter._id] = [lower, upper];
+    } else recordUnmapped(field, raw, 'filter is not available in live SDUI');
   }
 
   // ── Continuous age (lower_age/upper_age) — our widget is discrete brackets,
@@ -637,7 +677,9 @@ export function mapArgsToFilters(args = {}, config = {}) {
  * body. The UI maps editable filters from `args`, but some upstream builds may
  * only surface `exact_search` in `full_payload`. Merge that single contract
  * field in so the AI flow stays exact-match-safe without depending on a
- * duplicated upstream shape.
+ * duplicated upstream shape. Planner metadata is read only for removing a
+ * stale instruction-derived keyword and is never copied into the mapped search
+ * arguments.
  *
  * @param {{ args?: object, full_payload?: object }} payload
  * @returns {object}
@@ -672,6 +714,26 @@ export function normalizeAiSearchArgs(payload = {}) {
   for (const key of passthroughKeys) {
     if (merged[key] != null || fullPayload[key] == null) continue;
     merged[key] = fullPayload[key];
+    changed = true;
+  }
+
+  // Older planner responses could leave an instruction-derived keyword in
+  // args even after adding planning metadata. Do not let that keyword broaden
+  // the search: only a term explicitly classified as a subject is eligible,
+  // and consumed phrases are never search terms. This does not touch genuine
+  // subject keywords or mutate the planner metadata returned by DS.
+  const planning = payload?.planning;
+  const searchTermRole = String(planning?.search_term_role || '').trim().toLowerCase();
+  const consumedPhrases = Array.isArray(planning?.consumed_phrases)
+    ? planning.consumed_phrases.map((phrase) => String(phrase || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const keyword = String(merged.keyword || '').trim().toLowerCase();
+  const nonSubjectRole = ['instruction', 'unsupported', 'ambiguous'].includes(searchTermRole);
+  const keywordWasConsumed = keyword && consumedPhrases.some((phrase) =>
+    phrase === keyword || phrase.includes(keyword),
+  );
+  if (keyword && (nonSubjectRole || keywordWasConsumed)) {
+    delete merged.keyword;
     changed = true;
   }
 

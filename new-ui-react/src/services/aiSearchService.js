@@ -17,7 +17,7 @@ const authHeaders = () => (getPASToken() ? { Authorization: `Bearer ${getPASToke
  *
  * @param {string} prompt
  * @param {{ signal?: AbortSignal }} [opts]
- * @returns {Promise<{ ref_id: string, prompt: string, payloads: Array<{label: string, args: object}>, model: string, usage: object }>}
+ * @returns {Promise<{ ref_id: string, prompt: string, payloads: Array<{label: string, args: object, full_payload?: object, planning?: object}>, model: string, usage: object }>}
  * @throws {Error} on non-200 (message carries the backend's reason)
  */
 export async function planAiSearch(prompt, { signal } = {}) {

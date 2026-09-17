@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles } from "lucide-react";
+import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles, Info } from "lucide-react";
 
 // PRD FR-11 — networks with materially lower crawled ad volume than the rest of
 // the platform today. When every currently-active platform is one of these, the
@@ -204,6 +204,9 @@ const AdGrid = ({
   exactSearch,
   aiPrompt = "",
   aiSearchLoading = false,
+  aiQuickFilterId,
+  onAiQuickFilterChange,
+  aiCapabilityMessage = null,
 }) => {
   const {
     activePlatforms,
@@ -1080,6 +1083,9 @@ const AdGrid = ({
             document={aiFiltersDoc}
             filterValues={filterValues}
             onApply={setAllFilters}
+            aiPrompt={aiPrompt}
+            activeQuickFilterId={aiQuickFilterId}
+            onQuickFilterChange={onAiQuickFilterChange}
             isRestricted={
               !!guest?.isRestricted || !!isFilterRestricted?.("ai_meta")
             }
@@ -1254,8 +1260,31 @@ const AdGrid = ({
           </div>
         )}
 
+        {/* A planner-only operation gets a capability state rather than the
+            misleading generic "No ads found" state or a broad fallback search. */}
+        {!error && aiCapabilityMessage && ads.length === 0 && !loadingMore && (
+          <div
+            className="flex flex-col items-center justify-center gap-5 py-32"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-[#8b5cf6]/25 bg-[#8b5cf6]/10">
+              <Info size={36} className="text-[#8b5cf6]" />
+            </div>
+            <div className="space-y-2 text-center">
+              <h3 className="text-lg font-bold text-theme-text-muted">
+                This request needs a supported filter
+              </h3>
+              <p className="max-w-sm text-xs leading-relaxed text-theme-text-muted">
+                {aiCapabilityMessage}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Platform suggestion banner — pinned to top */}
         {!error &&
+          !aiCapabilityMessage &&
           ads.length === 0 &&
           !loadingMore &&
           (() => {
@@ -1336,7 +1365,7 @@ const AdGrid = ({
             empty state below when every active platform is a known low-volume
             network, so the message explains the sparse coverage rather than
             implying the search terms were wrong. */}
-        {!error && ads.length === 0 && !loadingMore && activePlatforms.length > 0 &&
+        {!error && !aiCapabilityMessage && ads.length === 0 && !loadingMore && activePlatforms.length > 0 &&
           activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase())) && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">
@@ -1363,7 +1392,7 @@ const AdGrid = ({
         )}
 
         {/* Empty state (generic) */}
-        {!error && ads.length === 0 && !loadingMore &&
+        {!error && !aiCapabilityMessage && ads.length === 0 && !loadingMore &&
           !(activePlatforms.length > 0 && activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase()))) && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">

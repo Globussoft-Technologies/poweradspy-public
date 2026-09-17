@@ -158,6 +158,9 @@ describe("AiQuickFilters", () => {
       country_filter: ["US"],
       ai_category_id: ["1009"],
       ai_subcategory_id: ["10090001", "10090002"],
+    }, {
+      filterName: "quick_filter_b2b_saas",
+      entryPoint: "quick_filters",
     });
   });
 
@@ -200,6 +203,37 @@ describe("AiQuickFilters", () => {
     await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     expect(
       screen.getByRole("button", { name: /TikTok UGC/i }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not infer a quick filter from equivalent AI fields in an AI plan", async () => {
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ ai_intent: ["app_install"] }}
+        aiPrompt="Find ads promoting mobile app installs"
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", { name: /App Install/i }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("highlights only the preset explicitly named by the planner", async () => {
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ ai_intent: ["app_install"] }}
+        aiPrompt="Apply the App Install Quick Filter"
+        activeQuickFilterId="app_install"
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", { name: /App Install/i }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -399,6 +433,6 @@ describe("AiQuickFilters", () => {
     await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByTitle("Clear all AI filters"));
 
-    expect(onApply).toHaveBeenCalledWith({ country_filter: ["US"] });
+    expect(onApply).toHaveBeenCalledWith({ country_filter: ["US"] }, null);
   });
 });

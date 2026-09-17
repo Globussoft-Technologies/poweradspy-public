@@ -27,7 +27,9 @@
  *   POST {baseUrl}/search/payload      { prompt } → 202 { ref_id, status:"pending" }
  *        (planning runs ASYNC in the background — never blocks this call)
  *   GET  {baseUrl}/search/payload/{id}           → { status:"pending"|"ready"|"error",
- *        prompt, payloads[], model, usage, grounding, error? } — poll until not pending
+ *        prompt, payloads[], model, usage, grounding, error? } — poll until not pending.
+ *        Each payload item is forwarded unchanged, including DS `planning`
+ *        control metadata used by the frontend orchestration layer.
  *   GET  {baseUrl}/health
  */
 
@@ -162,6 +164,10 @@ router.post(
           data: {
             ref_id: d.ref_id || refId,
             prompt: d.prompt || prompt,
+            // Preserve the complete DS item. In particular, do not rebuild or
+            // strip `planning`: it is UI/control metadata, not a Common Search
+            // request field, and the frontend needs the exact unsupported and
+            // explicit quick-filter markers returned by DS.
             payloads: Array.isArray(d.payloads) ? d.payloads : [],
             model: d.model ?? null,
             usage: d.usage ?? null,
