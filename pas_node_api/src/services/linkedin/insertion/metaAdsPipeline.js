@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * LinkedIn lnAdsData pipeline — port of adsDataController::adsdata()
  * (api_linkedin lines 78-1879). See ../../../../KT-LINKEDIN-MIGRATION.md.
@@ -545,11 +547,8 @@ function extractDomain(url) {
   // PHP parse_url('null') / '' → no host → domain ''. Treat the literal "null" (common in
   // ads-library payloads with no destination) and unparseable values as no-domain.
   if (s === '' || s.toLowerCase() === 'null') return '';
-  try {
-    const u = new URL(/^https?:\/\//i.test(s) ? s : `http://${s}`);
-    const h = (u.hostname || '').replace(/^www\./i, '');
-    return h.toLowerCase() === 'null' ? '' : h;
-  } catch { return ''; }
+  const h = getLastUrlHostname(s).replace(/^www\./i, '');
+  return h.toLowerCase() === 'null' ? '' : h;
 }
 function safeJson(s) {
   if (s === undefined || s === null) return null;

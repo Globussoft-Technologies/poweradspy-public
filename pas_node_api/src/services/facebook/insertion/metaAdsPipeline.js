@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * Facebook metaAdsData pipeline — port of adsDataController::adsdata().
  * See docs/insertion/PHP-SPEC-metaAdsData.md for the authoritative behaviour.
@@ -703,7 +705,7 @@ function sourceIs(n, kind) {
 function arr1(v) { return Array.isArray(v) ? v[0] : v; }
 function extractDomain(url) {
   if (!url) return '';
-  try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; }
+  return getLastUrlHostname(url).replace(/^www\./, '');
 }
 function computeDaysRunning(postDate, lastSeenEpoch) {
   // postDate may be a DATETIME string (from DB) or an epoch; lastSeenEpoch is epoch seconds.

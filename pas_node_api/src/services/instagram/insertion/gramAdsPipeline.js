@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * Instagram gramAdsData pipeline — port of InstagramUserController::instaAdsData.
  * Same optimized shape as the Facebook metaAds pipeline: parallel translation/user/
@@ -449,7 +451,7 @@ function parseMaybeJson(v) {
   if (typeof v === 'string' && (v.startsWith('[') || v.startsWith('{'))) { try { return JSON.parse(v); } catch { return v; } }
   return v;
 }
-function extractDomain(url) { if (!url) return ''; try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; } }
+function extractDomain(url) { if (!url) return ''; return getLastUrlHostname(url).replace(/^www\./, ''); }
 function computeDaysRunning(start, lastSeenEpoch) {
   const p = toEpochSeconds(start); const l = toInt(lastSeenEpoch);
   if (!p || !l || l < p) return 1;

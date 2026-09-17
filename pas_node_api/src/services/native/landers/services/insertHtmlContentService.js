@@ -4,6 +4,7 @@ const NativeAdUrl = require('../models/NativeAdUrl');
 const NativeAdOutgoing = require('../models/NativeAdOutgoing');
 const NativeAdHtmlLander = require('../models/NativeAdHtmlLander');
 const databaseManager = require('../../../../database/DatabaseManager');
+const { getLastUrlHostname } = require('../../../common/helpers/urlDomain');
 
 // Helper to execute queries
 async function executeQuery(sql, params = []) {
@@ -246,8 +247,9 @@ class InsertHtmlContentService {
    */
   static extractDomain(url) {
     try {
-      const urlObj = new URL(url);
-      let domain = urlObj.hostname;
+      const hostname = getLastUrlHostname(url);
+      if (!hostname) return url;
+      let domain = hostname;
 
       // Remove www. if present
       if (domain.startsWith('www.')) {

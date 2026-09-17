@@ -1,6 +1,7 @@
 'use strict';
 
 const repo = require('./repository');
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 
 /**
  * insertHtmlRedirectCountry — inserts/updates lander data across multiple tables
@@ -162,8 +163,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
       // Domain management
       if (item.destinations) {
         try {
-          const urlObj = new URL(item.destinations);
-          const hostname = urlObj.hostname;
+          const hostname = getLastUrlHostname(item.destinations);
           const domainMatch = hostname.match(/(?:[a-z0-9](?:[a-z0-9\-]{1,63})?\.)+[a-z\.]{2,6}$/i);
 
           if (domainMatch) {

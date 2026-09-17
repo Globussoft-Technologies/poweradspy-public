@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 const UNKNOWN_POST_DATE_SQL = '1000-01-01 00:00:00';
 
 const pad2 = (value) => String(value).padStart(2, '0');
@@ -33,8 +35,8 @@ function daysRunning(firstSeen, lastSeen) {
 
 function extractDomain(value) {
   if (!value) return null;
-  try { return new URL(value).hostname.replace(/^www\./i, '').toLowerCase(); }
-  catch { return null; }
+  const host = getLastUrlHostname(value).replace(/^www\./i, '').toLowerCase();
+  return host || null;
 }
 
 function normalizeTransparencyPayload(payload) {

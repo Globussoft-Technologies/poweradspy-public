@@ -11,9 +11,9 @@ afterEach(() => {
 
 describe('services/gdn/helpers/youtubeDisplayMerge', () => {
   it.each([
-    ['example.com', '*example.com*'],
-    ['https://www.example.com/products/42', '*www.example.com*'],
-  ])('applies GDN domain search to merged YouTube DISPLAY hits for %s', async (domain, expected) => {
+    ['example.com', 'example.com'],
+    ['https://www.example.com/products/42', 'example.com'],
+  ])('applies normalized domain search to merged YouTube DISPLAY hits for %s', async (domain, expectedDomain) => {
     const search = vi.fn(async () => ({ hits: { total: { value: 0 }, hits: [] } }));
     vi.spyOn(databaseManager, 'getConnections').mockReturnValue({
       elastic: { indexName: 'youtube_ads_data', search },
@@ -27,7 +27,13 @@ describe('services/gdn/helpers/youtubeDisplayMerge', () => {
 
     const request = search.mock.calls[0][0];
     expect(request.body.query.bool.filter).toContainEqual({
-      wildcard: { ad_url: expected },
+      bool: {
+        should: [
+          { match_phrase: { destination_url: expectedDomain } },
+          { match_phrase: { destination_url: `www.${expectedDomain}` } },
+        ],
+        minimum_should_match: 1,
+      },
     });
   });
 });

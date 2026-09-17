@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * Google landers — insert_html_content (BlackhatController@inserHtmlContentToDBO).
  *
@@ -43,9 +45,7 @@ function splitDbList(dbValue) {
 const uniq = (arr) => [...new Set(arr)];
 function extractDomain(destinations) {
   if (!destinations) return null;
-  let host;
-  try { host = new URL(destinations).hostname; }
-  catch { host = String(destinations).replace(/^https?:\/\//i, '').split('/')[0]; }
+  const host = getLastUrlHostname(destinations);
   const m = String(host || '').match(/([a-z0-9][a-z0-9-]{1,63}\.[a-z.]{2,6})$/i);
   return m ? m[1] : null;
 }

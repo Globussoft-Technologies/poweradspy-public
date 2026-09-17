@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * GDN metaAdsData pipeline — port of GdnAdController::insertAds() →
  * insertNewGdnAds() → (processAd | updateAdsData).
@@ -473,15 +475,10 @@ function toArray(v) {
   return Array.isArray(v) ? v : [v];
 }
 function uniq(arr) { return [...new Set(arr.filter((x) => x !== undefined && x !== null && x !== ''))]; }
-/** Host of a URL minus a leading www. (PHP parse_url); falls back to the raw string. */
+/** Host of the final HTTP(S) URL minus a leading www. */
 function extractDomain(url) {
   if (!url) return '';
-  try {
-    const u = new URL(/^https?:\/\//i.test(url) ? url : `http://${url}`);
-    return (u.hostname || '').replace(/^www\./i, '');
-  } catch {
-    return String(url); // PHP: domainName = destination_url when parse_url has no host
-  }
+  return getLastUrlHostname(url).replace(/^www\./i, '');
 }
 
 module.exports = { processMetaAd };

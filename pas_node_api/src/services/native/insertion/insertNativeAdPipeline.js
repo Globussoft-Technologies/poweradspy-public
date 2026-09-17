@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * Native ad insertion pipeline — optimized port of NativeAdController::insertNewNativeAds().
  *
@@ -471,7 +473,7 @@ async function indexAd(ctx, nativeAdId, n, result) {
 
 function extractDomain(url) {
   if (!url) return '';
-  try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; }
+  return getLastUrlHostname(url).replace(/^www\./, '');
 }
 
 // Public-suffix set for the common multi-label TLDs so registrableDomain() doesn't mistake

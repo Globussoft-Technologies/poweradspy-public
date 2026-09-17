@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * YouTube landers — shared value transforms.
  *
@@ -47,12 +49,10 @@ function appendZip(dbValue, htmlPath) {
   return uniq([...base, htmlPath]);
 }
 
-/** Registrable domain from a destination URL (PHP parse_url + regex). */
+/** Registrable domain from the final HTTP(S) URL in a destination value. */
 function extractDomain(destinations) {
   if (!destinations) return null;
-  let host;
-  try { host = new URL(destinations).hostname; }
-  catch { host = String(destinations).replace(/^https?:\/\//i, '').split('/')[0]; }
+  const host = getLastUrlHostname(destinations);
   const m = String(host || '').match(/([a-z0-9][a-z0-9-]{1,63}\.[a-z.]{2,6})$/i);
   return m ? m[1] : null;
 }

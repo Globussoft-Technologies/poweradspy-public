@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * Pinterest ad insertion pipeline — port of adsController::insert_ads_in_sql_es()
  * and processAd() / updateAdsData().
@@ -509,7 +511,7 @@ const stripNulls = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]
 
 function extractDomain(url) {
   if (!url) return '';
-  try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; }
+  return getLastUrlHostname(url).replace(/^www\./, '');
 }
 
 function formatDate(v) {

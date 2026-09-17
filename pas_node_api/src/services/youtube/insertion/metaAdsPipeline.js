@@ -26,6 +26,7 @@ const api = require('../../../insertion/helpers/apiClients');
 const media = require('../../../insertion/helpers/mediaUpload');
 const { nowDateTime, today, toInt } = require('../../../insertion/helpers/util');
 const { ok, updated, rejected, serverError } = require('../../../insertion/helpers/responses');
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 
 const DEFAULT_AD_IMAGE = '/bydefault_ads.jpg';
 const DEFAULT_OWNER_IMAGE = '/DefaultImage.jpg';
@@ -465,8 +466,8 @@ function extractDomain(url) {
   if (!url) return '';
   const s = String(url).trim();
   if (s === '' || s.toLowerCase() === 'null') return '';
-  try { const u = new URL(/^https?:\/\//i.test(s) ? s : `http://${s}`); const h = (u.hostname || '').replace(/^www\./i, ''); return h.toLowerCase() === 'null' ? '' : h; }
-  catch { return ''; }
+  const host = getLastUrlHostname(s).replace(/^www\./i, '').toLowerCase();
+  return host === 'null' ? '' : host;
 }
 function safeJson(s) {
   if (s === undefined || s === null) return null;

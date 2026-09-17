@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * GTEXT (Google Text) gtAdsData pipeline — port of GoogleTextAdController::
  * insertAdsFromPluginO → insertNewGoogleTextAdsO → (processAdO | updateAdsDataO).
@@ -398,8 +400,8 @@ async function uploadGtextImage(adImage, adId, network) {
 // ── small helpers ─────────────────────────────────────────────────────────────
 function extractDomain(url) {
   if (!url) return '';
-  try { const u = new URL(/^https?:\/\//i.test(url) ? url : `http://${url}`); return (u.hostname || '').replace(/^www\./i, ''); }
-  catch { return String(url); }
+  const host = getLastUrlHostname(url).replace(/^www\./i, '');
+  return host || String(url);
 }
 function computeDaysRunning(firstSeen, lastSeen) {
   const p = toEpochSeconds(firstSeen); const l = toEpochSeconds(lastSeen);

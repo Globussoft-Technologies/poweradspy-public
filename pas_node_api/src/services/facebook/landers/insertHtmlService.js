@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * Facebook landers — insertHtmlRedirectCountry.
  *
@@ -67,16 +69,10 @@ function cleanDate(v) {
   return v;
 }
 
-/** Registrable domain from a destination URL (PHP parse_url + regex). */
+/** Registrable domain from the final HTTP(S) URL in a destination value. */
 function extractDomain(destinations) {
   if (!destinations) return null;
-  let host;
-  try {
-    host = new URL(destinations).hostname;
-  } catch {
-    // PHP parse_url falls back to the path when there is no host.
-    host = String(destinations).replace(/^https?:\/\//i, '').split('/')[0];
-  }
+  const host = getLastUrlHostname(destinations);
   const m = String(host || '').match(/([a-z0-9][a-z0-9-]{1,63}\.[a-z.]{2,6})$/i);
   return m ? m[1] : null;
 }

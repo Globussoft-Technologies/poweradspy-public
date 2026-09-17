@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 function nullable(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
@@ -37,7 +39,7 @@ function canonicalImageSize(value) {
 function normalizeAdmobPayload(payload) {
   const destinationUrl = nullable(payload.destination_url);
   let destinationHost = null;
-  try { destinationHost = destinationUrl ? new URL(destinationUrl).hostname.toLowerCase() : null; } catch { /* validated earlier */ }
+  destinationHost = destinationUrl ? (getLastUrlHostname(destinationUrl).toLowerCase() || null) : null;
 
   return {
     ad_id: String(payload.ad_id).trim(),

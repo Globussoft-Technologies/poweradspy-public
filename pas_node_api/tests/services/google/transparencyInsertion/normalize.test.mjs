@@ -43,6 +43,14 @@ describe('Google Transparency normalization', () => {
     expect(result.thumbnail).toBe('https://cdn.example/video-poster.jpg');
   });
 
+  it('stores the final landing host from a nested tracking URL', () => {
+    const result = normalizeTransparencyPayload({
+      destination_url: 'https://ad.doubleclick.net/track?https://turbotax.intuit.com/lp/byp/1495/',
+      country_details: [],
+    });
+    expect(result.domain).toBe('turbotax.intuit.com');
+  });
+
   it('preserves a nullable post owner', () => {
     const result = normalizeTransparencyPayload({
       post_owner: null, system_id: 'worker', first_seen: null, last_seen: null,

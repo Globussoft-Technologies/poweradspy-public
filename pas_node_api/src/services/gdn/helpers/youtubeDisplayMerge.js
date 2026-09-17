@@ -123,15 +123,28 @@ function buildSharedFilters(p) {
     must.push({ match_phrase: { post_owner: String(p.advertiser) } });
   }
   // Domain search is applied to the native GDN query separately, so mirror the
-  // YouTube query builder's host normalization and `ad_url` filter here. Without
-  // this clause, every YouTube DISPLAY/IMAGE hit is eligible for the merged page
-  // even when the GDN half of the request is restricted to one domain.
+  // YouTube query builder's host normalization and `destination_url` filter here.
+  // Without this clause, every YouTube DISPLAY/IMAGE hit is eligible for the
+  // merged page even when the GDN half of the request is restricted to one domain.
   if (p.domain) {
     const url = String(p.domain);
     let domain;
     try { domain = new URL(url.startsWith('http') ? url : `http://${url}`).hostname; }
     catch (_) { domain = url.split('/')[0]; }
-    filter.push({ wildcard: { ad_url: `*${domain}*` } });
+    domain = String(domain || '').replace(/^www\./i, '').toLowerCase().trim();
+    if (domain) {
+      // destination_url is analyzed text; phrase queries avoid the expensive
+      // leading wildcard previously used by the merged YouTube query.
+      filter.push({
+        bool: {
+          should: [
+            { match_phrase: { destination_url: domain } },
+            { match_phrase: { destination_url: `www.${domain}` } },
+          ],
+          minimum_should_match: 1,
+        },
+      });
+    }
   }
   // Country — mirror YouTube SearchMixQueryBuilder._getCountryEnv()
   // (YouTube DISPLAY ads store countries in the top-level `countries` array).

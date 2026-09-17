@@ -1,3 +1,4 @@
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 const InstagramRepository = require('./repository');
 
 async function executeQuery(sql, params = []) {
@@ -65,7 +66,9 @@ class InsertHtmlContentService {
           );
         }
 
-        const domain = data.domain_name ? data.domain_name.split('/')[0] : null;
+        const domain = data.domain_name
+          ? (getLastUrlHostname(data.domain_name) || String(data.domain_name).split('/')[0])
+          : null;
         let domainId = null;
 
         if (domain) {

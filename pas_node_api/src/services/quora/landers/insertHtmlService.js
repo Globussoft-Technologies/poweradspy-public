@@ -1,6 +1,7 @@
 'use strict';
 
 const repo = require('./repository');
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 
 function validateItem(item) {
   // html_path is OPTIONAL (may be omitted) — mirrors gdn/google/youtube/linkedin.
@@ -127,8 +128,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
 
       // Extract domain from destination URL
       if (item.destinations) {
-        const url = new URL(item.destinations);
-        const domain = url.hostname;
+        const domain = getLastUrlHostname(item.destinations);
         const domainMatch = domain.match(/(?:[a-z0-9](?:[a-z0-9-]{1,63}[a-z0-9])?\.)+[a-z]{2,6}$/i);
 
         if (domainMatch) {

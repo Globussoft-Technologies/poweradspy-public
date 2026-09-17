@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+
 /**
  * Facebook adsLibrary pipeline — port of adsDataController::adsLibraryInsert().
  * See docs/insertion/PHP-SPEC-adsLibrary.md. Reuses the same repository / media /
@@ -517,7 +519,7 @@ function avg(a, b) {
 }
 function extractDomain(url) {
   if (!url) return '';
-  try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; }
+  return getLastUrlHostname(url).replace(/^www\./, '');
 }
 function buildAdgptPayload(n, result) {
   return { ad_id: n.ad_id, facebook_ad_id: result.facebookAdId, type: n.type, platform: toInt(n.platform) };
