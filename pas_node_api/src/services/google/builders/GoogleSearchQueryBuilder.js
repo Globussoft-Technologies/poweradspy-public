@@ -150,6 +150,7 @@ class GoogleSearchQueryBuilder {
   setAdBudget(v) { this._params.adBudget = Array.isArray(v) ? v : null; return this; }
   setLastSeen(v) { this._params.lastSeen = v; return this; }
   setPostDate(v) { this._params.postDate = v; return this; }
+  setFirstSeen(v) { this._params.firstSeen = v; return this; }
   setDomainDate(v) { this._params.domainDate = v; return this; }
   setCountryDelivery(v) { this._params.countryDelivery = v || null; return this; }
   setLowerAgeSeen(v) { this._params.lowerAgeSeen = v; return this; }
@@ -469,6 +470,12 @@ class GoogleSearchQueryBuilder {
     return asFilter({ range: { post_date: { gte: p.lower_date, lte: p.upper_date, format: "yyyy-MM-dd HH:mm:ss" } } });
   }
 
+  _getFirstSeenEnv() {
+    const fs = this._params.firstSeen;
+    if (!fs || !fs.lower_date || !fs.upper_date) return null;
+    return asFilter({ range: { first_seen: { gte: fs.lower_date, lte: fs.upper_date, format: 'yyyy-MM-dd HH:mm:ss' } } });
+  }
+
   _getDomainDateEnv() {
     const d = this._params.domainDate;
     if (!d || !d.lower_date || !d.upper_date) return null;
@@ -505,7 +512,7 @@ class GoogleSearchQueryBuilder {
       "_getAdCategoryEnv", "_getSubCategoryEnv", "_getTargetKeywordEnv",
       "_getLangDetectEnv", "_getBuiltWithEnv", "_getSourceEnv", "_getFunnelEnv",
       "_getAffiliateEnv", "_getTrackEnv", "_getMarketPlatformEnv",
-      "_getLastSeenEnv", "_getPostDateEnv", "_getDomainDateEnv", "_getCountryDeliveryEnv", "_getNeedleEnv",
+      "_getLastSeenEnv", "_getPostDateEnv", "_getFirstSeenEnv", "_getDomainDateEnv", "_getCountryDeliveryEnv", "_getNeedleEnv",
       "_getUrlEnv", "_getKeywordEnv", "_getPostOwnerNameEnv", "_getHtmlContentEnv",
     ];
     const out = [];

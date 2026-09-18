@@ -153,6 +153,7 @@ const RESTRICTED_BODY_KEY_TO_SDUI_IDS = {
   adcategory:    ['adcategory', 'category', 'categories', 'subcategory'],
   // Date filters — backend body keys map directly to SDUI filterValues keys
   seen_btn_sort:        ['seen_btn_sort'],
+  first_seen_btn_sort:  ['first_seen_btn_sort'],
   post_date_btn_sort:   ['post_date_btn_sort'],
   domain_date_btn_sort: ['domain_date_btn_sort'],
 };
@@ -2326,7 +2327,7 @@ const App = () => {
       const probeDiagnostics = [];
       const plannedTiers = payloads.map((tierValue) => {
         const tier = tierValue || {};
-        const mapped = mapArgsToFilters(normalizeAiSearchArgs(tier), sdui.config);
+        const mapped = mapArgsToFilters(normalizeAiSearchArgs(tier), sdui.config, tier.planning);
         const unsupported = getPlanningUnsupported(tier.planning);
         return {
           tier,

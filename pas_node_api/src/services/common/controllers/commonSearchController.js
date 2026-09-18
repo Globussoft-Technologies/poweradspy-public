@@ -46,12 +46,20 @@ const NETWORK_SEARCH = {
   admob:     admobSearchAds,
 };
 
-// Every network below has a real post_date field in its search index. TikTok
-// is intentionally absent: its index only exposes first_seen, so allowing it
-// through would return unfiltered ads for a posted-date request.
+// Date-dimension support is explicit because not every network exposes every
+// date field under the same contract. TikTok's post-date slot is backed by
+// first_seen, so it is intentionally excluded from posted-date searches.
 const POST_DATE_NETWORKS = new Set([
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
   'reddit', 'quora', 'pinterest', 'google',
+]);
+const FIRST_SEEN_NETWORKS = new Set([
+  'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
+  'reddit', 'quora', 'pinterest', 'google', 'tiktok',
+]);
+const LAST_SEEN_NETWORKS = new Set([
+  'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
+  'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
 ]);
 
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
@@ -196,9 +204,32 @@ async function searchAllNetworks(req, res) {
   // Hard restriction: ad budget data only exists on Facebook, Instagram, YouTube.
   // Apply directly here so it works regardless of SDUI config or cache state.
   const _body = body;
-  const _postDateFilterActive = Array.isArray(_body.post_date_btn_sort) &&
-    _body.post_date_btn_sort.length === 2 &&
-    _body.post_date_btn_sort.every(value => Number.isFinite(Number(value)));
+  const isDateRange = (value) => Array.isArray(value) &&
+    value.length === 2 &&
+    value.every(entry => Number.isFinite(Number(entry)));
+  const _dateFilterNetworks = new Set([
+    'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
+    'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
+  ]);
+  if (isDateRange(_body.post_date_btn_sort)) {
+    for (const network of [..._dateFilterNetworks]) {
+      if (!POST_DATE_NETWORKS.has(network)) _dateFilterNetworks.delete(network);
+    }
+  }
+  if (isDateRange(_body.first_seen_btn_sort)) {
+    for (const network of [..._dateFilterNetworks]) {
+      if (!FIRST_SEEN_NETWORKS.has(network)) _dateFilterNetworks.delete(network);
+    }
+  }
+  if (isDateRange(_body.seen_btn_sort)) {
+    for (const network of [..._dateFilterNetworks]) {
+      if (!LAST_SEEN_NETWORKS.has(network)) _dateFilterNetworks.delete(network);
+    }
+  }
+  const _dateFilterActive =
+    isDateRange(_body.post_date_btn_sort) ||
+    isDateRange(_body.first_seen_btn_sort) ||
+    isDateRange(_body.seen_btn_sort);
   const _isActiveBudgetVal = (v) => {
     if (!v || v === 'NA') return false;
     if (Array.isArray(v)) return v.length > 0 && !v.every(x => x === 'NA' || x === '' || x == null);
@@ -234,7 +265,7 @@ async function searchAllNetworks(req, res) {
     (!sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&
     (!_popularitySortActive || _POPULARITY_NETWORKS.has(net)) &&
-    (!_postDateFilterActive || POST_DATE_NETWORKS.has(net)) &&
+    (!_dateFilterActive || _dateFilterNetworks.has(net)) &&
     isUserRequested(net);
 
   const ms = config.apiTimeouts.networkSearchTimeoutMs;
@@ -463,9 +494,9 @@ async function searchAllNetworks(req, res) {
     for (const [net, [svc, fn, baseReq]] of Object.entries(NETWORK_FNS)) {
       if (!svc || alreadyQueried.has(net)) continue;
       // Never use an unsupported network as an empty-result suggestion for a
-      // posted-date search; TikTok would ignore the shared date field and
-      // return matches based on first_seen instead.
-      if (_postDateFilterActive && !POST_DATE_NETWORKS.has(net)) continue;
+      // date-dimension search; it may ignore the shared date field and return
+      // matches from a different date dimension instead.
+      if (_dateFilterActive && !_dateFilterNetworks.has(net)) continue;
       if (allowedPlatforms && !allowedPlatforms.includes(net)) continue;
       if (sduiApplicable && !sduiApplicable.includes(net)) continue;
       const reqForNet = net === 'google' ? discoveryGoogReq : discoveryReq;

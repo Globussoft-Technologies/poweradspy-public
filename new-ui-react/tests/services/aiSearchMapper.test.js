@@ -148,6 +148,45 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('maps planning date dimensions without forwarding planning metadata', () => {
+    const posted = mapArgsToFilters(
+      {},
+      {},
+      { date_filter: { field: 'post_date', preset: 'last_30_days' } },
+    );
+    const firstSeen = mapArgsToFilters(
+      {},
+      {},
+      { date_filter: { field: 'first_seen', preset: 'last_7_days' } },
+    );
+    const lastSeen = mapArgsToFilters(
+      { keyword: 'shoe' },
+      {},
+      { date_filter: { field: 'last_seen', preset: 'last_7_days' } },
+    );
+    const custom = mapArgsToFilters(
+      {},
+      {},
+      {
+        date_filter: {
+          field: 'last_seen',
+          start_date: '2026-08-01',
+          end_date: '2026-09-11',
+        },
+      },
+    );
+
+    expect(posted.filterValues).toEqual({ post_date_btn_sort: 'last_30_days' });
+    expect(firstSeen.filterValues).toEqual({ first_seen_btn_sort: 'last_7_days' });
+    expect(lastSeen).toMatchObject({
+      searchQuery: 'shoe',
+      filterValues: { seen_btn_sort: 'last_7_days' },
+    });
+    expect(custom.filterValues).toEqual({
+      seen_btn_sort: { startDate: '2026-08-01', endDate: '2026-09-11' },
+    });
+  });
+
   it('maps open-ended likes ranges without turning the missing bound into zero', () => {
     const mapped = mapArgsToFilters({
       network: ['facebook'],

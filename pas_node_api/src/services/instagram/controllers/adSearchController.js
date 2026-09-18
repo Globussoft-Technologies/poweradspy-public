@@ -558,6 +558,9 @@ async function searchAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) {
     builder.setPostDate({ lower_date: tsToDate(p.post_date_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.post_date_btn_sort[0], '23:59:59') });
   }
+  if (Array.isArray(p.first_seen_btn_sort) && p.first_seen_btn_sort.length === 2) {
+    builder.setFirstSeen({ lower_date: tsToDate(p.first_seen_btn_sort[1], '00:00:00'), upper_date: tsToDate(p.first_seen_btn_sort[0], '23:59:59') });
+  }
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) {
     const tsToDay = ts => new Date(Number(ts) * 1000).toISOString().slice(0, 10);
     builder.setDomainDate({ lower_date: tsToDay(p.domain_date_btn_sort[1]), upper_date: tsToDay(p.domain_date_btn_sort[0]) });

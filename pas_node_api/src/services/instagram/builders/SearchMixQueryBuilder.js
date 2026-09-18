@@ -178,6 +178,7 @@ class SearchMixQueryBuilder {
 
   setLastSeen(v)           { this._params.lastSeen = v; return this; }
   setPostDate(v)           { this._params.postDate = v; return this; }
+  setFirstSeen(v)          { this._params.firstSeen = v; return this; }
   setPageCreation(v)       { this._params.pageCreation = v; return this; }
   setDomainDate(v)         { this._params.domainDate = v; return this; }
 
@@ -451,6 +452,19 @@ class SearchMixQueryBuilder {
       range: {
         'instagram_ad.post_date': {
           gte: pd.lower_date, lte: pd.upper_date,
+          format: "yyyy-MM-dd' 'HH:mm:ss",
+        },
+      },
+    });
+  }
+
+  _getFirstSeenEnv() {
+    const fs = this._params.firstSeen;
+    if (!fs || !fs.lower_date || !fs.upper_date) return null;
+    return asFilter({
+      range: {
+        'instagram_ad.first_seen': {
+          gte: fs.lower_date, lte: fs.upper_date,
           format: "yyyy-MM-dd' 'HH:mm:ss",
         },
       },
@@ -744,6 +758,7 @@ class SearchMixQueryBuilder {
       '_getLowerAgeSeenEnv',
       '_getLastSeenEnv',
       '_getPostDateEnv',
+      '_getFirstSeenEnv',
       '_getPageCreationEnv',
       '_getDomainDateEnv',
       '_getNeedleEnv',

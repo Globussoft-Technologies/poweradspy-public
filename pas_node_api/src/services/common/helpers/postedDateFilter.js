@@ -97,21 +97,26 @@ function activeDateValue(value) {
   return true;
 }
 
-function explicitRange(body) {
-  // The frontend's canonical payload may carry an AI custom range under
-  // post_date_btn_sort before this boundary converts it to timestamps.
-  const range = body.dateRange ?? body.date_range ?? body.post_date_btn_sort;
-  if (Array.isArray(range) && range.length === 2) return range;
-  if (typeof range === 'string') {
-    const match = range.trim().match(/^(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})$/);
-    if (match) return [match[1], match[2]];
-  }
-  if (range && typeof range === 'object') {
-    const candidate = [
-      range.startDate ?? range.start_date ?? range.start ?? range.from,
-      range.endDate ?? range.end_date ?? range.end ?? range.to,
-    ];
-    if (candidate.some((value) => value != null && value !== '')) return candidate;
+function explicitRange(body, dateKey = 'post_date_btn_sort') {
+  // AI custom ranges are carried under the selected date dimension before this
+  // boundary converts them to the canonical timestamp pair.
+  // A legacy generic dateRange remains a valid custom-range source. Check it
+  // after the selected field so a dimension-specific custom range wins, but
+  // do not let a dimension preset hide an older custom range.
+  const candidates = [body[dateKey], body.dateRange, body.date_range];
+  for (const range of candidates) {
+    if (Array.isArray(range) && range.length === 2) return range;
+    if (typeof range === 'string') {
+      const match = range.trim().match(/^(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})$/);
+      if (match) return [match[1], match[2]];
+    }
+    if (range && typeof range === 'object') {
+      const candidate = [
+        range.startDate ?? range.start_date ?? range.start ?? range.from,
+        range.endDate ?? range.end_date ?? range.end ?? range.to,
+      ];
+      if (candidate.some((value) => value != null && value !== '')) return candidate;
+    }
   }
 
   if (activeDateValue(body.startDate) && activeDateValue(body.endDate)) {
@@ -127,26 +132,43 @@ function isNumericPair(value) {
 }
 
 /**
- * Convert AI/date aliases into the existing search-controller contract.
+ * Convert AI/date aliases into the existing search-controller contracts.
  *
- * Canonical transport: post_date_btn_sort = [endUnixSeconds, startUnixSeconds].
- * The range is inclusive at UTC day boundaries and targets post_date in the
- * conventional network builders. Invalid or unsupported aliases are left
- * untouched so this boundary cannot turn a malformed request into a query.
+ * Canonical transport for every supported date dimension is
+ * [endUnixSeconds, startUnixSeconds]. The range is inclusive at UTC day
+ * boundaries. Invalid or unsupported aliases are left untouched so this
+ * boundary cannot turn a malformed request into a query.
  */
 function normalizePostedDateFilter(body, now = new Date()) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
 
-  const current = body.post_date_btn_sort;
-  if (isNumericPair(current)) return body;
+  const dateKeys = ['post_date_btn_sort', 'first_seen_btn_sort', 'seen_btn_sort'];
+  const activeKeys = dateKeys.filter(key => activeDateValue(body[key]));
+  // Legacy callers can still send datePreset/dateRange without a dimension;
+  // preserve the historical default of posted date in that case.
+  const targetKeys = activeKeys.length ? activeKeys : ['post_date_btn_sort'];
+  let normalized = body;
+  let changed = false;
 
-  const custom = explicitRange(body);
-  const customRange = custom && toTransportRange(custom[0], custom[1]);
-  const preset = body.datePreset ?? body.date_preset ?? current;
-  const normalizedRange = customRange || (activeDateValue(preset) ? presetRange(preset, now) : null);
-  if (!normalizedRange) return body;
+  for (const dateKey of targetKeys) {
+    const current = body[dateKey];
+    if (isNumericPair(current)) continue;
 
-  const normalized = { ...body, post_date_btn_sort: normalizedRange };
+    const custom = explicitRange(body, dateKey);
+    const customRange = custom && toTransportRange(custom[0], custom[1]);
+    const preset = activeDateValue(current)
+      ? current
+      : (body.datePreset ?? body.date_preset);
+    const normalizedRange = customRange || (activeDateValue(preset) ? presetRange(preset, now) : null);
+    if (!normalizedRange) continue;
+
+    normalized = normalized === body ? { ...body } : normalized;
+    normalized[dateKey] = normalizedRange;
+    changed = true;
+  }
+
+  if (!changed) return body;
+
   for (const key of [
     'datePreset', 'date_preset', 'dateRange', 'date_range',
     'startDate', 'start_date', 'endDate', 'end_date',

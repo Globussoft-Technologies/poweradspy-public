@@ -114,6 +114,7 @@ class NativeSearchQueryBuilder {
 
   setLastSeen(v)           { this._params.lastSeen = v; return this; }
   setPostDate(v)           { this._params.postDate = v; return this; }
+  setFirstSeen(v)          { this._params.firstSeen = v; return this; }
   setDomainDate(v)         { this._params.domainDate = v; return this; }
 
   setLowerAgeSeen(v)       { this._params.lowerAgeSeen = v; return this; }
@@ -364,6 +365,19 @@ class NativeSearchQueryBuilder {
     });
   }
 
+  _getFirstSeenEnv() {
+    const fs = this._params.firstSeen;
+    if (!fs || !fs.lower_date || !fs.upper_date) return null;
+    return asFilter({
+      range: {
+        'native_ad.first_seen': {
+          gte: fs.lower_date, lte: fs.upper_date,
+          format: "yyyy-MM-dd' 'HH:mm:ss",
+        },
+      },
+    });
+  }
+
   _getDomainDateEnv() {
     const dd = this._params.domainDate;
     if (!dd || !dd.lower_date || !dd.upper_date) return null;
@@ -512,7 +526,7 @@ class NativeSearchQueryBuilder {
       '_getTargetKeywordEnv', '_getTagsEnv',
       '_getBuiltWithEnv', '_getTrackEnv', '_getSourceEnv',
       '_getFunnelEnv', '_getAffiliateEnv', '_getMarketPlatformEnv',
-      '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv',
+      '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv', '_getFirstSeenEnv',
       '_getDomainDateEnv', '_getNeedleEnv',
       '_getLikesEnv', '_getCommentsEnv',
       '_getUrlEnv',

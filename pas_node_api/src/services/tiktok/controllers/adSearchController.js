@@ -345,6 +345,13 @@ async function searchAds(req, db, logger) {
       endDate: new Date(ey, em - 1, ed, 23, 59, 59).toISOString(),
     });
   }
+  if (Array.isArray(raw.first_seen_btn_sort) && raw.first_seen_btn_sort.length === 2) {
+    const tsToIso = (ts, time) => new Date(Number(ts) * 1000).toISOString().slice(0, 10) + 'T' + time + 'Z';
+    builder.setFirstSeen({
+      startDate: tsToIso(raw.first_seen_btn_sort[1], '00:00:00'),
+      endDate: tsToIso(raw.first_seen_btn_sort[0], '23:59:59'),
+    });
+  }
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'tiktok', p);
   addAiMetaVisibleCountAgg(esParams, 'tiktok', p);

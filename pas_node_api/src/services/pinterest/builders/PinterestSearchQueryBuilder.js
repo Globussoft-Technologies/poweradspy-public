@@ -104,6 +104,7 @@ class PinterestSearchQueryBuilder {
   setNeedle(v)         { this._params.needle = (v && v !== 'NA') ? v : ''; return this; }
   setLastSeen(v)       { this._params.lastSeen = v; return this; }
   setPostDate(v)       { this._params.postDate = v; return this; }
+  setFirstSeen(v)      { this._params.firstSeen = v; return this; }
   setDomainDate(v)     { this._params.domainDate = v; return this; }
   setLowerAgeSeen(v)   { this._params.lowerAgeSeen = v; return this; }
   setOcr(v)            { this._params.ocr = v; return this; }
@@ -318,6 +319,12 @@ class PinterestSearchQueryBuilder {
     return asFilter({ range: { 'pinterest_ad.post_date': { gte: p.lower_date, lte: p.upper_date, format: "yyyy-MM-dd' 'HH:mm:ss" } } });
   }
 
+  _getFirstSeenEnv() {
+    const fs = this._params.firstSeen;
+    if (!fs || !fs.lower_date || !fs.upper_date) return null;
+    return asFilter({ range: { 'pinterest_ad.first_seen': { gte: fs.lower_date, lte: fs.upper_date, format: "yyyy-MM-dd' 'HH:mm:ss" } } });
+  }
+
   _getDomainDateEnv() {
     const d = this._params.domainDate;
     if (!d || !d.lower_date || !d.upper_date) return null;
@@ -424,7 +431,7 @@ class PinterestSearchQueryBuilder {
       '_getLangDetectEnv',
       '_getBuiltWithEnv', '_getTrackEnv', '_getSourceEnv',
       '_getFunnelEnv', '_getAffiliateEnv', '_getMarketPlatformEnv',
-      '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv',
+      '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv', '_getFirstSeenEnv',
       '_getDomainDateEnv', '_getNeedleEnv',
       '_getUrlEnv',
       '_getKeywordEnv', '_getPostOwnerNameEnv',

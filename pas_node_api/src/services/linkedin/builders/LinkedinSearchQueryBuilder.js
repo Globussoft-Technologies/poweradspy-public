@@ -170,6 +170,7 @@ class LinkedinSearchQueryBuilder {
 
   setLastSeen(v)           { this._params.lastSeen = v; return this; }
   setPostDate(v)           { this._params.postDate = v; return this; }
+  setFirstSeen(v)          { this._params.firstSeen = v; return this; }
   setDomainDate(v)         { this._params.domainDate = v; return this; }
 
   setLowerAgeSeen(v)       { this._params.lowerAgeSeen = v; return this; }
@@ -364,6 +365,12 @@ class LinkedinSearchQueryBuilder {
     return asFilter({ range: { post_date: { gte: pd.lower_date, lte: pd.upper_date, format: 'epoch_second' } } });
   }
 
+  _getFirstSeenEnv() {
+    const fs = this._params.firstSeen;
+    if (!fs || !fs.lower_date || !fs.upper_date) return null;
+    return asFilter({ range: { first_seen: { gte: fs.lower_date, lte: fs.upper_date, format: 'epoch_second' } } });
+  }
+
   _getDomainDateEnv() {
     const dd = this._params.domainDate;
     if (!dd || !dd.lower_date || !dd.upper_date) return null;
@@ -468,7 +475,7 @@ class LinkedinSearchQueryBuilder {
       '_getLangDetectEnv', '_getVerifiedEnv', '_getTargetKeywordEnv',
       '_getBuiltWithEnv', '_getTrackEnv', '_getSourceEnv',
       '_getFunnelEnv', '_getAffiliateEnv', '_getMarketPlatformEnv',
-      '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv',
+      '_getLowerAgeSeenEnv', '_getLastSeenEnv', '_getPostDateEnv', '_getFirstSeenEnv',
       '_getDomainDateEnv', '_getNeedleEnv',
       '_getExactPostOwnerIdsEnv',
       '_getLikesEnv', '_getCommentsEnv', '_getImpressionsEnv', '_getPopularityEnv',

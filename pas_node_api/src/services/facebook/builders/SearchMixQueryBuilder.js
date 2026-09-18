@@ -210,6 +210,7 @@ class SearchMixQueryBuilder {
   // Date range setters
   setLastSeen(v)           { this._params.lastSeen = v; return this; }
   setPostDate(v)           { this._params.postDate = v; return this; }
+  setFirstSeen(v)          { this._params.firstSeen = v; return this; }
   setPageCreation(v)       { this._params.pageCreation = v; return this; }
   setDomainDate(v)         { this._params.domainDate = v; return this; }
 
@@ -506,6 +507,19 @@ class SearchMixQueryBuilder {
     });
   }
 
+  _getFirstSeenEnv() {
+    const fs = this._params.firstSeen;
+    if (!fs || !fs.lower_date || !fs.upper_date) return null;
+    return asFilter({
+      range: {
+        'facebook_ad.first_seen': {
+          gte: fs.lower_date, lte: fs.upper_date,
+          format: "yyyy-MM-dd' 'HH:mm:ss",
+        },
+      },
+    });
+  }
+
   _getPageCreationEnv() {
     const pc = this._params.pageCreation;
     if (!pc || !pc.lower_date || !pc.upper_date) return null;
@@ -745,6 +759,7 @@ class SearchMixQueryBuilder {
       '_getLowerAgeSeenEnv',
       '_getLastSeenEnv',
       '_getPostDateEnv',
+      '_getFirstSeenEnv',
       '_getPageCreationEnv',
       '_getDomainDateEnv',
       '_getNeedleEnv',

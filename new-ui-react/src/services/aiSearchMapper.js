@@ -83,6 +83,12 @@ const FILTER_IDS = {
 // see utils/countryFilter.js). Everything else stores option.value.
 const LABEL_KEYED_IDS = new Set(['country_filter']);
 
+const PLANNING_DATE_FILTER_KEYS = {
+  post_date: 'post_date_btn_sort',
+  first_seen: 'first_seen_btn_sort',
+  last_seen: 'seen_btn_sort',
+};
+
 const MULTI_SELECT_TYPES = new Set([
   'chip_multi_select', 'multi_select', 'combobox', 'nested_select', 'checkbox', 'checkbox_group',
 ]);
@@ -213,7 +219,7 @@ function mapSortValue(orderColumn) {
  *   unmappedDetails: object[], // field/value/network/reason diagnostics
  * }}
  */
-export function mapArgsToFilters(args = {}, config = {}) {
+export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   const filterValues = {};
   const unmapped = [];
   const unmappedDetails = [];
@@ -632,9 +638,25 @@ export function mapArgsToFilters(args = {}, config = {}) {
     applyStableField(findFilter(config, ids), field, raw, filterValues, unmapped, field, recordUnmapped);
   }
 
-  // Keep AI posted-date intent in the same state slot used by the regular date
-  // picker. The common API turns presets/custom ranges into its canonical
-  // [endUnixSeconds, startUnixSeconds] form before querying each network.
+  // Keep AI date intent in the same state slots used by the regular date flow.
+  // Planning is control metadata, so only its selected date dimension/value is
+  // materialized into normal search filter state.
+  const plannedDate = (() => {
+    const dateFilter = planning?.date_filter;
+    if (!dateFilter || typeof dateFilter !== 'object') return null;
+    const filterKey = PLANNING_DATE_FILTER_KEYS[String(dateFilter.field || '').trim().toLowerCase()];
+    if (!filterKey) return null;
+
+    const startDate = dateFilter.start_date ?? dateFilter.startDate;
+    const endDate = dateFilter.end_date ?? dateFilter.endDate;
+    if (startDate != null && startDate !== '' && endDate != null && endDate !== '') {
+      return { filterKey, value: { startDate, endDate } };
+    }
+
+    const preset = String(dateFilter.preset || '').trim();
+    return preset ? { filterKey, value: preset } : null;
+  })();
+
   const dateRange = args.dateRange ?? args.date_range;
   const customDateRange = dateRange ?? (
     args.startDate != null && args.endDate != null
@@ -654,11 +676,15 @@ export function mapArgsToFilters(args = {}, config = {}) {
     if (Array.isArray(value)) return value.length > 0;
     return true;
   };
-  const dateValue = isActiveDateValue(customDateRange)
-    ? customDateRange
-    : (isActiveDateValue(datePreset) ? datePreset : args.post_date_btn_sort);
-  const dateIsActive = isActiveDateValue(dateValue);
-  if (dateIsActive) filterValues.post_date_btn_sort = dateValue;
+  if (plannedDate) {
+    filterValues[plannedDate.filterKey] = plannedDate.value;
+  } else {
+    const dateValue = isActiveDateValue(customDateRange)
+      ? customDateRange
+      : (isActiveDateValue(datePreset) ? datePreset : args.post_date_btn_sort);
+    const dateIsActive = isActiveDateValue(dateValue);
+    if (dateIsActive) filterValues.post_date_btn_sort = dateValue;
+  }
 
   return {
     searchQuery,
@@ -706,6 +732,8 @@ export function normalizeAiSearchArgs(payload = {}) {
     'date_range',
     'startDate',
     'endDate',
+    'seen_btn_sort',
+    'first_seen_btn_sort',
     'post_date_btn_sort',
   ];
 

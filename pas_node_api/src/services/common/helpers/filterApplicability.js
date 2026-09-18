@@ -79,7 +79,7 @@ const NON_FILTER_BODY_KEYS = new Set([
   'network', 'user_id', 'take', 'skip', 'page', 'page_size', 'order_column', 'order_by',
   'newest_sort', 'running_longest_sort', 'last_seen_sort', 'likes_sort', 'comments_sort',
   'shares_sort', 'hits_sort', 'domain_sort', 'impression_sort', 'popularity_sort',
-  'adBudget_sort', 'seen_btn_sort', 'post_date_btn_sort',
+  'adBudget_sort', 'seen_btn_sort', 'first_seen_btn_sort', 'post_date_btn_sort',
   'subscriptionType', 'userSubscription', 'favorite', 'hidden', 'tags', 'version',
   'selected_user', 'discoverer_user_id', 'needle', 'mixdata', 'html', 'html_content',
   'commentdata', 'page_creation', 'ocr', 'image_celebrity', 'image_object', 'image_logo',

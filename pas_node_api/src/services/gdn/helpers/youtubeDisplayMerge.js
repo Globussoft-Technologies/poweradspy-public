@@ -181,6 +181,7 @@ function buildSharedFilters(p) {
   };
   dateRange(p.seen_btn_sort, 'last_seen');
   dateRange(p.post_date_btn_sort, 'post_date');
+  dateRange(p.first_seen_btn_sort, 'first_seen');
   dateRange(p.domain_date_btn_sort, 'domain_registration_date');
 
   // Traffic Source — mirror GDN SearchMixQueryBuilder._getSourceEnv().

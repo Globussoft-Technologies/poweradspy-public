@@ -1402,13 +1402,14 @@ export const buildSearchPayload = (filters = {}) => {
     googleTransparencyAds === 'true';
   const market_platform = pick('market_platform', 'marketing_platform_filter', 'marketing_platform', 'marketingPlatform');
   const post_date_btn_sort = pick('post_date_btn_sort');
+  const first_seen_btn_sort = pick('first_seen_btn_sort');
   const seen_btn_sort = pick('seen_btn_sort');
   const domain_date_btn_sort = pick('domain_date_btn_sort');
 
-  // Date presets/custom ranges are carried through post_date_btn_sort for AI
-  // Search. Unlike numeric/range filters, a custom date object must not be
-  // collapsed to "NA" by the generic value helper; the common API normalizes
-  // it into the canonical timestamp pair.
+  // Date presets/custom ranges are carried through the selected date dimension
+  // for AI Search. Unlike numeric/range filters, a custom date object must not
+  // be collapsed to "NA" by the generic value helper; the common API
+  // normalizes it into the canonical timestamp pair.
   const dateFilterValue = (value) => {
     if (value && typeof value === 'object' && !Array.isArray(value) && (
       value.startDate !== undefined || value.start_date !== undefined ||
@@ -1626,7 +1627,11 @@ export const buildSearchPayload = (filters = {}) => {
     popularity_sort: order_column === 'popularity' ? 'popularity_sort' : 'NA',
     views_sort: order_column === 'views' ? 'views_sort' : 'NA',
     adBudget_sort: order_column === 'ad_budget' ? 'adBudget_sort' : 'NA',
-    seen_btn_sort: v(seen_btn_sort),
+    // Preserve custom last-seen ranges for the common-search normalizer.
+    // The generic value helper treats arbitrary objects as range objects with
+    // min/max bounds, so it would otherwise discard { startDate, endDate }.
+    seen_btn_sort: dateFilterValue(seen_btn_sort),
+    first_seen_btn_sort: dateFilterValue(first_seen_btn_sort),
     post_date_btn_sort: dateFilterValue(post_date_btn_sort),
     domain_date_btn_sort: v(domain_date_btn_sort),
     // Per-platform filter skipping: only include filter fields that at least one
@@ -1871,6 +1876,7 @@ async function trackUserActivity(payload, meta) {
     shares_sort:          payload.shares_sort          ?? 'NA',
     domain_sort:          payload.domain_sort          ?? 'NA',
     seen_btn_sort:        payload.seen_btn_sort        ?? 'NA',
+    first_seen_btn_sort:  payload.first_seen_btn_sort  ?? 'NA',
     post_date_btn_sort:   payload.post_date_btn_sort   ?? 'NA',
     domain_date_btn_sort: payload.domain_date_btn_sort ?? 'NA',
     call_to_action:       payload.call_to_action       ?? 'NA',

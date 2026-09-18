@@ -65,6 +65,7 @@ class TiktokSearchQueryBuilder {
   setCtr(v) { this._params.ctr = v; return this; }
   setAdSeen(v) { this._params.adSeen = v; return this; }
   setPostDate(v) { this._params.postDate = v; return this; }
+  setFirstSeen(v) { this._params.firstSeen = v; return this; }
   setDomainDate(v) { this._params.domainDate = v; return this; }
 
   // ─── Clause generators ──
@@ -193,6 +194,7 @@ class TiktokSearchQueryBuilder {
 
   _getAdSeenEnv()     { return this._dateRangeEnv('last_seen',              this._params.adSeen); }
   _getPostDateEnv()   { return this._dateRangeEnv('first_seen',             this._params.postDate); }
+  _getFirstSeenEnv()  { return this._dateRangeEnv('first_seen',             this._params.firstSeen); }
   _getDomainDateEnv() { return this._dateRangeEnv('domain_registered_date', this._params.domainDate); }
 
   // ─── Query assembly ──
@@ -204,7 +206,7 @@ class TiktokSearchQueryBuilder {
       '_getBudgetEnv', '_getLanguageEnv', '_getCountryEnv',
       '_getLikesEnv', '_getCommentsEnv', '_getSharesEnv',
       '_getPopularityEnv', '_getImpressionEnv', '_getCtrEnv',
-      '_getAdSeenEnv', '_getPostDateEnv', '_getDomainDateEnv',
+      '_getAdSeenEnv', '_getPostDateEnv', '_getFirstSeenEnv', '_getDomainDateEnv',
       '_getKeywordEnv',
     ];
     const out = [];

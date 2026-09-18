@@ -345,6 +345,9 @@ async function searchAds(req, db, logger) {
   if (Array.isArray(p.post_date_btn_sort) && p.post_date_btn_sort.length === 2) {
     builder.setPostDate({ lower_date: Number(p.post_date_btn_sort[1]), upper_date: Number(p.post_date_btn_sort[0]) });
   }
+  if (Array.isArray(p.first_seen_btn_sort) && p.first_seen_btn_sort.length === 2) {
+    builder.setFirstSeen({ lower_date: Number(p.first_seen_btn_sort[1]), upper_date: Number(p.first_seen_btn_sort[0]) });
+  }
   if (Array.isArray(p.domain_date_btn_sort) && p.domain_date_btn_sort.length === 2) {
     builder.setDomainDate({ lower_date: Number(p.domain_date_btn_sort[1]), upper_date: Number(p.domain_date_btn_sort[0]) });
   }
