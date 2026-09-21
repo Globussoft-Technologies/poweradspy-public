@@ -152,7 +152,7 @@ const Sidebar = ({
       )}
 
       <aside
-        className={`${isOpen ? "w-56" : "w-16"} ${isOpen ? "fixed md:relative" : "relative"} inset-y-0 left-0 z-50 md:z-20 bg-theme-bg transition-all duration-300 flex-shrink-0 flex flex-col overflow-hidden`}
+        className={`${isOpen ? "w-56" : "w-16"} ${isOpen ? "fixed md:relative" : "relative"} inset-y-0 left-0 z-50 md:z-20 bg-theme-bg transition-[width] duration-300 flex-shrink-0 flex flex-col overflow-hidden`}
       >
         {/* Fading Gradient Border */}
         <div
@@ -171,7 +171,7 @@ const Sidebar = ({
               onClick={() => setIsOpen(!isOpen)}
               className={`p-2 hover:bg-theme-text/[0.06] rounded-lg transition-colors text-theme-text-muted hover:text-theme-text ${!isOpen ? "w-full flex justify-center" : ""}`}
             >
-              <Menu size={isOpen ? 18 : 20} />
+              <Menu size={18} />
             </button>
           </div>
 

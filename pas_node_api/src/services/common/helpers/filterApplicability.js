@@ -78,7 +78,7 @@ const BODY_TO_SDUI_FILTER_IDS = {
 const NON_FILTER_BODY_KEYS = new Set([
   'network', 'user_id', 'take', 'skip', 'page', 'page_size', 'order_column', 'order_by',
   'newest_sort', 'running_longest_sort', 'last_seen_sort', 'likes_sort', 'comments_sort',
-  'shares_sort', 'hits_sort', 'domain_sort', 'impression_sort', 'popularity_sort',
+  'shares_sort', 'hits_sort', 'impression_sort', 'popularity_sort',
   'adBudget_sort', 'seen_btn_sort', 'first_seen_btn_sort', 'post_date_btn_sort',
   'subscriptionType', 'userSubscription', 'favorite', 'hidden', 'tags', 'version',
   'selected_user', 'discoverer_user_id', 'needle', 'mixdata', 'html', 'html_content',
@@ -97,6 +97,17 @@ const STATIC_FILTER_NETWORKS = {
   // network that has matching country data (notably TikTok `countries: ["AU"]`).
   country: ALL_NETWORKS,
   domain_date_btn_sort: ['facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native', 'reddit', 'quora', 'pinterest', 'google'],
+  // "Ordered By: Domain Registration Date" — a sort flag, not a date-range
+  // filter, but same underlying data gap: AdMob and TikTok have no
+  // domain-registration data to sort by. SDUI's sb_domain_reg option already
+  // marks both excluded in its Platforms config, but that per-option
+  // applicability never reaches this code — domain_sort isn't in
+  // BODY_TO_SDUI_FILTER_IDS, and the value the frontend sends (the literal
+  // string "domain_sort", see services/api.js) doesn't match the SDUI
+  // option's actual value ("domain_reg_date") even if it were wired up.
+  // Static entry here mirrors domain_date_btn_sort above rather than fixing
+  // that SDUI wiring, matching the existing precedent in this file.
+  domain_sort: ['facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native', 'reddit', 'quora', 'pinterest', 'google'],
   // Numeric budget (fb/ig/yt) and categorical budget (tiktok) both supported
   adBudget: ['facebook', 'instagram', 'youtube'],
   // TikTok categorical budget ["Low","Medium","High"] — same platforms as adBudget
