@@ -5,6 +5,7 @@ import { FiHardDrive, FiServer, FiShare2, FiGlobe, FiCpu } from "react-icons/fi"
 import AdminContext from "../Context/Context";
 import fbaccountdetails from '../assets/fbaccountdetails.png'
 import systeminfo from '../assets/systeminfo.png'
+import sidebarLogo from '../assets/icon-192x192.webp'
 
 const Sidebar = () => {
   const navigate = useNavigate();
@@ -99,11 +100,8 @@ const navLabelClass = (active) =>
 
           <img
             className="h-[44px] w-[64%]"
-            src={
-              isOn
-                ? "https://i.ibb.co/bMD8bCDj/2560x1440-Change-Tagline-Change-2.png"
-                : "https://app.adsgpt.io/amember/data/public/673ac6707b2be.png"
-            }
+            src={sidebarLogo}
+
             alt="AdsGPT"
           />
 
@@ -192,11 +190,12 @@ const navLabelClass = (active) =>
                 </a>
                 <Link to={"/pas/crawler-insights"} className="block">
                   <li className={navItemClass(isActive("/pas/crawler-insights"))}>
-                    <img
+                    {/* <img
                       src="https://i.ibb.co/99W27LGb/vaadin-pie-bar-chart.png"
                       alt=""
                       className="w-[22px] h-[22px]"
-                    />
+                    /> */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bot-message-square preview-icon w-[22px] h-[22px] text-[#1f296a]"><path d="M12 6V2H8"/><path d="M15 11v2"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M20 16a2 2 0 0 1-2 2H8.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 4 20.286V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/><path d="M9 11v2"/></svg>
                     <span className={navLabelClass(isActive("/pas/crawler-insights"))}>
                       Crawler Insights
                     </span>
@@ -204,11 +203,12 @@ const navLabelClass = (active) =>
                 </Link>
                 <Link to={"/pas/search-intelligence"} className="block">
                   <li className={navItemClass(isActive("/pas/search-intelligence"))}>
-                    <img
+                    {/* <img
                       src="https://i.ibb.co/99W27LGb/vaadin-pie-bar-chart.png"
                       alt=""
                       className="w-[22px] h-[22px]"
-                    />
+                    /> */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-brain preview-icon w-[22px] h-[22px] text-[#1f296a]"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
                     <span className={navLabelClass(isActive("/pas/search-intelligence"))}>
                       Intelligence
                     </span>
@@ -258,11 +258,12 @@ const navLabelClass = (active) =>
               {isOn && (
                 <Link to={"/pas/email-details"} className="block">
                   <li className={navItemClass(isActive("/pas/email-details"))}>
-                    <img
+                    {/* <img
                       src="https://i.ibb.co/hJRQHK70/Vector.png"
                       alt=""
                       className="w-[22px] h-[22px]"
-                    />
+                    /> */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-mail preview-icon w-[22px] h-[22px] text-[#1f296a]"><path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
                     <span className={navLabelClass(isActive("/pas/email-details"))}>
                      Email Details
                     </span>
@@ -278,11 +279,12 @@ const navLabelClass = (active) =>
                     })
                   }
                 >
-                  <img
+                  {/* <img
                     src="https://i.ibb.co/hJRQHK70/Vector.png"
                     alt=""
                     className="w-[22px] h-[22px]"
-                  />
+                  /> */}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-users preview-icon w-[22px] h-[22px] text-[#1f296a]"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
                   <span className={navLabelClass(isActive("/pas/competitor-tracker"))}>
                    Competitor Tracker
                   </span>
