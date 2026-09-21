@@ -2138,17 +2138,20 @@ const App = () => {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiRunIdRef = useRef(0);
   const aiAbortRef = useRef(null);
+  // Only filter-producing AI searches need prompt cleanup when their filters
+  // are edited manually. Keyword-only AI searches must keep their prompt.
+  const aiPromptFilterSnapshotRef = useRef(null);
   // `undefined` keeps legacy/manual preset inference available; null means an
   // AI plan explicitly selected no visible Quick Filter preset.
   const [aiQuickFilterId, setAiQuickFilterId] = useState(undefined);
 
-  // Keep every Ask AI reset path consistent: clear the DS-applied payload,
-  // forget the user-visible prompt, restore the All-networks view, and cancel
-  // any in-flight AI run so late responses cannot repopulate the dashboard.
-  const resetAiSearchState = useCallback(() => {
+  // Clear the AI-owned query state without changing the user's selected
+  // networks. This is used when the prompt/AI filters are cleared in place.
+  const clearAiPromptState = useCallback(() => {
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
     aiRunIdRef.current += 1;
+    aiPromptFilterSnapshotRef.current = null;
     setAiSearchLoading(false);
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
@@ -2156,8 +2159,20 @@ const App = () => {
     dispatch(setAiPrompt(''));
     dispatch(setSearchIn('keyword'));
     dispatch(setExactSearch(false));
-    dispatch(setSpecificPlatforms([]));
+  }, [dispatch]);
+
+  const clearAiSearchFilters = useCallback(() => {
     sdui.clearAll?.();
+    clearAiPromptState();
+  }, [clearAiPromptState, sdui.clearAll]);
+
+  // Keep every explicit Ask AI reset path consistent: clear the DS-applied
+  // payload, forget the user-visible prompt, restore the All-networks view,
+  // and cancel any in-flight AI run so late responses cannot repopulate the
+  // dashboard.
+  const resetAiSearchState = useCallback(() => {
+    clearAiPromptState();
+    dispatch(setSpecificPlatforms([]));
     const permitted = Array.isArray(planAllowedPlatforms)
       ? allPlatformValues.filter((network) => (
           isCustomPlan
@@ -2166,13 +2181,13 @@ const App = () => {
         ))
       : allPlatformValues;
     sdui.setActivePlatforms(permitted);
-    setSearchTrigger((prev) => prev + 1);
   }, [
     allPlatformValues,
+    clearAiPromptState,
     dispatch,
     isCustomPlan,
     planAllowedPlatforms,
-    sdui,
+    sdui.setActivePlatforms,
   ]);
 
   const handleSearch = useCallback((query, type, platform, options = {}) => {
@@ -2198,6 +2213,7 @@ const App = () => {
     }
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
+    aiPromptFilterSnapshotRef.current = null;
     // Every handleSearch call is a genuine keyword/advertiser/domain search, never an AI
     // one (runAiSearch is a separate path) — clear any leftover ui.aiPrompt so it can't
     // stay stale from an earlier AI search the user didn't explicitly exit. searchBannerVisible
@@ -2244,6 +2260,7 @@ const App = () => {
       return;
     }
     if (guestGuard("Please login to search", { searchQuery: trimmed })) return;
+    aiPromptFilterSnapshotRef.current = null;
     // Store the raw user prompt separately so Ask AI keeps showing exactly what
     // the user typed even when the DS payload rewrites the internal query.
     dispatch(setAiPrompt(trimmed));
@@ -2285,6 +2302,14 @@ const App = () => {
     // setAllFilters replaces the whole filter map, clearing any stale manual filters.
     const commit = (mapped, planning = null) => {
       setAiCapabilityMessage(null);
+      const mappedFilters = mapped.filterValues || {};
+      const committedAiFilters = {
+        ...mappedFilters,
+        ...(mapped.sortBy ? { sorting: mapped.sortBy } : {}),
+      };
+      aiPromptFilterSnapshotRef.current = Object.keys(committedAiFilters).length > 0
+        ? committedAiFilters
+        : null;
       // Quick-filter highlighting is driven only by the planner's explicit
       // preset marker. Equivalent AI fields must remain ordinary AI filters.
       setAiQuickFilterId(getPlanningQuickFilterId(planning));
@@ -2489,6 +2514,25 @@ const App = () => {
   const exitAiSearch = useCallback(() => {
     resetAiSearchState();
   }, [resetAiSearchState]);
+
+  // A user can remove or edit AI-applied chips from the sidebar or result bar
+  // without going through the header. Compare only the filter keys committed
+  // by the AI plan, so unrelated manual filters do not mask that change. A
+  // keyword-only AI search has no snapshot and intentionally keeps its prompt.
+  useEffect(() => {
+    const snapshot = aiPromptFilterSnapshotRef.current;
+    if (!ui.aiPrompt || aiSearchLoading || !snapshot) return;
+    const aiFilterChanged = Object.entries(snapshot).some(([key, value]) => (
+      JSON.stringify(sdui.filterValues?.[key]) !== JSON.stringify(value)
+    ));
+    if (!aiFilterChanged) return;
+    clearAiPromptState();
+  }, [
+    aiSearchLoading,
+    clearAiPromptState,
+    sdui.filterValues,
+    ui.aiPrompt,
+  ]);
 
   // Recent Activity ("Today / Yesterday / Last Week / Last Month") click on the
   // competitor analytics table → land on the ads library searching that
@@ -2869,6 +2913,7 @@ const App = () => {
         }
         onAiSearch={runAiSearch}
         onExitAiSearch={exitAiSearch}
+        onClearAiSearch={clearAiSearchFilters}
         onCancelAiSearch={exitAiSearch}
         onAiModeChange={setAiModeActive}
         aiSearchAvailable={aiSearchAvailable}
@@ -3168,6 +3213,10 @@ const App = () => {
             }}
             allowedPlatforms={adsAllowedPlatforms}
             onClearAll={() => {
+              if (ui.aiPrompt) {
+                clearAiSearchFilters();
+                return;
+              }
               if (sdui.clearAll) sdui.clearAll();
               dispatch(setSearchQuery(""));
             }}

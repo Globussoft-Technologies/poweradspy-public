@@ -107,6 +107,33 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('hydrates nested AI category selections like a manual parent selection', () => {
+    const mapped = mapArgsToFilters({
+      adcategory: ['Ad Safety Risk'],
+    }, {
+      sidebar: [{
+        filters: [{
+          _id: 'categories',
+          type: 'nested_select',
+          options: [{
+            label: 'Ad Safety Risk',
+            value: 'Ad Safety Risk',
+            children: [
+              { label: 'General Ad Safety Risk', value: 'General Ad Safety Risk' },
+              { label: 'Restricted Products', value: 'Restricted Products' },
+            ],
+          }],
+        }],
+      }],
+    });
+
+    expect(mapped.filterValues).toEqual({
+      adcategory: ['Ad Safety Risk'],
+      subcategory: ['General Ad Safety Risk', 'Restricted Products'],
+    });
+    expect(mapped.filterValues).not.toHaveProperty('categories');
+  });
+
   it('inherits AI fields from full_payload when args omits them', () => {
     const args = normalizeAiSearchArgs({
       args: {

@@ -237,6 +237,29 @@ describe("AiQuickFilters", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("clears the active preset when its AI filters are removed", async () => {
+    const { rerender } = render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ ai_ad_type: ["ugc"] }}
+        activeQuickFilterId="tiktok_ugc"
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: /TikTok UGC/i })).toHaveAttribute("aria-pressed", "true");
+
+    rerender(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{}}
+        activeQuickFilterId="tiktok_ugc"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /TikTok UGC/i })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("replaces the active strategy when another card is selected", async () => {
     const onApply = vi.fn();
     const { rerender } = render(

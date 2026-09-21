@@ -131,11 +131,26 @@ function collectOptions(filter) {
     for (const o of opts || []) {
       if (!o) continue;
       out.push(o);
-      if (Array.isArray(o.children) && o.children.length) walk(o.children);
+      const children = o.children || o.sub_options || [];
+      if (Array.isArray(children) && children.length) walk(children);
     }
   };
   walk(filter?.options);
   return out;
+}
+
+// Nested category widgets keep the parent marker and leaf values in separate
+// state keys. Hydrating both keys makes AI Search behave like a manual tree
+// selection, including the checked state and grouped filter chips.
+function collectLeafValues(option, result = []) {
+  const children = option?.children || option?.sub_options || [];
+  if (children.length === 0) {
+    const value = option?.value ?? option?.label;
+    if (value != null && value !== '') result.push(value);
+    return result;
+  }
+  for (const child of children) collectLeafValues(child, result);
+  return result;
 }
 
 // Resolve a raw DS value to the stored key the widget expects (option.value, or
@@ -164,6 +179,40 @@ function applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel, on
   }
   if (!resolved.length) return;
   filterValues[filter._id] = isMulti(filter) ? resolved : resolved[0];
+}
+
+function applyNestedResolved(filter, rawValues, filterValues, unmapped, fieldLabel, onUnmapped) {
+  const resolved = [];
+  for (const raw of rawValues) {
+    const value = resolveOption(filter, raw);
+    if (value === undefined) {
+      if (onUnmapped) onUnmapped(fieldLabel, raw, 'value is not present in live SDUI options');
+      else unmapped.push(`${fieldLabel}: ${raw}`);
+    } else if (!resolved.includes(value)) {
+      resolved.push(value);
+    }
+  }
+  if (!resolved.length) return;
+
+  const parentKey = filter.parent_filter_id || 'adcategory';
+  const childKey = filter.child_filter_id || 'subcategory';
+  filterValues[parentKey] = isMulti(filter) ? resolved : resolved[0];
+
+  const leaves = [];
+  for (const value of resolved) {
+    const parent = (filter.options || []).find(
+      (option) => norm(option?.value) === norm(value) || norm(option?.label) === norm(value),
+    );
+    if (parent?.children?.length || parent?.sub_options?.length) {
+      collectLeafValues(parent, leaves);
+    }
+  }
+  if (leaves.length) {
+    const existing = Array.isArray(filterValues[childKey])
+      ? filterValues[childKey]
+      : filterValues[childKey] ? [filterValues[childKey]] : [];
+    filterValues[childKey] = [...new Set([...existing, ...leaves])];
+  }
 }
 
 // DS AI planner fields are part of the stable PAS request contract, and the
@@ -308,19 +357,25 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     }
   }
 
-  // ── adcategory / subCategory → categories / subcategory (only when they
+  // ── adcategory / subCategory → nested category state (only when they
   //    resolve to real options; DS taxonomy often won't match ours) ───────────
-  const categoriesFilter = findFilter(config, FILTER_IDS.categories);
-  if (args.adcategory && categoriesFilter) {
-    applyResolved(categoriesFilter, asArray(args.adcategory), filterValues, unmapped, 'adcategory', recordUnmapped);
-  } else if (args.adcategory) {
-    recordUnmapped('adcategory', args.adcategory, 'filter is not available in live SDUI');
-  }
+  // Resolve explicit leaves first so parent expansion below merges with them
+  // instead of replacing a narrower subcategory selection.
   const subcategoryFilter = findFilter(config, FILTER_IDS.subcategory);
   if (args.subCategory && subcategoryFilter) {
     applyResolved(subcategoryFilter, asArray(args.subCategory), filterValues, unmapped, 'subCategory', recordUnmapped);
   } else if (args.subCategory) {
     recordUnmapped('subCategory', args.subCategory, 'filter is not available in live SDUI');
+  }
+  const categoriesFilter = findFilter(config, FILTER_IDS.categories);
+  if (args.adcategory && categoriesFilter) {
+    if (categoriesFilter.type === 'nested_select' || categoriesFilter.type === 'nested_multiselect') {
+      applyNestedResolved(categoriesFilter, asArray(args.adcategory), filterValues, unmapped, 'adcategory', recordUnmapped);
+    } else {
+      applyResolved(categoriesFilter, asArray(args.adcategory), filterValues, unmapped, 'adcategory', recordUnmapped);
+    }
+  } else if (args.adcategory) {
+    recordUnmapped('adcategory', args.adcategory, 'filter is not available in live SDUI');
   }
 
   // Standard AI Search fields with special request shaping in api.js. Keep

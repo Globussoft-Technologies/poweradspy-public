@@ -69,11 +69,14 @@ const AiQuickFilters = ({
   // A natural-language AI result must not light up a preset merely because
   // its AI fields happen to be equivalent. Only an explicit planner value or
   // a direct quick-filter interaction may select the visible shortcut.
+  const matchingPreset = findActiveAiQuickFilterPreset(filterValues, doc, presets);
   const activePreset = activeQuickFilterId !== undefined
-    ? presets.find((preset) => preset.id === activeQuickFilterId) || null
+    ? (activeQuickFilterId && matchingPreset?.id === activeQuickFilterId
+      ? matchingPreset
+      : null)
     : String(aiPrompt || '').trim()
       ? null
-      : findActiveAiQuickFilterPreset(filterValues, doc, presets);
+      : matchingPreset;
   const hasAiFilters = hasActiveAiFilters(filterValues, doc);
 
   useEffect(() => {

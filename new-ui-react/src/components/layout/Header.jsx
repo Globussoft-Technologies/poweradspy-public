@@ -134,6 +134,7 @@ const Header = ({
   onSearch,
   onAiSearch,
   onExitAiSearch,
+  onClearAiSearch,
   onAiModeChange,
   aiSearchAvailable = false,
   aiSearchChecked = false,
@@ -187,6 +188,9 @@ const Header = ({
   const [localQuery, setLocalQuery] = useState(
     aiMode ? (aiPrompt || "") : (searchQuery || "")
   );
+  // The clear icon emits both onChange("") and onClear. Avoid running the
+  // state-reset callback twice while still handling backspace/select-all.
+  const aiClearHandledRef = useRef(false);
   // When a category is selected we clear Redux searchQuery (category-only search)
   // but must NOT wipe the visible input — this ref suppresses that one sync.
   const skipQuerySyncRef = useRef(false);
@@ -786,12 +790,23 @@ const Header = ({
                     setLocalQuery(val);
                     if (val.length > 0) setShowAiPrompts(false);
                     if (val === "") {
-                      if (!aiMode && onSearch) onSearch("", localSearchIn);
+                      if (aiMode) {
+                        aiClearHandledRef.current = true;
+                        onClearAiSearch?.();
+                      } else if (onSearch) {
+                        onSearch("", localSearchIn);
+                      }
+                    } else {
+                      aiClearHandledRef.current = false;
                     }
                   }}
                   onClear={() => {
                     if (aiMode) {
-                      if (onAiSearch) onAiSearch("");
+                      if (aiClearHandledRef.current) {
+                        aiClearHandledRef.current = false;
+                        return;
+                      }
+                      onClearAiSearch?.();
                       return;
                     }
                     if (onSearch) onSearch("", localSearchIn);
@@ -995,6 +1010,10 @@ const Header = ({
           <button
             onClick={() => {
               if (guest?.showGuestWarning("Please login to change filters")) return;
+              if (aiPrompt.trim()) {
+                onClearAiSearch?.();
+                return;
+              }
               sdui.clearAll();
               if (setSearchQuery) setSearchQuery("");
               if (setActiveTab) setActiveTab("Newest");
