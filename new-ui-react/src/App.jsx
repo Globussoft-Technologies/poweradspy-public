@@ -2210,6 +2210,17 @@ const App = () => {
       // the previous page/session; start the search from a blank filter state so
       // the clicked advertiser/platform is the only active context.
       sdui.clearAll?.();
+    } else if (ui.aiPrompt?.trim()) {
+      // A normal drill-down replaces an active AI prompt. Drop only the
+      // prompt-derived filters; selected networks and ordinary filters remain.
+      const aiFilterSnapshot = aiPromptFilterSnapshotRef.current;
+      if (aiFilterSnapshot) {
+        const remainingFilters = { ...sdui.filterValues };
+        Object.keys(aiFilterSnapshot).forEach((filterId) => {
+          delete remainingFilters[filterId];
+        });
+        sdui.setAllFilters?.(remainingFilters);
+      }
     }
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
@@ -2247,7 +2258,7 @@ const App = () => {
     const si = type || ui.searchIn || 'keyword';
     const selected = (platform ? [platform] : ui.specificPlatforms) || [];
     armKeywordSearchTrack(query, si, selected);
-  }, [guestGuard, dispatch, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
+  }, [guestGuard, dispatch, ui.aiPrompt, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
 
   // Orchestrates AI search: prompt → DS plan → try each fallback payload
   // (most-specific first) until one returns results → commit that tier's filters

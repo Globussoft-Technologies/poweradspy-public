@@ -158,6 +158,11 @@ const Header = ({
   // language switch performs (Google Translate reset), matching the no-reload
   // behaviour of the other languages.
   const [aiMode, setAiMode] = useState(() => {
+    // A committed normal search must win over the AI-first default on reload;
+    // otherwise the persisted results disappear behind an empty AI prompt.
+    const hasActiveAiPrompt = Boolean(aiPrompt?.trim());
+    const hasCommittedNormalSearch = Boolean(searchQuery?.trim()) && !hasActiveAiPrompt;
+    if (hasCommittedNormalSearch) return false;
     try { return sessionStorage.getItem("ai_search_mode") !== "0"; } catch { return true; }
   });
   useEffect(() => {
@@ -191,19 +196,58 @@ const Header = ({
   // The clear icon emits both onChange("") and onClear. Avoid running the
   // state-reset callback twice while still handling backspace/select-all.
   const aiClearHandledRef = useRef(false);
+  // Selecting AI from the mode menu is intentional even if the previous
+  // normal search was an advertiser/domain search.
+  const preserveAiModeRef = useRef(false);
+  // Track the committed normal-search state so persisted advertiser/domain
+  // mode on an empty search is not mistaken for a new drill-down on mount.
+  const previousSearchStateRef = useRef({
+    searchIn: searchIn || "keyword",
+    searchQuery: searchQuery || "",
+  });
   // When a category is selected we clear Redux searchQuery (category-only search)
   // but must NOT wipe the visible input — this ref suppresses that one sync.
   const skipQuerySyncRef = useRef(false);
   useEffect(() => {
     if (skipQuerySyncRef.current) { skipQuerySyncRef.current = false; return; }
-    setLocalQuery(aiMode ? (aiPrompt || "") : (searchQuery || ""));
-  }, [aiMode, aiPrompt, searchQuery]);
+    const currentSearchIn = searchIn || "keyword";
+    const currentSearchQuery = searchQuery || "";
+    const previous = previousSearchStateRef.current;
+    const externalNormalSearch =
+      !aiPrompt &&
+      currentSearchIn !== "keyword" &&
+      !preserveAiModeRef.current &&
+      (previous.searchIn !== currentSearchIn || previous.searchQuery !== currentSearchQuery);
+    setLocalQuery(aiMode && !externalNormalSearch ? (aiPrompt || "") : currentSearchQuery);
+  }, [aiMode, aiPrompt, searchIn, searchQuery]);
 
   // Local search type — only syncs to Redux on submit
   const [localSearchIn, setLocalSearchIn] = useState(searchIn || "keyword");
   useEffect(() => {
     setLocalSearchIn(searchIn || "keyword");
   }, [searchIn]);
+
+  // Card and intelligence drill-downs can commit a normal advertiser/domain
+  // search without going through this header's mode menu. Leave AI mode when
+  // that external search is committed, but keep AI mode for a live AI prompt.
+  useEffect(() => {
+    const currentSearchIn = searchIn || "keyword";
+    const currentSearchQuery = searchQuery || "";
+    const previous = previousSearchStateRef.current;
+    const externalNormalSearch =
+      !aiPrompt &&
+      currentSearchIn !== "keyword" &&
+      (previous.searchIn !== currentSearchIn || previous.searchQuery !== currentSearchQuery);
+    previousSearchStateRef.current = {
+      searchIn: currentSearchIn,
+      searchQuery: currentSearchQuery,
+    };
+    if (preserveAiModeRef.current) {
+      preserveAiModeRef.current = false;
+      return;
+    }
+    if (aiMode && externalNormalSearch) setAiMode(false);
+  }, [aiMode, aiPrompt, searchIn, searchQuery]);
 
   const isGuestMode = !!guest?.isRestricted; // true only for non-logged-in guests
   const [switchingToOldPAS, setSwitchingToOldPAS] = useState(false);
@@ -529,6 +573,7 @@ const Header = ({
     setShowAiPrompts(false);
     if (mode === "ai") {
       if (!aiSearchAvailable) return;
+      if (!aiMode) preserveAiModeRef.current = true;
       setAiMode(true);
       setLocalQuery(aiPrompt || "");
       return;
