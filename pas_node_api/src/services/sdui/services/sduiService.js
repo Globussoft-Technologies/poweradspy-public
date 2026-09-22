@@ -524,19 +524,21 @@ function fallbackAdmobOptions(filter) {
   }));
 }
 
-function resolveAdmobFilterOptions(filter, liveOptions) {
+function resolveAdmobFilterOptions(filter, liveOptions, platforms = ['admob']) {
   const filterId = getCanonicalAdmobFilterId(filter._id);
   const allOptions = Array.isArray(filter.options) ? filter.options.map((option) => ({ ...option })) : [];
-  // Several of these live-hydrated filters (e.g. ad_position_filter) are
-  // shared sidebar docs also used by other networks (facebook/youtube), and
-  // their static options are tagged platform_applicability: "all" — meaning
-  // they leak into AdMob's list too unless filtered out. Only keep static
-  // options explicitly scoped to admob; the rest come from the live DB query
-  // below, which is the actual source of truth for AdMob's real values.
+  // Several of these live-hydrated filters (e.g. ad_position_filter, image_size_filter)
+  // are shared sidebar docs also used by other networks (facebook/youtube/gdn), and
+  // some of their static options are tagged platform_applicability: "all" — meaning
+  // they'd otherwise leak into AdMob's list. Keep only options scoped to a
+  // currently-selected platform (e.g. admob and/or gdn); the rest come from
+  // the live DB query below, the source of truth for AdMob's own real values.
+  const normalizedPlatforms = (platforms || []).map((p) => String(p).toLowerCase());
   const existingOptions = allOptions.filter((option) => {
     const pa = option.platform_applicability;
     if (!pa) return true;
-    return pa === 'admob' || (Array.isArray(pa) && pa.includes('admob'));
+    const list = Array.isArray(pa) ? pa : [pa];
+    return list.some((p) => normalizedPlatforms.includes(String(p).toLowerCase()));
   });
   // Manually-authored options are the primary source of truth for this
   // filter — once an admin has curated a list, live DB data must never mix
@@ -551,8 +553,30 @@ function resolveAdmobFilterOptions(filter, liveOptions) {
   return fallbackAdmobOptions(filter);
 }
 
-async function prepareAdmobSidebar(config, { admobOnly = false } = {}) {
-  const liveOptions = await getAdmobLiveFilterOptions();
+async function prepareAdmobSidebar(config, { admobOnly = false, platforms = ['admob'] } = {}) {
+  // getAdmobLiveFilterOptions() is a real SQL/Elasticsearch round trip that
+  // blocks this whole response. resolveAdmobFilterOptions() below always
+  // prefers admin-curated SDUI options over it, so skip the live call
+  // entirely when every live-eligible filter already has curated options.
+  const sidebarDocs = config.sidebar || [];
+  const needsLiveOptions =
+    !sidebarDocs.some((doc) => doc._id === 'admob_network') ||
+    !sidebarDocs.some((doc) => doc._id === 'source_app' || doc._id === 'admob_source_app') ||
+    sidebarDocs.some((doc) =>
+      ADMOB_SIDEBAR_IDS.includes(doc._id) &&
+      !(doc._id === 'source' && !admobOnly) &&
+      (doc.filters || []).some((filter) => {
+        if (!ADMOB_LIVE_FILTER_IDS.has(getCanonicalAdmobFilterId(filter._id))) return false;
+        const options = Array.isArray(filter.options) ? filter.options : [];
+        return !options.some((option) => {
+          const pa = option.platform_applicability;
+          return !pa || pa === 'admob' || (Array.isArray(pa) && pa.includes('admob'));
+        });
+      })
+    );
+  const liveOptions = needsLiveOptions
+    ? await getAdmobLiveFilterOptions()
+    : { available: false, optionsByFilter: {} };
   let hasAdmobNetworkDocument = false;
   let hasSourceAppDocument = false;
   const prepared = {
@@ -591,7 +615,7 @@ async function prepareAdmobSidebar(config, { admobOnly = false } = {}) {
           'admob'
         ),
         options: ADMOB_LIVE_FILTER_IDS.has(getCanonicalAdmobFilterId(filter._id))
-          ? resolveAdmobFilterOptions(filter, liveOptions)
+          ? resolveAdmobFilterOptions(filter, liveOptions, platforms)
           : mergeAdmobOptions(filter),
       }));
 
@@ -746,7 +770,7 @@ async function filterConfigByPlatforms(config, platforms) {
   const isAdmobOnly = normalizedPlatforms.length === 1 && normalizedPlatforms[0] === 'admob';
   const hasAdmob = normalizedPlatforms.includes('admob');
   const sourceConfig = hasAdmob
-    ? await prepareAdmobSidebar(config, { admobOnly: isAdmobOnly })
+    ? await prepareAdmobSidebar(config, { admobOnly: isAdmobOnly, platforms: normalizedPlatforms })
     : config;
 
   // Extract platform_filter_matrix from the navbar "platforms" document
