@@ -29,6 +29,10 @@ const NAS_PLACE = ['pasvideo', 'pasimage', 'bydefault'].map((p) => ({ wildcard: 
 const FINDABLE = { bool: { should: [
   { bool: { filter: [{ terms: { 'ad_type.keyword': VD } }, { exists: { field: 'thumbnail_url' } }], must_not: THUMB_PLACE } },
   { bool: { filter: [{ exists: { field: 'new_nas_image_url' } }], must_not: [{ terms: { 'ad_type.keyword': VD } }, ...NAS_PLACE] } },
+  // BANNER ads never get thumbnail_url/new_nas_image_url (separate legacy
+  // insertion flow — see SearchMixQueryBuilder.js's EXTRA_CONDITION comment,
+  // the source of truth this mirrors). Pass on ad_type alone.
+  { bool: { filter: [{ term: { 'ad_type.keyword': 'BANNER' } }] } },
 ], minimum_should_match: 1 } };
 const HAS_REDIRECT = { bool: { filter: [{ exists: { field: 'redirect_urls' } }], must_not: [{ term: { 'redirect_urls.keyword': '' } }] } };
 

@@ -92,6 +92,17 @@ const EXTRA_CONDITION = [
             ],
           },
         },
+        // BANNER ads are inserted through a separate legacy PHP flow
+        // (insertBannerAds — see insertion/metaAdsPipeline.js), which never
+        // populates thumbnail_url or new_nas_image_url — confirmed against
+        // real data 2026-09-23: 0 of 89 production BANNER docs had either
+        // field, across every field on the document, not just these two.
+        // Neither branch above can ever match a BANNER ad, so without this
+        // branch every BANNER ad is silently dropped by this gate regardless
+        // of any ad-type filter — pass BANNER through on ad_type alone, with
+        // no image-field requirement, since no such field is ever populated
+        // for this type.
+        { bool: { filter: [{ term: { 'ad_type.keyword': 'BANNER' } }] } },
       ],
       minimum_should_match: 1,
     },

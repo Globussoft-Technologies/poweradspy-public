@@ -173,6 +173,12 @@ const YOUTUBE = [
             { wildcard: { 'new_nas_image_url.keyword': { value: '*bydefault*' } } },
           ],
         } },
+        // BANNER ads come through a separate legacy PHP insertion flow that
+        // never populates thumbnail_url/new_nas_image_url (confirmed against
+        // real data 2026-09-23 — 0 of 89 production BANNER docs had either
+        // field). Pass on ad_type alone; mirrors the source-of-truth change
+        // in pas_node_api/src/services/youtube/builders/SearchMixQueryBuilder.js.
+        { bool: { filter: [{ term: { 'ad_type.keyword': 'BANNER' } }] } },
       ],
       minimum_should_match: 1,
     },
