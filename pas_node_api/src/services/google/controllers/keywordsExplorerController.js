@@ -383,8 +383,22 @@ async function getKeywordsExplorer(req, db, logger) {
     // arguments to mysqld_stmt_execute") binding LIMIT/OFFSET as placeholders
     // against this MySQL setup. Both are clampInt()-validated integers, so
     // inlining is safe (same workaround as getAdsByAdvertiserController.js).
+    // `keyword_stats_unique.sample_keyword_id` was dropped from the table
+    // (2026-09-23) — keyword_id (a real google_text_keywords.id, needed by
+    // Keyword Lists' add/remove, which stores it as an int FK — the keyword
+    // TEXT alone isn't enough there) is now resolved with a correlated
+    // subquery instead. Bounded to just this page's rows (LIMIT above), not
+    // the whole table, same "cheap because it only runs against an
+    // already-limited result set" reasoning as keywordIdeasController.js's
+    // display-only joins. No LOWER()/TRIM() wrap on either side of the
+    // match — ksu.keyword is already lowercased/trimmed at write time, and
+    // google_text_keywords.keyword's collation is case-insensitive already;
+    // wrapping either side in a function would defeat the index (measured
+    // elsewhere in this codebase: an 80.7s/page vs 46ms/page difference from
+    // exactly this).
     const rowsPromise = db.sql.query(
-      `SELECT sample_keyword_id AS keyword_id, keyword, countries,
+      `SELECT (SELECT MIN(gtk.id) FROM google_text_keywords gtk WHERE gtk.keyword = ksu.keyword) AS keyword_id,
+              keyword, countries,
               ads_total, advertisers_total, domains_total, growth_pct,
               competition_score, category, sub_category, top_country,
               type_mix, position_top_pct, first_seen, last_seen
