@@ -3360,16 +3360,7 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
             )}
 
             {/* Lander Details */}
-            {![
-              "google",
-              "gdn",
-              "native",
-              "linkedin",
-              "reddit",
-              "quora",
-              "pinterest",
-              "tiktok",
-            ].includes(ctx.platform) && (
+            {landerScreenshotUrl && (
               <LanderDetails
                 screenshotUrl={landerScreenshotUrl}
                 pageUrl={landerVisitUrl}

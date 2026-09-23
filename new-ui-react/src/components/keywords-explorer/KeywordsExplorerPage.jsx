@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Upload, Database, TrendingUp, TrendingDown, Swords, BarChart3 } from "lucide-react";
+import { Search, Upload, Database, TrendingUp, TrendingDown, Users, BarChart3 } from "lucide-react";
 import { getGoogleKeywordsExplorer, importGoogleKeywordsFile, importGoogleKeywordsText } from "../../services/api";
 import KeywordFilterBar from "./KeywordFilterBar.jsx";
 import KeywordExplorerTable from "./KeywordExplorerTable.jsx";
@@ -88,7 +88,6 @@ const KeywordTableSkeleton = ({ rows = 8 }) => (
 );
 
 const fmtNum = (n) => (n == null ? "–" : Number(n).toLocaleString("en-US"));
-const compBarColor = (s) => (s == null ? "bg-gray-400" : s < 34 ? "bg-emerald-500" : s < 67 ? "bg-amber-500" : "bg-red-500");
 
 const StatCard = ({ icon, label, children }) => (
   <div className="rounded-2xl border border-theme-border bg-theme-card px-4 py-3.5 shadow-sm">
@@ -111,19 +110,22 @@ const StatCardsSkeleton = () => (
 /** Summary stat cards above the table — driven by the aggregate `stats` the
  *  /keywords/explorer API returns over the whole filtered set. */
 const StatCards = ({ stats, loading, access = {}, onUpgrade }) => {
-  if (loading) return <StatCardsSkeleton />;
+  // Skeleton only when there are no numbers on screen yet — once real stats
+  // have loaded once, a live filter edit dims them in place instead of
+  // flashing back to the skeleton on every keystroke-triggered refresh (same
+  // reasoning as the keyword table below).
+  if (loading && !stats) return <StatCardsSkeleton />;
   if (!stats) return null;
   return (
-    <FadeIn className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4 [font-variant-numeric:tabular-nums]">
-      <StatCard icon={<Search size={12} className="text-[#6b99ff]" />} label="Keywords">
+    <FadeIn className={`grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4 [font-variant-numeric:tabular-nums] transition-opacity duration-200 ${loading ? "opacity-50" : "opacity-100"}`}>
+      <StatCard icon={<Search size={12} className="text-[#6b99ff]" />} label="Keywords Tracked">
         <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.keywords)}</div>
+        <div className="mt-0.5 text-[11px] text-theme-text-muted">across the whole database</div>
       </StatCard>
-      <PlanLockedSection allowed={access.competition !== false} title="Avg Competition" onUpgrade={onUpgrade} compact>
-      <StatCard icon={<Swords size={12} className="text-[#6b99ff]" />} label="Avg Competition">
-        <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{stats.avg_competition ?? "–"}</div>
-        <div className="mt-2 h-1.5 rounded-full bg-theme-text/[0.06] overflow-hidden">
-          <div className={`h-full rounded-full ${compBarColor(stats.avg_competition)}`} style={{ width: `${Math.max(0, Math.min(100, stats.avg_competition ?? 0))}%` }} />
-        </div>
+      <PlanLockedSection allowed={access.competition !== false} title="Total Advertisers" onUpgrade={onUpgrade} compact>
+      <StatCard icon={<Users size={12} className="text-[#6b99ff]" />} label="Total Advertisers">
+        <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.total_advertisers)}</div>
+        <div className="mt-0.5 text-[11px] text-theme-text-muted">unique businesses bidding</div>
       </StatCard>
       </PlanLockedSection>
       <PlanLockedSection allowed={access.adVolume !== false} title="Total Ad Volume" onUpgrade={onUpgrade} compact>
@@ -134,11 +136,20 @@ const StatCards = ({ stats, loading, access = {}, onUpgrade }) => {
       </PlanLockedSection>
       <PlanLockedSection allowed={access.growth !== false} title="Trending" onUpgrade={onUpgrade} compact>
       <StatCard icon={<TrendingUp size={12} className="text-[#6b99ff]" />} label="Trending">
-        <div className="mt-1.5 flex items-center gap-3">
-          <span className="inline-flex items-center gap-1 text-xl font-extrabold text-emerald-500"><TrendingUp size={16} />{fmtNum(stats.trending_up)}</span>
-          <span className="inline-flex items-center gap-1 text-xl font-extrabold text-red-500"><TrendingDown size={16} />{fmtNum(stats.trending_down)}</span>
-        </div>
-        <div className="mt-0.5 text-[11px] text-theme-text-muted">up vs down</div>
+        {stats.trending_last_30d == null || stats.trending_prior_30d == null ? (
+          <div className="mt-1.5 text-2xl font-extrabold text-theme-text">–</div>
+        ) : (() => {
+          const isUp = stats.trending_last_30d >= stats.trending_prior_30d;
+          return (
+            <div
+              className={`mt-1.5 inline-flex items-center gap-1 text-2xl font-extrabold ${isUp ? "text-emerald-500" : "text-red-500"}`}
+              title={`Last 30 days: ${fmtNum(stats.trending_last_30d)} · Prior 30 days: ${fmtNum(stats.trending_prior_30d)}`}
+            >
+              {isUp ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+              {fmtNum(stats.trending_last_30d)}
+            </div>
+          );
+        })()}
       </StatCard>
       </PlanLockedSection>
     </FadeIn>
@@ -148,14 +159,16 @@ const StatCards = ({ stats, loading, access = {}, onUpgrade }) => {
 // Client-side stats for the import/search view (API returns the full matched
 // set there, not a page — so averaging/summing it is accurate).
 const computeStats = (list = []) => {
-  if (!list.length) return { keywords: 0, avg_competition: null, total_ad_volume: 0, trending_up: 0, trending_down: 0 };
-  const comp = list.filter((r) => r.competition_score != null);
+  if (!list.length) return { keywords: 0, total_advertisers: 0, total_ad_volume: 0, trending_last_30d: null, trending_prior_30d: null };
+  // No per-row 30d/prior-30d ad counts come back on this list, so this view's
+  // Trending card falls back to the StatCard's "–" (insufficient data) state
+  // rather than showing a number computed from a different, unrelated field.
   return {
     keywords: list.length,
-    avg_competition: comp.length ? Math.round(comp.reduce((s, r) => s + Number(r.competition_score), 0) / comp.length) : null,
+    total_advertisers: list.reduce((s, r) => s + (Number(r.advertisers_total) || 0), 0),
     total_ad_volume: list.reduce((s, r) => s + (Number(r.ads_total) || 0), 0),
-    trending_up: list.filter((r) => Number(r.growth_pct) > 0).length,
-    trending_down: list.filter((r) => Number(r.growth_pct) < 0).length,
+    trending_last_30d: null,
+    trending_prior_30d: null,
   };
 };
 
@@ -201,12 +214,23 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
   // NOT trigger a browse refetch — that was reloading the entire DB list on sort).
   const [mode, setMode] = useState("browse");
 
+  // Filters now auto-apply as-you-type (debounced in KeywordFilterBar), which
+  // reintroduces the possibility this ref guards against: two fetches in
+  // flight at once, with no guarantee the one that started LATER also
+  // resolves later. Each call claims a ticket; a response only gets applied
+  // if it's still holding the most recent ticket when it resolves — an
+  // older, slower response arriving after a newer one just gets dropped
+  // instead of overwriting fresher rows/stats on screen.
+  const fetchTicketRef = useRef(0);
+
   const fetchRows = useCallback(async () => {
     if (!access.browse) return;
+    const ticket = ++fetchTicketRef.current;
     setLoading(true);
     setError(null);
     try {
       const res = await getGoogleKeywordsExplorer({ page, page_size: PAGE_SIZE, ...sort, ...filters });
+      if (ticket !== fetchTicketRef.current) return; // a newer request has already started
       if (res.code === 200) {
         setRows(res.data.keywords || []);
         setTotal(res.data.total || 0);
@@ -217,9 +241,10 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
         setStats(null);
       }
     } catch (e) {
+      if (ticket !== fetchTicketRef.current) return;
       setError(e.message || "Failed to load keywords.");
     } finally {
-      setLoading(false);
+      if (ticket === fetchTicketRef.current) setLoading(false);
     }
   }, [page, sort, filters, access.browse]);
 
@@ -254,10 +279,10 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
   }, [rows, sort, mode, page]);
 
   // Clear the previous results so a failed/empty import doesn't leave the stat
-  // cards (Keywords / Avg Competition / Total Ad Volume / Trending) and the table
+  // cards (Keywords / Total Advertisers / Total Ad Volume / Trending) and the table
   // showing the stale database-browse numbers behind the error message. e.g.
   // uploading a CSV whose keyword column is empty → 0 matches → counts must read 0.
-  // computeStats([]) → { keywords: 0, avg_competition: null, total_ad_volume: 0, ... }.
+  // computeStats([]) → { keywords: 0, total_advertisers: 0, total_ad_volume: 0, ... }.
   const clearResults = () => {
     setRows([]);
     setTotal(0);
@@ -495,7 +520,14 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
             </div>
             </PlanLockedSection>
             <PlanLockedSection allowed={access.browse} title="Keyword table" onUpgrade={onUpgrade} className="mt-4">
-            {busyShimmer ? (
+            {/* Full skeleton only for a true "nothing to show yet" load (first
+                open, or an error/empty state). Once a table is already on
+                screen, a live filter edit re-fetches in the background — swapping
+                to the skeleton on every keystroke-triggered update flashed the
+                whole table out and back in, which read as janky rather than
+                "live." Dimming the existing rows in place instead keeps the
+                table visibly there the whole time filters are being typed. */}
+            {busyShimmer && rows.length === 0 ? (
               <KeywordTableSkeleton />
             ) : error ? (
               // Retry re-fetches the current filter/sort/page from the database view — an
@@ -504,18 +536,20 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
               <ErrorRetry message={error} onRetry={fetchRows} className="py-16" />
             ) : (
               <FadeIn>
-                <KeywordExplorerTable
-                  rows={displayRows}
-                  total={total}
-                  page={page}
-                  pageSize={PAGE_SIZE}
-                  sort={sort}
-                  onSortChange={(s) => { setSort(s); setPage(1); }}
-                  onPageChange={setPage}
-                  onKeywordClick={onOpenKeyword}
-                  access={access}
-                  onUpgrade={onUpgrade}
-                />
+                <div className={`transition-opacity duration-200 ${busyShimmer ? "opacity-50 pointer-events-none" : "opacity-100"}`}>
+                  <KeywordExplorerTable
+                    rows={displayRows}
+                    total={total}
+                    page={page}
+                    pageSize={PAGE_SIZE}
+                    sort={sort}
+                    onSortChange={(s) => { setSort(s); setPage(1); }}
+                    onPageChange={setPage}
+                    onKeywordClick={onOpenKeyword}
+                    access={access}
+                    onUpgrade={onUpgrade}
+                  />
+                </div>
               </FadeIn>
             )}
             </PlanLockedSection>

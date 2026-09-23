@@ -53,15 +53,26 @@ async function insertHtmlRedirectCountry(req, db, log) {
       };
     }
 
+    // Accepts every shape the scrapers send (mirrors facebook/instagram/gdn landers'
+    // normalization): { ad_id, insertData: {...} }, { ad_id, insertData: [{...}] },
+    // [ {...} ] (top-level array), or a flat { ad_id, ... } body.
     const rawItems = Array.isArray(payload) ? payload : [payload];
-    // All lander payloads must use the `insertData` wrapper.
-    const items = rawItems.map((item) =>
-      item && item.insertData ? item.insertData : null
-    );
+    const items = rawItems.map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      let lander = 'insertData' in item ? item.insertData : item;
+      if (Array.isArray(lander)) lander = lander[0];
+      if (!lander || typeof lander !== 'object' || Array.isArray(lander)) return null;
+      const hasAdId = lander.ad_id !== undefined && lander.ad_id !== null && lander.ad_id !== '';
+      const wrapperAdId = item.ad_id;
+      if (!hasAdId && wrapperAdId !== undefined && wrapperAdId !== null && wrapperAdId !== '') {
+        lander = { ...lander, ad_id: wrapperAdId };
+      }
+      return lander;
+    });
     if (items.some((item) => !item)) {
       return {
         code: 400,
-        message: 'insertData wrapper is required',
+        message: 'No lander details were found in the request body.',
         exe_time: (Date.now() - startTime) / 1000
       };
     }
@@ -267,6 +278,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
         // Remove duplicates and store as JSON
         updateMeta.white_ad_screenshot = JSON.stringify([...new Set(screenshots)]);
         updateMeta.white_ad_lander = JSON.stringify([...new Set(zips)]);
+        updateMeta.screenshot_url = item.screen_shot;
         updateMeta.white_lander_date = new Date().toISOString().split('T')[0];
         updateMeta.white_ad_status = item.domain_age === 1 ? 2 : item.status;
         htmlContent.html_dc_blackhat_lander_text = item.html_content;
@@ -305,6 +317,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
         // Remove duplicates and store as JSON
         updateMeta.png_file = JSON.stringify([...new Set(screenshots)]);
         updateMeta.blackhat_path = JSON.stringify([...new Set(zips)]);
+        updateMeta.screenshot_url = item.screen_shot;
         updateMeta.blackhat_status = 1;
         updateMeta.blackhat_date = new Date().toISOString().split('T')[0];
         htmlContent.html_res_blackhat_lander_text = item.html_content;

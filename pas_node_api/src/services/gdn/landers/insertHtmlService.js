@@ -5,10 +5,16 @@ const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 /**
  * GDN landers — insert_html_content (BlackhatController@inserHtmlContentToDB).
  *
- * Request body: an ARRAY of insert objects (PHP $request->all()); the ES existence
- * check uses postdata[0].ad_id. Each object: ad_id, country_iso, destinations,
- * html_path, screen_shot, html_content, status, domain_registered_date, crawled_by,
- * domain_age, outgoing_url[], redirects[], ad_category.
+ * Request body: accepts every shape the scrapers send (mirrors facebook/instagram
+ * landers' normalization):
+ *   - { ad_id, insertData: { ... } }        (documented Node shape)
+ *   - { ad_id, insertData: [ { ... } ] }    (PHP wraps insertData in a 1-element array)
+ *   - [ { ad_id, ... } ]                     (top-level array)
+ *   - { ad_id, country_iso, ... }            (flat body — fields at the top level)
+ * The ES existence check uses postdata[0].ad_id. Each lander object: ad_id,
+ * country_iso, destinations, html_path, screen_shot, html_content, status,
+ * domain_registered_date, crawled_by, domain_age, outgoing_url[], redirects[],
+ * ad_category.
  *
  * Pipeline (faithful to the PHP):
  *   ES check (gdn_search_mix, dotted `gdn_ad.id`) → validate → status-3 short-circuit
@@ -69,6 +75,33 @@ function appendZip(dbValue, htmlPath) {
   return uniq([...base, htmlPath]);
 }
 
+/**
+ * Normalise the incoming request body into a single flat lander object.
+ * Accepts every shape the scrapers send (same contract as the facebook/instagram
+ * landers): { ad_id, insertData: {...} }, { ad_id, insertData: [{...}] },
+ * [ {...} ] (top-level array), or a flat { ad_id, ... } body. Returns null when
+ * no usable object can be found.
+ */
+function normalizeBody(rawBody) {
+  let raw = rawBody;
+  if (Array.isArray(raw)) raw = raw[0];
+  if (raw === null || typeof raw !== 'object') return null;
+
+  let value = raw.insertData;
+  if (Array.isArray(value)) value = value[0];
+  if (value === undefined || value === null) {
+    value = ('insertData' in raw) ? value : raw;
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const hasAdId = value.ad_id !== undefined && value.ad_id !== null && value.ad_id !== '';
+  const wrapperAdId = raw.ad_id;
+  if (!hasAdId && wrapperAdId !== undefined && wrapperAdId !== null && wrapperAdId !== '') {
+    value = { ...value, ad_id: wrapperAdId };
+  }
+  return value;
+}
+
 const ES_DOC_TYPE = 'doc';
 
 function esHits(res) {
@@ -82,11 +115,8 @@ async function insertHtmlContent(req, db, log) {
   const elastic = db?.elastic;
   const ES_INDEX = elastic?.indexName || 'gdn_search_mix';
 
-  const body = req.body;
-  // ONLY the standard wrapped payload { ad_id, insertData: {...} } is accepted.
-  // Flat {...} and array [ {...} ] shapes are rejected (postdata stays empty → 400).
-  const value = (body && !Array.isArray(body)) ? body.insertData : undefined;
-  const postdata = (value !== undefined && value !== null) ? [value] : [];
+  const value = normalizeBody(req.body);
+  const postdata = value ? [value] : [];
   const date = new Date().toISOString().slice(0, 10);
 
   // accumulators (mirror PHP locals)
@@ -310,10 +340,12 @@ async function insertHtmlContent(req, db, log) {
     // 13. Fold screenshot/zip JSON into the meta update.
     if (blackhat_screenshot.length > 0) {
       update_meta_table.png_file = JSON.stringify(blackhat_screenshot);
+      update_meta_table.screenshot_url = value.screen_shot;
       if (blackhat_zip.length > 0) update_meta_table.blackhat_path = JSON.stringify(blackhat_zip);
     }
     if (whitehat_screenshot.length > 0) {
       update_meta_table.white_ad_screenshot = JSON.stringify(whitehat_screenshot);
+      update_meta_table.screenshot_url = value.screen_shot;
       if (whitehat_zip.length > 0) update_meta_table.white_ad_lander = JSON.stringify(whitehat_zip);
     }
 

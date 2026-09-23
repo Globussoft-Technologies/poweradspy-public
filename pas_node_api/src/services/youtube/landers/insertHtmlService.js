@@ -3,7 +3,12 @@
 /**
  * YouTube landers — insert_html_content_lander (BlackhatControllerYoutube@inserHtmlContentToDB).
  *
- * Request body: { ad_id, insertData } (PHP wraps insertData in a 1-element array).
+ * Request body: accepts every shape the scrapers send (mirrors facebook/instagram/gdn
+ * landers' normalization):
+ *   - { ad_id, insertData: { ... } }        (documented Node shape)
+ *   - { ad_id, insertData: [ { ... } ] }    (PHP wraps insertData in a 1-element array)
+ *   - [ { ad_id, ... } ]                     (top-level array)
+ *   - { ad_id, country_iso, ... }            (flat body — fields at the top level)
  * insertData: ad_id, country_iso, destinations, html_path, screen_shot, html_content,
  * status, domain_registered_date, crawled_by, domain_age, outgoing_url[], redirects[],
  * ad_category.
@@ -33,6 +38,33 @@ const { validate } = require('./validate');
 
 const ES_DOC_TYPE = 'doc';
 
+/**
+ * Normalise the incoming request body into a single flat lander object.
+ * Accepts every shape the scrapers send (same contract as the facebook/instagram/gdn
+ * landers): { ad_id, insertData: {...} }, { ad_id, insertData: [{...}] },
+ * [ {...} ] (top-level array), or a flat { ad_id, ... } body. Returns null when
+ * no usable object can be found.
+ */
+function normalizeBody(rawBody) {
+  let raw = rawBody;
+  if (Array.isArray(raw)) raw = raw[0];
+  if (raw === null || typeof raw !== 'object') return null;
+
+  let value = raw.insertData;
+  if (Array.isArray(value)) value = value[0];
+  if (value === undefined || value === null) {
+    value = ('insertData' in raw) ? value : raw;
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const hasAdId = value.ad_id !== undefined && value.ad_id !== null && value.ad_id !== '';
+  const wrapperAdId = raw.ad_id;
+  if (!hasAdId && wrapperAdId !== undefined && wrapperAdId !== null && wrapperAdId !== '') {
+    value = { ...value, ad_id: wrapperAdId };
+  }
+  return value;
+}
+
 async function insertHtmlContent(req, db, log) {
   const started = Date.now();
   const response = {};
@@ -40,9 +72,8 @@ async function insertHtmlContent(req, db, log) {
   const elastic = db?.elastic;
   const ES_INDEX = elastic?.indexName || 'youtube_ads_data';
 
-  const body = req.body || {};
-  const ad_id = body.ad_id;
-  const value = body.insertData;
+  const value = normalizeBody(req.body);
+  const ad_id = value ? value.ad_id : undefined;
   const date = new Date().toISOString().slice(0, 10);
 
   // accumulators (mirror PHP locals)
@@ -258,6 +289,7 @@ async function insertHtmlContent(req, db, log) {
     // 13. Fold screenshot/zip JSON into the meta update.
     if (blackhat_screenshot.length > 0) {
       update_meta_table.png_file = JSON.stringify(blackhat_screenshot);
+      update_meta_table.screenshot_url = value.screen_shot;
       if (blackhat_zip.length > 0) update_meta_table.blackhat_path = JSON.stringify(blackhat_zip);
     }
     if (whitehat_screenshot.length > 0) {

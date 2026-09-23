@@ -141,15 +141,26 @@ async function insertHtmlRedirectCountry(req, db, log) {
       };
     }
 
+    // Accepts every shape the scrapers send (mirrors facebook/instagram/gdn landers'
+    // normalization): { ad_id, insertData: {...} }, { ad_id, insertData: [{...}] },
+    // [ {...} ] (top-level array), or a flat { ad_id, ... } body.
     const rawItems = Array.isArray(payload) ? payload : [payload];
-    // All lander payloads must use the `insertData` wrapper.
-    const items = rawItems.map((item) =>
-      item && item.insertData ? item.insertData : null
-    );
+    const items = rawItems.map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      let lander = 'insertData' in item ? item.insertData : item;
+      if (Array.isArray(lander)) lander = lander[0];
+      if (!lander || typeof lander !== 'object' || Array.isArray(lander)) return null;
+      const hasAdId = lander.ad_id !== undefined && lander.ad_id !== null && lander.ad_id !== '';
+      const wrapperAdId = item.ad_id;
+      if (!hasAdId && wrapperAdId !== undefined && wrapperAdId !== null && wrapperAdId !== '') {
+        lander = { ...lander, ad_id: wrapperAdId };
+      }
+      return lander;
+    });
     if (items.some((item) => !item)) {
       return {
         code: 400,
-        message: 'insertData wrapper is required',
+        message: 'No lander details were found in the request body.',
         exe_time: (Date.now() - startTime) / 1000
       };
     }
@@ -463,6 +474,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
         } catch (e) { existingScreenshots = []; }
       }
       metaUpdate.png_file = JSON.stringify([...new Set([...existingScreenshots, ...blackhatScreenshot])]);
+      metaUpdate.screenshot_url = blackhatScreenshot[blackhatScreenshot.length - 1];
     }
 
     if (whitehatScreenshot.length > 0) {
@@ -475,6 +487,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
         } catch (e) { existingScreenshots = []; }
       }
       metaUpdate.white_ad_screenshot = JSON.stringify([...new Set([...existingScreenshots, ...whitehatScreenshot])]);
+      metaUpdate.screenshot_url = whitehatScreenshot[whitehatScreenshot.length - 1];
     }
 
     if (whitehatZip.length > 0) {

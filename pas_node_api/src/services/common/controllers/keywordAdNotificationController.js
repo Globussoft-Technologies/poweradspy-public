@@ -579,6 +579,7 @@ function startFirstAdPushWatcher({ docId, scrapeId, type, value, network }) {
         const query = buildQuery(lookupNet, type, value, dateScoped, today);
         const es = query ? dbManager.getElastic(lookupNet) : null;
         const index = es?.indexName || config.networks?.[lookupNet]?.elastic?.index;
+        log.info('query for push notification', { query: JSON.stringify(query), es: !!es, index });
         if (query && es && index) {
           const adsCount = await getAdsCountFresh(lookupNet, index, query);
           log.info('First-ad push watcher: ads count checked', { network, value, adsCount });

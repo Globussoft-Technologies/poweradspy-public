@@ -76,6 +76,182 @@ function setCachedStats(key, value) {
   statsCache.set(key, { expiresAt: Date.now() + STATS_CACHE_TTL_MS, value });
 }
 
+// Unfiltered stat-cards (keywords/advertisers/ad_volume/trending), sourced
+// from Elasticsearch instead of MySQL — see 2026-09-22 decision: MySQL's
+// AVG(competition_score) always converges to ~50 regardless of underlying
+// data (averaging a percentile rank), so it never carried real signal;
+// total_advertisers (a real, absolute count) replaces it. Trending is
+// redefined too — the old trending_up/trending_down (count of keywords whose
+// 30d vs prior-30d activity rose/fell) needed a per-keyword composite-agg
+// sweep over the whole ES corpus to compute (same shape as
+// jobs/refreshKeywordStats.js's sweep()) — expensive (measured elsewhere in
+// this codebase: ~3min at best-tuned settings over an 18mo-scoped subset,
+// hours over the full corpus). A single overall ad-volume % change
+// (last 30d vs prior 30d) answers "is the market growing or shrinking" with
+// one aggregate query instead of a per-keyword sweep, at the cost of no
+// longer being a count of individual keywords. "One query" turned out to
+// still be slow in absolute terms — see ES_STATS_PRECISION and the
+// cache-warming interval below — flat aggs are cheap RELATIVE TO a composite
+// sweep, not cheap in an absolute sense at this document count.
+//
+// Deliberately separate from the MySQL statsCache above — same TTL/eviction
+// shape, but a single fixed key since this covers only the one no-filter
+// case (a filtered request still uses the MySQL path/cache; translating
+// every MySQL filter — volume/competition/category/country/etc. — into ES
+// query DSL is out of scope for this change).
+const ES_STATS_CACHE_TTL_MS = 2 * 60 * 1000;
+let esStatsCache = null; // { expiresAt, value } — single entry, this covers only the no-filter case
+
+// Same "real ads only" scope as the rest of the Google network's ES queries
+// (see GoogleSearchQueryBuilder's default must_not): excludes ORGANIC SEARCH
+// (not a paid ad) and platform 18 (Google Transparency — a separate crawl
+// source from the regular Google Ads corpus this feature is scoped to; kept
+// out by explicit product decision, not to match MySQL's scope, which
+// currently doesn't filter it — see chat history 2026-09-22).
+const ES_ELIGIBLE_AD_FILTER = {
+  bool: {
+    must_not: [
+      { term: { type: 'organic search' } },
+      { term: { platform: 18 } },
+    ],
+  },
+};
+
+// precision_threshold — measured directly against production 2026-09-22:
+// this query (5 flat cardinality aggs over the whole eligible-ad set, no
+// composite bucketing) took 17.6s at precision_threshold=40000. That's the
+// "flat aggs are cheap regardless of precision" assumption from this file's
+// original comment turning out to be wrong in practice, not just a
+// theoretical difference from the composite-sweep case — measuring beats
+// reasoning-from-the-code-shape. Lowered to 3000: same reasoning
+// refreshKeywordStats.js already uses for its own bulk sweep (a proxy/
+// summary count doesn't need HyperLogLog-exact precision), still not
+// re-measured against production at this exact value — see the cache-warming
+// comment below for why a slow first call no longer reaches a live request
+// either way.
+const ES_STATS_PRECISION = 3000;
+
+// `force` bypasses the cache-is-still-valid check — used by the warmer
+// below, which must actually refresh on its own schedule rather than
+// silently no-op'ing because the cache it's trying to keep warm hasn't
+// expired yet (it never would, if the warmer just deferred to the same
+// check a live request uses).
+async function computeEsStats(db, logger, force = false) {
+  const cached = esStatsCache;
+  if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
+
+  if (!db.elastic) {
+    logger?.warn?.('computeEsStats: Elasticsearch unavailable — serving degraded stats');
+    return {
+      keywords: 0, total_advertisers: null, total_ad_volume: null,
+      trending_last_30d: null, trending_prior_30d: null, stale: true,
+    };
+  }
+
+  try {
+    const esIndex = db.elastic.indexName || 'google_ads_data_v2';
+    const result = await db.elastic.search({
+      index: esIndex,
+      body: {
+        size: 0,
+        track_total_hits: false,
+        query: ES_ELIGIBLE_AD_FILTER,
+        aggs: {
+          // total_keywords/total_advertisers genuinely need a distinct-value
+          // count — cardinality is the only way to get that from ES, no
+          // cheaper substitute exists.
+          total_keywords: { cardinality: { field: 'target_keyword', precision_threshold: ES_STATS_PRECISION } },
+          total_advertisers: { cardinality: { field: 'post_owner_lower', precision_threshold: ES_STATS_PRECISION } },
+          // total_ad_volume / last_30d / prior_30d were cardinality(id)
+          // (deduping the index's ~4% duplicate docs — see
+          // helpers/aggregations.js's comment on the same trade-off) but
+          // cardinality builds a HyperLogLog sketch per matching doc, which
+          // measured as real, non-trivial cost here (17.6s → 14.3s from a
+          // 13x precision drop alone — see chat history 2026-09-22,
+          // confirming precision wasn't the dominant cost, doc-count was).
+          // Switched to plain filter doc_count — accepts ~4% overcounting
+          // instead of computing a sketch over tens of millions of docs.
+          total_ad_volume: { filter: { match_all: {} } },
+          last_30d: { filter: { range: { last_seen: { gte: 'now-30d/d' } } } },
+          prior_30d: { filter: { range: { last_seen: { gte: 'now-60d/d', lt: 'now-30d/d' } } } },
+        },
+      },
+    });
+
+    const aggs = result.aggregations || result.body?.aggregations;
+
+    // Raw counts, not a % change — a % off a small prior-30d base swings to
+    // extreme, misleading values (3 ads → 0 ads reads as "-100%", which looks
+    // like the market collapsed, not like the small sample it is — see chat
+    // history 2026-09-22). The frontend renders these two counts as a simple
+    // side-by-side bar comparison instead.
+    const value = {
+      keywords: Number(aggs?.total_keywords?.value) || 0,
+      total_advertisers: Number(aggs?.total_advertisers?.value) || 0,
+      // doc_count, not cardinality.value — see the aggs definition above.
+      total_ad_volume: Number(aggs?.total_ad_volume?.doc_count) || 0,
+      trending_last_30d: Number(aggs?.last_30d?.doc_count) || 0,
+      trending_prior_30d: Number(aggs?.prior_30d?.doc_count) || 0,
+      stale: false,
+    };
+    esStatsCache = { expiresAt: Date.now() + ES_STATS_CACHE_TTL_MS, value };
+    startEsStatsWarmer(db, logger);
+    return value;
+  } catch (err) {
+    logger?.warn?.('computeEsStats: query failed — serving degraded stats', { error: err.message });
+    return {
+      keywords: 0, total_advertisers: null, total_ad_volume: null,
+      trending_last_30d: null, trending_prior_30d: null, stale: true,
+    };
+  }
+}
+
+// Measured against production 2026-09-22: this query takes ~14s even after
+// two rounds of optimization (precision, cardinality→doc_count) — the cost
+// turned out to be dominated by the base query's match-set size (tens of
+// millions of docs on a single-node, 22-shard cluster), not by the
+// aggregations layered on top, so it will only get slower as more ads get
+// crawled/indexed over time. A live user request must never be the thing
+// that pays that cost, at any point in that growth.
+//
+// setTimeout + reschedule-after-completion (NOT setInterval) is deliberate:
+// setInterval fires on a fixed clock regardless of whether the previous call
+// finished, so the day this query takes longer than the interval — which
+// WILL happen as the corpus grows, per the paragraph above — two warm
+// cycles would start overlapping, each running its own expensive ES query
+// at once, doubling load on the cluster at exactly the moment it's already
+// struggling. Scheduling the next cycle only after the current one
+// completes means cadence naturally stretches out as the query gets slower,
+// instead of piling up concurrent calls.
+const ES_STATS_WARM_INTERVAL_MS = 90 * 1000;
+// Logged, not enforced — an early-warning signal (in logs/monitoring) that
+// this query's cost is approaching the cache TTL, well before it would
+// actually cause a live request to see a cold cache.
+const ES_STATS_WARM_SLOW_WARN_MS = 60 * 1000;
+let esStatsWarmerStarted = false;
+
+function scheduleEsStatsWarm(db, logger) {
+  const timer = setTimeout(async () => {
+    const startedAt = Date.now();
+    try {
+      await computeEsStats(db, logger, true);
+    } finally {
+      const durationMs = Date.now() - startedAt;
+      if (durationMs > ES_STATS_WARM_SLOW_WARN_MS) {
+        logger?.warn?.(`computeEsStats warm refresh took ${durationMs}ms — approaching cache TTL (${ES_STATS_CACHE_TTL_MS}ms) as the corpus grows`);
+      }
+      scheduleEsStatsWarm(db, logger);
+    }
+  }, ES_STATS_WARM_INTERVAL_MS);
+  timer.unref();
+}
+
+function startEsStatsWarmer(db, logger) {
+  if (esStatsWarmerStarted) return;
+  esStatsWarmerStarted = true;
+  scheduleEsStatsWarm(db, logger);
+}
+
 // mysql2 returns JSON columns already parsed; guard anyway in case a row was
 // written before this column existed (NULL) or the driver hands back a string.
 function parseCountries(v) {
@@ -103,16 +279,23 @@ async function getKeywordsExplorer(req, db, logger) {
   // treats "absent" and "empty string" the same: no filter applied.
   const hasValue = (v) => v !== undefined && v !== null && v !== '';
 
-  if (hasValue(p.volume_min)) { where.push('ksu.ads_total >= ?'); params.push(Number(p.volume_min) || 0); }
-  if (hasValue(p.volume_max)) { where.push('ksu.ads_total <= ?'); params.push(Number(p.volume_max) || 0); }
-  if (hasValue(p.competition_min)) { where.push('ksu.competition_score >= ?'); params.push(Number(p.competition_min) || 0); }
-  if (hasValue(p.competition_max)) { where.push('ksu.competition_score <= ?'); params.push(Number(p.competition_max) || 0); }
-  if (hasValue(p.growth_min)) { where.push('ksu.growth_pct >= ?'); params.push(Number(p.growth_min) || 0); }
-  if (hasValue(p.growth_max)) { where.push('ksu.growth_pct <= ?'); params.push(Number(p.growth_max) || 0); }
-  if (p.category) { where.push('ksu.category = ?'); params.push(p.category); }
-  if (p.country) { where.push('JSON_CONTAINS(ksu.countries, JSON_QUOTE(?))'); params.push(p.country); }
-  if (p.include) { where.push('ksu.keyword LIKE ?'); params.push(`%${p.include}%`); }
-  if (p.exclude) { where.push('ksu.keyword NOT LIKE ?'); params.push(`%${p.exclude}%`); }
+  // Tracks whether any USER-CHOSEN filter is active (not the always-on
+  // data-quality filters below) — the unfiltered/default view's stat-cards
+  // are sourced from Elasticsearch (see computeEsStats above); a filtered
+  // request keeps using the live MySQL aggregate, since translating every
+  // filter here into ES query DSL is out of scope for this change.
+  let hasOptionalFilter = false;
+
+  if (hasValue(p.volume_min)) { where.push('ksu.ads_total >= ?'); params.push(Number(p.volume_min) || 0); hasOptionalFilter = true; }
+  if (hasValue(p.volume_max)) { where.push('ksu.ads_total <= ?'); params.push(Number(p.volume_max) || 0); hasOptionalFilter = true; }
+  if (hasValue(p.competition_min)) { where.push('ksu.competition_score >= ?'); params.push(Number(p.competition_min) || 0); hasOptionalFilter = true; }
+  if (hasValue(p.competition_max)) { where.push('ksu.competition_score <= ?'); params.push(Number(p.competition_max) || 0); hasOptionalFilter = true; }
+  if (hasValue(p.growth_min)) { where.push('ksu.growth_pct >= ?'); params.push(Number(p.growth_min) || 0); hasOptionalFilter = true; }
+  if (hasValue(p.growth_max)) { where.push('ksu.growth_pct <= ?'); params.push(Number(p.growth_max) || 0); hasOptionalFilter = true; }
+  if (p.category) { where.push('ksu.category = ?'); params.push(p.category); hasOptionalFilter = true; }
+  if (p.country) { where.push('JSON_CONTAINS(ksu.countries, JSON_QUOTE(?))'); params.push(p.country); hasOptionalFilter = true; }
+  if (p.include) { where.push('ksu.keyword LIKE ?'); params.push(`%${p.include}%`); hasOptionalFilter = true; }
+  if (p.exclude) { where.push('ksu.keyword NOT LIKE ?'); params.push(`%${p.exclude}%`); hasOptionalFilter = true; }
 
   // Always-on garbage filter — not a user-facing filter, a data-quality floor.
   // Two junk patterns observed in production: (1) mojibake — a keyword that's
@@ -144,26 +327,56 @@ async function getKeywordsExplorer(req, db, logger) {
     // aggregates on every page click. The row query below is independent of
     // both and always runs fresh, in parallel with the (cached-or-not) stats
     // lookup, instead of the three queries running one after another.
+    //
+    // `total` (pagination count) always comes from MySQL — the row list
+    // itself is still MySQL-driven regardless of stats source, so paging
+    // must stay consistent with what keyword_stats_unique actually has.
+    // `stats` (the 4 cards) branches: a filtered request keeps the MySQL
+    // aggregate (translating every filter to ES query DSL is out of scope —
+    // see computeEsStats' comment above); the unfiltered/default view is
+    // sourced from Elasticsearch instead.
     const cacheKey = statsCacheKey(whereSql, params);
     const cached = getCachedStats(cacheKey);
 
     const statsPromise = cached
       ? Promise.resolve(cached)
-      : Promise.all([
-          db.sql.query(`SELECT COUNT(*) AS total ${baseFrom}`, params),
-          db.sql.query(
-            `SELECT AVG(competition_score) AS avg_competition,
-                    SUM(ads_total)          AS total_ad_volume,
-                    SUM(CASE WHEN growth_pct > 0 THEN 1 ELSE 0 END) AS trending_up,
-                    SUM(CASE WHEN growth_pct < 0 THEN 1 ELSE 0 END) AS trending_down
-             ${baseFrom}`,
-            params
-          ),
-        ]).then(([[{ total } = { total: 0 }], [aggRow = {}]]) => {
-          const value = { total, aggRow };
-          setCachedStats(cacheKey, value);
-          return value;
-        });
+      : (hasOptionalFilter
+          ? Promise.all([
+              db.sql.query(`SELECT COUNT(*) AS total ${baseFrom}`, params),
+              db.sql.query(
+                `SELECT SUM(advertisers_total) AS total_advertisers,
+                        SUM(ads_total)         AS total_ad_volume,
+                        SUM(ads_30d)           AS ads_30d_sum,
+                        SUM(ads_prior_30d)     AS ads_prior_30d_sum
+                 ${baseFrom}`,
+                params
+              ),
+            ]).then(([[{ total } = { total: 0 }], [aggRow = {}]]) => {
+              const value = {
+                total,
+                stats: {
+                  keywords: Number(total) || 0,
+                  total_advertisers: Number(aggRow.total_advertisers) || 0,
+                  total_ad_volume: Number(aggRow.total_ad_volume) || 0,
+                  trending_last_30d: Number(aggRow.ads_30d_sum) || 0,
+                  trending_prior_30d: Number(aggRow.ads_prior_30d_sum) || 0,
+                  stale: false,
+                },
+              };
+              setCachedStats(cacheKey, value);
+              return value;
+            })
+          : Promise.all([
+              db.sql.query(`SELECT COUNT(*) AS total ${baseFrom}`, params),
+              computeEsStats(db, logger),
+            ]).then(([[{ total } = { total: 0 }], esStats]) => {
+              const value = { total, stats: esStats };
+              // Only cache when ES actually answered — a transient ES failure
+              // shouldn't get pinned as "the" stats for the next 2 minutes.
+              if (!esStats.stale) setCachedStats(cacheKey, value);
+              return value;
+            })
+        );
 
     // LIMIT/OFFSET are inlined below rather than bound as `?` — db.sql.query()
     // runs prepared statements (mysql2 execute()), which errors ("Incorrect
@@ -181,20 +394,12 @@ async function getKeywordsExplorer(req, db, logger) {
       params
     );
 
-    const [{ total, aggRow }, rawRows] = await Promise.all([statsPromise, rowsPromise]);
+    const [{ total, stats }, rawRows] = await Promise.all([statsPromise, rowsPromise]);
 
     const rows = rawRows.map((r) => {
       const countries = parseCountries(r.countries);
       return { ...r, countries, country: countries[0] || null };
     });
-
-    const stats = {
-      keywords: Number(total) || 0,
-      avg_competition: aggRow.avg_competition != null ? Math.round(Number(aggRow.avg_competition)) : null,
-      total_ad_volume: Number(aggRow.total_ad_volume) || 0,
-      trending_up: Number(aggRow.trending_up) || 0,
-      trending_down: Number(aggRow.trending_down) || 0,
-    };
 
     return {
       code: 200,
