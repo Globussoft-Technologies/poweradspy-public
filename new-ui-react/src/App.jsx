@@ -1926,7 +1926,7 @@ const App = () => {
 
         const aiExecution = aiSearchExecutionRef.current;
         const diagnosticsEnabled = import.meta.env.DEV || import.meta.env.VITE_AI_SEARCH_DIAGNOSTICS === 'true';
-        if (aiExecution?.refId && aiExecution.tierExpectations?.length) {
+        if (aiExecution?.refId) {
           const executionKey = `${aiExecution.refId}:${aiExecution.tierIndex}`;
           if (aiPaginationDiagnosticsRef.current?.executionKey !== executionKey || page === 0) {
             aiPaginationDiagnosticsRef.current = {
@@ -1955,6 +1955,12 @@ const App = () => {
             (pagination.recordsRejected.frontend_normalization || 0) + normalizedCount;
           if (duplicateCount > 0) pagination.recordsRejected.duplicate =
             (pagination.recordsRejected.duplicate || 0) + duplicateCount;
+          if (pageRecords.length === 0 && meta?.hasMore === true) {
+            // A backend page can be empty after network-side filtering; keep
+            // this visible in diagnostics while the pagination recovery runs.
+            pagination.recordsRejected.backend_empty_page =
+              (pagination.recordsRejected.backend_empty_page || 0) + 1;
+          }
 
           aiExpectationRecordsRef.current = [
             ...aiExpectationRecordsRef.current,
@@ -1995,7 +2001,6 @@ const App = () => {
           return [...prev, ...unique];
         });
         if (networks) setAvailableNetworks(networks);
-        if (msg) setNoDataMessage(msg);
         if (meta?.total != null) {
           const normalizeMetaTotal = () => {
             if (typeof meta.total === 'number') {
@@ -2026,6 +2031,7 @@ const App = () => {
           try { localStorage.setItem('clientIP', meta.clientIp); } catch {}
         }
         // Guest mode: stop loading when limit reached
+        let deferNoDataMessage = false;
         if (data.guestLimitReached) {
           setHasMore(false);
           emptyPageStreakRef.current = 0;
@@ -2043,6 +2049,8 @@ const App = () => {
           });
           emptyPageStreakRef.current = paginationState.emptyPageStreak;
           setHasMore(paginationState.hasMore);
+          // Do not flash "No ads found" while a sparse page is being skipped.
+          deferNoDataMessage = paginationState.shouldAutoAdvance;
           if (paginationState.shouldAutoAdvance) {
             setPage((prev) => prev + 1);
           }
@@ -2051,6 +2059,8 @@ const App = () => {
           emptyPageStreakRef.current = newAds.length > 0 ? 0 : emptyPageStreakRef.current;
           setHasMore(newAds.length >= ADS_PAGE_SIZE);
         }
+        if (deferNoDataMessage) setNoDataMessage(null);
+        else if (msg) setNoDataMessage(msg);
       } catch (err) {
         // Aborted by a newer effect run (user switched tab/filter) — silently bail.
         if (controller.signal.aborted || err.name === 'AbortError') return;
@@ -2242,33 +2252,47 @@ const App = () => {
     dispatch(setExactSearch(false));
   }, [dispatch]);
 
+  // AI filters are committed on top of ordinary filters. Leaving AI Search
+  // must remove only that committed layer, otherwise Keyword/Advertiser/Domain
+  // searches silently inherit the previous AI query.
+  const clearCommittedAiFilters = useCallback(() => {
+    const previousAiFilters = aiPromptFilterSnapshotRef.current || {};
+    if (Object.keys(previousAiFilters).length > 0) {
+      const remainingFilters = { ...sdui.filterValues };
+      Object.keys(previousAiFilters).forEach((filterId) => {
+        delete remainingFilters[filterId];
+      });
+      sdui.setAllFilters?.(remainingFilters);
+    }
+    aiPromptFilterSnapshotRef.current = null;
+  }, [sdui.filterValues, sdui.setAllFilters]);
+
+  const restoreAllPlatforms = useCallback(() => {
+    dispatch(setSpecificPlatforms([]));
+    const permitted = Array.isArray(planAllowedPlatforms)
+      ? allPlatformValues.filter((network) => isCurrentPlanNetworkAllowed(network))
+      : allPlatformValues;
+    sdui.setActivePlatforms(permitted);
+  }, [allPlatformValues, dispatch, isCurrentPlanNetworkAllowed, planAllowedPlatforms, sdui.setActivePlatforms]);
+
   const clearAiSearchFilters = useCallback(() => {
     sdui.clearAll?.();
     clearAiPromptState();
-  }, [clearAiPromptState, sdui.clearAll]);
+    restoreAllPlatforms();
+  }, [clearAiPromptState, restoreAllPlatforms, sdui.clearAll]);
 
   // Keep every explicit Ask AI reset path consistent: clear the DS-applied
   // payload, forget the user-visible prompt, restore the All-networks view,
   // and cancel any in-flight AI run so late responses cannot repopulate the
   // dashboard.
   const resetAiSearchState = useCallback(() => {
+    clearCommittedAiFilters();
     clearAiPromptState();
-    dispatch(setSpecificPlatforms([]));
-    const permitted = Array.isArray(planAllowedPlatforms)
-      ? allPlatformValues.filter((network) => (
-          isCustomPlan
-            ? isPlanNetworkAllowed(planAllowedPlatforms, network)
-            : isAdsSearchNetworkAllowed(planAllowedPlatforms, network)
-        ))
-      : allPlatformValues;
-    sdui.setActivePlatforms(permitted);
+    restoreAllPlatforms();
   }, [
-    allPlatformValues,
+    clearCommittedAiFilters,
     clearAiPromptState,
-    dispatch,
-    isCustomPlan,
-    planAllowedPlatforms,
-    sdui.setActivePlatforms,
+    restoreAllPlatforms,
   ]);
 
   const handleSearch = useCallback((query, type, platform, options = {}) => {
@@ -2572,6 +2596,10 @@ const App = () => {
           continue;
         }
         if (mapped.unmappedDetails?.length) {
+          // An unmapped planner field would make the result broader than the
+          // request. Skip that tier instead of executing only a partial query;
+          // DS's explicit planning.unsupported metadata remains the safe path
+          // for intentionally ignored instructions.
           diagnostic.result = 'unmapped_error';
           unmappedItems.push(...mapped.unmappedDetails);
           probeDiagnostics.push(diagnostic);
@@ -2662,9 +2690,30 @@ const App = () => {
           setError(null);
           showToast(message, 'error', 8000);
           return;
+        } else if (plannedTiers.some(({ planning }) => planning && Object.keys(planning).length > 0)) {
+          // A DS-planned prompt with no executable subject/filter must not
+          // degrade into a platform-only or empty default search. Keep the
+          // prompt visible and explain what the user can do next.
+          const message = String(
+            topPlanning?.reason ||
+            'AI could not identify a searchable subject or supported filter in that request.',
+          ).trim();
+          clearPreviousAiFilters();
+          aiCapabilityOnlyRef.current = true;
+          setAds([]);
+          setAdsMeta({});
+          setAvailableNetworks([]);
+          setHasMore(false);
+          setLoadingMore(false);
+          setNoDataMessage(null);
+          setAiQuickFilterId(null);
+          setAiCapabilityMessage(message);
+          setError(null);
+          showToast(message, 'notice', 8000);
+          return;
         } else {
-          // Preserve the pre-planning behavior for an unrecognized prompt that
-          // contains no unsupported metadata.
+          // Older DS responses without planning metadata retain the legacy
+          // fallback so this guard remains backwards-compatible during rollout.
           matchedIndex = 0;
           matchedMapped = plannedTiers[0].mapped;
           matchedPlanning = plannedTiers[0].planning || topPlanning;
@@ -2675,7 +2724,19 @@ const App = () => {
       const partialNotice = getPlanningOutcome(selectedPlanning) === 'partial_compatibility'
         ? formatPlanningCapabilityMessage(selectedPlanning)
         : null;
-      commit(matchedMapped, selectedPlanning, matchedIndex, refId, partialNotice || null);
+      const selectedUnmapped = matchedMapped.unmappedDetails || [];
+      const selectedUnmappedNotice = selectedUnmapped.length > 0
+        ? `AI could not apply these requested filters: ${[
+            ...new Set(selectedUnmapped.map((item) => item.field).filter(Boolean)),
+          ].join(', ')}.`
+        : null;
+      commit(
+        matchedMapped,
+        selectedPlanning,
+        matchedIndex,
+        refId,
+        [partialNotice, selectedUnmappedNotice].filter(Boolean).join(' ') || null,
+      );
 
       if (matchedIndex > 0) showToast("Broadened your search to find results", "success");
       const selectedTierMeta = getPlanningTier(selectedPlanning, matchedIndex);
@@ -2731,7 +2792,21 @@ const App = () => {
       trackProductEvent('feature_error', { entry_point: 'header', error_type: classifyError(err), feature_name: 'ad_search', ...getNetworkContext(sdui.activePlatforms), request_context: 'search', search_mode: 'ai', search_type: 'keyword' });
       const msg = /unauthor/i.test(err?.message || '')
         ? 'Please login to search'
-        : 'AI search failed. Please try again.';
+        : 'AI server is facing heavy traffic, please try again later.';
+      // Do not leave the previous AI result on screen after a planner/API
+      // failure. Keep the prompt available for retry, but make the failure
+      // explicit instead of showing a stale result or generic empty state.
+      clearPreviousAiFilters();
+      aiCapabilityOnlyRef.current = true;
+      setAds([]);
+      setAdsMeta({});
+      setAvailableNetworks([]);
+      setHasMore(false);
+      setLoadingMore(false);
+      setNoDataMessage(null);
+      setAiQuickFilterId(null);
+      setAiCapabilityMessage(msg);
+      setError(null);
       showToast(msg, "error");
     } finally {
       if (runId === aiRunIdRef.current) {

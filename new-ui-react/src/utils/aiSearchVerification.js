@@ -16,6 +16,15 @@ const getRecordValue = (record, fields = []) => {
   return null;
 };
 
+const getRecordFieldNames = (records) => {
+  const fields = new Set();
+  for (const record of records) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) continue;
+    Object.keys(record).forEach((field) => fields.add(field));
+  }
+  return [...fields].sort();
+};
+
 const toNumber = (value) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'string' && value.trim() !== '') {
@@ -54,6 +63,7 @@ const matchesExpectation = (value, expectation) => {
  */
 export function verifyAiExpectations(expectations = [], records = []) {
   const rows = Array.isArray(records) ? records : [];
+  const availableRecordFields = getRecordFieldNames(rows);
   const filters = (Array.isArray(expectations) ? expectations : []).map((expectation) => {
     const fields = Array.isArray(expectation?.record_fields)
       ? expectation.record_fields.map(String)
@@ -80,7 +90,10 @@ export function verifyAiExpectations(expectations = [], records = []) {
       comparator: expectation?.comparator || null,
       status,
       candidateFields: fields,
-      actualFields: [...observedFields],
+      // When no candidate matches, expose the fields that were actually
+      // present so DS can correct its record_fields vocabulary without seeing
+      // ad values or other user content in diagnostics.
+      actualFields: checked === 0 ? availableRecordFields : [...observedFields],
       recordsChecked: checked,
       recordsFailed: failed,
     };

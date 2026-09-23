@@ -62,8 +62,11 @@ const FILTER_IDS = {
   googleTransparencySubnetwork: ['google_transparency_subnetwork', 'google_transparency_platform'],
   adSubPosition: ['ad_sub_position_filter', 'ad_sub_position', 'adSubPosition'],
   imageSize: ['image_size_filter', 'image_size', 'size'],
-  admobNetwork: ['admob_network_filter', 'sub_network_filter', 'sub_network'],
-  admobSourceApp: ['admob_source_app_filter', 'source_app_filter', 'source_app'],
+  // DS uses the camel-case query_param names for these AdMob filters, while
+  // the Common Ads Search body uses snake_case. Keep both forms at the mapper
+  // boundary so AI Search follows the same aliases as manual search.
+  admobNetwork: ['admob_network_filter', 'sub_network_filter', 'sub_network', 'subNetwork'],
+  admobSourceApp: ['admob_source_app_filter', 'source_app_filter', 'source_app', 'sourceApp'],
   admobPosterSort: ['admob_poster_rank_filter', 'admob_poster_sort', 'admobPosterSort'],
   leadScoreRange: ['admob_lead_score_range', 'leadScoreRange'],
   occurrenceCountRange: ['admob_occurrence_count_range', 'occurrenceCountRange'],
@@ -466,11 +469,11 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   const specialCategoricalFields = [
     ['ad_sub_position', FILTER_IDS.adSubPosition, ['google'], 'Google ad sub-position requires only the Google network'],
     ['size', FILTER_IDS.imageSize, ['gdn', 'admob'], 'Image size requires only the GDN and/or AdMob network'],
-    ['sub_network', FILTER_IDS.admobNetwork, ['admob'], 'AdMob filter requires the AdMob network'],
-    ['source_app', FILTER_IDS.admobSourceApp, ['admob'], 'AdMob filter requires the AdMob network'],
+    ['sub_network', FILTER_IDS.admobNetwork, ['admob'], 'AdMob filter requires the AdMob network', ['sub_network', 'subNetwork']],
+    ['source_app', FILTER_IDS.admobSourceApp, ['admob'], 'AdMob filter requires the AdMob network', ['source_app', 'sourceApp']],
   ];
-  for (const [field, ids, supportedNetworks, unsupportedReason] of specialCategoricalFields) {
-    const rawValues = meaningfulValues(args[field]);
+  for (const [field, ids, supportedNetworks, unsupportedReason, argumentKeys = [field]] of specialCategoricalFields) {
+    const rawValues = [...new Set(argumentKeys.flatMap((key) => meaningfulValues(args[key])))];
     if (!rawValues.length) continue;
     const filter = findFilter(config, ids);
     if (!hasOnlyPlatforms(...supportedNetworks)) {
@@ -678,11 +681,24 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     } else recordUnmapped(field, raw, 'filter is not available in live SDUI');
   }
 
-  // ── Continuous age (lower_age/upper_age) — our widget is discrete brackets,
-  //    which DS itself confirmed don't filter, so this doesn't round-trip. Leave
-  //    it unmapped rather than force a lossy conversion. ─────────────────────────
+  // ── Continuous age (lower_age/upper_age) ────────────────────────────────────
+  // Common Ads Search already consumes numeric bounds. Prefer the live age
+  // widget when present; otherwise retain the canonical body keys so the
+  // existing buildSearchPayload() path can send them without a lossy bracket
+  // conversion.
   if (args.lower_age != null || args.upper_age != null) {
-    recordUnmapped('age', `${args.lower_age ?? ''}-${args.upper_age ?? ''}`, 'frontend uses discrete age brackets and cannot safely convert continuous bounds');
+    const lowerAge = Number(args.lower_age);
+    const upperAge = Number(args.upper_age);
+    if (!Number.isInteger(lowerAge) || !Number.isInteger(upperAge) || lowerAge < 1 || upperAge < lowerAge) {
+      recordUnmapped('age', `${args.lower_age ?? ''}-${args.upper_age ?? ''}`, 'age bounds must be complete positive integers');
+    } else {
+      const ageFilter = findFilter(config, ['age_filter', 'age']);
+      if (ageFilter) filterValues[ageFilter._id] = [lowerAge, upperAge];
+      else {
+        filterValues.lower_age = lowerAge;
+        filterValues.upper_age = upperAge;
+      }
+    }
   }
 
   // DS AI-plan payloads use stable top-level PAS keys. Hydrate them into the
@@ -720,16 +736,22 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   const plannedDate = (() => {
     const dateFilter = planning?.date_filter;
     if (!dateFilter || typeof dateFilter !== 'object') return null;
-    const filterKey = PLANNING_DATE_FILTER_KEYS[String(dateFilter.field || '').trim().toLowerCase()];
-    if (!filterKey) return null;
-
     const startDate = dateFilter.start_date ?? dateFilter.startDate;
     const endDate = dateFilter.end_date ?? dateFilter.endDate;
+    const preset = String(dateFilter.preset || '').trim();
+    const requestedField = String(dateFilter.field || '').trim().toLowerCase();
+    // DS defines fieldless relative recency as last-seen intent. Keep that
+    // default inside the AI metadata boundary; ordinary manual date filters
+    // continue using their existing posted-date default in the backend.
+    const filterKey = requestedField
+      ? PLANNING_DATE_FILTER_KEYS[requestedField]
+      : (preset || (startDate != null && endDate != null) ? 'seen_btn_sort' : null);
+    if (!filterKey) return null;
+
     if (startDate != null && startDate !== '' && endDate != null && endDate !== '') {
       return { filterKey, value: { startDate, endDate } };
     }
 
-    const preset = String(dateFilter.preset || '').trim();
     return preset ? { filterKey, value: preset } : null;
   })();
 
@@ -779,7 +801,7 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     'keyword', 'advertiser', 'domain', 'page', 'brand', 'network', 'type', 'country',
     'adcategory', 'subCategory', 'lang', 'language', 'platform', 'meta_ads_lib',
     'google_transparency_ads', 'google_transparency_subnetwork', 'ad_sub_position',
-    'size', 'sub_network', 'source_app', 'admobPosterSort', 'admob_poster_sort',
+    'size', 'sub_network', 'subNetwork', 'source_app', 'sourceApp', 'admobPosterSort', 'admob_poster_sort',
     'leadScoreRange', 'admob_lead_score_range', 'occurrenceCountRange',
     'admob_occurrence_count_range', 'activeDaysRange', 'admob_active_days_range',
     'gender', 'verified', 'call_to_action', 'order_column', 'order_by', 'affiliate',

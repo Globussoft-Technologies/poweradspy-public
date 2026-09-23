@@ -35,14 +35,14 @@ describe('verifyAiExpectations', () => {
     ]);
   });
 
-  it('marks an expectation unverifiable when no candidate field is returned', () => {
+  it('marks an expectation unverifiable and exposes returned record field names', () => {
     const report = verifyAiExpectations([
       { filter: 'market_platform', record_fields: ['market_platform'], comparator: 'present' },
-    ], [{ network: 'youtube' }]);
+    ], [{ network: 'youtube', platform: 'youtube' }]);
 
     expect(report.filters[0]).toMatchObject({
       status: 'unverifiable',
-      actualFields: [],
+      actualFields: ['network', 'platform'],
       recordsChecked: 0,
     });
   });

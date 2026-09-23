@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../src/hooks/useAuth", () => ({
   getAuthToken: vi.fn(() => "tk"),
+  disableEnvAuthFallback: vi.fn(),
   markFiltersForExpiry: vi.fn(),
 }));
 
@@ -63,6 +64,17 @@ describe("api > fetchAds frontend safety-net sort", () => {
     ]));
     const out = await api.fetchAds({ sortBy: "running_longest" });
     expect(out.ads[0].id).toBe(2);
+  });
+  it("running_longest_sort respects an AI-requested ascending direction", async () => {
+    globalThis.fetch.mockResolvedValueOnce(makeRes([
+      { ad_id: 1, days_running: 5 },
+      { ad_id: 2, days_running: 50 },
+    ]));
+    const out = await api.fetchAds({ sortBy: "running_longest", sortDirection: "asc" });
+    const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+    expect(body.order_column).toBe("days_running");
+    expect(body.order_by).toBe("asc");
+    expect(out.ads[0].id).toBe(1);
   });
   it("likes_sort → likes desc", async () => {
     globalThis.fetch.mockResolvedValueOnce(makeRes([
@@ -282,15 +294,13 @@ describe("api > fetchAds payload-flag double-map else-ifs (1388-1394)", () => {
     // non-null (50,10) first, nulls sink to the end
     expect(out.ads.slice(0, 2).map(a => a.id)).toEqual([1, 3]);
   });
-  it("sortBy='domain_sort' → no sort-chain flag matches → default last_seen (1399 else)", async () => {
-    // domain_sort sets payload.domain_sort (not in fetchAds' flag chain) and is not in
-    // SORT_BY_FIELD_MAP, so execution falls through every else-if to the default.
+  it("sortBy='domain_sort' sorts by domain registration date", async () => {
     globalThis.fetch.mockResolvedValueOnce(makeRes([
-      { ad_id: 1, last_seen: "2025-01-01" },
-      { ad_id: 2, last_seen: "2026-01-01" },
+      { ad_id: 1, domain_registered_date: "2026-01-01", last_seen: "2025-01-01" },
+      { ad_id: 2, domain_registered_date: "2026-01-02", last_seen: "2024-01-01" },
     ]));
     const out = await api.fetchAds({ sortBy: "domain_sort" });
-    expect(out.ads[0].id).toBe(2); // default last_seen desc
+    expect(out.ads[0].id).toBe(2);
   });
   it("accepts an AbortSignal as 2nd arg (line 1316 signal)", async () => {
     globalThis.fetch.mockResolvedValueOnce(makeRes([{ ad_id: 1 }]));

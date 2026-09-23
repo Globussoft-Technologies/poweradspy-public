@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../src/hooks/useAuth", () => ({
   getAuthToken: vi.fn(() => "tk"),
   markFiltersForExpiry: vi.fn(),
+  disableEnvAuthFallback: vi.fn(),
 }));
 
 let buildSearchPayload;
@@ -287,6 +288,16 @@ describe("buildSearchPayload > age parsing", () => {
     expect(p.lower_age).toBe(30);
     expect(p.upper_age).toBe(40);
   });
+  it("numeric two-value array preserves continuous AI planner bounds", () => {
+    const p = buildSearchPayload({ age_filter: [25, 34], activePlatforms: ["facebook"] });
+    expect(p.lower_age).toBe(25);
+    expect(p.upper_age).toBe(34);
+  });
+  it("does not coerce an empty numeric age pair to zero", () => {
+    const p = buildSearchPayload({ age_filter: ["", ""], activePlatforms: ["facebook"] });
+    expect(p.lower_age).toBe("NA");
+    expect(p.upper_age).toBe("NA");
+  });
   it("empty array → both NA", () => {
     const p = buildSearchPayload({ age: [], activePlatforms: ["facebook"] });
     expect(p.lower_age).toBe("NA");
@@ -343,15 +354,15 @@ describe("buildSearchPayload > industry derivation", () => {
 describe("buildSearchPayload > country resolution", () => {
   it("country_filter array wins", () => {
     const p = buildSearchPayload({ country_filter: ["US"] });
-    expect(p.country).toEqual(["US"]);
+    expect(p.country).toEqual(["US", "United States"]);
   });
   it("country_filter scalar wrapped to array", () => {
     const p = buildSearchPayload({ country_filter: "US" });
-    expect(p.country).toEqual(["US"]);
+    expect(p.country).toEqual(["US", "United States"]);
   });
   it("selCountries fallback", () => {
     const p = buildSearchPayload({ selCountries: ["GB"] });
-    expect(p.country).toEqual(["GB"]);
+    expect(p.country).toEqual(["GB", "United Kingdom"]);
   });
   it("none → NA", () => {
     expect(buildSearchPayload().country).toBe("NA");
@@ -526,9 +537,9 @@ describe("buildSearchPayload > verified + metaAdsLib + platform", () => {
     const p = buildSearchPayload({ verified: false, activePlatforms: ["facebook"] });
     expect(p.verified).toBe("NA");
   });
-  it("verified is not sent to a network that does not support it", () => {
+  it("verified remains request-wide even when platform config omits the network", () => {
     const p = buildSearchPayload({ verified: true, activePlatforms: ["reddit"] });
-    expect(p.verified).toBe("NA");
+    expect(p.verified).toBe(1);
   });
   it("metaAdsLib=true with FB/IG → platform=15", () => {
     const p = buildSearchPayload({ meta_ads_lib: true, activePlatforms: ["facebook"] });

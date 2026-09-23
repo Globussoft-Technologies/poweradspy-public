@@ -214,6 +214,29 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('defaults a fieldless AI recency filter to last seen', () => {
+    const mapped = mapArgsToFilters({}, {}, {
+      date_filter: { preset: 'last_7_days' },
+    });
+
+    expect(mapped.filterValues).toEqual({ seen_btn_sort: 'last_7_days' });
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
+  it('preserves valid continuous age bounds for Common Ads Search', () => {
+    const mapped = mapArgsToFilters({ lower_age: 25, upper_age: 34 }, {});
+
+    expect(mapped.filterValues).toEqual({ lower_age: 25, upper_age: 34 });
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
+  it('rejects incomplete or invalid continuous age bounds', () => {
+    const mapped = mapArgsToFilters({ lower_age: 25 }, {});
+
+    expect(mapped.filterValues).toEqual({});
+    expect(mapped.unmappedDetails).toContainEqual(expect.objectContaining({ field: 'age' }));
+  });
+
   it('hydrates dimension-specific date args when DS sends the wire fields directly', () => {
     const mapped = mapArgsToFilters({
       first_seen_btn_sort: 'last_7_days',
@@ -505,5 +528,41 @@ describe('aiSearchMapper', () => {
       reason: 'Google Transparency mode requires only the Google network',
       network: ['facebook'],
     }));
+  });
+
+  it('maps DS camel-case AdMob query parameters without reporting them as unknown', () => {
+    const mapped = mapArgsToFilters({
+      network: ['admob'],
+      subNetwork: ['gdn'],
+      sourceApp: ['example.app'],
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'platform_selector',
+          type: 'chip_multi_select',
+          options: [{ label: 'AdMob', value: 'admob' }],
+        }],
+      }],
+      sidebar: [{
+        filters: [
+          {
+            _id: 'admob_network_filter',
+            type: 'checkbox',
+            options: [{ label: 'GDN', value: 'gdn' }],
+          },
+          {
+            _id: 'admob_source_app_filter',
+            type: 'checkbox',
+            options: [{ label: 'Example', value: 'example.app' }],
+          },
+        ],
+      }],
+    });
+
+    expect(mapped.filterValues).toMatchObject({
+      admob_network_filter: ['gdn'],
+      admob_source_app_filter: ['example.app'],
+    });
+    expect(mapped.unmappedDetails).toEqual([]);
   });
 });

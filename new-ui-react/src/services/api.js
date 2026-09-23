@@ -1351,6 +1351,13 @@ export const buildSearchPayload = (filters = {}) => {
         upper: ageFilter.max ?? ageFilter.upper ?? ageFilter.upper_age ?? ageFilter.upperAge,
       };
     }
+    // AI planning stores continuous bounds as [lower, upper], while the UI
+    // stores bracket labels such as "25-34". Preserve the numeric form here.
+    const isNumericAgeBound = (value) => value !== null && value !== undefined &&
+      String(value).trim() !== '' && Number.isFinite(Number(value));
+    if (Array.isArray(ageFilter) && ageFilter.length === 2 && ageFilter.every(isNumericAgeBound)) {
+      return { lower: Number(ageFilter[0]), upper: Number(ageFilter[1]) };
+    }
     if (typeof ageFilter === 'number' || (typeof ageFilter === 'string' && !ageFilter.includes('-') && !ageFilter.includes('+'))) {
       return { lower: ageFilter, upper: pick('upper_age', 'upperAge') };
     }
@@ -2328,11 +2335,13 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   // the mapped ad (likes/views/etc), fall back to reading rawAds.
   const MAPPED_NUMERIC_FIELDS = {
     popularity: 'popularity',
-    days_running: 'runningDays',
     occurrence_count: 'occurrenceCount',
     lead_score: 'leadScore',
   };
-  const RAW_NUMERIC_FIELDS = new Set(['likes', 'comment', 'share', 'impression', 'ad_budget']);
+  // Keep the backend's days_running value authoritative. The card's
+  // runningDays field can be derived from dates and may not match the indexed
+  // value used by Common Ads Search for sorting.
+  const RAW_NUMERIC_FIELDS = new Set(['days_running', 'likes', 'comment', 'share', 'impression', 'ad_budget']);
   const sortDirectionValue = String(filters.sortDirection || '').toLowerCase() === 'asc'
     ? 'asc'
     : 'desc';
@@ -2343,8 +2352,8 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     if (bv == null) return -1;
     return sortDirectionValue === 'asc' ? av - bv : bv - av;
   };
-  const toNumRaw = (raw, field) => {
-    const v = raw?.[field];
+  const toNumRaw = (raw, field, fallback) => {
+    const v = raw?.[field] ?? fallback;
     if (v == null || v === '') return null;
     if (typeof v === 'object') {
       const c = v.current ?? v.score ?? v.value ?? null;
@@ -2385,7 +2394,10 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     // comparator can read numeric values that mapAdToCard formatted into
     // display strings.
     const paired = mappedAds.map((m, i) => ({ m, raw: rawAds[i] }));
-    paired.sort((a, b) => cmpNumeric(toNumRaw(a.raw, sortField), toNumRaw(b.raw, sortField)));
+    paired.sort((a, b) => cmpNumeric(
+      toNumRaw(a.raw, sortField, sortField === 'days_running' ? a.m.runningDays : undefined),
+      toNumRaw(b.raw, sortField, sortField === 'days_running' ? b.m.runningDays : undefined),
+    ));
     sortedAds = paired.map(p => p.m);
   } else {
     const paired = mappedAds.map((m, i) => ({ m, raw: rawAds[i] }));

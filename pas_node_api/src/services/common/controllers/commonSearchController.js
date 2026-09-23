@@ -93,6 +93,16 @@ async function searchAllNetworks(req, res) {
   // Normalize once at the common boundary so every network receives the same
   // posted-date filter without duplicating date parsing in each controller.
   const body = normalizePostedDateFilter(req.body || {});
+  const requestedOrderColumn = String(body.order_column || '').trim().toLowerCase();
+  if (requestedOrderColumn === 'days_running' || requestedOrderColumn === 'running_days') {
+    // Network parsers support the legacy running_longest_sort flag, while AI
+    // Search also supplies the unified order_by direction. Normalize the two
+    // contracts here so a single-network request cannot ignore an ascending
+    // running-days sort before the common merge has a chance to re-sort it.
+    body.running_longest_sort = String(body.order_by || '').toLowerCase() === 'asc'
+      ? 'asc'
+      : 'running_longest_sort';
+  }
 
   // ── 1. IP-country detection ─────────────────────────────────────────────
   //
@@ -393,7 +403,8 @@ async function searchAllNetworks(req, res) {
     // Default (and "newest") sorts by last_seen — mirrors what every individual
     // network's parseSort() does when newest_sort is active.
     let sortField = 'last_seen';
-    if      (b.running_longest_sort === 'running_longest_sort') sortField = 'days_running';
+    const runningDaysSort = String(b.running_longest_sort || '').toLowerCase();
+    if      (runningDaysSort === 'running_longest_sort' || runningDaysSort === 'asc' || runningDaysSort === 'desc') sortField = 'days_running';
     else if (b.last_seen_sort       === 'LastSeen_sort')        sortField = 'last_seen';
     else if (b.likes_sort           === 'likes_sort')           sortField = 'likes';
     else if (b.comments_sort        === 'comments_sort')        sortField = 'comment';
