@@ -142,7 +142,12 @@ function isNumericPair(value) {
 function normalizePostedDateFilter(body, now = new Date()) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
 
-  const dateKeys = ['post_date_btn_sort', 'first_seen_btn_sort', 'seen_btn_sort'];
+  const dateKeys = [
+    'post_date_btn_sort',
+    'first_seen_btn_sort',
+    'seen_btn_sort',
+    'domain_date_btn_sort',
+  ];
   const activeKeys = dateKeys.filter(key => activeDateValue(body[key]));
   // Legacy callers can still send datePreset/dateRange without a dimension;
   // preserve the historical default of posted date in that case.

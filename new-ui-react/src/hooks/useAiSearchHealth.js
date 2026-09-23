@@ -40,7 +40,15 @@ export function useAiSearchHealth({ enabled = true, intervalMs = DEFAULT_INTERVA
       setChecking(true);
       try {
         const res = await checkAiSearchHealth({ signal: controller.signal });
-        if (!cancelled) setAvailable(!!res?.ok);
+        if (!cancelled) {
+          setAvailable(!!res?.ok);
+          if (res?.httpStatus === 503 || String(res?.status || '').toLowerCase() === 'degraded') {
+            console.error('[ai-search] health check failed: DS vocabulary/deployment is degraded', {
+              status: res.status || null,
+              httpStatus: res.httpStatus || null,
+            });
+          }
+        }
       } catch {
         if (!cancelled) setAvailable(false);
       } finally {

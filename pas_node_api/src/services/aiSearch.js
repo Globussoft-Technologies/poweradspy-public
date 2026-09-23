@@ -169,6 +169,11 @@ router.post(
             // request field, and the frontend needs the exact unsupported and
             // explicit quick-filter markers returned by DS.
             payloads: Array.isArray(d.payloads) ? d.payloads : [],
+            // Planning is orchestration metadata. Preserve it exactly at the
+            // top level as well as inside each payload item so the frontend can
+            // route outcomes before it decides whether Common Search may run.
+            planning: d.planning ?? null,
+            outcome: d.outcome ?? d.planning?.outcome ?? null,
             model: d.model ?? null,
             usage: d.usage ?? null,
             grounding: d.grounding ?? null,
@@ -197,12 +202,13 @@ router.get(
   '/health',
   asyncHandler(async (req, res) => {
     if (!BASE) {
-      return res.json({ code: 200, message: 'ok', data: { ok: false, status: 'not_configured' } });
+      return res.status(503).json({ code: 503, message: 'ok', data: { ok: false, status: 'not_configured' } });
     }
 
     const now = Date.now();
     if (healthCache.body && now - healthCache.at < HEALTH_CACHE_MS) {
-      return res.json({ code: 200, message: 'ok', data: healthCache.body });
+      const statusCode = healthCache.body.ok ? 200 : 503;
+      return res.status(statusCode).json({ code: statusCode, message: 'ok', data: healthCache.body });
     }
 
     let body;
@@ -219,7 +225,11 @@ router.get(
     }
 
     healthCache = { at: now, body };
-    return res.json({ code: 200, message: 'ok', data: body });
+    // A degraded DS vocabulary is a deployment failure, not a healthy response
+    // that the caller should retry-and-ignore. Keep the JSON diagnostic body,
+    // but expose the health failure through HTTP as well for monitoring.
+    const statusCode = body.ok ? 200 : 503;
+    return res.status(statusCode).json({ code: statusCode, message: 'ok', data: body });
   })
 );
 

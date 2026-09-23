@@ -52,6 +52,7 @@ const FILTER_IDS = {
   shares: ['shares', 'share', 'shares_range', 'engagement_shares'],
   comments: ['comments', 'comment', 'comments_range', 'engagement_comments'],
   impressions: ['impressions', 'impression', 'impressions_range', 'engagement_impressions'],
+  views: ['views_range_filter', 'view', 'views', 'video_views', 'views_range', 'view_count'],
   popularity: ['popularity', 'popularity_score', 'popularity_range'],
   ctr: ['ctr', 'ctr_filter', 'ctr_range'],
   adBudget: ['adBudget', 'ad_budget', 'avg_ad_budget'],
@@ -87,6 +88,7 @@ const PLANNING_DATE_FILTER_KEYS = {
   post_date: 'post_date_btn_sort',
   first_seen: 'first_seen_btn_sort',
   last_seen: 'seen_btn_sort',
+  domain_registration_date: 'domain_date_btn_sort',
 };
 
 const MULTI_SELECT_TYPES = new Set([
@@ -240,6 +242,7 @@ function applyStableField(filter, stateKey, rawValues, filterValues, unmapped, f
 // value exists among the sort filter's options before using it.
 function mapSortValue(orderColumn) {
   const c = norm(orderColumn);
+  if (/domain/.test(c) && /(reg|registration|date)/.test(c)) return 'domain_sort';
   if (/post ?date|date|created|newest|recent/.test(c)) return 'newest';
   // Keep metric sorts distinct. Mapping impressions to Popular silently
   // changed the user's requested ordering and sent popularity_sort instead.
@@ -262,6 +265,7 @@ function mapSortValue(orderColumn) {
  *   searchIn: 'keyword'|'advertiser'|'domain'|null,
  *   activePlatforms: string[],
  *   sortBy: string|null,
+ *   sortDirection: 'asc'|'desc'|null,
  *   exactSearch: boolean,
  *   filterValues: object,      // keyed by SDUI filter _id — ready for setAllFilters
  *   unmapped: string[],        // DS values we couldn't resolve (for logging/telemetry)
@@ -276,6 +280,7 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   let searchIn = null;
   let activePlatforms = [];
   let sortBy = null;
+  let sortDirection = null;
   // DS uses exact_search to protect explicit advertiser/domain matching. Keep
   // that intent separate from the widget-mapped filters so App.jsx can forward
   // it unchanged through the normal buildSearchPayload() path.
@@ -393,7 +398,10 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   }
 
   const plannerPlatform = Number(args.platform);
-  const metaAdsLibRequested = plannerPlatform === 15;
+  const metaAdsLibRequested = plannerPlatform === 15 ||
+    args.meta_ads_lib === true ||
+    args.meta_ads_lib === 1 ||
+    String(args.meta_ads_lib).toLowerCase() === 'true';
   if (metaAdsLibRequested) {
     const metaAdsFilter = findFilter(config, FILTER_IDS.metaAdsLib);
     if (!hasOnlyPlatforms('facebook', 'instagram')) {
@@ -568,7 +576,15 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     const sortFilter = findFilter(config, FILTER_IDS.sort);
     if (semantic) {
       if (sortFilter) {
-        const r = resolveOption(sortFilter, semantic);
+        // SDUI has used both `domain_sort` and the DS contract's
+        // `domain_reg_date`; accept either live option without weakening the
+        // validation for unrelated sort values.
+        const sortCandidates = semantic === 'domain_sort'
+          ? ['domain_sort', 'domain_reg_date', '-domain_reg_date']
+          : [semantic];
+        const r = sortCandidates
+          .map((candidate) => resolveOption(sortFilter, candidate))
+          .find((value) => value !== undefined);
         if (r !== undefined) sortBy = r;
         else recordUnmapped('sort', `${args.order_column} ${args.order_by || ''}`.trim(), 'sort value is not present in live SDUI options');
       } else {
@@ -576,6 +592,10 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
       }
     } else {
       recordUnmapped('sort', `${args.order_column} ${args.order_by || ''}`.trim(), 'sort value is not supported by the frontend mapper');
+    }
+    const requestedDirection = String(args.order_by || '').trim().toLowerCase();
+    if (requestedDirection === 'asc' || requestedDirection === 'desc') {
+      sortDirection = requestedDirection;
     }
   }
 
@@ -592,7 +612,7 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     ['budget', FILTER_IDS.budget],
   ];
   for (const [field, ids] of MULTI_VOCAB) {
-    const raw = asArray(args[field]);
+    const raw = asArray(field === 'nativeNetwork' ? (args.nativeNetwork ?? args.native_network) : args[field]);
     if (!raw.length) continue;
     const filter = findFilter(config, ids);
     if (filter) applyResolved(filter, raw, filterValues, unmapped, field, recordUnmapped);
@@ -606,6 +626,7 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     ['shares', FILTER_IDS.shares],
     ['comments', FILTER_IDS.comments],
     ['impressions', FILTER_IDS.impressions],
+    ['views', FILTER_IDS.views],
     ['popularity', FILTER_IDS.popularity],
     ['ctr', FILTER_IDS.ctr],
     ['adBudget', FILTER_IDS.adBudget],
@@ -636,7 +657,7 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   };
 
   for (const [field, ids] of RANGES) {
-    const raw = args[field];
+    const raw = field === 'adBudget' ? (args.adBudget ?? args.ad_budget) : args[field];
     if (raw == null || raw === '') continue;
     const nums = normalizeNumericRange(raw);
     if (!nums) {
@@ -731,8 +752,18 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     if (Array.isArray(value)) return value.length > 0;
     return true;
   };
+  const directDateValues = [
+    ['post_date_btn_sort', args.post_date_btn_sort],
+    ['first_seen_btn_sort', args.first_seen_btn_sort],
+    ['seen_btn_sort', args.seen_btn_sort],
+    ['domain_date_btn_sort', args.domain_date_btn_sort],
+  ].filter(([, value]) => isActiveDateValue(value));
   if (plannedDate) {
     filterValues[plannedDate.filterKey] = plannedDate.value;
+  } else if (directDateValues.length > 0) {
+    directDateValues.forEach(([filterKey, value]) => {
+      filterValues[filterKey] = value;
+    });
   } else {
     const dateValue = isActiveDateValue(customDateRange)
       ? customDateRange
@@ -741,12 +772,37 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     if (dateIsActive) filterValues.post_date_btn_sort = dateValue;
   }
 
+  // Do not silently drop a newly introduced DS arg. Keeping this inventory at
+  // the mapper boundary makes contract drift visible and prevents a planner
+  // filter from turning into a broader, less precise search.
+  const handledArgs = new Set([
+    'keyword', 'advertiser', 'domain', 'page', 'brand', 'network', 'type', 'country',
+    'adcategory', 'subCategory', 'lang', 'language', 'platform', 'meta_ads_lib',
+    'google_transparency_ads', 'google_transparency_subnetwork', 'ad_sub_position',
+    'size', 'sub_network', 'source_app', 'admobPosterSort', 'admob_poster_sort',
+    'leadScoreRange', 'admob_lead_score_range', 'occurrenceCountRange',
+    'admob_occurrence_count_range', 'activeDaysRange', 'admob_active_days_range',
+    'gender', 'verified', 'call_to_action', 'order_column', 'order_by', 'affiliate',
+    'ecommerce', 'funnel', 'market_platform', 'source', 'ad_position', 'nativeNetwork',
+    'native_network', 'budget', 'likes', 'shares', 'comments', 'impressions', 'views',
+    'popularity', 'ctr', 'adBudget', 'ad_budget', 'lower_age', 'upper_age',
+    'has_ai_meta', 'ai_ad_type', 'ai_intent', 'ai_hook', 'ai_offering_type',
+    'ai_offer_type', 'ai_colors', 'ai_category_id', 'ai_subcategory_id', 'exact_search',
+    'datePreset', 'date_preset', 'dateRange', 'date_range', 'startDate', 'endDate',
+    'seen_btn_sort', 'first_seen_btn_sort', 'post_date_btn_sort', 'domain_date_btn_sort',
+  ]);
+  for (const [field, value] of Object.entries(args)) {
+    if (handledArgs.has(field) || !meaningfulValues(value).length) continue;
+    recordUnmapped(field, value, 'planner argument is not mapped by the frontend search contract');
+  }
+
   return {
     searchQuery,
     searchIn,
     activePlatforms,
     exactSearch,
     sortBy,
+    sortDirection,
     filterValues,
     unmapped,
     unmappedDetails,
@@ -790,6 +846,7 @@ export function normalizeAiSearchArgs(payload = {}) {
     'seen_btn_sort',
     'first_seen_btn_sort',
     'post_date_btn_sort',
+    'domain_date_btn_sort',
   ];
 
   let changed = false;

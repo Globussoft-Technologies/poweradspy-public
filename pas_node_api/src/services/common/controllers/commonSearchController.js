@@ -61,6 +61,10 @@ const LAST_SEEN_NETWORKS = new Set([
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
   'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
 ]);
+const DOMAIN_DATE_NETWORKS = new Set([
+  'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
+  'reddit', 'quora', 'pinterest', 'google',
+]);
 
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
 
@@ -226,10 +230,16 @@ async function searchAllNetworks(req, res) {
       if (!LAST_SEEN_NETWORKS.has(network)) _dateFilterNetworks.delete(network);
     }
   }
+  if (isDateRange(_body.domain_date_btn_sort)) {
+    for (const network of [..._dateFilterNetworks]) {
+      if (!DOMAIN_DATE_NETWORKS.has(network)) _dateFilterNetworks.delete(network);
+    }
+  }
   const _dateFilterActive =
     isDateRange(_body.post_date_btn_sort) ||
     isDateRange(_body.first_seen_btn_sort) ||
-    isDateRange(_body.seen_btn_sort);
+    isDateRange(_body.seen_btn_sort) ||
+    isDateRange(_body.domain_date_btn_sort);
   const _isActiveBudgetVal = (v) => {
     if (!v || v === 'NA') return false;
     if (Array.isArray(v)) return v.length > 0 && !v.every(x => x === 'NA' || x === '' || x == null);
@@ -391,6 +401,7 @@ async function searchAllNetworks(req, res) {
     else if (b.impression_sort      === 'impression_sort')      sortField = 'impression';
     else if (b.popularity_sort      === 'popularity_sort')      sortField = 'popularity';
     else if (b.adBudget_sort        === 'adBudget_sort')        sortField = 'ad_budget';
+    else if (b.domain_sort          === 'domain_sort' || b.order_column === 'domain_date') sortField = 'domain_registration_date';
     else if (b.newest_sort          === 'newest_sort')          sortField = 'last_seen';
     else if (b.sortBy === 'Impression')   sortField = 'impression';
     else if (b.sortBy === 'Popularity')   sortField = 'popularity';
@@ -398,7 +409,8 @@ async function searchAllNetworks(req, res) {
     else if (b.sortBy === 'Newest')       sortField = 'last_seen';
     else if (b.sortBy === 'days_running') sortField = 'days_running';
 
-    const isDateField = sortField === 'post_date' || sortField === 'last_seen' || sortField === 'first_seen';
+    const isDateField = sortField === 'post_date' || sortField === 'last_seen' ||
+      sortField === 'first_seen' || sortField === 'domain_registration_date';
     const isPopularity = sortField === 'popularity';
 
     // Schwartzian transform — compute the numeric sort key once per ad
@@ -423,6 +435,7 @@ async function searchAllNetworks(req, res) {
     for (let i = 0; i < sortable.length; i++) {
       const ad = sortable[i];
       let v = ad[sortField];
+      if (v == null && sortField === 'domain_registration_date') v = ad.domain_registered_date;
       let n = 0;
       if (v != null && v !== '') {
         if (isPopularity && typeof v === 'object') v = v.current ?? v.max ?? 0;
@@ -438,7 +451,8 @@ async function searchAllNetworks(req, res) {
       }
       decorated[i] = [n, ad];
     }
-    decorated.sort((a, b) => b[0] - a[0]);
+    const ascending = String(b.order_by || '').toLowerCase() === 'asc';
+    decorated.sort((a, b) => ascending ? a[0] - b[0] : b[0] - a[0]);
     data = new Array(decorated.length);
     for (let i = 0; i < decorated.length; i++) data[i] = decorated[i][1];
   }

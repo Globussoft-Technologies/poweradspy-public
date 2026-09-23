@@ -26,6 +26,16 @@ export const getPlanningQuickFilterId = (planning) => {
   return normalized || null;
 };
 
+export const getPlanningOutcome = (planning) => {
+  const outcome = String(planning?.outcome || '').trim().toLowerCase();
+  return outcome || null;
+};
+
+export const getPlanningTier = (planning, index) => {
+  const tier = planning?.tiers?.[index];
+  return tier && typeof tier === 'object' ? tier : null;
+};
+
 const ORCHESTRATION_ONLY_FILTER_KEYS = new Set(['_autoSortField', 'has_ai_meta', 'ai_meta']);
 
 /**
@@ -61,4 +71,23 @@ export const formatPlanningUnsupportedMessage = (unsupported) => {
     .filter(Boolean);
   if (reasons.length) return reasons.join(' ');
   return 'This requested operation is not currently supported.';
+};
+
+/**
+ * Partial compatibility is executable, but the planner deliberately removed
+ * networks that cannot honor one of the requested filters. Keep that detail
+ * visible instead of making the result look like a complete network search.
+ */
+export const formatPlanningCapabilityMessage = (planning) => {
+  const excluded = Array.isArray(planning?.capability?.excluded_networks)
+    ? planning.capability.excluded_networks
+    : [];
+  const labels = excluded.map((entry) => {
+    if (typeof entry === 'string') return entry;
+    return entry?.network || entry?.name || entry?.platform || null;
+  }).filter(Boolean);
+  if (labels.length) {
+    return `Some requested networks were excluded because they cannot apply the requested filter: ${labels.join(', ')}.`;
+  }
+  return String(planning?.reason || '').trim();
 };

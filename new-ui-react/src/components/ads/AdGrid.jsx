@@ -1231,6 +1231,17 @@ const AdGrid = ({
       {/* Scrollable content area — disable scrolling when there's nothing to scroll
           through (empty / error states), so the infinite-scroll handler can't fire
           spurious page-bumps that cause flicker at high browser zoom levels. */}
+      {aiCapabilityMessage && ads.length > 0 && !error && (
+        <div
+          className="mx-5 mb-2 rounded-lg border border-[#8b5cf6]/25 bg-[#8b5cf6]/10 px-3 py-2 text-xs text-theme-text-muted"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="font-semibold text-[#8b5cf6]">AI Search note:</span>{' '}
+          {aiCapabilityMessage}
+        </div>
+      )}
+
       <div
         className={`px-5 pb-5 flex-1 ${ads.length > 0 ? "overflow-y-auto" : "overflow-hidden"}`}
         ref={scrollRef}

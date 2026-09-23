@@ -51,9 +51,12 @@ export async function checkAiSearchHealth({ signal } = {}) {
       headers: { ...authHeaders() },
       signal,
     });
-    if (!res.ok) return { ok: false };
     const json = await res.json().catch(() => null);
-    return json?.data || { ok: false };
+    return {
+      ...(json?.data || {}),
+      ok: res.ok && json?.data?.ok === true,
+      httpStatus: res.status,
+    };
   } catch {
     return { ok: false };
   }

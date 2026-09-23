@@ -40,13 +40,17 @@ import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
 import {
+  formatPlanningCapabilityMessage,
   formatPlanningUnsupportedMessage,
+  getPlanningOutcome,
   getPlanningQuickFilterId,
+  getPlanningTier,
   getPlanningUnsupported,
   hasExecutableMappedSearch,
 } from "./utils/aiSearchPlanning";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
 import { ADS_PAGE_SIZE, resolvePaginationState } from "./utils/adsPagination";
+import { verifyAiExpectations } from "./utils/aiSearchVerification";
 import { Check, X, Loader2, Info } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -1610,6 +1614,13 @@ const App = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchTrigger, setSearchTrigger] = useState(0);
   const emptyPageStreakRef = useRef(0);
+  // AI execution metadata stays outside SDUI state. It is attached only to
+  // Common Search diagnostics and never becomes part of the API payload.
+  const aiSearchExecutionRef = useRef(null);
+  const aiExpectationRecordsRef = useRef([]);
+  const aiExpectationReportRef = useRef(null);
+  const aiPaginationDiagnosticsRef = useRef(null);
+  const aiCapabilityOnlyRef = useRef(false);
 
   // The crawl-status banner is fully derived, not driven by any imperative
   // showToast() call — see the comment by hasActiveSearchQuery above for why.
@@ -1814,11 +1825,13 @@ const App = () => {
           selCategories: sdui.selCategories,
           selCountries: sdui.selCountries,
           sortBy: sdui.sortBy,
+          sortDirection: aiSearchExecutionRef.current?.sortDirection || 'desc',
           activePlatforms: permittedPlatforms,
           activePlatform: permittedPlatforms[0] || 'facebook',
           skip: page,
           filterPlatformSupport: sdui.filterPlatformSupport,
           isAllTab: isAllActive,
+          _aiSearchExecution: aiSearchExecutionRef.current,
           ...(_projCtx || {}),
         };
 
@@ -1905,10 +1918,66 @@ const App = () => {
 
         const {
           ads: newAds,
+          rawAds: rawPageAds,
           availableNetworks: networks,
           noDataMessage: msg,
           meta,
         } = data;
+
+        const aiExecution = aiSearchExecutionRef.current;
+        const diagnosticsEnabled = import.meta.env.DEV || import.meta.env.VITE_AI_SEARCH_DIAGNOSTICS === 'true';
+        if (aiExecution?.refId && aiExecution.tierExpectations?.length) {
+          const executionKey = `${aiExecution.refId}:${aiExecution.tierIndex}`;
+          if (aiPaginationDiagnosticsRef.current?.executionKey !== executionKey || page === 0) {
+            aiPaginationDiagnosticsRef.current = {
+              executionKey,
+              pagesExamined: 0,
+              recordsSeen: 0,
+              recordsRejected: {},
+              seenIds: new Set(),
+            };
+            aiExpectationRecordsRef.current = [];
+            aiExpectationReportRef.current = null;
+          }
+
+          const pagination = aiPaginationDiagnosticsRef.current;
+          const pageRecords = Array.isArray(rawPageAds) ? rawPageAds : (newAds || []);
+          const duplicateCount = pageRecords.reduce((count, record, index) => {
+            const id = String(record?.id ?? record?.ad_id ?? `${page}:${index}`);
+            if (pagination.seenIds.has(id)) return count + 1;
+            pagination.seenIds.add(id);
+            return count;
+          }, 0);
+          const normalizedCount = Math.max(0, pageRecords.length - (newAds?.length || 0));
+          pagination.pagesExamined += 1;
+          pagination.recordsSeen += pageRecords.length;
+          if (normalizedCount > 0) pagination.recordsRejected.frontend_normalization =
+            (pagination.recordsRejected.frontend_normalization || 0) + normalizedCount;
+          if (duplicateCount > 0) pagination.recordsRejected.duplicate =
+            (pagination.recordsRejected.duplicate || 0) + duplicateCount;
+
+          aiExpectationRecordsRef.current = [
+            ...aiExpectationRecordsRef.current,
+            ...pageRecords,
+          ].slice(0, 1000);
+          aiExpectationReportRef.current = verifyAiExpectations(
+            aiExecution.tierExpectations,
+            aiExpectationRecordsRef.current,
+          );
+
+          if (diagnosticsEnabled) {
+            console.info('[ai-search] verification and pagination', {
+              ref_id: aiExecution.refId,
+              tier: aiExecution.tierIndex,
+              page,
+              expectations: aiExpectationReportRef.current,
+              pages_examined: pagination.pagesExamined,
+              records_seen: pagination.recordsSeen,
+              records_rejected: pagination.recordsRejected,
+              backend_has_more: meta?.hasMore ?? null,
+            });
+          }
+        }
 
         setAds((prev) => {
           if (page === 0) return newAds;
@@ -2037,6 +2106,13 @@ const App = () => {
     // render (visible as 10–15 `(canceled)` /search rows) and still consumed the
     // server rate-limit bucket. Let page-zero state settle briefly so only the
     // final payload is sent. Pagination remains immediate.
+    if (aiCapabilityOnlyRef.current) {
+      // An unsupported AI plan intentionally has no Common Search request.
+      // Consume this guard once; a later manual change can use the normal flow.
+      aiCapabilityOnlyRef.current = false;
+      setLoadingMore(false);
+      return;
+    }
     const startTimer = setTimeout(loadAds, page === 0 ? 120 : 0);
     return () => {
       clearTimeout(startTimer);
@@ -2152,6 +2228,11 @@ const App = () => {
     aiAbortRef.current = null;
     aiRunIdRef.current += 1;
     aiPromptFilterSnapshotRef.current = null;
+    aiSearchExecutionRef.current = null;
+    aiExpectationRecordsRef.current = [];
+    aiExpectationReportRef.current = null;
+    aiPaginationDiagnosticsRef.current = null;
+    aiCapabilityOnlyRef.current = false;
     setAiSearchLoading(false);
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
@@ -2225,6 +2306,11 @@ const App = () => {
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
     aiPromptFilterSnapshotRef.current = null;
+    aiSearchExecutionRef.current = null;
+    aiExpectationRecordsRef.current = [];
+    aiExpectationReportRef.current = null;
+    aiPaginationDiagnosticsRef.current = null;
+    aiCapabilityOnlyRef.current = false;
     // Every handleSearch call is a genuine keyword/advertiser/domain search, never an AI
     // one (runAiSearch is a separate path) — clear any leftover ui.aiPrompt so it can't
     // stay stale from an earlier AI search the user didn't explicitly exit. searchBannerVisible
@@ -2271,7 +2357,14 @@ const App = () => {
       return;
     }
     if (guestGuard("Please login to search", { searchQuery: trimmed })) return;
-    aiPromptFilterSnapshotRef.current = null;
+    // Keep the previous AI snapshot until the next tier is committed. That
+    // lets the commit replace AI-owned keys atomically while preserving manual
+    // filters set outside AI Search.
+    aiSearchExecutionRef.current = null;
+    aiExpectationRecordsRef.current = [];
+    aiExpectationReportRef.current = null;
+    aiPaginationDiagnosticsRef.current = null;
+    aiCapabilityOnlyRef.current = false;
     // Store the raw user prompt separately so Ask AI keeps showing exactly what
     // the user typed even when the DS payload rewrites the internal query.
     dispatch(setAiPrompt(trimmed));
@@ -2286,7 +2379,7 @@ const App = () => {
     setAiSearchLoading(true);
 
     // Build a fetchAds param set from a mapped payload (mirrors loadAds' _searchParams).
-    const buildProbeParams = (mapped) => ({
+    const buildProbeParams = (mapped, execution = null) => ({
       ...mapped.filterValues,
       searchQuery: mapped.searchQuery,
       searchIn: mapped.searchIn || 'keyword',
@@ -2294,37 +2387,52 @@ const App = () => {
       // tier-selection request and the final committed request behave the same.
       exactSearch: !!mapped.exactSearch,
       sortBy: mapped.sortBy || sdui.sortBy,
+      sortDirection: mapped.sortDirection || 'desc',
       activePlatforms: mapped.activePlatforms.length
         ? mapped.activePlatforms
         : (sdui.activePlatforms?.length ? sdui.activePlatforms : ['facebook']),
       activePlatform: mapped.activePlatforms[0] || sdui.activePlatforms?.[0] || 'facebook',
       skip: 0,
       filterPlatformSupport: sdui.filterPlatformSupport,
+      _aiSearchExecution: execution,
     });
 
-    const totalFromData = (data) => {
-      const t = data?.meta?.total;
-      if (typeof t === 'number') return t;
-      if (t && typeof t === 'object') return Object.values(t).reduce((a, b) => a + (Number(b) || 0), 0);
-      return data?.ads?.length || 0;
-    };
+    // Tier fallback must use displayable cards, not ES/meta totals. Totals can
+    // include collapsed, duplicated, or non-hydratable records and would make
+    // an empty probe look successful.
+    const totalFromData = (data) => Array.isArray(data?.ads) ? data.ads.length : 0;
 
     // Commit a mapped payload to app state; the debounced loadAds effect refetches.
-    // setAllFilters replaces the whole filter map, clearing any stale manual filters.
-    const commit = (mapped, planning = null) => {
-      setAiCapabilityMessage(null);
+    // Replace only the previous AI-owned keys so manual filters survive a new
+    // prompt, while stale AI filters cannot leak into the next query.
+    const commit = (mapped, planning = null, tierIndex = 0, refId = null, notice = null) => {
+      setAiCapabilityMessage(notice);
+      aiCapabilityOnlyRef.current = false;
       const mappedFilters = mapped.filterValues || {};
+      const previousAiFilters = aiPromptFilterSnapshotRef.current || {};
       const committedAiFilters = {
         ...mappedFilters,
         ...(mapped.sortBy ? { sorting: mapped.sortBy } : {}),
       };
+      const nextFilters = { ...sdui.filterValues };
+      Object.keys(previousAiFilters).forEach((filterId) => delete nextFilters[filterId]);
+      Object.assign(nextFilters, mappedFilters);
+      if (mapped.sortBy) nextFilters.sorting = mapped.sortBy;
       aiPromptFilterSnapshotRef.current = Object.keys(committedAiFilters).length > 0
         ? committedAiFilters
         : null;
+      sdui.setAllFilters?.(nextFilters);
+      const selectedTier = getPlanningTier(planning, tierIndex);
+      aiSearchExecutionRef.current = {
+        refId,
+        tierIndex,
+        dsHash: selectedTier?.hash || null,
+        sortDirection: mapped.sortDirection || 'desc',
+        tierExpectations: Array.isArray(selectedTier?.expectations) ? selectedTier.expectations : [],
+      };
       // Quick-filter highlighting is driven only by the planner's explicit
       // preset marker. Equivalent AI fields must remain ordinary AI filters.
       setAiQuickFilterId(getPlanningQuickFilterId(planning));
-      sdui.setAllFilters?.(mapped.filterValues || {});
       if (mapped.activePlatforms?.length) {
         sdui.setActivePlatforms?.(mapped.activePlatforms);
         dispatch(setSpecificPlatforms(mapped.activePlatforms));
@@ -2345,12 +2453,66 @@ const App = () => {
       });
     };
 
+    const clearPreviousAiFilters = () => {
+      const previousAiFilters = aiPromptFilterSnapshotRef.current || {};
+      if (Object.keys(previousAiFilters).length > 0) {
+        const remainingFilters = { ...sdui.filterValues };
+        Object.keys(previousAiFilters).forEach((filterId) => delete remainingFilters[filterId]);
+        sdui.setAllFilters?.(remainingFilters);
+      }
+      aiPromptFilterSnapshotRef.current = null;
+      aiSearchExecutionRef.current = null;
+      aiExpectationRecordsRef.current = [];
+      aiExpectationReportRef.current = null;
+      aiPaginationDiagnosticsRef.current = null;
+      dispatch(setSearchQuery(''));
+      dispatch(setSearchIn('keyword'));
+    };
+
     try {
-      const { payloads, ref_id: refId } = await planAiSearch(trimmed, {
+      const plan = await planAiSearch(trimmed, {
         signal: controller.signal,
       });
+      const { payloads, ref_id: refId } = plan;
+      const topPlanning = plan?.planning || payloads?.find((payload) => payload?.planning)?.planning || null;
+      // DS normally nests the outcome under planning, but keep the proxy's
+      // top-level fallback meaningful for older/upstream responses too.
+      const outcome = getPlanningOutcome(topPlanning) || getPlanningOutcome({ outcome: plan?.outcome });
       if (runId !== aiRunIdRef.current) return; // superseded by a newer AI search
+
+      if (outcome === 'degraded_planner') {
+        console.warn('[ai-search] DS returned a degraded planner result', {
+          ref_id: refId || null,
+          reason: topPlanning?.reason || topPlanning?.planner?.reason || null,
+        });
+      }
+
+      if (outcome === 'unsupported_combination') {
+        const message = String(topPlanning?.reason || 'This combination of filters is not currently supported.').trim();
+        clearPreviousAiFilters();
+        aiCapabilityOnlyRef.current = true;
+        setAds([]);
+        setAdsMeta({});
+        setAvailableNetworks([]);
+        setHasMore(false);
+        setLoadingMore(false);
+        setNoDataMessage(null);
+        setAiQuickFilterId(null);
+        setAiCapabilityMessage(message);
+        setError(null);
+        showToast(message, 'notice', 8000);
+        return;
+      }
+
       if (!Array.isArray(payloads) || payloads.length === 0) {
+        clearPreviousAiFilters();
+        aiCapabilityOnlyRef.current = true;
+        setAds([]);
+        setAdsMeta({});
+        setHasMore(false);
+        setNoDataMessage(null);
+        setAiQuickFilterId(null);
+        setAiCapabilityMessage('AI could not produce an executable search plan for this request.');
         showToast("AI couldn't interpret that prompt. Try rephrasing.", "error");
         return;
       }
@@ -2360,15 +2522,18 @@ const App = () => {
       let matchedPlanning = null;
       let firstExecutableCandidate = null;
       const unsupportedOnlyItems = [];
+      const unmappedItems = [];
       const probeDiagnostics = [];
       const plannedTiers = payloads.map((tierValue) => {
         const tier = tierValue || {};
-        const mapped = mapArgsToFilters(normalizeAiSearchArgs(tier), sdui.config, tier.planning);
-        const unsupported = getPlanningUnsupported(tier.planning);
+        const tierPlanning = tier.planning || topPlanning;
+        const mapped = mapArgsToFilters(normalizeAiSearchArgs(tier), sdui.config, tierPlanning);
+        const unsupported = getPlanningUnsupported(tierPlanning);
         return {
           tier,
           mapped,
           unsupported,
+          planning: tierPlanning,
           hasExecutableSearch: hasExecutableMappedSearch(mapped),
         };
       });
@@ -2385,6 +2550,7 @@ const App = () => {
           tier,
           mapped,
           unsupported,
+          planning,
           hasExecutableSearch,
         } = plannedTiers[i];
         const diagnostic = {
@@ -2392,9 +2558,9 @@ const App = () => {
           label: tier.label || null,
           argsFields: Object.keys(tier.args || {}),
           fullPayloadFields: Object.keys(tier.full_payload || {}),
-          planningFields: Object.keys(tier.planning || {}),
+          planningFields: Object.keys(planning || {}),
           unsupportedCount: unsupported.length,
-          quickFilterRequested: Boolean(getPlanningQuickFilterId(tier.planning)),
+          quickFilterRequested: Boolean(getPlanningQuickFilterId(planning)),
           mappedFields: Object.keys(mapped.filterValues || {}),
           unmapped: mapped.unmappedDetails || [],
         };
@@ -2405,13 +2571,24 @@ const App = () => {
           probeDiagnostics.push(diagnostic);
           continue;
         }
+        if (mapped.unmappedDetails?.length) {
+          diagnostic.result = 'unmapped_error';
+          unmappedItems.push(...mapped.unmappedDetails);
+          probeDiagnostics.push(diagnostic);
+          continue;
+        }
         if (hasExecutableSearch && !firstExecutableCandidate) {
-          firstExecutableCandidate = { index: i, mapped, planning: tier.planning || null };
+          firstExecutableCandidate = { index: i, mapped, planning: planning || null };
         }
 
         let data = null;
         try {
-          data = await fetchAds(buildProbeParams(mapped), {
+          data = await fetchAds(buildProbeParams(mapped, {
+            refId,
+            tierIndex: i,
+            dsHash: getPlanningTier(planning, i)?.hash || null,
+            probe: true,
+          }), {
             signal: controller.signal,
           });
         } catch (err) {
@@ -2422,12 +2599,27 @@ const App = () => {
         }
         if (runId !== aiRunIdRef.current) return; // superseded mid-probe
         diagnostic.total = totalFromData(data);
+        diagnostic.backendTotal = data?.meta?.total ?? null;
+        if (diagnostic.total > 0 && getPlanningTier(planning, i)?.expectations?.length) {
+          const expectationReport = verifyAiExpectations(
+            getPlanningTier(planning, i).expectations,
+            data.rawAds || data.ads || [],
+          );
+          if (import.meta.env.DEV || import.meta.env.VITE_AI_SEARCH_DIAGNOSTICS === 'true') {
+            console.info('[ai-search] tier verification', {
+              ref_id: refId || null,
+              tier: i,
+              ds_hash: getPlanningTier(planning, i)?.hash || null,
+              report: expectationReport,
+            });
+          }
+        }
         diagnostic.result = diagnostic.total > 0 ? 'selected' : 'empty';
         probeDiagnostics.push(diagnostic);
         if (diagnostic.total > 0) {
           matchedIndex = i;
           matchedMapped = mapped;
-          matchedPlanning = tier.planning || null;
+          matchedPlanning = planning || null;
           break;
         }
       }
@@ -2443,6 +2635,8 @@ const App = () => {
           const message = formatPlanningUnsupportedMessage(unsupportedOnlyItems);
           // No Common Ads Search call was made, so show a capability state rather
           // than the generic empty-search copy or a stale result list.
+          clearPreviousAiFilters();
+          aiCapabilityOnlyRef.current = true;
           setAds([]);
           setAdsMeta({});
           setAvailableNetworks([]);
@@ -2454,19 +2648,50 @@ const App = () => {
           setError(null);
           showToast(message, "notice", 8000);
           return;
+        } else if (unmappedItems.length > 0) {
+          const fields = [...new Set(unmappedItems.map((item) => item.field).filter(Boolean))];
+          const message = `AI could not apply these requested filters: ${fields.join(', ')}.`;
+          clearPreviousAiFilters();
+          aiCapabilityOnlyRef.current = true;
+          setAds([]);
+          setAdsMeta({});
+          setHasMore(false);
+          setNoDataMessage(null);
+          setAiQuickFilterId(null);
+          setAiCapabilityMessage(message);
+          setError(null);
+          showToast(message, 'error', 8000);
+          return;
         } else {
           // Preserve the pre-planning behavior for an unrecognized prompt that
           // contains no unsupported metadata.
           matchedIndex = 0;
           matchedMapped = plannedTiers[0].mapped;
-          matchedPlanning = plannedTiers[0].tier.planning || null;
+          matchedPlanning = plannedTiers[0].planning || topPlanning;
         }
       }
 
-      commit(matchedMapped, matchedPlanning);
+      const selectedPlanning = matchedPlanning || topPlanning;
+      const partialNotice = getPlanningOutcome(selectedPlanning) === 'partial_compatibility'
+        ? formatPlanningCapabilityMessage(selectedPlanning)
+        : null;
+      commit(matchedMapped, selectedPlanning, matchedIndex, refId, partialNotice || null);
 
       if (matchedIndex > 0) showToast("Broadened your search to find results", "success");
-      const selectedUnsupported = getPlanningUnsupported(matchedPlanning);
+      const selectedTierMeta = getPlanningTier(selectedPlanning, matchedIndex);
+      if (selectedTierMeta?.changed_subject || selectedTierMeta?.added_inferences?.length) {
+        const inferred = Array.isArray(selectedTierMeta.added_inferences)
+          ? selectedTierMeta.added_inferences.join(', ')
+          : '';
+        showToast(
+          inferred
+            ? `AI broadened the search and added: ${inferred}.`
+            : 'AI broadened the search to find relevant results.',
+          'notice',
+          7000,
+        );
+      }
+      const selectedUnsupported = getPlanningUnsupported(selectedPlanning);
       if (selectedUnsupported.length > 0) {
         showToast(
           formatPlanningUnsupportedMessage(selectedUnsupported),

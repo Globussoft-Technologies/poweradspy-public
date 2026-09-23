@@ -1237,6 +1237,7 @@ const platformSupports = (nets, field, dynamicMap) => {
 export const buildSearchPayload = (filters = {}) => {
   const {
     searchQuery, searchIn, exactSearch, activePlatforms, activePlatform, selCategories, selCountries, sortBy,
+    sortDirection,
     filterPlatformSupport: dynamicPlatformSupport,
   } = filters;
 
@@ -1560,6 +1561,7 @@ export const buildSearchPayload = (filters = {}) => {
     hits: 'hits', hit: 'hits',
     // domain
     domain: 'domain_date', domain_date: 'domain_date', domain_sort: 'domain_date',
+    domain_reg_date: 'domain_date',
     domain_reg_sort: 'domain_date', 'domain registration date': 'domain_date',
     '-domain_reg_date': 'domain_date',
     // ad budget
@@ -1633,7 +1635,7 @@ export const buildSearchPayload = (filters = {}) => {
     seen_btn_sort: dateFilterValue(seen_btn_sort),
     first_seen_btn_sort: dateFilterValue(first_seen_btn_sort),
     post_date_btn_sort: dateFilterValue(post_date_btn_sort),
-    domain_date_btn_sort: v(domain_date_btn_sort),
+    domain_date_btn_sort: dateFilterValue(domain_date_btn_sort),
     // Per-platform filter skipping: only include filter fields that at least one
     // resolved network supports. Unsupported fields are sent as 'NA' so the backend
     // ignores them cleanly.
@@ -1719,7 +1721,7 @@ export const buildSearchPayload = (filters = {}) => {
       ? 'NA'
       : (Array.isArray(nativeNetwork) ? (nativeNetwork.length > 0 ? nativeNetwork : 'NA') : [nativeNetwork]),
     order_column,
-    order_by: 'desc',
+    order_by: String(sortDirection || '').toLowerCase() === 'asc' ? 'asc' : 'desc',
     take: '9',
     skip: filters.skip ?? 0,
     needle: 'NA',
@@ -2216,6 +2218,21 @@ export function trackEvent(method, fields = {}) {
 export const fetchAds = async (filters = {}, { signal } = {}) => {
   const payload = buildSearchPayload(filters);
 
+  // Keep the exact Common Ads Search body tied to the DS tier that produced it.
+  // This is opt-in so ordinary searches do not add console noise or expose
+  // request details during normal browsing.
+  const aiExecution = filters._aiSearchExecution;
+  if (aiExecution && (import.meta.env.DEV || import.meta.env.VITE_AI_SEARCH_DIAGNOSTICS === 'true')) {
+    console.info('[ai-search] common search request', {
+      ref_id: aiExecution.refId || null,
+      tier: aiExecution.tierIndex ?? null,
+      ds_hash: aiExecution.dsHash || null,
+      probe: aiExecution.probe === true,
+      page: filters.skip ?? 0,
+      body: payload,
+    });
+  }
+
   const response = await fetch(`${PAS_API_BASE}/api/v1/common/ads/search`, {
     method: 'POST',
     headers: {
@@ -2276,6 +2293,8 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     shares: 'share', share: 'share',
     running_days: 'days_running', running_longest: 'days_running',
     days_running: 'days_running', longest_running: 'days_running',
+    domain_reg_date: 'domain_registration_date', domain_date: 'domain_registration_date',
+    domain_sort: 'domain_registration_date', domain_reg_sort: 'domain_registration_date',
     lead_score: 'lead_score', top_ranked: 'lead_score',
     poster_intelligence_score: 'poster_intelligence_score', poster_intelligence: 'poster_intelligence_score',
     occurrence_count: 'occurrence_count', most_seen: 'occurrence_count',
@@ -2314,12 +2333,15 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     lead_score: 'leadScore',
   };
   const RAW_NUMERIC_FIELDS = new Set(['likes', 'comment', 'share', 'impression', 'ad_budget']);
-  // null/missing scores sink to the end regardless of direction
-  const cmpDesc = (av, bv) => {
+  const sortDirectionValue = String(filters.sortDirection || '').toLowerCase() === 'asc'
+    ? 'asc'
+    : 'desc';
+  // Null/missing scores sink to the end regardless of direction.
+  const cmpNumeric = (av, bv) => {
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
-    return bv - av;
+    return sortDirectionValue === 'asc' ? av - bv : bv - av;
   };
   const toNumRaw = (raw, field) => {
     const v = raw?.[field];
@@ -2356,18 +2378,29 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     sortedAds = [...mappedAds].sort((a, b) => {
       const av = a[mappedKey] == null ? null : Number(a[mappedKey]);
       const bv = b[mappedKey] == null ? null : Number(b[mappedKey]);
-      return cmpDesc(av, bv);
+      return cmpNumeric(av, bv);
     });
   } else if (RAW_NUMERIC_FIELDS.has(sortField)) {
     // For these we pair mapped ads with their raw counterparts so the
     // comparator can read numeric values that mapAdToCard formatted into
     // display strings.
     const paired = mappedAds.map((m, i) => ({ m, raw: rawAds[i] }));
-    paired.sort((a, b) => cmpDesc(toNumRaw(a.raw, sortField), toNumRaw(b.raw, sortField)));
+    paired.sort((a, b) => cmpNumeric(toNumRaw(a.raw, sortField), toNumRaw(b.raw, sortField)));
     sortedAds = paired.map(p => p.m);
   } else {
     const paired = mappedAds.map((m, i) => ({ m, raw: rawAds[i] }));
-    paired.sort((a, b) => toTs(b.raw?.[sortField]) - toTs(a.raw?.[sortField]));
+    const dateCompare = (a, b) => {
+      const aValue = sortField === 'domain_registration_date'
+        ? (a.raw?.domain_registration_date ?? a.raw?.domain_registered_date)
+        : a.raw?.[sortField];
+      const bValue = sortField === 'domain_registration_date'
+        ? (b.raw?.domain_registration_date ?? b.raw?.domain_registered_date)
+        : b.raw?.[sortField];
+      const av = toTs(aValue);
+      const bv = toTs(bValue);
+      return sortDirectionValue === 'asc' ? av - bv : bv - av;
+    };
+    paired.sort(dateCompare);
     sortedAds = paired.map(p => p.m);
   }
 
@@ -2394,6 +2427,10 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   return {
     ads: sortedAds,
     meta: sanitizedMeta,
+    // AI diagnostics need the original field names to compare DS expectations.
+    // Keep this opt-in because retaining the raw page doubles memory for normal
+    // searches without changing the rendered result.
+    ...(aiExecution ? { rawAds } : {}),
   };
 };
 

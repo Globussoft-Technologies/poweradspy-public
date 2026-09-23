@@ -214,6 +214,18 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('hydrates dimension-specific date args when DS sends the wire fields directly', () => {
+    const mapped = mapArgsToFilters({
+      first_seen_btn_sort: 'last_7_days',
+      domain_date_btn_sort: { startDate: '2026-08-01', endDate: '2026-09-11' },
+    }, {});
+
+    expect(mapped.filterValues).toEqual({
+      first_seen_btn_sort: 'last_7_days',
+      domain_date_btn_sort: { startDate: '2026-08-01', endDate: '2026-09-11' },
+    });
+  });
+
   it('maps open-ended likes ranges without turning the missing bound into zero', () => {
     const mapped = mapArgsToFilters({
       network: ['facebook'],
@@ -285,6 +297,35 @@ describe('aiSearchMapper', () => {
 
     expect(mapped.sortBy).toBe('impression');
     expect(mapped.sortBy).not.toBe('popular');
+  });
+
+  it('preserves ascending direction and domain-registration sorting', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook'],
+      order_column: 'domain_reg_date',
+      order_by: 'asc',
+    }, {});
+
+    expect(mapped.sortBy).toBe('domain_sort');
+    expect(mapped.sortDirection).toBe('asc');
+  });
+
+  it('resolves the deployed domain-registration sort alias', () => {
+    const mapped = mapArgsToFilters({
+      order_column: 'domain_reg_date',
+      order_by: 'desc',
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'sort_by',
+          type: 'radio',
+          options: [{ label: 'Domain Registration Date', value: 'domain_reg_date' }],
+        }],
+      }],
+    });
+
+    expect(mapped.sortBy).toBe('domain_reg_date');
+    expect(mapped.unmappedDetails).toEqual([]);
   });
 
   it('does not copy planner metadata into mapped search arguments', () => {

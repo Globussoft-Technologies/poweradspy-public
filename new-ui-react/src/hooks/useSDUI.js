@@ -161,6 +161,7 @@ const normalizeStoredValue = (value) => String(value ?? '').trim().toLowerCase()
 
 const DATE_FILTER_STATE_KEYS = new Set([
     'seen_btn_sort',
+    'first_seen_btn_sort',
     'post_date_btn_sort',
     'domain_date_btn_sort',
 ]);
