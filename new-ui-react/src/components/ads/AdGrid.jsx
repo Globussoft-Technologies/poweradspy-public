@@ -50,6 +50,29 @@ const formatCountryChipLabel = (filterId, label) => {
   return normalized === "reunion" ? "R\u00e9union (France)" : label;
 };
 
+const DATE_PRESET_LABELS = {
+  today: "Today",
+  yesterday: "Yesterday",
+  last_7_days: "Last 7 days",
+  last_14_days: "Last 14 days",
+  last_30_days: "Last 30 days",
+  last_90_days: "Last 90 days",
+  this_month: "This month",
+  last_month: "Last month",
+  this_year: "This year",
+};
+
+// AI Search may provide a relative date preset before the live SDUI date
+// options have supplied a display label. Keep the chip readable without
+// changing the preset sent to Common Ads Search.
+export const formatDatePresetLabel = (value) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (DATE_PRESET_LABELS[normalized]) return DATE_PRESET_LABELS[normalized];
+  return normalized
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+};
+
 const SORT_CHIP_VALUE_ALIASES = {
   newest: "created_at",
   newest_sort: "created_at",
@@ -195,6 +218,7 @@ const AdGrid = ({
   onAiFilterRestricted,
   guest,
   onClearAll,
+  onBroadenSearch,
   hiddenCount = 0,
   isSearchActive = false,
   onGuestLimit,
@@ -259,6 +283,7 @@ const AdGrid = ({
   const DATE_FILTER_KEYS = {
     seen_btn_sort: "Ad Seen",
     post_date_btn_sort: "Post Date",
+    first_seen_btn_sort: "First Seen",
     domain_date_btn_sort: "Domain Reg.",
   };
 
@@ -521,6 +546,13 @@ const AdGrid = ({
         otherChips.push({ type: "chip", filterId: key, value: "__date_range__", label });
         continue;
       }
+      if (DATE_FILTER_KEYS[key] && typeof value === "string" && value.trim()) {
+        const configuredLabel = filterOptionLabels[key]?.[value];
+        const presetLabel = configuredLabel || formatDatePresetLabel(value);
+        const label = `${DATE_FILTER_KEYS[key]}: ${presetLabel}`;
+        otherChips.push({ type: "chip", filterId: key, value: "__date_preset__", label });
+        continue;
+      }
       const rangeLabel = RANGE_FILTER_KEYS[key];
       const isNumericPair =
         Array.isArray(value) &&
@@ -589,7 +621,7 @@ const AdGrid = ({
   ]);
 
   const removeChip = (filterId, chipValue) => {
-    if (chipValue === "__date_range__" || chipValue === "__range__" || chipValue === "__toggle__") {
+    if (chipValue === "__date_range__" || chipValue === "__date_preset__" || chipValue === "__range__" || chipValue === "__toggle__") {
       setFilter(filterId, false);
       return;
     }
@@ -1392,7 +1424,10 @@ const AdGrid = ({
             </div>
             <button
               onClick={() => {
-                if (onClearAll) onClearAll();
+                // AI searches have planned fallback tiers. Reuse those tiers so
+                // broadening keeps the prompt and selected network context.
+                if (onBroadenSearch) onBroadenSearch();
+                else if (onClearAll) onClearAll();
                 else if (sdui.clearAll) sdui.clearAll();
               }}
               className="mt-2 px-5 py-2 rounded-lg bg-theme-surface border border-theme-border text-xs font-semibold text-theme-text-muted hover:text-theme-text hover:border-theme-text-muted transition-all"

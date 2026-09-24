@@ -36,6 +36,22 @@ export const getPlanningTier = (planning, index) => {
   return tier && typeof tier === 'object' ? tier : null;
 };
 
+/**
+ * Return the next safe fallback tier without re-planning the prompt. A tier
+ * with unmapped fields would silently broaden the request, so it is skipped.
+ */
+export const findNextExecutablePlanningTier = (plannedTiers, currentIndex = -1) => {
+  if (!Array.isArray(plannedTiers)) return null;
+  const startIndex = Number.isInteger(currentIndex) ? currentIndex + 1 : 0;
+  for (let index = Math.max(0, startIndex); index < plannedTiers.length; index += 1) {
+    const tier = plannedTiers[index];
+    if (tier?.hasExecutableSearch && !tier.mapped?.unmappedDetails?.length) {
+      return { ...tier, index };
+    }
+  }
+  return null;
+};
+
 const ORCHESTRATION_ONLY_FILTER_KEYS = new Set(['_autoSortField', 'has_ai_meta', 'ai_meta']);
 
 /**

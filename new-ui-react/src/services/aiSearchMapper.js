@@ -690,7 +690,9 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     const lowerAge = Number(args.lower_age);
     const upperAge = Number(args.upper_age);
     if (!Number.isInteger(lowerAge) || !Number.isInteger(upperAge) || lowerAge < 1 || upperAge < lowerAge) {
-      recordUnmapped('age', `${args.lower_age ?? ''}-${args.upper_age ?? ''}`, 'age bounds must be complete positive integers');
+      // Current network controllers only apply age when both numeric bounds
+      // are present; rejecting an open interval prevents an unenforced search.
+      recordUnmapped('age', `${args.lower_age ?? ''}-${args.upper_age ?? ''}`, 'age bounds must be complete positive integers with upper_age >= lower_age');
     } else {
       const ageFilter = findFilter(config, ['age_filter', 'age']);
       if (ageFilter) filterValues[ageFilter._id] = [lowerAge, upperAge];

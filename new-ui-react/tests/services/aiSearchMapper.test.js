@@ -232,9 +232,14 @@ describe('aiSearchMapper', () => {
 
   it('rejects incomplete or invalid continuous age bounds', () => {
     const mapped = mapArgsToFilters({ lower_age: 25 }, {});
+    const upperOnly = mapArgsToFilters({ upper_age: 34 }, {});
+    const reversed = mapArgsToFilters({ lower_age: 34, upper_age: 25 }, {});
 
     expect(mapped.filterValues).toEqual({});
     expect(mapped.unmappedDetails).toContainEqual(expect.objectContaining({ field: 'age' }));
+    expect(upperOnly.filterValues).toEqual({});
+    expect(upperOnly.unmappedDetails).toContainEqual(expect.objectContaining({ field: 'age' }));
+    expect(reversed.unmappedDetails).toContainEqual(expect.objectContaining({ field: 'age' }));
   });
 
   it('hydrates dimension-specific date args when DS sends the wire fields directly', () => {

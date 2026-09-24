@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatPlanningUnsupportedMessage,
+  findNextExecutablePlanningTier,
   getPlanningQuickFilterId,
   getPlanningUnsupported,
   hasExecutableMappedSearch,
@@ -28,5 +29,16 @@ describe("AI search planning helpers", () => {
     expect(hasExecutableMappedSearch({ filterValues: { likes: [500, 2000] } })).toBe(true);
     expect(hasExecutableMappedSearch({ searchQuery: "shoe", filterValues: {} })).toBe(true);
     expect(hasExecutableMappedSearch({ filterValues: {}, sortBy: "impressions" })).toBe(true);
+  });
+
+  it("finds the next executable fallback tier and skips unmapped tiers", () => {
+    const tiers = [
+      { hasExecutableSearch: true, mapped: { filterValues: { colors: ["red"] } } },
+      { hasExecutableSearch: true, mapped: { unmappedDetails: [{ field: "unknown" }] } },
+      { hasExecutableSearch: true, mapped: { filterValues: { hook: ["urgency"] } } },
+    ];
+
+    expect(findNextExecutablePlanningTier(tiers, 0)).toMatchObject({ index: 2 });
+    expect(findNextExecutablePlanningTier(tiers, 2)).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import AdGrid, { resolveSortChipLabel } from "../../src/components/ads/AdGrid";
+import AdGrid, { formatDatePresetLabel, resolveSortChipLabel } from "../../src/components/ads/AdGrid";
 import { getDashboardAdNavigation } from "../../src/utils/dashboardAdNavigation";
 
 describe("getDashboardAdNavigation", () => {
@@ -73,5 +73,16 @@ describe("resolveSortChipLabel", () => {
 
   it("keeps the existing newest chip wording aligned with backend ordering", () => {
     expect(resolveSortChipLabel("created_at", sortTabs)).toBe("Last Seen");
+  });
+});
+
+describe("formatDatePresetLabel", () => {
+  it("turns AI date preset tokens into readable chip labels", () => {
+    expect(formatDatePresetLabel("last_30_days")).toBe("Last 30 days");
+    expect(formatDatePresetLabel("yesterday")).toBe("Yesterday");
+  });
+
+  it("keeps unknown preset-shaped values readable", () => {
+    expect(formatDatePresetLabel("last_45_days")).toBe("Last 45 Days");
   });
 });

@@ -42,6 +42,7 @@ import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapp
 import {
   formatPlanningCapabilityMessage,
   formatPlanningUnsupportedMessage,
+  findNextExecutablePlanningTier,
   getPlanningOutcome,
   getPlanningQuickFilterId,
   getPlanningTier,
@@ -1617,6 +1618,9 @@ const App = () => {
   // AI execution metadata stays outside SDUI state. It is attached only to
   // Common Search diagnostics and never becomes part of the API payload.
   const aiSearchExecutionRef = useRef(null);
+  // Keep the already-planned fallback tiers available to the empty state.
+  // Broadening must not clear the prompt or issue another DS planning request.
+  const aiBroadenSearchRef = useRef(null);
   const aiExpectationRecordsRef = useRef([]);
   const aiExpectationReportRef = useRef(null);
   const aiPaginationDiagnosticsRef = useRef(null);
@@ -2239,6 +2243,7 @@ const App = () => {
     aiRunIdRef.current += 1;
     aiPromptFilterSnapshotRef.current = null;
     aiSearchExecutionRef.current = null;
+    aiBroadenSearchRef.current = null;
     aiExpectationRecordsRef.current = [];
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
@@ -2331,6 +2336,7 @@ const App = () => {
     setAiCapabilityMessage(null);
     aiPromptFilterSnapshotRef.current = null;
     aiSearchExecutionRef.current = null;
+    aiBroadenSearchRef.current = null;
     aiExpectationRecordsRef.current = [];
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
@@ -2385,6 +2391,7 @@ const App = () => {
     // lets the commit replace AI-owned keys atomically while preserving manual
     // filters set outside AI Search.
     aiSearchExecutionRef.current = null;
+    aiBroadenSearchRef.current = null;
     aiExpectationRecordsRef.current = [];
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
@@ -2486,6 +2493,7 @@ const App = () => {
       }
       aiPromptFilterSnapshotRef.current = null;
       aiSearchExecutionRef.current = null;
+      aiBroadenSearchRef.current = null;
       aiExpectationRecordsRef.current = [];
       aiExpectationReportRef.current = null;
       aiPaginationDiagnosticsRef.current = null;
@@ -2737,6 +2745,34 @@ const App = () => {
         refId,
         [partialNotice, selectedUnmappedNotice].filter(Boolean).join(' ') || null,
       );
+
+      let currentTierIndex = matchedIndex;
+      aiBroadenSearchRef.current = () => {
+        if (runId !== aiRunIdRef.current) return;
+        const nextTier = findNextExecutablePlanningTier(plannedTiers, currentTierIndex);
+        if (!nextTier) {
+          showToast('No broader AI interpretation is available for this search.', 'notice');
+          return;
+        }
+
+        currentTierIndex = nextTier.index;
+        const nextPlanning = nextTier.planning || topPlanning;
+        const nextPartialNotice = getPlanningOutcome(nextPlanning) === 'partial_compatibility'
+          ? formatPlanningCapabilityMessage(nextPlanning)
+          : null;
+        const nextUnsupported = getPlanningUnsupported(nextPlanning);
+        const nextUnsupportedNotice = nextUnsupported.length > 0
+          ? formatPlanningUnsupportedMessage(nextUnsupported)
+          : null;
+        commit(
+          nextTier.mapped,
+          nextPlanning,
+          nextTier.index,
+          refId,
+          [nextPartialNotice, nextUnsupportedNotice].filter(Boolean).join(' ') || null,
+        );
+        showToast('Broadened your search while keeping your AI prompt.', 'success');
+      };
 
       if (matchedIndex > 0) showToast("Broadened your search to find results", "success");
       const selectedTierMeta = getPlanningTier(selectedPlanning, matchedIndex);
@@ -3484,6 +3520,7 @@ const App = () => {
             aiQuickFilterId={aiQuickFilterId}
             onAiQuickFilterChange={setAiQuickFilterId}
             aiCapabilityMessage={aiCapabilityMessage}
+            onBroadenSearch={ui.aiPrompt?.trim() ? () => aiBroadenSearchRef.current?.() : undefined}
             searchQuery={ui.searchQuery}
             searchIn={ui.searchIn}
             exactSearch={ui.exactSearch}
