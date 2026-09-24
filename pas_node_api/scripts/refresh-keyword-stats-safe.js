@@ -335,11 +335,6 @@ function collectKeywords(targetKeyword) {
   )];
 }
 
-// Organic-search ads are counted like any other ad. A keyword that has at least one of
-// them is flagged in keyword_stats_unique.organic_search (see aggregateBatchStats).
-// normalizeType() upper-cases the ES type, so that is what the flag compares against.
-const ORGANIC_SEARCH_TYPE = 'ORGANIC SEARCH';
-
 // dryRun: runs fn's queries for real (so it computes the same real numbers a live
 // run would — real ES-sourced rows really get inserted into keyword_ad, really get
 // merged against keyword_stats_unique, all within this transaction) but ALWAYS
@@ -444,8 +439,7 @@ async function ensureSupportTables(sql) {
       position_top_pct    DECIMAL(5,2) NULL,
       first_seen          DATE NULL,
       last_seen           DATE NULL,
-      organic_search      TINYINT(1) NOT NULL DEFAULT 0,
-      updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_ksu_ads_total (ads_total),
       INDEX idx_ksu_competition_score (competition_score),
       INDEX idx_ksu_growth_pct (growth_pct),
@@ -454,17 +448,6 @@ async function ensureSupportTables(sql) {
       INDEX idx_ksu_first_seen (first_seen)
     )
   `);
-
-  // organic_search: 1 when the keyword has at least one "organic search" ad, else 0.
-  // Older tables get the column added; no-op once it exists.
-  const [hasOrganic] = await sql.query(`
-    SELECT COUNT(*) AS n FROM information_schema.columns
-     WHERE table_schema = DATABASE() AND table_name = 'keyword_stats_unique' AND column_name = 'organic_search'
-  `);
-  if (!Number(hasOrganic?.n)) {
-    log('adding keyword_stats_unique.organic_search');
-    await sql.query('ALTER TABLE keyword_stats_unique ADD COLUMN organic_search TINYINT(1) NOT NULL DEFAULT 0 AFTER last_seen');
-  }
 
   // categories / sub_categories: every category (sub-category) seen on the keyword's ads,
   // as a JSON list like countries. category / sub_category stay as the single value the
@@ -1133,7 +1116,6 @@ function aggregateBatchStats(rows, now = new Date()) {
     const typeCounts = new Map();
     let positionTotal = 0;
     let positionTop = 0;
-    let organicSearch = false;
 
     for (const row of groupRows) {
       adsTotal++;
@@ -1157,7 +1139,6 @@ function aggregateBatchStats(rows, now = new Date()) {
       if (country) { bump(countryCounts, country); countrySet.add(country); }
       const adType = row.ad_type ? String(row.ad_type).trim().toUpperCase() : null;
       if (adType) bump(typeCounts, adType);
-      if (adType === ORGANIC_SEARCH_TYPE) organicSearch = true;
       const adPosition = trimTo(row.ad_position, 128);
       if (adPosition) {
         positionTotal++;
@@ -1183,7 +1164,6 @@ function aggregateBatchStats(rows, now = new Date()) {
       position_top_pct: pct(positionTop, positionTotal),
       first_seen: ymd(minFirstSeen),
       last_seen: ymd(maxLastSeen),
-      organic_search: organicSearch ? 1 : 0,
     });
   }
   return out;
@@ -1243,8 +1223,6 @@ function mergeKeywordStats(existing, batch) {
     position_top_pct: weightedPct(existing.position_top_pct, num(existing.ads_total), batch.position_top_pct, num(batch.ads_total)),
     first_seen: minDate(toYmd(existing.first_seen), batch.first_seen),
     last_seen: maxDate(toYmd(existing.last_seen), batch.last_seen),
-    // Once a keyword has an organic-search ad it stays 1.
-    organic_search: num(existing.organic_search) || num(batch.organic_search) ? 1 : 0,
   };
 }
 
@@ -1257,7 +1235,7 @@ async function fetchExistingKeywordStats(exec, keywords) {
     const placeholders = part.map(() => '?').join(', ');
     const rows = await exec.query(
       `SELECT keyword, countries, categories, sub_categories, ads_total, advertisers_total, domains_total, ads_30d, ads_prior_30d,
-              category, sub_category, top_country, type_mix, position_top_pct, first_seen, last_seen, organic_search
+              category, sub_category, top_country, type_mix, position_top_pct, first_seen, last_seen
          FROM keyword_stats_unique
         WHERE keyword IN (${placeholders})`,
       part
@@ -1284,7 +1262,7 @@ async function upsertKeywordStats(exec, rows) {
   const cols = [
     'keyword', 'countries', 'categories', 'sub_categories', 'ads_total', 'advertisers_total', 'domains_total',
     'ads_30d', 'ads_prior_30d', 'growth_pct', 'category', 'sub_category',
-    'top_country', 'type_mix', 'position_top_pct', 'first_seen', 'last_seen', 'organic_search',
+    'top_country', 'type_mix', 'position_top_pct', 'first_seen', 'last_seen',
   ];
   for (const part of chunk(rows, INSERT_CHUNK)) {
     const placeholders = part.map(() => `(${cols.map(() => '?').join(', ')}, NOW())`).join(', ');
