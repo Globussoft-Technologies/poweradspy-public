@@ -29,10 +29,10 @@ async function getDataForLander(status = 0) {
   const sql = `
     SELECT reddit_ad_meta_data.reddit_ad_id as id,
            MAX(reddit_ad_meta_data.destination_url) as destination_url,
-           GROUP_CONCAT(reddit_country_only.country) as country
+           GROUP_CONCAT(reddit_country.country) as country
     FROM reddit_ad_meta_data
     LEFT JOIN reddit_ad ON reddit_ad.id = reddit_ad_meta_data.reddit_ad_id
-    LEFT JOIN reddit_country_only ON reddit_country_only.id = reddit_ad.country_only_id
+    LEFT JOIN reddit_country ON reddit_country.id = reddit_ad.country_id
     WHERE reddit_ad_meta_data.redirect_status = ?
       AND reddit_ad_meta_data.destination_url IS NOT NULL
       AND TRIM(reddit_ad_meta_data.destination_url) <> ''

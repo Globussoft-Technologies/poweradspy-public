@@ -1638,7 +1638,7 @@ const App = () => {
   // message (ads.length > 0) — the zero-results "underway"/"no ads yet" message
   // always shows regardless of the flag, since that's the only feedback the user
   // has that anything is happening at all while there's nothing on screen yet.
-  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt && !aiModeActive && !guest?.isRestricted
+  const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt && !aiModeActive && !guest?.isRestricted && !searchDropdownOpen
     && (ads.length === 0 || SEARCH_CRAWL_BANNER_ON);
   const searchBannerLabel = ["keyword", "advertiser", "domain"].includes(String(ui.searchIn || '').toLowerCase())
     ? ui.searchIn

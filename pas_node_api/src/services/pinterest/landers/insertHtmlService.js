@@ -229,7 +229,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
           const outgoingData = {
             pinterest_ad_id: item.ad_id,
             source_url: outgoing.start_url || null,
-            redirect_url: redirectUrls || null,
+            redirect_url: redirectUrls,
             final_url: outgoing.destination_url || null,
             country_code: countryISO,
             proxy_lander_status: itemStatus
