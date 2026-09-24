@@ -27,7 +27,17 @@ const uploadDir = path.join(__dirname, '../../../..', 'tmp', 'pinterest-landers'
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
-const upload = multer({ dest: uploadDir });
+// Keep the original extension on the temp file: storeInNas derives the stored extension from it,
+// and multer's `dest` writes extensionless names (→ NAS paths ending in ".").
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: uploadDir,
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname || '').replace(/[^A-Za-z0-9.]/g, '').toLowerCase();
+      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+    }
+  })
+});
 
 function createPinterestLandersRoutes(service) {
   const router = Router();

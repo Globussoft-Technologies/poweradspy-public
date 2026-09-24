@@ -13,6 +13,8 @@
 
 const { Router } = require('express');
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { asyncHandler } = require('../../../middleware/errorHandler');
 const {
   getAdsForLander,
@@ -21,7 +23,22 @@ const {
 } = require('./quoraLandersController');
 
 // Multer config for file uploads
-const upload = multer({ dest: '/tmp/quora-landers/' });
+// storeInNas derives the stored file's extension from the temp file path, and multer's `dest`
+// writes extensionless temp names — which produced NAS paths ending in "." (no .jpg/.zip).
+// Use diskStorage so the original extension is preserved on the temp file.
+const uploadDir = '/tmp/quora-landers/';
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: uploadDir,
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname || '').replace(/[^A-Za-z0-9.]/g, '').toLowerCase();
+      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+    }
+  })
+});
 
 function createQuoraLandersRoutes(service) {
   const router = Router();

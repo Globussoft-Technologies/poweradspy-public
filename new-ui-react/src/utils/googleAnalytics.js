@@ -116,10 +116,11 @@ export function classifyError(error) {
 // lowercased, every run of non-alphanumerics collapsed to a single underscore,
 // ends trimmed. "Palladium" -> "palladium", "Basic (2026)" -> "basic_2026".
 function normalizePlanTierValue(raw) {
-  return String(raw || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+  // Send the plan name exactly as received (no lowercasing / underscoring).
+  const value = String(raw ?? '');
+  // A bare number is a plan_id (the JWT's userSubscriptionType), not a plan name.
+  // Never send an id to GA — report `unknown` instead of leaking e.g. "69".
+  return /^\s*\d+\s*$/.test(value) ? 'unknown' : value;
 }
 
 /**
