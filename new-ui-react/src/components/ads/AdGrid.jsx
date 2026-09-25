@@ -360,7 +360,11 @@ const AdGrid = ({
       if (f.label) categoryMap[f._id] = f.label;
       if (!f.options?.length) continue;
 
-      const addOptionLabels = (filterId, options) => {
+      const isNestedFilter =
+        f.type === "nested_select" || f.type === "nested_multiselect";
+      const nestedParentKey = f.parent_filter_id || "adcategory";
+      const nestedChildKey = f.child_filter_id || "subcategory";
+      const addOptionLabels = (filterId, options, childFilterId = filterId) => {
         if (!optionMap[filterId]) optionMap[filterId] = {};
         for (const opt of options) {
           const val = opt.value ?? opt.label ?? opt;
@@ -377,12 +381,17 @@ const AdGrid = ({
           // Map their labels there so active-filter chips never fall back to IDs.
           const children = opt.children || opt.sub_options || [];
           if (children.length) {
-            addOptionLabels(f.child_filter_id || filterId, children);
+            addOptionLabels(childFilterId, children, childFilterId);
           }
         }
       };
 
-      addOptionLabels(f._id, f.options);
+      addOptionLabels(f._id, f.options, isNestedFilter ? nestedChildKey : f._id);
+      // Legacy nested filters store parents under adcategory, even when the
+      // SDUI filter's own ID is categories; keep chips resolving either key.
+      if (isNestedFilter && nestedParentKey !== f._id) {
+        addOptionLabels(nestedParentKey, f.options, nestedChildKey);
+      }
     }
     seenFilterOptionLabels.current = optionMap;
     seenFilterCategoryLabels.current = categoryMap;

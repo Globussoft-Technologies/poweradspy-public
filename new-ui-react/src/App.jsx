@@ -58,6 +58,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
 import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setAiPrompt, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
+import { AI_FAILED_PROMPT_RELOAD_KEY } from './store/store';
 import { useBrowserHistoryState, coalesceNextHistoryWrite } from './hooks/useBrowserHistoryState';
 import { ADMOB_FRONTEND_ENABLED } from './constants';
 
@@ -83,6 +84,14 @@ import LockedFeaturePreview from "./components/shared/LockedFeaturePreview";
 // Market Trends is gated twice: the build-time env flag AND a per-user server
 // allow-list (config.intelligence.allowedUserIds), probed via /access.
 const INTEL_ENV_ON = import.meta.env.VITE_ENABLE_INTELLIGENCE_FEATURE === "true";
+
+const markFailedAiPromptForReload = () => {
+  try { sessionStorage.setItem(AI_FAILED_PROMPT_RELOAD_KEY, '1'); } catch {}
+};
+
+const clearFailedAiPromptReloadMarker = () => {
+  try { sessionStorage.removeItem(AI_FAILED_PROMPT_RELOAD_KEY); } catch {}
+};
 
 // Keywords Explorer and the Google competitive-intel entry points are controlled
 // by the same build-time env gate. Turning this off hides the nav item, page,
@@ -1616,6 +1625,15 @@ const App = () => {
   const [aiModeActive, setAiModeActive] = useState(() => {
     try { return sessionStorage.getItem("ai_search_mode") === "1"; } catch { return false; }
   });
+  const handleAiModeChange = useCallback((active) => {
+    setAiModeActive(active);
+    if (!active) {
+      // AI capability copy is only meaningful while AI mode is active. The
+      // health guard can switch modes without going through the AI reset path.
+      setAiCapabilityMessage(null);
+      dismissAiToast();
+    }
+  }, [dismissAiToast]);
   const debounceTimer = useRef(null);
   const lastDailyKeywordRef = useRef(null);
   const projectContextRef = useRef(null);
@@ -2257,6 +2275,7 @@ const App = () => {
   // Clear the AI-owned query state without changing the user's selected
   // networks. This is used when the prompt/AI filters are cleared in place.
   const clearAiPromptState = useCallback(() => {
+    clearFailedAiPromptReloadMarker();
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
     aiRunIdRef.current += 1;
@@ -2326,6 +2345,7 @@ const App = () => {
   ]);
 
   const handleSearch = useCallback((query, type, platform, options = {}) => {
+    clearFailedAiPromptReloadMarker();
     if (guest?.isPublicLanding && guest?.isRestricted) {
       trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'header', feature_name: 'ad_search', ...getNetworkContext(platform ? [platform] : ui.specificPlatforms), request_context: 'search', search_mode: 'standard', search_type: String(type || ui.searchIn || 'keyword').toLowerCase() });
       guest.showGuestWarning("Please login to search");
@@ -2412,6 +2432,7 @@ const App = () => {
       return;
     }
     if (guestGuard("Please login to search", { searchQuery: trimmed })) return;
+    clearFailedAiPromptReloadMarker();
     // Keep the previous AI snapshot until the next tier is committed. That
     // lets the commit replace AI-owned keys atomically while preserving manual
     // filters set outside AI Search.
@@ -2525,6 +2546,9 @@ const App = () => {
       aiPaginationDiagnosticsRef.current = null;
       dispatch(setSearchQuery(''));
       dispatch(setSearchIn('keyword'));
+      // Keep the failed prompt visible for this session, but remove it from
+      // Redux persistence on the next reload so it cannot label all ads as AI results.
+      markFailedAiPromptForReload();
     };
 
     try {
@@ -2871,8 +2895,8 @@ const App = () => {
         ? 'Please login to search'
         : 'AI server is facing heavy traffic, please try again later.';
       // Do not leave the previous AI result on screen after a planner/API
-      // failure. Keep the prompt available for retry, but make the failure
-      // explicit instead of showing a stale result or generic empty state.
+      // failure. Keep the failed prompt visible for this session; the cleanup
+      // marker prevents it from being restored beside the Ads Library later.
       clearPreviousAiFilters();
       aiCapabilityOnlyRef.current = true;
       setAds([]);
@@ -3303,7 +3327,7 @@ const App = () => {
         onExitAiSearch={exitAiSearch}
         onClearAiSearch={clearAiSearchFilters}
         onCancelAiSearch={exitAiSearch}
-        onAiModeChange={setAiModeActive}
+        onAiModeChange={handleAiModeChange}
         aiSearchAvailable={aiSearchAvailable}
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}

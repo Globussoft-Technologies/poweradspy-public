@@ -3,6 +3,10 @@ import { persistStore, persistReducer } from 'redux-persist';
 import sessionStorage from 'redux-persist/lib/storage/session';
 import uiReducer from './uiSlice';
 
+// A failed AI prompt remains visible for the current session, but must not be
+// restored beside the unfiltered Ads Library after the next page reload.
+export const AI_FAILED_PROMPT_RELOAD_KEY = 'ai_search_failed_prompt_reload';
+
 // If opened via email link (?advertiser=...), wipe persisted activePage so it
 // doesn't override the ads page we're about to navigate to. Normal visits are unaffected.
 if (new URLSearchParams(window.location.search).get('advertiser')) {
@@ -22,6 +26,8 @@ if (new URLSearchParams(window.location.search).get('advertiser')) {
 // stale pricing/subscription modal cannot reopen on a paid user's next login.
 try {
   const raw = window.sessionStorage.getItem('persist:root');
+  const clearFailedAiPrompt = window.sessionStorage.getItem(AI_FAILED_PROMPT_RELOAD_KEY) === '1';
+  if (clearFailedAiPrompt) window.sessionStorage.removeItem(AI_FAILED_PROMPT_RELOAD_KEY);
   if (raw) {
     const parsed = JSON.parse(raw);
     const transientKeys = [
@@ -35,6 +41,10 @@ try {
       'isOnboardingModalOpen',
     ];
     let changed = false;
+    if (clearFailedAiPrompt && 'aiPrompt' in parsed) {
+      parsed.aiPrompt = '""';
+      changed = true;
+    }
     transientKeys.forEach((key) => {
       if (key in parsed) {
         delete parsed[key];
