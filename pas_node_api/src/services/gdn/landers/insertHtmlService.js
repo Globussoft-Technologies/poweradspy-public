@@ -187,7 +187,7 @@ async function insertHtmlContent(req, db, log) {
       // 4. status === 3 → no response: flip redirect_status only (PHP always returns here).
       if (Number(value.status) === 3) {
         if (blackhat_status != 1 || whitehat_status != 0 || whitehat_status != 2) {
-          update_meta_table.redirect_status = value.crawled_by === '.net' ? 3 : 6;
+          update_meta_table.redirect_status = value.crawled_by === '.net' ? 3 : 5;
           const upd = await repo.updateMeta(sql, value.ad_id, update_meta_table);
           response.code = upd === 1 ? 200 : 400;
           response.message = upd === 1 ? 'Redirect status updated succesfully' : 'Redirect status updated previously';

@@ -129,7 +129,7 @@ class InsertHtmlContentService {
 
     // Step 2: Handle no response case (status = 3)
     if (data.status === 3) {
-      const redirectStatus = data.crawled_by === '.net' ? 3 : 6;
+      const redirectStatus = data.crawled_by === '.net' ? 3 : 5;
       await NativeAdMetaData.updateRedirectStatus(data.ad_id, redirectStatus);
       return {
         success: true,

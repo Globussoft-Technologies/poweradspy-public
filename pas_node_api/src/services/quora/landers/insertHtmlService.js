@@ -118,7 +118,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
           };
         }
 
-        const redirectStatus = item.crawled_by === '.net' ? 3 : 6;
+        const redirectStatus = item.crawled_by === '.net' ? 3 : 5;
         // repo.updateAdMetaData returns the affectedRows count (a number), not a
         // { code } object — reading `.code` off it made this response's code
         // undefined, which crashed res.status() in the route (HTTP 500).

@@ -66,6 +66,19 @@ class InsertHtmlContentService {
           );
         }
 
+        // Status 3 = data not found: only flag redirect_status (5, or 3 for .net); skip content writes.
+        if (parseInt(data.status, 10) === 3) {
+          const flagged = await repository.updateRedirectStatus(data.ad_id, data.crawled_by === '.net' ? 3 : 5);
+          results.push({
+            ad_id: data.ad_id,
+            code: flagged ? 200 : 400,
+            message: flagged
+              ? 'Data not found; redirect status updated successfully'
+              : 'Redirect status updated previously',
+          });
+          continue;
+        }
+
         const domain = data.domain_name
           ? (getLastUrlHostname(data.domain_name) || String(data.domain_name).split('/')[0])
           : null;
@@ -287,6 +300,7 @@ class InsertHtmlContentService {
     }
 
     const errors = [];
+    const isNotFound = parseInt(data.status, 10) === 3;
 
     // required: key present AND value not null/undefined/empty-string.
     const REQUIRED_VALUE_KEYS = ['ad_id', 'status', 'crawled_by'];
@@ -302,9 +316,10 @@ class InsertHtmlContentService {
       (k) => data[k] === undefined || data[k] === null || data[k] === ''
     );
     // 2. present — key must exist in the payload (value may be null).
-    const missingPresent = [...PRESENT_STRING_NULLABLE_KEYS, ...PRESENT_NULLABLE_KEYS].filter(
-      (k) => !(k in data)
-    );
+    // Status 3 (data not found) carries no lander content, so those fields are not required.
+    const missingPresent = isNotFound
+      ? []
+      : [...PRESENT_STRING_NULLABLE_KEYS, ...PRESENT_NULLABLE_KEYS].filter((k) => !(k in data));
     const missing = [...missingRequired, ...missingPresent];
     if (missing.length === 1) {
       errors.push(`The "insertData.${missing[0]}" field is missing from the payload and is required.`);
@@ -315,7 +330,7 @@ class InsertHtmlContentService {
     }
 
     // 3. string|nullable — when present and not null, the value must be a string.
-    for (const k of PRESENT_STRING_NULLABLE_KEYS) {
+    for (const k of isNotFound ? [] : PRESENT_STRING_NULLABLE_KEYS) {
       if (data[k] !== null && data[k] !== undefined && typeof data[k] !== 'string') {
         errors.push(`The "insertData.${k}" field must be a string or null (received ${typeof data[k]}).`);
       }
@@ -324,11 +339,11 @@ class InsertHtmlContentService {
     // 4. status => in:1,2
     if (
       data.status !== undefined && data.status !== null && data.status !== '' &&
-      ![1, 2].includes(parseInt(data.status, 10))
+      ![1, 2, 3].includes(parseInt(data.status, 10))
     ) {
       errors.push(
         `The "insertData.status" field is invalid (received ${JSON.stringify(data.status)}). `
-          + 'It must be 1 (blackhat) or 2 (whitehat).'
+          + 'It must be 1 (blackhat), 2 (whitehat) or 3 (data not found).'
       );
     }
 

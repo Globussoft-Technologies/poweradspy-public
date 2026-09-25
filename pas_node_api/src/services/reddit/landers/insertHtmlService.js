@@ -233,7 +233,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
           const wStatus = metaData.white_ad_status;
 
           if (bStatus !== 1 || wStatus !== 0 || wStatus !== 2) {
-            const redirectStatus = item.crawled_by === '.net' ? 3 : 6;
+            const redirectStatus = item.crawled_by === '.net' ? 3 : 5;
             const updateResult = await repo.updateAdMetaData(item.ad_id, {
               redirect_status: redirectStatus
             });
