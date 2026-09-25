@@ -2558,7 +2558,8 @@ const App = () => {
         setAiQuickFilterId(null);
         setAiCapabilityMessage(message);
         setError(null);
-        showToast(message, 'notice', 8000, 'top', 'ai-search');
+        // Keep AI capability notices away from the platform and Quick Filter rows.
+        showToast(message, 'notice', 8000, 'bottom', 'ai-search');
         return;
       }
 
@@ -2571,7 +2572,7 @@ const App = () => {
         setNoDataMessage(null);
         setAiQuickFilterId(null);
         setAiCapabilityMessage('AI could not produce an executable search plan for this request.');
-        showToast("AI couldn't interpret that prompt. Try rephrasing.", "error", 3000, "top", "ai-search");
+        showToast("AI couldn't interpret that prompt. Try rephrasing.", "error", 3000, "bottom", "ai-search");
         return;
       }
 
@@ -2713,7 +2714,7 @@ const App = () => {
           setAiQuickFilterId(null);
           setAiCapabilityMessage(message);
           setError(null);
-          showToast(message, "notice", 8000, "top", "ai-search");
+          showToast(message, "notice", 8000, "bottom", "ai-search");
           return;
         } else if (unmappedItems.length > 0) {
           const fields = [...new Set(unmappedItems.map((item) => item.field).filter(Boolean))];
@@ -2727,7 +2728,7 @@ const App = () => {
           setAiQuickFilterId(null);
           setAiCapabilityMessage(message);
           setError(null);
-          showToast(message, 'error', 8000, 'top', 'ai-search');
+          showToast(message, 'error', 8000, 'bottom', 'ai-search');
           return;
         } else if (plannedTiers.some(({ planning }) => planning && Object.keys(planning).length > 0)) {
           // A DS-planned prompt with no executable subject/filter must not
@@ -2751,7 +2752,7 @@ const App = () => {
           setAiQuickFilterId(null);
           setAiCapabilityMessage(message);
           setError(null);
-          showToast(message, 'notice', 8000, 'top', 'ai-search');
+          showToast(message, 'notice', 8000, 'bottom', 'ai-search');
           return;
         } else {
           // Older DS responses without planning metadata retain the legacy
@@ -2785,7 +2786,7 @@ const App = () => {
         if (runId !== aiRunIdRef.current) return;
         const nextTier = findNextExecutablePlanningTier(plannedTiers, currentTierIndex);
         if (!nextTier) {
-          showToast('No broader AI interpretation is available for this search.', 'notice');
+          showToast('No broader AI interpretation is available for this search.', 'notice', 3000, 'bottom', 'ai-search');
           return;
         }
 
@@ -2805,10 +2806,12 @@ const App = () => {
           refId,
           [nextPartialNotice, nextUnsupportedNotice].filter(Boolean).join(' ') || null,
         );
-        showToast('Broadened your search while keeping your AI prompt.', 'success');
+        showToast('Broadened your search while keeping your AI prompt.', 'success', 3000, 'bottom', 'ai-search');
       };
 
-      if (matchedIndex > 0) showToast("Broadened your search to find results", "success");
+      if (matchedIndex > 0) {
+        showToast("Broadened your search to find results", "success", 3000, "bottom", "ai-search");
+      }
       const selectedTierMeta = getPlanningTier(selectedPlanning, matchedIndex);
       if (selectedTierMeta?.changed_subject || selectedTierMeta?.added_inferences?.length) {
         const inferred = Array.isArray(selectedTierMeta.added_inferences)
@@ -2820,6 +2823,8 @@ const App = () => {
             : 'AI broadened the search to find relevant results.',
           'notice',
           7000,
+          'bottom',
+          'ai-search',
         );
       }
       const selectedUnsupported = getPlanningUnsupported(selectedPlanning);
@@ -2828,6 +2833,8 @@ const App = () => {
           formatPlanningUnsupportedMessage(selectedUnsupported),
           "notice",
           8000,
+          "bottom",
+          "ai-search",
         );
       }
       if (matchedMapped.unmappedDetails?.length) {
@@ -2877,7 +2884,7 @@ const App = () => {
       setAiQuickFilterId(null);
       setAiCapabilityMessage(msg);
       setError(null);
-      showToast(msg, "error", 3000, "top", "ai-search");
+      showToast(msg, "error", 3000, "bottom", "ai-search");
     } finally {
       if (runId === aiRunIdRef.current) {
         setAiSearchLoading(false);

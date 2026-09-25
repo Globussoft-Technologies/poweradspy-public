@@ -148,11 +148,9 @@ export function expandCountryFilterValues(values) {
       continue;
     }
 
-    pushUnique(raw);
-
-    const iso = resolveCountryIso(raw);
-    if (iso) pushUnique(iso);
-
+    // Common Ads Search indexes country names. Normalize an SDUI value such as
+    // "IN" to "India" instead of sending both representations; the latter can
+    // make an exact country filter depend on which network's field is queried.
     const countryName = resolveCountryName(raw);
     if (countryName) pushUnique(countryName);
   }

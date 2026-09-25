@@ -46,7 +46,7 @@ describe("buildSearchPayload > AI-Meta", () => {
     expect(payload).not.toHaveProperty("ai_category_id");
     expect(payload).not.toHaveProperty("ai_subcategory_id");
     expect(payload.network).toEqual(["facebook", "admob"]);
-    expect(payload.country).toEqual(["US", "United States"]);
+    expect(payload.country).toEqual(["United States"]);
   });
 
   it("forwards selected contract filters without embedding their options", () => {
@@ -354,15 +354,19 @@ describe("buildSearchPayload > industry derivation", () => {
 describe("buildSearchPayload > country resolution", () => {
   it("country_filter array wins", () => {
     const p = buildSearchPayload({ country_filter: ["US"] });
-    expect(p.country).toEqual(["US", "United States"]);
+    expect(p.country).toEqual(["United States"]);
   });
   it("country_filter scalar wrapped to array", () => {
     const p = buildSearchPayload({ country_filter: "US" });
-    expect(p.country).toEqual(["US", "United States"]);
+    expect(p.country).toEqual(["United States"]);
   });
   it("selCountries fallback", () => {
     const p = buildSearchPayload({ selCountries: ["GB"] });
-    expect(p.country).toEqual(["GB", "United Kingdom"]);
+    expect(p.country).toEqual(["United Kingdom"]);
+  });
+  it("keeps canonical country labels and does not add ISO aliases", () => {
+    const p = buildSearchPayload({ country_filter: ["India", "IN"] });
+    expect(p.country).toEqual(["India"]);
   });
   it("none → NA", () => {
     expect(buildSearchPayload().country).toBe("NA");
