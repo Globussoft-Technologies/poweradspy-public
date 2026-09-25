@@ -60,75 +60,105 @@ class InstagramRepository {
     return result.length > 0 ? result[0].id : null;
   }
 
-  // Domain: insert or get
+  // Domain: insert or get (Facebook-style). A blank/zero registration date is stored as NULL,
+  // and never overwrites an existing real date; a real date refreshes the existing row.
   static async getOrCreateDomain(domain, registeredDate) {
     const existing = await this.getDomain(domain);
-    if (existing) return existing;
+    if (existing) {
+      if (registeredDate) {
+        await executeQuery(
+          'UPDATE instagram_ad_domain SET domain_registered_date = ? WHERE id = ?',
+          [registeredDate, existing]
+        );
+      }
+      return existing;
+    }
 
-    const sql = `INSERT INTO instagram_ad_domain (domain, domain_registered_date) VALUES (?, ?)`;
-    const result = await executeQuery(sql, [
-      domain,
-      registeredDate || new Date().toISOString().split('T')[0],
-    ]);
+    const result = await executeQuery(
+      'INSERT INTO instagram_ad_domain (domain, domain_registered_date) VALUES (?, ?)',
+      [domain, registeredDate || null]
+    );
     return result.insertId;
   }
 
-  // URL: insert redirect (R) + destination (D)
-  static async insertUrls(adId, redirectUrls, destinationUrl, countryIso) {
-    const iso = countryIso
-      ? Array.isArray(countryIso)
-        ? countryIso[0]
-        : countryIso.toString().split(',')[0]
-      : null;
+  // Country list -> "IN||US" (uppercase, "||"-joined) — same normalisation as the Facebook lander.
+  static normalizeCountry(countryIso) {
+    if (countryIso === undefined || countryIso === null || countryIso === '') return '';
+    const list = Array.isArray(countryIso) ? countryIso : String(countryIso).split(/[,|]+/);
+    return list.map((c) => String(c).trim()).filter(Boolean).join('||').toUpperCase();
+  }
 
-    for (const redirectUrl of redirectUrls) {
-      const sql = `
-        INSERT INTO instagram_ad_url (instagram_ad_id, url_type, url, type, country_code, proxy_lander_status)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE url = VALUES(url)
-      `;
-      await executeQuery(sql, [adId, 'R', redirectUrl || null, 0, iso, 0]);
+  // ad_url rows (facebook-style): top-level redirects[] -> url_type 'R', destinations -> url_type 'D'.
+  // Each row is inserted once per (ad, type, url, status); an existing D row just gets its country refreshed.
+  static async upsertAdUrls(adId, redirects, destination, countryIso, status) {
+    const country = this.normalizeCountry(countryIso);
+    const proxyStatus = status ?? 0;
+    const hasValue = (v) => typeof v === 'string' && v.trim() !== '' && v.trim().toUpperCase() !== 'NA';
+
+    const rows = [];
+    if (Array.isArray(redirects)) {
+      for (const r of redirects) if (hasValue(r)) rows.push(['R', r, 0]);
     }
+    if (hasValue(destination)) rows.push(['D', destination, 1]);
 
-    if (destinationUrl) {
-      const destSql = `
-        INSERT INTO instagram_ad_url (instagram_ad_id, url_type, url, type, country_code, proxy_lander_status)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE url = VALUES(url)
-      `;
-      await executeQuery(destSql, [adId, 'D', destinationUrl || null, 0, iso, 0]);
+    for (const [urlType, url, type] of rows) {
+      const existing = await executeQuery(
+        `SELECT id FROM instagram_ad_url
+          WHERE instagram_ad_id = ? AND url_type = ? AND url <=> ? AND proxy_lander_status <=> ? LIMIT 1`,
+        [adId, urlType, url, proxyStatus]
+      );
+      if (existing.length > 0) {
+        await executeQuery('UPDATE instagram_ad_url SET country_code = ? WHERE id = ?', [country, existing[0].id]);
+        continue;
+      }
+      await executeQuery(
+        `INSERT INTO instagram_ad_url (instagram_ad_id, url_type, url, type, country_code, proxy_lander_status)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [adId, urlType, url, type, country, proxyStatus]
+      );
     }
   }
 
-  // Outgoing: insert outgoing links
-  static async insertOutgoingLinks(adId, outgoingUrls, countryIso) {
-    if (!outgoingUrls || outgoingUrls.length === 0) return;
+  // Outgoing links: ONE row per outgoing_url item (source_url = start_url, final_url = destination_url,
+  // redirect_url = its redirect chain "||"-joined, '' when redirect_urls is [] — column is NOT NULL).
+  // An identical existing row (same ad + source + final + status) only has its country list merged.
+  static async insertOutgoingLinks(adId, outgoingUrls, countryIso, status) {
+    if (!Array.isArray(outgoingUrls) || outgoingUrls.length === 0) return;
 
-    const country = countryIso
-      ? Array.isArray(countryIso)
-        ? countryIso.join('|')
-        : countryIso
-      : null;
+    const country = this.normalizeCountry(countryIso);
+    const proxyStatus = status ?? 0;
 
-    for (const urlObj of outgoingUrls) {
-      const redirectUrls = urlObj.redirect_urls || urlObj.redirectUrls || [];
-      const destinationUrl = urlObj.destination_url || urlObj.destinationUrl || null;
+    for (const o of outgoingUrls) {
+      if (!o) continue;
+      const start = o.start_url || o.startUrl || null;
+      const dest = o.destination_url || o.destinationUrl || null;
+      if (!start && !dest) continue;
 
-      for (const redirectUrl of redirectUrls) {
-        const sql = `
-          INSERT INTO instagram_ad_outgoing_links (instagram_ad_id, source_url, redirect_url, final_url, country_code, proxy_lander_status)
-          VALUES (?, ?, ?, ?, ?, ?)
-          ON DUPLICATE KEY UPDATE redirect_url = VALUES(redirect_url)
-        `;
-        await executeQuery(sql, [
-          adId,
-          destinationUrl || null,
-          redirectUrl || null,
-          destinationUrl || null,
-          country,
-          0,
-        ]);
+      const reds = o.redirect_urls || o.redirectUrls;
+      const redirectUrl = (Array.isArray(reds) ? reds : [reds]).filter(Boolean).join('||');
+      const sourceUrl = start || dest;
+
+      const existing = await executeQuery(
+        `SELECT id, country_code FROM instagram_ad_outgoing_links
+          WHERE instagram_ad_id = ? AND source_url <=> ? AND final_url <=> ?
+            AND proxy_lander_status <=> ? LIMIT 1`,
+        [adId, sourceUrl, dest, proxyStatus]
+      );
+      if (existing.length > 0) {
+        const merged = [...new Set(
+          [...String(existing[0].country_code || '').split('||'), ...country.split('||')].filter(Boolean)
+        )].join('||');
+        await executeQuery(
+          'UPDATE instagram_ad_outgoing_links SET redirect_url = ?, country_code = ? WHERE id = ?',
+          [redirectUrl, merged, existing[0].id]
+        );
+        continue;
       }
+      await executeQuery(
+        `INSERT INTO instagram_ad_outgoing_links (instagram_ad_id, source_url, redirect_url, final_url, country_code, proxy_lander_status)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [adId, sourceUrl, redirectUrl, dest, country, proxyStatus]
+      );
     }
   }
 
@@ -249,7 +279,9 @@ class InstagramRepository {
       });
 
       const hits = result?.body?.hits?.hits || result?.hits?.hits || [];
-      return hits.length > 0;
+      // Return the hit's real ES _id (truthy) so callers can update the right document;
+      // false when the ad is absent from the index.
+      return hits.length > 0 ? String(hits[0]._id) : false;
     } catch (error) {
       return false;
     }

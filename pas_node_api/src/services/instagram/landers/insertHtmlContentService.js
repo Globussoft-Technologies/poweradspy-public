@@ -1,6 +1,22 @@
 const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 const InstagramRepository = require('./repository');
 
+/** "" / "0" / "0000-00-00" / null from the scraper -> null (no date resolved). */
+function cleanDate(v) {
+  if (v === undefined || v === null) return null;
+  const t = String(v).trim();
+  if (t === '' || t === '0' || t === '0000-00-00' || t === '0000-00-00 00:00:00') return null;
+  return v;
+}
+
+/** Registrable domain from the destination URL (same rule as the Facebook lander). */
+function extractDomain(destinations) {
+  if (!destinations) return null;
+  const host = getLastUrlHostname(destinations);
+  const m = String(host || '').match(/([a-z0-9][a-z0-9-]{1,63}\.[a-z.]{2,6})$/i);
+  return m ? m[1] : null;
+}
+
 async function executeQuery(sql, params = []) {
   const databaseManager = require('../../../database/DatabaseManager');
   const pool = databaseManager.getSQL('instagram');
@@ -16,7 +32,46 @@ async function executeQuery(sql, params = []) {
   }
 }
 
-async function updateAdDocument(adId, data, esWrapper) {
+const isRealUrl = (v) => typeof v === 'string' && v.trim() !== '' && v.trim().toUpperCase() !== 'NA';
+
+/**
+ * ES link fields for the ad document (same shape the Facebook lander writes): the outgoing
+ * links' start / redirect / destination URLs and the ad_url redirects / destination, each
+ * "||"-joined, plus the country list. Keys are omitted when the payload has no value, so an
+ * existing ES value is never blanked.
+ */
+function buildLinkFields(data) {
+  const fields = {};
+  const outgoing = Array.isArray(data.outgoing_url) ? data.outgoing_url.filter(Boolean) : [];
+
+  const sources = outgoing.map((o) => o.start_url || o.startUrl).filter(isRealUrl);
+  const finals = outgoing.map((o) => o.destination_url || o.destinationUrl).filter(isRealUrl);
+  const redirects = outgoing
+    .map((o) => {
+      const r = o.redirect_urls || o.redirectUrls;
+      return (Array.isArray(r) ? r : [r]).filter(isRealUrl).join('||');
+    })
+    .filter(Boolean);
+  if (sources.length) fields['instagram_ad_outgoing_links.source_url'] = sources.join('||');
+  if (finals.length) fields['instagram_ad_outgoing_links.final_url'] = finals.join('||');
+  if (sources.length || finals.length) {
+    fields['instagram_ad_outgoing_links.redirect_url'] = redirects.join('||');
+  }
+
+  const urlRedirects = (Array.isArray(data.redirects) ? data.redirects : []).filter(isRealUrl);
+  if (urlRedirects.length) fields['instagram_ad_url.url_redirects'] = urlRedirects.join('||');
+  if (isRealUrl(data.destinations)) fields['instagram_ad_url.url_destination'] = data.destinations;
+
+  const country = InstagramRepository.normalizeCountry(data.country_iso);
+  if (country && (fields['instagram_ad_url.url_destination'] || urlRedirects.length)) {
+    fields['instagram_ad_url.country_code'] = country;
+  }
+  return fields;
+}
+
+// esDocId is the real ES _id of the ad's document. Docs are often indexed with an auto-generated
+// _id (not the ad id), so updating by String(adId) would 404 — the ad id is only a fallback.
+async function updateAdDocument(adId, data, esWrapper, esDocId) {
   // if (!esWrapper) {
   //   console.log('ES not available, skipping update');
   //   return;
@@ -26,7 +81,7 @@ async function updateAdDocument(adId, data, esWrapper) {
     await esWrapper.update({
       index: 'instagram_search_mix',
       type: 'doc',
-      id: String(adId),
+      id: typeof esDocId === 'string' && esDocId ? esDocId : String(adId),
       body: {
         doc: {
           'instagram_ad_html_lander_content.html_whitehat_lander_text':
@@ -35,6 +90,12 @@ async function updateAdDocument(adId, data, esWrapper) {
             data.htmlContent?.html_dc_blackhat_lander_text || null,
           'instagram_ad_html_lander_content.html_res_blackhat_lander_text':
             data.htmlContent?.html_res_blackhat_lander_text || null,
+          // Only written when the scraper resolved a date — never blanks an existing one.
+          ...(data.domainRegisteredDate
+            ? { 'instagram_ad_domain.domain_registered_date': data.domainRegisteredDate }
+            : {}),
+          // Outgoing links / url fields — only the ones this payload actually carries.
+          ...(data.linkFields || {}),
         },
       },
     });
@@ -79,15 +140,18 @@ class InsertHtmlContentService {
           continue;
         }
 
-        const domain = data.domain_name
-          ? (getLastUrlHostname(data.domain_name) || String(data.domain_name).split('/')[0])
-          : null;
+        // Domain comes from the destination URL (Facebook-style); domain_name is a legacy fallback.
+        const domain = extractDomain(data.destinations)
+          || (data.domain_name
+            ? (getLastUrlHostname(data.domain_name) || String(data.domain_name).split('/')[0])
+            : null);
+        const domainRegisteredDate = cleanDate(data.domain_registered_date);
         let domainId = null;
 
         if (domain) {
           domainId = await repository.getOrCreateDomain(
             domain,
-            data.domain_registered_date
+            domainRegisteredDate
           );
           if (!domainId) {
             throw new Error(
@@ -96,29 +160,21 @@ class InsertHtmlContentService {
           }
         }
 
-        if (data.outgoing_url && Array.isArray(data.outgoing_url)) {
-       
-          await repository.insertOutgoingLinks(
-            data.ad_id,
-            data.outgoing_url,
-            data.country_iso
-          );
-        }
+        // Outgoing links + ad_url rows (redirects R / destination D), same layout as Facebook.
+        await repository.insertOutgoingLinks(
+          data.ad_id,
+          data.outgoing_url,
+          data.country_iso,
+          data.status
+        );
+        await repository.upsertAdUrls(
+          data.ad_id,
+          data.redirects,
+          data.destinations,
+          data.country_iso,
+          data.status
+        );
 
-        if (data.outgoing_url && Array.isArray(data.outgoing_url)) {
-          for (const outgoing of data.outgoing_url) {
-            if (outgoing.redirect_urls) {
-              await repository.insertUrls(
-                data.ad_id,
-                outgoing.redirect_urls,
-                outgoing.destination_url,
-                data.country_iso
-              );
-            }
-          }
-        }
-
-      
         await repository.insertHtmlContent(
           data.ad_id,
           data.html || data.html_content,
@@ -243,6 +299,8 @@ class InsertHtmlContentService {
 
         const htmlContent = data.html || data.html_content;
         await updateAdDocument(data.ad_id, {
+          domainRegisteredDate: domain ? domainRegisteredDate : null,
+          linkFields: buildLinkFields(data),
           htmlContent: {
             html_whitehat_lander_text:
               data.status === 2 ? htmlContent : null,
@@ -251,7 +309,7 @@ class InsertHtmlContentService {
             html_res_blackhat_lander_text:
               data.status === 1 ? htmlContent : null,
           },
-        }, esWrapper);
+        }, esWrapper, existsInEs);
 
         results.push({
           ad_id: data.ad_id,
