@@ -18,6 +18,7 @@ const repo = require('./repository');
 const { esHits } = require('./transforms');
 
 const PENDING = 0;
+const IN_PROCESSING = 2;
 const NOT_FOUND = 5;
 
 // A destination_url is usable only if it is a non-empty string that is not the
@@ -41,7 +42,12 @@ async function getLinkedinAdsWithCountry(db, log) {
       return { code: 401, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
     }
 
-    const ads = await repo.getDataForLander(sql, PENDING);
+    // PENDING has priority; only once it is fully drained fall back to IN_PROCESSING (ads
+    // claimed by a worker that crashed/never finished) so they get re-served, not stranded.
+    let ads = await repo.getDataForLander(sql, PENDING);
+    if (!ads.length) {
+      ads = await repo.getDataForLander(sql, IN_PROCESSING);
+    }
     if (!ads.length) {
       return { code: 200, message: 'urls over', data: [], exe_time: (Date.now() - started) / 1000 };
     }
@@ -66,6 +72,9 @@ async function getLinkedinAdsWithCountry(db, log) {
       }
 
       if (hits.length) {
+        // Claim it (0 → 2) so it is not re-served every poll; the 2-fallback re-serves it
+        // only if a worker never reports back and the pending queue is fully drained.
+        await repo.updateMeta(sql, row.id, { redirect_status: IN_PROCESSING });
         // Each ad gets ONLY its own resolved ISO codes (no cross-ad accumulator — the
         // legacy shared-accumulator inflated every ad's `iso` with earlier ads' countries).
         const names = String(row.country || '').split(',').filter(Boolean);

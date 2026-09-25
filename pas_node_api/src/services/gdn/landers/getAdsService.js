@@ -40,7 +40,13 @@ async function getGdnAdsWithCountry(db, log) {
       return { code: 401, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
     }
 
-    const fetched = await repo.getDataForLander(sql, PENDING);
+    // PENDING has priority: only once that queue is fully drained (0 rows) does this fall
+    // back to FOUND (2 = in processing — claimed by a worker that crashed/never finished) so
+    // those get re-served instead of stranded, but never ahead of brand-new pending ads.
+    let fetched = await repo.getDataForLander(sql, PENDING);
+    if (!fetched.length) {
+      fetched = await repo.getDataForLander(sql, FOUND);
+    }
     // Never lease an ad without a usable destination_url (defence-in-depth —
     // getDataForLander already excludes these at the SQL level).
     const ads = fetched.filter((a) => isUsableDestinationUrl(a.destination_url));

@@ -18,7 +18,13 @@ async function getAdwithCountryCode(db, log) {
     // Fetch ads with redirect_status = 0. Never lease an ad without a usable
     // destination_url (defence-in-depth — getDataForLander already excludes these
     // at the SQL level).
-    const ads = (await repo.getDataForLander(0)).filter((a) => isUsableDestinationUrl(a.destination_url));
+    // Pending (0) has priority; only once it is fully drained fall back to 2 (in processing —
+    // claimed by a worker that crashed/never finished) so those get re-served, not stranded.
+    let fetched = await repo.getDataForLander(0);
+    if (!fetched.length) {
+      fetched = await repo.getDataForLander(2);
+    }
+    const ads = fetched.filter((a) => isUsableDestinationUrl(a.destination_url));
 
     log?.info(`Fetched ${ads.length} ads`);
 

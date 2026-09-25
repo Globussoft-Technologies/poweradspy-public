@@ -332,7 +332,9 @@ async function insertHtmlRedirectCountry(req, db, log) {
           const outgoingData = {
             reddit_ad_id: item.ad_id,
             source_url: outgoing.start_url || null,
-            redirect_url: redirectUrls || null,
+            // NOT NULL column — an empty chain (redirect_urls: []) is stored as '', not null
+            // (same as pinterest/quora/gdn).
+            redirect_url: redirectUrls,
             final_url: outgoing.destination_url || null,
             country_code: countryISO,
             proxy_lander_status: itemStatus

@@ -22,8 +22,13 @@ function isUsableDestinationUrl(value) {
 async function getAdsForBlackhat(db, log) {
   const startTime = Date.now();
   try {
-    // Fetch ads with redirect_status = 0
-    const ads = await repo.getDataForLander(0);
+    // Fetch ads with redirect_status = 0 (pending). Only once that queue is fully drained,
+    // fall back to 2 (in processing — claimed by a worker that crashed/never finished) so
+    // those get re-served instead of stranded, never ahead of brand-new pending ads.
+    let ads = await repo.getDataForLander(0);
+    if (!ads.length) {
+      ads = await repo.getDataForLander(2);
+    }
 
     log?.info(`[pinterest-landers] Fetched ${ads.length} ads for blackhat`);
 

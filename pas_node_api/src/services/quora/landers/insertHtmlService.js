@@ -175,7 +175,9 @@ async function insertHtmlRedirectCountry(req, db, log) {
           const outgoingData = {
             quora_ad_id: item.ad_id,
             source_url: outgoing.start_url || null,
-            redirect_url: redirectUrls || null,
+            // redirect_url is NOT NULL in quora_ad_outgoing_links — an empty chain
+            // (redirect_urls: []) must be stored as '' (same as pinterest/gdn), not null.
+            redirect_url: redirectUrls,
             final_url: outgoing.destination_url || null,
             country_code: countryISO,
             proxy_lander_status: item.status

@@ -45,7 +45,12 @@ class GetNativeAdsService {
   static async fetchAdsForScraping() {
     try {
       // Step 1: Get ads with status=0
-      const ads = await NativeAdMetaData.getAdsByStatus(0);
+      // Pending (0) has priority; only once it is fully drained fall back to 2 (in processing —
+      // claimed by a worker that crashed/never finished) so those get re-served, not stranded.
+      let ads = await NativeAdMetaData.getAdsByStatus(0);
+      if (ads.length === 0) {
+        ads = await NativeAdMetaData.getAdsByStatus(2);
+      }
 
       if (ads.length === 0) {
         return [];
