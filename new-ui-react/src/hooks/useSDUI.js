@@ -732,13 +732,27 @@ export function useSDUI() {
         return keyToGroup;
     }, [config]);
 
+    const nestedFilterParentKeys = useMemo(() => {
+        const parents = new Set(['adcategory']);
+        const allFilters = [
+            ...(config?.searchbar?.flatMap(d => d.filters || []) || []),
+            ...(config?.navbar?.flatMap(d => d.filters || []) || []),
+            ...(config?.sidebar?.flatMap(d => d.filters || []) || []),
+        ];
+        allFilters.forEach((filter) => {
+            if (filter.type === 'nested_select' || filter.type === 'nested_multiselect') {
+                parents.add(filter.parent_filter_id || 'adcategory');
+            }
+        });
+        return parents;
+    }, [config]);
+
     const totalActiveFilters = useMemo(() => {
-        // Keep internal helper keys out of the counter, but let nested parent
-        // filters such as `adcategory` count when they are the only selected
-        // key (for example, onboarding applies a top-level category without a
-        // subcategory).
-        const EXCLUDED_KEYS = new Set(['_autoSortField']);
-        const countedNestedGroups = new Set();
+        // The clear button should count the same removable units as the chip
+        // row. Multi-select values render as separate chips, while a numeric
+        // pair (range/date) and a nested category branch render as one unit.
+        // `has_ai_meta` is an automatic AI-only invariant and has no chip.
+        const EXCLUDED_KEYS = new Set(['_autoSortField', 'has_ai_meta']);
         return Object.entries(filterValues).reduce((total, [key, v]) => {
             if (EXCLUDED_KEYS.has(key)) return total;
             const isActive = Array.isArray(v)
@@ -750,16 +764,32 @@ export function useSDUI() {
 
             const nestedGroup = nestedFilterKeyToGroup.get(key);
             if (nestedGroup) {
-                if (countedNestedGroups.has(nestedGroup)) return total;
-                countedNestedGroups.add(nestedGroup);
-                return total + 1;
+                if (nestedFilterParentKeys.has(key)) {
+                    return total + (Array.isArray(v) ? v.length : 1);
+                }
+                // Child values are already represented by their selected
+                // parent cluster when that parent exists. Orphan leaves still
+                // render individually and therefore retain their own count.
+                const parentKey = [...nestedFilterParentKeys].find((parent) =>
+                    nestedFilterKeyToGroup.get(parent) === nestedGroup,
+                );
+                const parentValue = parentKey ? filterValues[parentKey] : null;
+                if (parentValue !== null && parentValue !== undefined &&
+                    (!Array.isArray(parentValue) || parentValue.length > 0)) {
+                    return total;
+                }
+                return total + (Array.isArray(v) ? v.length : 1);
             }
-            if (Array.isArray(v)) return total + (v.length > 0 ? 1 : 0);
+            if (Array.isArray(v)) {
+                const isNumericPair = v.length === 2 &&
+                    v.every((value) => value !== null && value !== undefined && !isNaN(Number(value)));
+                return total + (isNumericPair ? 1 : v.length);
+            }
             if (typeof v === 'boolean') return total + (v ? 1 : 0);
             if (v === null || v === undefined || v === '') return total;
             return total + 1;
         }, 0);
-    }, [filterValues, nestedFilterKeyToGroup]);
+    }, [filterValues, nestedFilterKeyToGroup, nestedFilterParentKeys]);
 
     // ── Effective platforms — restricted by active platform-specific filters ──
     // If a filter that is active has platform_applicability restricted to specific

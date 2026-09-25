@@ -433,6 +433,22 @@ describe("useSDUI > totalActiveFilters", () => {
     expect(result.current.totalActiveFilters).toBe(2);
   });
 
+  it("counts removable chips instead of state keys and excludes the automatic AI flag", async () => {
+    fetchSpy.mockResolvedValue(makeConfig());
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => {
+      result.current.setAllFilters({
+        ai_intent: ["conversion", "lead_generation"], // two visible chips
+        likes: [500, 2000], // one range chip
+        has_ai_meta: true, // automatic and not rendered as a chip
+        adcategory: ["Education", "Software"], // one cluster per parent
+        subcategory: ["Online Education"], // absorbed by its parent cluster
+      });
+    });
+    expect(result.current.totalActiveFilters).toBe(5);
+  });
+
 });
 
 describe("useSDUI > buildQueryParams", () => {

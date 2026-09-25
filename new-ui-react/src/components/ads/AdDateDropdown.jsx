@@ -9,16 +9,128 @@ const OPTIONS = [
   { id: "domain_reg", label: "Domain Registration Date" },
 ];
 
-const QUICK_FILTERS = [
+// Keep the picker presets aligned with the canonical values accepted by Common Ads Search.
+export const QUICK_FILTERS = [
   { id: "all", label: "All" },
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
   { id: "last_7", label: "Last Seven Days" },
+  { id: "last_14", label: "Last Fourteen Days" },
   { id: "last_30", label: "Last Thirty Days" },
-  // { id: "this_month", label: "This Month" },
-  // { id: "last_month", label: "Last Month" },
+  { id: "last_90", label: "Last Ninety Days" },
+  { id: "this_month", label: "This Month" },
+  { id: "last_month", label: "Last Month" },
+  { id: "this_year", label: "This Year" },
   { id: "custom", label: "Custom Range" },
 ];
+
+const QUICK_FILTER_PRESETS = Object.freeze({
+  all: "all_time",
+  today: "today",
+  yesterday: "yesterday",
+  last_7: "last_7_days",
+  last_14: "last_14_days",
+  last_30: "last_30_days",
+  last_90: "last_90_days",
+  this_month: "this_month",
+  last_month: "last_month",
+  this_year: "this_year",
+});
+
+const PRESET_TO_QUICK_FILTER = Object.freeze(
+  Object.fromEntries(
+    Object.entries(QUICK_FILTER_PRESETS).map(([quickFilter, preset]) => [preset, quickFilter]),
+  ),
+);
+
+const toDateOnly = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const sameDate = (left, right) => (
+  left.getFullYear() === right.getFullYear()
+  && left.getMonth() === right.getMonth()
+  && left.getDate() === right.getDate()
+);
+
+const differenceInDays = (left, right) => Math.round((left - right) / (1000 * 60 * 60 * 24));
+
+export const getQuickFilterForPreset = (value) => {
+  const preset = String(value || "").trim().toLowerCase();
+  return PRESET_TO_QUICK_FILTER[preset] || null;
+};
+
+export const getQuickFilterRange = (filterId, now = new Date()) => {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  switch (filterId) {
+    case "all":
+      return undefined;
+    case "today":
+      return { from: startOfToday, to: now };
+    case "yesterday": {
+      const yesterdayStart = new Date(startOfToday);
+      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+      const yesterdayEnd = new Date(yesterdayStart);
+      yesterdayEnd.setHours(23, 59, 59);
+      return { from: yesterdayStart, to: yesterdayEnd };
+    }
+    case "last_7":
+    case "last_14":
+    case "last_30":
+    case "last_90": {
+      const days = { last_7: 6, last_14: 13, last_30: 29, last_90: 89 }[filterId];
+      const start = new Date(startOfToday);
+      start.setDate(start.getDate() - days);
+      return { from: start, to: now };
+    }
+    case "this_month":
+      return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: now };
+    case "last_month": {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      end.setHours(23, 59, 59);
+      return { from: start, to: end };
+    }
+    case "this_year":
+      return { from: new Date(now.getFullYear(), 0, 1), to: now };
+    default:
+      return null;
+  }
+};
+
+export const getQuickFilterForRange = (range, now = new Date()) => {
+  if (!range?.from || !range?.to) return "all";
+
+  const today = toDateOnly(now);
+  const activeFrom = toDateOnly(range.from);
+  const activeTo = toDateOnly(range.to);
+  const startDiff = differenceInDays(today, activeFrom);
+  const endDiff = differenceInDays(today, activeTo);
+
+  if (startDiff === 0 && endDiff === 0) return "today";
+  if (startDiff === 1 && endDiff === 1) return "yesterday";
+  if (startDiff === 6 && endDiff === 0) return "last_7";
+  if (startDiff === 13 && endDiff === 0) return "last_14";
+  if (startDiff === 29 && endDiff === 0) return "last_30";
+  if (startDiff === 89 && endDiff === 0) return "last_90";
+
+  const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (sameDate(activeFrom, currentMonthStart) && sameDate(activeTo, today)) {
+    return "this_month";
+  }
+
+  const previousMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const previousMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+  if (sameDate(activeFrom, previousMonthStart) && sameDate(activeTo, previousMonthEnd)) {
+    return "last_month";
+  }
+
+  const currentYearStart = new Date(today.getFullYear(), 0, 1);
+  if (sameDate(activeFrom, currentYearStart) && sameDate(activeTo, today)) {
+    return "this_year";
+  }
+
+  return "custom";
+};
 
 const CustomSelect = ({ value, options, onChange, label, className }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -171,37 +283,20 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
     }
     setDates(restored);
 
-    // Detect which quick filter matches the active date type
+    // AI Search may keep a canonical preset string instead of a local timestamp pair.
+    const activeFilterKey = Object.keys(FILTER_KEY_TO_DATE_TYPE)
+      .find((key) => FILTER_KEY_TO_DATE_TYPE[key] === activeDateType);
+    const activeVal = filterValues?.[activeFilterKey];
+    const activePreset = getQuickFilterForPreset(activeVal);
     const activeRange = restored[activeDateType];
-    if (!activeRange) {
+    if (activePreset) {
+      setActiveQuickFilter(activePreset);
+    } else if (!activeRange) {
       setActiveQuickFilter("all");
     } else {
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      
-      const toDateOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-      const activeFrom = toDateOnly(activeRange.from);
-      const activeTo = toDateOnly(activeRange.to);
-      const todayOnly = toDateOnly(now);
-      
-      const diffDays = (d1, d2) => Math.round((d1 - d2) / (1000 * 60 * 60 * 24));
-      const startDiff = diffDays(todayOnly, activeFrom);
-      const endDiff = diffDays(todayOnly, activeTo);
-
-      if (startDiff === 0 && endDiff === 0) {
-        setActiveQuickFilter("today");
-      } else if (startDiff === 1 && endDiff === 1) {
-        setActiveQuickFilter("yesterday");
-      } else if (startDiff === 6 && endDiff === 0) {
-        setActiveQuickFilter("last_7");
-      } else if (startDiff === 29 && endDiff === 0) {
-        setActiveQuickFilter("last_30");
-      } else {
-        setActiveQuickFilter("custom");
-      }
+      setActiveQuickFilter(getQuickFilterForRange(activeRange));
     }
 
-    const activeVal = filterValues?.[Object.keys(FILTER_KEY_TO_DATE_TYPE).find(k => FILTER_KEY_TO_DATE_TYPE[k] === activeDateType)];
     if (Array.isArray(activeVal) && activeVal.length === 2) {
       setMonth(new Date(Number(activeVal[1]) * 1000));
     }
@@ -257,65 +352,17 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
   const handleQuickFilterClick = (filterId) => {
     if (guest?.showGuestWarning("Please login to change date filters")) return;
     if (filterId !== 'all' && isDateTypeRestricted(activeDateType)) { onRestricted?.(); return; }
-    setActiveQuickFilter(filterId);
-    let range = undefined;
-    const now = new Date();
-    const startOfToday = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-    );
-    const endOfToday = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      23,
-      59,
-      59,
-    );
 
-    switch (filterId) {
-      case "all":
-        range = undefined;
-        break;
-      case "today":
-        range = { from: startOfToday, to: now };
-        break;
-      case "yesterday": {
-        const yesterdayStart = new Date(startOfToday);
-        yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-        const yesterdayEnd = new Date(yesterdayStart);
-        yesterdayEnd.setHours(23, 59, 59);
-        range = { from: yesterdayStart, to: yesterdayEnd };
-        break;
-      }
-      case "last_7": {
-        const start = new Date(startOfToday);
-        start.setDate(start.getDate() - 6);
-        range = { from: start, to: now };
-        break;
-      }
-      case "last_30": {
-        const start = new Date(startOfToday);
-        start.setDate(start.getDate() - 29);
-        range = { from: start, to: now };
-        break;
-      }
-      case "this_month": {
-        const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        range = { from: start, to: now };
-        break;
-      }
-      case "last_month": {
-        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const end = new Date(now.getFullYear(), now.getMonth(), 0);
-        end.setHours(23, 59, 59);
-        range = { from: start, to: end };
-        break;
-      }
-      default:
-        return;
+    // Custom Range is selected through the calendar, so it has no preset range to apply.
+    if (filterId === "custom") {
+      setActiveQuickFilter(filterId);
+      return;
     }
+
+    const range = getQuickFilterRange(filterId);
+    if (range === null) return;
+
+    setActiveQuickFilter(filterId);
 
     setDates((prev) => ({
       ...prev,
@@ -355,7 +402,9 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
   const hasSelectedDates = useMemo(() => {
     return DATE_FILTER_KEYS.some(k => {
       const val = filterValues?.[k];
-      return Array.isArray(val) && val.length === 2;
+      const presetFilter = getQuickFilterForPreset(val);
+      return (Array.isArray(val) && val.length === 2)
+        || Boolean(presetFilter && presetFilter !== "all");
     });
   }, [filterValues]);
 
