@@ -47,6 +47,7 @@ import {
   getPlanningQuickFilterId,
   getPlanningTier,
   getPlanningUnsupported,
+  hasExplicitPlanningSubject,
   hasExecutableMappedSearch,
 } from "./utils/aiSearchPlanning";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
@@ -535,6 +536,7 @@ const App = () => {
     source: null,
   });
   const toastTimerRef = useRef(null);
+  const toastSourceRef = useRef(null);
   // Tracks the (locally-owned-in-AdGrid) ad detail popup's open state, purely so the
   // crawl-status banner below can hide WHILE it's open and reappear once it closes —
   // see the banner's render condition further down.
@@ -566,19 +568,36 @@ const App = () => {
     source = null,
   ) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastSourceRef.current = source;
     setToast({ show: true, message, type, position, source });
     if (Number.isFinite(durationMs) && durationMs > 0) {
       toastTimerRef.current = setTimeout(
-        () => setToast({
-          show: false,
-          message: "",
-          type: "success",
-          position: "top",
-          source: null,
-        }),
+        () => {
+          toastSourceRef.current = null;
+          setToast({
+            show: false,
+            message: "",
+            type: "success",
+            position: "top",
+            source: null,
+          });
+        },
         durationMs,
       );
     }
+  }, []);
+  const dismissAiToast = useCallback(() => {
+    if (toastSourceRef.current !== "ai-search") return;
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = null;
+    toastSourceRef.current = null;
+    setToast({
+      show: false,
+      message: "",
+      type: "success",
+      position: "top",
+      source: null,
+    });
   }, []);
   // The crawl-status banner ("your search is underway" / "Showing what we have" /
   // "No ads yet") used to be a `source: 'search'` entry in the generic `toast`
@@ -2251,11 +2270,17 @@ const App = () => {
     setAiSearchLoading(false);
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
+    dismissAiToast();
+    // An unsupported AI plan can leave the normal query/filter state already
+    // empty, so clearing the prompt would otherwise produce no dependency
+    // change for the default Ads Library request. Force one fresh page-zero
+    // load so the unfiltered library is restored reliably.
+    setSearchTrigger((prev) => prev + 1);
     dispatch(setSearchQuery(''));
     dispatch(setAiPrompt(''));
     dispatch(setSearchIn('keyword'));
     dispatch(setExactSearch(false));
-  }, [dispatch]);
+  }, [dismissAiToast, dispatch]);
 
   // AI filters are committed on top of ordinary filters. Leaving AI Search
   // must remove only that committed layer, otherwise Keyword/Advertiser/Domain
@@ -2399,6 +2424,7 @@ const App = () => {
     // Store the raw user prompt separately so Ask AI keeps showing exactly what
     // the user typed even when the DS payload rewrites the internal query.
     dispatch(setAiPrompt(trimmed));
+    dismissAiToast();
     setAiCapabilityMessage(null);
 
     // Abort a previous run before starting another one; the run id remains a
@@ -2532,7 +2558,7 @@ const App = () => {
         setAiQuickFilterId(null);
         setAiCapabilityMessage(message);
         setError(null);
-        showToast(message, 'notice', 8000);
+        showToast(message, 'notice', 8000, 'top', 'ai-search');
         return;
       }
 
@@ -2545,7 +2571,7 @@ const App = () => {
         setNoDataMessage(null);
         setAiQuickFilterId(null);
         setAiCapabilityMessage('AI could not produce an executable search plan for this request.');
-        showToast("AI couldn't interpret that prompt. Try rephrasing.", "error");
+        showToast("AI couldn't interpret that prompt. Try rephrasing.", "error", 3000, "top", "ai-search");
         return;
       }
 
@@ -2559,14 +2585,17 @@ const App = () => {
       const plannedTiers = payloads.map((tierValue) => {
         const tier = tierValue || {};
         const tierPlanning = tier.planning || topPlanning;
-        const mapped = mapArgsToFilters(normalizeAiSearchArgs(tier), sdui.config, tierPlanning);
+        const normalizedArgs = normalizeAiSearchArgs(tier);
+        const mapped = mapArgsToFilters(normalizedArgs, sdui.config, tierPlanning);
         const unsupported = getPlanningUnsupported(tierPlanning);
+        const hasExplicitSubject = hasExplicitPlanningSubject(tierPlanning, normalizedArgs, mapped);
         return {
           tier,
           mapped,
           unsupported,
           planning: tierPlanning,
-          hasExecutableSearch: hasExecutableMappedSearch(mapped),
+          hasExplicitSubject,
+          hasExecutableSearch: hasExplicitSubject && hasExecutableMappedSearch(mapped),
         };
       });
       // If any fallback tier explicitly reports an unsupported operation, do
@@ -2583,6 +2612,7 @@ const App = () => {
           mapped,
           unsupported,
           planning,
+          hasExplicitSubject,
           hasExecutableSearch,
         } = plannedTiers[i];
         const diagnostic = {
@@ -2592,6 +2622,7 @@ const App = () => {
           fullPayloadFields: Object.keys(tier.full_payload || {}),
           planningFields: Object.keys(planning || {}),
           unsupportedCount: unsupported.length,
+          subjectMissing: String(planning?.search_term_role || '').trim().toLowerCase() === 'subject' && !hasExplicitSubject,
           quickFilterRequested: Boolean(getPlanningQuickFilterId(planning)),
           mappedFields: Object.keys(mapped.filterValues || {}),
           unmapped: mapped.unmappedDetails || [],
@@ -2682,7 +2713,7 @@ const App = () => {
           setAiQuickFilterId(null);
           setAiCapabilityMessage(message);
           setError(null);
-          showToast(message, "notice", 8000);
+          showToast(message, "notice", 8000, "top", "ai-search");
           return;
         } else if (unmappedItems.length > 0) {
           const fields = [...new Set(unmappedItems.map((item) => item.field).filter(Boolean))];
@@ -2696,15 +2727,18 @@ const App = () => {
           setAiQuickFilterId(null);
           setAiCapabilityMessage(message);
           setError(null);
-          showToast(message, 'error', 8000);
+          showToast(message, 'error', 8000, 'top', 'ai-search');
           return;
         } else if (plannedTiers.some(({ planning }) => planning && Object.keys(planning).length > 0)) {
           // A DS-planned prompt with no executable subject/filter must not
           // degrade into a platform-only or empty default search. Keep the
           // prompt visible and explain what the user can do next.
+          const subjectMissing = plannedTiers.some((candidate) => candidate.subjectMissing);
           const message = String(
             topPlanning?.reason ||
-            'AI could not identify a searchable subject or supported filter in that request.',
+            (subjectMissing
+              ? 'AI could not apply the requested topic or advertiser. Please try again.'
+              : 'AI could not identify a searchable subject or supported filter in that request.'),
           ).trim();
           clearPreviousAiFilters();
           aiCapabilityOnlyRef.current = true;
@@ -2717,7 +2751,7 @@ const App = () => {
           setAiQuickFilterId(null);
           setAiCapabilityMessage(message);
           setError(null);
-          showToast(message, 'notice', 8000);
+          showToast(message, 'notice', 8000, 'top', 'ai-search');
           return;
         } else {
           // Older DS responses without planning metadata retain the legacy
@@ -2843,14 +2877,14 @@ const App = () => {
       setAiQuickFilterId(null);
       setAiCapabilityMessage(msg);
       setError(null);
-      showToast(msg, "error");
+      showToast(msg, "error", 3000, "top", "ai-search");
     } finally {
       if (runId === aiRunIdRef.current) {
         setAiSearchLoading(false);
         aiAbortRef.current = null;
       }
     }
-  }, [guestGuard, dispatch, resetAiSearchState, sdui, showToast]);
+  }, [guestGuard, dispatch, dismissAiToast, resetAiSearchState, sdui, showToast]);
 
   // Explicitly turning the AI toggle OFF abandons the AI search: clear the
   // AI-applied query + filters so nothing lingers on screen or gets restored on

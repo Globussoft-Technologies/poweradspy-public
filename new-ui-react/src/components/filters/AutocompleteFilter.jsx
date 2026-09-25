@@ -2,6 +2,37 @@ import React, { useState, useEffect, useRef } from "react";
 import { ArrowUp, Search, Sparkles, ChevronDown, Play, Square, X } from "lucide-react";
 import { useDebounce } from "../../hooks/useDebounce";
 
+const normalizeSuggestionTokens = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+const suggestionMatchesQueryPrefix = (suggestion, query) => {
+  const queryTokens = normalizeSuggestionTokens(query);
+  const suggestionTokens = normalizeSuggestionTokens(suggestion);
+  if (suggestionTokens.length < queryTokens.length) return false;
+
+  return queryTokens.every((queryToken, index) =>
+    suggestionTokens[index]?.startsWith(queryToken),
+  );
+};
+
+// Word suggestions use the complete phrase for relevance. For a multi-word
+// query, require the returned phrase to match each typed token in order so a
+// trailing word cannot surface unrelated phrases from that word.
+export const filterWordSuggestionsByQuery = (suggestions, query) => {
+  if (!Array.isArray(suggestions)) return [];
+  const queryTokens = normalizeSuggestionTokens(query);
+  if (queryTokens.length < 2) return suggestions;
+
+  return suggestions.filter((suggestion) =>
+    suggestionMatchesQueryPrefix(suggestion, query),
+  );
+};
+
 /**
  * AutocompleteFilter — SDUI-driven search input with API-powered suggestions.
  *
@@ -37,8 +68,9 @@ const AutocompleteFilter = ({
   // Only show suggestions when the user actually typed — not on programmatic value sync (e.g. page load/refresh)
   const userTypedRef = useRef(false);
 
-  const lastWord = searchQuery.trim().split(/\s+/).pop() || "";
-  const debouncedLastWord = useDebounce(lastWord, debounceMs);
+  const debouncedSearchQuery = useDebounce(searchQuery, debounceMs);
+  const debouncedLastWord =
+    debouncedSearchQuery.trim().split(/\s+/).pop() || "";
 
   // Sync external value changes — mark as NOT user-typed so suggestions don't fire
   useEffect(() => {
@@ -85,6 +117,11 @@ const AutocompleteFilter = ({
           try {
             let res;
             if (source.method === "GET") {
+              const isWordSuggestionSource =
+                source.on_select_action === "replacePartialWord";
+              const suggestionQuery = isWordSuggestionSource
+                ? debouncedSearchQuery
+                : debouncedLastWord;
               // Build query params from query_param_config (with defaults) or fall back to query_params
               const paramConfigs = source.query_param_config || [];
               const rawParams =
@@ -95,8 +132,9 @@ const AutocompleteFilter = ({
                         source.query_params[pc.name] !== undefined
                           ? source.query_params[pc.name]
                           : pc.default;
-                      // Replace template variable "lastWord" with actual search term
-                      if (val === "lastWord") val = debouncedLastWord;
+                      // Word suggestions need the complete phrase for relevance;
+                      // other SDUI sources retain their configured last-word query.
+                      if (val === "lastWord") val = suggestionQuery;
                       if (val !== undefined && val !== null) acc[pc.name] = val;
                       return acc;
                     }, {})
@@ -107,7 +145,7 @@ const AutocompleteFilter = ({
                 rawParams.query === "lastWord" ||
                 rawParams.query === undefined
               ) {
-                rawParams.query = debouncedLastWord;
+                rawParams.query = suggestionQuery;
               }
 
               const params = new URLSearchParams();
@@ -117,7 +155,7 @@ const AutocompleteFilter = ({
 
               const endpoint = source.endpoint.replace(
                 "{query}",
-                encodeURIComponent(debouncedLastWord),
+                encodeURIComponent(suggestionQuery),
               );
               const finalUrl = `${baseUrl}${endpoint}?${params.toString()}`;
               res = await fetch(finalUrl);
@@ -125,8 +163,8 @@ const AutocompleteFilter = ({
               const body = { ...(source.request_body || {}) };
               // Replace template variables in body
               if (body.query !== undefined)
-                /* v8 ignore next -- the fetch is gated on debouncedLastWord (derived from searchQuery), so searchQuery is always truthy here; the `|| debouncedLastWord` fallback is defensive */
-                body.query = searchQuery || debouncedLastWord;
+                /* v8 ignore next -- the fetch is gated on debouncedLastWord, so the fallback is defensive */
+                body.query = debouncedSearchQuery || debouncedLastWord;
               if (body.top_k === undefined) body.top_k = 5;
               res = await fetch(`${baseUrl}${source.endpoint}`, {
                 method: "POST",
@@ -175,7 +213,9 @@ const AutocompleteFilter = ({
                   return null;
                 })
                 .filter(Boolean);
-              setWordSuggestions(words);
+              setWordSuggestions(
+                filterWordSuggestionsByQuery(words, debouncedSearchQuery),
+              );
             }
           } catch {
             // Individual source failure is non-fatal
@@ -190,7 +230,7 @@ const AutocompleteFilter = ({
     };
 
     fetchAll();
-  }, [debouncedLastWord]);
+  }, [debouncedSearchQuery]);
 
   // Report the dropdown's actual visibility (same condition as the JSX render
   // below) to the parent, so it can move things that would otherwise sit
@@ -221,7 +261,10 @@ const AutocompleteFilter = ({
     /* v8 ignore next -- split() always yields at least one element, so words.length is always > 0; the guard is defensive */
     if (words.length > 0) words.pop();
     const prefix = words.length > 0 ? words.join(" ") + " " : "";
-    const newQuery = prefix + word + " ";
+    const isFullPhraseSuggestion =
+      normalizeSuggestionTokens(searchQuery).length > 1 &&
+      suggestionMatchesQueryPrefix(word, searchQuery);
+    const newQuery = `${isFullPhraseSuggestion ? String(word).trim() : prefix + word} `;
     setSearchQuery(newQuery);
     onChange(newQuery.trim());
     setWordSuggestions([]);

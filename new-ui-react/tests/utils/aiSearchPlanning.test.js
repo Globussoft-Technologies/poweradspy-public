@@ -4,6 +4,7 @@ import {
   findNextExecutablePlanningTier,
   getPlanningQuickFilterId,
   getPlanningUnsupported,
+  hasExplicitPlanningSubject,
   hasExecutableMappedSearch,
 } from "../../src/utils/aiSearchPlanning";
 
@@ -29,6 +30,16 @@ describe("AI search planning helpers", () => {
     expect(hasExecutableMappedSearch({ filterValues: { likes: [500, 2000] } })).toBe(true);
     expect(hasExecutableMappedSearch({ searchQuery: "shoe", filterValues: {} })).toBe(true);
     expect(hasExecutableMappedSearch({ filterValues: {}, sortBy: "impressions" })).toBe(true);
+  });
+
+  it("requires a subject-like value when DS declares a subject role", () => {
+    const planning = { search_term_role: "subject" };
+
+    expect(hasExplicitPlanningSubject(planning, { keyword: "weight loss" }, {})).toBe(true);
+    expect(hasExplicitPlanningSubject(planning, { ai_intent: ["app_install"] }, {})).toBe(true);
+    expect(hasExplicitPlanningSubject(planning, {}, { searchQuery: "NA" })).toBe(false);
+    expect(hasExplicitPlanningSubject(planning, { network: ["facebook"], type: ["VIDEO"] }, {})).toBe(false);
+    expect(hasExplicitPlanningSubject({ search_term_role: "instruction" }, { network: ["facebook"] }, {})).toBe(true);
   });
 
   it("finds the next executable fallback tier and skips unmapped tiers", () => {

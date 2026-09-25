@@ -88,6 +88,9 @@ const Masonry = ({
     onItemMeasure,
     onVisualOrderChange,
     loading = false,
+    // AI result replacement should feel immediate; normal searches retain the
+    // existing entry animation for the feed's lighter-weight transitions.
+    animateNewItems = true,
 }) => {
     const defaultColumns = useMedia(
         ['(min-width:1280px)', '(min-width:1024px)', '(min-width:768px)', '(min-width:640px)'],
@@ -246,48 +249,50 @@ const Masonry = ({
 
         if (!prev) {
           // Immediately place the item at its correct position so items don't stack at 0,0
-          gsap.set(selector, { ...animationProps, opacity: 0 });
-          // Brand-new item — animate in
-          if (!hasMounted.current) {
-            // First mount: all cards slide up together
-            gsap.fromTo(
-              selector,
-              {
-                opacity: 0,
-                left: item.x,
-                top: item.y + 30,
-                width: item.w,
-                ...(autoHeight ? {} : { height: item.h }),
-              },
-              {
-                opacity: 1,
-                ...animationProps,
-                duration: 0.35,
-                ease: "power2.out",
-                delay: newItemIndex * 0.01,
-              },
-            );
-          } else {
-            // Appended later (infinite scroll) — quick fade in
-            gsap.fromTo(
-              selector,
-              {
-                opacity: 0,
-                top: item.y + 25,
-                left: item.x,
-                width: item.w,
-                ...(autoHeight ? {} : { height: item.h }),
-              },
-              {
-                opacity: 1,
-                ...animationProps,
-                duration: 0.3,
-                ease: "power2.out",
-                delay: newItemIndex * 0.015,
-              },
-            );
+          gsap.set(selector, { ...animationProps, opacity: animateNewItems ? 0 : 1 });
+          if (animateNewItems) {
+            // Brand-new item — animate in
+            if (!hasMounted.current) {
+              // First mount: all cards slide up together
+              gsap.fromTo(
+                selector,
+                {
+                  opacity: 0,
+                  left: item.x,
+                  top: item.y + 30,
+                  width: item.w,
+                  ...(autoHeight ? {} : { height: item.h }),
+                },
+                {
+                  opacity: 1,
+                  ...animationProps,
+                  duration: 0.35,
+                  ease: "power2.out",
+                  delay: newItemIndex * 0.01,
+                },
+              );
+            } else {
+              // Appended later (infinite scroll) — quick fade in
+              gsap.fromTo(
+                selector,
+                {
+                  opacity: 0,
+                  top: item.y + 25,
+                  left: item.x,
+                  width: item.w,
+                  ...(autoHeight ? {} : { height: item.h }),
+                },
+                {
+                  opacity: 1,
+                  ...animationProps,
+                  duration: 0.3,
+                  ease: "power2.out",
+                  delay: newItemIndex * 0.015,
+                },
+              );
+            }
+            newItemIndex++;
           }
-          newItemIndex++;
         } else if (
           prev.x !== item.x ||
           prev.y !== item.y ||
@@ -328,7 +333,7 @@ const Masonry = ({
 
       hasMounted.current = true;
       // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grid, stagger, blurToFocus, duration, ease, autoHeight]);
+  }, [grid, stagger, blurToFocus, duration, ease, autoHeight, animateNewItems]);
 
     // Continuously track each item's painted bottom — covers the case where the
     // grid hasn't changed but an item resized (e.g. image finished loading and

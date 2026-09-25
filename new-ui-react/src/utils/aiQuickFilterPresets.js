@@ -1,5 +1,11 @@
 export const AI_FILTER_DRAFT_KEY = "sdui.aiSignals.draft";
 
+// SDUI may provide legacy title casing for this established acronym. Keep the
+// stored value (`ugc`) unchanged and normalize only its visible presentation.
+export const formatAiFilterOptionLabel = (label) => (
+  typeof label === "string" ? label.replace(/\bugc\b/gi, "UGC") : label
+);
+
 /**
  * Quick strategies intentionally stay within one filter group. The backend
  * combines different groups with AND, while values within one group are OR'd;

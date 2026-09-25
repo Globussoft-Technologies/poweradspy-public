@@ -19,7 +19,10 @@ import ChipCluster from "../filters/ChipCluster";
 import { getAiColorLabel } from "../../utils/aiColorPalette";
 import { COUNTRY_NAMES } from "../../utils/countries";
 import { getDashboardAdNavigation } from "../../utils/dashboardAdNavigation";
-import { hasActiveAiFilters } from "../../utils/aiQuickFilterPresets";
+import {
+  formatAiFilterOptionLabel,
+  hasActiveAiFilters,
+} from "../../utils/aiQuickFilterPresets";
 import { trackAdAction } from "../../utils/googleAnalytics";
 
 // Env kill-switch for the "Total Ads: X" count shown next to the filter chips
@@ -265,21 +268,20 @@ const AdGrid = ({
   // its NAS thumbnail for IMAGE/VIDEO), so this total equals what actually
   // renders and matches a same-filter DB count — no client-side recount, no
   // pagination growth. Summing across networks works for every tab (non-requested
-  // networks come back as 0). Gated on `ads.length` so the count is hidden in the
-  // empty/discovery states.
+  // networks come back as 0). A known zero is still useful after an empty
+  // search, but an empty metadata object means the request has not supplied a
+  // count yet.
   const adsCount = useMemo(() => {
-    if (!ads || ads.length === 0) return null;
-    const total =
-      adsMeta && typeof adsMeta === "object"
-        ? Object.values(adsMeta).reduce((s, n) => s + (Number(n) || 0), 0)
-        : 0;
-    if (!total) return null;
+    if (!adsMeta || typeof adsMeta !== "object" || Object.keys(adsMeta).length === 0) return null;
+    const totals = Object.values(adsMeta).map(Number).filter(Number.isFinite);
+    if (totals.length === 0) return null;
+    const total = totals.reduce((sum, value) => sum + value, 0);
     return total >= 1_000_000
       ? `${(total / 1_000_000).toFixed(1)}M`
       : total >= 1_000
         ? `${(total / 1_000).toFixed(1)}K`
         : `${total}`;
-  }, [ads.length, adsMeta]);
+  }, [adsMeta]);
   const DATE_FILTER_KEYS = {
     seen_btn_sort: "Ad Seen",
     post_date_btn_sort: "Post Date",
@@ -362,7 +364,9 @@ const AdGrid = ({
         if (!optionMap[filterId]) optionMap[filterId] = {};
         for (const opt of options) {
           const val = opt.value ?? opt.label ?? opt;
-          const configuredLabel = opt.label ?? opt.value ?? opt;
+          const configuredLabel = formatAiFilterOptionLabel(
+            opt.label ?? opt.value ?? opt,
+          );
           const lbl =
             f._id === "ai_colors"
               ? getAiColorLabel(val, configuredLabel)
@@ -942,6 +946,10 @@ const AdGrid = ({
   hasMoreRef.current = hasMore;
   loadingMoreRef.current = loadingMore;
   adsLengthRef.current = ads.length;
+  // A result set with no cards has no scrollable content, so its filter/header
+  // controls must remain visible even if the previous result set collapsed the
+  // header before this search completed.
+  const shouldCollapseHeader = Boolean(isHeaderScrolled && ads.length > 0);
 
   // Synchronous lock that serializes page bumps. `loadingMore` is React state,
   // so it only flips to true on the next render — in the gap between issuing a
@@ -1088,7 +1096,7 @@ const AdGrid = ({
         {/* Dynamic Filter Bar Wrapper */}
         <div
           className={`transition-all duration-300 ease-in-out ${
-            isHeaderScrolled
+            shouldCollapseHeader
               ? "max-h-0 opacity-0 invisible overflow-hidden pointer-events-none mb-0"
               : "max-h-[320px] opacity-100 visible mb-3"
           }`}
@@ -1150,7 +1158,7 @@ const AdGrid = ({
             </div> */}
         <div className="flex flex-wrap items-start justify-between mt-3 gap-1 mb-2 px-3">
           <div className="px-3 py-1 flex flex-wrap items-center gap-2 max-w-full lg:max-w-[40%] xl:max-w-[50%] 2xl:max-w-[55%] max-h-[120px] 2xl:max-h-[150px] overflow-y-auto">
-            {SHOW_TOTAL_ADS_COUNT && adsCount && (
+            {SHOW_TOTAL_ADS_COUNT && adsCount !== null && (
               <span className="text-[14px] font-bold whitespace-nowrap text-theme-text capitalize tracking-widest mr-1">
                 {isAllActive || specificPlatforms.length > 1 ? "Total Ads" : activePlatformLabel}
                 {`: ${adsCount}`}
@@ -1242,7 +1250,7 @@ const AdGrid = ({
 
           <div className="flex items-center flex-wrap gap-2">
             <div className={`transition-all duration-300 ease-in-out ${
-              isHeaderScrolled
+              shouldCollapseHeader
                 ? "max-h-0 opacity-0 invisible overflow-hidden pointer-events-none"
                 : "max-h-[100px] opacity-100 visible"
             }`}>
@@ -1279,7 +1287,7 @@ const AdGrid = ({
         ref={scrollRef}
       >
         {/* Error state */}
-        {error && !loadingMore && (
+        {error && !aiSearchLoading && !loadingMore && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
               <AlertTriangle size={36} className="text-red-400" />
@@ -1305,7 +1313,7 @@ const AdGrid = ({
 
         {/* A planner-only operation gets a capability state rather than the
             misleading generic "No ads found" state or a broad fallback search. */}
-        {!error && aiCapabilityMessage && ads.length === 0 && !loadingMore && (
+        {!error && !aiSearchLoading && aiCapabilityMessage && ads.length === 0 && !loadingMore && (
           <div
             className="flex flex-col items-center justify-center gap-5 py-32"
             role="status"
@@ -1327,6 +1335,7 @@ const AdGrid = ({
 
         {/* Platform suggestion banner — pinned to top */}
         {!error &&
+          !aiSearchLoading &&
           !aiCapabilityMessage &&
           ads.length === 0 &&
           !loadingMore &&
@@ -1408,7 +1417,7 @@ const AdGrid = ({
             empty state below when every active platform is a known low-volume
             network, so the message explains the sparse coverage rather than
             implying the search terms were wrong. */}
-        {!error && !aiCapabilityMessage && ads.length === 0 && !loadingMore && activePlatforms.length > 0 &&
+        {!error && !aiSearchLoading && !aiCapabilityMessage && ads.length === 0 && !loadingMore && activePlatforms.length > 0 &&
           activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase())) && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">
@@ -1438,7 +1447,7 @@ const AdGrid = ({
         )}
 
         {/* Empty state (generic) */}
-        {!error && !aiCapabilityMessage && ads.length === 0 && !loadingMore &&
+        {!error && !aiSearchLoading && !aiCapabilityMessage && ads.length === 0 && !loadingMore &&
           !(activePlatforms.length > 0 && activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase()))) && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">
@@ -1453,6 +1462,15 @@ const AdGrid = ({
                 with different keywords.
               </p>
             </div>
+            {/* Reuse DS-planned fallback tiers; never invent a broader query here. */}
+            {onBroadenSearch && String(aiPrompt || "").trim() && (
+              <button
+                onClick={onBroadenSearch}
+                className="mt-2 px-5 py-2 rounded-lg bg-[#8b5cf6]/10 border border-[#8b5cf6]/30 text-xs font-semibold text-[#8b5cf6] hover:bg-[#8b5cf6]/20 hover:border-[#8b5cf6]/50 transition-all"
+              >
+                Broaden search
+              </button>
+            )}
             <button
               onClick={() => {
                 if (onClearAll) onClearAll();
@@ -1500,6 +1518,10 @@ const AdGrid = ({
             measuredHeights={measuredHeights}
             onItemMeasure={handleItemMeasure}
             onVisualOrderChange={handleVisualOrderChange}
+            // Do not fade freshly returned AI-filtered results from transparent
+            // to opaque; the analysis/banner state already communicates loading
+            // and cards should be readable as soon as the response arrives.
+            animateNewItems={!isAiFilteredResult}
             loading={loadingMore && ads.length > 0}
             renderItem={(item) =>
               previewMode ? (

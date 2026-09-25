@@ -4,6 +4,7 @@ import SchemaRenderer from "./SchemaRenderer";
 import { useTheme } from "../../hooks/useTheme";
 import {
   AI_FILTER_DRAFT_KEY,
+  formatAiFilterOptionLabel,
   getAiFilterKeys,
   normalizeAiFilterValues,
 } from "../../utils/aiQuickFilterPresets";
@@ -62,7 +63,9 @@ const AI_FILTER_PRESENTATION = Object.freeze({
 });
 
 const optionValue = (option) => option?.value ?? option?.label ?? option;
-const optionLabel = (option) => option?.label ?? option?.value ?? option;
+const optionLabel = (option) => formatAiFilterOptionLabel(
+  option?.label ?? option?.value ?? option,
+);
 const presentationHue = (presentation, isLightTheme) =>
   isLightTheme
     ? presentation?.hue || "#4f46e5"

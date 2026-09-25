@@ -102,6 +102,30 @@ describe("Masonry > basic rendering", () => {
     );
     expect(queryByTestId("loader-ic")).toBeNull();
   });
+
+  it("shows AI result items immediately when entry animation is disabled", async () => {
+    const { gsap } = await import("gsap");
+    gsap.set.mockClear();
+    gsap.fromTo.mockClear();
+    setMq("(min-width:1280px)", true);
+    render(
+      <Masonry
+        items={sampleItems}
+        renderItem={(i) => <span>card-{i.id}</span>}
+        animateNewItems={false}
+      />,
+    );
+
+    act(() => {
+      roInstances[0].trigger([{ contentRect: { width: 800, height: 600 } }]);
+    });
+
+    expect(gsap.fromTo).not.toHaveBeenCalled();
+    expect(gsap.set).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ opacity: 1 }),
+    );
+  });
 });
 
 describe("Masonry > columns + useMedia", () => {

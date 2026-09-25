@@ -36,6 +36,37 @@ export const getPlanningTier = (planning, index) => {
   return tier && typeof tier === 'object' ? tier : null;
 };
 
+const SUBJECT_ARGUMENTS = [
+  'keyword',
+  'advertiser',
+  'domain',
+  'page',
+  'brand',
+  'adcategory',
+  'subCategory',
+  'ai_ad_type',
+  'ai_intent',
+  'ai_hook',
+  'ai_offering_type',
+  'ai_offer_type',
+  'ai_colors',
+  'ai_category_id',
+  'ai_subcategory_id',
+];
+
+/**
+ * A planner that explicitly reports a remaining subject must also preserve it
+ * as a query, taxonomy value, or AI semantic field. Without this guard, a
+ * missing topic/brand can degrade into a broad platform-only search.
+ */
+export const hasExplicitPlanningSubject = (planning, args = {}, mapped = {}) => {
+  const role = String(planning?.search_term_role || '').trim().toLowerCase();
+  if (role !== 'subject') return true;
+  const mappedQuery = String(mapped?.searchQuery || '').trim();
+  if (mappedQuery && !['na', 'all'].includes(mappedQuery.toLowerCase())) return true;
+  return SUBJECT_ARGUMENTS.some((field) => isMeaningfulValue(args?.[field]));
+};
+
 /**
  * Return the next safe fallback tier without re-planning the prompt. A tier
  * with unmapped fields would silently broaden the request, so it is skipped.

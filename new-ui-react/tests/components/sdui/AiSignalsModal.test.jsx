@@ -58,14 +58,14 @@ describe("AiSignalsModal draft keys", () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Ugc" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "UGC" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     expect(screen.getByText("1 selected across 1 group")).toBeInTheDocument();
     expect(screen.getByText("1 selection ready to apply")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Remove Ad Type: Ugc" }),
+      screen.getByRole("button", { name: "Remove Ad Type: UGC" }),
     ).toBeInTheDocument();
   });
 
@@ -106,12 +106,12 @@ describe("AiSignalsModal draft keys", () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Ugc" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "UGC" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Intent" }));
     expect(
       screen.getByRole("button", { name: "Awareness" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Ugc" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "UGC" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Awareness" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply 1" }));
@@ -225,7 +225,7 @@ describe("AiSignalsModal draft keys", () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Ugc" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "UGC" })).toHaveAttribute(
       "aria-pressed",
       "false",
     );

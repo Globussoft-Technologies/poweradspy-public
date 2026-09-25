@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatAiFilterOptionLabel,
   findActiveAiQuickFilterPreset,
   hasActiveAiFilters,
   replaceAiFilters,
   resolveAiQuickFilterPresets,
 } from "../../src/utils/aiQuickFilterPresets";
+
+describe("formatAiFilterOptionLabel", () => {
+  it("normalizes UGC presentation without changing other labels", () => {
+    expect(formatAiFilterOptionLabel("Ugc")).toBe("UGC");
+    expect(formatAiFilterOptionLabel("UGC testimonial")).toBe("UGC testimonial");
+    expect(formatAiFilterOptionLabel("Product")).toBe("Product");
+  });
+});
 
 const makeDoc = () => ({
   _id: "ai_meta",

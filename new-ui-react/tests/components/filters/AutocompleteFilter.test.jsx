@@ -16,7 +16,9 @@ vi.mock("../../../src/hooks/useDebounce", () => ({
   useDebounce: (v) => v,
 }));
 
-import AutocompleteFilter from "../../../src/components/filters/AutocompleteFilter.jsx";
+import AutocompleteFilter, {
+  filterWordSuggestionsByQuery,
+} from "../../../src/components/filters/AutocompleteFilter.jsx";
 
 const WORD_SOURCE = {
   rank: 1,
@@ -37,6 +39,23 @@ const CAT_SOURCE = {
   response_key: "matches",
   on_select_action: "setSelCategories",
 };
+
+describe("AutocompleteFilter > suggestion relevance", () => {
+  it("requires the full multi-word context while preserving single-word results", () => {
+    const suggestions = [
+      "weight loss supplements",
+      "loss of use coverage",
+      "Loss Prevention Moving",
+    ];
+
+    expect(filterWordSuggestionsByQuery(suggestions, "weight loss")).toEqual([
+      "weight loss supplements",
+    ]);
+    expect(filterWordSuggestionsByQuery(suggestions, "loss")).toEqual(
+      suggestions,
+    );
+  });
+});
 
 beforeEach(() => {
   globalThis.fetch = vi.fn();
@@ -238,6 +257,32 @@ describe("AutocompleteFilter > GET source word suggestions", () => {
     fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "abc" } });
     expect(await findByText("abc-string")).toBeInTheDocument();
   });
+  it("filters unrelated last-word matches for a multi-word query", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        suggestions: [
+          { word: "weight loss supplements" },
+          { word: "loss of use coverage" },
+        ],
+      }),
+    });
+    const { getByPlaceholderText, findByText, queryByText } = render(
+      <AutocompleteFilter
+        onChange={() => {}}
+        suggestionSources={[WORD_SOURCE]}
+      />,
+    );
+    fireEvent.change(getByPlaceholderText("Search..."), {
+      target: { value: "weight loss" },
+    });
+
+    expect(await findByText("weight loss supplements")).toBeInTheDocument();
+    expect(queryByText("loss of use coverage")).toBeNull();
+    expect(new URL(globalThis.fetch.mock.calls[0][0]).searchParams.get("query")).toBe(
+      "weight loss",
+    );
+  });
   it("item.word fallback when display_field missing", async () => {
     const src = { ...WORD_SOURCE, display_field: undefined };
     globalThis.fetch.mockResolvedValueOnce({
@@ -323,7 +368,7 @@ describe("AutocompleteFilter > POST source category suggestions", () => {
 describe("AutocompleteFilter > selection callbacks", () => {
   it("word click replaces last word + suppresses next fetch", async () => {
     globalThis.fetch.mockResolvedValueOnce({
-      ok: true, json: async () => ({ suggestions: ["completion"] }),
+      ok: true, json: async () => ({ suggestions: ["shoe completion"] }),
     });
     const onChange = vi.fn();
     const onSearch = vi.fn();
@@ -332,7 +377,7 @@ describe("AutocompleteFilter > selection callbacks", () => {
         suggestionSources={[WORD_SOURCE]} />,
     );
     fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "shoe com" } });
-    fireEvent.click(await findByText("completion"));
+    fireEvent.click(await findByText("shoe completion"));
     expect(onChange).toHaveBeenCalledWith("shoe completion");
     expect(onSearch).toHaveBeenCalledWith("shoe completion");
   });
