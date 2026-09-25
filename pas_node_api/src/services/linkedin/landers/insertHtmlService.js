@@ -4,7 +4,8 @@
  * LinkedIn landers — insert_html_lander (api_linkedin BlackhatController@inserHtmlContentToDB).
  * Same shape as youtube/landers/insertHtmlService.js.
  *
- * Request body: { ad_id, insertData }. insertData: ad_id, country_iso, destinations, html_path,
+ * Request body: flat { ad_id, country_iso, ... } (a nested { ad_id, insertData: {...} } is also accepted).
+ * Fields: ad_id, country_iso, destinations, html_path,
  * screen_shot, html_content, status, domain_registered_date, crawled_by, domain_age,
  * outgoing_url[], redirects[], ad_category.
  *
@@ -37,8 +38,12 @@ async function insertHtmlContent(req, db, log) {
   const ES_INDEX = elastic?.indexName || 'linkedin_ads_data';
 
   const body = req.body || {};
-  const ad_id = body.ad_id;
-  const value = body.insertData;
+  // Fields are read from the top level of the body; a nested `insertData` wrapper is still accepted.
+  const hasWrapper = body.insertData !== undefined && body.insertData !== null;
+  const value = hasWrapper
+    ? (Array.isArray(body.insertData) ? body.insertData[0] : body.insertData)
+    : (Object.keys(body).length > 0 ? body : undefined);
+  const ad_id = body.ad_id !== undefined && body.ad_id !== null ? body.ad_id : value?.ad_id;
   const date = new Date().toISOString().slice(0, 10);
 
   let start_url = null, redirect_url = null, final_url = null;

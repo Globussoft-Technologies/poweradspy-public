@@ -116,8 +116,10 @@ export function classifyError(error) {
 // lowercased, every run of non-alphanumerics collapsed to a single underscore,
 // ends trimmed. "Palladium" -> "palladium", "Basic (2026)" -> "basic_2026".
 function normalizePlanTierValue(raw) {
-  // Send the plan name exactly as received (no lowercasing / underscoring).
-  const value = String(raw ?? '');
+  // GA4 dimension values are case-sensitive, and the plan name arrives in
+  // different casings depending on the source (plan-access API vs JWT), so
+  // trim + lowercase to keep a single row per plan ("Palladium" -> "palladium").
+  const value = String(raw ?? '').trim().toLowerCase();
   // A bare number is a plan_id (the JWT's userSubscriptionType), not a plan name.
   // Never send an id to GA — report `unknown` instead of leaking e.g. "69".
   return /^\s*\d+\s*$/.test(value) ? 'unknown' : value;

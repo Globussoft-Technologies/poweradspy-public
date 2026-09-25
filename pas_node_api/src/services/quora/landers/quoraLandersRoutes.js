@@ -70,7 +70,10 @@ function createQuoraLandersRoutes(service) {
     '/landers/insert-lander-details-todb',
     asyncHandler(async (req, res) => {
       const result = await insertLanderDetailsToDB(req, service.db, service.log);
-      return res.status(result.code === 200 ? 200 : result.code).json(result);
+      // A response without a valid HTTP code must never reach res.status() —
+      // that throws ERR_HTTP_INVALID_STATUS_CODE and turns into a global 500.
+      const status = Number.isInteger(result?.code) && result.code >= 100 && result.code <= 599 ? result.code : 500;
+      return res.status(status).json(result);
     })
   );
 

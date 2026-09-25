@@ -141,7 +141,7 @@ async function updateAdUrl(adId, data) {
 
 async function getAdOutgoingDetails(whereObj) {
   const cols = Object.keys(whereObj);
-  const sql = `SELECT country_code, id FROM quora_ad_outgoing_links WHERE ${cols.map(c => `${c} = ?`).join(' AND ')}`;
+  const sql = `SELECT country_code, id FROM quora_ad_outgoing_links WHERE ${cols.map(c => `${c} <=> ?`).join(' AND ')}`;
   const result = await executeQuery(sql, Object.values(whereObj));
   return result;
 }

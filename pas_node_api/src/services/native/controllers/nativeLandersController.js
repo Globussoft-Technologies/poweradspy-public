@@ -88,15 +88,15 @@ class LandersController {
     try {
       const startTime = Date.now();
       const rawArray = Array.isArray(req.body) ? req.body : [req.body];
-      // All lander payloads must use the `insertData` wrapper.
+      // `insertData` wrapper is optional; accept wrapped or plain payloads.
       const requestArray = rawArray.map((item) =>
-        item && item.insertData ? item.insertData : null
+        item && item.insertData ? item.insertData : item
       );
       if (requestArray.some((item) => !item)) {
         return res.status(400).json({
           code: 400,
           message: 'Validation failed',
-          errors: ['insertData wrapper is required'],
+          errors: ['Request body item is required'],
         });
       }
       const db = service?.db || {};

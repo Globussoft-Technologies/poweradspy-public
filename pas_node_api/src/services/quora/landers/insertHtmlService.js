@@ -119,13 +119,17 @@ async function insertHtmlRedirectCountry(req, db, log) {
         }
 
         const redirectStatus = item.crawled_by === '.net' ? 3 : 6;
-        const updateResult = await repo.updateAdMetaData( item.ad_id, {
+        // repo.updateAdMetaData returns the affectedRows count (a number), not a
+        // { code } object — reading `.code` off it made this response's code
+        // undefined, which crashed res.status() in the route (HTTP 500).
+        const affectedRows = await repo.updateAdMetaData( item.ad_id, {
           redirect_status: redirectStatus
         });
+        const updated = affectedRows > 0;
 
         lastResponse = {
-          code: updateResult.code,
-          message: updateResult.code === 200
+          code: updated ? 200 : 400,
+          message: updated
             ? 'Redirect status updated successfully'
             : 'Redirect status not updated or already updated',
           exe_time: (Date.now() - startTime) / 1000
@@ -168,7 +172,10 @@ async function insertHtmlRedirectCountry(req, db, log) {
       // Insert/update outgoing URLs
       if (item.outgoing_url && Array.isArray(item.outgoing_url) && item.outgoing_url.length > 0) {
         for (const outgoing of item.outgoing_url) {
-          const redirectUrls = (outgoing.redirect_urls || [])
+          // Non-string / empty entries are dropped so the joined value is always a
+          // string ('' for an empty chain) — redirect_url is NOT NULL.
+          const redirectUrls = (Array.isArray(outgoing.redirect_urls) ? outgoing.redirect_urls : [])
+            .filter(u => typeof u === 'string' && u.trim() !== '')
             .map(u => u.trim())
             .join('||');
 
@@ -185,9 +192,9 @@ async function insertHtmlRedirectCountry(req, db, log) {
 
           const existing = await repo.getAdOutgoingDetails( {
             quora_ad_id: item.ad_id,
-            source_url: outgoing.start_url,
+            source_url: outgoing.start_url ?? null,
             redirect_url: redirectUrls,
-            final_url: outgoing.destination_url
+            final_url: outgoing.destination_url ?? null
           });
 
           if (existing.length === 0) {
