@@ -6,9 +6,13 @@ const config = require('../../../../src/config');
 const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
+  combineCategorySources,
+  getAiMetaCategoryFilterClauses,
   getAiMetaFilterClauses,
+  getAiMetaNonCategoryFilterClauses,
   getAiMetaEsField,
   getAiMetaOfferTypeEsField,
+  getLegacyCategoryFilterClauses,
   readAiMetaVisibleCount,
 } = require('../../../../src/services/common/helpers/aiMetaSearchFilter');
 const originalEnv = config.env;
@@ -57,6 +61,15 @@ describe('aiMetaSearchFilter', () => {
     expect(esParams.body.query).toEqual({ match_all: {} });
   });
 
+  it('preserves ordinary bool filter structure when AI filters are inactive', () => {
+    const filter = { term: { country: 'India' } };
+    const esParams = { body: { query: { bool: { filter } } } };
+
+    applyAiMetaFilters(esParams, 'facebook', { has_ai_meta: false });
+
+    expect(esParams.body.query.bool.filter).toBe(filter);
+  });
+
   it('counts LinkedIn AI-filtered cards through the flat ad_id field', () => {
     const esParams = { body: { query: { bool: { filter: [] } } } };
 
@@ -95,24 +108,25 @@ describe('aiMetaSearchFilter', () => {
     ]));
   });
 
-  it('keeps AI category rows with a null subcategory visible when a category branch is selected', () => {
+  it('keeps parent-only AI category searches independent of child filtering', () => {
     config.env = 'development';
-    const clauses = getAiMetaFilterClauses('facebook', {
+    const parentOnlyClauses = getAiMetaFilterClauses('facebook', {
+      ai_category_id: ['1009'],
+    });
+    const parentAndChildClauses = getAiMetaFilterClauses('facebook', {
       ai_category_id: ['1009'],
       ai_subcategory_id: ['10090001', '10090002'],
     });
 
-    expect(clauses).toEqual(expect.arrayContaining([
+    expect(parentOnlyClauses).toEqual(expect.arrayContaining([
       { terms: { 'ai.category_id': ['1009'] } },
-      {
-        bool: {
-          should: [
-            { terms: { 'ai.subcategory_id': ['10090001', '10090002'] } },
-            { bool: { must_not: [{ exists: { field: 'ai.subcategory_id' } }] } },
-          ],
-          minimum_should_match: 1,
-        },
-      },
+    ]));
+    expect(parentOnlyClauses).not.toEqual(expect.arrayContaining([
+      { terms: { 'ai.subcategory_id': ['10090001', '10090002'] } },
+    ]));
+    expect(parentAndChildClauses).toEqual(expect.arrayContaining([
+      { terms: { 'ai.category_id': ['1009'] } },
+      { terms: { 'ai.subcategory_id': ['10090001', '10090002'] } },
     ]));
   });
 
@@ -138,5 +152,125 @@ describe('aiMetaSearchFilter', () => {
     expect(clauses).toEqual([
       { terms: { 'ai.offering_type': ['product', 'both'] } },
     ]);
+  });
+
+  it('supports aligned taxonomy IDs alongside legacy category names', () => {
+    const esParams = {
+      body: {
+        query: {
+          bool: {
+            filter: [
+              { term: { 'youtube.category.keyword': '1009' } },
+              { bool: { should: [
+                { term: { 'youtube.subCategory.keyword': '10090001' } },
+                { bool: { must_not: [{ exists: { field: 'youtube.subCategory.keyword' } }] } },
+              ], minimum_should_match: 1 } },
+            ],
+          },
+        },
+      },
+    };
+
+    applyAiMetaFilters(esParams, 'youtube', {
+      adcategory: ['1009'],
+      subCategory: ['10090001'],
+    });
+
+    expect(esParams.body.query.bool.filter[0]).toEqual({
+      bool: {
+        should: [
+          { term: { 'youtube.category.keyword': '1009' } },
+          { terms: { category_id: ['1009'] } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
+    expect(esParams.body.query.bool.filter[1].bool.should).toEqual(expect.arrayContaining([
+      { terms: { subCategory_id: ['10090001'] } },
+    ]));
+
+    const displayClauses = getLegacyCategoryFilterClauses('youtube', {
+      adcategory: ['Computer Software'],
+      subCategory: ['Browser Extensions'],
+    });
+    expect(displayClauses).toEqual([
+      { term: { 'youtube.category.keyword': 'Computer Software' } },
+      { bool: { should: [
+        { term: { 'youtube.subCategory.keyword': 'Browser Extensions' } },
+        { bool: { must_not: [{ exists: { field: 'youtube.subCategory.keyword' } }] } },
+      ], minimum_should_match: 1 } },
+    ]);
+
+    expect(getLegacyCategoryFilterClauses('youtube', {
+      adcategory: ['1009'],
+      subCategory: ['10090001'],
+    })).toEqual([
+      { bool: { should: [
+        { term: { 'youtube.category.keyword': '1009' } },
+        { terms: { category_id: ['1009'] } },
+      ], minimum_should_match: 1 } },
+      { bool: { should: [
+        { bool: { should: [
+          { term: { 'youtube.subCategory.keyword': '10090001' } },
+          { bool: { must_not: [{ exists: { field: 'youtube.subCategory.keyword' } }] } },
+        ], minimum_should_match: 1 } },
+        { terms: { subCategory_id: ['10090001'] } },
+      ], minimum_should_match: 1 } },
+    ]);
+  });
+
+  it('unions outer and AI category sources without widening other filters', () => {
+    const esParams = {
+      body: {
+        query: {
+          bool: {
+            filter: [
+              { term: { 'youtube.category.keyword': '1009' } },
+              { term: { country: 'India' } },
+            ],
+          },
+        },
+      },
+    };
+
+    applyAiMetaFilters(esParams, 'youtube', {
+      has_ai_meta: true,
+      adcategory: ['1009'],
+      ai_category_id: ['1009'],
+    });
+
+    const filters = esParams.body.query.bool.filter;
+    expect(filters).toContainEqual({ term: { country: 'India' } });
+    expect(filters).toContainEqual(getAiMetaNonCategoryFilterClauses('youtube', { has_ai_meta: true })[0]);
+    expect(filters).toContainEqual({
+      bool: {
+        should: [
+          {
+            bool: {
+              should: [
+                { term: { 'youtube.category.keyword': '1009' } },
+                { terms: { category_id: ['1009'] } },
+              ],
+              minimum_should_match: 1,
+            },
+          },
+          ...getAiMetaCategoryFilterClauses('youtube', { ai_category_id: ['1009'] }),
+        ],
+        minimum_should_match: 1,
+      },
+    });
+
+    expect(combineCategorySources(
+      [{ term: { 'youtube.category.keyword': 'Computer Software' } }],
+      getAiMetaCategoryFilterClauses('youtube', { ai_category_id: ['1009'] }),
+    )).toEqual([{
+      bool: {
+        should: [
+          { term: { 'youtube.category.keyword': 'Computer Software' } },
+          { terms: { 'ai.category_id': ['1009'] } },
+        ],
+        minimum_should_match: 1,
+      },
+    }]);
   });
 });

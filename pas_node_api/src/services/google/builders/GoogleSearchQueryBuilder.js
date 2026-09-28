@@ -26,7 +26,6 @@ require("dotenv").config();
 const {
   flatBool,
   termFilter,
-  termFilterOrMissing,
   asFilter,
   asMust,
   bucketize,
@@ -43,6 +42,31 @@ const CONTENT_FIELDS = [
   "newsfeed_description",
   "news_feed_description",
 ];
+
+const CATEGORY_FIELDS = ["category", "google.category", "google.category.keyword"];
+const SUBCATEGORY_FIELDS = ["subCategory", "google.subCategory", "google.subCategory.keyword"];
+
+function exactAcrossFields(fields, values, allowMissing = false) {
+  const matches = fields.map((field) => termFilter(field, values)).filter(Boolean);
+  if (!matches.length) return null;
+
+  const match = matches.length === 1
+    ? matches[0]
+    : { bool: { should: matches, minimum_should_match: 1 } };
+  if (!allowMissing) return match;
+
+  // A parent category remains a valid match when the older document has no
+  // subcategory in either of its supported field layouts.
+  return {
+    bool: {
+      should: [
+        match,
+        { bool: { must_not: fields.map((field) => ({ exists: { field } })) } },
+      ],
+      minimum_should_match: 1,
+    },
+  };
+}
 
 /**
  * NAS image must_not — IMAGE ads with no/empty new_nas_image_url are excluded.
@@ -288,14 +312,18 @@ class GoogleSearchQueryBuilder {
   _getCountryEnv()      { const c = this._params.country;      return c && c.length ? asFilter(termFilter("country", c)) : null; }
   _getStateEnv()        { const s = this._params.state;        return s && s.length ? asFilter(termFilter("state", s)) : null; }
   _getCityEnv()         { const c = this._params.city;         return c && c.length ? asFilter(termFilter("city", c)) : null; }
-  _getAdCategoryEnv()   { const c = this._params.adCategory;   return c && c.length ? asFilter(termFilter("category", c)) : null; }
+  _getAdCategoryEnv()   {
+    const c = this._params.adCategory;
+    return c && c.length ? asFilter(exactAcrossFields(CATEGORY_FIELDS, c)) : null;
+  }
   _getSubCategoryEnv()  {
     const s = this._params.subCategory;
     if (!s || !s.length) return null;
-    if (!this._params.adCategory || !this._params.adCategory.length) {
-      return asFilter(termFilter("subCategory", s));
-    }
-    return asFilter(termFilterOrMissing("subCategory", s));
+    return asFilter(exactAcrossFields(
+      SUBCATEGORY_FIELDS,
+      s,
+      Boolean(this._params.adCategory?.length),
+    ));
   }
   _getTypeEnv()         { const t = this._params.type;         return t && t.length ? asFilter(termFilter("type", t)) : null; }
   _getPlatformEnv()     { const p = this._params.platform;     return p && p.length ? asFilter(termFilter("platform", p)) : null; }

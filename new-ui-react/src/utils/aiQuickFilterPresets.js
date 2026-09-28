@@ -285,7 +285,43 @@ export const replaceAiFilters = (filterValues, doc, replacement = {}) => {
   for (const [key, value] of Object.entries(replacement)) {
     if (!isEmptyValue(value)) next[key] = value;
   }
-  return expandNestedSelections(doc, next);
+  // Presets own the parent category only. Do not materialize every child into
+  // the search payload, because an explicit AI subcategory must remain exact.
+  // The modal still calls normalizeAiFilterValues for its visual draft state.
+  return next;
+};
+
+/**
+ * Apply a quick preset without discarding AI constraints inferred from the
+ * current prompt. A preset still owns its filter group, so a previous preset's
+ * values are removed before the new preset is added; prompt values in other
+ * groups remain part of the resulting search.
+ */
+export const mergeAiQuickFilter = (
+  filterValues,
+  doc,
+  replacement = {},
+  previousPreset = null,
+) => {
+  const next = { ...(filterValues || {}) };
+
+  for (const filterId of Object.keys(previousPreset?.filters || {})) {
+    delete next[filterId];
+    const nestedFilter = getNestedFilters(doc).find(
+      (filter) => (filter.parent_filter_id || filter._id) === filterId,
+    );
+    if (nestedFilter?.child_filter_id) {
+      delete next[nestedFilter.child_filter_id];
+    }
+  }
+
+  for (const [key, value] of Object.entries(replacement)) {
+    if (!isEmptyValue(value)) next[key] = value;
+  }
+
+  // Keep a preset's parent-only meaning at the API boundary; prompt-inferred
+  // child selections already present in `next` remain untouched.
+  return next;
 };
 
 export const discardAiFilterDraft = () => {

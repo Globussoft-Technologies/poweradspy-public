@@ -233,6 +233,7 @@ const AdGrid = ({
   aiSearchLoading = false,
   aiQuickFilterId,
   onAiQuickFilterChange,
+  onAiQuickFilterApply,
   aiCapabilityMessage = null,
 }) => {
   const {
@@ -1131,7 +1132,7 @@ const AdGrid = ({
           <AiQuickFilters
             document={aiFiltersDoc}
             filterValues={filterValues}
-            onApply={setAllFilters}
+            onApply={onAiQuickFilterApply || setAllFilters}
             aiPrompt={aiPrompt}
             activeQuickFilterId={aiQuickFilterId}
             onQuickFilterChange={onAiQuickFilterChange}

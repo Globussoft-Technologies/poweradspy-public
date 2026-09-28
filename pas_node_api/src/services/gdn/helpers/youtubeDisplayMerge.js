@@ -31,9 +31,12 @@
  */
 
 const databaseManager = require('../../../database/DatabaseManager');
-const { matchFilter, multiFieldMatchFilter, termFilterOrMissing } = require('../../common/helpers/esQueryHelpers');
+const { matchFilter, multiFieldMatchFilter } = require('../../common/helpers/esQueryHelpers');
 const {
-  getAiMetaFilterClauses,
+  combineCategorySources,
+  getAiMetaCategoryFilterClauses,
+  getAiMetaNonCategoryFilterClauses,
+  getLegacyCategoryFilterClauses,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
 } = require('../../common/helpers/aiMetaSearchFilter');
@@ -152,19 +155,12 @@ function buildSharedFilters(p) {
   // YouTube query path.
   const countryFilter = multiFieldMatchFilter(['countries'], p.country);
   if (countryFilter) filter.push(countryFilter);
-  // Category / sub-category — mirror youtube SearchMixQueryBuilder
-  // (_getAdCategoryEnv / _getSubCategoryEnv) so the DISPLAY ads merged in here
-  // are filtered by the SAME category as the GDN/YouTube queries. Without this
-  // the YouTube DISPLAY side stayed unfiltered and leaked uncategorized/default
-  // ads under `network:youtube` whenever a category filter was active.
-  const cats = ensureArr(p.adcategory);
-  if (cats.length) filter.push({ terms: { 'youtube.category.keyword': cats } });
-  const subs = ensureArr(p.subCategory);
-  if (subs.length) {
-    filter.push(cats.length
-      ? termFilterOrMissing('youtube.subCategory.keyword', subs)
-      : { terms: { 'youtube.subCategory.keyword': subs } });
-  }
+  // Keep the merged DISPLAY query aligned with the main search path. The
+  // shared helper accepts both aligned taxonomy IDs and legacy category names,
+  // then ORs outer-category and AI-category sources when both are selected.
+  const legacyCategoryClauses = getLegacyCategoryFilterClauses('youtube', p);
+  const aiCategoryClauses = getAiMetaCategoryFilterClauses('youtube', p);
+  filter.push(...combineCategorySources(legacyCategoryClauses, aiCategoryClauses));
   // Date-range filters. Each *_btn_sort arrives as [upperTs, lowerTs] in epoch
   // seconds. The GDN main query applies these to the GDN side; mirror them here
   // so the merged-in YouTube DISPLAY total is bounded by the same window —
@@ -232,8 +228,10 @@ function buildSharedFilters(p) {
   if (langFilter) filter.push(langFilter);
 
   // GDN also surfaces YouTube DISPLAY ads, so they must honor every selected
-  // AI-Meta field instead of bypassing the main GDN query's predicates.
-  filter.push(...getAiMetaFilterClauses('youtube', p));
+  // non-category AI-Meta field instead of bypassing the main GDN query's
+  // predicates. Category fields were added above with the legacy category
+  // branch so they use the same union semantics as the main query.
+  filter.push(...getAiMetaNonCategoryFilterClauses('youtube', p));
 
   return { must, filter };
 }

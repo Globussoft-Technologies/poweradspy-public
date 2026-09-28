@@ -39,6 +39,7 @@ import { useGuest } from "./hooks/useGuest";
 import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
+import { getAiFilterKeys } from "./utils/aiQuickFilterPresets";
 import {
   formatPlanningCapabilityMessage,
   formatPlanningUnsupportedMessage,
@@ -1632,8 +1633,18 @@ const App = () => {
       // health guard can switch modes without going through the AI reset path.
       setAiCapabilityMessage(null);
       dismissAiToast();
+      // A failed/unsupported AI plan has no valid search to restore. Clear its
+      // persisted prompt when the health guard leaves AI mode, otherwise the
+      // old prompt is rehydrated when the user opens AI mode again. Successful
+      // AI searches keep their prompt and results across a transient health
+      // fallback.
+      if (aiFailedPromptRef.current) {
+        clearFailedAiPromptReloadMarker();
+        aiFailedPromptRef.current = false;
+        dispatch(setAiPrompt(''));
+      }
     }
-  }, [dismissAiToast]);
+  }, [dispatch, dismissAiToast]);
   const debounceTimer = useRef(null);
   const lastDailyKeywordRef = useRef(null);
   const projectContextRef = useRef(null);
@@ -2265,6 +2276,10 @@ const App = () => {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiRunIdRef = useRef(0);
   const aiAbortRef = useRef(null);
+  // Separate from aiCapabilityOnlyRef: that ref is consumed by the Ads
+  // loading guard, while this one must survive until a failed prompt leaves AI
+  // mode so it cannot be rehydrated later.
+  const aiFailedPromptRef = useRef(false);
   // Only filter-producing AI searches need prompt cleanup when their filters
   // are edited manually. Keyword-only AI searches must keep their prompt.
   const aiPromptFilterSnapshotRef = useRef(null);
@@ -2272,10 +2287,46 @@ const App = () => {
   // AI plan explicitly selected no visible Quick Filter preset.
   const [aiQuickFilterId, setAiQuickFilterId] = useState(undefined);
 
+  // Keep the prompt-cleanup snapshot aligned when a quick preset intentionally
+  // changes AI filters. Otherwise the subsequent state update looks like a
+  // manual chip edit and clears the prompt from the search bar.
+  const handleAiQuickFilterApply = useCallback((nextFilters, analytics = null) => {
+    if (
+      String(ui.aiPrompt || '').trim() &&
+      analytics?.filterName?.startsWith('quick_filter_')
+    ) {
+      const aiMetaDoc = sdui.config?.sidebar?.find(
+        (doc) => doc?._id === 'ai_meta' && doc.visible !== false,
+      );
+      const aiKeys = new Set(['has_ai_meta', ...getAiFilterKeys(aiMetaDoc)]);
+      const previousSnapshot = aiPromptFilterSnapshotRef.current || {};
+      const nextSnapshot = {};
+
+      // Keep the prompt's existing mapped fields (country/date/etc.) while
+      // replacing their values with the newly committed state.
+      Object.keys(previousSnapshot).forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(nextFilters, key)) {
+          nextSnapshot[key] = nextFilters[key];
+        }
+      });
+      aiKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(nextFilters, key)) {
+          nextSnapshot[key] = nextFilters[key];
+        }
+      });
+      aiPromptFilterSnapshotRef.current = Object.keys(nextSnapshot).length
+        ? nextSnapshot
+        : null;
+    }
+
+    sdui.setAllFilters?.(nextFilters, analytics);
+  }, [sdui.config, sdui.setAllFilters, ui.aiPrompt]);
+
   // Clear the AI-owned query state without changing the user's selected
   // networks. This is used when the prompt/AI filters are cleared in place.
   const clearAiPromptState = useCallback(() => {
     clearFailedAiPromptReloadMarker();
+    aiFailedPromptRef.current = false;
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
     aiRunIdRef.current += 1;
@@ -2346,6 +2397,7 @@ const App = () => {
 
   const handleSearch = useCallback((query, type, platform, options = {}) => {
     clearFailedAiPromptReloadMarker();
+    aiFailedPromptRef.current = false;
     if (guest?.isPublicLanding && guest?.isRestricted) {
       trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'header', feature_name: 'ad_search', ...getNetworkContext(platform ? [platform] : ui.specificPlatforms), request_context: 'search', search_mode: 'standard', search_type: String(type || ui.searchIn || 'keyword').toLowerCase() });
       guest.showGuestWarning("Please login to search");
@@ -2433,6 +2485,7 @@ const App = () => {
     }
     if (guestGuard("Please login to search", { searchQuery: trimmed })) return;
     clearFailedAiPromptReloadMarker();
+    aiFailedPromptRef.current = false;
     // Keep the previous AI snapshot until the next tier is committed. That
     // lets the commit replace AI-owned keys atomically while preserving manual
     // filters set outside AI Search.
@@ -2546,6 +2599,7 @@ const App = () => {
       aiPaginationDiagnosticsRef.current = null;
       dispatch(setSearchQuery(''));
       dispatch(setSearchIn('keyword'));
+      aiFailedPromptRef.current = true;
       // Keep the failed prompt visible for this session, but remove it from
       // Redux persistence on the next reload so it cannot label all ads as AI results.
       markFailedAiPromptForReload();
@@ -3584,6 +3638,7 @@ const App = () => {
             aiSearchLoading={aiSearchLoading}
             aiQuickFilterId={aiQuickFilterId}
             onAiQuickFilterChange={setAiQuickFilterId}
+            onAiQuickFilterApply={handleAiQuickFilterApply}
             aiCapabilityMessage={aiCapabilityMessage}
             onBroadenSearch={ui.aiPrompt?.trim() ? () => aiBroadenSearchRef.current?.() : undefined}
             searchQuery={ui.searchQuery}

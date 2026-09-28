@@ -573,7 +573,16 @@ const Header = ({
     setShowAiPrompts(false);
     if (mode === "ai") {
       if (!aiSearchAvailable) return;
-      if (!aiMode) preserveAiModeRef.current = true;
+      if (!aiMode) {
+        preserveAiModeRef.current = true;
+        const hasCommittedNormalSearch =
+          !aiPrompt?.trim() &&
+          (Boolean(searchQuery?.trim()) || String(searchIn || "keyword").toLowerCase() !== "keyword");
+        // AI mode is a separate search context. Clear a committed normal
+        // query before switching modes so persisted results cannot force the
+        // Header back to Keyword/Advertiser/Domain mode after a reload.
+        if (hasCommittedNormalSearch) onSearch?.("", "keyword");
+      }
       setAiMode(true);
       setLocalQuery(aiPrompt || "");
       return;

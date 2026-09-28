@@ -155,7 +155,11 @@ describe("Google builder > clause generators", () => {
     const filters = b.build().body.query.bool.filter || [];
     const json = JSON.stringify(filters);
     expect(json).toContain("\"category\"");
+    expect(json).toContain("google.category");
+    expect(json).toContain("google.category.keyword");
     expect(json).toContain("\"subCategory\"");
+    expect(json).toContain("google.subCategory");
+    expect(json).toContain("google.subCategory.keyword");
     expect(json).toContain("target_keyword");
     // Google intentionally does not expose tags on this index.
     expect(json).not.toContain("\"tags\"");

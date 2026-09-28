@@ -15,6 +15,7 @@ import {
   discardAiFilterDraft,
   findActiveAiQuickFilterPreset,
   hasActiveAiFilters,
+  mergeAiQuickFilter,
   replaceAiFilters,
   resolveAiQuickFilterPresets,
 } from "../../utils/aiQuickFilterPresets";
@@ -70,10 +71,16 @@ const AiQuickFilters = ({
   // its AI fields happen to be equivalent. Only an explicit planner value or
   // a direct quick-filter interaction may select the visible shortcut.
   const matchingPreset = findActiveAiQuickFilterPreset(filterValues, doc, presets);
+  const explicitlySelectedPreset = activeQuickFilterId
+    ? presets.find((preset) => preset.id === activeQuickFilterId)
+    : null;
+  const explicitPresetIsApplied = explicitlySelectedPreset
+    ? Object.entries(explicitlySelectedPreset.filters).every(([key, value]) =>
+        JSON.stringify(filterValues?.[key]) === JSON.stringify(value),
+      )
+    : false;
   const activePreset = activeQuickFilterId !== undefined
-    ? (activeQuickFilterId && matchingPreset?.id === activeQuickFilterId
-      ? matchingPreset
-      : null)
+    ? (explicitPresetIsApplied ? explicitlySelectedPreset : null)
     : String(aiPrompt || '').trim()
       ? null
       : matchingPreset;
@@ -85,6 +92,9 @@ const AiQuickFilters = ({
       return;
     }
 
+    // Do not render availability from the previous network/search context
+    // while the single batch probe for the new context is in flight.
+    setPresetAvailability(null);
     const controller = new AbortController();
     let cancelled = false;
 
@@ -155,8 +165,11 @@ const AiQuickFilters = ({
     }
     discardAiFilterDraft();
     onQuickFilterChange?.(presetId);
+    const nextFilters = presetId && String(aiPrompt || '').trim()
+      ? mergeAiQuickFilter(filterValues, doc, replacement, activePreset)
+      : replaceAiFilters(filterValues, doc, replacement);
     onApply?.(
-      replaceAiFilters(filterValues, doc, replacement),
+      nextFilters,
       presetId
         ? {
             filterName: `quick_filter_${presetId}`,

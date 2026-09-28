@@ -157,7 +157,6 @@ describe("AiQuickFilters", () => {
     expect(onApply).toHaveBeenCalledWith({
       country_filter: ["US"],
       ai_category_id: ["1009"],
-      ai_subcategory_id: ["10090001", "10090002"],
     }, {
       filterName: "quick_filter_b2b_saas",
       entryPoint: "quick_filters",
@@ -219,6 +218,36 @@ describe("AiQuickFilters", () => {
     expect(
       screen.getByRole("button", { name: /App Install/i }),
     ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("keeps prompt AI constraints when a quick filter is selected", async () => {
+    const onApply = vi.fn();
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{
+          ai_offering_type: ["product"],
+          ai_hook: ["social_proof"],
+        }}
+        aiPrompt="Show me ads for weight-loss products"
+        onApply={onApply}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /B2B SaaS/i }));
+
+    expect(onApply).toHaveBeenCalledWith(
+      {
+        ai_offering_type: ["product"],
+        ai_hook: ["social_proof"],
+        ai_category_id: ["1009"],
+      },
+      {
+        filterName: "quick_filter_b2b_saas",
+        entryPoint: "quick_filters",
+      },
+    );
   });
 
   it("highlights only the preset explicitly named by the planner", async () => {
@@ -289,7 +318,6 @@ describe("AiQuickFilters", () => {
     const replacementValues = onApply.mock.calls[1][0];
     expect(replacementValues).toEqual({
       ai_category_id: ["1009"],
-      ai_subcategory_id: ["10090001", "10090002"],
     });
 
     rerender(
@@ -331,6 +359,40 @@ describe("AiQuickFilters", () => {
     expect(
       screen.getByRole("button", { name: /B2B SaaS/i }),
     ).toBeInTheDocument();
+  });
+
+  it("does not retain the previous context's presets while availability reloads", async () => {
+    let resolveNextProbe;
+    fetchAiQuickFilterAvailability
+      .mockImplementationOnce(async () => ({ availability: allPresetsAvailable }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveNextProbe = resolve;
+      }));
+
+    const { rerender } = render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{}}
+        activePlatforms={["facebook"]}
+        onApply={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: /B2B SaaS/i })).toBeInTheDocument();
+
+    rerender(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{}}
+        activePlatforms={["google"]}
+        onApply={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /B2B SaaS/i })).not.toBeInTheDocument();
+    resolveNextProbe({ availability: { b2b_saas: true } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /B2B SaaS/i })).toBeInTheDocument());
   });
 
   it("does not render unverified presets after an empty availability response", async () => {

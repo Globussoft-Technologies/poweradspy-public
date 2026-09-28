@@ -1,7 +1,37 @@
 'use strict';
 
 const config = require('../../../config');
-const { termFilterOrMissing } = require('./esQueryHelpers');
+const { termFilter, termFilterOrMissing } = require('./esQueryHelpers');
+
+// The aligned SDUI stores taxonomy IDs, while older network fields still store
+// category names. Keep the field knowledge here so every search controller can
+// accept both representations without duplicating builder changes per network.
+const LEGACY_CATEGORY_FIELDS = {
+  facebook: { category: ['facebook.category.keyword'], subcategory: ['facebook.subCategory.keyword'] },
+  instagram: { category: ['instagram.category.keyword'], subcategory: ['instagram.subCategory.keyword'] },
+  youtube: { category: ['youtube.category.keyword'], subcategory: ['youtube.subCategory.keyword'] },
+  gdn: { category: ['gdn.category.keyword'], subcategory: ['gdn.subCategory.keyword'] },
+  native: {
+    category: ['native.category.keyword', 'native_category.category'],
+    subcategory: ['native.subCategory.keyword'],
+  },
+  linkedin: { category: ['linkedin.category.keyword'], subcategory: ['linkedin.subCategory.keyword'] },
+  reddit: { category: ['reddit.category.keyword'], subcategory: ['reddit.subCategory.keyword'] },
+  quora: { category: ['quora.category.keyword'], subcategory: ['quora.subCategory.keyword'] },
+  pinterest: { category: ['pinterest.category.keyword'], subcategory: ['pinterest.subCategory.keyword'] },
+  // Google has both the v2 flat fields and the production-qualified fields.
+  // Keep both names available so old label-based requests remain searchable.
+  google: {
+    category: ['category', 'google.category', 'google.category.keyword'],
+    subcategory: ['subCategory', 'google.subCategory', 'google.subCategory.keyword'],
+  },
+  tiktok: { category: ['industry'], subcategory: [] },
+};
+
+const TAXONOMY_ID_FIELDS = {
+  category: 'category_id',
+  subcategory: 'subCategory_id',
+};
 
 // AI-filtered search results are presented as a visible card count, not as the
 // raw ES hit total. On collapsed indices (Facebook / Instagram) the raw hit
@@ -68,6 +98,121 @@ function values(value) {
   return String(value).split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+function uniqueValues(...inputs) {
+  return [...new Set(inputs.flatMap((input) => values(input)))];
+}
+
+function taxonomyIds(input, length) {
+  return uniqueValues(input)
+    .map((value) => String(value))
+    .filter((value) => new RegExp(`^\\d{${length}}$`).test(value));
+}
+
+function clauseContainsField(clause, fields) {
+  if (!clause || typeof clause !== 'object') return false;
+  if (Array.isArray(clause)) return clause.some((item) => clauseContainsField(item, fields));
+  return Object.entries(clause).some(([key, value]) =>
+    fields.includes(key) || clauseContainsField(value, fields),
+  );
+}
+
+function orWithTaxonomyIds(baseClause, idField, ids) {
+  if (!baseClause || !ids.length) return baseClause;
+  return {
+    bool: {
+      should: [baseClause, { terms: { [idField]: ids } }],
+      minimum_should_match: 1,
+    },
+  };
+}
+
+function getLegacyCategoryFieldConfig(network) {
+  return LEGACY_CATEGORY_FIELDS[String(network || '').toLowerCase()] || null;
+}
+
+function getCategoryValues(params = {}) {
+  return uniqueValues(params.adcategory, params.category, params.industry);
+}
+
+function getSubcategoryValues(params = {}) {
+  return uniqueValues(params.subCategory, params.subcategory);
+}
+
+/**
+ * Build category predicates for secondary query paths (for example the
+ * YouTube DISPLAY merge) that do not pass through a network query builder.
+ */
+function getLegacyCategoryFilterClauses(network, params = {}) {
+  const fields = getLegacyCategoryFieldConfig(network);
+  if (!fields) return [];
+
+  const categoryValues = getCategoryValues(params);
+  const subcategoryValues = getSubcategoryValues(params);
+  const clauses = [];
+
+  if (categoryValues.length && fields.category[0]) {
+    clauses.push(orWithTaxonomyIds(
+      termFilter(fields.category[0], categoryValues),
+      TAXONOMY_ID_FIELDS.category,
+      taxonomyIds(categoryValues, 4),
+    ));
+  }
+
+  if (subcategoryValues.length && fields.subcategory[0]) {
+    const baseClause = categoryValues.length
+      ? termFilterOrMissing(fields.subcategory[0], subcategoryValues)
+      : termFilter(fields.subcategory[0], subcategoryValues);
+    clauses.push(orWithTaxonomyIds(
+      baseClause,
+      TAXONOMY_ID_FIELDS.subcategory,
+      taxonomyIds(subcategoryValues, 8),
+    ));
+  }
+
+  return clauses.filter(Boolean);
+}
+
+/**
+ * Add ID-field alternatives to category clauses already emitted by a builder.
+ * Name-field behavior remains the original branch, so old label-based payloads
+ * and indices without populated taxonomy IDs continue to work unchanged.
+ */
+function addLegacyCategoryIdAlternatives(network, filters, params = {}) {
+  const fields = getLegacyCategoryFieldConfig(network);
+  if (!fields) return filters;
+
+  const categoryIds = taxonomyIds(getCategoryValues(params), 4);
+  const subcategoryIds = taxonomyIds(getSubcategoryValues(params), 8);
+  if (!categoryIds.length && !subcategoryIds.length) return filters;
+
+  return filters.map((clause) => {
+    let next = clause;
+    if (categoryIds.length && clauseContainsField(clause, fields.category)) {
+      next = orWithTaxonomyIds(next, TAXONOMY_ID_FIELDS.category, categoryIds);
+    }
+    if (subcategoryIds.length && clauseContainsField(clause, fields.subcategory)) {
+      next = orWithTaxonomyIds(next, TAXONOMY_ID_FIELDS.subcategory, subcategoryIds);
+    }
+    return next;
+  });
+}
+
+function groupCategoryClauses(clauses) {
+  return clauses.length === 1 ? clauses[0] : { bool: { filter: clauses } };
+}
+
+function combineCategorySources(legacyClauses, aiClauses) {
+  if (!legacyClauses.length || !aiClauses.length) {
+    return [...legacyClauses, ...aiClauses];
+  }
+  return [{
+    bool: {
+      should: [groupCategoryClauses(legacyClauses), groupCategoryClauses(aiClauses)],
+      minimum_should_match: 1,
+    },
+  }];
+}
+
 function expandOfferingTypeSelection(selected) {
   const normalized = [...new Set((selected || []).map((value) => String(value)))];
   if (normalized.includes('product') || normalized.includes('service')) {
@@ -100,11 +245,17 @@ function buildOfferingTypeClause(field, selected) {
  * a field are OR'd; each returned clause is added alongside other filters, so
  * separate fields combine with AND semantics.
  */
-function getAiMetaFilterClauses(network, params = {}) {
+function getAiMetaFilterParts(network, params = {}) {
   const field = getAiMetaEsField(network);
   const clauses = [];
+  const categoryClauses = [];
+  const nonCategoryClauses = [];
 
-  if (isEnabled(params.has_ai_meta)) clauses.push(getHasAiMetaFilter(network));
+  if (isEnabled(params.has_ai_meta)) {
+    const clause = getHasAiMetaFilter(network);
+    clauses.push(clause);
+    nonCategoryClauses.push(clause);
+  }
 
   const exactFields = {
     ai_ad_type: 'ad_type',
@@ -120,21 +271,33 @@ function getAiMetaFilterClauses(network, params = {}) {
   for (const [param, suffix] of Object.entries(exactFields)) {
     const selected = values(params[param]);
     if (!selected.length) continue;
-    // Some legacy rows only stored the major AI category and left the
-    // subcategory null. When a category branch is selected, keep those rows
-    // visible by treating a missing subcategory as a valid parent-only match.
-    if (suffix === 'subcategory_id' && values(params.ai_category_id).length) {
-      clauses.push(termFilterOrMissing(`${field}.${suffix}`, selected));
-      continue;
-    }
-    clauses.push(suffix === 'offering_type'
+    // An AI subcategory is a real child selection, so it must be exact. A
+    // parent-only request omits ai_subcategory_id and therefore still matches
+    // records whose parent classification has no child value.
+    const clause = suffix === 'offering_type'
       ? buildOfferingTypeClause(field, selected)
       : suffix === 'offer_type'
       ? buildOfferTypeClause(network, field, selected)
-      : { terms: { [`${field}.${suffix}`]: selected } });
+      : { terms: { [`${field}.${suffix}`]: selected } };
+    clauses.push(clause);
+    (param === 'ai_category_id' || param === 'ai_subcategory_id'
+      ? categoryClauses
+      : nonCategoryClauses).push(clause);
   }
 
-  return clauses;
+  return { clauses, categoryClauses, nonCategoryClauses };
+}
+
+function getAiMetaFilterClauses(network, params = {}) {
+  return getAiMetaFilterParts(network, params).clauses;
+}
+
+function getAiMetaCategoryFilterClauses(network, params = {}) {
+  return getAiMetaFilterParts(network, params).categoryClauses;
+}
+
+function getAiMetaNonCategoryFilterClauses(network, params = {}) {
+  return getAiMetaFilterParts(network, params).nonCategoryClauses;
 }
 
 /**
@@ -144,16 +307,48 @@ function getAiMetaFilterClauses(network, params = {}) {
 function applyAiMetaFilters(esParams, network, params) {
   if (!esParams?.body) return esParams;
 
-  const clauses = getAiMetaFilterClauses(network, params);
-  if (!clauses.length) return esParams;
   const query = esParams.body.query;
   if (query?.bool) {
-    const filters = Array.isArray(query.bool.filter)
+    const originalFilters = Array.isArray(query.bool.filter)
       ? query.bool.filter
       : query.bool.filter ? [query.bool.filter] : [];
-    filters.push(...clauses);
-    query.bool.filter = filters;
+    const filters = addLegacyCategoryIdAlternatives(network, originalFilters, params);
+    const aiParts = getAiMetaFilterParts(network, params);
+
+    if (!aiParts.clauses.length) {
+      // Preserve the builder's original bool shape for ordinary searches. The
+      // helper is called for every request, so a disabled AI filter must not
+      // turn a single filter object or an absent filter into a new array.
+      if (filters !== originalFilters) query.bool.filter = filters;
+      return esParams;
+    }
+
+    if (!aiParts.categoryClauses.length) {
+      filters.push(...aiParts.clauses);
+      query.bool.filter = filters;
+      return esParams;
+    }
+
+    const legacyCategoryClauses = [];
+    const remainingFilters = [];
+    const legacyFields = getLegacyCategoryFieldConfig(network);
+    for (const clause of filters) {
+      const isCategoryClause = legacyFields && (
+        clauseContainsField(clause, legacyFields.category) ||
+        clauseContainsField(clause, legacyFields.subcategory)
+      );
+      (isCategoryClause ? legacyCategoryClauses : remainingFilters).push(clause);
+    }
+
+    remainingFilters.push(...combineCategorySources(
+      legacyCategoryClauses,
+      aiParts.categoryClauses,
+    ));
+    remainingFilters.push(...aiParts.nonCategoryClauses);
+    query.bool.filter = remainingFilters;
   } else {
+    const clauses = getAiMetaFilterClauses(network, params);
+    if (!clauses.length) return esParams;
     esParams.body.query = { bool: { must: query ? [query] : [], filter: clauses } };
   }
 
@@ -197,9 +392,13 @@ function readAiMetaVisibleCount(result) {
 module.exports = {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
+  combineCategorySources,
+  getAiMetaCategoryFilterClauses,
   getAiMetaEsField,
   getAiMetaOfferTypeEsField,
   getAiMetaFilterClauses,
+  getAiMetaNonCategoryFilterClauses,
+  getLegacyCategoryFilterClauses,
   getHasAiMetaFilter,
   readAiMetaVisibleCount,
   isEnabled,

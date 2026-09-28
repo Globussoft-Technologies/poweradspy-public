@@ -3,6 +3,7 @@ import {
   formatAiFilterOptionLabel,
   findActiveAiQuickFilterPreset,
   hasActiveAiFilters,
+  mergeAiQuickFilter,
   replaceAiFilters,
   resolveAiQuickFilterPresets,
 } from "../../src/utils/aiQuickFilterPresets";
@@ -176,7 +177,7 @@ describe("AI quick filter presets", () => {
     expect(next.ai_hook).toEqual(["scarcity", "urgency", "discount"]);
   });
 
-  it("expands nested category presets to the matching child leaves", () => {
+  it("keeps nested category presets parent-only at the search boundary", () => {
     const doc = makeDoc();
     const next = replaceAiFilters(
       { country_filter: ["US"] },
@@ -186,7 +187,7 @@ describe("AI quick filter presets", () => {
 
     expect(next.country_filter).toEqual(["US"]);
     expect(next.ai_category_id).toEqual(["1009"]);
-    expect(next.ai_subcategory_id).toEqual(["10090001", "10090002"]);
+    expect(next).not.toHaveProperty("ai_subcategory_id");
   });
 
   it("recognizes a preset regardless of selected-value ordering", () => {
@@ -229,8 +230,31 @@ describe("AI quick filter presets", () => {
     expect(next).toEqual({
       country_filter: ["US"],
       ai_category_id: ["1009"],
-      ai_subcategory_id: ["10090001", "10090002"],
     });
+  });
+
+  it("keeps prompt AI filters while replacing the previous quick strategy", () => {
+    const doc = makeDoc();
+    const presets = resolveAiQuickFilterPresets(doc);
+    const flashSale = presets.find((preset) => preset.id === "flash_sale");
+    const b2bSaas = presets.find((preset) => preset.id === "b2b_saas");
+    const next = mergeAiQuickFilter(
+      {
+        country_filter: ["US"],
+        ai_offering_type: ["product"],
+        ...flashSale.filters,
+      },
+      doc,
+      b2bSaas.filters,
+      flashSale,
+    );
+
+    expect(next).toEqual({
+      country_filter: ["US"],
+      ai_offering_type: ["product"],
+      ai_category_id: ["1009"],
+    });
+    expect(next).not.toHaveProperty("ai_hook");
   });
 
   it("clears every configured AI key while retaining normal filters", () => {
