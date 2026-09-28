@@ -2288,6 +2288,10 @@ const App = () => {
   // Only filter-producing AI searches need prompt cleanup when their filters
   // are edited manually. Keyword-only AI searches must keep their prompt.
   const aiPromptFilterSnapshotRef = useRef(null);
+  // A Quick Filter is a temporary layer over the prompt result. Keep the
+  // prompt-only values separately so removing that layer can restore fields
+  // which the preset temporarily replaced.
+  const aiPromptBaseFilterSnapshotRef = useRef(null);
   // `undefined` keeps legacy/manual preset inference available; null means an
   // AI plan explicitly selected no visible Quick Filter preset.
   const [aiQuickFilterId, setAiQuickFilterId] = useState(undefined);
@@ -2299,10 +2303,16 @@ const App = () => {
     // Applying a preset starts a new result load, so stale recovery prompts
     // should not remain attached to the previous AI response.
     setAiSearchSuggestions([]);
-    if (
-      String(ui.aiPrompt || '').trim() &&
-      analytics?.filterName?.startsWith('quick_filter_')
-    ) {
+    const hasAiPrompt = Boolean(String(ui.aiPrompt || '').trim());
+    const isQuickPresetApply = analytics?.filterName?.startsWith('quick_filter_');
+    let filtersToApply = nextFilters;
+
+    if (hasAiPrompt && isQuickPresetApply) {
+      if (aiPromptBaseFilterSnapshotRef.current === null) {
+        aiPromptBaseFilterSnapshotRef.current = {
+          ...(aiPromptFilterSnapshotRef.current || {}),
+        };
+      }
       const aiMetaDoc = sdui.config?.sidebar?.find(
         (doc) => doc?._id === 'ai_meta' && doc.visible !== false,
       );
@@ -2325,9 +2335,26 @@ const App = () => {
       aiPromptFilterSnapshotRef.current = Object.keys(nextSnapshot).length
         ? nextSnapshot
         : null;
+    } else if (
+      hasAiPrompt &&
+      analytics === null &&
+      aiPromptBaseFilterSnapshotRef.current !== null
+    ) {
+      // Quick Filter reset must remove only the temporary preset layer. Put
+      // the prompt's original values back before the normal state update so
+      // overlapping AI fields are restored as well.
+      const promptSnapshot = aiPromptBaseFilterSnapshotRef.current;
+      filtersToApply = {
+        ...nextFilters,
+        ...promptSnapshot,
+      };
+      aiPromptFilterSnapshotRef.current = Object.keys(promptSnapshot).length
+        ? { ...promptSnapshot }
+        : null;
+      aiPromptBaseFilterSnapshotRef.current = null;
     }
 
-    sdui.setAllFilters?.(nextFilters, analytics);
+    sdui.setAllFilters?.(filtersToApply, analytics);
   }, [sdui.config, sdui.setAllFilters, ui.aiPrompt]);
 
   // Clear the AI-owned query state without changing the user's selected
@@ -2339,6 +2366,7 @@ const App = () => {
     aiAbortRef.current = null;
     aiRunIdRef.current += 1;
     aiPromptFilterSnapshotRef.current = null;
+    aiPromptBaseFilterSnapshotRef.current = null;
     aiSearchExecutionRef.current = null;
     aiBroadenSearchRef.current = null;
     aiExpectationRecordsRef.current = [];
@@ -2374,6 +2402,7 @@ const App = () => {
       sdui.setAllFilters?.(remainingFilters);
     }
     aiPromptFilterSnapshotRef.current = null;
+    aiPromptBaseFilterSnapshotRef.current = null;
   }, [sdui.filterValues, sdui.setAllFilters]);
 
   const restoreAllPlatforms = useCallback(() => {
@@ -2442,6 +2471,7 @@ const App = () => {
     setAiCapabilityMessage(null);
     setAiSearchSuggestions([]);
     aiPromptFilterSnapshotRef.current = null;
+    aiPromptBaseFilterSnapshotRef.current = null;
     aiSearchExecutionRef.current = null;
     aiBroadenSearchRef.current = null;
     aiExpectationRecordsRef.current = [];
@@ -2563,6 +2593,9 @@ const App = () => {
       aiPromptFilterSnapshotRef.current = Object.keys(committedAiFilters).length > 0
         ? committedAiFilters
         : null;
+      aiPromptBaseFilterSnapshotRef.current = Object.keys(committedAiFilters).length > 0
+        ? { ...committedAiFilters }
+        : null;
       sdui.setAllFilters?.(nextFilters);
       const selectedTier = getPlanningTier(planning, tierIndex);
       aiSearchExecutionRef.current = {
@@ -2603,6 +2636,7 @@ const App = () => {
         sdui.setAllFilters?.(remainingFilters);
       }
       aiPromptFilterSnapshotRef.current = null;
+      aiPromptBaseFilterSnapshotRef.current = null;
       aiSearchExecutionRef.current = null;
       aiBroadenSearchRef.current = null;
       aiExpectationRecordsRef.current = [];
@@ -3016,6 +3050,25 @@ const App = () => {
       JSON.stringify(sdui.filterValues?.[key]) !== JSON.stringify(value)
     ));
     if (!aiFilterChanged) return;
+
+    // Removing a Quick Filter chip changes the temporary preset layer, not
+    // the prompt that produced the underlying result. When the prompt-owned
+    // snapshot still matches, keep the prompt active and drop the temporary
+    // layer marker instead of resetting to the unfiltered Ads Library.
+    const promptBaseSnapshot = aiPromptBaseFilterSnapshotRef.current;
+    if (
+      promptBaseSnapshot !== null &&
+      Object.entries(promptBaseSnapshot).every(([key, value]) => (
+        JSON.stringify(sdui.filterValues?.[key]) === JSON.stringify(value)
+      ))
+    ) {
+      aiPromptFilterSnapshotRef.current = Object.keys(promptBaseSnapshot).length
+        ? { ...promptBaseSnapshot }
+        : null;
+      aiPromptBaseFilterSnapshotRef.current = null;
+      return;
+    }
+
     clearAiPromptState();
   }, [
     aiSearchLoading,

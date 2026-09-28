@@ -250,6 +250,30 @@ describe("AiQuickFilters", () => {
     );
   });
 
+  it("resets only the active quick strategy when a prompt is active", async () => {
+    const onApply = vi.fn();
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{
+          ai_offering_type: ["product"],
+          ai_category_id: ["1009"],
+        }}
+        aiPrompt="Show me ads for weight-loss products"
+        activeQuickFilterId="b2b_saas"
+        onApply={onApply}
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTitle("Clear all AI filters"));
+
+    expect(onApply).toHaveBeenCalledWith(
+      { ai_offering_type: ["product"] },
+      null,
+    );
+  });
+
   it("highlights only the preset explicitly named by the planner", async () => {
     render(
       <AiQuickFilters

@@ -165,7 +165,8 @@ const AiQuickFilters = ({
     }
     discardAiFilterDraft();
     onQuickFilterChange?.(presetId);
-    const nextFilters = presetId && String(aiPrompt || '').trim()
+    const hasPrompt = Boolean(String(aiPrompt || '').trim());
+    const nextFilters = hasPrompt && (presetId || activePreset)
       ? mergeAiQuickFilter(filterValues, doc, replacement, activePreset)
       : replaceAiFilters(filterValues, doc, replacement);
     onApply?.(

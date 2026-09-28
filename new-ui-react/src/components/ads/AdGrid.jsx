@@ -259,9 +259,10 @@ const AdGrid = ({
     () => hasActiveAiFilters(filterValues, aiFiltersDoc),
     [filterValues, aiFiltersDoc],
   );
-  // Only label filters as inferred when the current result came from an AI
-  // prompt. Manually opening the AI Filters panel should not claim inference.
-  const isAiSearchResult = Boolean(String(aiPrompt || "").trim()) && isAiFilteredResult;
+  // A planner prompt and an explicitly selected Quick Filter are both AI
+  // result sources. Manual filters from the sidebar/modal remain unlabelled.
+  const hasAiResultSource = Boolean(String(aiPrompt || "").trim()) || aiQuickFilterId != null;
+  const isAiSearchResult = hasAiResultSource && isAiFilteredResult;
 
   // "Total Ads" = the ES match total from the backend (`adsMeta` is per-network
   // `meta.total`, captured once at page 0 in App.jsx, stable across pages). The

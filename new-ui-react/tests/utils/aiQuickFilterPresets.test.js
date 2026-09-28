@@ -257,6 +257,28 @@ describe("AI quick filter presets", () => {
     expect(next).not.toHaveProperty("ai_hook");
   });
 
+  it("removes the active quick strategy without removing prompt AI filters", () => {
+    const doc = makeDoc();
+    const b2bSaas = resolveAiQuickFilterPresets(doc).find(
+      (preset) => preset.id === "b2b_saas",
+    );
+    const next = mergeAiQuickFilter(
+      {
+        country_filter: ["US"],
+        ai_offering_type: ["product"],
+        ...b2bSaas.filters,
+      },
+      doc,
+      {},
+      b2bSaas,
+    );
+
+    expect(next).toEqual({
+      country_filter: ["US"],
+      ai_offering_type: ["product"],
+    });
+  });
+
   it("clears every configured AI key while retaining normal filters", () => {
     const doc = makeDoc();
     const next = replaceAiFilters(
