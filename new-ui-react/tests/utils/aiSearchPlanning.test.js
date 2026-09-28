@@ -3,6 +3,7 @@ import {
   formatPlanningUnsupportedMessage,
   findNextExecutablePlanningTier,
   getPlanningQuickFilterId,
+  getPlanningSuggestions,
   getPlanningUnsupported,
   hasExplicitPlanningSubject,
   hasExecutableMappedSearch,
@@ -21,6 +22,25 @@ describe("AI search planning helpers", () => {
     expect(getPlanningQuickFilterId({ quick_filter: "app_install" })).toBe("app_install");
     expect(getPlanningQuickFilterId({ quick_filter: "" })).toBeNull();
     expect(getPlanningQuickFilterId({})).toBeNull();
+  });
+
+  it("normalizes and caps planner Did you mean suggestions", () => {
+    expect(getPlanningSuggestions({
+      suggestions: [
+        { prompt: "  Show shoe ads  ", kind: "exact" },
+        { prompt: "Show ads from India", kind: "broader" },
+        { prompt: "Show ads", kind: "broadest" },
+        { prompt: "ignored fourth suggestion", kind: "exact" },
+        { prompt: "   ", kind: "exact" },
+        null,
+      ],
+    })).toEqual([
+      { prompt: "Show shoe ads", kind: "exact" },
+      { prompt: "Show ads from India", kind: "broader" },
+      { prompt: "Show ads", kind: "broadest" },
+    ]);
+    expect(getPlanningSuggestions({ suggestions: [] })).toEqual([]);
+    expect(getPlanningSuggestions({})).toEqual([]);
   });
 
   it("does not treat platform-only or unsupported-only plans as executable", () => {

@@ -327,6 +327,26 @@ describe('aiSearchMapper', () => {
     expect(mapped.sortBy).not.toBe('popular');
   });
 
+  it('maps AI popularity sorting to the live popularity_score SDUI option', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook', 'instagram'],
+      order_column: 'popularity',
+      order_by: 'desc',
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'sort_by',
+          type: 'radio',
+          options: [{ label: 'Popularity', value: 'popularity_score' }],
+        }],
+      }],
+    });
+
+    expect(mapped.sortBy).toBe('popularity_score');
+    expect(mapped.sortDirection).toBe('desc');
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
   it('preserves ascending direction and domain-registration sorting', () => {
     const mapped = mapArgsToFilters({
       network: ['facebook'],

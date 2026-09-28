@@ -26,6 +26,25 @@ export const getPlanningQuickFilterId = (planning) => {
   return normalized || null;
 };
 
+/**
+ * Keep only usable DS "Did you mean" entries and cap the UI at the contract's
+ * maximum of three suggestions. Invalid entries are ignored so a malformed
+ * upstream item cannot render an empty or non-clickable chip.
+ */
+export const getPlanningSuggestions = (planning) => {
+  if (!Array.isArray(planning?.suggestions)) return [];
+  return planning.suggestions
+    .filter((suggestion) => suggestion && typeof suggestion === 'object')
+    .map((suggestion) => ({
+      prompt: String(suggestion.prompt || '').trim(),
+      kind: ['exact', 'broader', 'broadest'].includes(suggestion.kind)
+        ? suggestion.kind
+        : null,
+    }))
+    .filter((suggestion) => suggestion.prompt)
+    .slice(0, 3);
+};
+
 export const getPlanningOutcome = (planning) => {
   const outcome = String(planning?.outcome || '').trim().toLowerCase();
   return outcome || null;

@@ -46,6 +46,7 @@ import {
   findNextExecutablePlanningTier,
   getPlanningOutcome,
   getPlanningQuickFilterId,
+  getPlanningSuggestions,
   getPlanningTier,
   getPlanningUnsupported,
   hasExplicitPlanningSubject,
@@ -522,6 +523,9 @@ const App = () => {
   // is separate from the ordinary empty-search state so the UI never says
   // "No ads found" when no search was actually executed.
   const [aiCapabilityMessage, setAiCapabilityMessage] = useState(null);
+  // Planner-provided recovery prompts are transient UI state; they are not
+  // search filters and must disappear when the prompt/context changes.
+  const [aiSearchSuggestions, setAiSearchSuggestions] = useState([]);
   const [useSample, setUseSample] = useState(USE_SAMPLE_DATA);
 
   const [isHeaderScrolled, setIsHeaderScrolled] = useState(false);
@@ -1632,6 +1636,7 @@ const App = () => {
       // AI capability copy is only meaningful while AI mode is active. The
       // health guard can switch modes without going through the AI reset path.
       setAiCapabilityMessage(null);
+      setAiSearchSuggestions([]);
       dismissAiToast();
       // A failed/unsupported AI plan has no valid search to restore. Clear its
       // persisted prompt when the health guard leaves AI mode, otherwise the
@@ -2291,6 +2296,9 @@ const App = () => {
   // changes AI filters. Otherwise the subsequent state update looks like a
   // manual chip edit and clears the prompt from the search bar.
   const handleAiQuickFilterApply = useCallback((nextFilters, analytics = null) => {
+    // Applying a preset starts a new result load, so stale recovery prompts
+    // should not remain attached to the previous AI response.
+    setAiSearchSuggestions([]);
     if (
       String(ui.aiPrompt || '').trim() &&
       analytics?.filterName?.startsWith('quick_filter_')
@@ -2337,6 +2345,7 @@ const App = () => {
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
     aiCapabilityOnlyRef.current = false;
+    setAiSearchSuggestions([]);
     setAiSearchLoading(false);
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
@@ -2431,6 +2440,7 @@ const App = () => {
     }
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
+    setAiSearchSuggestions([]);
     aiPromptFilterSnapshotRef.current = null;
     aiSearchExecutionRef.current = null;
     aiBroadenSearchRef.current = null;
@@ -2495,6 +2505,7 @@ const App = () => {
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
     aiCapabilityOnlyRef.current = false;
+    setAiSearchSuggestions([]);
     // Store the raw user prompt separately so Ask AI keeps showing exactly what
     // the user typed even when the DS payload rewrites the internal query.
     dispatch(setAiPrompt(trimmed));
@@ -2611,6 +2622,16 @@ const App = () => {
       });
       const { payloads, ref_id: refId } = plan;
       const topPlanning = plan?.planning || payloads?.find((payload) => payload?.planning)?.planning || null;
+      // Suggestions are planner recovery metadata, not Common Search fields.
+      // Prefer the response-level planning object, with a tier fallback for
+      // older DS responses that attach planning only to payload items.
+      const topSuggestions = getPlanningSuggestions(topPlanning);
+      const tierSuggestions = topSuggestions.length
+        ? topSuggestions
+        : (payloads || [])
+          .map((payload) => getPlanningSuggestions(payload?.planning))
+          .find((suggestions) => suggestions.length) || [];
+      setAiSearchSuggestions(tierSuggestions);
       // DS normally nests the outcome under planning, but keep the proxy's
       // top-level fallback meaningful for older/upstream responses too.
       const outcome = getPlanningOutcome(topPlanning) || getPlanningOutcome({ outcome: plan?.outcome });
@@ -2842,6 +2863,8 @@ const App = () => {
       }
 
       const selectedPlanning = matchedPlanning || topPlanning;
+      const selectedSuggestions = getPlanningSuggestions(selectedPlanning);
+      if (selectedSuggestions.length) setAiSearchSuggestions(selectedSuggestions);
       const partialNotice = getPlanningOutcome(selectedPlanning) === 'partial_compatibility'
         ? formatPlanningCapabilityMessage(selectedPlanning)
         : null;
@@ -2869,6 +2892,7 @@ const App = () => {
         }
 
         currentTierIndex = nextTier.index;
+        setAiSearchSuggestions([]);
         const nextPlanning = nextTier.planning || topPlanning;
         const nextPartialNotice = getPlanningOutcome(nextPlanning) === 'partial_compatibility'
           ? formatPlanningCapabilityMessage(nextPlanning)
@@ -3385,6 +3409,8 @@ const App = () => {
         aiSearchAvailable={aiSearchAvailable}
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}
+        aiSuggestions={aiSearchSuggestions}
+        onAiSuggestionsDismiss={() => setAiSearchSuggestions([])}
         onNotifOpenChange={setNotificationsOpen}
         onSearchDropdownOpenChange={handleSearchDropdownOpenChange}
         searchIn={ui.searchIn}

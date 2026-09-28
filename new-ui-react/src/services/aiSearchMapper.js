@@ -579,12 +579,21 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     const sortFilter = findFilter(config, FILTER_IDS.sort);
     if (semantic) {
       if (sortFilter) {
-        // SDUI has used both `domain_sort` and the DS contract's
-        // `domain_reg_date`; accept either live option without weakening the
-        // validation for unrelated sort values.
+        // SDUI has used several aliases for the same visible sort. Keep the
+        // validation against live options, but accept the contract value and
+        // the legacy UI value so AI Search does not reject a valid sort when
+        // environments are on different SDUI revisions.
         const sortCandidates = semantic === 'domain_sort'
           ? ['domain_sort', 'domain_reg_date', '-domain_reg_date']
-          : [semantic];
+          : semantic === 'popular'
+            ? ['popularity_score', 'popularity', 'popular', '-popularity_score']
+            : semantic === 'impressions'
+              ? ['impressions', 'impression', 'impression_sort']
+              : semantic === 'running_longest'
+                ? ['running_days', 'running_longest', 'ad_running_days', 'ad_running_days_sort']
+                : semantic === 'newest'
+                  ? ['newest', 'created_at', 'post_date']
+                  : [semantic];
         const r = sortCandidates
           .map((candidate) => resolveOption(sortFilter, candidate))
           .find((value) => value !== undefined);

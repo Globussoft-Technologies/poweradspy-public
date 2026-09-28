@@ -726,6 +726,20 @@ const AdGrid = ({
     const countries = Array.isArray(rawCountry)
       ? rawCountry.join(", ")
       : rawCountry;
+    const asUrl = (value) => {
+      const parts = Array.isArray(value) ? value : [value];
+      return parts
+        .map((part) => (typeof part === "string" ? part.trim() : ""))
+        .filter((part) => part && part !== "null" && part !== "undefined")
+        .join("||");
+    };
+    const firstUrl = (...values) => values.map(asUrl).find(Boolean) || "";
+    const asUrlList = (value) => {
+      if (Array.isArray(value)) return value.map(asUrl).filter(Boolean);
+      return typeof value === "string"
+        ? value.split("||").map((url) => url.trim()).filter(Boolean)
+        : [];
+    };
 
     const headers = [
       "Sr. No",
@@ -738,6 +752,9 @@ const AdGrid = ({
       "Platform",
       "Post Date",
       "Countries",
+      "Initial URL",
+      "Redirect URL",
+      "Ad URL",
     ];
 
     const limitedExportAds = exportAds.slice(0, 100);
@@ -746,6 +763,33 @@ const AdGrid = ({
       const keyword = Array.isArray(ad.keywords)
         ? ad.keywords.join(", ")
         : ad.keywords || "";
+      const network = String(ad.network || "").toLowerCase();
+      const marketUrls = ad.marketPlatformUrls || {};
+      const redirectChain = asUrlList(
+        marketUrls.redirect_urls ?? ad.redirect_urls,
+      );
+      const commonInitialUrl = firstUrl(
+        ad.destinationUrl,
+        marketUrls.url_destination,
+        marketUrls.source_url,
+      );
+      // GDN uses ad_url as its initial click and destination_url as its Ad URL.
+      const initialUrl = network === "gdn"
+        ? firstUrl(ad.adUrl, commonInitialUrl)
+        : network === "youtube"
+          ? firstUrl(redirectChain[0], commonInitialUrl)
+          : commonInitialUrl;
+      const redirectUrl = network === "youtube"
+        ? (redirectChain.length > 1 ? redirectChain.join("||") : "")
+        : firstUrl(
+            ad.url,
+            ad.redirectUrl,
+            marketUrls.redirect_url,
+            marketUrls.final_url,
+          );
+      const adUrl = network === "gdn"
+        ? commonInitialUrl
+        : firstUrl(ad.tiktokLibraryUrl, ad.adUrl);
       return [
         index + 1,
         ad.adId || ad.id || "",
@@ -757,6 +801,9 @@ const AdGrid = ({
         (ad.network || "").toUpperCase(),
         ad.date || ad.firstSeen || "",
         countries,
+        initialUrl,
+        redirectUrl,
+        adUrl,
       ]
         .map(escapeVal)
         .join(",");

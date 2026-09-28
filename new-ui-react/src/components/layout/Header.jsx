@@ -139,6 +139,8 @@ const Header = ({
   aiSearchAvailable = false,
   aiSearchChecked = false,
   aiSearchLoading = false,
+  aiSuggestions = [],
+  onAiSuggestionsDismiss,
   onCancelAiSearch,
   onNotifOpenChange,
   onSearchDropdownOpenChange,
@@ -842,6 +844,7 @@ const Header = ({
                   value={localQuery}
                   onChange={(val) => {
                     setLocalQuery(val);
+                    if (aiMode) onAiSuggestionsDismiss?.();
                     if (val.length > 0) setShowAiPrompts(false);
                     if (val === "") {
                       if (aiMode) {
@@ -933,6 +936,40 @@ const Header = ({
                           className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
                         />
                         <span className="min-w-0 truncate whitespace-nowrap">{prompt}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {aiMode && !aiSearchLoading && !searchTypeOpen && !showAiPrompts && aiSuggestions.length > 0 && (
+                <div
+                  className="absolute left-0 right-0 top-full z-[85] mt-3 rounded-2xl border border-[#8b5cf6]/30 bg-theme-surface p-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] animate-in fade-in slide-in-from-top-2 duration-200"
+                  role="group"
+                  aria-label="Did you mean suggestions"
+                >
+                  <div className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6]">
+                    Did you mean:
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {aiSuggestions.map((suggestion, index) => (
+                      <button
+                        key={`${suggestion.prompt}-${index}`}
+                        type="button"
+                        onClick={() => {
+                          setShowAiPrompts(false);
+                          setLocalQuery(suggestion.prompt);
+                          onAiSuggestionsDismiss?.();
+                          onAiSearch?.(suggestion.prompt);
+                        }}
+                        className="group flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-full border border-theme-border bg-theme-text/[0.025] px-3 py-1.5 text-left text-[11px] font-medium text-theme-text transition-colors hover:border-[#8b5cf6]/45 hover:bg-[#8b5cf6]/10"
+                        aria-label={`Run suggested search: ${suggestion.prompt}`}
+                      >
+                        <Sparkles
+                          size={13}
+                          className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
+                        />
+                        <span className="min-w-0 whitespace-normal">{suggestion.prompt}</span>
                       </button>
                     ))}
                   </div>
