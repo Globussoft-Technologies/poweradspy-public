@@ -4,6 +4,7 @@ import { searchOnboardingCategory, saveOnboarding, fetchOnboardingPreview, fetch
 import { fetchSDUIConfig } from "../../services/sduiService";
 import { findCountryOptions } from "../../utils/countryFilter";
 import { dismissOnboardingForUserId } from "../../hooks/useAuth";
+import { trackProductEvent } from "../../utils/googleAnalytics";
 
 const MAX_COMPETITORS = 3;
 const MAX_COUNTRIES = 3;
@@ -397,6 +398,18 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
       return;
     }
     setError("");
+
+    // GA4: record how many filters were picked on "Show trending ads". The
+    // `onboarding_filters` param feeds the event-scoped custom dimension of the
+    // same name; the *_count params can be registered as custom metrics.
+    const categoriesCount = selectedCategory ? 1 : 0;
+    trackProductEvent("onboarding_filters", {
+      onboarding_filters: `categories:${categoriesCount}|countries:${countries.length}|competitors:${competitors.length}`,
+      categories_count: categoriesCount,
+      countries_count: countries.length,
+      competitors_count: competitors.length,
+    }).catch(() => {});
+
     setSubmitting(true);
     setStep("loading");
     try {

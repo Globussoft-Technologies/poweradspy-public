@@ -139,9 +139,15 @@ const BasicInfo = ({
   const outgoing = Array.isArray(outgoingLinks)
     ? outgoingLinks[0]
     : outgoingLinks;
-  const sourceUrl = outgoing?.source_url || "";
-  const stepRedirect = outgoing?.redirect_url || "";
-  const targetUrl = outgoing?.final_url || "";
+  // Some rows store redirect chains as "||"-joined hops where every hop is
+  // blank (e.g. "||||" for a 5-hop chain with no intermediate redirect),
+  // which rendered as literal pipe characters. Re-joining the filtered
+  // splitUrls() result drops those empty hops, collapsing to "" when none
+  // of them had real content.
+  const cleanUrl = (val) => splitUrls(val).join("||");
+  const sourceUrl = cleanUrl(outgoing?.source_url || "");
+  const stepRedirect = cleanUrl(outgoing?.redirect_url || "");
+  const targetUrl = cleanUrl(outgoing?.final_url || "");
 
   const CopyBtn = ({ text }) => {
     const [copied, setCopied] = useState(false);
@@ -423,7 +429,7 @@ const BasicInfo = ({
 
   return (
     <div
-      className={`grid grid-cols-1 ${showOutgoingLinks ? "lg:grid-cols-2" : ""} gap-4 px-6`}
+      className="grid grid-cols-1 gap-4 px-6"
     >
       {/* Basic URLs */}
       {/* Source App must be able to render even when there are no URL rows
@@ -600,42 +606,94 @@ const BasicInfo = ({
           <div
             className={`rounded-xl overflow-hidden border border-l-2 border-l-[#3759a3]/40 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/5"}`}
           >
-            {visibleOutgoingRows.map((url, i, arr) => (
-              <div
-                key={i}
-                className={`flex items-center gap-3 px-4 py-3 transition-all group ${i < arr.length - 1 ? (isLight ? "border-b border-gray-200" : "border-b border-white/5") : ""} ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
-              >
-                <div className="flex items-center gap-2 shrink-0 w-44">
-                  {url.icon && (
-                    <url.icon
-                      size={13}
-                      className="text-[#9f9f9f] opacity-70 shrink-0"
-                    />
-                  )}
-                  <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
-                    {url.label}
-                  </span>
-                </div>
-                <span
-                  className={`text-[14px] truncate flex-1 min-w-0 ${isLight ? "text-gray-800" : "text-white/80"}`}
-                >
-                  {url.value || "—"}
-                </span>
-                <div className="flex items-center shrink-0">
-                  {url.value && <CopyBtn text={url.value} />}
-                  {url.href && (
-                    <a
-                      href={url.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`p-1.5 rounded-md transition-colors ${isLight ? "text-gray-400 hover:text-gray-500 hover:bg-gray-100" : "text-white/30 hover:text-white/60 hover:bg-white/10"}`}
+            {visibleOutgoingRows.map((url, i, arr) => {
+              const urlList = splitUrls(url.value);
+              const isMultiUrl = urlList.length > 1;
+
+              return (
+                <div key={i}>
+                  {isMultiUrl ? (
+                    // Multiple hops — show label once, then each hop on its own row
+                    <>
+                      <div
+                        className={`flex items-center gap-3 px-4 py-3 transition-all group ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
+                      >
+                        <div className="flex items-center gap-2 shrink-0 w-44">
+                          {url.icon && (
+                            <url.icon
+                              size={13}
+                              className="text-[#9f9f9f] opacity-70 shrink-0"
+                            />
+                          )}
+                          <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
+                            {url.label} ({urlList.length})
+                          </span>
+                        </div>
+                      </div>
+                      {urlList.map((singleUrl, j) => (
+                        <div
+                          key={j}
+                          className={`flex items-center gap-3 px-4 py-2 pl-12 transition-all group ${isLight ? "bg-gray-50/30 border-t border-gray-100 hover:bg-black/[0.01]" : "bg-white/[0.01] border-t border-white/3 hover:bg-white/[0.02]"}`}
+                        >
+                          <span
+                            className={`text-[13px] truncate flex-1 min-w-0 ${isLight ? "text-gray-800" : "text-white/80"}`}
+                            title={singleUrl}
+                          >
+                            {singleUrl}
+                          </span>
+                          <div className="flex items-center shrink-0">
+                            <CopyBtn text={singleUrl} />
+                            <a
+                              href={singleUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`p-1.5 rounded-md transition-colors ${isLight ? "text-gray-400 hover:text-gray-500 hover:bg-gray-100" : "text-white/30 hover:text-white/60 hover:bg-white/10"}`}
+                            >
+                              <ExternalLink size={14} />
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    // Single URL (or empty) — original single-line display
+                    <div
+                      className={`flex items-center gap-3 px-4 py-3 transition-all group ${i < arr.length - 1 ? (isLight ? "border-b border-gray-200" : "border-b border-white/5") : ""} ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
                     >
-                      <ExternalLink size={14} />
-                    </a>
+                      <div className="flex items-center gap-2 shrink-0 w-44">
+                        {url.icon && (
+                          <url.icon
+                            size={13}
+                            className="text-[#9f9f9f] opacity-70 shrink-0"
+                          />
+                        )}
+                        <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
+                          {url.label}
+                        </span>
+                      </div>
+                      <span
+                        className={`text-[14px] truncate flex-1 min-w-0 ${isLight ? "text-gray-800" : "text-white/80"}`}
+                      >
+                        {url.value || "—"}
+                      </span>
+                      <div className="flex items-center shrink-0">
+                        {url.value && <CopyBtn text={url.value} />}
+                        {url.href && (
+                          <a
+                            href={url.href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={`p-1.5 rounded-md transition-colors ${isLight ? "text-gray-400 hover:text-gray-500 hover:bg-gray-100" : "text-white/30 hover:text-white/60 hover:bg-white/10"}`}
+                          >
+                            <ExternalLink size={14} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
