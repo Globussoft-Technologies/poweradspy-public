@@ -556,6 +556,30 @@ const firstNonEmptyString = (...values) => {
   return null;
 };
 
+
+
+
+// A carousel's per-card titles arrive as ONE string joined with "||," (or "||").
+// The stored title is capped at 255 chars, so a long carousel comes back cut
+// mid-title ("…md.||,Fra k"). Returns null for a plain (non-carousel) title.
+//   titles — one entry per stored card, cut-off tail fragment dropped
+//   title  — what to show for slides that have no stored title of their own:
+//            the shared title when every stored card has the same one; ''
+//            when the cut hides titles that differ (unknown, so show nothing
+//            rather than the wrong one)
+const TITLE_STORAGE_LIMIT = 255;
+const parseCarouselTitles = (val) => {
+  if (typeof val !== 'string' || !val) return null;
+  const sep = val.includes('||,') ? '||,' : (val.includes('||') ? '||' : null);
+  if (!sep) return null;
+  const wasCut = val.length >= TITLE_STORAGE_LIMIT && !val.endsWith(sep);
+  let titles = val.split(sep).map((s) => s.replace(/\|+$/, '').trim()).filter(Boolean);
+  if (wasCut && titles.length > 1) titles = titles.slice(0, -1);
+  const unique = [...new Set(titles)];
+  const title = unique.length === 1 ? unique[0] : (wasCut ? '' : (titles[0] || ''));
+  return { titles, title };
+};
+
 export const mapAdToCard = (raw) => {
   const resolvedNetwork = (raw.platform_network || raw.network || PLATFORM_ID_TO_NETWORK[Number(raw.platform)] || '').toLowerCase();
   const isAdmob = resolvedNetwork === 'admob';
@@ -737,7 +761,7 @@ export const mapAdToCard = (raw) => {
     lastSeenRaw: transparencyWindow?.lastSeenRaw ?? raw.last_seen ?? null,
     lastShownRaw: raw.last_shown ?? null,
     postDateRaw: raw.post_date ?? null,
-    title: raw.ad_title || '',
+    title: parseCarouselTitles(raw.ad_title)?.title ?? (raw.ad_title || ''),
     carouselMedia: (() => {
       let val = isGoogleTransparency
         ? transparencyOtherMedia
@@ -759,10 +783,7 @@ export const mapAdToCard = (raw) => {
     carouselTitles: (() => {
       const val = raw.ad_title;
       if (Array.isArray(val)) return val;
-      if (typeof val !== 'string' || !val) return [];
-      const sep = val.includes('||,') ? '||,' : (val.includes('||') ? '||' : null);
-      if (!sep) return [];
-      return val.split(sep).map(s => s.trim()).filter(Boolean);
+      return parseCarouselTitles(val)?.titles ?? [];
     })(),
     subtitle: raw.news_feed_description || '',
     adText : raw.ad_text || '',
