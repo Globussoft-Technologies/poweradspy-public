@@ -631,12 +631,13 @@ class SearchMixQueryBuilder {
       'instagram_ad_url.url_redirects',
       'instagram_ad_meta_data.destination_url',
     ];
+    // Preserve substring semantics used by AnalyticsModal. Do not switch to
+    // phrase matching: it misses markers embedded in URL terms. The direct
+    // analyzed fields are intentional; `.keyword` would scan whole URLs.
     const should = [];
     for (const v of mp) {
       const value = `*${v}*`;
-      for (const f of fields) {
-        should.push({ wildcard: { [f]: { value } } });
-      }
+      for (const f of fields) should.push({ wildcard: { [f]: { value } } });
     }
     return asFilter({ bool: { should, minimum_should_match: 1 } });
   }

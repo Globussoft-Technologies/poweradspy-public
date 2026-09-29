@@ -165,10 +165,11 @@ describe("GDN builder > clause generators (filter)", () => {
     b.setSource(["all"]);
     expect(b.build().body.query.bool.filter.some(f => JSON.stringify(f).includes("gdn_ad.source"))).toBe(false);
   });
-  it("marketPlatform → bool.should wildcards across 7 fields", () => {
+  it("marketPlatform → bool.should wildcards across 8 fields", () => {
     b.setMarketPlatform(["mp"]);
     const f = b.build().body.query.bool.filter.find(f => f.bool?.should?.[0]?.wildcard);
-    expect(f.bool.should.length).toBe(7);
+    expect(f.bool.should.length).toBe(8);
+    expect(f.bool.should.some(s => s.wildcard?.["gdn_ad_url.url"])).toBe(true);
   });
   it("adImageSize '300x250' → 2 range filters (width+height ± 50)", () => {
     b.setAdImageSize("300x250");

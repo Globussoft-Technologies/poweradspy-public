@@ -183,10 +183,11 @@ describe("Pinterest builder > clause generators (filter)", () => {
     b.setSource(["ios", "android"]);
     expect(b.build().body.query.bool.filter.some(f => f.bool?.should?.length === 2)).toBe(true);
   });
-  it("marketPlatform → bool.should wildcards across 6 fields", () => {
+  it("marketPlatform → bool.should wildcards across 7 fields", () => {
     b.setMarketPlatform(["mp"]);
     const f = b.build().body.query.bool.filter.find(f => f.bool?.should?.[0]?.wildcard);
-    expect(f.bool.should.length).toBe(6);
+    expect(f.bool.should.length).toBe(7);
+    expect(f.bool.should.some(s => s.wildcard?.["pinterest_ad_url.url"])).toBe(true);
   });
 });
 

@@ -452,16 +452,21 @@ class SearchMixQueryBuilder {
     const mp = this._params.marketPlatform;
     if (!mp || !mp.length) return null;
     const fields = [
+      // AdDetailController exposes the raw URL from gdn_ad_url.url as `url`.
+      // Include the indexed ES field so a platform marker found there is also
+      // discoverable through the Marketing Platform filter.
+      'gdn_ad_url.url',
       'gdn_ad_url.url_destination', 'gdn_ad_url.url_redirects',
       'gdn_ad_outgoing_links.source_url', 'gdn_ad_outgoing_links.redirect_url', 'gdn_ad_outgoing_links.final_url',
       'gdn_ad_meta_data.destination_url', 'gdn_ad_meta_data.redirect_url',
     ];
+    // Preserve substring semantics used by AnalyticsModal. Do not switch to
+    // phrase matching: it misses markers embedded in URL terms. The direct
+    // analyzed fields are intentional; `.keyword` would scan whole URLs.
     const should = [];
     for (const v of mp) {
       const value = `*${v}*`;
-      for (const f of fields) {
-        should.push({ wildcard: { [f]: { value } } });
-      }
+      for (const f of fields) should.push({ wildcard: { [f]: { value } } });
     }
     return asFilter({ bool: { should, minimum_should_match: 1 } });
   }

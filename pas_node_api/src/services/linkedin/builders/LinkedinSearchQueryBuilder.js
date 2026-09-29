@@ -431,7 +431,17 @@ class LinkedinSearchQueryBuilder {
   _getMarketPlatformEnv() {
     const mp = this._params.marketPlatform;
     if (!mp || !mp.length) return null;
-    const should = mp.map(v => ({ wildcard: { redirect_urls: { value: `*${v}*` } } }));
+    // AnalyticsModal checks the SQL destination URL as well as the resolved
+    // click chain; both are indexed as flat LinkedIn ES fields.
+    const fields = ['redirect_urls', 'destination_url'];
+    // Preserve substring semantics used by AnalyticsModal. Do not switch to
+    // phrase matching: it misses markers embedded in URL terms. The direct
+    // analyzed fields are intentional; `.keyword` would scan whole URLs.
+    const should = [];
+    for (const v of mp) {
+      const value = `*${v}*`;
+      for (const field of fields) should.push({ wildcard: { [field]: { value } } });
+    }
     return asFilter({ bool: { should, minimum_should_match: 1 } });
   }
 

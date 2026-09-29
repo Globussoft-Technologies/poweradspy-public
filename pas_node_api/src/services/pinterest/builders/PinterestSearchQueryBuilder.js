@@ -388,10 +388,16 @@ class PinterestSearchQueryBuilder {
     const m = this._params.marketPlatform;
     if (!m || !m.length) return null;
     const fields = [
+      // AdDetailController exposes pinterest_ad_url.url as the raw `url`.
+      // Search it as well so the platform badge is filterable consistently.
+      'pinterest_ad_url.url',
       'pinterest_ad_url.url_destination','pinterest_ad_outgoing_links.source_url',
       'pinterest_ad_outgoing_links.redirect_url','pinterest_ad_outgoing_links.final_url',
       'pinterest_ad_url.url_redirects','pinterest_ad_meta_data.destination_url',
     ];
+    // Preserve substring semantics used by AnalyticsModal. Do not switch to
+    // phrase matching: it misses markers embedded in URL terms. The direct
+    // analyzed fields are intentional; `.keyword` would scan whole URLs.
     const should = [];
     for (const v of m) {
       const value = `*${v}*`;

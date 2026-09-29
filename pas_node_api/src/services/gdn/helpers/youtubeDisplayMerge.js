@@ -193,14 +193,20 @@ function buildSharedFilters(p) {
   const affFilter = matchFilter('affiliate_networks', p.affiliate);
   if (affFilter) filter.push(affFilter);
 
-  // Marketing Platform — mirror YouTube SearchMixQueryBuilder._getMarketPlatformEnv()
-  // (YouTube DISPLAY ads store the click chain in `redirect_urls`). Without this,
-  // merged YouTube DISPLAY ads leak through regardless of the selected marketing
-  // platform (e.g. an ad with no Adobe Audience Manager data appears when that
-  // filter is active).
+  // Marketing Platform — mirror YouTube SearchMixQueryBuilder._getMarketPlatformEnv().
+  // YouTube DISPLAY ads use flat ES fields, not the nested GDN URL fields. Keep
+  // the field name identical to the YouTube builder (`redirect_urls`, not its
+  // `.keyword` subfield) and include destination_url for parity with AnalyticsModal.
   const mpValues = ensureArr(p.market_platform).filter(v => v && v !== 'NA');
   if (mpValues.length) {
-    const should = mpValues.map(v => ({ wildcard: { 'redirect_urls.keyword': { value: `*${v}*` } } }));
+    // Keep the merged DISPLAY query aligned with YouTube's builder and retain
+    // substring semantics for markers embedded inside URL terms.
+    const fields = ['redirect_urls', 'destination_url'];
+    const should = [];
+    for (const v of mpValues) {
+      const value = `*${v}*`;
+      for (const field of fields) should.push({ wildcard: { [field]: { value } } });
+    }
     filter.push({ bool: { should, minimum_should_match: 1 } });
   }
 
