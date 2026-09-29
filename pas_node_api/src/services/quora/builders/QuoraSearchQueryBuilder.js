@@ -424,17 +424,10 @@ class QuoraSearchQueryBuilder {
     const mp = this._params.marketPlatform;
     if (!mp || !mp.length) return null;
     const fields = [
-      // AdDetailController reads quora_ad_url.url into the top-level `url`.
-      // Include it so platform markers present only in that raw URL are not
-      // missed by search.
-      'quora_ad_url.url',
       'quora_ad_url.url_destination', 'quora_ad_outgoing_links.source_url',
       'quora_ad_outgoing_links.redirect_url', 'quora_ad_outgoing_links.final_url',
       'quora_ad_url.url_redirects', 'quora_ad_meta_data.destination_url',
     ];
-    // Preserve substring semantics used by AnalyticsModal. Do not switch to
-    // phrase matching: it misses markers embedded in URL terms. The direct
-    // analyzed fields are intentional; `.keyword` would scan whole URLs.
     const should = [];
     for (const v of mp) {
       const value = `*${v}*`;

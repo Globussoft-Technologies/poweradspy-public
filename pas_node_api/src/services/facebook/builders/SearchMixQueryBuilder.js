@@ -635,14 +635,13 @@ class SearchMixQueryBuilder {
   _getMarketPlatformEnv() {
     const mp = this._params.marketPlatform;
     if (!mp || !mp.length) return null;
-    // Preserve AnalyticsModal's substring semantics: platform markers can be
-    // embedded in URL terms such as `_branch_match_id` or `branches`, which a
-    // phrase query would miss. Keep the wildcard on analyzed fields rather
-    // than `.keyword`, which would scan complete high-cardinality URLs.
+    // Original used leading+trailing wildcards in query_string — we keep
+    // the wildcard since URL substrings genuinely need a containment
+    // search and we can't change mappings. We do drop query_string in
+    // favour of a `bool.should` of `wildcard` queries (one per term),
+    // which avoids the QueryString parser cost and keeps each clause
+    // individually cacheable in filter context.
     const fields = [
-      // AdDetailController also exposes the raw SQL URL as `url`; keep the
-      // filter aligned for ads whose platform marker exists only in that URL.
-      'facebook_ad_url.url',
       'facebook_ad_url.url_destination',
       'facebook_ad_outgoing_links.source_url',
       'facebook_ad_outgoing_links.redirect_url',
@@ -653,7 +652,9 @@ class SearchMixQueryBuilder {
     const should = [];
     for (const v of mp) {
       const value = `*${v}*`;
-      for (const f of fields) should.push({ wildcard: { [f]: { value } } });
+      for (const f of fields) {
+        should.push({ wildcard: { [f]: { value } } });
+      }
     }
     return asFilter({ bool: { should, minimum_should_match: 1 } });
   }

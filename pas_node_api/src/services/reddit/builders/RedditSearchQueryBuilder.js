@@ -429,16 +429,10 @@ class RedditSearchQueryBuilder {
     const mp = this._params.marketPlatform;
     if (!mp || !mp.length) return null;
     const fields = [
-      // AdDetailController reads reddit_ad_url.url into the top-level `url`.
-      // Search the same indexed field so the Analytics badge and filter agree.
-      'reddit_ad_url.url',
       'reddit_ad_url.url_destination', 'reddit_ad_outgoing_links.source_url',
       'reddit_ad_outgoing_links.redirect_url', 'reddit_ad_outgoing_links.final_url',
       'reddit_ad_url.url_redirects', 'reddit_ad_meta_data.destination_url',
     ];
-    // Preserve substring semantics used by AnalyticsModal. Do not switch to
-    // phrase matching: it misses markers embedded in URL terms. The direct
-    // analyzed fields are intentional; `.keyword` would scan whole URLs.
     const should = [];
     for (const v of mp) {
       const value = `*${v}*`;

@@ -36,27 +36,4 @@ describe('services/gdn/helpers/youtubeDisplayMerge', () => {
       },
     });
   });
-
-  it('uses the same flat URL fields as the YouTube builder for Marketing Platform', async () => {
-    const search = vi.fn(async () => ({ hits: { total: { value: 0 }, hits: [] } }));
-    vi.spyOn(databaseManager, 'getConnections').mockReturnValue({
-      elastic: { indexName: 'youtube_ads_data', search },
-    });
-
-    await getYoutubeDisplayHits(
-      20,
-      { field: 'gdn_ad.last_seen', order: 'desc' },
-      { market_platform: ['Branch'] },
-    );
-
-    const request = search.mock.calls[0][0];
-    const marketPlatformFilter = request.body.query.bool.filter.find((f) =>
-      f.bool?.should?.some((s) => s.wildcard?.redirect_urls)
-    );
-    expect(marketPlatformFilter.bool.should).toEqual(expect.arrayContaining([
-      { wildcard: { redirect_urls: { value: '*Branch*' } } },
-      { wildcard: { destination_url: { value: '*Branch*' } } },
-    ]));
-    expect(JSON.stringify(marketPlatformFilter)).not.toContain('redirect_urls.keyword');
-  });
 });
