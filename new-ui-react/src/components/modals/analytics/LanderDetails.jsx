@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, ShieldCheck, Monitor, Maximize2, Download, X, MessageCircle, Phone } from "lucide-react";
 import { parsePhoneNumberFromString } from "libphonenumber-js/min";
@@ -192,7 +192,7 @@ const LanderDetails = ({
   const showWhatsappDetails = hasRotatorCount || phoneNumbers.length > 0;
   const [hasError, setHasError] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const settledRef = useRef(false); // set by onLoad/onError once the image resolves
+  const [isLoaded, setIsLoaded] = useState(false);
 
   // Close the enlarged preview on Escape.
   useEffect(() => {
@@ -202,17 +202,13 @@ const LanderDetails = ({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [showPreview]);
 
-  // Set timeout to hide if image doesn't load within 15 seconds. A cold CDN
-  // cache (cf-cache-status: MISS on first fetch) can take a few seconds past
-  // the old 5s budget, so this only needs to catch genuinely dead URLs.
+  // Reset load state when the screenshot changes. Only a real onError hides the
+  // section: a timeout-based hide unmounted the <img> mid-download for large
+  // full-page screenshots on slow browsers/cold CDN, so the section vanished
+  // until the URL prop happened to change and remounted it.
   useEffect(() => {
     setHasError(false);
-    settledRef.current = false;
-    if (!resolvedScreenshotUrl) return;
-    const timer = setTimeout(() => {
-      if (!settledRef.current) setHasError(true);
-    }, 15000);
-    return () => clearTimeout(timer);
+    setIsLoaded(false);
   }, [resolvedScreenshotUrl]);
 
   // processing.gif or null/empty means screenshot not ready
@@ -308,18 +304,23 @@ const LanderDetails = ({
           style={{ height: "320px", overflowY: "auto", overflowX: "hidden" }}
           onClick={() => setShowPreview(true)}
         >
+          {!isLoaded && (
+            <div
+              className={`absolute inset-0 flex items-center justify-center animate-pulse ${isLight ? "bg-gray-100" : "bg-white/[0.04]"}`}
+            >
+              <span className={`text-[12px] ${isLight ? "text-gray-400" : "text-white/40"}`}>
+                Loading lander screenshot…
+              </span>
+            </div>
+          )}
           <img
+            key={resolvedScreenshotUrl}
             src={resolvedScreenshotUrl}
             alt="Lander Screenshot"
             className="w-full"
             style={{ display: "block" }}
-            onError={() => {
-              settledRef.current = true;
-              setHasError(true);
-            }}
-            onLoad={() => {
-              settledRef.current = true;
-            }}
+            onError={() => setHasError(true)}
+            onLoad={() => setIsLoaded(true)}
           />
         </div>
       </div>
