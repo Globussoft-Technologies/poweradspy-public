@@ -192,6 +192,11 @@ async function getAdDetails(req, db, logger) {
       }
     }
 
+    // Top-level redirect URL, always from google_ad_url (url_type = 'R', joined
+    // in AD_DETAIL_SQL as `url`) — never from ES. market_platform_urls.redirect_url
+    // above is a separate ES-sourced field and is left as-is.
+    adData.redirect_url = adData.url || null;
+
     const isTransparency = Number(esSource.platform ?? adData.platform) === 18;
     if (isTransparency) {
       let transparencyPayload = null;
@@ -236,7 +241,9 @@ async function getAdDetails(req, db, logger) {
       adData.region_code = esSource.region_code || payload.region_code || null;
       adData.source = esSource.source || adData.source || null;
       adData.version = esSource.version || adData.version || null;
-      adData.redirect_url = esSource.redirect_url || payload.redirect_url || null;
+      // google_ad_url (url_type = 'R', joined in AD_DETAIL_SQL as `url`) is the
+      // source of truth for the redirect URL; never read from ES.
+      adData.redirect_url = adData.url || payload.redirect_url || null;
       adData.destination_url = hasOwn(esSource, 'destination_url')
         ? esSource.destination_url
         : adData.destination_url ?? null;

@@ -29,7 +29,8 @@ const INSIGHT_REGISTRY = [
   {
     key: 'outgoingLinks',
     fn: getGoogleOutgoings,
-    payload: (p) => ({ google_text_ad_id: p.google_text_ad_id }),
+    // getGoogleOutgoings reads `ad_id` (same as the standalone /ads/getGoogleOutgoings route).
+    payload: (p) => ({ ad_id: p.google_text_ad_id }),
   },
 ];
 

@@ -71,7 +71,7 @@ async function getGoogleOutgoings(req, db, logger) {
   try {
     const rows = await db.sql.query(OUTGOING_SQL, [p.ad_id]);
     if (rows && rows.length > 0) return { code: 200, data: rows };
-    return { code: 400, data: [] };
+      return { code: 400, data: [] };
   } catch (err) {
     logger.error('Error in getGoogleOutgoings', { error: err.message });
     return { code: 401, data: [] };

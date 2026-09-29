@@ -19,6 +19,31 @@ const NETWORK_AD_ID_FIELD = {
   tiktok:    'tiktok_ad_id',
 };
 
+// Google's outgoingLinks event can arrive as one SQL row per link. Every
+// consumer only reads outgoingLinks[0], so fold the rows into a single object
+// with "||"-joined fields (the same shape the ES ad doc stores), keeping all
+// links. Exact duplicate rows are dropped; already-merged input is unchanged.
+function mergeOutgoingLinks(rows) {
+  if (!Array.isArray(rows) || rows.length <= 1) return rows;
+  const seen = new Set();
+  const unique = rows.filter((row) => {
+    if (!row || typeof row !== 'object') return false;
+    const key = `${row.source_url ?? ''}\u0000${row.redirect_url ?? ''}\u0000${row.final_url ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  // A field may itself be an array of URLs — join it with "||" rather than
+  // letting String() comma-join it.
+  const asPiped = (v) => (Array.isArray(v) ? v.filter((u) => u != null).join('||') : (v ?? ''));
+  const join = (field) => unique.map((row) => asPiped(row[field])).join('||');
+  return [{
+    source_url: join('source_url'),
+    redirect_url: join('redirect_url'),
+    final_url: join('final_url'),
+  }];
+}
+
 /**
  * Custom hook to fetch ad insights via SSE streaming.
  * Sends the ad's network in the payload so the backend routes to the correct handler.
@@ -215,9 +240,12 @@ export function useAdInsights(
               const stateKey = event === 'adsLibUserData' ? 'advertiserUserData' : event;
 
               if (parsed.code === 200 && parsed.data != null) {
+                const value = stateKey === 'outgoingLinks' && normalizedNetwork === 'google'
+                  ? mergeOutgoingLinks(parsed.data)
+                  : parsed.data;
                 setInsights(prev => ({
                   ...prev,
-                  [stateKey]: parsed.data,
+                  [stateKey]: value,
                   [`${stateKey}Meta`]: parsed,
                 }));
               } else {

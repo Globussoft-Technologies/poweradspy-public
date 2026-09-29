@@ -35,7 +35,6 @@ const BasicInfo = ({
   // Platforms that hide outgoing links section
   const hideOutgoingLinks = [
     "tiktok",
-    "google",
     "reddit",
     "quora",
     "pinterest",
@@ -52,10 +51,15 @@ const BasicInfo = ({
     return Number.isFinite(num) && num > 0 ? num : null;
   };
 
-  // Split URLs by || separator if present
+  // Split URLs by || separator if present. Accepts a string, or an array whose
+  // items may themselves be "||"-joined; drops blanks and "null"/"undefined".
   const splitUrls = (url) => {
     if (!url) return [];
-    return url.split('||').map(u => u.trim()).filter(Boolean);
+    const parts = Array.isArray(url) ? url : [url];
+    return parts
+      .flatMap((u) => (u == null ? [] : String(u).split('||')))
+      .map((u) => u.trim())
+      .filter((u) => u && u !== 'null' && u !== 'undefined');
   };
 
   // market_platform_urls fallback (present in Pinterest, Native, etc.)
@@ -413,7 +417,7 @@ const BasicInfo = ({
 
   const outgoingRows = [
     { label: "SOURCE URL", icon: Globe, value: sourceUrl, href: sourceUrl },
-    { label: "STEP REDIRECT", icon: RefreshCw, value: stepRedirect, href: stepRedirect },
+    { label: "REDIRECT URL", icon: RefreshCw, value: stepRedirect, href: stepRedirect },
     { label: "TARGET URL", icon: Target, value: targetUrl, href: targetUrl },
   ];
   const visibleOutgoingRows = hideEmpty
@@ -608,12 +612,14 @@ const BasicInfo = ({
           >
             {visibleOutgoingRows.map((url, i, arr) => {
               const urlList = splitUrls(url.value);
-              const isMultiUrl = urlList.length > 1;
+              // Any URL (even a single one) is listed below its label so every
+              // row in this section lines up; only an empty value stays inline.
+              const isMultiUrl = urlList.length > 0;
 
               return (
                 <div key={i}>
                   {isMultiUrl ? (
-                    // Multiple hops — show label once, then each hop on its own row
+                    // Show label once, then each hop on its own row
                     <>
                       <div
                         className={`flex items-center gap-3 px-4 py-3 transition-all group ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
@@ -626,7 +632,7 @@ const BasicInfo = ({
                             />
                           )}
                           <span className="text-[12px] font-bold uppercase text-[#9f9f9f]">
-                            {url.label} ({urlList.length})
+                            {url.label}{urlList.length > 1 ? ` (${urlList.length})` : ""}
                           </span>
                         </div>
                       </div>

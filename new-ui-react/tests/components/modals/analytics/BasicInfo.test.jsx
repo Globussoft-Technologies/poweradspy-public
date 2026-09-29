@@ -192,8 +192,33 @@ describe("BasicInfo > outgoing links section", () => {
     );
     expect(queryByText("Out Going Links Flow")).toBeNull();
   });
-  it("hides section for google, reddit, quora, pinterest, native", () => {
-    for (const p of ["google", "reddit", "quora", "pinterest", "native"]) {
+  it("renders for google, one row per ||-joined link", () => {
+    const { getByText } = render(
+      <BasicInfo platform="google"
+        outgoingLinks={[{ source_url: "http://a.com||http://b.com", redirect_url: "||", final_url: "http://a.com||http://b.com" }]} />,
+    );
+    expect(getByText("Out Going Links Flow")).toBeInTheDocument();
+    expect(getByText("SOURCE URL (2)")).toBeInTheDocument();
+    expect(getByText("TARGET URL (2)")).toBeInTheDocument();
+  });
+  it("field given as an array (items may be ||-joined) → one row per URL", () => {
+    const { getByText } = render(
+      <BasicInfo platform="google"
+        outgoingLinks={[{ source_url: ["http://a.com", "http://b.com||http://c.com"], final_url: "http://f.com" }]} />,
+    );
+    expect(getByText("SOURCE URL (3)")).toBeInTheDocument();
+    expect(getByText("http://c.com")).toBeInTheDocument();
+  });
+  it("drops blank and 'null' hops from ||-joined values", () => {
+    const { getByText, queryByText } = render(
+      <BasicInfo platform="google"
+        outgoingLinks={{ source_url: "http://a.com||null||||http://b.com", final_url: "http://f.com" }} />,
+    );
+    expect(getByText("SOURCE URL (2)")).toBeInTheDocument();
+    expect(queryByText("null")).toBeNull();
+  });
+  it("hides section for reddit, quora, pinterest, native", () => {
+    for (const p of ["reddit", "quora", "pinterest", "native"]) {
       const { queryByText } = render(
         <BasicInfo platform={p} outgoingLinks={{ source_url: "x" }} />,
       );
@@ -220,12 +245,14 @@ describe("BasicInfo > outgoing links section", () => {
     expect(container.innerHTML).toMatch(/text-gray-800/);
     expect(container.innerHTML).toMatch(/bg-gray-50\/50/);
   });
-  it("outgoing links with stepRedirect renders STEP REDIRECT row", () => {
-    const { getByText } = render(
+  it("outgoing links with a redirect render a REDIRECT URL row (not STEP REDIRECT)", () => {
+    const { getByText, getAllByText, queryByText } = render(
       <BasicInfo platform="facebook"
         outgoingLinks={{ source_url: "http://s.com", redirect_url: "http://step.com", final_url: "http://f.com" }} />,
     );
-    expect(getByText("STEP REDIRECT")).toBeInTheDocument();
+    // One REDIRECT URL row in Basic Info + one in the outgoing-links section.
+    expect(getAllByText("REDIRECT URL")).toHaveLength(2);
+    expect(queryByText("STEP REDIRECT")).toBeNull();
     expect(getByText("http://step.com")).toBeInTheDocument();
   });
 });

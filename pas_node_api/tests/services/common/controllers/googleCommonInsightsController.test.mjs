@@ -93,7 +93,7 @@ describe("services/common/googleCommonInsightsController > getAdInsights", () =>
     expect(registry[0].payload(p)).toEqual({ ad_id: "g1", user_id: "u1", language: "en" });
     expect(registry[1].payload(p)).toEqual({ google_text_ad_id: "g1", user_id: "u1" });
     expect(registry[2].payload(p)).toEqual({ google_text_ad_id: "g1", user_id: "u1" });
-    expect(registry[3].payload(p)).toEqual({ google_text_ad_id: "g1" });
+    expect(registry[3].payload(p)).toEqual({ ad_id: "g1" });
   });
 
   it("merges req.body and req.query into normalizeParams input", async () => {
