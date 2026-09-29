@@ -4,14 +4,15 @@
  * YouTube landers — get_youtubeid_for_lander (BlackhatControllerYoutube@getYoutubeAdsWithCounrty).
  *
  * Flow (faithful to the PHP):
- *   1. Fetch up to 100 ads at redirect_status = 0 with a non-null destination_url.
- *   2. For each ad, check ES `youtube_ads_data` (match on `ad_id`):
- *        - present → resolve ISO codes (country_data.nicename → iso) and emit the ad
- *          (NOTE: youtube does NOT flip redirect_status to 2 here — only to 5 when missing).
+ *   1. Fetch up to 50 ads at redirect_status = 0 with a non-null destination_url.
+ *      (falls back to redirect_status = 2 not served today when none are pending).
+ *   2. Check every ad in ES `youtube_ads_data` (match on `ad_id`), in parallel:
+ *        - present → redirect_status = 2 + updated_date, resolve ISO codes, emit the ad.
  *        - absent  → set redirect_status = 5.
  *   3. Return { code, data } — same shape as the PHP JSON ("urls over" when none).
  *
- * ISO accumulator `a` is shared across ads to mirror the legacy PHP.
+ * Status updates and the ISO lookup are batched (one IN (...) query each), awaited one
+ * at a time so a request holds at most one MySQL connection.
  */
 
 const repo = require('./repository');
@@ -31,6 +32,32 @@ function isUsableDestinationUrl(value) {
   return !['null', 'undefined'].includes(trimmed.toLowerCase());
 }
 
+// [{ nicename, iso }] → Map(lowercased nicename → [iso, ...]). MySQL's nicename comparison is
+// case-insensitive, so lookups are keyed by lowercase.
+function buildIsoByNicename(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    if (r.iso === undefined || r.iso === null) continue;
+    const key = String(r.nicename).toLowerCase();
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r.iso);
+  }
+  return map;
+}
+
+// ISO codes for one ad's country names (each distinct name counted once, like SQL IN (...)).
+function isosFor(names, isoByNicename) {
+  const seen = new Set();
+  const out = [];
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(...(isoByNicename.get(key) || []));
+  }
+  return out;
+}
+
 async function getYoutubeAdsWithCountry(db, log) {
   const started = Date.now();
   const sql = db?.sql;
@@ -44,52 +71,54 @@ async function getYoutubeAdsWithCountry(db, log) {
 
     // PENDING has priority; only once it is fully drained fall back to IN_PROCESSING (ads
     // claimed by a worker that crashed/never finished) so they get re-served, not stranded.
+    // IN_PROCESSING ads already served today (updated_date = today) are skipped until tomorrow.
     let ads = await repo.getDataForLander(sql, PENDING);
     if (!ads.length) {
-      ads = await repo.getDataForLander(sql, IN_PROCESSING);
+      ads = await repo.getDataForLander(sql, IN_PROCESSING, { excludeServedToday: true });
     }
     if (!ads.length) {
       return { code: 200, message: 'urls over', data: [], exe_time: (Date.now() - started) / 1000 };
     }
 
-    const newarr = [];
+    // Never serve an ad without a usable destination_url (defence-in-depth —
+    // getDataForLander already excludes these at the SQL level).
+    const usable = ads.filter((row) => isUsableDestinationUrl(row.destination_url));
 
-    for (const row of ads) {
-      // Never serve an ad without a usable destination_url (defence-in-depth —
-      // getDataForLander already excludes these at the SQL level).
-      if (!isUsableDestinationUrl(row.destination_url)) continue;
+    // ── 1. ES existence check — all ads in parallel (same per-id match query as before).
+    const hitsPerAd = await Promise.all(usable.map((row) =>
+      elastic.search({
+        index: ES_INDEX,
+        type: 'doc',
+        body: { query: { match: { ad_id: row.id } } },
+      })
+        .then(esHits)
+        .catch((e) => {
+          log?.error?.('landers.getYoutubeAds ES search failed', { id: row.id, error: e.message });
+          return [];
+        })
+    ));
+    const found = usable.filter((_, i) => hitsPerAd[i].length > 0);
+    const missingIds = usable.filter((_, i) => hitsPerAd[i].length === 0).map((r) => r.id);
 
-      let hits = [];
-      try {
-        hits = esHits(await elastic.search({
-          index: ES_INDEX,
-          type: 'doc',
-          body: { query: { match: { ad_id: row.id } } },
-        }));
-      } catch (e) {
-        log?.error?.('landers.getYoutubeAds ES search failed', { id: row.id, error: e.message });
-        hits = [];
-      }
+    // ── 2. Bulk status writes + one ISO lookup. SQL calls are awaited one at a time so a
+    //   request never holds more than one pool connection.
+    //   present → claimed (0 → 2) + updated_date stamped, so the 2-fallback re-serves it at most
+    //   once per day and only if a worker never reports back; absent → NOT_FOUND.
+    await repo.markServedMultiple(sql, found.map((r) => r.id), IN_PROCESSING);
+    await repo.updateMetaMultiple(sql, missingIds, { redirect_status: NOT_FOUND });
 
-      if (hits.length) {
-        // Claim it (0 → 2) so it is not re-served every poll; the 2-fallback re-serves it
-        // only if a worker never reports back and the pending queue is fully drained.
-        await repo.updateMeta(sql, row.id, { redirect_status: IN_PROCESSING });
-        // Each ad gets ONLY its own resolved ISO codes (no cross-ad accumulator — the
-        // legacy shared-accumulator inflated every ad's `iso` with earlier ads' countries).
-        const names = String(row.country || '').split(',').filter(Boolean);
-        const isos = await repo.getIsoByNicenames(sql, names);
-        newarr.push({
-          id: row.id,
-          iso: isos,
-          destination_url: row.destination_url,
-          ad_url: row.ad_url,
-        });
-      } else {
-        // Not in ES → mark failed.
-        await repo.updateMeta(sql, row.id, { redirect_status: NOT_FOUND });
-      }
-    }
+    const splitCountries = (row) => String(row.country || '').split(',').filter(Boolean);
+    const nicenames = [...new Set(found.flatMap(splitCountries))];
+    const isoByNicename = buildIsoByNicename(await repo.getIsoByNicenamesMultiple(sql, nicenames));
+
+    // ── 3. Build the response. Each ad gets ONLY its own resolved ISO codes (no cross-ad
+    //   accumulator — the legacy shared-accumulator inflated every ad's `iso`).
+    const newarr = found.map((row) => ({
+      id: row.id,
+      iso: isosFor(splitCountries(row), isoByNicename),
+      destination_url: row.destination_url,
+      ad_url: row.ad_url,
+    }));
 
     return { code: 200, data: newarr, exe_time: (Date.now() - started) / 1000 };
   } catch (e) {

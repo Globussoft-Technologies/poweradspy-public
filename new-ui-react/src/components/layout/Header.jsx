@@ -21,6 +21,7 @@ import {
   ArrowLeftRight,
   Sparkles,
   Plus,
+  Info,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { createDashboardShare, buildSearchPayload, trackEvent } from "../../services/api";
@@ -53,6 +54,39 @@ export const AI_SEARCH_PROMPTS = [
   "Find recently launched ads in India.",
   "Show me high-engagement video ads.",
 ];
+
+const AiSearchPlanContext = ({ summary = "", notices = [], embedded = false }) => {
+  if (!summary && notices.length === 0) return null;
+
+  return (
+    <div
+      className={embedded
+        ? "flex flex-col gap-1 border-b border-theme-border/70 pb-3"
+        : "absolute left-0 right-0 top-full z-[84] mt-1 flex flex-col gap-1 rounded-r-lg border-l-2 border-[#8b5cf6]/70 bg-[#8b5cf6]/[0.07] px-3 py-1.5 shadow-[0_8px_20px_rgba(0,0,0,0.12)]"}
+      aria-label="AI search explanation"
+    >
+      {summary && (
+        <div className="flex min-w-0 items-start gap-1.5 text-[11px] leading-4 text-theme-text-muted">
+          <Sparkles size={11} className="mt-0.5 shrink-0 text-[#8b5cf6]" />
+          <span className="min-w-0 break-words">
+            <span className="font-semibold text-[#8b5cf6]">Searched:</span>{" "}
+            {summary}
+          </span>
+        </div>
+      )}
+      {notices.map((notice, index) => (
+        <div
+          key={`${notice.kind || "notice"}-${notice.message}-${index}`}
+          className="flex min-w-0 items-start gap-1.5 text-[11px] leading-4 text-theme-text-muted"
+          data-notice-kind={notice.kind || undefined}
+        >
+          <Info size={11} className="mt-0.5 shrink-0 text-[#8b5cf6]" />
+          <span className="min-w-0 break-words">{notice.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 // Programmatically trigger Google Translate widget for full-page translation.
 // Retries up to 10 times (3 s total) to handle async widget initialization.
@@ -140,6 +174,8 @@ const Header = ({
   aiSearchChecked = false,
   aiSearchLoading = false,
   aiSuggestions = [],
+  aiSearchSummary = "",
+  aiSearchNotices = [],
   onAiSuggestionsDismiss,
   onCancelAiSearch,
   onNotifOpenChange,
@@ -655,9 +691,30 @@ const Header = ({
     activePage !== "keywords-explorer";
   const showClearFilters =
     isAdsLibraryPage && !guest?.isRestricted && sdui.totalActiveFilters > 0;
+  const hasAiSearchPlanContext =
+    Boolean(aiSearchSummary) || aiSearchNotices.length > 0;
+  const showAiSearchPlanContext =
+    aiMode &&
+    !aiSearchLoading &&
+    !searchTypeOpen &&
+    !showAiPrompts &&
+    aiSuggestions.length === 0 &&
+    !isScrolled &&
+    hasAiSearchPlanContext;
+  // Summary-only context fits in the compact row; planner notices need extra room.
+  const aiSearchPlanHeaderHeight =
+    aiSearchNotices.length > 0
+      ? "h-[112px] 2xl:h-[120px]"
+      : "h-[96px] 2xl:h-[104px]";
 
   return (
-    <header className="relative flex h-16 min-w-0 shrink-0 items-center justify-between gap-2 overflow-visible border-b border-theme-border bg-theme-bg/95 px-3 py-2 backdrop-blur-md sticky top-0 z-40 2xl:h-20 sm:px-5">
+    <header
+      className={`relative flex ${
+        showAiSearchPlanContext
+          ? `${aiSearchPlanHeaderHeight} items-start`
+          : "h-16 2xl:h-20 items-center"
+      } min-w-0 shrink-0 justify-between gap-2 overflow-visible border-b border-theme-border bg-theme-bg/95 px-3 py-2 backdrop-blur-md sticky top-0 z-40 sm:px-5`}
+    >
       <div className="flex min-w-0 shrink-0 items-center gap-4">
         <img
           src={powerAdSpyLogo}
@@ -678,7 +735,11 @@ const Header = ({
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div
             className={`
-              inset-0 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out
+              ${
+                isSearchOpenMobile || !showAiSearchPlanContext
+                  ? "inset-0"
+                  : "left-0 right-0 top-0 bottom-auto h-[50px]"
+              } mx-auto w-full min-w-0 transition-all duration-300 ease-in-out
               ${
                 isSearchOpenMobile
                   ? "max-w-none"
@@ -689,7 +750,9 @@ const Header = ({
               ${
                 isSearchOpenMobile
                   ? "fixed inset-0 z-50 bg-theme-bg/98 backdrop-blur-xl flex items-center px-4 gap-3 pointer-events-auto"
-                  : "absolute items-center hidden md:flex gap-2"
+                  : showAiSearchPlanContext
+                    ? "absolute items-start hidden md:flex gap-2"
+                    : "absolute items-center hidden md:flex gap-2"
               }
               ${isScrolled ? "xl:opacity-0 xl:invisible xl:-translate-y-6 xl:pointer-events-none opacity-100 visible translate-y-0" : "opacity-100 visible translate-y-0"}
             `}
@@ -905,6 +968,13 @@ const Header = ({
                 />
               </div>
 
+              {showAiSearchPlanContext && (
+                <AiSearchPlanContext
+                  summary={aiSearchSummary}
+                  notices={aiSearchNotices}
+                />
+              )}
+
               {aiMode && showAiPrompts && !searchTypeOpen && !aiSearchLoading && !localQuery.trim() && (
                 <div
                   className="absolute left-0 right-0 top-full z-[80] mt-3 rounded-2xl border border-[#8b5cf6]/30 bg-theme-surface p-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] animate-in fade-in slide-in-from-top-2 duration-200"
@@ -948,6 +1018,11 @@ const Header = ({
                   role="group"
                   aria-label="Did you mean suggestions"
                 >
+                  <AiSearchPlanContext
+                    summary={aiSearchSummary}
+                    notices={aiSearchNotices}
+                    embedded
+                  />
                   <div className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6]">
                     Did you mean:
                   </div>

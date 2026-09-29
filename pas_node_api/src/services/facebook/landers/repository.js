@@ -41,10 +41,16 @@ const stripNulls = (obj) =>
  * becomes a SQL `IN (...)`). The service calls this once per status in priority order
  * (PENDING, then IN_PROCESSING only if PENDING is empty) rather than passing an array,
  * so one status's queue is never diluted by the other within the same 50-row batch.
+ *
+ * `excludeServedToday` skips ads whose updated_at is today (already handed out today by
+ * markServed) — used for the IN_PROCESSING fallback so an ad is re-served at most once a day.
  */
-async function getDataForLander(exec, redirectStatus) {
+async function getDataForLander(exec, redirectStatus, { excludeServedToday = false } = {}) {
   const statuses = Array.isArray(redirectStatus) ? redirectStatus : [redirectStatus];
   const placeholders = statuses.map(() => '?').join(',');
+  const servedTodayFilter = excludeServedToday
+    ? `AND (facebook_ad_meta_data.updated_at IS NULL OR facebook_ad_meta_data.updated_at < CURDATE())`
+    : '';
   // Ads with an unusable destination_url are excluded here so they are never leased,
   // never flipped to IN_PROCESSING, and therefore never re-served on the drain fallback.
   // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
@@ -63,6 +69,7 @@ async function getDataForLander(exec, redirectStatus) {
        AND facebook_ad_meta_data.destination_url IS NOT NULL
        AND TRIM(facebook_ad_meta_data.destination_url) <> ''
        AND LOWER(TRIM(facebook_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+       ${servedTodayFilter}
      GROUP BY facebook_ad_meta_data.facebook_ad_id
      ORDER BY facebook_ad_meta_data.facebook_ad_id DESC
      LIMIT 50`;
@@ -85,6 +92,39 @@ async function updateMeta(exec, facebookAdId, data) {
   if (!cols.length) return 0;
   const sql = `UPDATE facebook_ad_meta_data SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE facebook_ad_id = ?`;
   return affected(await exec.query(sql, [...Object.values(data), facebookAdId]));
+}
+
+/**
+ * Claim an ad for the lander worker: redirect_status = status and updated_at = NOW().
+ * updated_at is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
+ * already-IN_PROCESSING ad is re-served (no column value changes).
+ */
+async function markServed(exec, facebookAdId, status) {
+  return affected(await exec.query(
+    'UPDATE facebook_ad_meta_data SET redirect_status = ?, updated_at = NOW() WHERE facebook_ad_id = ?',
+    [status, facebookAdId]
+  ));
+}
+
+/** Bulk markServed: one UPDATE ... WHERE facebook_ad_id IN (...). */
+async function markServedMultiple(exec, facebookAdIds, status) {
+  const ids = (Array.isArray(facebookAdIds) ? facebookAdIds : [facebookAdIds]).filter((v) => v !== undefined && v !== null);
+  if (!ids.length) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  return affected(await exec.query(
+    `UPDATE facebook_ad_meta_data SET redirect_status = ?, updated_at = NOW() WHERE facebook_ad_id IN (${placeholders})`,
+    [status, ...ids]
+  ));
+}
+
+/** Bulk updateMeta: one UPDATE ... WHERE facebook_ad_id IN (...). */
+async function updateMetaMultiple(exec, facebookAdIds, data) {
+  const ids = (Array.isArray(facebookAdIds) ? facebookAdIds : [facebookAdIds]).filter((v) => v !== undefined && v !== null);
+  const cols = Object.keys(data);
+  if (!ids.length || !cols.length) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  const sql = `UPDATE facebook_ad_meta_data SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE facebook_ad_id IN (${placeholders})`;
+  return affected(await exec.query(sql, [...Object.values(data), ...ids]));
 }
 
 // ── facebook_ad_domains ─────────────────────────────────────────────────────────
@@ -245,6 +285,44 @@ async function getIsoById(exec, id) {
   const r = rows(await exec.query('SELECT iso FROM country_data WHERE id = ?', [id]));
   return r.length ? r[0].iso : null;
 }
+// ── bulk lookups (getAdwithCountryCode batch path) ──────────────────────────────
+
+/** Discoverers (type = 2) for many ads at once → [{ facebook_ad_id, user_id }]. */
+async function getAdUserIdsMultiple(exec, facebookAdIds) {
+  if (!facebookAdIds.length) return [];
+  const placeholders = facebookAdIds.map(() => '?').join(',');
+  return rows(await exec.query(
+    `SELECT facebook_ad_id, user_id FROM facebook_ad_users
+      WHERE facebook_ad_id IN (${placeholders}) AND type = 2
+      GROUP BY facebook_ad_id, user_id`,
+    facebookAdIds
+  ));
+}
+/** current_country_id for many users → [{ id, current_country_id }]. */
+async function getUsersCurrentCountryIds(exec, userIds) {
+  if (!userIds.length) return [];
+  const placeholders = userIds.map(() => '?').join(',');
+  return rows(await exec.query(
+    `SELECT id, current_country_id FROM facebook_users WHERE id IN (${placeholders})`,
+    userIds
+  ));
+}
+/** ISO for many country_data ids → [{ id, iso }]. */
+async function getIsoByIds(exec, ids) {
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  return rows(await exec.query(`SELECT id, iso FROM country_data WHERE id IN (${placeholders})`, ids));
+}
+/** ISO for many nicenames → [{ nicename, iso }]. */
+async function getIsoByNicenamesMultiple(exec, nicenames) {
+  if (!nicenames.length) return [];
+  const placeholders = nicenames.map(() => '?').join(',');
+  return rows(await exec.query(
+    `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`,
+    nicenames
+  ));
+}
+
 /** PHP: nicename for an ISO code (insertHtml ES country_code resolution). */
 async function getNicenameByIso(exec, iso) {
   const r = rows(await exec.query('SELECT nicename FROM country_data WHERE iso = ?', [iso]));
@@ -253,7 +331,7 @@ async function getNicenameByIso(exec, iso) {
 
 module.exports = {
   // meta
-  getDataForLander, getMetaDataDetails, updateMeta,
+  getDataForLander, getMetaDataDetails, updateMeta, markServed, markServedMultiple, updateMetaMultiple,
   // domains
   getDomainId, updateDomainRegisterDate, insertDomainName, setDomainDodDate,
   // outgoing
@@ -266,4 +344,6 @@ module.exports = {
   updateFacebookAd,
   // lookups
   getAdUserIds, getUserCurrentCountryId, getIsoByNicenames, getIsoById, getNicenameByIso,
+  // bulk lookups
+  getAdUserIdsMultiple, getUsersCurrentCountryIds, getIsoByIds, getIsoByNicenamesMultiple,
 };

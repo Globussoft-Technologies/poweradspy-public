@@ -15,14 +15,20 @@ async function executeQuery(sql, params = []) {
 }
 
 class InstagramRepository {
-  // GET endpoint: fetch up to 100 ads at the given redirect_status
+  // GET endpoint: fetch up to 50 rows at the given redirect_status (one row per ad per country)
   // (called with PENDING=0 first, falling back to IN_PROCESSING=2 when PENDING is drained).
   //
   // Ads with an unusable destination_url are excluded here so they are never leased,
   // never flipped to IN_PROCESSING, and therefore never re-served on the drain fallback.
   // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
   // (some upstream writes store the string, not a real NULL).
-  static async getDataForLander(status) {
+  //
+  // `excludeServedToday` skips ads whose updated_date is today (already handed out today by
+  // markServed) — used for the IN_PROCESSING fallback so an ad is re-served at most once a day.
+  static async getDataForLander(status, { excludeServedToday = false } = {}) {
+    const servedTodayFilter = excludeServedToday
+      ? `AND (instagram_ad_meta_data.updated_date IS NULL OR instagram_ad_meta_data.updated_date < CURDATE())`
+      : '';
     const sql = `
       SELECT
         instagram_ad_meta_data.instagram_ad_id as id,
@@ -36,8 +42,9 @@ class InstagramRepository {
         AND instagram_ad_meta_data.destination_url IS NOT NULL
         AND TRIM(instagram_ad_meta_data.destination_url) <> ''
         AND LOWER(TRIM(instagram_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+        ${servedTodayFilter}
       ORDER BY instagram_ad_meta_data.instagram_ad_id DESC
-      LIMIT 100
+      LIMIT 50
     `;
     return await executeQuery(sql, [status]);
   }
@@ -51,6 +58,32 @@ class InstagramRepository {
     `;
     const result = await executeQuery(sql, [status, adId]);
     return result.affectedRows > 0;
+  }
+
+  // Claim an ad for the lander worker: redirect_status = status and updated_date = NOW().
+  // updated_date is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
+  // already-IN_PROCESSING ad is re-served (no column value changes).
+  static async markServed(adId, status) {
+    const sql = `
+      UPDATE instagram_ad_meta_data
+      SET redirect_status = ?, updated_date = NOW()
+      WHERE instagram_ad_id = ?
+    `;
+    const result = await executeQuery(sql, [status, adId]);
+    return result.affectedRows > 0;
+  }
+
+  // Bulk markServed: one UPDATE ... WHERE instagram_ad_id IN (...).
+  static async markServedMultiple(adIds, status) {
+    if (!adIds.length) return 0;
+    const placeholders = adIds.map(() => '?').join(',');
+    const sql = `
+      UPDATE instagram_ad_meta_data
+      SET redirect_status = ?, updated_date = NOW()
+      WHERE instagram_ad_id IN (${placeholders})
+    `;
+    const result = await executeQuery(sql, [status, ...adIds]);
+    return result.affectedRows;
   }
 
   // Domain: check if exists
@@ -245,6 +278,22 @@ class InstagramRepository {
     const sql = `SELECT instagram_country_iso FROM country_data WHERE LOWER(nicename) = LOWER(?)`;
     const result = await executeQuery(sql, [countryName]);
     return result.length > 0 ? result[0].instagram_country_iso : null;
+  }
+
+  // Country ISO for many names at once (case-insensitive, like getCountryIso).
+  // Returns Map(lowercased name → instagram_country_iso of the first matching row).
+  static async getCountryIsoMultiple(countryNames) {
+    const map = new Map();
+    const names = [...new Set(countryNames.map((n) => String(n).toLowerCase()))];
+    if (!names.length) return map;
+    const placeholders = names.map(() => '?').join(',');
+    const sql = `SELECT nicename, instagram_country_iso FROM country_data WHERE LOWER(nicename) IN (${placeholders})`;
+    const results = await executeQuery(sql, names);
+    for (const row of results) {
+      const key = String(row.nicename).toLowerCase();
+      if (!map.has(key)) map.set(key, row.instagram_country_iso);
+    }
+    return map;
   }
 
   // Batch get country ISO codes

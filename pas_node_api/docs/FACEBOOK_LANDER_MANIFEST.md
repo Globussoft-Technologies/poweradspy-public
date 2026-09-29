@@ -67,13 +67,30 @@ getAdsService.getAdwithCountryCode(db)
   │    literal strings 'null'/'undefined' (some upstream writes store the token, not a
   │    real NULL). Excluding them here means they are never leased, never flipped to
   │    redirect_status=2, and never re-served on the drain fallback.
-  ├─ for each ad:
-  │    ├─ ES search search_mix (term facebook_ad.id)
-  │    ├─ present → updateMeta redirect_status=2 ; resolve ISO (per-ad, see §7) ; emit
-  │    └─ absent  → updateMeta redirect_status=5
+  │    └─ if none, getDataForLander(2, { excludeServedToday:true })
+  │         → drain fallback: re-lease redirect_status=2 (IN_PROCESSING) rows so a crashed
+  │           worker's batch is not stranded — but ONLY rows not served today:
+  │           AND (updated_at IS NULL OR updated_at < CURDATE())
+  │           An ad served today is not handed out again until tomorrow.
+  ├─ ES existence check — every ad in PARALLEL (Promise.all), search_mix term facebook_ad.id
+  ├─ bulk status writes (run in parallel with the discoverer lookup):
+  │    ├─ present → markServedMultiple: redirect_status=2, updated_at=NOW()   (one UPDATE … IN)
+  │    └─ absent  → updateMetaMultiple: redirect_status=5                      (one UPDATE … IN)
+  ├─ bulk ISO resolution (one IN (...) query each, no per-ad / per-user queries):
+  │    getAdUserIdsMultiple → getUsersCurrentCountryIds + getIsoByNicenamesMultiple → getIsoByIds
+  │    ├─ ad has no discoverers → ISO of its own tracked country nicenames
+  │    └─ ad has discoverers    → ISO of the most common current_country_id ('' when that id is 0)
   │    (belt-and-braces: isUsableDestinationUrl(row.destination_url) re-checked before emit)
   └─ Response: { code, message, data:[{ id, ad_url, iso, destination_url }], exe_time }
 ```
+
+**Why `updated_at` is stamped explicitly.** `markServed` / `markServedMultiple` set
+`updated_at = NOW()` in the UPDATE itself. `ON UPDATE CURRENT_TIMESTAMP` would not fire when an
+ad that is already at `redirect_status=2` is re-served, because no column value changes. "Today"
+is the DB server's `CURDATE()`, so the window resets at midnight in the DB timezone.
+
+**Performance.** A 50-ad batch costs 7 SQL round trips + one parallel ES round
+(previously 250+ sequential calls, ~5 s). Response shape and per-ad `iso` rules are unchanged.
 
 ### POST `/landers/uploadFileToServer`  (multipart: media, zip, ad_id, country, status)
 ```
@@ -158,8 +175,12 @@ insertHtmlService.insertHtmlRedirectCountry(req, db)
 
 ```
 0 (pending)
-  ├─ getAds: in ES   → 2 (found / in-progress)
+  ├─ getAds: in ES   → 2 (found / in-progress), updated_at = NOW()
   └─ getAds: not ES  → 5 (failed)
+
+2 (in-progress, worker never reported back)
+  └─ getAds fallback (only when 0 is empty) — re-served at most once per day
+     (updated_at < CURDATE()); re-stamps updated_at = NOW()
 
 insertHtml:
   status 1/2  + .net    → redirect_status = 1
@@ -182,7 +203,7 @@ insertHtml:
 2. **Whitehat html lands in `html_dc_blackhat_lander_text`** (status 2 pushes to `dc_black_hat`).
 3. **`updateOutgoingCountry` filters by the matched row's id** passed as the `facebook_ad_id` where value (PHP latent quirk).
 4. **ES `country_code` = nicename array** while MySQL stores the ISO.
-5. **`getAds` ISO accumulator** is shared across ads — each ad's `iso` is a snapshot of the running set.
+5. ~~**`getAds` ISO accumulator** shared across ads~~ — **removed**: each ad's `iso` now holds only its own resolved codes.
 6. **`png_file` is `varchar(128)`** (vs `blackhat_path text`) — a pre-existing schema constraint, left as-is.
 7. **`ad_category` table write is NOT ported** (out of the 3-endpoint scope) — only the observable `cat_status=1` effect is replicated.
 
@@ -206,6 +227,9 @@ Dependency added: `multer` (multipart upload parsing).
 - ✅ `getDataForLander` excludes an unusable `destination_url` (NULL / empty / `'null'` /
   `'undefined'`) in SQL, so invalid ads are never leased or re-served on the drain
   fallback (see §3). Instagram lander carries the identical filter + `isUsableDestinationUrl` guard.
+- ✅ Batched `getAdwithCountryCode` checked against mocked SQL/ES: no-discoverer ad, top-country
+  ad, ad missing from ES (→ 5) and top-country-0 ad (→ `iso: ''`) all match the old output; 7 SQL
+  round trips per batch. ⏳ Live `exe_time` and the `updated_at` column still to be confirmed on the DB.
 - ✅ `insertHtmlRedirectCountry` (status 1/2/3) — all MySQL writes persist (incl. accumulate/dedup).
 - ✅ ES `search_mix` write-back matches MySQL (with the ISO→nicename transform).
 
@@ -228,6 +252,12 @@ Dependency added: `multer` (multipart upload parsing).
 ---
 
 ## Document Version
+- **v1.3** — `getAdwithCountryCode` batched: parallel ES checks, bulk status UPDATEs
+  (`markServedMultiple`, `updateMetaMultiple`) and bulk ISO lookups (`getAdUserIdsMultiple`,
+  `getUsersCurrentCountryIds`, `getIsoByIds`, `getIsoByNicenamesMultiple`) (§3).
+- **v1.2** — Status-2 drain fallback skips ads already served today (`updated_at < CURDATE()`);
+  serving an ad stamps `updated_at = NOW()` (§3, §6). Same change on Instagram, YouTube, Google (whose meta
+  tables use the column name `updated_date` instead of `updated_at`).
 - **v1.1** — `getDataForLander` lease query now excludes an unusable `destination_url`
   (NULL / empty / `'null'` / `'undefined'`) at the SQL level, plus an `isUsableDestinationUrl`
   guard in `getAdsService.js` (§3). Instagram lander mirrors it.

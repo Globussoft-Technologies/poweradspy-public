@@ -65,13 +65,23 @@ src/
 ### GET `/landers/get_youtubeid_for_lander`
 ```
 getAdsService.getYoutubeAdsWithCountry(db)
-  ├─ repository.getDataForLander(0)          → ≤100 ads at redirect_status=0 with destination_url NOT NULL
-  ├─ for each ad: ES search youtube_ads_data (match ad_id)
-  │    ├─ present → resolve ISO (country_data.nicename → iso) + emit { id, iso, destination_url, ad_url }
-  │    │           (NOTE: youtube does NOT flip status to 2 here)
-  │    └─ absent  → repository.updateMeta(id, redirect_status=5)
+  ├─ repository.getDataForLander(0)          → ≤50 ads at redirect_status=0 with a usable destination_url
+  │    └─ if none, getDataForLander(2, { excludeServedToday:true })
+  │         → drain fallback: re-lease redirect_status=2 rows a worker never reported back on —
+  │           but ONLY rows not served today: AND (updated_date IS NULL OR updated_date < CURDATE())
+  ├─ ES existence check — every ad in PARALLEL, youtube_ads_data (match ad_id)
+  ├─ bulk status writes (one UPDATE … IN each):
+  │    ├─ present → markServedMultiple: redirect_status=2, updated_date=NOW()
+  │    └─ absent  → updateMetaMultiple: redirect_status=5
+  ├─ one ISO lookup for the batch: getIsoByNicenamesMultiple (country_data.nicename → iso)
+  │    → emit { id, iso, destination_url, ad_url } (each ad only its own ISO codes)
+  │    SQL is awaited one query at a time → a request holds at most 1 MySQL connection
   └─ Response: { code, data, exe_time }   ("urls over" when none)
 ```
+
+**Once-per-day re-serve.** An ad handed out today is not handed out again until tomorrow.
+`updated_date` is set explicitly in the UPDATE because `ON UPDATE CURRENT_TIMESTAMP` does not fire
+when an ad already at status 2 is re-served (no value changes). "Today" = DB server `CURDATE()`.
 
 ### POST `/landers/upload_blackhat_image_zip`  (multipart: media, zip, ad_id, country, status)
 ```
@@ -134,7 +144,12 @@ insertHtmlService.insertHtmlContent(req, db)
 
 ```
 0 (pending)
-  └─ getAds: in ES → (left at 0; emitted) ;  not in ES → redirect_status = 5
+  ├─ getAds: in ES   → 2 (in-progress), updated_date = NOW()
+  └─ getAds: not ES  → 5
+
+2 (in-progress, worker never reported back)
+  └─ getAds fallback (only when 0 is empty) — re-served at most once per day
+     (updated_date < CURDATE()); re-stamps updated_date = NOW()
 
 insertHtml:
   status 1/2 + .net    → redirect_status = 1
@@ -202,4 +217,12 @@ No `.env` change required. Dependency: `multer`.
 ## Document Version
 - **v1.0** — YouTube landers, faithful port from `api_youtube` BlackhatControllerYoutube.
 - **v1.1** — Extracted `transforms.js` + `validate.js` from `insertHtmlService` (DRY/optimization); no behavior change.
+- **v1.2** — getAds flow brought up to date: ads found in ES are claimed (0 → 2) and a status-2
+  drain fallback re-serves unfinished ads, at most once per day (`updated_date < CURDATE()`);
+  serving stamps `updated_date = NOW()` via `markServed` (§3, §6). Same change on Facebook,
+  Instagram, Google. `updated_date` column still to be confirmed on the DB.
+- **v1.3** — getAds batched: parallel ES checks, bulk `markServedMultiple` / `updateMetaMultiple`,
+  one `getIsoByNicenamesMultiple` lookup. 4 SQL queries per batch (was up to 150 sequential calls),
+  run one at a time so at most 1 MySQL connection is used per request. Batch size lowered
+  from 100 to 50 ads (`LIMIT 50`), same as every other platform.
 - **DB/ES verified:** `pasdev_youtube` + `youtube_ads_data`.

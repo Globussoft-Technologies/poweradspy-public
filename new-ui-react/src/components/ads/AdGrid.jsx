@@ -269,13 +269,18 @@ const AdGrid = ({
   // backend ES queries now filter to displayable ads only (each network requires
   // its NAS thumbnail for IMAGE/VIDEO), so this total equals what actually
   // renders and matches a same-filter DB count — no client-side recount, no
-  // pagination growth. Summing across networks works for every tab (non-requested
-  // networks come back as 0). A known zero is still useful after an empty
-  // search, but an empty metadata object means the request has not supplied a
-  // count yet.
+  // pagination growth. Empty-result discovery also adds counts for alternative
+  // networks, so specific-network tabs must only total their selected networks.
+  // A known zero is still useful after an empty search, but an empty metadata
+  // object means the request has not supplied a count yet.
   const adsCount = useMemo(() => {
     if (!adsMeta || typeof adsMeta !== "object" || Object.keys(adsMeta).length === 0) return null;
-    const totals = Object.values(adsMeta).map(Number).filter(Number.isFinite);
+    const countPlatforms = isAllActive
+      ? Object.keys(adsMeta)
+      : (specificPlatforms?.length ? specificPlatforms : activePlatforms);
+    const totals = countPlatforms
+      .map((platform) => Number(adsMeta[String(platform).toLowerCase()]))
+      .filter(Number.isFinite);
     if (totals.length === 0) return null;
     const total = totals.reduce((sum, value) => sum + value, 0);
     return total >= 1_000_000

@@ -137,12 +137,21 @@ LandersController.insertHtmlContent(req, res, service)
 
 ```
 getAdsService.fetchAdsForScraping(db)
-  ├─ repository.getDataForLander(0)          → ≤100 ads at redirect_status=0 (PENDING)
-  │    └─ if none, getDataForLander(2)       → drain fallback: re-lease redirect_status=2
-  │       (IN_PROCESSING) rows so a crashed worker's batch is not stranded
-  ├─ for each row: resolve ISO per-ad, emit { id, ad_url, destination_url, iso, country }
-  └─ every fetched ad → updateRedirectStatus(2)  (claimed)
+  ├─ repository.getDataForLander(0)          → ≤50 rows at redirect_status=0 (PENDING) — one row per ad per country
+  │    └─ if none, getDataForLander(2, { excludeServedToday:true })
+  │         → drain fallback: re-lease redirect_status=2 (IN_PROCESSING) rows so a crashed
+  │           worker's batch is not stranded — but ONLY rows not served today:
+  │           AND (updated_date IS NULL OR updated_date < CURDATE())
+  ├─ one ISO lookup for the batch: getCountryIsoMultiple (case-insensitive nicename → instagram_country_iso)
+  ├─ for each row: emit { id, ad_url, destination_url, iso, country } from that map
+  └─ every fetched ad → markServedMultiple(2): redirect_status=2, updated_date=NOW()  (one UPDATE … IN)
+     SQL is awaited one query at a time → a request holds at most 1 MySQL connection
 ```
+
+**Once-per-day re-serve.** An ad handed out today (0→2, or re-served from the status-2
+fallback) is not handed out again until tomorrow. `updated_date` is set explicitly in the
+UPDATE because `ON UPDATE CURRENT_TIMESTAMP` does not fire when an ad already at status 2 is
+re-served (no value changes). "Today" = DB server `CURDATE()`.
 
 **`destination_url` filter (added to stop invalid ads being re-leased forever).**
 `getDataForLander` excludes any row whose `destination_url` is unusable, at the SQL level:
@@ -197,9 +206,19 @@ defence-in-depth mirroring the SQL filter.
 - ✅ `get-ads-for-blackhat` lease query excludes unusable `destination_url`
   (NULL / empty / `'null'` / `'undefined'`) at the SQL level, so invalid ads are
   never leased or re-served (§3b) — Facebook lander carries the same filter
+- ⏳ Once-per-day status-2 re-serve (§3b) — code done; `updated_date` column to be confirmed on the DB
 - ⚠️ Domain derivation still reads `domain_name` instead of `destinations` (§3a Known gap)
 
 ---
+
+**Version: v1.4** – get-ads batched: one `getCountryIsoMultiple` lookup and one bulk
+`markServedMultiple` UPDATE. 3 SQL queries per batch (was up to 100 sequential), run one at
+a time so at most 1 MySQL connection is used per request (§3b). Batch size lowered from
+100 to 50 rows (`LIMIT 50`), same as every other platform.
+
+**Version: v1.3** – Status-2 drain fallback skips ads already served today
+(`updated_date < CURDATE()`); claiming an ad now uses `markServed` which stamps
+`updated_date = NOW()` (§3b). Same change on Facebook, YouTube, Google.
 
 **Version: v1.2** – Adds the `get-ads-for-blackhat` lease-query `destination_url`
 filter (§3b): unusable URLs (NULL / empty / `'null'` / `'undefined'`) are excluded

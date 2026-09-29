@@ -36,8 +36,14 @@ const stripNulls = (obj) =>
  * ad's own tracked countries. destination_url is wrapped in ANY_VALUE() so the
  * GROUP BY is valid under MySQL only_full_group_by (manifest §8 gotcha #2).
  * Returns [{ id, destination_url, country }] (country = comma-joined names).
+ *
+ * `excludeServedToday` skips ads whose updated_date is today (already handed out today by
+ * markServedMultiple) — used for the status-2 fallback so an ad is re-served at most once a day.
  */
-async function getDataForLander(exec, redirectStatus) {
+async function getDataForLander(exec, redirectStatus, { excludeServedToday = false } = {}) {
+  const servedTodayFilter = excludeServedToday
+    ? `AND (google_text_ad_meta_data.updated_date IS NULL OR google_text_ad_meta_data.updated_date < CURDATE())`
+    : '';
   // Ads with an unusable destination_url are excluded here so they are never leased,
   // never flipped to redirect_status=2, and therefore never re-served on a later poll.
   // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
@@ -55,6 +61,7 @@ async function getDataForLander(exec, redirectStatus) {
        AND google_text_ad_meta_data.destination_url IS NOT NULL
        AND TRIM(google_text_ad_meta_data.destination_url) <> ''
        AND LOWER(TRIM(google_text_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+       ${servedTodayFilter}
      GROUP BY google_text_ad_meta_data.google_text_ad_id
      ORDER BY google_text_ad_meta_data.google_text_ad_id DESC
      LIMIT 50`;
@@ -70,6 +77,19 @@ async function updateMetaMultiple(exec, adIds, data) {
   const placeholders = ids.map(() => '?').join(',');
   const sql = `UPDATE google_text_ad_meta_data SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE google_text_ad_id IN (${placeholders})`;
   return affected(await exec.query(sql, [...Object.values(data), ...ids]));
+}
+
+/**
+ * Bulk-claim ads for the lander worker: redirect_status = status and updated_date = NOW().
+ * updated_date is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
+ * already-status-2 ad is re-served (no column value changes).
+ */
+async function markServedMultiple(exec, adIds, status) {
+  const ids = (Array.isArray(adIds) ? adIds : [adIds]).filter((v) => v !== undefined && v !== null);
+  if (!ids.length) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  const sql = `UPDATE google_text_ad_meta_data SET redirect_status = ?, updated_date = NOW() WHERE google_text_ad_id IN (${placeholders})`;
+  return affected(await exec.query(sql, [status, ...ids]));
 }
 
 /** PHP getMetaDataDetails(): the screenshot/zip/status snapshot used by insertHtml. */
@@ -207,6 +227,15 @@ async function getIsoByNicenames(exec, nicenames) {
   const r = rows(await exec.query(`SELECT iso FROM country_data WHERE nicename IN (${placeholders})`, list));
   return r.map((row) => row.iso).filter((v) => v !== undefined && v !== null);
 }
+/** ISO for many nicenames at once → [{ nicename, iso }] (getAds batch path). */
+async function getIsoByNicenamesMultiple(exec, nicenames) {
+  if (!nicenames.length) return [];
+  const placeholders = nicenames.map(() => '?').join(',');
+  return rows(await exec.query(
+    `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`,
+    nicenames
+  ));
+}
 /** PHP: nicename for an ISO code (insert_html country_code resolution). */
 async function getNicenameByIso(exec, iso) {
   const r = rows(await exec.query('SELECT nicename FROM country_data WHERE iso = ?', [iso]));
@@ -215,7 +244,7 @@ async function getNicenameByIso(exec, iso) {
 
 module.exports = {
   // meta (+ main ad)
-  getDataForLander, updateMetaMultiple, getMetaDataDetails, updateMeta, updateMainAdDomainId,
+  getDataForLander, updateMetaMultiple, markServedMultiple, getMetaDataDetails, updateMeta, updateMainAdDomainId,
   // domains
   getDomainId, updateDomainRegisterDate, insertDomainName,
   // outgoing
@@ -225,5 +254,5 @@ module.exports = {
   // html lander
   getHtmlLanderDetails, insertHtmlFile, updateHtmlFile,
   // lookups
-  getIsoByNicenames, getNicenameByIso,
+  getIsoByNicenames, getIsoByNicenamesMultiple, getNicenameByIso,
 };

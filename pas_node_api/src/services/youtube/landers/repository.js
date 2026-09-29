@@ -28,7 +28,7 @@ const stripNulls = (obj) =>
 // ── youtube_ad_meta_data ────────────────────────────────────────────────────────
 
 /**
- * PHP getDataForLanderWithCountry(): up to 100 ads at redirect_status with a usable
+ * PHP getDataForLanderWithCountry(): up to 50 ads at redirect_status with a usable
  * destination_url, joined to country names. ad_url/destination_url wrapped in ANY_VALUE()
  * for only_full_group_by.
  *
@@ -39,8 +39,14 @@ const stripNulls = (obj) =>
  *
  * NOTE (faithful to PHP): the join is `youtube_ad_countries_only.id = meta.youtube_ad_id`
  * exactly as the legacy Laravel query wrote it.
+ *
+ * `excludeServedToday` skips ads whose updated_date is today (already handed out today by
+ * markServed) — used for the IN_PROCESSING fallback so an ad is re-served at most once a day.
  */
-async function getDataForLander(exec, redirectStatus) {
+async function getDataForLander(exec, redirectStatus, { excludeServedToday = false } = {}) {
+  const servedTodayFilter = excludeServedToday
+    ? `AND (youtube_ad_meta_data.updated_date IS NULL OR youtube_ad_meta_data.updated_date < CURDATE())`
+    : '';
   const sql = `
     SELECT youtube_ad_meta_data.youtube_ad_id AS id,
            ANY_VALUE(youtube_ad_meta_data.ad_url) AS ad_url,
@@ -55,9 +61,10 @@ async function getDataForLander(exec, redirectStatus) {
        AND youtube_ad_meta_data.destination_url IS NOT NULL
        AND TRIM(youtube_ad_meta_data.destination_url) <> ''
        AND LOWER(TRIM(youtube_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+       ${servedTodayFilter}
      GROUP BY youtube_ad_meta_data.youtube_ad_id
      ORDER BY youtube_ad_meta_data.youtube_ad_id DESC
-     LIMIT 100`;
+     LIMIT 50`;
   return rows(await exec.query(sql, [redirectStatus]));
 }
 
@@ -77,6 +84,37 @@ async function updateMeta(exec, adId, data) {
   if (!cols.length) return 0;
   const sql = `UPDATE youtube_ad_meta_data SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE youtube_ad_id = ?`;
   return affected(await exec.query(sql, [...Object.values(data), adId]));
+}
+
+/**
+ * Claim an ad for the lander worker: redirect_status = status and updated_date = NOW().
+ * updated_date is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
+ * already-IN_PROCESSING ad is re-served (no column value changes).
+ */
+async function markServed(exec, adId, status) {
+  return affected(await exec.query(
+    'UPDATE youtube_ad_meta_data SET redirect_status = ?, updated_date = NOW() WHERE youtube_ad_id = ?',
+    [status, adId]
+  ));
+}
+
+/** Bulk markServed: one UPDATE ... WHERE youtube_ad_id IN (...). */
+async function markServedMultiple(exec, adIds, status) {
+  if (!adIds.length) return 0;
+  const placeholders = adIds.map(() => '?').join(',');
+  return affected(await exec.query(
+    `UPDATE youtube_ad_meta_data SET redirect_status = ?, updated_date = NOW() WHERE youtube_ad_id IN (${placeholders})`,
+    [status, ...adIds]
+  ));
+}
+
+/** Bulk updateMeta: one UPDATE ... WHERE youtube_ad_id IN (...). */
+async function updateMetaMultiple(exec, adIds, data) {
+  const cols = Object.keys(data);
+  if (!adIds.length || !cols.length) return 0;
+  const placeholders = adIds.map(() => '?').join(',');
+  const sql = `UPDATE youtube_ad_meta_data SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE youtube_ad_id IN (${placeholders})`;
+  return affected(await exec.query(sql, [...Object.values(data), ...adIds]));
 }
 
 /** PHP YoutubeAd.updateData1(): set domain_id on the main youtube_ad row (WHERE id = ?). */
@@ -189,16 +227,25 @@ async function getIsoByNicenames(exec, nicenames) {
   const r = rows(await exec.query(`SELECT iso FROM country_data WHERE nicename IN (${placeholders})`, list));
   return r.map((row) => row.iso).filter((v) => v !== undefined && v !== null);
 }
+/** ISO for many nicenames at once → [{ nicename, iso }] (getAds batch path). */
+async function getIsoByNicenamesMultiple(exec, nicenames) {
+  if (!nicenames.length) return [];
+  const placeholders = nicenames.map(() => '?').join(',');
+  return rows(await exec.query(
+    `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`,
+    nicenames
+  ));
+}
 async function getNicenameByIso(exec, iso) {
   const r = rows(await exec.query('SELECT nicename FROM country_data WHERE iso = ?', [iso]));
   return r.length ? r[0].nicename : null;
 }
 
 module.exports = {
-  getDataForLander, getMetaDataDetails, updateMeta, updateMainAdDomainId,
+  getDataForLander, getMetaDataDetails, updateMeta, markServed, markServedMultiple, updateMetaMultiple, updateMainAdDomainId,
   getDomainId, updateDomainRegisterDate, insertDomainName,
   getOutgoingDetails, insertOutgoing, updateOutgoingCountry,
   getDestinationDetails, insertAdUrl, updateAdUrl, getCountryCodes,
   getHtmlLanderDetails, insertHtmlFile, updateHtmlFile,
-  getIsoByNicenames, getNicenameByIso,
+  getIsoByNicenames, getIsoByNicenamesMultiple, getNicenameByIso,
 };

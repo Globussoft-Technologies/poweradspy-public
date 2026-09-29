@@ -45,6 +45,37 @@ export const getPlanningSuggestions = (planning) => {
     .slice(0, 3);
 };
 
+/**
+ * Resolve the summary for the tier that actually ran. The fallback planning
+ * object keeps this compatible with responses that attach metadata only once
+ * at the response level rather than repeating it on every payload item.
+ */
+export const getPlanningSummary = (planning, tierIndex = 0, fallbackPlanning = null) => {
+  const candidates = [
+    planning?.tiers?.[tierIndex]?.summary,
+    planning?.summary,
+    fallbackPlanning?.tiers?.[tierIndex]?.summary,
+    fallbackPlanning?.summary,
+  ];
+  return candidates.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+};
+
+/**
+ * Keep only displayable planner notices while preserving their ready-to-show
+ * message and kind for the UI. Empty or malformed entries are ignored.
+ */
+export const getPlanningNotices = (planning, fallbackPlanning = null) => {
+  const noticeSources = [planning?.notices, fallbackPlanning?.notices];
+  const source = noticeSources.find((notices) => Array.isArray(notices) && notices.length > 0) || [];
+  return source
+    .filter((notice) => notice && typeof notice === 'object')
+    .map((notice) => ({
+      kind: typeof notice.kind === 'string' ? notice.kind.trim() : '',
+      message: typeof notice.message === 'string' ? notice.message.trim() : '',
+    }))
+    .filter((notice) => notice.message);
+};
+
 export const getPlanningOutcome = (planning) => {
   const outcome = String(planning?.outcome || '').trim().toLowerCase();
   return outcome || null;

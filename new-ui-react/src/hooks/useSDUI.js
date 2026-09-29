@@ -428,10 +428,16 @@ export function useSDUI() {
 
     // ── Re-fetch config when platforms change ─────────────────────────────
     const lastConfigPlatformKeyRef = useRef(null);
+    // Do not depend on the whole config object: the synchronous full-schema
+    // restore below replaces that object while the scoped request is pending.
+    // Readiness and version still trigger bootstrap/polling refreshes without
+    // canceling the active platform request.
+    const configReady = Boolean(config);
+    const configVersion = config?.config_version;
     useEffect(() => {
         // The initial unfiltered fetch owns bootstrap. A ref keyed by the real
         // selection remains correct when StrictMode replays effect setup.
-        if (loading || !config) return;
+        if (loading || !configRef.current) return;
         const platformKey = JSON.stringify(activePlatforms);
         if (lastConfigPlatformKeyRef.current === platformKey) return;
         lastConfigPlatformKeyRef.current = platformKey;
@@ -485,7 +491,7 @@ export function useSDUI() {
         };
         reload();
         return () => { cancelled = true; };
-    }, [activePlatforms, applyConfig, config, loading]);
+    }, [activePlatforms, applyConfig, configReady, configVersion, loading]);
 
     // ── Polling for config changes ──────────────────────────────────────────
     const handleConfigChanged = useCallback((freshConfig) => {

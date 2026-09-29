@@ -992,10 +992,12 @@ describe("useSDUI > platform re-fetch effect", () => {
     fetchSpy.mockResolvedValue(makeConfig());
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
-    fetchSpy.mockRejectedValueOnce(new Error("re-down"));
+    fetchSpy.mockRejectedValue(new Error("re-down"));
     act(() => { result.current.setActivePlatforms(["facebook"]); });
-    await act(async () => { await Promise.resolve(); });
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("Platform config re-fetch failed"), expect.any(String));
+    await waitFor(() => expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Platform config re-fetch failed"),
+      expect.any(String),
+    ), { timeout: 2500 });
   });
 
   it("activePlatforms growing back to all still fetches fresh config", async () => {

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   formatPlanningUnsupportedMessage,
   findNextExecutablePlanningTier,
+  getPlanningNotices,
   getPlanningQuickFilterId,
+  getPlanningSummary,
   getPlanningSuggestions,
   getPlanningUnsupported,
   hasExplicitPlanningSubject,
@@ -41,6 +43,34 @@ describe("AI search planning helpers", () => {
     ]);
     expect(getPlanningSuggestions({ suggestions: [] })).toEqual([]);
     expect(getPlanningSuggestions({})).toEqual([]);
+  });
+
+  it("resolves the selected tier summary and displayable notices", () => {
+    const planning = {
+      summary: "Facebook ads - Category: Footwear",
+      notices: [{ kind: "scope", message: " Searched Facebook only " }],
+      tiers: [
+        { summary: "Facebook ads - Category: Footwear" },
+        { summary: "Facebook ads - Keyword: shoes" },
+      ],
+    };
+
+    expect(getPlanningSummary(planning, 1)).toBe("Facebook ads - Keyword: shoes");
+    expect(getPlanningNotices(planning)).toEqual([
+      { kind: "scope", message: "Searched Facebook only" },
+    ]);
+  });
+
+  it("falls back to response-level planning metadata", () => {
+    expect(getPlanningSummary(
+      { tiers: [] },
+      0,
+      { summary: "Facebook ads - Country: India" },
+    )).toBe("Facebook ads - Country: India");
+    expect(getPlanningNotices(
+      { tiers: [] },
+      { notices: [{ kind: "choice", message: " Selected Taboola " }] },
+    )).toEqual([{ kind: "choice", message: "Selected Taboola" }]);
   });
 
   it("does not treat platform-only or unsupported-only plans as executable", () => {

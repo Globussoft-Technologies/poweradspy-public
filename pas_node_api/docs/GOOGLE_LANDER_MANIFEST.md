@@ -65,12 +65,20 @@ src/
 getAdsService.getGoogleAdsWithCountry(db)
   ├─ repository.getDataForLander(0)          → ≤50 ads at redirect_status=0
   │    (join google_text_ad_countries_only → google_text_country_only; ANY_VALUE(destination_url))
-  ├─ repository.updateMetaMultiple(all ids, redirect_status=2)   ← BULK flip up-front (no status 5)
-  ├─ for each ad:
-  │    ├─ repository.getIsoByNicenames(country names) → accumulate ISO
-  │    └─ ES search google_ads_data (match id) → if present, emit { id, iso, destination_url }
+  │    └─ if none, getDataForLander(2, { excludeServedToday:true })
+  │         → drain fallback: re-lease redirect_status=2 rows a worker never reported back on —
+  │           but ONLY rows not served today: AND (updated_date IS NULL OR updated_date < CURDATE())
+  ├─ repository.markServedMultiple(all ids, 2)   ← BULK flip up-front (no status 5):
+  │    redirect_status=2, updated_date=NOW()
+  ├─ one ISO lookup for the batch: getIsoByNicenamesMultiple (each ad only its own ISO codes)
+  ├─ ES search google_ads_data (match id) — every ad in PARALLEL → if present, emit { id, iso, destination_url }
+  │    SQL is awaited one query at a time → a request holds at most 1 MySQL connection
   └─ Response: { code, message, data, exe_time }
 ```
+
+**Once-per-day re-serve.** An ad handed out today is not handed out again until tomorrow.
+`updated_date` is set explicitly in the UPDATE because `ON UPDATE CURRENT_TIMESTAMP` does not fire
+when an ad already at status 2 is re-served (no value changes). "Today" = DB server `CURDATE()`.
 
 ### POST `/landers/upload_gtext_blackhat`  (multipart: media, zip, ad_id, country, status)
 ```
@@ -137,7 +145,11 @@ insertHtmlService.insertHtmlContent(req, db)
 
 ```
 0 (pending)
-  └─ getAds: BULK → 2 (in-progress) for ALL fetched ids   ← no status 5 for google
+  └─ getAds: BULK → 2 (in-progress) for ALL fetched ids, updated_date = NOW()   ← no status 5 for google
+
+2 (in-progress, worker never reported back)
+  └─ getAds fallback (only when 0 is empty) — re-served at most once per day
+     (updated_date < CURDATE()); re-stamps updated_date = NOW()
 
 insertHtml:
   status 1/2 + .net    → redirect_status = 1
@@ -214,4 +226,11 @@ No `.env` change required (config.json is read before `.env`). Dependency: `mult
 
 ## Document Version
 - **v1.0** — Google/gtext landers, faithful port from `api_gtext` BlackhatController.
+- **v1.1** — Status-2 drain fallback re-serves unfinished ads at most once per day
+  (`updated_date < CURDATE()`); the bulk claim now uses `markServedMultiple`, which also stamps
+  `updated_date = NOW()` (§3, §6). Same change on Facebook, Instagram, YouTube. `updated_date`
+  column still to be confirmed on the DB.
+- **v1.2** — getAds batched: one `getIsoByNicenamesMultiple` lookup and parallel ES checks.
+  3 SQL queries per batch (was 50+ sequential), run one at a time so at most 1 MySQL
+  connection is used per request.
 - **DB/ES verified:** `pasdev_gtext` + `google_ads_data`.

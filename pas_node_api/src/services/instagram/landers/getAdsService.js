@@ -25,13 +25,21 @@ class GetAdsService {
       // PENDING has priority: only once that queue is fully drained (0 rows) does
       // this fall back to IN_PROCESSING — ads already claimed by a worker that
       // crashed/never finished — so those get re-served instead of stranded, but
-      // never ahead of brand-new pending ones.
+      // never ahead of brand-new pending ones. IN_PROCESSING ads already served today
+      // (updated_date = today) are skipped; they become eligible again tomorrow.
       let ads = await repository.getDataForLander(PENDING);
       if (!ads.length) {
-        ads = await repository.getDataForLander(IN_PROCESSING);
+        ads = await repository.getDataForLander(IN_PROCESSING, { excludeServedToday: true });
       }
 
       const results = [];
+
+      // One ISO lookup for every country name in the batch (instead of one per row).
+      // SQL calls are awaited one at a time — a request holds at most one connection.
+      const countryNames = ads
+        .filter((ad) => isUsableDestinationUrl(ad.destination_url) && ad.iso && ad.iso !== "ALL")
+        .map((ad) => ad.iso);
+      const isoByName = await repository.getCountryIsoMultiple(countryNames);
 
       // Process each row (PHP style: one row per country per ad)
       for (const ad of ads) {
@@ -50,7 +58,7 @@ class GetAdsService {
             countryName = "ALL";
           } else {
             // Lookup actual country ISO code
-            isoCode = await repository.getCountryIso(ad.iso);
+            isoCode = isoByName.get(String(ad.iso).toLowerCase()) || null;
             if (!isoCode) continue; // Skip if ISO not found
 
             // Normalize country name to proper case
@@ -71,12 +79,11 @@ class GetAdsService {
         }
       }
 
-      // Mark every fetched ad as claimed. No-op for ads that were already
-      // IN_PROCESSING (the fallback batch) — they just get re-stamped.
+      // Mark every fetched ad as claimed and stamp updated_date (served today), so the
+      // IN_PROCESSING fallback does not hand the same ad out again until tomorrow.
+      // One bulk UPDATE for the whole batch.
       const uniqueAdIds = [...new Set(ads.map(ad => ad.id))];
-      for (const adId of uniqueAdIds) {
-        await repository.updateRedirectStatus(adId, IN_PROCESSING);
-      }
+      await repository.markServedMultiple(uniqueAdIds, IN_PROCESSING);
 
       return results;
     } catch (error) {

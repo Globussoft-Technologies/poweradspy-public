@@ -44,8 +44,10 @@ import {
   formatPlanningCapabilityMessage,
   formatPlanningUnsupportedMessage,
   findNextExecutablePlanningTier,
+  getPlanningNotices,
   getPlanningOutcome,
   getPlanningQuickFilterId,
+  getPlanningSummary,
   getPlanningSuggestions,
   getPlanningTier,
   getPlanningUnsupported,
@@ -526,6 +528,15 @@ const App = () => {
   // Planner-provided recovery prompts are transient UI state; they are not
   // search filters and must disappear when the prompt/context changes.
   const [aiSearchSuggestions, setAiSearchSuggestions] = useState([]);
+  // The selected planner tier's explanation is transient UI metadata. It is
+  // never copied into the Common Ads Search payload.
+  const [aiSearchSummary, setAiSearchSummary] = useState("");
+  const [aiSearchNotices, setAiSearchNotices] = useState([]);
+  const clearAiSearchDisplay = useCallback(() => {
+    setAiSearchSuggestions([]);
+    setAiSearchSummary("");
+    setAiSearchNotices([]);
+  }, []);
   const [useSample, setUseSample] = useState(USE_SAMPLE_DATA);
 
   const [isHeaderScrolled, setIsHeaderScrolled] = useState(false);
@@ -1636,7 +1647,7 @@ const App = () => {
       // AI capability copy is only meaningful while AI mode is active. The
       // health guard can switch modes without going through the AI reset path.
       setAiCapabilityMessage(null);
-      setAiSearchSuggestions([]);
+      clearAiSearchDisplay();
       dismissAiToast();
       // A failed/unsupported AI plan has no valid search to restore. Clear its
       // persisted prompt when the health guard leaves AI mode, otherwise the
@@ -1649,7 +1660,7 @@ const App = () => {
         dispatch(setAiPrompt(''));
       }
     }
-  }, [dispatch, dismissAiToast]);
+  }, [clearAiSearchDisplay, dispatch, dismissAiToast]);
   const debounceTimer = useRef(null);
   const lastDailyKeywordRef = useRef(null);
   const projectContextRef = useRef(null);
@@ -2302,7 +2313,7 @@ const App = () => {
   const handleAiQuickFilterApply = useCallback((nextFilters, analytics = null) => {
     // Applying a preset starts a new result load, so stale recovery prompts
     // should not remain attached to the previous AI response.
-    setAiSearchSuggestions([]);
+    clearAiSearchDisplay();
     const hasAiPrompt = Boolean(String(ui.aiPrompt || '').trim());
     const isQuickPresetApply = analytics?.filterName?.startsWith('quick_filter_');
     let filtersToApply = nextFilters;
@@ -2355,7 +2366,7 @@ const App = () => {
     }
 
     sdui.setAllFilters?.(filtersToApply, analytics);
-  }, [sdui.config, sdui.setAllFilters, ui.aiPrompt]);
+  }, [clearAiSearchDisplay, sdui.config, sdui.setAllFilters, ui.aiPrompt]);
 
   // Clear the AI-owned query state without changing the user's selected
   // networks. This is used when the prompt/AI filters are cleared in place.
@@ -2373,7 +2384,7 @@ const App = () => {
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
     aiCapabilityOnlyRef.current = false;
-    setAiSearchSuggestions([]);
+    clearAiSearchDisplay();
     setAiSearchLoading(false);
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
@@ -2387,7 +2398,7 @@ const App = () => {
     dispatch(setAiPrompt(''));
     dispatch(setSearchIn('keyword'));
     dispatch(setExactSearch(false));
-  }, [dismissAiToast, dispatch]);
+  }, [clearAiSearchDisplay, dismissAiToast, dispatch]);
 
   // AI filters are committed on top of ordinary filters. Leaving AI Search
   // must remove only that committed layer, otherwise Keyword/Advertiser/Domain
@@ -2469,7 +2480,7 @@ const App = () => {
     }
     setAiQuickFilterId(undefined);
     setAiCapabilityMessage(null);
-    setAiSearchSuggestions([]);
+    clearAiSearchDisplay();
     aiPromptFilterSnapshotRef.current = null;
     aiPromptBaseFilterSnapshotRef.current = null;
     aiSearchExecutionRef.current = null;
@@ -2511,7 +2522,7 @@ const App = () => {
     const si = type || ui.searchIn || 'keyword';
     const selected = (platform ? [platform] : ui.specificPlatforms) || [];
     armKeywordSearchTrack(query, si, selected);
-  }, [guestGuard, dispatch, ui.aiPrompt, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
+  }, [clearAiSearchDisplay, guestGuard, dispatch, ui.aiPrompt, ui.searchIn, ui.specificPlatforms, sdui, user, guest, isAuthenticated, _isPublicRoute]);
 
   // Orchestrates AI search: prompt → DS plan → try each fallback payload
   // (most-specific first) until one returns results → commit that tier's filters
@@ -2535,7 +2546,7 @@ const App = () => {
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
     aiCapabilityOnlyRef.current = false;
-    setAiSearchSuggestions([]);
+    clearAiSearchDisplay();
     // Store the raw user prompt separately so Ask AI keeps showing exactly what
     // the user typed even when the DS payload rewrites the internal query.
     dispatch(setAiPrompt(trimmed));
@@ -2899,6 +2910,8 @@ const App = () => {
       const selectedPlanning = matchedPlanning || topPlanning;
       const selectedSuggestions = getPlanningSuggestions(selectedPlanning);
       if (selectedSuggestions.length) setAiSearchSuggestions(selectedSuggestions);
+      setAiSearchSummary(getPlanningSummary(selectedPlanning, matchedIndex, topPlanning));
+      setAiSearchNotices(getPlanningNotices(selectedPlanning, topPlanning));
       const partialNotice = getPlanningOutcome(selectedPlanning) === 'partial_compatibility'
         ? formatPlanningCapabilityMessage(selectedPlanning)
         : null;
@@ -2926,8 +2939,10 @@ const App = () => {
         }
 
         currentTierIndex = nextTier.index;
-        setAiSearchSuggestions([]);
+        clearAiSearchDisplay();
         const nextPlanning = nextTier.planning || topPlanning;
+        setAiSearchSummary(getPlanningSummary(nextPlanning, nextTier.index, topPlanning));
+        setAiSearchNotices(getPlanningNotices(nextPlanning, topPlanning));
         const nextPartialNotice = getPlanningOutcome(nextPlanning) === 'partial_compatibility'
           ? formatPlanningCapabilityMessage(nextPlanning)
           : null;
@@ -3027,7 +3042,7 @@ const App = () => {
         aiAbortRef.current = null;
       }
     }
-  }, [guestGuard, dispatch, dismissAiToast, resetAiSearchState, sdui, showToast]);
+  }, [clearAiSearchDisplay, guestGuard, dispatch, dismissAiToast, resetAiSearchState, sdui, showToast]);
 
   // Explicitly turning the AI toggle OFF abandons the AI search: clear the
   // AI-applied query + filters so nothing lingers on screen or gets restored on
@@ -3463,7 +3478,9 @@ const App = () => {
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}
         aiSuggestions={aiSearchSuggestions}
-        onAiSuggestionsDismiss={() => setAiSearchSuggestions([])}
+        aiSearchSummary={aiSearchSummary}
+        aiSearchNotices={aiSearchNotices}
+        onAiSuggestionsDismiss={clearAiSearchDisplay}
         onNotifOpenChange={setNotificationsOpen}
         onSearchDropdownOpenChange={handleSearchDropdownOpenChange}
         searchIn={ui.searchIn}
