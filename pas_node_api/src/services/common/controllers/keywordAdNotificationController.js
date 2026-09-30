@@ -266,6 +266,16 @@ function networksScrapedToday(doc, today) {
   return [...out];
 }
 
+// Gates ONLY the new first-ad push (watcher + Google Transparency immediate send) —
+// NOT the older 20-ad bell, which stays on for every user. notify.allUsers true → everyone. false → only
+// notify.allowedUserIds (matched by user id; a user known only by email is excluded).
+function isNotifyAllowedUser(userId) {
+  const notify = config.keywordSearch?.notify || {};
+  if (notify.allUsers !== false) return true;
+  if (userId === undefined || userId === null || userId === '') return false;
+  return (notify.allowedUserIds || []).map(String).includes(String(userId));
+}
+
 // Users who searched the term → [{ userId, username, email }]. Prefer the richer
 // userInfos[]; fall back to the plain users[] (emails only).
 function resolveUsers(doc) {
@@ -281,6 +291,13 @@ function resolveUsers(doc) {
   return (doc.users || [])
     .filter(Boolean)
     .map(email => ({ userId: null, username: null, email: String(email) }));
+}
+
+// Recipients for the first-ad push: searchers of this term who are on the push
+// allow-list and not yet pushed today for this network.
+function pendingFirstAdPushUsers(doc, network, today) {
+  return resolveUsers(doc).filter((u) =>
+    isNotifyAllowedUser(u.userId) && !isAdFoundPushedToday(doc, u, network, today));
 }
 
 /**
@@ -521,7 +538,7 @@ async function sendFirstAdPushForKnownCount({ docId, value, network, adsCount })
       { projection: { type: 1, value: 1, valueNorm: 1, users: 1, userInfos: 1, adFoundPushed: 1 } }
     );
     if (!doc) return;
-    const pendingUsers = resolveUsers(doc).filter((u) => !isAdFoundPushedToday(doc, u, network, today));
+    const pendingUsers = pendingFirstAdPushUsers(doc, network, today);
     for (const u of pendingUsers) {
       await sendFirstAdPushSafe(source, doc, u, network, today);
     }
@@ -574,7 +591,7 @@ function startFirstAdPushWatcher({ docId, scrapeId, type, value, network }) {
       // way, even while it was genuinely still running.
       stillOpen = !!session && (session.status === 'scrapping' || session.status === 'processing');
 
-      const pendingUsers = resolveUsers(doc).filter((u) => !isAdFoundPushedToday(doc, u, network, today));
+      const pendingUsers = pendingFirstAdPushUsers(doc, network, today);
       if (pendingUsers.length > 0) {
         const query = buildQuery(lookupNet, type, value, dateScoped, today);
         const es = query ? dbManager.getElastic(lookupNet) : null;
@@ -592,7 +609,7 @@ function startFirstAdPushWatcher({ docId, scrapeId, type, value, network }) {
           }
         }
       } else {
-        return; // everyone who searched this has already been pushed today — nothing left to do
+        return; // no one left to push (already pushed today, or not on the push allow-list) — stop, no ES check
       }
     } catch (err) {
       log.warn('first-ad push watcher tick failed', { docId: String(docId), scrapeId: String(scrapeId), network, value, error: err.message });
@@ -818,6 +835,7 @@ module.exports = {
   runUserKeywordAdScan,
   getUserKeywordAdNotifications,
   markKeywordAdNotificationRead,
+  isNotifyAllowedUser,
   // called from keywordSearchController.js's scraperWork(), once per claimed term
   startFirstAdPushWatcher,
   // called from keywordSearchController.js's addScrapingHistory() when ads_count is

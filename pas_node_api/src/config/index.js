@@ -456,6 +456,18 @@ const config = {
       // scraped. First check is always 1 min after the claim (not configurable); this is
       // that recurring interval after the first check.
       firstAdPushCheckIntervalSec: getVal(fileConfig.keywordSearch?.notify?.firstAdPushCheckIntervalSec, 'KEYWORD_SEARCH_NOTIFY_FIRST_AD_PUSH_CHECK_INTERVAL_SEC', toInt) || 300,
+      // Who gets the first-ad push (keyword scraping watcher + Google Transparency).
+      // The older 20-ad bell is NOT gated — it stays on for everyone. allUsers true
+      // (default) = everyone; false = ONLY allowedUserIds. The frontend banners have
+      // their own matching list (VITE_SEARCH_CRAWL_ALL_USERS / _ALLOWED_USER_IDS) —
+      // keep the two in sync.
+      allUsers: getVal(fileConfig.keywordSearch?.notify?.allUsers, 'KEYWORD_SEARCH_NOTIFY_ALL_USERS', toBool) !== false,
+      allowedUserIds: (() => {
+        const raw = getVal(fileConfig.keywordSearch?.notify?.allowedUserIds, 'KEYWORD_SEARCH_NOTIFY_ALLOWED_USER_IDS');
+        if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+        if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+        return [];
+      })(),
     },
   },
 

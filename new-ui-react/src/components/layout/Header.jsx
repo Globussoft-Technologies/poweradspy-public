@@ -272,11 +272,11 @@ const Header = ({
     if (!clean) return "";
     return exact ? `"${clean}"` : clean;
   };
-  // Clearing the box ends a project-originated search: hide the toggle and
-  // drop precise mode so later normal searches are not silently quoted.
+  // Clearing the box drops precise mode so later searches are not silently
+  // quoted, and ends a project-originated search.
   const endProjectSearch = () => {
-    if (!showExactSearchToggle) return;
     setPreciseSearch(false);
+    if (!showExactSearchToggle) return;
     onProjectSearchEnd?.();
   };
   const handleExactSearchToggle = (checked) => {
@@ -290,6 +290,10 @@ const Header = ({
 
   // Local search type — only syncs to Redux on submit
   const [localSearchIn, setLocalSearchIn] = useState(searchIn || "keyword");
+  // Precise search: always for keyword; for advertiser only on project searches.
+  const preciseSearchAllowed =
+    localSearchIn === "keyword" ||
+    (showExactSearchToggle && localSearchIn === "advertiser");
   useEffect(() => {
     setLocalSearchIn(searchIn || "keyword");
   }, [searchIn]);
@@ -966,7 +970,7 @@ const Header = ({
                     if (aiMode) {
                       if (onAiSearch) onAiSearch(val);
                     } else if (onSearch) {
-                      const query = showExactSearchToggle && preciseSearch ? toExactQuery(val, true) : val;
+                      const query = preciseSearch && preciseSearchAllowed ? toExactQuery(val, true) : val;
                       if (query !== val) setLocalQuery(query);
                       onSearch(query, localSearchIn);
                     }
@@ -1134,7 +1138,7 @@ const Header = ({
               </button>
             */}
 
-            {showExactSearchToggle && !aiMode && localQuery.trim().length > 0 && (localSearchIn === "keyword" || localSearchIn === "advertiser") && (
+            {!aiMode && localQuery.trim().length > 0 && preciseSearchAllowed && (
               <label
                 className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
                 title={t("search_precisely_tooltip")}

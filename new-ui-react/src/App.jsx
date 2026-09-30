@@ -110,6 +110,17 @@ const GOOGLE_INTEL_ON = KEYWORD_EXPLORER_ON;
 // to "false" to kill the banner without a code change/deploy.
 const SEARCH_CRAWL_BANNER_ON = import.meta.env.VITE_ENABLE_SEARCH_CRAWL_BANNER !== "false";
 
+// Who sees the "No ads yet — we're crawling" / "Showing what we have" banners (the
+// frontend half of the first-ad push feature). VITE_SEARCH_CRAWL_ALL_USERS not
+// "false" (default) = everyone; "false" = only VITE_SEARCH_CRAWL_ALLOWED_USER_IDS
+// (comma-separated). Keep in sync with the backend's keywordSearch.notify.allUsers /
+// allowedUserIds, which decides who actually gets the push.
+const SEARCH_CRAWL_ALL_USERS = import.meta.env.VITE_SEARCH_CRAWL_ALL_USERS !== "false";
+const SEARCH_CRAWL_ALLOWED_USER_IDS = String(import.meta.env.VITE_SEARCH_CRAWL_ALLOWED_USER_IDS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+const isSearchCrawlAllowedUser = (userId) =>
+  SEARCH_CRAWL_ALL_USERS || (userId !== "" && userId != null && SEARCH_CRAWL_ALLOWED_USER_IDS.includes(String(userId)));
+
 const SAVED_HIDDEN_SNAPSHOT_KEY = 'pas.savedHiddenAdSnapshots.v1';
 const MAX_SAVED_HIDDEN_SNAPSHOTS = 120;
 
@@ -1705,19 +1716,39 @@ const App = () => {
   // `ads.length` first so scrolling doesn't flash the "underway" spinner icon/text
   // back on over results that are already on screen.
   const searchBannerLoading = ads.length === 0 && loadingMore;
-  // SEARCH_CRAWL_BANNER_ON only gates the "ads found, still checking for more"
-  // message (ads.length > 0) — the zero-results "underway"/"no ads yet" message
-  // always shows regardless of the flag, since that's the only feedback the user
-  // has that anything is happening at all while there's nothing on screen yet.
+  // 3-second minimum for the "underway" message, restarted each time a fresh
+  // zero-ads load begins. Timer lives in a ref and is NOT cleared when loading
+  // ends — a load finishing inside the 3s must still let the hold run out.
+  const [underwayHold, setUnderwayHold] = useState(false);
+  const underwayHoldTimerRef = useRef(null);
+  useEffect(() => {
+    if (!searchBannerLoading) return;
+    setUnderwayHold(true);
+    clearTimeout(underwayHoldTimerRef.current);
+    underwayHoldTimerRef.current = setTimeout(() => setUnderwayHold(false), 3000);
+  }, [searchBannerLoading]);
+  useEffect(() => () => clearTimeout(underwayHoldTimerRef.current), []);
+
+  // The "underway" loading message shows for every user. The two crawl-status
+  // messages — "No ads yet — we're crawling" and "Showing what we have" — are the
+  // new search-crawl feature (paired with the backend first-ad push), so they show
+  // only for allowed users (VITE_SEARCH_CRAWL_ALL_USERS / _ALLOWED_USER_IDS).
+  // Other users instead keep "underway" up while loading, for at least 3s, then
+  // the banner hides. SEARCH_CRAWL_BANNER_ON additionally gates "Showing what we
+  // have" (ads.length > 0) for allowed users.
+  const searchCrawlAllowed = isSearchCrawlAllowedUser(currentUserId);
+  const searchBannerShowUnderway = searchBannerLoading || (!searchCrawlAllowed && underwayHold);
+  const searchBannerCrawlAllowed = searchBannerShowUnderway
+    || (searchCrawlAllowed && (ads.length === 0 || SEARCH_CRAWL_BANNER_ON));
   const searchBannerVisible = hasActiveSearchQuery && onAdsDashboardPage && !adDetailModalOpen && !selectedAdForAnalytics && !ui.aiPrompt && !aiModeActive && !guest?.isRestricted && !searchDropdownOpen
-    && (ads.length === 0 || SEARCH_CRAWL_BANNER_ON);
+    && searchBannerCrawlAllowed;
   const searchBannerLabel = ["keyword", "advertiser", "domain"].includes(String(ui.searchIn || '').toLowerCase())
     ? ui.searchIn
     : "keyword";
-  const searchBannerMessage = ads.length > 0
-    ? "Showing what we have — our crawler is still checking for new ads. We'll notify you if anything new shows up."
-    : searchBannerLoading
-      ? `Your ${searchBannerLabel} search is underway. We’re scanning for the newest matching ads.`
+  const searchBannerMessage = searchBannerShowUnderway
+    ? `Your ${searchBannerLabel} search is underway. We’re scanning for the newest matching ads.`
+    : ads.length > 0
+      ? "Showing what we have — our crawler is still checking for new ads. We'll notify you if anything new shows up."
       : "No ads yet for this — we're crawling now. Usually ready in 15–20 min; we'll notify you the moment new ads come in.";
 
   // Auto-open pricing modal when guest on public landing reaches the end of ads
@@ -3976,7 +4007,7 @@ const App = () => {
           }}
         >
           <div className="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-white bg-[#335296]">
-            {searchBannerLoading
+            {searchBannerShowUnderway
               ? <Loader2 size={14} strokeWidth={3} className="animate-spin" />
               : <Info size={14} strokeWidth={3} />}
           </div>
