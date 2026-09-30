@@ -2,6 +2,7 @@
 
 const repo = require('./repository');
 const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+const { describeError } = require('../../common/helpers/errorResponse');
 
 function validateItem(item) {
   // html_path is OPTIONAL (may be omitted) — mirrors gdn/google/youtube/linkedin.
@@ -392,10 +393,11 @@ async function insertHtmlRedirectCountry(req, db, log) {
 
     return lastResponse;
   } catch (error) {
-    log?.error(`Error in insertHtmlRedirectCountry: ${error.message}`);
+    const reason = describeError(error);
+    log?.error(`Error in insertHtmlRedirectCountry: ${reason}`);
     return {
       code: 400,
-      message: 'Some Error Occurred',
+      message: `Failed to store the destination lander: ${reason}`,
       error: error.message,
       exe_time: (Date.now() - startTime) / 1000
     };

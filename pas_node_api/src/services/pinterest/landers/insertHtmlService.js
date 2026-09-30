@@ -2,6 +2,7 @@
 
 const repo = require('./repository');
 const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+const { describeError } = require('../../common/helpers/errorResponse');
 
 /**
  * insertHtmlRedirectCountry — inserts/updates lander data across multiple tables
@@ -417,10 +418,11 @@ async function insertHtmlRedirectCountry(req, db, log) {
 
     return lastResponse;
   } catch (error) {
-    log?.error(`[pinterest-landers] Error in insertHtmlRedirectCountry: ${error.message}`);
+    const reason = describeError(error);
+    log?.error(`[pinterest-landers] Error in insertHtmlRedirectCountry: ${reason}`);
     return {
       code: 401,
-      message: 'Some Error Occurred',
+      message: `Failed to store the destination lander: ${reason}`,
       error: error.message,
       exe_time: (Date.now() - startTime) / 1000
     };

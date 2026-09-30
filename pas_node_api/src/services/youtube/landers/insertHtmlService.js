@@ -35,6 +35,7 @@ const {
   esHits, pipeJoin, normalizeCountry, splitDbList, uniq, appendZip, extractDomain, toUnixSeconds,
 } = require('./transforms');
 const { validate } = require('./validate');
+const { describeError } = require('../../common/helpers/errorResponse');
 
 const ES_DOC_TYPE = 'doc';
 
@@ -100,7 +101,7 @@ async function insertHtmlContent(req, db, log) {
     }
     if (!sql || !elastic) {
       response.code = 401;
-      response.message = 'Some Error Occured';
+      response.message = `${!sql ? 'SQL' : 'Elasticsearch'} connection not initialised for YouTube — request not processed, please retry shortly`;
       response.exe_time = (Date.now() - started) / 1000;
       return response;
     }
@@ -321,9 +322,10 @@ async function insertHtmlContent(req, db, log) {
       response.message = 'Destination Lander not updated';
     }
   } catch (e) {
-    log?.error?.('landers.insertHtmlContent failed', { ad_id, error: e.message });
+    const reason = describeError(e);
+    log?.error?.('landers.insertHtmlContent failed', { ad_id, error: reason });
     response.code = 401;
-    response.message = 'Some Error Occured';
+    response.message = `Failed to store the destination lander for ad "${ad_id}": ${reason}`;
   }
 
   response.exe_time = (Date.now() - started) / 1000;

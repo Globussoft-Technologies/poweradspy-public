@@ -137,6 +137,8 @@ const Header = ({
   setSearchIn,
   exactSearch,
   setExactSearch,
+  showExactSearchToggle = false,
+  onProjectSearchEnd,
   sdui,
   activePage = "ads",
   isLanding = false,
@@ -258,6 +260,33 @@ const Header = ({
       (previous.searchIn !== currentSearchIn || previous.searchQuery !== currentSearchQuery);
     setLocalQuery(aiMode && !externalNormalSearch ? (aiPrompt || "") : currentSearchQuery);
   }, [aiMode, aiPrompt, searchIn, searchQuery]);
+
+  // "Search precisely": the backend treats a keyword containing double quotes
+  // as an exact phrase match, so exact mode only wraps the text in quotes.
+  // It is local UI state — it must NOT flip Redux exactSearch (exact_search
+  // stays 0; the quotes alone drive the precise match).
+  const [preciseSearch, setPreciseSearch] = useState(false);
+  const stripQuotes = (val) => String(val || "").replace(/"/g, "").trim();
+  const toExactQuery = (val, exact) => {
+    const clean = stripQuotes(val);
+    if (!clean) return "";
+    return exact ? `"${clean}"` : clean;
+  };
+  // Clearing the box ends a project-originated search: hide the toggle and
+  // drop precise mode so later normal searches are not silently quoted.
+  const endProjectSearch = () => {
+    if (!showExactSearchToggle) return;
+    setPreciseSearch(false);
+    onProjectSearchEnd?.();
+  };
+  const handleExactSearchToggle = (checked) => {
+    setPreciseSearch(checked);
+    if (exactSearch) setExactSearch?.(false);
+    const next = toExactQuery(localQuery, checked);
+    if (!next) return;
+    setLocalQuery(next);
+    onSearch?.(next, localSearchIn);
+  };
 
   // Local search type — only syncs to Redux on submit
   const [localSearchIn, setLocalSearchIn] = useState(searchIn || "keyword");
@@ -914,6 +943,7 @@ const Header = ({
                         aiClearHandledRef.current = true;
                         onClearAiSearch?.();
                       } else if (onSearch) {
+                        endProjectSearch();
                         onSearch("", localSearchIn);
                       }
                     } else {
@@ -929,13 +959,16 @@ const Header = ({
                       onClearAiSearch?.();
                       return;
                     }
+                    endProjectSearch();
                     if (onSearch) onSearch("", localSearchIn);
                   }}
                   onSearch={(val) => {
                     if (aiMode) {
                       if (onAiSearch) onAiSearch(val);
                     } else if (onSearch) {
-                      onSearch(val, localSearchIn);
+                      const query = showExactSearchToggle && preciseSearch ? toExactQuery(val, true) : val;
+                      if (query !== val) setLocalQuery(query);
+                      onSearch(query, localSearchIn);
                     }
                   }}
                   // AI mode takes a free-form prompt — keyword/category suggestions
@@ -1101,18 +1134,18 @@ const Header = ({
               </button>
             */}
 
-            {!aiMode && localQuery.trim().length > 0 && localSearchIn === "keyword" && (
+            {showExactSearchToggle && !aiMode && localQuery.trim().length > 0 && (localSearchIn === "keyword" || localSearchIn === "advertiser") && (
               <label
                 className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
                 title={t("search_precisely_tooltip")}
               >
                 <input
                   type="checkbox"
-                  checked={exactSearch}
-                  onChange={(e) => setExactSearch(e.target.checked)}
-                  className="w-3.5 h-3.5 rounded border-[#333] bg-[#111] accent-[#3759a3] cursor-pointer"
+                  checked={preciseSearch || /^".+"$/.test(localQuery.trim())}
+                  onChange={(e) => handleExactSearchToggle(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-theme-border accent-[#3759a3] cursor-pointer"
                 />
-                <span className="notranslate text-[10px] 2xl:text-[12px] text-white/50 hover:text-[#6b99ff] transition-colors whitespace-nowrap">
+                <span className="notranslate text-[10px] 2xl:text-[12px] text-theme-text-muted hover:text-[#3759a3] transition-colors whitespace-nowrap">
                   {t("search_precisely")}
                 </span>
               </label>

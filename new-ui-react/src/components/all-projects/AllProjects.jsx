@@ -3564,7 +3564,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                                       // Ads Library filter from the previous page
                                       // cannot suppress the exact platform the
                                       // user clicked in the competitor table.
-                                      onSearch?.(comp.name, "advertiser", p.toLowerCase(), {
+                                      onSearch?.(`"${comp.name}"`, "advertiser", p.toLowerCase(), {
                                         resetFilters: true,
                                       });
                                       markReturnToAnalytics();

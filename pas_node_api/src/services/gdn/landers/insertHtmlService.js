@@ -1,6 +1,7 @@
 'use strict';
 
 const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+const { describeError } = require('../../common/helpers/errorResponse');
 
 /**
  * GDN landers — insert_html_content (BlackhatController@inserHtmlContentToDB).
@@ -142,7 +143,7 @@ async function insertHtmlContent(req, db, log) {
     }
     if (!sql || !elastic) {
       response.code = 400;
-      response.message = 'Empty PostData provided';
+      response.message = `${!sql ? 'SQL' : 'Elasticsearch'} connection not initialised for GDN — request not processed, please retry shortly`;
       response.exe_time = (Date.now() - started) / 1000;
       return response;
     }
@@ -393,9 +394,10 @@ async function insertHtmlContent(req, db, log) {
       response.message = 'Destination Lander not updated';
     }
   } catch (e) {
-    log?.error?.('landers.insertHtmlContent failed', { ad_id: postdata[0]?.ad_id, error: e.message, stack: e.stack });
+    const reason = describeError(e);
+    log?.error?.('landers.insertHtmlContent failed', { ad_id: postdata[0]?.ad_id, error: reason, stack: e.stack });
     response.code = 400;
-    response.message = 'Some Error occurred';
+    response.message = `Failed to store the destination lander for ad "${postdata[0]?.ad_id}": ${reason}`;
   }
 
   response.exe_time = (Date.now() - started) / 1000;

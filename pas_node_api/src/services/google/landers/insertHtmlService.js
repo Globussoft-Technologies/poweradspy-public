@@ -1,6 +1,7 @@
 'use strict';
 
 const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
+const { describeError } = require('../../common/helpers/errorResponse');
 
 /**
  * Google landers — insert_html_content (BlackhatController@inserHtmlContentToDBO).
@@ -52,7 +53,11 @@ const uniq = (arr) => [...new Set(arr)];
 function extractDomain(destinations) {
   if (!destinations) return null;
   const host = getLastUrlHostname(destinations);
-  const m = String(host || '').match(/([a-z0-9][a-z0-9-]{1,63}\.[a-z.]{2,6})$/i);
+  const h = String(host || '');
+  // Legacy pattern (handles 2-part TLDs like .co.uk); fall back to a single long TLD
+  // (e.g. .website, .online) which the {2,6} limit rejects.
+  const m = h.match(/([a-z0-9][a-z0-9-]{1,63}\.[a-z.]{2,6})$/i)
+    || h.match(/([a-z0-9][a-z0-9-]{1,63}\.[a-z]{2,63})$/i);
   return m ? m[1] : null;
 }
 
@@ -133,6 +138,7 @@ async function insertHtmlContent(req, db, log) {
   let whitehat_screenshot = [], blackhat_screenshot = [], whitehat_zip = [], blackhat_zip = [];
 
   const update_meta_table = {};
+  let stage = 'init'; // current pipeline step, reported when an error is thrown
 
   try {
     if (!postdata.length) {
@@ -143,7 +149,7 @@ async function insertHtmlContent(req, db, log) {
     }
     if (!sql || !elastic) {
       response.code = 400;
-      response.message = 'Empty PostData provided';
+      response.message = `${!sql ? 'SQL' : 'Elasticsearch'} connection not initialised for Google — request not processed, please retry shortly`;
       response.exe_time = (Date.now() - started) / 1000;
       return response;
     }
@@ -151,6 +157,7 @@ async function insertHtmlContent(req, db, log) {
     const firstAdId = postdata[0].ad_id;
 
     // 1. Must exist in Elasticsearch (google_ads_data_v2, flat id).
+    stage = 'elasticsearch ad lookup';
     const esFound = await elastic.search({
       index: ES_INDEX, type: ES_DOC_TYPE, body: { query: { match: { id: firstAdId } } },
     });
@@ -176,6 +183,7 @@ async function insertHtmlContent(req, db, log) {
       }
 
       // 3. Current meta snapshot.
+      stage = 'fetch meta data (google_text_ad_meta_data)';
       const metaRows = await repo.getMetaDataDetails(sql, value.ad_id);
       const m0 = metaRows[0] || {};
       const blackhat_status = m0.blackhat_status;
@@ -188,6 +196,7 @@ async function insertHtmlContent(req, db, log) {
       // 4. status === 3 → no response: flip redirect_status only (PHP always returns here).
       if (Number(value.status) === 3) {
         if (blackhat_status != 1 || whitehat_status != 0 || whitehat_status != 2) {
+          stage = 'update redirect_status (status 3)';
           update_meta_table.redirect_status = value.crawled_by === '.net' ? 3 : 5;
           const upd = await repo.updateMeta(sql, value.ad_id, update_meta_table);
           response.code = upd === 1 ? 200 : 400;
@@ -198,13 +207,14 @@ async function insertHtmlContent(req, db, log) {
       }
 
       // 5. Domain upsert (no dod_date for gtext).
+      stage = 'domain upsert (google_text_ad_domains)';
       domain_name = extractDomain(value.destinations);
       if (domain_name) {
         const domainRows = await repo.getDomainId(sql, domain_name);
         domain_registered_date = value.domain_registered_date ?? null;
         if (domainRows[0] && domainRows[0].id != null) {
+          id = domainRows[0].id;
           if (value.domain_registered_date !== undefined && value.domain_registered_date !== null) {
-            id = domainRows[0].id;
             await repo.updateDomainRegisterDate(sql, id, value.domain_registered_date);
           }
         } else {
@@ -217,6 +227,7 @@ async function insertHtmlContent(req, db, log) {
       }
 
       // 6. Country + redirect_status (found case).
+      stage = 'country / lander bookkeeping';
       const country = normalizeCountry(value.country_iso);
       update_meta_table.redirect_status = value.crawled_by === '.net' ? 1 : 4;
 
@@ -237,6 +248,7 @@ async function insertHtmlContent(req, db, log) {
 
       // 8. Outgoing links upsert (per entry — gtext processes each inside the loop).
       if (Array.isArray(value.outgoing_url) && value.outgoing_url.length > 0) {
+        stage = 'outgoing links upsert (google_ad_outgoing_links)';
         for (const end of value.outgoing_url) {
           update_meta_table.outgoing_status = 1;
           const outgoing_url_data = {
@@ -282,6 +294,7 @@ async function insertHtmlContent(req, db, log) {
 
       // 9. ad_url redirect rows (type R).
       if (Array.isArray(value.redirects) && value.redirects.length > 0 && value.redirects[0] !== 'NA') {
+        stage = 'redirect urls upsert (google_ad_url type R)';
         for (const rval of value.redirects) {
           const existing = await repo.getDestinationDetails(
             sql, { google_text_ad_id: value.ad_id, url_type: 'R', url: rval, proxy_lander_status: rval }, 'google_text_ad_id'
@@ -297,6 +310,7 @@ async function insertHtmlContent(req, db, log) {
       }
 
       // 10. ad_url destination row (type D) — update if exists else insert.
+      stage = 'destination url upsert (google_ad_url type D)';
       const destRows = await repo.getDestinationDetails(
         sql, { url_type: 'D', google_text_ad_id: value.ad_id, url: value.destinations, proxy_lander_status: value.status },
         ['google_text_ad_id', 'cat_status']
@@ -322,6 +336,7 @@ async function insertHtmlContent(req, db, log) {
     const firstAdId2 = postdata[0].ad_id;
 
     // 11. html_lander_content upsert.
+    stage = 'html lander content upsert (google_ad_html_lander_content)';
     const insert_html_content = {
       google_text_ad_id: firstAdId2,
       html_whitehat_lander_text: whitehat.length > 0 ? JSON.stringify(whitehat) : null,
@@ -337,7 +352,11 @@ async function insertHtmlContent(req, db, log) {
     }
 
     // 12. main google_text_ad.domain_id.
-    await repo.updateMainAdDomainId(sql, firstAdId2, id);
+    // Skip when no domain could be resolved — never overwrite an existing domain_id with ''.
+    stage = 'update google_text_ad.domain_id';
+    if (id !== '' && id !== null && id !== undefined && Number(id) > 0) {
+      await repo.updateMainAdDomainId(sql, firstAdId2, id);
+    }
 
     // 13. Fold screenshot/zip JSON into the meta update.
     if (blackhat_screenshot.length > 0) {
@@ -352,8 +371,10 @@ async function insertHtmlContent(req, db, log) {
     }
 
     // 14. Meta update → ES doc update.
+    stage = 'update meta data (google_text_ad_meta_data)';
     const metaUpd = await repo.updateMeta(sql, firstAdId2, update_meta_table);
     if (metaUpd === 1) {
+      stage = 'elasticsearch doc update';
       await elastic.update({
         index: ES_INDEX,
         type: ES_DOC_TYPE,
@@ -383,9 +404,10 @@ async function insertHtmlContent(req, db, log) {
       response.message = 'Destination Lander not updated';
     }
   } catch (e) {
-    log?.error?.('landers.insertHtmlContent failed', { ad_id: postdata[0]?.ad_id, error: e.message });
+    const reason = describeError(e);
+    log?.error?.('landers.insertHtmlContent failed', { ad_id: postdata[0]?.ad_id, stage, error: reason });
     response.code = 400;
-    response.message = 'Some Error occurred';
+    response.message = `Failed at step "${stage}": ${reason}`;
   }
 
   response.exe_time = (Date.now() - started) / 1000;

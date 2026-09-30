@@ -1,6 +1,7 @@
 const GetAdsService = require('../landers/getAdsService');
 const UploadService = require('../landers/uploadService');
 const InsertHtmlContentService = require('../landers/insertHtmlContentService');
+const { describeError } = require('../../common/helpers/errorResponse');
 
 class LandersController {
   static async getInstagramAdsWithCountry(req, res, next, service) {
@@ -151,7 +152,7 @@ class LandersController {
 
       return res.status(500).json({
         code: 500,
-        message: 'Internal server error',
+        message: `Failed to store the destination lander: ${describeError(error)}`,
         error: error.message,
       });
     }

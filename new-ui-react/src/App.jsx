@@ -1665,6 +1665,9 @@ const App = () => {
   const lastDailyKeywordRef = useRef(null);
   const projectContextRef = useRef(null);
   const [projectContextTrigger, setProjectContextTrigger] = useState(0);
+  // True while the current search was opened from the All Projects section —
+  // the header's "Search precisely" toggle is only offered for those searches.
+  const [isProjectSearch, setIsProjectSearch] = useState(false);
   useEffect(() => {
     clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(
@@ -3489,6 +3492,8 @@ const App = () => {
         setSearchQuery={guestSetSearchQuery}
         exactSearch={ui.exactSearch}
         setExactSearch={guestSetExactSearch}
+        showExactSearchToggle={isProjectSearch}
+        onProjectSearchEnd={() => setIsProjectSearch(false)}
         onGenerateStrategy={handleGenerateCampaign}
         sdui={sdui}
         setActiveTab={(val) => dispatch(setActiveTab(val))}
@@ -3683,7 +3688,7 @@ const App = () => {
               }}
               onRecentActivityClick={handleRecentActivityClick}
               onCountryClick={handleCountryClick}
-              setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); }}
+              setProjectContext={(ctx) => { projectContextRef.current = ctx; setProjectContextTrigger(t => t + 1); setIsProjectSearch(true); dispatch(setExactSearch(false)); }}
               onBrandLimitReached={() => showUpgradeOrLoginPrompt("Please login to track more brands")}
             />
           )
