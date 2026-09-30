@@ -8,6 +8,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
@@ -806,7 +807,7 @@ ORDER BY FIELD(instagram_ad.id, ${placeholders})
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'instagram'),
         post_owner:
           ad.post_owner
           || src['instagram_ad_post_owners.post_owner_name']

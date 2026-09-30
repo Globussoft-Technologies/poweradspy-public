@@ -33,6 +33,8 @@ const TAXONOMY_ID_FIELDS = {
   subcategory: 'subCategory_id',
 };
 
+const AI_META_REQUIRED_FIELDS = ['ad_type', 'intent', 'hook', 'offering_type'];
+
 // AI-filtered search results are presented as a visible card count, not as the
 // raw ES hit total. On collapsed indices (Facebook / Instagram) the raw hit
 // total can run ahead of what the UI renders, so we keep a lightweight
@@ -61,6 +63,37 @@ function getAiMetaEsField(network) {
   return config.env === 'production' && String(network).toLowerCase() === 'facebook'
     ? 'ai_meta'
     : 'ai';
+}
+
+function getAiMetaSourceFields(network) {
+  const field = getAiMetaEsField(network);
+  return AI_META_REQUIRED_FIELDS.map((key) => `${field}.${key}`);
+}
+
+function hasCompleteAiMeta(source, network) {
+  const aiMeta = source?.[getAiMetaEsField(network)];
+  if (!aiMeta || typeof aiMeta !== 'object' || Array.isArray(aiMeta)) return false;
+  return AI_META_REQUIRED_FIELDS.every((field) => {
+    const value = aiMeta[field];
+    return Array.isArray(value)
+      ? value.length > 0
+      : value !== undefined && value !== null && String(value).trim() !== '';
+  });
+}
+
+function markAiMetaResult(ad, source, network) {
+  const aiMeta = source?.[getAiMetaEsField(network)];
+  if (!aiMeta || typeof aiMeta !== 'object' || Array.isArray(aiMeta)) return ad;
+  return { ...ad, has_ai_meta: hasCompleteAiMeta(source, network) };
+}
+
+function addAiMetaSourceFields(esParams, network) {
+  const source = esParams?.body?._source;
+  // Facebook's builder intentionally requests the complete source. Do not
+  // replace a non-array source configuration; other builders use arrays.
+  if (!Array.isArray(source)) return esParams;
+  esParams.body._source = [...new Set([...source, ...getAiMetaSourceFields(network)])];
+  return esParams;
 }
 
 /**
@@ -307,6 +340,11 @@ function getAiMetaNonCategoryFilterClauses(network, params = {}) {
 function applyAiMetaFilters(esParams, network, params) {
   if (!esParams?.body) return esParams;
 
+  // Normal result cards need only a cheap per-ad AI marker. Keep the full AI
+  // object out of ordinary feed responses and let the detail modal read it on
+  // demand when the user opens an AI-enriched ad.
+  addAiMetaSourceFields(esParams, network);
+
   const query = esParams.body.query;
   if (query?.bool) {
     const originalFilters = Array.isArray(query.bool.filter)
@@ -395,11 +433,14 @@ module.exports = {
   combineCategorySources,
   getAiMetaCategoryFilterClauses,
   getAiMetaEsField,
+  getAiMetaSourceFields,
   getAiMetaOfferTypeEsField,
   getAiMetaFilterClauses,
   getAiMetaNonCategoryFilterClauses,
   getLegacyCategoryFilterClauses,
   getHasAiMetaFilter,
+  hasCompleteAiMeta,
+  markAiMetaResult,
   readAiMetaVisibleCount,
   isEnabled,
 };

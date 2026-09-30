@@ -8,6 +8,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
@@ -520,7 +521,7 @@ ORDER BY FIELD(linkedin_ad.id, ${placeholders})
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'linkedin'),
         post_owner: ad.post_owner || src['post_owner'] || null,
         post_owner_id: ad.post_owner_id || src['post_owner_id'] || null,
         post_owner_image: ad.post_owner_image || src['post_owner_image'] || null,

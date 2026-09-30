@@ -8,6 +8,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
@@ -499,7 +500,7 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       const esLang = src['ad_language'];
       const language = (esLang && langMap) ? resolveLanguageName(langMap, esLang) : null;
       return {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'youtube'),
         language,
         post_owner: ad.post_owner || src['post_owner'] || null,
         post_owner_id: ad.post_owner_id || src['post_owner_id'] || null,

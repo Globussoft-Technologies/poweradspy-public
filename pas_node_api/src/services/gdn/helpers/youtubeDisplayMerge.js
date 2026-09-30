@@ -36,6 +36,8 @@ const {
   combineCategorySources,
   getAiMetaCategoryFilterClauses,
   getAiMetaNonCategoryFilterClauses,
+  getAiMetaSourceFields,
+  markAiMetaResult,
   getLegacyCategoryFilterClauses,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
@@ -397,8 +399,11 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
           body: {
             query: { terms: { ad_id: ids.map(Number) } },
             size: ids.length,
-            _source: ['ad_id', 'ad_type', 'new_nas_image_url', 'reactions', 'dislikes',
-              'comments', 'views', 'verified', 'countries', 'duration', 'call_to_action', 'ad_language'],
+            _source: [
+              'ad_id', 'ad_type', 'new_nas_image_url', 'reactions', 'dislikes',
+              'comments', 'views', 'verified', 'countries', 'duration', 'call_to_action', 'ad_language',
+              ...getAiMetaSourceFields('youtube'),
+            ],
           },
         });
         const hh = r.hits || r.body?.hits;
@@ -441,7 +446,7 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
           if (resolved) row.language = resolved;
         }
       }
-      return row;
+      return markAiMetaResult(row, src, 'youtube');
     });
 
     for (const ad of cleanYoutubeAds(shaped)) {

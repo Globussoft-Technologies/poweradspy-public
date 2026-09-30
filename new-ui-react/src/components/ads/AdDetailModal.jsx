@@ -314,6 +314,11 @@ const AdDetailModal = ({
   const inlineAiMeta = [ad?.ai_meta, ad?.aiMeta, ad?.ai].find(
     (value) => value && typeof value === "object" && !Array.isArray(value),
   ) || null;
+  // A normal feed carries only a lightweight marker for AI-enriched ads. Keep
+  // the visual treatment immediate and fetch detailed labels only on open.
+  const hasAiMeta = isAiFilteredResult || ad?.hasAiMeta === true || ad?.has_ai_meta === true || (
+    ad?.hasAiMeta !== false && ad?.has_ai_meta !== false && Boolean(inlineAiMeta)
+  );
   const inlineIntent = formatAiSignalValue(inlineAiMeta?.intent);
   const inlineHook = formatAiSignalValue(inlineAiMeta?.hook);
   const aiMetaAdId = ad?.adId ?? ad?.id ?? null;
@@ -326,7 +331,7 @@ const AdDetailModal = ({
   // metadata read-back when this AI modal cannot render the chips inline.
   useEffect(() => {
     if (
-      !isAiFilteredResult ||
+      !hasAiMeta ||
       inlineIntent ||
       inlineHook ||
       !aiMetaNetwork ||
@@ -353,7 +358,7 @@ const AdDetailModal = ({
     aiMetaRequestKey,
     inlineHook,
     inlineIntent,
-    isAiFilteredResult,
+    hasAiMeta,
   ]);
 
   // Key the async result to the open ad so a rapid next/previous navigation
@@ -691,7 +696,7 @@ const AdDetailModal = ({
     { label: "Intent", ...formatPrimaryAiSignal(resolvedAiMeta?.intent) },
     { label: "Hook", ...formatPrimaryAiSignal(resolvedAiMeta?.hook) },
   ].filter(({ value }) => Boolean(value));
-  const hasAiSignals = isAiFilteredResult && aiHeaderSignals.length > 0;
+  const hasAiSignals = hasAiMeta && aiHeaderSignals.length > 0;
 
   const starRating = ad.popularity ? getStarRating(ad.popularity) : 0;
 
@@ -794,7 +799,7 @@ const AdDetailModal = ({
 
         <div
           className={`w-[90vw] relative max-w-sm md:max-w-xl lg:max-w-3xl max-h-[90vh] flex flex-col md:flex-row overflow-hidden rounded-2xl shadow-2xl ${
-            isAiFilteredResult ? "border" : ""
+            hasAiMeta ? "border" : ""
           }`}
           style={{
             backgroundColor: "var(--color-card)",
@@ -1140,11 +1145,11 @@ const AdDetailModal = ({
             )}
           </div>
 
-          {/* Right: Details. AI-filtered ads use 1b's inline output treatment;
+            {/* Right: Details. AI-enriched ads use the inline output treatment;
               ordinary detail modals retain their existing layout. */}
           <div className="md:w-1/2 relative overflow-y-auto overflow-x-hidden p-5 pt-10 space-y-4">
             <div className="flex flex-col gap-2.5">
-              {isAiFilteredResult && (
+              {hasAiMeta && (
                 <div
                   className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.05em] ${
                     isLightTheme

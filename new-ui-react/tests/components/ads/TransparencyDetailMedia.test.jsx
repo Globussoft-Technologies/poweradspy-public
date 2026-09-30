@@ -54,7 +54,7 @@ const transparencyVideoAd = {
 };
 
 describe("Google Transparency detail media", () => {
-  it("shows the AI-filtered result indicator only for AI-filtered searches", () => {
+  it("shows the AI indicator for an AI-enriched ad outside an AI-filtered search", () => {
     const onAnalytics = vi.fn();
     const aiTaggedAd = {
       ...transparencyTextAd,
@@ -94,9 +94,9 @@ describe("Google Transparency detail media", () => {
       />,
     );
 
-    expect(screen.queryByText("AI Analysed")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Intent: conversion")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Hook: discount")).not.toBeInTheDocument();
+    expect(screen.getByText("AI Analysed")).toBeInTheDocument();
+    expect(screen.getByLabelText("Intent: conversion")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hook: discount")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "12 insights" })).not.toBeInTheDocument();
   });
 
@@ -125,6 +125,29 @@ describe("Google Transparency detail media", () => {
       network: "google",
       adId: "CR18",
       internalId: null,
+    }));
+  });
+
+  it("loads AI labels lazily for a lightweight marker in an ordinary result", async () => {
+    fetchAdAiMeta.mockResolvedValueOnce({
+      intent: ["conversion"],
+      hook: ["discount"],
+    });
+
+    render(
+      <AdDetailModal
+        ad={{ ...transparencyTextAd, network: "pinterest", id: 901, adId: 901, hasAiMeta: true }}
+        onClose={vi.fn()}
+        guest={{ showGuestWarning: vi.fn(() => false) }}
+      />,
+    );
+
+    expect(screen.getByText("AI Analysed")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Intent: conversion")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hook: discount")).toBeInTheDocument();
+    expect(fetchAdAiMeta).toHaveBeenCalledWith(expect.objectContaining({
+      network: "pinterest",
+      adId: 901,
     }));
   });
 

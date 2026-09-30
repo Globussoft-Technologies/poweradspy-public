@@ -249,6 +249,25 @@ describe("buildSearchPayload > auto-sort by last-changed range slider", () => {
     const p = buildSearchPayload({ shares: { min: 1, max: 100 } });
     expect(p.order_column).toBe("share");
   });
+  it("preserves a Shares range for backend gating on LinkedIn-only searches", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["linkedin"],
+      shares: { min: 32, max: 1100 },
+    });
+    expect(p.shares).toEqual({ min: 32, max: 1100 });
+  });
+  it("preserves active Views and CTR ranges for backend network gating", () => {
+    const views = buildSearchPayload({
+      activePlatforms: ["facebook"],
+      views_range_filter: [100, 1000],
+    });
+    const ctr = buildSearchPayload({
+      activePlatforms: ["facebook"],
+      ctr_range: [1, 5],
+    });
+    expect(views.view).toEqual([100, 1000]);
+    expect(ctr.ctr).toEqual([1, 5]);
+  });
   it("comments range fallback", () => {
     const p = buildSearchPayload({ comments: { min: 1, max: 100 } });
     expect(p.order_column).toBe("comment");
@@ -948,31 +967,31 @@ describe("buildSearchPayload > platform-support gating (false + secondary-operan
     expect(p.nativeNetwork).toEqual(["taboola"]);
   });
 
-  it("view: both unsupported → NA (896 false)", () => {
+  it("view range is preserved for backend gating despite unsupported platform metadata", () => {
     const p = buildSearchPayload({
       views: [1, 5], activePlatforms: fb,
       filterPlatformSupport: { views_range_filter: ["nope"], views: ["nope"] },
     });
-    expect(p.view).toBe("NA");
+    expect(p.view).toEqual([1, 5]);
   });
-  it("view: secondary 'views' supported (896 second operand)", () => {
+  it("views_range_filter alias is preserved for backend gating", () => {
     const p = buildSearchPayload({
-      views: [1, 5], activePlatforms: fb,
+      views_range_filter: [1, 5], activePlatforms: fb,
       filterPlatformSupport: { views_range_filter: ["nope"], views: ["facebook"] },
     });
     expect(p.view).toEqual([1, 5]);
   });
 
-  it("ctr: both unsupported → NA (899 false)", () => {
+  it("CTR range is preserved for backend gating despite unsupported platform metadata", () => {
     const p = buildSearchPayload({
       ctr: [1, 5], activePlatforms: fb,
       filterPlatformSupport: { ctr_filter: ["nope"], ctr: ["nope"] },
     });
-    expect(p.ctr).toBe("NA");
+    expect(p.ctr).toEqual([1, 5]);
   });
-  it("ctr: secondary 'ctr' supported (899 second operand)", () => {
+  it("ctr_range alias is preserved for backend gating", () => {
     const p = buildSearchPayload({
-      ctr: [1, 5], activePlatforms: fb,
+      ctr_range: [1, 5], activePlatforms: fb,
       filterPlatformSupport: { ctr_filter: ["nope"], ctr: ["facebook"] },
     });
     expect(p.ctr).toEqual([1, 5]);

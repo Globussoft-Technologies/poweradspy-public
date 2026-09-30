@@ -262,6 +262,13 @@ const MasonryCard = ({
   sduiConfig,
 }) => {
   const platform = String(ad.network || "").toLowerCase();
+  // AI enrichment is an ad property, not only a search-result property. The
+  // boolean is intentionally lightweight; full labels are loaded on demand.
+  // An explicit backend false means projected AI fields were incomplete.
+  const hasAiMeta = isAiFilteredResult || ad.hasAiMeta === true || ad.has_ai_meta === true || (
+    ad.hasAiMeta !== false && ad.has_ai_meta !== false &&
+    ad.ai_meta && typeof ad.ai_meta === "object" && !Array.isArray(ad.ai_meta)
+  );
   const isAdmob = platform === "admob";
   // Network shown on the corner badge. YouTube DISPLAY ads surfaced under GDN
   // carry badgeNetwork:'gdn' so they show the GDN badge (while still routing to
@@ -616,7 +623,7 @@ const MasonryCard = ({
     <div
       onClick={() => onClick?.(ad)}
       className={`group relative h-full cursor-pointer rounded-2xl overflow-hidden hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-300 bg-[#0f111a] border ${
-        isAiFilteredResult
+        hasAiMeta
           ? isLight
             ? "border-violet-300/70 shadow-[0_0_0_2px_rgba(109,40,217,0.12),0_0_20px_rgba(109,40,217,0.18),0_10px_20px_-8px_rgba(15,23,42,0.20)] hover:border-slate-300 hover:shadow-2xl"
             : "border-violet-400/60 shadow-[0_0_0_2px_rgba(139,92,246,0.14),0_0_22px_rgba(109,40,217,0.24),0_12px_24px_-10px_rgba(0,0,0,0.55)] hover:border-white/25 hover:shadow-2xl"
@@ -956,10 +963,9 @@ const MasonryCard = ({
             </div>
           )}
 
-          {/* AI filtering is search context rather than permanent ad metadata.
-              Keep this mark over the media so the card body never reflows, and
+          {/* Keep this mark over the media so the card body never reflows, and
               fade it out when the hover action strip needs the same corner. */}
-          {isAiFilteredResult && (
+          {hasAiMeta && (
             <div
               aria-label="AI analysed result"
               title="AI analysed result"

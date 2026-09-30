@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles, Info } from "lucide-react";
+import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles, Info, X } from "lucide-react";
 
 // PRD FR-11 — networks with materially lower crawled ad volume than the rest of
 // the platform today. When every currently-active platform is one of these, the
@@ -235,6 +235,12 @@ const AdGrid = ({
   onAiQuickFilterChange,
   onAiQuickFilterApply,
   aiCapabilityMessage = null,
+  aiSearchSummary = "",
+  aiSearchNotices = [],
+  onAiSearchPlanContextDismiss,
+  aiSearchSuggestions = [],
+  onAiSuggestionSelect,
+  onAiSuggestionsDismiss,
 }) => {
   const {
     activePlatforms,
@@ -263,6 +269,9 @@ const AdGrid = ({
   // result sources. Manual filters from the sidebar/modal remain unlabelled.
   const hasAiResultSource = Boolean(String(aiPrompt || "").trim()) || aiQuickFilterId != null;
   const isAiSearchResult = hasAiResultSource && isAiFilteredResult;
+  const hasAiSearchPlanContext =
+    Boolean(aiSearchSummary) || aiSearchNotices.length > 0;
+  const hasAiSearchSuggestions = aiSearchSuggestions.length > 0;
 
   // "Total Ads" = the ES match total from the backend (`adsMeta` is per-network
   // `meta.total`, captured once at page 0 in App.jsx, stable across pages). The
@@ -1153,6 +1162,79 @@ const AdGrid = ({
                 />
               ))}
             </span>
+          </div>
+        )}
+        {!aiSearchLoading && (hasAiSearchPlanContext || hasAiSearchSuggestions) && (
+          <div
+            className="mb-3 flex flex-wrap items-start gap-3 rounded-2xl border border-[#7c3aed]/35 bg-theme-surface px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.16)]"
+            role="region"
+            aria-label="AI search explanation"
+          >
+            {hasAiSearchPlanContext && (
+              <>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#7c3aed]/15 text-[#6d28d9] dark:text-[#c4b5fd]">
+                  <Sparkles size={16} />
+                </span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  {aiSearchSummary && (
+                    <p className="whitespace-pre-line break-words text-xs leading-5 text-theme-text-muted">
+                      <span className="font-bold text-theme-text">Searched:</span>{" "}
+                      {aiSearchSummary}
+                    </p>
+                  )}
+                  {aiSearchNotices.map((notice, index) => (
+                    <p
+                      key={`${notice.kind || "notice"}-${notice.message}-${index}`}
+                      className="flex items-start gap-1.5 text-[10px] leading-4 text-theme-text-muted"
+                      data-notice-kind={notice.kind || undefined}
+                    >
+                      <Info size={11} className="mt-0.5 shrink-0 text-[#8b5cf6]" />
+                      <span className="min-w-0 break-words">{notice.message}</span>
+                    </p>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={onAiSearchPlanContextDismiss}
+                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-theme-text-muted transition-colors hover:bg-theme-text/[0.08] hover:text-theme-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8b5cf6]/50"
+                  aria-label="Dismiss AI search explanation"
+                  title="Dismiss AI search explanation"
+                >
+                  <X size={15} />
+                </button>
+              </>
+            )}
+            {hasAiSearchSuggestions && (
+              <div
+                className={`${hasAiSearchPlanContext ? "mt-1 basis-full border-t border-theme-border/70 pt-3" : "w-full"}`}
+                role="group"
+                aria-label="Did you mean suggestions"
+              >
+                <div className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6]">
+                  Did you mean:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {aiSearchSuggestions.map((suggestion, index) => (
+                    <button
+                      key={`${suggestion.prompt}-${index}`}
+                      type="button"
+                      onClick={() => {
+                        onAiSuggestionsDismiss?.();
+                        onAiSuggestionSelect?.(suggestion.prompt);
+                      }}
+                      className="group flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-full border border-theme-border bg-theme-text/[0.025] px-3 py-1.5 text-left text-[11px] font-medium text-theme-text transition-colors hover:border-[#8b5cf6]/45 hover:bg-[#8b5cf6]/10"
+                      aria-label={`Run suggested search: ${suggestion.prompt}`}
+                    >
+                      <Sparkles
+                        size={13}
+                        className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
+                      />
+                      <span className="min-w-0 whitespace-normal">{suggestion.prompt}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

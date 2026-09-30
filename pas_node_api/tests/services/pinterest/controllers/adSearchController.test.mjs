@@ -309,6 +309,28 @@ describe("services/pinterest/controllers/adSearchController > regular searchAds"
     expect(out.data[0].market_platform_urls.source_url).toBe("src");
   });
 
+  it("marks AI-enriched ads without returning the full AI metadata object", async () => {
+    const esHits = [
+      { _source: {
+        "pinterest_ad.id": 1,
+        ai: {
+          ad_type: "image",
+          intent: ["conversion"],
+          hook: ["discount"],
+          offering_type: "product",
+          caption: "not projected into the feed",
+        },
+      } },
+    ];
+    const db = {
+      elastic: { indexName: "pinterest_search_mix", search: vi.fn(async () => mkEsHits(esHits)) },
+      sql: { query: vi.fn(async () => [{ ad_id: 1, id: 1, type: "IMAGE" }]) },
+    };
+    const out = await searchAds({ body: { user_id: "u" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].has_ai_meta).toBe(true);
+    expect(out.data[0].ai).toBeUndefined();
+  });
+
   it("0 hits → returns 'No ads found'", async () => {
     const db = {
       elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) },

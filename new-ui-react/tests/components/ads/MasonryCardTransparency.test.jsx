@@ -16,7 +16,7 @@ const renderCard = (ad, props = {}) => render(
 );
 
 describe("MasonryCard Google Transparency media", () => {
-  it("adds the 1a corner mark and violet edge only to AI-filtered results", () => {
+  it("adds the 1a corner mark and violet edge to AI-filtered results", () => {
     const ad = {
       id: 17,
       network: "facebook",
@@ -37,6 +37,33 @@ describe("MasonryCard Google Transparency media", () => {
         <MasonryCard ad={ad} onImageReady={vi.fn()} isAiFilteredResult={false} />
       </ThemeProvider>,
     );
+
+    expect(screen.queryByLabelText("AI analysed result")).not.toBeInTheDocument();
+    expect(container.firstElementChild).not.toHaveClass("border-violet-300/70");
+  });
+
+  it("keeps the AI treatment for a marked ad in an ordinary feed", () => {
+    const ad = mapAdToCard({
+      id: 18,
+      ad_id: 18,
+      network: "pinterest",
+      type: "IMAGE",
+      has_ai_meta: true,
+      image_video_url: "https://cdn.example/ai-creative.jpg",
+    });
+    const { container } = renderCard(ad);
+
+    expect(screen.getByLabelText("AI analysed result")).toBeInTheDocument();
+    expect(container.firstElementChild).toHaveClass("border-violet-300/70");
+  });
+
+  it("does not treat partial AI metadata as a completed enrichment", () => {
+    const ad = mapAdToCard({
+      id: 19,
+      network: "facebook",
+      ai: { intent: ["conversion"] },
+    });
+    const { container } = renderCard(ad);
 
     expect(screen.queryByLabelText("AI analysed result")).not.toBeInTheDocument();
     expect(container.firstElementChild).not.toHaveClass("border-violet-300/70");

@@ -501,7 +501,7 @@ PinterestSearchQueryBuilder.SEARCH_SOURCE_FIELDS = [
   'pinterest_ad_outgoing_links.redirect_url',
   'pinterest_ad_outgoing_links.final_url',
   'pinterest_ad_meta_data.destination_url',
-  'lang_detect'
+  'lang_detect',
 ];
 
 module.exports = PinterestSearchQueryBuilder;

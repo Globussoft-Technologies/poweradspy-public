@@ -20,6 +20,7 @@ const NestedMultiselectFilter = ({
   const isLightTheme = theme === "light";
   const [expandedParents, setExpandedParents] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchCollapsedParents, setSearchCollapsedParents] = useState(new Set());
   // Nested AI filters need a distinct but theme-aware accent so the cluster
   // still feels grouped without overwhelming the popup in light mode.
   const accentPalette = isLightTheme
@@ -96,7 +97,9 @@ const NestedMultiselectFilter = ({
         (c.label || "").toLowerCase().includes(q)
       );
       if (parentMatches || matchingChildren.length > 0) {
-        acc.push({ ...option, _searchChildren: matchingChildren.length > 0 ? matchingChildren : childOptions });
+        // A parent-name match should reveal its full branch, not just children
+        // that happen to contain the same search text.
+        acc.push({ ...option, _searchChildren: parentMatches ? childOptions : matchingChildren });
       }
       return acc;
     }, []);
@@ -126,19 +129,30 @@ const NestedMultiselectFilter = ({
     selectedExpansionKeys.forEach((key) => autoExpanded.add(key));
     filteredOptions.forEach((opt) => {
       const childOptions = opt.children || opt.sub_options || [];
+      const parentMatches = (opt.label || "").toLowerCase().includes(q);
       const hasMatchingChild = childOptions.some((c) =>
         (c.label || "").toLowerCase().includes(q)
       );
-      if (hasMatchingChild) autoExpanded.add(opt._id ?? opt.value);
+      if (parentMatches || hasMatchingChild) autoExpanded.add(opt._id ?? opt.value);
     });
+    searchCollapsedParents.forEach((key) => autoExpanded.delete(key));
     return autoExpanded;
-  }, [searchTerm, filteredOptions, expandedParents]);
+  }, [searchTerm, filteredOptions, expandedParents, searchCollapsedParents]);
 
   const toggleParent = (parentId) => {
+    const isExpanded = effectiveExpanded.has(parentId);
     const newExpanded = new Set(expandedParents);
-    if (newExpanded.has(parentId)) newExpanded.delete(parentId);
+    if (isExpanded) newExpanded.delete(parentId);
     else newExpanded.add(parentId);
     setExpandedParents(newExpanded);
+    if (searchTerm.trim()) {
+      setSearchCollapsedParents((current) => {
+        const next = new Set(current);
+        if (isExpanded) next.add(parentId);
+        else next.delete(parentId);
+        return next;
+      });
+    }
   };
 
   // Recursively collect every leaf value beneath a parent (nodes that have no
@@ -203,7 +217,7 @@ const NestedMultiselectFilter = ({
   const renderOption = (option, level = 0, parentValue = null) => {
     const optValue = option.value ?? option.label;
     const optId = option._id ?? optValue;
-    // Use _searchChildren when searching so only matching children show
+    // Use the search-specific children list; matching parent names keep the full branch.
     const childOptions = option._searchChildren || option.children || option.sub_options || [];
     const hasChildren = childOptions.length > 0;
     const isExpanded = effectiveExpanded.has(optId);
@@ -352,7 +366,10 @@ const NestedMultiselectFilter = ({
           type="text"
           placeholder="Search categories..."
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={(e) => {
+            setSearchTerm(e.target.value);
+            setSearchCollapsedParents(new Set());
+          }}
           className={`w-full bg-theme-card border rounded-md pl-7 pr-3 py-1.5 text-[11px] text-theme-text placeholder:text-theme-text-muted focus:outline-none transition-colors ${accented ? accentPalette.input : "border-theme-border focus:border-[#3759a3]/50 focus:bg-theme-surface"}`}
         />
       </div>

@@ -89,9 +89,16 @@ const NON_FILTER_BODY_KEYS = new Set([
   'track',
 ]);
 
-// Static network restrictions for filters not driven by SDUI platform_applicability.
-// Keys here are body param names; values are the networks that support the filter.
+// Hard backend capability restrictions. These override SDUI when a network's
+// search controller cannot actually apply a filter; keys are request body fields.
 const STATIC_FILTER_NETWORKS = {
+  // LinkedIn has no share-count field; SDUI applicability must not make its
+  // search controller silently ignore an active Shares range.
+  shares: ['facebook', 'tiktok'],
+  // Views filtering exists only in YouTube; CTR filtering exists only in TikTok.
+  view: ['youtube'],
+  views: ['youtube'],
+  ctr: ['tiktok'],
   // Country is a core targeting field supported by every search controller.
   // Treat it as universal so stale SDUI platform metadata cannot skip a
   // network that has matching country data (notably TikTok `countries: ["AU"]`).

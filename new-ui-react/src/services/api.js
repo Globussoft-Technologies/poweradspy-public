@@ -688,6 +688,25 @@ export const mapAdToCard = (raw) => {
     raw['linkedin_ad_post_owners.post_owner_name'],
     raw['linkedin_ad_post_owners.post_owner_name_exactly'],
   );
+  const aiMeta = (() => {
+    const value = raw.ai_meta ?? raw.aiMeta ?? raw.ai ?? null;
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  })();
+  // Source filtering can return a partial object; match the backend marker contract.
+  const hasCompleteAiMeta = aiMeta && ['ad_type', 'intent', 'hook', 'offering_type'].every((field) => {
+    const value = aiMeta[field];
+    return Array.isArray(value)
+      ? value.length > 0
+      : value !== undefined && value !== null && String(value).trim() !== '';
+  });
+  const aiMetaMarker = raw.has_ai_meta ?? raw.hasAiMeta;
   const card = {
     id: raw.ad_id || raw.sql_id || raw.id,
     internalId: raw.id ?? raw.sql_id ?? null,
@@ -743,7 +762,8 @@ export const mapAdToCard = (raw) => {
         : '',
     likes: formatNumber(raw.likes),
     comments: formatNumber(raw.comment || raw.comments),
-    views: formatNumber(raw.views),
+    // YouTube's search and insights responses expose this metric as `view`.
+    views: formatNumber(raw.views ?? raw.view),
     shares: formatNumber(raw.share || raw.shares),
     impressions: formatNumber(raw.impression || raw.impressions),
     // Transparency delivery values are ranges, not exact engagement counts.
@@ -932,19 +952,10 @@ export const mapAdToCard = (raw) => {
     affiliateData: raw.affiliate_data || null,
     // Preserve AI metadata for lightweight surfaces such as AdDetailModal.
     // Most indices expose `ai`; production Facebook retains `ai_meta`.
-    ai_meta: (() => {
-      const value = raw.ai_meta ?? raw.aiMeta ?? raw.ai ?? null;
-      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-      if (typeof value !== 'string' || !value.trim()) return null;
-      try {
-        const parsed = JSON.parse(value);
-        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? parsed
-          : null;
-      } catch {
-        return null;
-      }
-    })(),
+    // Search feeds may also provide only this boolean to avoid carrying the
+    // full AI object through every result; the modal reads details lazily.
+    hasAiMeta: typeof aiMetaMarker === 'boolean' ? aiMetaMarker : Boolean(hasCompleteAiMeta),
+    ai_meta: aiMeta,
     marketPlatformUrls: (() => {
       const v = raw.market_platform_urls;
       if (!v) return null;
@@ -1191,13 +1202,13 @@ export const fetchGemini = async (prompt, retryCount = 0) => {
 // Also exported so App.jsx can decide whether to skip TikTok or generic API calls entirely.
 export const FILTER_PLATFORM_SUPPORT = {
   likes:          ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok', 'quora'],
-  shares:         ['facebook', 'tiktok', 'quora'],
+  shares:         ['facebook', 'tiktok'],
   comments:       ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok', 'quora'],
   impressions:    ['facebook', 'instagram', 'linkedin', 'tiktok'],
   popularity:     ['facebook', 'instagram', 'linkedin', 'tiktok'],
   adBudget:       ['facebook', 'instagram', 'youtube', 'tiktok'],
-  ctr:            ['facebook', 'tiktok'],
-  views:          ['youtube', 'facebook', 'tiktok'],
+  ctr:            ['tiktok'],
+  views:          ['youtube'],
   cta:            ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'quora'],
   gender:         ['facebook', 'instagram'],
   age:            ['facebook', 'instagram'],
@@ -1763,12 +1774,16 @@ export const buildSearchPayload = (filters = {}) => {
     discoverer_user_id: 'NA',
     likes: ps(resolvedNetworks, 'likes') ? v(likesRange) : 'NA',
     comments: ps(resolvedNetworks, 'comments') ? v(commentsRange) : 'NA',
-    shares: ps(resolvedNetworks, 'shares') ? v(sharesRange) : 'NA',
+    // Keep the active range in the common request so its backend applicability
+    // guard can exclude networks without a share-count field (for example LinkedIn).
+    shares: v(sharesRange),
     impressions: ps(resolvedNetworks, 'impressions') ? v(impressionsRange) : 'NA',
-    view: ps(resolvedNetworks, 'views_range_filter') || ps(resolvedNetworks, 'views') ? v(viewsRange) : 'NA',
+    // Preserve active ranges so common-search applicability can exclude networks
+    // whose builders do not implement the requested metric.
+    view: v(viewsRange),
     popularity: ps(resolvedNetworks, 'popularity') ? v(popularityRange) : 'NA',
     adBudget: ps(resolvedNetworks, 'adBudget') ? v(adBudgetRange) : 'NA',
-    ctr: ps(resolvedNetworks, 'ctr_filter') || ps(resolvedNetworks, 'ctr') ? v(ctrRange) : 'NA',
+    ctr: v(ctrRange),
     budget: tiktokBudget.length > 0 ? tiktokBudget : 'NA',
     impression: ps(resolvedNetworks, 'impressions') ? v(impressionsRange) : 'NA',
     html: 'NA',

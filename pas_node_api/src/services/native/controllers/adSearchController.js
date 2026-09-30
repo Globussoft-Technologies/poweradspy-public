@@ -8,6 +8,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
@@ -479,7 +480,7 @@ ORDER BY FIELD(native_ad.id, ${placeholders})
       // ever matches `lang_detect`. Never fall back to the stale SQL join.
       const language = (src['lang_detect'] && langMap) ? resolveLanguageName(langMap, src['lang_detect']) : null;
       return {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'native'),
         post_owner:
           ad.post_owner
           || src['native_ad_post_owners.post_owner_name']

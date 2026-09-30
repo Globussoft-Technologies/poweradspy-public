@@ -11,9 +11,11 @@ const {
   getAiMetaFilterClauses,
   getAiMetaNonCategoryFilterClauses,
   getAiMetaEsField,
+  getAiMetaSourceFields,
   getAiMetaOfferTypeEsField,
   getLegacyCategoryFilterClauses,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../../../src/services/common/helpers/aiMetaSearchFilter');
 const originalEnv = config.env;
 
@@ -29,6 +31,34 @@ describe('aiMetaSearchFilter', () => {
 
     config.env = 'development';
     expect(getAiMetaEsField('facebook')).toBe('ai');
+  });
+
+  it('projects only the required AI fields and marks complete results', () => {
+    config.env = 'production';
+    expect(getAiMetaSourceFields('facebook')).toEqual([
+      'ai_meta.ad_type',
+      'ai_meta.intent',
+      'ai_meta.hook',
+      'ai_meta.offering_type',
+    ]);
+
+    const esParams = { body: { _source: ['ad_id'], query: { match_all: {} } } };
+    applyAiMetaFilters(esParams, 'facebook', {});
+    expect(esParams.body._source).toEqual([
+      'ad_id',
+      'ai_meta.ad_type',
+      'ai_meta.intent',
+      'ai_meta.hook',
+      'ai_meta.offering_type',
+    ]);
+
+    const ad = { id: 1 };
+    expect(markAiMetaResult(ad, {
+      ai_meta: { ad_type: 'image', intent: ['conversion'], hook: ['discount'], offering_type: 'product' },
+    }, 'facebook')).toEqual({ ...ad, has_ai_meta: true });
+    expect(markAiMetaResult(ad, { ai_meta: { intent: ['conversion'] } }, 'facebook'))
+      .toEqual({ ...ad, has_ai_meta: false });
+    expect(markAiMetaResult(ad, {}, 'facebook')).toBe(ad);
   });
 
   it('uses the dynamically-created offer_type keyword sub-field only in production', () => {

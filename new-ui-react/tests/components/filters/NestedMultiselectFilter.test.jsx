@@ -226,6 +226,40 @@ describe("NestedMultiselectFilter > search", () => {
     fireEvent.change(getByPlaceholderText("Search categories..."), { target: { value: "shoe" } });
     expect(getByText("Shoes")).toBeInTheDocument();
   });
+  it("searching a parent shows its full child list when only some child names match", () => {
+    const children = Array.from({ length: 19 }, (_, index) => ({
+      value: `subcategory-${index}`,
+      label: index < 6
+        ? `Education and Careers Topic ${index + 1}`
+        : `Specialty ${index + 1}`,
+    }));
+    const options = [{ value: "education-careers", label: "Education and Careers", children }];
+    const { getByPlaceholderText, getByText } = render(
+      <NestedMultiselectFilter options={options} selected={[]}
+        onChange={() => {}} onChildChange={() => {}} />,
+    );
+
+    fireEvent.change(getByPlaceholderText("Search categories..."), {
+      target: { value: "Education and Careers" },
+    });
+
+    children.forEach(({ label }) => expect(getByText(label)).toBeInTheDocument());
+  });
+  it("allows an auto-expanded parent to collapse and expand while searching", () => {
+    const { getByPlaceholderText, getByText, queryByText } = render(
+      <NestedMultiselectFilter options={TREE} selected={[]}
+        onChange={() => {}} onChildChange={() => {}} />,
+    );
+    fireEvent.change(getByPlaceholderText("Search categories..."), {
+      target: { value: "fashion" },
+    });
+    expect(getByText("Shoes")).toBeInTheDocument();
+
+    fireEvent.click(getByText("Fashion"));
+    expect(queryByText("Shoes")).toBeNull();
+    fireEvent.click(getByText("Fashion"));
+    expect(getByText("Shoes")).toBeInTheDocument();
+  });
   it("no matches → 'No categories found.'", () => {
     const { getByPlaceholderText, getByText } = render(
       <NestedMultiselectFilter options={TREE} selected={[]}

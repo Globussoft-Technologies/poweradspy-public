@@ -8,6 +8,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
@@ -307,7 +308,7 @@ async function searchAds(req, db, logger) {
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
       return {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'quora'),
         post_owner:
           ad.post_owner
           || src['quora_ad_post_owners.post_owner_name']

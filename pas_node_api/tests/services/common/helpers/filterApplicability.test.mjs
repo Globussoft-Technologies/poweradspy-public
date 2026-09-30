@@ -87,6 +87,42 @@ describe("filterApplicability > static filter networks (no SDUI required)", () =
     expect(out).toEqual(expect.arrayContaining(["facebook", "instagram", "youtube"]));
   });
 
+  it("does not let SDUI make LinkedIn eligible for Shares", async () => {
+    getSDUIConfig.mockResolvedValue({
+      sidebar: [{ filters: [{
+        _id: "shares_range",
+        query_param: "shares",
+        platform_applicability: ["facebook", "tiktok", "linkedin"],
+      }] }],
+    });
+    const { getApplicableNetworks } = freshSut();
+    const networks = await getApplicableNetworks({ shares: [32, 1100] });
+    expect(networks).toEqual(["facebook", "tiktok"]);
+    expect(networks).not.toContain("linkedin");
+    expect(networks).not.toContain("quora");
+  });
+
+  it("limits Views and CTR to networks whose builders apply those ranges", async () => {
+    getSDUIConfig.mockResolvedValue({
+      sidebar: [{ filters: [
+        {
+          _id: "views_range_filter",
+          query_param: "views",
+          platform_applicability: ["facebook", "youtube", "linkedin"],
+        },
+        {
+          _id: "ctr_range",
+          query_param: "ctr",
+          platform_applicability: ["facebook", "tiktok"],
+        },
+      ] }],
+    });
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({ view: [100, 1000] })).toEqual(["youtube"]);
+    expect(await getApplicableNetworks({ views: [100, 1000] })).toEqual(["youtube"]);
+    expect(await getApplicableNetworks({ ctr: [1, 5] })).toEqual(["tiktok"]);
+  });
+
   it("ad_position is in NON_FILTER_BODY_KEYS → ignored", async () => {
     getSDUIConfig.mockResolvedValue({});
     const { getApplicableNetworks } = freshSut();

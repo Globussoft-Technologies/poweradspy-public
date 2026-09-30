@@ -11,6 +11,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 
 /**
@@ -449,7 +450,7 @@ async function searchAds(req, db, logger) {
         ? resolveLanguageName(langMap, src['lang_detect'])
         : isTransparency ? null : ad.language;
       const normalized = {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'google'),
         language,
         market_platform_urls: {
           url_destination: src['url_destination'] || null,

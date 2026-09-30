@@ -548,6 +548,10 @@ const App = () => {
     setAiSearchSummary("");
     setAiSearchNotices([]);
   }, []);
+  const dismissAiSearchPlanContext = useCallback(() => {
+    setAiSearchSummary("");
+    setAiSearchNotices([]);
+  }, []);
   const [useSample, setUseSample] = useState(USE_SAMPLE_DATA);
 
   const [isHeaderScrolled, setIsHeaderScrolled] = useState(false);
@@ -1253,6 +1257,7 @@ const App = () => {
       trackProductEvent('feature_blocked', { blocked_reason: 'login_required', entry_point: 'network_tab', feature_name: 'network_selection', network: 'all', network_scope: 'all', request_context: 'network_tab' });
       return;
     }
+    aiPlatformSelectionSourceRef.current = 'manual';
     dispatch(setSpecificPlatforms([]));
     const permitted = Array.isArray(planAllowedPlatforms)
       ? allPlatformValues.filter((network) => isCurrentPlanNetworkAllowed(network))
@@ -1277,6 +1282,7 @@ const App = () => {
       return;
     }
 
+    aiPlatformSelectionSourceRef.current = 'manual';
     let newSpecific;
     newSpecific = ui.specificPlatforms.some((p) => normalizePlanNetwork(p) === normalizedPlatform)
       ? ui.specificPlatforms.filter((p) => normalizePlanNetwork(p) !== normalizedPlatform)
@@ -2340,6 +2346,11 @@ const App = () => {
   // `undefined` keeps legacy/manual preset inference available; null means an
   // AI plan explicitly selected no visible Quick Filter preset.
   const [aiQuickFilterId, setAiQuickFilterId] = useState(undefined);
+  // Track who owns the current platform selection so leaving AI mode does not
+  // erase a platform the user selected manually.
+  const aiPlatformSelectionSourceRef = useRef(
+    ui.aiPrompt?.trim() ? 'ai' : null,
+  );
 
   // Keep the prompt-cleanup snapshot aligned when a quick preset intentionally
   // changes AI filters. Otherwise the subsequent state update looks like a
@@ -2458,24 +2469,29 @@ const App = () => {
     sdui.setActivePlatforms(permitted);
   }, [allPlatformValues, dispatch, isCurrentPlanNetworkAllowed, planAllowedPlatforms, sdui.setActivePlatforms]);
 
+  const restoreAiOwnedPlatforms = useCallback(() => {
+    const shouldRestore = aiPlatformSelectionSourceRef.current === 'ai';
+    aiPlatformSelectionSourceRef.current = null;
+    if (shouldRestore) restoreAllPlatforms();
+  }, [restoreAllPlatforms]);
+
   const clearAiSearchFilters = useCallback(() => {
     sdui.clearAll?.();
     clearAiPromptState();
-    restoreAllPlatforms();
-  }, [clearAiPromptState, restoreAllPlatforms, sdui.clearAll]);
+    restoreAiOwnedPlatforms();
+  }, [clearAiPromptState, restoreAiOwnedPlatforms, sdui.clearAll]);
 
   // Keep every explicit Ask AI reset path consistent: clear the DS-applied
-  // payload, forget the user-visible prompt, restore the All-networks view,
-  // and cancel any in-flight AI run so late responses cannot repopulate the
-  // dashboard.
+  // payload, forget the user-visible prompt, restore All only for an
+  // AI-owned platform selection, and cancel any in-flight AI run.
   const resetAiSearchState = useCallback(() => {
     clearCommittedAiFilters();
     clearAiPromptState();
-    restoreAllPlatforms();
+    restoreAiOwnedPlatforms();
   }, [
     clearCommittedAiFilters,
     clearAiPromptState,
-    restoreAllPlatforms,
+    restoreAiOwnedPlatforms,
   ]);
 
   const handleSearch = useCallback((query, type, platform, options = {}) => {
@@ -2654,6 +2670,7 @@ const App = () => {
       // preset marker. Equivalent AI fields must remain ordinary AI filters.
       setAiQuickFilterId(getPlanningQuickFilterId(planning));
       if (mapped.activePlatforms?.length) {
+        aiPlatformSelectionSourceRef.current = 'ai';
         sdui.setActivePlatforms?.(mapped.activePlatforms);
         dispatch(setSpecificPlatforms(mapped.activePlatforms));
       }
@@ -3511,9 +3528,6 @@ const App = () => {
         aiSearchAvailable={aiSearchAvailable}
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}
-        aiSuggestions={aiSearchSuggestions}
-        aiSearchSummary={aiSearchSummary}
-        aiSearchNotices={aiSearchNotices}
         onAiSuggestionsDismiss={clearAiSearchDisplay}
         onNotifOpenChange={setNotificationsOpen}
         onSearchDropdownOpenChange={handleSearchDropdownOpenChange}
@@ -3772,6 +3786,12 @@ const App = () => {
             onAiQuickFilterChange={setAiQuickFilterId}
             onAiQuickFilterApply={handleAiQuickFilterApply}
             aiCapabilityMessage={aiCapabilityMessage}
+            aiSearchSummary={aiSearchSummary}
+            aiSearchNotices={aiSearchNotices}
+            onAiSearchPlanContextDismiss={dismissAiSearchPlanContext}
+            aiSearchSuggestions={aiSearchSuggestions}
+            onAiSuggestionSelect={runAiSearch}
+            onAiSuggestionsDismiss={clearAiSearchDisplay}
             onBroadenSearch={ui.aiPrompt?.trim() ? () => aiBroadenSearchRef.current?.() : undefined}
             searchQuery={ui.searchQuery}
             searchIn={ui.searchIn}

@@ -8,6 +8,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 
 // Resolve language values sent by frontend (ISO codes or full names) to ES field values.
@@ -368,7 +369,7 @@ async function searchAds(req, db, logger) {
 
     if (esHits.length === 0) return { code: 200, data: [], total: 0, message: 'No ads found' };
 
-    const ads = esHits.map(hit => hit._source);
+    const ads = esHits.map(hit => markAiMetaResult(hit._source, hit._source, 'tiktok'));
     const searchFilterTotal = result.aggregations?.total_ads?.value || total;
 
     return {

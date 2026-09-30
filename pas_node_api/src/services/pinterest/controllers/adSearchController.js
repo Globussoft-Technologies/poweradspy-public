@@ -8,6 +8,7 @@ const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
   readAiMetaVisibleCount,
+  markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
@@ -284,8 +285,11 @@ async function searchAds(req, db, logger) {
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['pinterest_ad.id'] || hit._id), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+      // Keep the normal feed light: expose only a boolean marker derived from
+      // the four source-filtered AI fields. Detailed labels are read lazily by
+      // AdDetailModal through the existing single-ad endpoint.
       return {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'pinterest'),
         post_owner:
           ad.post_owner
           || src['pinterest_ad_post_owners.post_owner_name']

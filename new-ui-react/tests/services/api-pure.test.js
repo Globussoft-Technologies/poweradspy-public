@@ -155,6 +155,18 @@ describe("api > mapAdToCard", () => {
     expect(mapAdToCard({ ai: aiMeta }).ai_meta).toEqual(aiMeta);
     expect(mapAdToCard({ ai_meta: JSON.stringify(aiMeta) }).ai_meta).toEqual(aiMeta);
     expect(mapAdToCard({ ai: "not-json" }).ai_meta).toBeNull();
+    expect(mapAdToCard({ ai: aiMeta }).hasAiMeta).toBe(false);
+    expect(mapAdToCard({ ai: {
+      ad_type: "video",
+      intent: ["conversion"],
+      hook: ["discount"],
+      offering_type: "product",
+    } }).hasAiMeta).toBe(true);
+  });
+
+  it("maps YouTube's `view` response alias into the shared Views metric", () => {
+    expect(mapAdToCard({ network: "youtube", view: 12373 }).views).toBe("12.4K");
+    expect(mapAdToCard({ network: "youtube", views: 12373 }).views).toBe("12.4K");
   });
 
   it("derives id/advertiser/network/aspectRatio defaults", () => {

@@ -4,7 +4,7 @@ const SearchMixQueryBuilder = require('../builders/SearchMixQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
-const { applyAiMetaFilters } = require('../../common/helpers/aiMetaSearchFilter');
+const { applyAiMetaFilters, markAiMetaResult } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 
 // Shared SQL fragment for fetching full ad details by IDs
@@ -627,7 +627,7 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
       // `facebook.averagebudget`; legacy docs use `facebook_ad.averagebudget`.
       const avgBudget = src['facebook.averagebudget'] ?? src['facebook_ad.averagebudget'];
       return {
-        ...ad,
+        ...markAiMetaResult(ad, src, 'facebook'),
         averageBudget: (avgBudget !== undefined && avgBudget !== null && avgBudget !== '')
           ? Number(avgBudget)
           : (ad.averageBudget ?? null),

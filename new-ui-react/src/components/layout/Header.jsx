@@ -21,7 +21,6 @@ import {
   ArrowLeftRight,
   Sparkles,
   Plus,
-  Info,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { createDashboardShare, buildSearchPayload, trackEvent } from "../../services/api";
@@ -54,39 +53,6 @@ export const AI_SEARCH_PROMPTS = [
   "Find recently launched ads in India.",
   "Show me high-engagement video ads.",
 ];
-
-const AiSearchPlanContext = ({ summary = "", notices = [], embedded = false }) => {
-  if (!summary && notices.length === 0) return null;
-
-  return (
-    <div
-      className={embedded
-        ? "flex flex-col gap-1 border-b border-theme-border/70 pb-3"
-        : "absolute left-0 right-0 top-full z-[84] mt-1 flex flex-col gap-1 rounded-r-lg border-l-2 border-[#8b5cf6]/70 bg-[#8b5cf6]/[0.07] px-3 py-1.5 shadow-[0_8px_20px_rgba(0,0,0,0.12)]"}
-      aria-label="AI search explanation"
-    >
-      {summary && (
-        <div className="flex min-w-0 items-start gap-1.5 text-[11px] leading-4 text-theme-text-muted">
-          <Sparkles size={11} className="mt-0.5 shrink-0 text-[#8b5cf6]" />
-          <span className="min-w-0 break-words">
-            <span className="font-semibold text-[#8b5cf6]">Searched:</span>{" "}
-            {summary}
-          </span>
-        </div>
-      )}
-      {notices.map((notice, index) => (
-        <div
-          key={`${notice.kind || "notice"}-${notice.message}-${index}`}
-          className="flex min-w-0 items-start gap-1.5 text-[11px] leading-4 text-theme-text-muted"
-          data-notice-kind={notice.kind || undefined}
-        >
-          <Info size={11} className="mt-0.5 shrink-0 text-[#8b5cf6]" />
-          <span className="min-w-0 break-words">{notice.message}</span>
-        </div>
-      ))}
-    </div>
-  );
-};
 
 // Programmatically trigger Google Translate widget for full-page translation.
 // Retries up to 10 times (3 s total) to handle async widget initialization.
@@ -175,9 +141,6 @@ const Header = ({
   aiSearchAvailable = false,
   aiSearchChecked = false,
   aiSearchLoading = false,
-  aiSuggestions = [],
-  aiSearchSummary = "",
-  aiSearchNotices = [],
   onAiSuggestionsDismiss,
   onCancelAiSearch,
   onNotifOpenChange,
@@ -724,29 +687,9 @@ const Header = ({
     activePage !== "keywords-explorer";
   const showClearFilters =
     isAdsLibraryPage && !guest?.isRestricted && sdui.totalActiveFilters > 0;
-  const hasAiSearchPlanContext =
-    Boolean(aiSearchSummary) || aiSearchNotices.length > 0;
-  const showAiSearchPlanContext =
-    aiMode &&
-    !aiSearchLoading &&
-    !searchTypeOpen &&
-    !showAiPrompts &&
-    aiSuggestions.length === 0 &&
-    !isScrolled &&
-    hasAiSearchPlanContext;
-  // Summary-only context fits in the compact row; planner notices need extra room.
-  const aiSearchPlanHeaderHeight =
-    aiSearchNotices.length > 0
-      ? "h-[112px] 2xl:h-[120px]"
-      : "h-[96px] 2xl:h-[104px]";
-
   return (
     <header
-      className={`relative flex ${
-        showAiSearchPlanContext
-          ? `${aiSearchPlanHeaderHeight} items-start`
-          : "h-16 2xl:h-20 items-center"
-      } min-w-0 shrink-0 justify-between gap-2 overflow-visible border-b border-theme-border bg-theme-bg/95 px-3 py-2 backdrop-blur-md sticky top-0 z-40 sm:px-5`}
+      className="relative flex h-16 2xl:h-20 min-w-0 shrink-0 items-center justify-between gap-2 overflow-visible border-b border-theme-border bg-theme-bg/95 px-3 py-2 backdrop-blur-md sticky top-0 z-40 sm:px-5"
     >
       <div className="flex min-w-0 shrink-0 items-center gap-4">
         <img
@@ -764,15 +707,11 @@ const Header = ({
       )}
 
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
-        <div className="relative mx-1 flex h-full min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
+        <div className="mx-1 flex h-full min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div
             className={`
-              ${
-                isSearchOpenMobile || !showAiSearchPlanContext
-                  ? "inset-0"
-                  : "left-0 right-0 top-0 bottom-auto h-[50px]"
-              } mx-auto w-full min-w-0 transition-all duration-300 ease-in-out
+              absolute inset-0 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out md:w-[calc(100vw-28rem)] lg:w-[calc(100vw-30rem)] xl:w-[calc(100vw-34rem)] 2xl:w-full
               ${
                 isSearchOpenMobile
                   ? "max-w-none"
@@ -783,9 +722,7 @@ const Header = ({
               ${
                 isSearchOpenMobile
                   ? "fixed inset-0 z-50 bg-theme-bg/98 backdrop-blur-xl flex items-center px-4 gap-3 pointer-events-auto"
-                  : showAiSearchPlanContext
-                    ? "absolute items-start hidden md:flex gap-2"
-                    : "absolute items-center hidden md:flex gap-2"
+                  : "absolute items-center hidden md:flex gap-2"
               }
               ${isScrolled ? "xl:opacity-0 xl:invisible xl:-translate-y-6 xl:pointer-events-none opacity-100 visible translate-y-0" : "opacity-100 visible translate-y-0"}
             `}
@@ -1005,13 +942,6 @@ const Header = ({
                 />
               </div>
 
-              {showAiSearchPlanContext && (
-                <AiSearchPlanContext
-                  summary={aiSearchSummary}
-                  notices={aiSearchNotices}
-                />
-              )}
-
               {aiMode && showAiPrompts && !searchTypeOpen && !aiSearchLoading && !localQuery.trim() && (
                 <div
                   className="absolute left-0 right-0 top-full z-[80] mt-3 rounded-2xl border border-[#8b5cf6]/30 bg-theme-surface p-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] animate-in fade-in slide-in-from-top-2 duration-200"
@@ -1049,44 +979,6 @@ const Header = ({
                 </div>
               )}
 
-              {aiMode && !aiSearchLoading && !searchTypeOpen && !showAiPrompts && aiSuggestions.length > 0 && (
-                <div
-                  className="absolute left-0 right-0 top-full z-[85] mt-3 rounded-2xl border border-[#8b5cf6]/30 bg-theme-surface p-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] animate-in fade-in slide-in-from-top-2 duration-200"
-                  role="group"
-                  aria-label="Did you mean suggestions"
-                >
-                  <AiSearchPlanContext
-                    summary={aiSearchSummary}
-                    notices={aiSearchNotices}
-                    embedded
-                  />
-                  <div className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6]">
-                    Did you mean:
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {aiSuggestions.map((suggestion, index) => (
-                      <button
-                        key={`${suggestion.prompt}-${index}`}
-                        type="button"
-                        onClick={() => {
-                          setShowAiPrompts(false);
-                          setLocalQuery(suggestion.prompt);
-                          onAiSuggestionsDismiss?.();
-                          onAiSearch?.(suggestion.prompt);
-                        }}
-                        className="group flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-full border border-theme-border bg-theme-text/[0.025] px-3 py-1.5 text-left text-[11px] font-medium text-theme-text transition-colors hover:border-[#8b5cf6]/45 hover:bg-[#8b5cf6]/10"
-                        aria-label={`Run suggested search: ${suggestion.prompt}`}
-                      >
-                        <Sparkles
-                          size={13}
-                          className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
-                        />
-                        <span className="min-w-0 whitespace-normal">{suggestion.prompt}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Legacy external AI toggle removed; mode switching now lives in the + menu.
@@ -1166,40 +1058,42 @@ const Header = ({
           </div>
 
           {/* Ad Filter Bar (visible on scroll on desktop) */}
-          <div
-            className={`
-              absolute inset-0 transition-all duration-300 ease-in-out 
-              ${isScrolled ? "xl:opacity-100 xl:visible xl:translate-y-0 xl:flex hidden" : "opacity-0 invisible translate-y-6 pointer-events-none"}
-              w-full items-center
-            `}
-          >
-            <AdFilterBar
-              sdui={sdui}
-              platformOptions={platformOptions}
-              specificPlatforms={specificPlatforms}
-              handleAllClick={handleAllClick}
-              handlePlatformClick={handlePlatformClick}
-              isAllActive={isAllActive}
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
-              sortTabs={sortTabs}
-              showMoreTabs={showMoreTabsHeader}
-              setShowMoreTabs={setShowMoreTabsHeader}
-              moreTabsRef={moreTabsRefHeader}
-              onDateChange={onDateChange}
-              isFilterRestricted={isFilterRestricted}
-              onAiFilterRestricted={onAiFilterRestricted}
-              showAiToggleOnMobile={false}
-              showPlatformsOnMobile={false}
-              isScrolled={isScrolled}
-              disableTooltips={true}
-              guest={guest}
-            />
+          <div className="relative h-full min-w-0 w-full">
+            <div
+              className={`
+                absolute inset-0 transition-all duration-300 ease-in-out
+                ${isScrolled ? "xl:opacity-100 xl:visible xl:translate-y-0 xl:flex hidden" : "opacity-0 invisible translate-y-6 pointer-events-none"}
+                w-full items-center
+              `}
+            >
+              <AdFilterBar
+                sdui={sdui}
+                platformOptions={platformOptions}
+                specificPlatforms={specificPlatforms}
+                handleAllClick={handleAllClick}
+                handlePlatformClick={handlePlatformClick}
+                isAllActive={isAllActive}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                sortTabs={sortTabs}
+                showMoreTabs={showMoreTabsHeader}
+                setShowMoreTabs={setShowMoreTabsHeader}
+                moreTabsRef={moreTabsRefHeader}
+                onDateChange={onDateChange}
+                isFilterRestricted={isFilterRestricted}
+                onAiFilterRestricted={onAiFilterRestricted}
+                showAiToggleOnMobile={false}
+                showPlatformsOnMobile={false}
+                isScrolled={isScrolled}
+                disableTooltips={true}
+                guest={guest}
+              />
+            </div>
           </div>
         </div>
       )}
 
-      {/* Keep actions in normal flow so the search slot shrinks instead of overlapping them. */}
+      {/* Keep actions in normal flow; the centered search reserves responsive side gutters. */}
       <div className="relative flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
         {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
@@ -1209,27 +1103,31 @@ const Header = ({
             <Search size={20} />
           </button>
         )}
-        {showClearFilters && (
-          <button
-            onClick={() => {
-              if (guest?.showGuestWarning("Please login to change filters")) return;
-              if (aiPrompt.trim()) {
-                onClearAiSearch?.();
-                return;
-              }
-              sdui.clearAll();
-              if (setSearchQuery) setSearchQuery("");
-              if (setActiveTab) setActiveTab("Newest");
-            }}
-            title={t("clear_filters", "Clear filters")}
-            aria-label={t("clear_filters", "Clear filters")}
-            className="flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 px-1.5 py-1.5 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow sm:gap-1.5 sm:px-3 sm:text-[11px]"
-          >
-            <X size={12} />
-            <span className="hidden sm:inline">
-              {sdui.totalActiveFilters === 1 ? t("clear_x_filters", { count: sdui.totalActiveFilters }) : t("clear_x_filters_plural", { count: sdui.totalActiveFilters })}
-            </span>
-          </button>
+        {isAdsLibraryPage && !guest?.isRestricted && (
+          <div className="w-8 shrink-0 sm:w-[120px]">
+            {showClearFilters && (
+              <button
+                onClick={() => {
+                  if (guest?.showGuestWarning("Please login to change filters")) return;
+                  if (aiPrompt.trim()) {
+                    onClearAiSearch?.();
+                    return;
+                  }
+                  sdui.clearAll();
+                  if (setSearchQuery) setSearchQuery("");
+                  if (setActiveTab) setActiveTab("Newest");
+                }}
+                title={t("clear_filters", "Clear filters")}
+                aria-label={t("clear_filters", "Clear filters")}
+                className="flex w-full shrink-0 items-center justify-center gap-0.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 px-1.5 py-1.5 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow sm:gap-1.5 sm:px-3 sm:text-[11px]"
+              >
+                <X size={12} />
+                <span className="hidden sm:inline">
+                  {sdui.totalActiveFilters === 1 ? t("clear_x_filters", { count: sdui.totalActiveFilters }) : t("clear_x_filters_plural", { count: sdui.totalActiveFilters })}
+                </span>
+              </button>
+            )}
+          </div>
         )}
         {/* Share Dashboard button — only for logged-in users, not on guest/share routes.
             `order-1` pulls it to the right side of the flex row (next to the
