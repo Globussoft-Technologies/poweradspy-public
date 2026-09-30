@@ -1369,7 +1369,7 @@ const MasonryCard = ({
                 <span className="relative group/budget inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
                   <Wallet size={10} />
                   {ad.budget} budget
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
+                  <div className="absolute bottom-full left-0 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
                     Estimated ad spend
                   </div>
                 </span>
@@ -1377,7 +1377,7 @@ const MasonryCard = ({
               {(ad.lowerBudget > 0 || ad.upperBudget > 0) && (
                 <span className="relative group/budget inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
                   <Wallet size={10} />${ad.lowerBudget ?? 0} – ${ad.upperBudget ?? "∞"}
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
+                  <div className="absolute bottom-full left-0 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
                     Ad spend range
                   </div>
                 </span>
@@ -1385,7 +1385,7 @@ const MasonryCard = ({
               {ad.adBudget > 0 && !(ad.lowerBudget > 0 || ad.upperBudget > 0) && (
                 <span className="relative group/budget inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
                   <Wallet size={10} />${Math.round(ad.adBudget).toLocaleString()}
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
+                  <div className="absolute bottom-full left-0 mb-1.5 px-2 py-1 bg-[#1a1a1a] text-white text-[10px] font-semibold rounded-md border border-white/10 whitespace-nowrap opacity-0 group-hover/budget:opacity-100 pointer-events-none transition-opacity z-50">
                     Estimated ad spend
                   </div>
                 </span>

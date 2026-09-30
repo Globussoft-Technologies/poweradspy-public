@@ -250,6 +250,15 @@ const AdFilterBar = ({
     .map((platform) => String(platform).trim().toLowerCase())
     .filter(Boolean), [activePlatforms]);
   const isAdmobOnly = activeLower.length === 1 && activeLower[0] === "admob";
+  const isQuoraOnly = activeLower.length === 1 && activeLower[0] === "quora";
+  const visibleSortTabs = useMemo(() => {
+    if (!isQuoraOnly) return sortTabs;
+    return sortTabs.filter((tab) => {
+      const tabValue = tab?.value ?? tab?.label ?? tab;
+      const tabLabel = tab?.label ?? tab;
+      return resolveSortPlanAccessId(tabLabel, tabValue) !== "ad_running_days_sort";
+    });
+  }, [isQuoraOnly, sortTabs]);
 
   const AD_TYPE_OPTIONS = useMemo(() => {
     const isWildcardApplicability = (applicability) => {
@@ -503,7 +512,7 @@ const AdFilterBar = ({
           )}
         </div>}
         {/* Sort filter */}
-        {sortTabs.length > 0 && (
+        {visibleSortTabs.length > 0 && (
           <div className="relative" ref={moreTabsRef}>
             <div className="relative">
               <button
@@ -513,7 +522,7 @@ const AdFilterBar = ({
                 onClick={() => setShowMoreTabs((p) => !p)}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${
                   showMoreTabs ||
-                  sortTabs.some((t) => activeTab === (t.label ?? t))
+                  visibleSortTabs.some((t) => activeTab === (t.label ?? t))
                     ? "bg-[#335296] text-white border-[#3759a3]"
                     : "bg-theme-card text-white/60 border-theme-border hover:text-theme-text-secondary hover:border-theme-text-muted"
                 }`}
@@ -539,7 +548,7 @@ const AdFilterBar = ({
             </div>
             {showMoreTabs && (
               <div className="absolute top-full lg:right-0 mt-1 bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1 min-w-[220px]">
-                {sortTabs.map((tab) => {
+                {visibleSortTabs.map((tab) => {
                   const tabValue = tab.value ?? tab.label ?? tab;
                   const tabLabel = tab.label ?? tab;
                   return (

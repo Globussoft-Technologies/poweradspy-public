@@ -596,6 +596,32 @@ describe("AdFilterBar > sort dropdown", () => {
     expect(getByText("newest")).toBeInTheDocument();
     expect(getByText("ad running days")).toBeInTheDocument();
   });
+  it("hides ad running days when Quora is selected", () => {
+    const { getByTestId, getByText, queryByText } = render(
+      <AdFilterBar
+        {...baseProps}
+        sortTabs={sortTabs}
+        sdui={{ ...baseSdui, activePlatforms: ["Quora"] }}
+      />,
+    );
+    fireEvent.click(getByTestId("sliders-ic").closest("button"));
+    expect(getByText("newest")).toBeInTheDocument();
+    expect(getByText("domain registration date")).toBeInTheDocument();
+    expect(queryByText("ad running days")).not.toBeInTheDocument();
+  });
+
+  it("shows ad running days when Quora and another network are selected", () => {
+    const { getByTestId, getByText } = render(
+      <AdFilterBar
+        {...baseProps}
+        sortTabs={sortTabs}
+        sdui={{ ...baseSdui, activePlatforms: ["Quora", "Facebook"] }}
+      />,
+    );
+    fireEvent.click(getByTestId("sliders-ic").closest("button"));
+    expect(getByText("ad running days")).toBeInTheDocument();
+  });
+
   it("clicking a tab calls setActiveTab and setSortBy", () => {
     const setActiveTab = vi.fn();
     const setSortBy = vi.fn();
