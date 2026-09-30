@@ -711,7 +711,7 @@ const Header = ({
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div
             className={`
-              absolute inset-0 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out md:w-[calc(100vw-28rem)] lg:w-[calc(100vw-30rem)] xl:w-[calc(100vw-34rem)] 2xl:w-full
+              absolute inset-0 z-10 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out md:w-[calc(100vw-28rem)] lg:w-[calc(100vw-30rem)] xl:w-[calc(100vw-34rem)] 2xl:w-full
               ${
                 isSearchOpenMobile
                   ? "max-w-none"
@@ -1094,7 +1094,7 @@ const Header = ({
       )}
 
       {/* Keep actions in normal flow; the centered search reserves responsive side gutters. */}
-      <div className="relative flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+      <div className="relative z-20 flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
         {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
             className="md:hidden sm:p-1.5 text-theme-text-muted hover:text-theme-text transition-colors"
