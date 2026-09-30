@@ -99,6 +99,10 @@ function isDisplayMergeApplicable(p, sort, from, size) {
   // Favorite/hidden modes are handled before this is ever called.
   if (!SORT_FIELD_MAP[sort.field]) return false;          // only recency sorts
   if ((from + size) > MAX_WINDOW) return false;           // deep pages → GDN-only
+  // Image-size filter (e.g. "300x250") is GDN-only — YouTube DISPLAY ads carry no
+  // width/height, so they can never match it. Mirror the builder's validity check
+  // (SearchMixQueryBuilder adImageSize) and skip the merge when a size is applied.
+  if (typeof p.size === 'string' && p.size.includes('x')) return false;
   // If the user filters by ad type and neither DISPLAY nor IMAGE is one of them, exclude.
   // (YouTube display ads land as ad_type IMAGE via the Node insertion; DISPLAY is the legacy
   // PHP label kept for historical ads — both surface under GDN.)

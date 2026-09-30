@@ -803,7 +803,10 @@ async function filterConfigByPlatforms(config, platforms) {
             // only applies inside the parent filter's allowed platforms.
             .filter(f => matchesPlatform(f.platform_applicability, normalizedPlatforms))
             .map(f => {
-              if (!f.options) return f;
+              // Option-less controls (range sliders like TikTok CTR) may carry
+              // `options: []` — nothing to narrow, so keep them. Only filters
+              // whose options were ALL removed by platform narrowing are dropped.
+              if (!Array.isArray(f.options) || f.options.length === 0) return f;
               const newF = { ...f };
               newF.options = f.options
               .filter(o => optionMatchesPlatform(o, normalizedPlatforms))
@@ -822,9 +825,10 @@ async function filterConfigByPlatforms(config, platforms) {
                   ),
                 };
               });
+              if (!isAdmobOnly && newF.options.length === 0) return null;
               return newF;
             })
-            .filter(f => isAdmobOnly || !f.options || f.options.length > 0);
+            .filter(Boolean);
         }
         return newDoc;
       })
