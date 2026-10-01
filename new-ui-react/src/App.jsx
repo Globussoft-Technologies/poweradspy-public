@@ -39,7 +39,7 @@ import { useGuest } from "./hooks/useGuest";
 import { GuestProvider } from "./hooks/useGuest";
 import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
-import { getAiFilterKeys } from "./utils/aiQuickFilterPresets";
+import { getAiFilterKeys, getAiFilterOptionLabels, resolveActiveAiQuickFilterPreset } from "./utils/aiQuickFilterPresets";
 import {
   formatPlanningCapabilityMessage,
   formatPlanningUnsupportedMessage,
@@ -1937,8 +1937,23 @@ const App = () => {
 
         const _projCtx = page === 0 ? projectContextRef.current : null;
         if (page === 0) projectContextRef.current = null;
+        // The Quick Filter preset shown as selected for this search — logged
+        // with the search in user activity (not sent to the search API).
+        const _aiMetaDoc = sdui.config?.sidebar?.find(
+          (doc) => doc?._id === 'ai_meta' && doc.visible !== false,
+        ) || null;
+        const _activeQuickFilter = resolveActiveAiQuickFilterPreset({
+          filterValues: sdui.filterValues,
+          doc: _aiMetaDoc,
+          activeQuickFilterId: aiQuickFilterId,
+          aiPrompt: ui.aiPrompt,
+        });
         const _searchParams = {
           ...sdui.filterValues,
+          quickFilterId: _activeQuickFilter?.id ?? null,
+          // AI categories are searched by ID; user activity logs their names.
+          aiCategoryNames: getAiFilterOptionLabels(_aiMetaDoc, 'ai_category_id', sdui.filterValues?.ai_category_id),
+          aiSubcategoryNames: getAiFilterOptionLabels(_aiMetaDoc, 'ai_subcategory_id', sdui.filterValues?.ai_subcategory_id),
           searchQuery: ui.searchQuery,
           searchIn: ui.searchIn,
           exactSearch: ui.exactSearch,

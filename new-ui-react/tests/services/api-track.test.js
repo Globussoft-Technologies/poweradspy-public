@@ -291,6 +291,84 @@ describe("trackUserActivity — adsCountOnSerach / ads_count_reason / error deta
     expect(activity()).toBeNull();
   });
 
+  it("AI filter selections are forwarded as arrays; unselected groups are sent as NA", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 1 } } });
+    const b = await search({
+      searchQuery: "",
+      activePlatforms: ["facebook"],
+      ai_ad_type: ["testimonial", "before_after", "comparison"],
+      ai_intent: ["awareness"],
+      ai_colors: [],
+    });
+    expect(b.getAll("ai_ad_type[]")).toEqual(["testimonial", "before_after", "comparison"]);
+    expect(b.getAll("ai_intent[]")).toEqual(["awareness"]);
+    expect(b.get("ai_colors")).toBe("NA");
+    expect(b.get("ai_hook")).toBe("NA");
+    expect(b.get("ai_category")).toBe("NA");
+    expect(b.get("ai_category_id")).toBeNull();
+  });
+
+  it("AI category / subcategory are logged by name, never by ID", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 1 } } });
+    const b = await search({
+      searchQuery: "",
+      activePlatforms: ["facebook"],
+      ai_category_id: ["1009"],
+      ai_subcategory_id: ["10090001"],
+      aiCategoryNames: ["B2B SaaS"],
+      aiSubcategoryNames: ["CRM, Sales"],
+      quickFilterId: "b2b_saas",
+    });
+    expect(b.getAll("ai_category[]")).toEqual(["B2B SaaS"]);
+    expect(b.getAll("ai_subcategory[]")).toEqual(["CRM, Sales"]);
+    expect(b.get("quick_filter")).toBe("b2b_saas");
+    expect(b.get("ai_category_id")).toBeNull();
+    expect(b.getAll("ai_category_id[]")).toEqual([]);
+    expect(b.getAll("ai_subcategory_id[]")).toEqual([]);
+    // The search API itself still filters by ID.
+    const searchCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes("/common/ads/search"));
+    expect(JSON.parse(searchCall[1].body).ai_category_id).toEqual(["1009"]);
+  });
+
+  it("caller that resolves no category names → the selection is still logged (IDs as fallback)", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 1 } } });
+    const b = await search({ searchQuery: "", activePlatforms: ["facebook"], ai_category_id: ["1009"] });
+    expect(b.getAll("ai_category[]")).toEqual(["1009"]);
+  });
+
+  it("AI colors are logged by name; the search API still gets the hex values", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 1 } } });
+    const b = await search({
+      searchQuery: "",
+      activePlatforms: ["facebook"],
+      ai_colors: ["#E03131", "#f76707", "#1E3A5F", "#123456"],
+    });
+    // Known palette hex → name (case-insensitive); unknown hex is kept as-is.
+    expect(b.getAll("ai_colors[]")).toEqual(["Red", "Orange", "Navy", "#123456"]);
+    const searchCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes("/common/ads/search"));
+    expect(JSON.parse(searchCall[1].body).ai_colors).toEqual(["#E03131", "#f76707", "#1E3A5F", "#123456"]);
+  });
+
+  it("active Quick Filter preset id is forwarded as quick_filter; NA when none", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 1 } } });
+    const withPreset = await search({
+      searchQuery: "", activePlatforms: ["facebook"], ai_ad_type: ["ugc"], quickFilterId: "tiktok_ugc",
+    });
+    expect(withPreset.get("quick_filter")).toBe("tiktok_ugc");
+    expect(withPreset.getAll("ai_ad_type[]")).toEqual(["ugc"]);
+
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 1 } } });
+    const without = await search({ activePlatforms: ["facebook"], quickFilterId: null });
+    expect(without.get("quick_filter")).toBe("NA");
+  });
+
+  it("quickFilterId is not sent to the search API", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 1 } } });
+    await search({ activePlatforms: ["facebook"], ai_ad_type: ["ugc"], quickFilterId: "tiktok_ugc" });
+    const searchCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes("/common/ads/search"));
+    expect(searchCall[1].body).not.toContain("tiktok_ugc");
+  });
+
   it("pagination (skip > 0) → nothing logged, even on failure", async () => {
     mockSearch({}, { ok: false, status: 500 });
     await expect(api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", activePlatforms: ["facebook"], skip: 2 }))

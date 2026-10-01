@@ -73,6 +73,35 @@ function parseErrorObject(val) {
   try { return JSON.parse(val); } catch { return val; }
 }
 
+// AI Filters modal selections (Ad Type / Intent / Hook / Offer Type / Offering
+// Type / Colors / Category). Same request keys the search API accepts — see
+// AI_META_FILTER_KEYS in new-ui-react/src/services/api.js. Apply to every network.
+// Category / subcategory arrive as names (ai_category / ai_subcategory); their
+// taxonomy IDs are not stored.
+const AI_FILTER_FIELDS = [
+  'ai_ad_type',
+  'ai_intent',
+  'ai_hook',
+  'ai_offering_type',
+  'ai_offer_type',
+  'ai_colors',
+  'ai_category',
+  'ai_subcategory',
+];
+
+// Always store AI filter selections as an array of strings. The urlencoded
+// body gives an array for `key[]=a&key[]=b`, a plain string for a single
+// value, and an index-keyed object once a list passes the parser's array limit.
+function toAiFilterList(val) {
+  if (val === undefined || val === null || val === '' || val === 'NA') return 'NA';
+  let arr;
+  if (Array.isArray(val)) arr = val;
+  else if (typeof val === 'object') arr = Object.values(val);
+  else arr = String(val).split(',');
+  arr = arr.map(v => String(v).trim()).filter(v => v !== '' && v !== 'NA');
+  return arr.length > 0 ? arr : 'NA';
+}
+
 function buildGetAdsInsertData(data, network) {
   // Normalize order_column → sort fields for platforms that send order_column instead of *_sort
   const orderCol = data.order_column;
@@ -133,6 +162,12 @@ function buildGetAdsInsertData(data, network) {
     competitor_platform:        data.competitor_platform       ?? 'NA',
     competitor_platform_click:  data.competitor_platform_click ?? 'NA',
   };
+
+  for (const field of AI_FILTER_FIELDS) {
+    base[`dashboard.${field}`] = toAiFilterList(data[field]);
+  }
+  // Quick Filter preset id (e.g. 'tiktok_ugc') the user applied for this search.
+  base['dashboard.quick_filter'] = data.quick_filter;
 
   if (network === 'facebook') {
     Object.assign(base, {
@@ -480,7 +515,9 @@ async function userActivity(req, elastic, logger) {
       const net = isNative ? 'Native' : data.network;
       const isAllOrMulti = net === 'All' || (typeof net === 'string' && net.includes(','));
       const branchNet = isAllOrMulti ? 'All' : net;
-      const filterFields = FILTER_FIELDS_BY_NETWORK[branchNet] || [];
+      // AI filters count as filters on every network, so an AI-only search
+      // is recorded as filterType 'filter_only'.
+      const filterFields = [...(FILTER_FIELDS_BY_NETWORK[branchNet] || []), ...AI_FILTER_FIELDS];
       // Use actual net for the stored network field, branchNet only for field-mapping branch selection
       const insertData = buildGetAdsInsertData(data, branchNet);
       insertData.network = net; // overwrite with actual value (e.g. 'facebook,instagram' not 'All')

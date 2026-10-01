@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   formatAiFilterOptionLabel,
   findActiveAiQuickFilterPreset,
+  getAiFilterOptionLabels,
   hasActiveAiFilters,
   mergeAiQuickFilter,
   replaceAiFilters,
+  resolveActiveAiQuickFilterPreset,
   resolveAiQuickFilterPresets,
 } from "../../src/utils/aiQuickFilterPresets";
 
@@ -307,5 +309,116 @@ describe("AI quick filter presets", () => {
     expect(replaceAiFilters(current, doc, {})).toEqual({
       country_filter: ["US"],
     });
+  });
+});
+
+describe("resolveActiveAiQuickFilterPreset", () => {
+  const doc = makeDoc();
+
+  it("explicit preset id whose filters are applied → that preset", () => {
+    const preset = resolveActiveAiQuickFilterPreset({
+      filterValues: { ai_ad_type: ["ugc"] },
+      doc,
+      activeQuickFilterId: "tiktok_ugc",
+    });
+    expect(preset?.id).toBe("tiktok_ugc");
+  });
+
+  it("explicit preset id whose filters were changed afterwards → none", () => {
+    const preset = resolveActiveAiQuickFilterPreset({
+      filterValues: { ai_ad_type: ["ugc", "testimonial"] },
+      doc,
+      activeQuickFilterId: "tiktok_ugc",
+    });
+    expect(preset).toBeNull();
+  });
+
+  it("explicit null (no preset selected) → none, even when values match a preset", () => {
+    const preset = resolveActiveAiQuickFilterPreset({
+      filterValues: { ai_ad_type: ["ugc"] },
+      doc,
+      activeQuickFilterId: null,
+    });
+    expect(preset).toBeNull();
+  });
+
+  it("no explicit id and no AI prompt → inferred from matching filter values", () => {
+    const preset = resolveActiveAiQuickFilterPreset({
+      filterValues: { ai_intent: ["app_install"] },
+      doc,
+      activeQuickFilterId: undefined,
+    });
+    expect(preset?.id).toBe("app_install");
+  });
+
+  it("no explicit id but an AI prompt is present → none", () => {
+    const preset = resolveActiveAiQuickFilterPreset({
+      filterValues: { ai_intent: ["app_install"] },
+      doc,
+      activeQuickFilterId: undefined,
+      aiPrompt: "app install ads",
+    });
+    expect(preset).toBeNull();
+  });
+
+  it("no AI filters at all → none", () => {
+    expect(resolveActiveAiQuickFilterPreset({ filterValues: {}, doc })).toBeNull();
+  });
+});
+
+describe("getAiFilterOptionLabels", () => {
+  const doc = {
+    _id: "ai_meta",
+    filters: [
+      { _id: "ai_ad_type", options: [{ value: "ugc", label: "UGC" }] },
+      {
+        _id: "ai_category_id",
+        parent_filter_id: "ai_category_id",
+        child_filter_id: "ai_subcategory_id",
+        options: [
+          {
+            value: "1009",
+            label: "B2B SaaS",
+            children: [{ value: "10090001", label: "CRM" }, { value: "10090002" }],
+          },
+          { value: 1010, label: "Local Services", sub_options: [{ value: "10100001", label: "Plumbing" }] },
+        ],
+      },
+    ],
+  };
+
+  it("maps category IDs to their names", () => {
+    expect(getAiFilterOptionLabels(doc, "ai_category_id", ["1009", "1010"])).toEqual(["B2B SaaS", "Local Services"]);
+  });
+
+  it("finds subcategory names inside the parent's option tree", () => {
+    expect(getAiFilterOptionLabels(doc, "ai_subcategory_id", ["10090001", "10100001"])).toEqual(["CRM", "Plumbing"]);
+  });
+
+  it("falls back to the value when there is no option or no label", () => {
+    expect(getAiFilterOptionLabels(doc, "ai_category_id", ["9999"])).toEqual(["9999"]);
+    expect(getAiFilterOptionLabels(doc, "ai_subcategory_id", ["10090002"])).toEqual(["10090002"]);
+    expect(getAiFilterOptionLabels(null, "ai_category_id", ["1009"])).toEqual(["1009"]);
+  });
+
+  it("a category ID carried into the subcategory list is not reported as a subcategory", () => {
+    // Two categories ticked in the popup: the first category's ID ends up in
+    // the subcategory selection alongside the real leaves.
+    expect(
+      getAiFilterOptionLabels(doc, "ai_subcategory_id", ["1009", "10090001", "10100001"]),
+    ).toEqual(["CRM", "Plumbing"]);
+    expect(getAiFilterOptionLabels(doc, "ai_subcategory_id", [1010])).toEqual([]);
+    expect(getAiFilterOptionLabels(doc, "ai_category_id", ["1009", "1010"])).toEqual(["B2B SaaS", "Local Services"]);
+  });
+
+  it("a subcategory ID is not resolved as a category, and repeated values are reported once", () => {
+    expect(getAiFilterOptionLabels(doc, "ai_category_id", ["10090001"])).toEqual(["10090001"]);
+    expect(getAiFilterOptionLabels(doc, "ai_subcategory_id", ["10090001", "10090001"])).toEqual(["CRM"]);
+  });
+
+  it("accepts a single value and returns [] when nothing is selected", () => {
+    expect(getAiFilterOptionLabels(doc, "ai_category_id", "1009")).toEqual(["B2B SaaS"]);
+    expect(getAiFilterOptionLabels(doc, "ai_category_id", [])).toEqual([]);
+    expect(getAiFilterOptionLabels(doc, "ai_category_id", undefined)).toEqual([]);
   });
 });

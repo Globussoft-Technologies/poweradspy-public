@@ -6,6 +6,7 @@ import { calculateRunningDays } from '../utils/helper';
 import { expandCountryFilterValues } from '../utils/countryFilter';
 import { dedupeInFlight } from '../utils/requestDeduper';
 import { ADMOB_FRONTEND_ENABLED } from '../constants';
+import { getAiColorLabel } from '../utils/aiColorPalette';
 const NAS_VIDEO_BASE_URL = (import.meta.env.VITE_NAS_VIDEO_URL || import.meta.env.VITE_NAS_BASE_URL || "").replace(/\/$/, '');
 
 // ─── PAS API Configuration ────────────────────────────────────────────────────
@@ -2035,6 +2036,17 @@ async function trackUserActivity(payload, meta, info = {}) {
     ad_position_filter:   payload.ad_position_filter   ?? 'NA',
     user_keyword:         payload.userkeyword          ?? false,
     ipBasedCountry:       payload.ipBasedCountry       ?? 'NA',
+    // AI Filters modal selections (Ad Type / Intent / Hook / Offer Type /
+    // Offering Type / Colors / Category) — stored as dashboard.ai_* by the backend.
+    // Category and subcategory are logged by name (ai_category / ai_subcategory),
+    // not by their taxonomy IDs.
+    ...Object.fromEntries(
+      AI_META_FILTER_KEYS
+        .filter((key) => key !== 'ai_category_id' && key !== 'ai_subcategory_id')
+        .concat(['ai_category', 'ai_subcategory'])
+        .map((key) => [key, hasActiveFilterValue(payload[key]) ? payload[key] : 'NA']),
+    ),
+    quick_filter:         payload.quick_filter         ?? 'NA',
     method:               'getAds',
     // adsCountOnSerach is mapped as `long` in Elasticsearch, so it must stay
     // numeric — concatenating payload.error_message onto it (e.g.
@@ -2353,6 +2365,18 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     competitor_name:          filters.competitor_name     ?? 'NA',
     competitor_platform:      filters.competitor_platform ?? 'NA',
     competitor_platform_click: filters.competitor_platform ?? 'NA',
+    // Quick Filter preset id (e.g. 'tiktok_ugc') selected for this search, if any.
+    quick_filter:             filters.quickFilterId       ?? 'NA',
+    // AI category / subcategory names for the log (the search itself uses IDs).
+    // Callers that don't resolve names fall back to the IDs so the selection
+    // is still recorded.
+    ai_category:              hasActiveFilterValue(filters.aiCategoryNames)    ? filters.aiCategoryNames    : payload.ai_category_id,
+    ai_subcategory:           hasActiveFilterValue(filters.aiSubcategoryNames) ? filters.aiSubcategoryNames : payload.ai_subcategory_id,
+    // AI colors are searched by hex (#E03131); the log stores the name (Red).
+    // A hex outside the fixed palette is kept as-is.
+    ai_colors:                Array.isArray(payload.ai_colors)
+                                ? payload.ai_colors.map((color) => getAiColorLabel(color))
+                                : payload.ai_colors,
     // Array of {network, message} rather than {[network]: message} — keying
     // by network name means every new platform that errors mints its own
     // dedicated Elasticsearch sub-field (search_error_detail.<network>).

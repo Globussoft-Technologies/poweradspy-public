@@ -207,6 +207,37 @@ export const getAiFilterKeys = (doc) => {
 };
 
 /**
+ * Display labels for the selected values of one AI filter — e.g. category IDs
+ * (`"1009"`) → the names shown in the AI Filters popup. Child filters
+ * (subcategories) are looked up among their parents' children only: the
+ * nested picker can carry a parent's own ID into the child selection, and
+ * that parent must not be reported as a subcategory. A value with no matching
+ * option or label is returned as-is.
+ */
+export const getAiFilterOptionLabels = (doc, filterId, values) => {
+  const filter = (doc?.filters || []).find(
+    (item) => item?._id === filterId || item?.child_filter_id === filterId,
+  );
+  const topLevel = filter?.options || [];
+  const isChildFilter = Boolean(filter) && filter._id !== filterId;
+  const children = topLevel.flatMap((option) => option?.children || option?.sub_options || []);
+  const findTopLevel = (value) =>
+    topLevel.find((option) => String(option?.value ?? option?.label ?? "") === String(value));
+
+  const labels = [];
+  const seen = new Set();
+  for (const value of toArray(values)) {
+    const key = String(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const option = isChildFilter ? findOptionByValue(children, value) : findTopLevel(value);
+    if (!option && isChildFilter && findTopLevel(value)) continue;
+    labels.push(isEmptyValue(option?.label) ? key : String(option.label));
+  }
+  return labels;
+};
+
+/**
  * Keeps presets compatible with the current SDUI document. A removed filter or
  * option is omitted rather than leaking an unsupported query value.
  */
@@ -266,6 +297,37 @@ export const findActiveAiQuickFilterPreset = (
       )
     );
   }) || null;
+};
+
+/**
+ * The Quick Filter preset that is shown as selected for the current state.
+ *
+ * A natural-language AI result must not light up a preset merely because its
+ * AI fields happen to be equivalent. Only an explicit planner value or a
+ * direct quick-filter interaction may select the visible shortcut.
+ * `activeQuickFilterId === undefined` keeps legacy/manual inference available;
+ * `null` means no preset is explicitly selected.
+ */
+export const resolveActiveAiQuickFilterPreset = ({
+  filterValues,
+  doc,
+  presets = resolveAiQuickFilterPresets(doc),
+  activeQuickFilterId,
+  aiPrompt = "",
+}) => {
+  if (activeQuickFilterId !== undefined) {
+    const explicitlySelectedPreset = activeQuickFilterId
+      ? presets.find((preset) => preset.id === activeQuickFilterId)
+      : null;
+    const explicitPresetIsApplied = explicitlySelectedPreset
+      ? Object.entries(explicitlySelectedPreset.filters).every(([key, value]) =>
+          JSON.stringify(filterValues?.[key]) === JSON.stringify(value),
+        )
+      : false;
+    return explicitPresetIsApplied ? explicitlySelectedPreset : null;
+  }
+  if (String(aiPrompt || "").trim()) return null;
+  return findActiveAiQuickFilterPreset(filterValues, doc, presets);
 };
 
 const hasAiMetaFlag = (value) =>
