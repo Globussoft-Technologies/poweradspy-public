@@ -390,8 +390,9 @@ async function updateRedditAd(sql, db, ad, redditAdId, translationData, ctx) {
 
     // Resolve FKs on update too — only when the crawler sent them, so they backfill
     // without clobbering an existing value with a blank.
+    const newType = String(ad.type).toUpperCase();
     const upd = {
-      type: String(ad.type).toUpperCase(),
+      type: newType,
       last_seen: lastSeen,
       days_running: daysRunning,
       ad_position: ad.ad_position || null,
@@ -435,6 +436,11 @@ async function updateRedditAd(sql, db, ad, redditAdId, translationData, ctx) {
       text: ad.ad_text || null,
       newsfeed_description: ad.news_feed_description || null,
       image_url_original: ad.image_video_url || null,
+      // A re-crawl can flip an ad's type away from IMAGE/VIDEO (e.g. to TEXT) —
+      // uploadAdMedia() below only ever uploads/overwrites image_url for
+      // IMAGE/VIDEO, so without this a stale NAS image from the ad's previous
+      // IMAGE/VIDEO classification would stick around forever on a TEXT ad.
+      ...(newType !== 'IMAGE' && newType !== 'VIDEO' ? { image_url: null } : {}),
     }, redditAdId);
 
     if (ad.destination_url) {
