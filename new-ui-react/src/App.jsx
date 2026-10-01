@@ -1074,9 +1074,20 @@ const App = () => {
   const sortingDoc = sdui.config?.navbar?.find((d) => d._id === "sorting");
   const sortFilter = sortingDoc?.filters?.[0];
   const sortTabs = useMemo(() => {
-    const fallback = ["Newest", "Ad Running Days", "Domain Registration Date"].map((t) => ({
-      label: t,
-      value: t === "Newest" ? "-created_at" : t === "Ad Running Days" ? "-running_days" : "-domain_reg_date",
+    const directions = (id, descendingLabel, ascendingLabel) => [
+      { _id: `${id}_desc`, label: descendingLabel, value: "desc", rank: 1 },
+      { _id: `${id}_asc`, label: ascendingLabel, value: "asc", rank: 2 },
+    ];
+    const fallback = [
+      ["Ad Seen Date", "-created_at", "Newest First", "Oldest First"],
+      ["Impressions", "impressions", "High to Low", "Low to High"],
+      ["Popularity", "popularity_score", "High to Low", "Low to High"],
+      ["Ad Running Days", "-running_days", "Longest Running", "Shortest Running"],
+      ["Domain Registration Date", "-domain_reg_date", "Newest First", "Oldest First"],
+    ].map(([label, value, descendingLabel, ascendingLabel], index) => ({
+      label,
+      value,
+      sub_options: directions(`sort_${index}`, descendingLabel, ascendingLabel),
     }));
 
     if (!sortingDoc) return fallback;
@@ -1090,8 +1101,9 @@ const App = () => {
   useEffect(() => {
     if (sortTabs.length > 0) return;
     if (sdui.sortBy) sdui.setSortBy("");
+    if (sdui.sortDirection !== "desc") sdui.setSortDirection?.("desc");
     if (ui.activeTab) dispatch(setActiveTab(""));
-  }, [dispatch, sdui.sortBy, sdui.setSortBy, sortTabs.length, ui.activeTab]);
+  }, [dispatch, sdui.sortBy, sdui.sortDirection, sdui.setSortBy, sdui.setSortDirection, sortTabs.length, ui.activeTab]);
 
   // activeTab is transient UI state, while sorting is persisted by useSDUI.
   // Rebuild the selected label from the persisted value after refresh so the
@@ -1933,7 +1945,7 @@ const App = () => {
           selCategories: sdui.selCategories,
           selCountries: sdui.selCountries,
           sortBy: sdui.sortBy,
-          sortDirection: aiSearchExecutionRef.current?.sortDirection || 'desc',
+          sortDirection: aiSearchExecutionRef.current?.sortDirection || sdui.sortDirection || 'desc',
           activePlatforms: permittedPlatforms,
           activePlatform: permittedPlatforms[0] || 'facebook',
           skip: page,
@@ -2620,7 +2632,7 @@ const App = () => {
       // tier-selection request and the final committed request behave the same.
       exactSearch: !!mapped.exactSearch,
       sortBy: mapped.sortBy || sdui.sortBy,
-      sortDirection: mapped.sortDirection || 'desc',
+      sortDirection: mapped.sortDirection || sdui.sortDirection || 'desc',
       activePlatforms: mapped.activePlatforms.length
         ? mapped.activePlatforms
         : (sdui.activePlatforms?.length ? sdui.activePlatforms : ['facebook']),
@@ -2663,7 +2675,7 @@ const App = () => {
         refId,
         tierIndex,
         dsHash: selectedTier?.hash || null,
-        sortDirection: mapped.sortDirection || 'desc',
+        sortDirection: mapped.sortDirection || sdui.sortDirection || 'desc',
         tierExpectations: Array.isArray(selectedTier?.expectations) ? selectedTier.expectations : [],
       };
       // Quick-filter highlighting is driven only by the planner's explicit
@@ -2675,6 +2687,7 @@ const App = () => {
         dispatch(setSpecificPlatforms(mapped.activePlatforms));
       }
       if (mapped.sortBy && sdui.setSortBy) sdui.setSortBy(mapped.sortBy);
+      if (mapped.sortDirection && sdui.setSortDirection) sdui.setSortDirection(mapped.sortDirection);
       dispatch(setExactSearch(!!mapped.exactSearch));
       if (mapped.searchIn) dispatch(setSearchIn(mapped.searchIn));
       dispatch(setSearchQuery(mapped.searchQuery || ''));

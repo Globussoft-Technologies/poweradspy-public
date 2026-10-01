@@ -147,9 +147,41 @@ export function getSDUIFallbackConfig() {
                         visible: true,
                         platform_applicability: 'all',
                         options: [
-                            { _id: 's_newest', label: 'Newest', value: 'newest', rank: 1, selected_by_default: true },
-                            { _id: 's_popular', label: 'Popular', value: 'popular', rank: 2, selected_by_default: false },
-                            { _id: 's_running', label: 'Running Longest', value: 'running_longest', rank: 3, selected_by_default: false },
+                            {
+                                _id: 's_newest', label: 'Ad Seen Date', value: 'newest', rank: 1, selected_by_default: true,
+                                sub_options: [
+                                    { _id: 's_newest_desc', label: 'Newest First', value: 'desc', rank: 1, selected_by_default: true },
+                                    { _id: 's_newest_asc', label: 'Oldest First', value: 'asc', rank: 2, selected_by_default: false },
+                                ],
+                            },
+                            {
+                                _id: 's_impressions', label: 'Impressions', value: 'impressions', rank: 3, selected_by_default: false,
+                                sub_options: [
+                                    { _id: 's_impressions_desc', label: 'High to Low', value: 'desc', rank: 1, selected_by_default: true },
+                                    { _id: 's_impressions_asc', label: 'Low to High', value: 'asc', rank: 2, selected_by_default: false },
+                                ],
+                            },
+                            {
+                                _id: 's_popularity_score', label: 'Popularity', value: 'popularity_score', rank: 4, selected_by_default: false,
+                                sub_options: [
+                                    { _id: 's_popularity_desc', label: 'High to Low', value: 'desc', rank: 1, selected_by_default: true },
+                                    { _id: 's_popularity_asc', label: 'Low to High', value: 'asc', rank: 2, selected_by_default: false },
+                                ],
+                            },
+                            {
+                                _id: 's_running', label: 'Running Longest', value: 'running_longest', rank: 6, selected_by_default: false,
+                                sub_options: [
+                                    { _id: 's_running_desc', label: 'Longest Running', value: 'desc', rank: 1, selected_by_default: true },
+                                    { _id: 's_running_asc', label: 'Shortest Running', value: 'asc', rank: 2, selected_by_default: false },
+                                ],
+                            },
+                            {
+                                _id: 's_domain_reg', label: 'Domain Registration Date', value: 'domain_reg_date', rank: 7, selected_by_default: false,
+                                sub_options: [
+                                    { _id: 's_domain_reg_desc', label: 'Newest First', value: 'desc', rank: 1, selected_by_default: true },
+                                    { _id: 's_domain_reg_asc', label: 'Oldest First', value: 'asc', rank: 2, selected_by_default: false },
+                                ],
+                            },
                         ],
                     },
                 ],

@@ -758,7 +758,7 @@ export function useSDUI() {
         // row. Multi-select values render as separate chips, while a numeric
         // pair (range/date) and a nested category branch render as one unit.
         // `has_ai_meta` is an automatic AI-only invariant and has no chip.
-        const EXCLUDED_KEYS = new Set(['_autoSortField', 'has_ai_meta']);
+        const EXCLUDED_KEYS = new Set(['_autoSortField', 'has_ai_meta', 'sortDirection']);
         return Object.entries(filterValues).reduce((total, [key, v]) => {
             if (EXCLUDED_KEYS.has(key)) return total;
             const isActive = Array.isArray(v)
@@ -981,6 +981,14 @@ export function useSDUI() {
 
     const optionMatchesPlatform = (option) => {
         if (!option) return false;
+        const hasExplicitApplicability = option.platform_applicability &&
+            !isWildcardPlatformApplicability(option.platform_applicability);
+        // A parent whitelist must not be widened by generic nested children.
+        // This matters for SDUI sort options whose direction children apply to
+        // the same platforms as their parent field.
+        if (hasExplicitApplicability) {
+            return matchesPlatform(option.platform_applicability, null);
+        }
         if (matchesPlatform(option.platform_applicability, null)) return true;
         const nestedOptions = option.children || option.sub_options || option.options;
         return Array.isArray(nestedOptions)
@@ -1032,6 +1040,7 @@ export function useSDUI() {
     const selCTAs = filterValues.cta || filterValues.ctas || [];
     const selCountries = filterValues.country_filter || filterValues.country || filterValues.countries || [];
     const sortBy = filterValues.sorting || '';
+    const sortDirection = filterValues.sortDirection === 'asc' ? 'asc' : 'desc';
 
     return {
         // Config
@@ -1071,6 +1080,7 @@ export function useSDUI() {
         selCountries,
         setSelCountries: (v) => setFilter('country_filter', typeof v === 'function' ? v(selCountries) : v),
         sortBy,
+        sortDirection,
         setSortBy: (v) => {
             const SORT_VALUE_NORMALIZE = {
                 'ad running days': 'running_days',
@@ -1084,6 +1094,16 @@ export function useSDUI() {
             };
             const normalized = SORT_VALUE_NORMALIZE[(v || '').toLowerCase().trim()] || v;
             setFilter('sorting', normalized);
+        },
+        // Sorting direction is toolbar state, not a user filter. Keep it in
+        // SDUI storage so a refresh preserves the selected nested sort option.
+        setSortDirection: (v) => {
+            const direction = String(v || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+            setFilterValues((prev) => {
+                const next = { ...prev, sortDirection: direction };
+                filterValuesRef.current = next;
+                return next;
+            });
         },
         // All ad type options with platform_applicability from config
         adTypeOptions: (() => {

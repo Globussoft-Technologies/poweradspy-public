@@ -56,6 +56,23 @@ describe('aiSearchMapper', () => {
     expect(mapped.exactSearch).toBe(true);
   });
 
+  it('keeps sort and type values when they only exist in full_payload', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: { network: ['facebook'] },
+      full_payload: {
+        order_column: 'popularity',
+        order_by: 'asc',
+        type: ['VIDEO'],
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      order_column: 'popularity',
+      order_by: 'asc',
+      type: ['VIDEO'],
+    });
+  });
+
   it('hydrates DS AI filter fields into frontend filter state', () => {
     const mapped = mapArgsToFilters({
       keyword: 'skincare products',
@@ -344,6 +361,35 @@ describe('aiSearchMapper', () => {
 
     expect(mapped.sortBy).toBe('popularity_score');
     expect(mapped.sortDirection).toBe('desc');
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
+  it('maps DS uppercase ad types and preserves ascending popularity sorting', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook', 'instagram', 'linkedin'],
+      type: ['VIDEO'],
+      order_column: 'popularity',
+      order_by: 'asc',
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'sort_by',
+          type: 'radio',
+          options: [{ label: 'Popularity', value: 'popularity_score' }],
+        }],
+      }],
+      sidebar: [{
+        filters: [{
+          _id: 'ad_type_filter',
+          type: 'radio',
+          options: [{ label: 'Video', value: 'Video' }],
+        }],
+      }],
+    });
+
+    expect(mapped.filterValues.ad_type_filter).toEqual('Video');
+    expect(mapped.sortBy).toBe('popularity_score');
+    expect(mapped.sortDirection).toBe('asc');
     expect(mapped.unmappedDetails).toEqual([]);
   });
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const config = require('../../../config');
+const { getSortOrder } = require('../../common/helpers/sortOrder');
 
 const CDN_BASE = (config.cdn && config.cdn.baseUrl) ? config.cdn.baseUrl.replace(/\/$/, '') : '';
 
@@ -35,15 +36,15 @@ function parseSort(params) {
   const { sortBy } = params;
 
   // Standard flags sent by the common multi-network controller
-  if (params.popularity_sort      === 'popularity_sort')      return { field: 'popularity',              order: 'desc' };
-  if (params.newest_sort          === 'newest_sort')          return { field: 'createdAt',               order: 'desc' };
-  if (params.last_seen_sort       === 'LastSeen_sort')        return { field: 'updatedAt',               order: 'desc' };
-  if (params.running_longest_sort === 'running_longest_sort') return { field: 'days_running',            order: 'desc' };
-  if (params.likes_sort           === 'likes_sort')           return { field: 'likes',                   order: 'desc' };
-  if (params.comments_sort        === 'comments_sort')        return { field: 'comments',                order: 'desc' };
-  if (params.shares_sort          === 'shares_sort')          return { field: 'shares',                  order: 'desc' };
-  if (params.impression_sort      === 'impression_sort')      return { field: 'impression',              order: 'desc' };
-  if (params.adBudget_sort        === 'adBudget_sort')        return { field: 'budget',                  order: 'desc' };
+  if (params.popularity_sort      === 'popularity_sort')      return { field: 'popularity',              order: getSortOrder(params, 'desc') };
+  if (params.newest_sort          === 'newest_sort')          return { field: 'createdAt',               order: getSortOrder(params, 'desc') };
+  if (params.last_seen_sort       === 'LastSeen_sort')        return { field: 'updatedAt',               order: getSortOrder(params, 'desc') };
+  if (params.running_longest_sort === 'running_longest_sort') return { field: 'days_running',            order: getSortOrder(params, 'desc') };
+  if (params.likes_sort           === 'likes_sort')           return { field: 'likes',                   order: getSortOrder(params, 'desc') };
+  if (params.comments_sort        === 'comments_sort')        return { field: 'comments',                order: getSortOrder(params, 'desc') };
+  if (params.shares_sort          === 'shares_sort')          return { field: 'shares',                  order: getSortOrder(params, 'desc') };
+  if (params.impression_sort      === 'impression_sort')      return { field: 'impression',              order: getSortOrder(params, 'desc') };
+  if (params.adBudget_sort        === 'adBudget_sort')        return { field: 'budget',                  order: getSortOrder(params, 'desc') };
 
   // Metric-based sort: active when a range filter is set for that metric.
   // Supports both object { min, max } and array [min, max] formats.
@@ -53,32 +54,35 @@ function parseSort(params) {
     likes: 'likes', comments: 'comments', shares: 'shares',
     impression: 'impression', impressions: 'impression',
     popularity: 'popularity', ctr: 'ctr', budget: 'budget',
-    newest: 'createdAt', last_seen: 'updatedAt', days_running: 'days_running',
+    newest: 'createdAt', post_date: 'createdAt', last_seen: 'updatedAt',
+    days_running: 'days_running', domain_date: 'domain_registered_date',
   };
-  if (params.order_column && params.order_column !== 'NA' && params.order_column !== 'post_date' && params.order_column !== '') {
+  const hasExplicitOrder = params.order_by === 'asc' || params.order_by === 'desc';
+  if (params.order_column && params.order_column !== 'NA' && params.order_column !== '' &&
+      (params.order_column !== 'post_date' || hasExplicitOrder)) {
     const esField = ORDER_COLUMN_MAP[params.order_column] || params.order_column;
-    const order = params.order_by === 'asc' ? 'asc' : 'desc';
+    const order = getSortOrder(params, 'desc');
     return { field: esField, order };
   }
 
   // TikTok-native sortBy values (from the TikTok-specific frontend)
-  if (sortBy === 'Newest')       return { field: 'createdAt',             order: 'desc' };
-  if (sortBy === 'LastSeen')     return { field: 'updatedAt',             order: 'desc' };
-  if (sortBy === 'domain_date')  return { field: 'domain_registered_date', order: 'desc' };
-  if (sortBy === 'days_running') return { field: 'days_running',          order: 'desc' };
-  if (sortBy === 'Impression')   return { field: 'impression',            order: 'desc' };
-  if (sortBy === 'Popularity')   return { field: 'popularity',            order: 'desc' };
+  if (sortBy === 'Newest')       return { field: 'createdAt',             order: getSortOrder(params, 'desc') };
+  if (sortBy === 'LastSeen')     return { field: 'updatedAt',             order: getSortOrder(params, 'desc') };
+  if (sortBy === 'domain_date')  return { field: 'domain_registered_date', order: getSortOrder(params, 'desc') };
+  if (sortBy === 'days_running') return { field: 'days_running',          order: getSortOrder(params, 'desc') };
+  if (sortBy === 'Impression')   return { field: 'impression',            order: getSortOrder(params, 'desc') };
+  if (sortBy === 'Popularity')   return { field: 'popularity',            order: getSortOrder(params, 'desc') };
 
   // Fallback: metric-based sort when order_column is post_date (default/newest)
   const metrics = ['ctr', 'likes', 'shares', 'comments', 'impression', 'popularity'];
   for (const key of metrics) {
     const v = params[key];
     if (!v) continue;
-    if (Array.isArray(v) && v.length === 2) return { field: key, order: 'desc' };
+    if (Array.isArray(v) && v.length === 2) return { field: key, order: getSortOrder(params, 'desc') };
     if (typeof v === 'object' && !Array.isArray(v)) {
       const hasMin = v.min !== '' && v.min !== null && v.min !== undefined;
       const hasMax = v.max !== '' && v.max !== null && v.max !== undefined;
-      if (hasMin || hasMax) return { field: key, order: 'desc' };
+      if (hasMin || hasMax) return { field: key, order: getSortOrder(params, 'desc') };
     }
   }
 

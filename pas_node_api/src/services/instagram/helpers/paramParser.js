@@ -1,6 +1,7 @@
 'use strict';
 
 const config = require('../../../config');
+const { getSortOrder } = require('../../common/helpers/sortOrder');
 
 // CDN base URL — prepended to relative image paths
 const CDN_BASE = (config.cdn && config.cdn.baseUrl) ? config.cdn.baseUrl.replace(/\/$/, '') : '';
@@ -65,7 +66,7 @@ function parseSort(params) {
   for (const [key, esField] of Object.entries(sortMap)) {
     const val = normalizeValue(params[key]);
     if (val && typeof val === 'string' && val !== '') {
-      return { field: esField, order: val.toLowerCase() === 'asc' ? 'asc' : 'desc' };
+      return { field: esField, order: getSortOrder(params, val) };
     }
   }
 

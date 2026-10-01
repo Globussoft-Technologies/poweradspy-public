@@ -1281,6 +1281,13 @@ export const buildSearchPayload = (filters = {}) => {
   // Scoped helper using the merged map
   const ps = (nets, field) => platformSupports(nets, field, platformSupportMap);
 
+  // DS may use VIDEO/TEXT_IMAGE while SDUI stores Video/Text Image. Compare
+  // these tokens without separators, then emit the backend's underscore form.
+  const normalizeAdTypeToken = (value) => String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+
   // Helper: return value if non-empty, else 'NA'
   const v = (val) => {
     if (val === undefined || val === null || val === '' || val === false) return 'NA';
@@ -1299,6 +1306,21 @@ export const buildSearchPayload = (filters = {}) => {
     for (const k of keys) {
       const val = filters[k];
       if (val !== undefined && val !== null) return val;
+    }
+    return undefined;
+  };
+
+  // Migration aliases can remain in session storage as empty or NA values.
+  // Ignore those markers so a newer alias with a real selection still reaches
+  // the backend instead of being serialized as type=NA.
+  const pickMeaningful = (...keys) => {
+    for (const k of keys) {
+      const val = filters[k];
+      const values = Array.isArray(val) ? val : [val];
+      if (values.some((item) => item !== undefined && item !== null &&
+        item !== '' && item !== false && String(item).trim().toUpperCase() !== 'NA')) {
+        return val;
+      }
     }
     return undefined;
   };
@@ -1369,7 +1391,10 @@ export const buildSearchPayload = (filters = {}) => {
   const categories = pick('categories', 'category');
   const cta_filter = pick('cta_filter', 'cta', 'call_to_action');
   const country_filter = pick('country_filter', 'country', 'countries', 'geo', 'location', 'targeting_country');
-  const ad_type = pick('ad_type', 'type', 'adType');
+  // SDUI has deployed this filter under several ids. AI Search writes the
+  // live filter's id, so include every known alias or a valid AI type can be
+  // lost at the final request boundary and become type=NA.
+  const ad_type = pickMeaningful('ad_type', 'ad_types', 'ad_type_filter', 'type', 'adType');
   const adPositionFilter = pick('ad_position_filter', 'ad_position', 'position');
   const adSubPosition = pick('ad_sub_position', 'ad_sub_position_filter', 'adSubPosition', 'subposition', 'sub_position');
   const gender = pick('gender', 'gender_filter', 'gender_selector');
@@ -1472,7 +1497,7 @@ export const buildSearchPayload = (filters = {}) => {
   const adTypeOptions = filters.adTypeOptions || [];
   const selectedTypes = Array.isArray(ad_type) ? ad_type : (ad_type ? [ad_type] : []);
   const restrictedPlatforms = selectedTypes.reduce((acc, t) => {
-    const opt = adTypeOptions.find(o => (o.value || '').toLowerCase() === (t || '').toLowerCase());
+    const opt = adTypeOptions.find(o => normalizeAdTypeToken(o.value) === normalizeAdTypeToken(t));
     const platforms = opt?.platform_applicability;
     if (Array.isArray(platforms) && platforms.length > 0) {
       platforms.forEach(p => acc.add(p.toLowerCase()));
@@ -1689,7 +1714,7 @@ export const buildSearchPayload = (filters = {}) => {
       const raw = v(ad_type);
       if (raw === 'NA') return 'NA';
       const vals = Array.isArray(raw) ? raw : [raw];
-      return vals.map(t => t.replace(/-/g, '_').toUpperCase());
+      return vals.map(t => String(t).trim().replace(/[\s-]+/g, '_').toUpperCase());
     })(),
     ad_position: resolvedAdPosition,
     gender: (() => {

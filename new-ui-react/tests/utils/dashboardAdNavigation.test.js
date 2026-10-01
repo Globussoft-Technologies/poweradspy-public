@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import AdGrid, { formatDatePresetLabel, resolveSortChipLabel } from "../../src/components/ads/AdGrid";
+import AdGrid, { formatDatePresetLabel, resolveSortChipLabel, resolveSortDirectionLabel } from "../../src/components/ads/AdGrid";
 import { getDashboardAdNavigation } from "../../src/utils/dashboardAdNavigation";
 
 describe("getDashboardAdNavigation", () => {
@@ -62,7 +62,14 @@ describe("getDashboardAdNavigation", () => {
 
 describe("resolveSortChipLabel", () => {
   const sortTabs = [
-    { label: "Newest", value: "created_at" },
+    {
+      label: "Ad Seen Date",
+      value: "created_at",
+      sub_options: [
+        { label: "Newest First", value: "desc" },
+        { label: "Oldest First", value: "asc" },
+      ],
+    },
     { label: "Domain Registration Date", value: "domain_reg_date" },
   ];
 
@@ -71,8 +78,15 @@ describe("resolveSortChipLabel", () => {
     expect(resolveSortChipLabel("domain_sort", sortTabs)).toBe("Domain Registration Date");
   });
 
-  it("keeps the existing newest chip wording aligned with backend ordering", () => {
-    expect(resolveSortChipLabel("created_at", sortTabs)).toBe("Last Seen");
+  it("uses the configured ad-seen-date label", () => {
+    expect(resolveSortChipLabel("created_at", sortTabs)).toBe("Ad Seen Date");
+  });
+
+  it("renders the selected sort direction for the sorting chip", () => {
+    expect(resolveSortDirectionLabel("desc", sortTabs, "created_at")).toBe("Newest First");
+    expect(resolveSortDirectionLabel("asc", sortTabs, "created_at")).toBe("Oldest First");
+    expect(resolveSortDirectionLabel("desc")).toBe("High to Low");
+    expect(resolveSortDirectionLabel()).toBe("High to Low");
   });
 });
 

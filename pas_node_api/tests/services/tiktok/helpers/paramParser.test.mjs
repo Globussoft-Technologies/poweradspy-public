@@ -80,6 +80,10 @@ describe("services/tiktok/helpers/paramParser > parseSort — standard flags", (
   it("popularity_sort", () => {
     expect(mod.parseSort({ popularity_sort: "popularity_sort" })).toEqual({ field: "popularity", order: "desc" });
   });
+  it("legacy flags honor the unified ascending direction", () => {
+    expect(mod.parseSort({ popularity_sort: "popularity_sort", order_by: "asc" }))
+      .toEqual({ field: "popularity", order: "asc" });
+  });
   it("newest_sort", () => {
     expect(mod.parseSort({ newest_sort: "newest_sort" })).toEqual({ field: "createdAt", order: "desc" });
   });
@@ -117,6 +121,10 @@ describe("services/tiktok/helpers/paramParser > parseSort — order_column path"
   });
   it("unknown order_column passes through as-is", () => {
     expect(mod.parseSort({ order_column: "weird_col" })).toEqual({ field: "weird_col", order: "desc" });
+  });
+  it("explicit order_by also enables the post_date order column", () => {
+    expect(mod.parseSort({ order_column: "post_date", order_by: "asc" }))
+      .toEqual({ field: "createdAt", order: "asc" });
   });
   it("order_column 'NA' / 'post_date' / '' is ignored", () => {
     expect(mod.parseSort({ order_column: "NA" })).toEqual({ field: "updatedAt", order: "desc" });

@@ -12,6 +12,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("lucide-react", () => ({
   Check: () => <i data-testid="check-ic" />,
+  ChevronRight: () => <i data-testid="chevron-right-ic" />,
   Filter: () => <i data-testid="filter-ic" />,
   SlidersHorizontal: () => <i data-testid="sliders-ic" />,
   Smartphone: () => <i data-testid="phone-ic" />,
@@ -107,6 +108,7 @@ const baseSdui = {
   setAllFilters: vi.fn(),
   sortBy: "",
   setSortBy: vi.fn(),
+  setSortDirection: vi.fn(),
 };
 
 const baseProps = {
@@ -632,6 +634,29 @@ describe("AdFilterBar > sort dropdown", () => {
     fireEvent.click(getByText("ad running days"));
     expect(setActiveTab).toHaveBeenCalledWith("ad running days");
     expect(setSortBy).toHaveBeenCalledWith("ad_running_days");
+  });
+  it("opens nested direction choices and applies low-to-high", () => {
+    const setSortBy = vi.fn();
+    const setSortDirection = vi.fn();
+    const { getByTestId, getByText } = render(
+      <AdFilterBar
+        {...baseProps}
+        sortTabs={[{
+          label: "Impressions",
+          value: "impressions",
+          sub_options: [
+            { label: "High to Low", value: "desc" },
+            { label: "Low to High", value: "asc" },
+          ],
+        }]}
+        sdui={{ ...baseSdui, setSortBy, setSortDirection }}
+      />,
+    );
+    fireEvent.click(getByTestId("sliders-ic").closest("button"));
+    fireEvent.click(getByText("Impressions"));
+    fireEvent.click(getByText("Low to High"));
+    expect(setSortBy).toHaveBeenCalledWith("impressions");
+    expect(setSortDirection).toHaveBeenCalledWith("asc");
   });
   it("tab click blocked by guest restriction", () => {
     const setSortBy = vi.fn();

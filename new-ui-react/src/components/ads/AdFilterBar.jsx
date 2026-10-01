@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Filter, SlidersHorizontal } from "lucide-react";
+import { Check, ChevronRight, Filter, SlidersHorizontal } from "lucide-react";
 import PlatformTab from "../shared/PlatformTab";
 import AdDateDropdown from "./AdDateDropdown";
 import { PLATFORMS } from "../../constants";
@@ -14,6 +14,8 @@ import {
 const SORT_TO_PLAN_ACCESS_ID = {
   newest: 'newest_sort',
   newest_sort: 'newest_sort',
+  created_at: 'newest_sort',
+  'ad seen date': 'newest_sort',
   likes: 'likes_sort',
   like: 'likes_sort',
   like_sort: 'likes_sort',
@@ -79,6 +81,7 @@ const SORT_VALUE_ALIASES = {
   "ad running days": "running_days",
   "running longest": "running_days",
   "days running": "running_days",
+  "ad seen date": "created_at",
   running_longest: "running_days",
   days_running: "running_days",
   "-running_days": "running_days",
@@ -92,6 +95,11 @@ const SORT_VALUE_ALIASES = {
 const normalizeSortValue = (value) => {
   const normalized = String(value ?? "").toLowerCase().trim();
   return SORT_VALUE_ALIASES[normalized] || normalized.replace(/[\s-]+/g, "_");
+};
+
+const getSortDirectionOptions = (tab) => {
+  const nested = tab?.sub_options || tab?.children || tab?.sort_directions;
+  return Array.isArray(nested) && nested.length > 0 ? nested : [];
 };
 
 export const resolveActiveSortLabel = (sortTabs = [], sortBy) => {
@@ -259,6 +267,11 @@ const AdFilterBar = ({
       return resolveSortPlanAccessId(tabLabel, tabValue) !== "ad_running_days_sort";
     });
   }, [isQuoraOnly, sortTabs]);
+  const [expandedSortValue, setExpandedSortValue] = useState(null);
+
+  useEffect(() => {
+    if (!showMoreTabs) setExpandedSortValue(null);
+  }, [showMoreTabs]);
 
   const AD_TYPE_OPTIONS = useMemo(() => {
     const isWildcardApplicability = (applicability) => {
@@ -551,25 +564,70 @@ const AdFilterBar = ({
                 {visibleSortTabs.map((tab) => {
                   const tabValue = tab.value ?? tab.label ?? tab;
                   const tabLabel = tab.label ?? tab;
+                  const directionOptions = getSortDirectionOptions(tab);
+                  const hasNestedDirections = directionOptions.length > 0;
+                  const isExpanded = expandedSortValue === tabValue;
+                  const selectedDirection = sdui.sortDirection || "desc";
+                  const applySort = (direction = selectedDirection) => {
+                    if (guest?.showGuestWarning("Please login to change sorting")) return;
+                    const planAccessId = resolveSortPlanAccessId(tabLabel, tabValue);
+                    if (planAccessId && isFilterRestricted?.(planAccessId)) {
+                      onSortRestricted?.();
+                      return;
+                    }
+                    setActiveTab(tabLabel);
+                    sdui.setSortBy(tabValue);
+                    sdui.setSortDirection?.(direction);
+                    setShowMoreTabs(false);
+                  };
                   return (
-                    <button
-                      key={tabValue}
-                      onClick={() => {
-                        if (guest?.showGuestWarning("Please login to change sorting")) return;
-                        const planAccessId = resolveSortPlanAccessId(tabLabel, tabValue);
-                        if (planAccessId && isFilterRestricted?.(planAccessId)) { onSortRestricted?.(); return; }
-                        setActiveTab(tabLabel);
-                        sdui.setSortBy(tabValue);
-                        setShowMoreTabs(false);
-                      }}
-                      className={`w-full text-left px-4 py-2 text-[13px] font-semibold transition-colors ${
-                        activeTab === tabLabel
-                          ? "text-[#6b99ff] bg-[#3762c1]/10"
-                          : "text-theme-text-secondary hover:text-theme-text hover:bg-theme-text/[0.04]"
-                      }`}
-                    >
-                      {tabLabel}
-                    </button>
+                    <div key={tabValue}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (hasNestedDirections) {
+                            setExpandedSortValue((current) => current === tabValue ? null : tabValue);
+                            return;
+                          }
+                          applySort();
+                        }}
+                        className={`flex w-full items-center justify-between gap-3 text-left px-4 py-2 text-[13px] font-semibold transition-colors ${
+                          activeTab === tabLabel
+                            ? "text-[#6b99ff] bg-[#3762c1]/10"
+                            : "text-theme-text-secondary hover:text-theme-text hover:bg-theme-text/[0.04]"
+                        }`}
+                      >
+                        <span className={activeTab === tabLabel ? "text-[#6b99ff]" : ""}>{tabLabel}</span>
+                        {hasNestedDirections && (
+                          <ChevronRight
+                            size={14}
+                            className={`shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                          />
+                        )}
+                      </button>
+                      {hasNestedDirections && isExpanded && (
+                        <div className="border-t border-theme-border/70 bg-theme-bg/30 py-1">
+                          {directionOptions.map((direction) => {
+                            const directionValue = String(direction?.value || "desc").toLowerCase() === "asc"
+                              ? "asc"
+                              : "desc";
+                            return (
+                              <button
+                                key={direction?._id || `${tabValue}-${directionValue}`}
+                                type="button"
+                                onClick={() => applySort(directionValue)}
+                                className="flex w-full items-center justify-between gap-3 px-7 py-1.5 text-left text-[12px] font-medium text-theme-text-secondary transition-colors hover:bg-theme-text/[0.05] hover:text-theme-text"
+                              >
+                                <span>{direction?.label || (directionValue === "asc" ? "Low to High" : "High to Low")}</span>
+                                {activeTab === tabLabel && selectedDirection === directionValue && (
+                                  <Check size={13} className="text-[#6b99ff]" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>

@@ -89,6 +89,7 @@ const SORT_CHIP_VALUE_ALIASES = {
   "ad running days": "running_days",
   "running longest": "running_days",
   "days running": "running_days",
+  "ad seen date": "created_at",
   running_longest: "running_days",
   longest_running: "running_days",
   days_running: "running_days",
@@ -127,6 +128,7 @@ const SORT_LABEL_MAP = {
   shares: "Shares", share: "Shares",
   hits: "Hits", hit: "Hits",
   last_seen: "Last Seen", lastseen: "Last Seen", "-last_seen_at": "Last Seen",
+  "ad seen date": "Ad Seen Date",
   running_days: "Ad Running Days", days_running: "Ad Running Days",
   running_longest: "Ad Running Days", longest_running: "Ad Running Days",
   "-running_days": "Ad Running Days", "ad running days": "Ad Running Days",
@@ -143,13 +145,13 @@ export const resolveSortChipLabel = (value, sortTabs = [], filterOptionLabels = 
   if (!raw) return "";
 
   const normalized = normalizeSortChipValue(raw);
-  // Keep the existing product copy: "Newest" sorts by last_seen in backend payloads.
+  const configuredFromTabs = resolveActiveSortLabel(sortTabs, raw);
+  if (configuredFromTabs) return configuredFromTabs;
+
+  // Keep the legacy fallback readable when live SDUI has not supplied a label.
   if (LAST_SEEN_SORT_VALUES.has(raw.toLowerCase()) || normalized === "created_at") {
     return "Last Seen";
   }
-
-  const configuredFromTabs = resolveActiveSortLabel(sortTabs, raw);
-  if (configuredFromTabs) return configuredFromTabs;
 
   const labelSources = [
     filterOptionLabels.sorting,
@@ -165,6 +167,21 @@ export const resolveSortChipLabel = (value, sortTabs = [], filterOptionLabels = 
   }
 
   return SORT_LABEL_MAP[raw.toLowerCase()] || SORT_LABEL_MAP[normalized] || raw;
+};
+
+export const resolveSortDirectionLabel = (direction, sortTabs = [], sortValue) => {
+  const normalizedDirection = String(direction ?? '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const normalizedValue = normalizeSortChipValue(sortValue);
+  const selectedTab = sortTabs.find((tab) => {
+    const value = normalizeSortChipValue(tab?.value ?? tab?.label ?? tab);
+    const label = normalizeSortChipValue(tab?.label ?? tab);
+    return value === normalizedValue || label === normalizedValue;
+  });
+  const nested = selectedTab?.sub_options || selectedTab?.children || selectedTab?.sort_directions;
+  const configured = Array.isArray(nested)
+    ? nested.find((option) => String(option?.value ?? '').toLowerCase() === normalizedDirection)
+    : null;
+  return configured?.label || (normalizedDirection === 'asc' ? 'Low to High' : 'High to Low');
 };
 
 /**
@@ -249,6 +266,7 @@ const AdGrid = ({
     setFilter,
     setAllFilters,
     setSortBy,
+    setSortDirection,
     config,
     filterPlatformSupport,
   } = sdui;
@@ -548,7 +566,7 @@ const AdGrid = ({
     const otherChips = [];
     for (const [key, value] of Object.entries(filterValues)) {
 
-      if (key === '_autoSortField') continue;
+      if (key === '_autoSortField' || key === 'sortDirection') continue;
       const nestedParent = nestedFilterConfigs.some(({ parentKey }) => parentKey === key);
       if (nestedParent) continue;
       const nestedChild = nestedFilterConfigs.find(({ childKey }) => childKey === key);
@@ -614,11 +632,12 @@ const AdGrid = ({
       if (typeof value === "string" && value !== "" && value !== "NA") {
         if (key === "sorting") {
           const pretty = resolveSortChipLabel(value, sortTabs, filterOptionLabels);
+          const direction = resolveSortDirectionLabel(filterValues.sortDirection, sortTabs, value);
           otherChips.push({
             type: "chip",
             filterId: key,
             value: "__single__",
-            label: `Ordered By: ${pretty}`,
+            label: `Ordered By: ${pretty} (${direction})`,
           });
           continue;
         }
@@ -656,6 +675,7 @@ const AdGrid = ({
     }
     if (chipValue === "__single__") {
       setFilter(filterId, "");
+      if (filterId === "sorting") setSortDirection?.("desc");
       // Legacy: an `adcategory` stored as a single string (older localStorage).
       // Removing that chip should also drop its children from `subcategory`.
       if (filterId === "adcategory") {
@@ -858,9 +878,10 @@ const AdGrid = ({
       if (fallback) {
         setActiveTab(fallback.label ?? fallback.value);
         setSortBy(fallback.value ?? fallback.label);
+        setSortDirection?.("desc");
       }
     }
-  }, [activePlatforms, activeTab, sortTabs, setActiveTab, setSortBy]);
+  }, [activePlatforms, activeTab, sortTabs, setActiveTab, setSortBy, setSortDirection]);
 
   const { t } = useTranslation();
   const [exportLoading, setExportLoading] = useState(false);

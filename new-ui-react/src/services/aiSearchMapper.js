@@ -98,9 +98,10 @@ const MULTI_SELECT_TYPES = new Set([
   'chip_multi_select', 'multi_select', 'combobox', 'nested_select', 'checkbox', 'checkbox_group',
 ]);
 
-// Normalize a value for tolerant matching: lowercase, collapse "_" / whitespace
-// to a single space, trim. So "shop_now", "Shop Now", "shop now" all compare equal.
-const norm = (v) => String(v ?? '').toLowerCase().replace(/[_\s]+/g, ' ').trim();
+// Normalize a value for tolerant matching: lowercase, collapse "_", "-", and
+// whitespace to a single space, trim. This lets DS values such as TEXT_IMAGE
+// match SDUI labels/values such as "Text Image" or "text-image".
+const norm = (v) => String(v ?? '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
 
 // Flatten every filter definition across all config sections.
 function allFilters(config) {
@@ -860,6 +861,13 @@ export function normalizeAiSearchArgs(payload = {}) {
     ? payload.full_payload
     : {};
   const passthroughKeys = [
+    // These are part of the AI search contract. Keep them when only the
+    // full_payload tier contains them so sort/type intent cannot disappear
+    // between the DS response and the editable frontend state.
+    'order_column',
+    'order_by',
+    'type',
+    'network',
     'exact_search',
     'has_ai_meta',
     'ai_ad_type',

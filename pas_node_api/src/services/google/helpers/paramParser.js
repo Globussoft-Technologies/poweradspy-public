@@ -1,6 +1,7 @@
 'use strict';
 
 const config = require('../../../config');
+const { getSortOrder } = require('../../common/helpers/sortOrder');
 
 const CDN_BASE = (config.cdn && config.cdn.baseUrl) ? config.cdn.baseUrl.replace(/\/$/, '') : '';
 
@@ -45,7 +46,7 @@ function parseSort(params) {
   };
   for (const [key, esField] of Object.entries(sortMap)) {
     const val = normalizeValue(params[key]);
-    if (val && typeof val === 'string' && val !== '') return { field: esField, order: val.toLowerCase() === 'asc' ? 'asc' : 'desc' };
+    if (val && typeof val === 'string' && val !== '') return { field: esField, order: getSortOrder(params, val) };
   }
   if (params.seen_btn_sort && Array.isArray(params.seen_btn_sort)) return { field: 'last_seen', order: 'desc' };
   const oc = normalizeValue(params.order_column); const ob = normalizeValue(params.order_by);

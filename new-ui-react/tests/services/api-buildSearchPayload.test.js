@@ -205,6 +205,12 @@ describe("buildSearchPayload > sortBy mapping", () => {
   it("unknown sort → post_date default", () => {
     expect(buildSearchPayload({ sortBy: "unknown" }).order_column).toBe("post_date");
   });
+  it("forwards an explicit ascending direction", () => {
+    const p = buildSearchPayload({ sortBy: "popular", sortDirection: "asc" });
+    expect(p.order_column).toBe("popularity");
+    expect(p.order_by).toBe("asc");
+  });
+
   it("all named-sort flag fields produced correctly", () => {
     // 'views' is not in SORT_MAP — sortBy='views' falls through to post_date.
     const map = {
@@ -221,6 +227,36 @@ describe("buildSearchPayload > sortBy mapping", () => {
       const p = buildSearchPayload({ sortBy });
       expect(p[flagField]).not.toBe("NA");
     }
+  });
+});
+
+describe("buildSearchPayload > AI ad type aliases", () => {
+  it("serializes the deployed ad_type_filter id instead of dropping it", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["facebook"],
+      ad_type_filter: "Video",
+    });
+
+    expect(p.type).toEqual(["VIDEO"]);
+  });
+
+  it("normalizes spaces and underscores in text-image ad types", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["youtube"],
+      ad_type_filter: "Text Image",
+    });
+
+    expect(p.type).toEqual(["TEXT_IMAGE"]);
+  });
+
+  it("ignores stale empty aliases when resolving an active ad type", () => {
+    const p = buildSearchPayload({
+      activePlatforms: ["facebook"],
+      ad_type: [],
+      ad_type_filter: "Video",
+    });
+
+    expect(p.type).toEqual(["VIDEO"]);
   });
 });
 
