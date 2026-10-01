@@ -428,6 +428,43 @@ module.exports = {
       },
     },
   },
+  // ChatGPT Ads (platform 21) — brand-new, self-contained network, no PHP legacy.
+  // See pas_node_api/docs/insertion/chatgptads/MANIFEST.md for the full build plan.
+  chatgptads: {
+    name: 'ChatGPT Ads',
+    slug: 'chatgptads',
+    enabled: toBool(netVal(netCfg.chatgptads, 'enabled', 'CGA_ENABLED', true)),
+    insertion: insertionConfig(netCfg.chatgptads, 'CGA'),
+    database: {
+      sql: {
+        enabled:  toBool(netVal(netCfg.chatgptads?.sql, 'enabled',  'CGA_SQL_ENABLED',   false)),
+        poolSize: netVal(netCfg.chatgptads?.sql, 'poolSize', 'CGA_SQL_POOL_SIZE', config.databases.sql.poolSize),
+        host:     netVal(netCfg.chatgptads?.sql, 'host',     'CGA_SQL_HOST',      config.databases.sql.host,     true),
+        port:     netVal(netCfg.chatgptads?.sql, 'port',     'CGA_SQL_PORT',      config.databases.sql.port,     true),
+        user:     netVal(netCfg.chatgptads?.sql, 'user',     'CGA_SQL_USER',      config.databases.sql.user,     true),
+        password: netVal(netCfg.chatgptads?.sql, 'password', 'CGA_SQL_PASSWORD',  config.databases.sql.password, true),
+        // Falls back to the SHARED config.databases.sql.database default — matches
+        // facebook/instagram/gdn/etc.'s own pattern (no hardcoded literal in code). The actual
+        // 'pasdev_chat_ads' name lives only in config.json's networks.chatgptads.sql.database.
+        database: netVal(netCfg.chatgptads?.sql, 'database', 'CGA_SQL_DATABASE',  config.databases.sql.database),
+      },
+      mongo: {
+        enabled:  toBool(netVal(netCfg.chatgptads?.mongo, 'enabled',  'CGA_MONGO_ENABLED',   false)),
+        poolSize: netVal(netCfg.chatgptads?.mongo, 'poolSize', 'CGA_MONGO_POOL_SIZE', config.databases.mongo.poolSize),
+        database: netVal(netCfg.chatgptads?.mongo, 'database', 'CGA_MONGO_DATABASE',  config.databases.mongo.database || 'pas_dev', true),
+        uri:      netVal(netCfg.chatgptads?.mongo, 'uri',      'CGA_MONGO_URI',       config.databases.mongo.uri,                    true),
+      },
+      elastic: {
+        enabled: toBool(netVal(netCfg.chatgptads?.elastic, 'enabled', 'CGA_ELASTIC_ENABLED', false)),
+        index:   netVal(netCfg.chatgptads?.elastic, 'index', 'CGA_ELASTIC_INDEX', 'chatgpt_search_mix'),
+        node:    netVal(netCfg.chatgptads?.elastic, 'node',     'CGA_ELASTIC_NODE',     config.databases.elastic.node,               true),
+        auth: {
+          username: netVal(netCfg.chatgptads?.elastic, 'username', 'CGA_ELASTIC_USERNAME', config.databases.elastic.auth.username, true),
+          password: netVal(netCfg.chatgptads?.elastic, 'password', 'CGA_ELASTIC_PASSWORD', config.databases.elastic.auth.password, true),
+        },
+      },
+    },
+  },
   tiktok: {
     name: 'TikTok',
     slug: 'tiktok',

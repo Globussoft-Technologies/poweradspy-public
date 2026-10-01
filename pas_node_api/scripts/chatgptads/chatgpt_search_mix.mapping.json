@@ -1,0 +1,75 @@
+{
+  "_comment": "chatgpt_search_mix — ES mapping for the new ChatGPT Ads network (platform 21). Modeled on google_ads_data_v2.mapping.json's PROVEN, already-tuned-in-production conventions, not invented from scratch: (1) FLAT field names, no facebook-style 'table.field' dotted prefixes — this network has no legacy PHP payload shape to stay compatible with, and flat keys avoid the whole readPath()/dotted-vs-nested ambiguity class of bug seen elsewhere in this codebase. (2) dynamic:false so an unexpected payload key never triggers ES's default dynamic-mapping (which is how the google index ended up with runaway auto-ngram fields). (3) keyword+lowercase_normalizer for every exact-match/filter field (term/terms queries — cheap) instead of wildcard-able text fields. (4) text+content_analyzer (standard tokenizer, no edge_ngram, no stemming) only on the handful of fields that genuinely need full-text search. (5) index:false on every display-only field (raw source URLs, NAS display paths that are never filtered/sorted on) to save both index size and CPU. (6) number_of_shards is LOW (2) because this is a brand-new, zero-document index — google's own index needed 4 shards only after growing to 206M docs/219GB; over-sharding an empty index wastes resources and slows aggregations for no benefit. Re-shard (reindex into a new index with more shards) only if/when real volume justifies it.",
+
+  "settings": {
+    "index": {
+      "number_of_shards": "2",
+      "number_of_replicas": "1",
+      "codec": "best_compression",
+      "refresh_interval": "30s",
+      "analysis": {
+        "normalizer": {
+          "lowercase_normalizer": { "type": "custom", "filter": ["lowercase"] }
+        },
+        "analyzer": {
+          "content_analyzer": {
+            "type": "custom",
+            "tokenizer": "standard",
+            "filter": ["lowercase", "asciifolding"]
+          }
+        }
+      }
+    }
+  },
+
+  "mappings": {
+    "doc": {
+      "dynamic": false,
+      "properties": {
+        "id": { "type": "long" },
+        "ad_id": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "uid": { "type": "keyword", "ignore_above": 128 },
+
+        "_comment_dates": "all three are written as 'yyyy-MM-dd HH:mm:ss' by esDocBuilder.coerceEsDate, matching every other network's search_mix convention.",
+        "post_date": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "first_seen": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+        "last_seen": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+
+        "status": { "type": "integer" },
+        "platform": { "type": "integer" },
+        "days_running": { "type": "integer" },
+        "hits": { "type": "integer" },
+
+        "_comment_filters": "exact-code filters -> keyword+normalizer (term/terms in filter context = cheapest ES query shape).",
+        "type": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "ad_position": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "network": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "country": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "domain": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "version": { "type": "keyword", "ignore_above": 64 },
+        "lang_detect": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+
+        "_comment_content": "Genuinely free-text ad copy only. match(AND)/match_phrase at query time, never wildcard — wildcard on a text field is the CPU trap being avoided here.",
+        "ad_title": { "type": "text", "analyzer": "content_analyzer" },
+        "ad_text": { "type": "text", "analyzer": "content_analyzer" },
+        "newsfeed_description": { "type": "text", "analyzer": "content_analyzer" },
+        "html": { "type": "text", "analyzer": "content_analyzer" },
+
+        "_comment_owner": "word-match (text) + .kw for exact/prefix/sort/aggregation, same split google_ads_data_v2 uses.",
+        "post_owner_name": { "type": "text", "analyzer": "content_analyzer", "fields": { "kw": { "type": "keyword", "ignore_above": 512, "normalizer": "lowercase_normalizer" } } },
+        "post_owner_lower": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+
+        "_comment_urls": "URLs: keyword, no analyzer, no edge_ngram.",
+        "destination_url": { "type": "keyword", "ignore_above": 2048 },
+
+        "_comment_media": "NAS paths that the displayable-media gate needs `exists`/`wildcard(*DefaultImage*)` on stay indexed. Everything purely for display (raw source URLs, video/carousel paths nothing ever filters on) is index:false — saves space and CPU, matches google_ads_data_v2's own split.",
+        "new_nas_image_url": { "type": "keyword", "ignore_above": 1024 },
+        "Thumbnail": { "type": "keyword", "ignore_above": 1024 },
+        "nas_video_url": { "type": "keyword", "index": false, "doc_values": false },
+        "othermedia": { "type": "keyword", "index": false, "doc_values": false },
+        "image_url_original": { "type": "keyword", "index": false, "doc_values": false },
+        "post_owner_image": { "type": "keyword", "index": false, "doc_values": false }
+      }
+    }
+  }
+}

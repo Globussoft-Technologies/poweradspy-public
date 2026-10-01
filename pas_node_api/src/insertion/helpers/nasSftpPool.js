@@ -124,4 +124,36 @@ async function putFile(localPath, remoteKeyPath) {
   }
 }
 
-module.exports = { putFile, isConfigured };
+/**
+ * Delete a file from the NAS at `remoteKeyPath` (relative to the SFTP home = bucket stream
+ * root — same addressing as putFile). Resolves true on success OR if the file was already
+ * gone (ENOENT/"No such file" is not an error for a delete); rejects only on a real failure
+ * (connection/permission), so the caller can decide whether to log-and-continue or retry.
+ *
+ * Uses the same `c.delete()` call already proven inside putFile's stale-file-overwrite path
+ * (line ~109 above) — not a new/unverified capability, just newly exposed as its own export.
+ *
+ * @param {string} remoteKeyPath  e.g. 'gpt/adImage/202610/31.png'
+ */
+async function deleteFile(remoteKeyPath) {
+  if (!isConfigured()) throw new Error('NAS SFTP not configured (insertion.nas.sftpHost/User/Pass)');
+  const slot = await acquire();
+  try {
+    const c = await clientFor(slot);
+    try {
+      await c.delete(remoteKeyPath);
+    } catch (e) {
+      // Already gone is a success for a delete, not a failure.
+      if (!/no such file|not found|enoent/i.test(e.message || '')) throw e;
+    }
+    release(slot);
+    return true;
+  } catch (err) {
+    try { if (slot.client) await slot.client.end(); } catch (e) { /* ignore */ }
+    slot.client = null;
+    release(slot);
+    throw err;
+  }
+}
+
+module.exports = { putFile, deleteFile, isConfigured };

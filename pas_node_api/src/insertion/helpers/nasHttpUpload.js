@@ -56,6 +56,34 @@ function uploadUrlFor(transport) {
 }
 
 /**
+ * Build the absolute DELETE URL for a stored file: {originUrl}/{bucket}/{storePath}.
+ * `storePath` is the key WITH extension (e.g. 'gpt/adImage/202610/31.png') — the same shape
+ * as the `key.ext` putFile/sftp uses, not the CDN-facing `/stream/...` read path.
+ * @param {string} storePath
+ * @returns {string|null} null if originUrl isn't configured.
+ */
+function deleteUrlFor(storePath) {
+  const n = nas();
+  if (!n.originUrl) return null;
+  return joinUrl(n.originUrl, `/${resolveBucket()}/${String(storePath).replace(/^\/+/, '')}`);
+}
+
+/**
+ * DELETE a file at the given absolute NAS URL. Mirrors httpUpload's never-throw-on-HTTP-error
+ * posture (only a hard network error throws) so callers can treat any failure uniformly.
+ * @returns {Promise<{ok:boolean, status:number}>} ok=true on 2xx OR 404 (already gone).
+ */
+async function httpDelete(url, timeoutMs) {
+  const res = await axios.delete(url, {
+    headers: { Authorization: `Bearer ${nas().mediaToken}` },
+    timeout: timeoutMs || nas().uploadTimeoutMs || 15000,
+    httpsAgent: nasAgent(),
+    validateStatus: () => true,
+  });
+  return { ok: (res.status >= 200 && res.status < 300) || res.status === 404, status: res.status };
+}
+
+/**
  * POST a local file to a NAS HTTP endpoint. Single attempt (callers add retry/defer policy).
  *
  * @param {string} filePath  absolute path to the local file
@@ -87,4 +115,4 @@ async function httpUpload(filePath, url, key, fileName, timeoutMs) {
   return { ok: false, status: res.status, body: res.data };
 }
 
-module.exports = { httpUpload, uploadUrlFor, resolveBucket, joinUrl };
+module.exports = { httpUpload, uploadUrlFor, deleteUrlFor, httpDelete, resolveBucket, joinUrl };

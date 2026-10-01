@@ -19,6 +19,7 @@ const { runActiveCountSnapshot } = require('./activeCountSnapshotJob');
 const { runKeywordStatsRefresh } = require('../services/google/jobs/refreshKeywordStats');
 const { runCompetitionScoreRefresh } = require('../services/google/jobs/competitionScoreCron');
 const { runAdmobEsOutbox } = require('../services/admob/jobs/admobEsOutboxJob');
+const { runChatgptadsEsOutbox } = require('../services/chatgptads/jobs/chatgptadsEsOutboxJob');
 
 const log = logger.createChild('cron-manager');
 
@@ -38,6 +39,7 @@ const REGISTRY = {
       recomputeScores: jobCfg.recomputeScores !== false,
     }),
   admobEsOutbox: (jobCfg) => runAdmobEsOutbox(jobCfg),
+  chatgptadsEsOutbox: (jobCfg) => runChatgptadsEsOutbox(jobCfg),
   // Decoupled from keywordStatsRefresh's own ad-corpus sweep completion —
   // see competitionScoreCron.js's doc comment for why that gating left
   // competition_score empty for most keywords. Only touches the small

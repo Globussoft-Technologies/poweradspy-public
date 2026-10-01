@@ -28,7 +28,7 @@ const config = require('../../config');
 const logger = require('../../logger');
 const { enqueueFailedUpload } = require('./nasUploadQueue');
 const sftpPool = require('./nasSftpPool');
-const { httpUpload, uploadUrlFor } = require('./nasHttpUpload');
+const { httpUpload, uploadUrlFor, deleteUrlFor, httpDelete } = require('./nasHttpUpload');
 
 const log = logger.createChild('nas-client');
 
@@ -62,6 +62,11 @@ const NAS_KEY_PREFIX = {
   linkedin: 'linkedin',
   quora: 'quora',
   bing: 'bing',
+  // ChatGPT Ads — the network slug passed into storeInNas()/mediaUpload is the config
+  // slug "chatgptads" (matches src/config/networks.js, insertionEnabled('chatgptads'),
+  // the route prefix); the payload's own "network":"chatgpt" field is just descriptive
+  // data on the ad row and must NOT be used here, or NAS keys would mismatch this map.
+  chatgptads: 'gpt',
 };
 
 // PHP $typeMap: upload type → NAS subfolder.
@@ -257,4 +262,57 @@ function resolveMediaUrl(storedPath) {
   return joinUrl(base, resolved);
 }
 
-module.exports = { storeInNas, resolveMediaUrl, resolveBucket, DEFAULT_IMAGE, TYPE_SUBFOLDER };
+/**
+ * Delete a previously-stored file from NAS, given its STORED path (the same
+ * `/<bucket>/stream/<key>.<ext>` shape storeInNas() returns and that ends up in SQL/ES).
+ *
+ * Transport chain mirrors the upload side: HTTP DELETE against originUrl first (confirmed
+ * contract: `DELETE {originUrl}/{bucket}/{key}.{ext}`, `Authorization: Bearer {mediaToken}` —
+ * same auth as upload, same key shape, no `/stream/` segment since that's the CDN-read path,
+ * not the storage-API path), falling back to SFTP `.delete()` if HTTP fails/isn't configured.
+ * 404 counts as success either way (already gone). Never throws — best-effort, same posture
+ * as every other NAS operation in this file; a failed delete is logged, not escalated.
+ *
+ * @param {string} storedPath  e.g. '/pas-dev/stream/gpt/adImage/202610/31.png'
+ * @param {Object} [opts]
+ * @param {string} [opts.adId] for log correlation
+ * @returns {Promise<boolean>} true if actually deleted (or already gone), false if skipped/failed
+ */
+async function deleteFromNas(storedPath, opts = {}) {
+  if (!storedPath || storedPath === DEFAULT_IMAGE || /DefaultImage/i.test(storedPath)) return false;
+  if (/^https?:\/\//i.test(storedPath)) {
+    log.warn('deleteFromNas: absolute URL stored paths are not supported', { storedPath });
+    return false;
+  }
+  // Strip the leading '/<bucket>/stream/' (or legacy '/PowerAdspy.../') prefix — both the
+  // HTTP delete URL and the SFTP remote key are relative to this same storage key.
+  const key = storedPath.replace(/^\/?[^/]+\/stream\//i, '').replace(/^\/?(PowerAdspy\/n2|PowerAdspy-Dev|PowerAdspy)\//i, '');
+  if (!key || key === storedPath.replace(/^\//, '')) {
+    log.warn('deleteFromNas: could not derive a storage key from the stored path (unexpected shape)', { storedPath });
+    return false;
+  }
+
+  const url = deleteUrlFor(key);
+  if (url) {
+    try {
+      const res = await httpDelete(url);
+      if (res.ok) return true;
+      log.warn('deleteFromNas: HTTP delete returned non-2xx/404, falling back to SFTP', { storedPath, key, status: res.status, adId: opts.adId });
+    } catch (err) {
+      log.warn('deleteFromNas: HTTP delete failed, falling back to SFTP', { storedPath, key, adId: opts.adId, error: err.message });
+    }
+  }
+  if (!sftpPool.isConfigured()) {
+    if (!url) log.warn('deleteFromNas skipped — neither HTTP (no originUrl) nor SFTP is configured', { storedPath, adId: opts.adId });
+    return false;
+  }
+  try {
+    await sftpPool.deleteFile(key);
+    return true;
+  } catch (err) {
+    log.warn('deleteFromNas failed on both transports', { storedPath, key, adId: opts.adId, error: err.message });
+    return false;
+  }
+}
+
+module.exports = { storeInNas, resolveMediaUrl, resolveBucket, deleteFromNas, DEFAULT_IMAGE, TYPE_SUBFOLDER };
