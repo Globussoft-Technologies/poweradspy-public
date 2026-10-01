@@ -1872,21 +1872,63 @@ async function getCountryByIP() {
   return 'auto-detect';
 }
 
-async function trackUserActivity(payload, meta) {
+// Why adsCountOnSerach has the value it has — stored alongside it so a 0 count
+// can be explained from the user-activity index without reproducing the search.
+export const ADS_COUNT_REASONS = Object.freeze({
+  OK:                        'ok',
+  NO_RESULTS:                'no_results',                  // search succeeded, genuinely 0 ads
+  NETWORK_ERROR:             'network_error',               // 0 ads because requested network(s) errored/timed out
+  PARTIAL_NETWORK_ERROR:     'partial_network_error',       // ads found, but some network(s) errored/timed out
+  META_TOTAL_MISSING:        'meta_total_missing_used_page_count', // ads shown, meta.total absent → counted the page
+  META_TOTAL_ZERO:           'meta_total_zero_used_page_count',    // ads shown, meta.total said 0 → counted the page
+  TOTAL_WITHOUT_VISIBLE_ADS: 'total_without_visible_ads',   // backend total > 0 but no displayable ads on page 1
+  SEARCH_FAILED:             'search_failed',               // the search request itself failed (HTTP/network)
+  PLAN_RESTRICTED:           'plan_restricted',             // 403 from plan access
+});
+
+// Sum meta.total for the requested networks. meta.total is normally a
+// {network: count} map, but tolerate a bare number too.
+function sumRequestedTotal(metaTotal, networkArr, isAll) {
+  const toCount = (n) => { const x = Number(n); return Number.isFinite(x) && x > 0 ? x : 0; };
+  if (typeof metaTotal === 'number' || (typeof metaTotal === 'string' && metaTotal.trim() !== '')) {
+    return { total: toCount(metaTotal), present: true };
+  }
+  if (!metaTotal || typeof metaTotal !== 'object') return { total: 0, present: false };
+  let present = false;
+  const total = Object.entries(metaTotal).reduce((s, [k, n]) => {
+    if (isAll || networkArr.includes(String(k).toLowerCase())) { present = true; return s + toCount(n); }
+    return s;
+  }, 0);
+  return { total, present };
+}
+
+async function trackUserActivity(payload, meta, info = {}) {
   if (!PAS_API_BASE) return;
   const authUser = getAuthUser();
   if (!authUser?.user_id) return;
+  // A superseded search is never shown to the user — don't log its count.
+  if (info.signal?.aborted) return;
   const userCurrentCountry = await getCountryByIP();
+  if (info.signal?.aborted) return;
   const networkRaw = payload.network;
   /* v8 ignore next -- payload.network always comes from buildSearchPayload (resolvedNetworks array); the non-array fallback is defensive */
-  const networkArr = Array.isArray(networkRaw) ? networkRaw.map(n => n.toLowerCase()) : [(networkRaw || 'all').toLowerCase()];
+  const networkArr = Array.isArray(networkRaw) ? networkRaw.map(n => String(n).toLowerCase()) : [String(networkRaw || 'all').toLowerCase()];
   const isAll = payload.isAllTab === true || networkArr[0] === 'all';
-  const total = meta?.total
-    ? Object.entries(meta.total).reduce((s, [k, n]) => {
-        if (isAll || networkArr.includes(k.toLowerCase())) return s + (Number(n) || 0);
-        return s;
-      }, 0)
-    : 0;
+  const { total: metaTotal, present: metaTotalPresent } = sumRequestedTotal(meta?.total, networkArr, isAll);
+  const adsReturned = Number(info.adsReturned) || 0;
+  // Backend totals can under-report (per-network timeout, a count aggregation
+  // returning 0 while ES still has hits, missing meta) — if ads were returned
+  // the count must never be below what the user actually sees.
+  const total = Math.max(metaTotal, adsReturned);
+  const networkErrors = Array.isArray(payload.error_message) ? payload.error_message : [];
+  let adsCountReason;
+  if (info.failureReason)                          adsCountReason = info.failureReason;
+  else if (adsReturned > 0 && metaTotal === 0)     adsCountReason = metaTotalPresent ? ADS_COUNT_REASONS.META_TOTAL_ZERO : ADS_COUNT_REASONS.META_TOTAL_MISSING;
+  else if (total > 0 && networkErrors.length)      adsCountReason = ADS_COUNT_REASONS.PARTIAL_NETWORK_ERROR;
+  else if (total > 0 && adsReturned === 0)         adsCountReason = ADS_COUNT_REASONS.TOTAL_WITHOUT_VISIBLE_ADS;
+  else if (total > 0)                              adsCountReason = ADS_COUNT_REASONS.OK;
+  else if (networkErrors.length)                   adsCountReason = ADS_COUNT_REASONS.NETWORK_ERROR;
+  else                                             adsCountReason = ADS_COUNT_REASONS.NO_RESULTS;
   const isMulti = !isAll && networkArr.length > 1;
   const networkKey = isAll ? 'all' : networkArr[0];
 
@@ -1974,6 +2016,7 @@ async function trackUserActivity(payload, meta) {
     // '0 | {"google":"Timeout"}') turns it into a string and trips a
     // mapper_parsing_exception (500). The error message gets its own field.
     adsCountOnSerach:          total,
+    ads_count_reason:          adsCountReason,
     // NOTE: field name is intentionally new (not search_error_message) — an
     // earlier version of this code sent a string here, which locked that
     // field's Elasticsearch mapping to `text`. Objects can never be written
@@ -2276,38 +2319,74 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     });
   }
 
-  const response = await fetch(`${PAS_API_BASE}/api/v1/common/ads/search`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
-    },
-    body: JSON.stringify(payload),
-    signal,
+  // User activity is logged only on a fresh search (skip=0), not scroll pagination.
+  const shouldTrackActivity = !filters.skip || filters.skip === 0;
+  const activityPayload = (errorMessage) => ({
+    ...payload,
+    isAllTab:            filters.isAllTab,
+    project_name:             filters.project_name        ?? 'NA',
+    competitor_name:          filters.competitor_name     ?? 'NA',
+    competitor_platform:      filters.competitor_platform ?? 'NA',
+    competitor_platform_click: filters.competitor_platform ?? 'NA',
+    // Array of {network, message} rather than {[network]: message} — keying
+    // by network name means every new platform that errors mints its own
+    // dedicated Elasticsearch sub-field (search_error_detail.<network>).
+    // A fixed {network, message} shape keeps the mapping the same no
+    // matter which or how many platforms fail.
+    error_message:            errorMessage,
   });
 
-  await checkFor401(response);
+  let json;
+  try {
+    const response = await fetch(`${PAS_API_BASE}/api/v1/common/ads/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(getPASToken() ? { Authorization: `Bearer ${getPASToken()}` } : {}),
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
 
-  if (response.status === 403) {
-    const json = await response.json();
-    const err = new Error(json.message || 'Access restricted by your plan.');
-    err.code = 403;
-    err.showSubscriptionModal = json.showSubscriptionModal || false;
-    err.platformRestriction = json.platformRestriction || false;
-    err.restrictedFilters = json.restrictedFilters || [];
-    err.allowedPlatforms = json.allowedPlatforms || [];
+    await checkFor401(response);
+
+    if (response.status === 403) {
+      const errJson = await response.json();
+      const err = new Error(errJson.message || 'Access restricted by your plan.');
+      err.code = 403;
+      err.showSubscriptionModal = errJson.showSubscriptionModal || false;
+      err.platformRestriction = errJson.platformRestriction || false;
+      err.restrictedFilters = errJson.restrictedFilters || [];
+      err.allowedPlatforms = errJson.allowedPlatforms || [];
+      throw err;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Ads API error: ${response.status}`);
+    }
+
+    json = await response.json();
+    // Some servers return 200 with { code: 401, message: "Unauthorized: Token expired" }
+    if (json.code === 401 || (typeof json.message === 'string' && json.message.toLowerCase().includes('token expired'))) {
+      handle401();
+      throw new Error('Unauthorized: Token expired');
+    }
+  } catch (err) {
+    // The search itself failed — still log it (count 0) with the reason and
+    // error message so a missing/zero count is explainable. A search the user
+    // superseded (aborted) is not logged.
+    if (shouldTrackActivity && err?.name !== 'AbortError' && !signal?.aborted) {
+      trackUserActivity(
+        activityPayload([{ network: 'search', message: String(err?.message || err || 'Unknown search error') }]),
+        null,
+        {
+          adsReturned: 0,
+          failureReason: err?.code === 403 ? ADS_COUNT_REASONS.PLAN_RESTRICTED : ADS_COUNT_REASONS.SEARCH_FAILED,
+          signal,
+        },
+      );
+    }
     throw err;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Ads API error: ${response.status}`);
-  }
-
-  const json = await response.json();
-  // Some servers return 200 with { code: 401, message: "Unauthorized: Token expired" }
-  if (json.code === 401 || (typeof json.message === 'string' && json.message.toLowerCase().includes('token expired'))) {
-    handle401();
-    throw new Error('Unauthorized: Token expired');
   }
   const rawAds = sanitizeFrontendRawAds(json.data || []);
   const sanitizedMeta = sanitizeFrontendMeta(json.meta || {});
@@ -2453,23 +2532,16 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   }
 
   // Fire-and-forget user activity — only on fresh search (skip=0), not scroll pagination
-  if (!filters.skip || filters.skip === 0) {
-    trackUserActivity({
-      ...payload,
-      isAllTab:            filters.isAllTab,
-      project_name:             filters.project_name        ?? 'NA',
-      competitor_name:          filters.competitor_name     ?? 'NA',
-      competitor_platform:      filters.competitor_platform ?? 'NA',
-      competitor_platform_click: filters.competitor_platform ?? 'NA',
-      // Array of {network, message} rather than {[network]: message} — keying
-      // by network name means every new platform that errors mints its own
-      // dedicated Elasticsearch sub-field (search_error_detail.<network>).
-      // A fixed {network, message} shape keeps the mapping the same no
-      // matter which or how many platforms fail.
-      error_message:            (json.errors && Object.keys(json.errors).length)
-                                   ? Object.entries(json.errors).map(([network, message]) => ({ network, message }))
-                                   : 'NA',
-    }, sanitizedMeta);
+  if (shouldTrackActivity) {
+    trackUserActivity(
+      activityPayload(
+        (json.errors && typeof json.errors === 'object' && Object.keys(json.errors).length)
+          ? Object.entries(json.errors).map(([network, message]) => ({ network, message: String(message) }))
+          : 'NA',
+      ),
+      sanitizedMeta,
+      { adsReturned: sortedAds.length, signal },
+    );
   }
 
   return {

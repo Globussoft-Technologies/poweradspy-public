@@ -117,6 +117,9 @@ function buildGetAdsInsertData(data, network) {
     'filter.ad_categories':    data.adcategory,
     'filter.ad_subCategories': data.subCategory,
     adsCountOnSerach:          data.adsCountOnSerach,
+    // Why adsCountOnSerach has its value (ok / no_results / network_error /
+    // search_failed / …) — see ADS_COUNT_REASONS in new-ui-react/src/services/api.js.
+    ads_count_reason:          data.ads_count_reason,
     // Field name intentionally differs from the frontend's earlier field
     // (search_error_message, now abandoned) — that name's ES mapping got
     // locked to `text` before this parsing existed, so an object can never

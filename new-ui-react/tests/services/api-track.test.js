@@ -117,6 +117,189 @@ describe("trackUserActivity (via fetchAds, PAS set)", () => {
   });
 });
 
+describe("trackUserActivity — adsCountOnSerach / ads_count_reason / error detail", () => {
+  const ad = (id, network = "facebook") => ({ id, ad_id: id, network, post_owner: `Owner ${id}` });
+  const mockSearch = (json, { ok = true, status = 200 } = {}) => {
+    globalThis.fetch.mockReset().mockImplementation((url) => {
+      if (String(url).includes("user-activity")) return Promise.resolve({ ok: true, status: 200 });
+      return Promise.resolve({ ok, status, text: async () => "", json: async () => json });
+    });
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  // Decoded form body of the user-activity POST (null when none was sent).
+  const activity = () => {
+    const call = globalThis.fetch.mock.calls.find(([u]) => String(u).includes("/user-activity"));
+    return call ? new URLSearchParams(call[1].body) : null;
+  };
+  const search = async (filters, opts) => {
+    await api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", ...filters }, opts);
+    await flush();
+    return activity();
+  };
+
+  beforeEach(() => setAuth({ user_id: 7, email: "a@b.c", name: "Joe" }));
+
+  it("ads returned but meta.total all zero → count = ads shown, reason meta_total_zero", async () => {
+    mockSearch({ data: [ad(1), ad(2), ad(3)], meta: { total: { facebook: 0, instagram: 0 } } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("3");
+    expect(b.get("ads_count_reason")).toBe("meta_total_zero_used_page_count");
+  });
+
+  it("ads returned but meta.total missing → count = ads shown, reason meta_total_missing", async () => {
+    mockSearch({ data: [ad(1), ad(2)], meta: {} });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("2");
+    expect(b.get("ads_count_reason")).toBe("meta_total_missing_used_page_count");
+  });
+
+  it("ads returned but meta.total has no key for the requested network → not 0", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { instagram: 50 } } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("1");
+    expect(b.get("ads_count_reason")).toBe("meta_total_missing_used_page_count");
+  });
+
+  it("meta.total as a plain number is used", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: 120 } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("120");
+    expect(b.get("ads_count_reason")).toBe("ok");
+  });
+
+  it("mixed-case meta.total keys are still matched", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { Facebook: 40 } } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("40");
+  });
+
+  it("string counts in meta.total are summed numerically", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: "25" } } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("25");
+  });
+
+  it("single network → only that network's total is counted", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 10, instagram: 99 } } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("10");
+    expect(b.get("ads_count_reason")).toBe("ok");
+  });
+
+  it("multi-network → sum of the requested networks only", async () => {
+    mockSearch({ data: [ad(1), ad(2, "instagram")], meta: { total: { facebook: 10, instagram: 5, youtube: 7 } } });
+    const b = await search({ activePlatforms: ["facebook", "instagram"] });
+    expect(b.get("adsCountOnSerach")).toBe("15");
+  });
+
+  it("All tab → sum of every network", async () => {
+    mockSearch({ data: [ad(1)], meta: { total: { facebook: 10, instagram: 5, youtube: 7 } } });
+    const b = await search({ isAllTab: true, activePlatforms: ["facebook", "instagram", "youtube"] });
+    expect(b.get("adsCountOnSerach")).toBe("22");
+  });
+
+  it("one network timed out but others returned ads → count not 0, error stored, reason partial_network_error", async () => {
+    mockSearch({
+      data: [ad(1)],
+      meta: { total: { facebook: 8, instagram: 0 } },
+      errors: { instagram: "Timeout" },
+    });
+    const b = await search({ activePlatforms: ["facebook", "instagram"] });
+    expect(b.get("adsCountOnSerach")).toBe("8");
+    expect(b.get("ads_count_reason")).toBe("partial_network_error");
+    expect(JSON.parse(b.get("search_error_detail"))).toEqual([{ network: "instagram", message: "Timeout" }]);
+  });
+
+  it("requested network errored and no ads → 0 with reason network_error and the error message", async () => {
+    mockSearch({ data: [], meta: { total: { facebook: 0 } }, errors: { facebook: "Timeout" } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("0");
+    expect(b.get("ads_count_reason")).toBe("network_error");
+    expect(JSON.parse(b.get("search_error_detail"))).toEqual([{ network: "facebook", message: "Timeout" }]);
+  });
+
+  it("backend total > 0 but no displayable ads → reason total_without_visible_ads", async () => {
+    mockSearch({ data: [], meta: { total: { facebook: 4 } } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("4");
+    expect(b.get("ads_count_reason")).toBe("total_without_visible_ads");
+  });
+
+  it("genuinely no ads, no errors → 0 with reason no_results", async () => {
+    mockSearch({ data: [], meta: { total: { facebook: 0 } } });
+    const b = await search({ activePlatforms: ["facebook"] });
+    expect(b.get("adsCountOnSerach")).toBe("0");
+    expect(b.get("ads_count_reason")).toBe("no_results");
+    expect(b.get("search_error_detail")).toBe("NA");
+  });
+
+  it("search HTTP 500 → still logged with 0, reason search_failed and the error message", async () => {
+    mockSearch({}, { ok: false, status: 500 });
+    await expect(api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", activePlatforms: ["facebook"] }))
+      .rejects.toThrow("Ads API error: 500");
+    await flush();
+    const b = activity();
+    expect(b.get("adsCountOnSerach")).toBe("0");
+    expect(b.get("ads_count_reason")).toBe("search_failed");
+    expect(JSON.parse(b.get("search_error_detail"))).toEqual([{ network: "search", message: "Ads API error: 500" }]);
+  });
+
+  it("search network failure (fetch rejects) → logged with reason search_failed", async () => {
+    globalThis.fetch.mockReset().mockImplementation((url) => {
+      if (String(url).includes("user-activity")) return Promise.resolve({ ok: true, status: 200 });
+      return Promise.reject(new TypeError("Failed to fetch"));
+    });
+    await expect(api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", activePlatforms: ["facebook"] }))
+      .rejects.toThrow("Failed to fetch");
+    await flush();
+    const b = activity();
+    expect(b.get("ads_count_reason")).toBe("search_failed");
+    expect(JSON.parse(b.get("search_error_detail"))[0].message).toBe("Failed to fetch");
+  });
+
+  it("403 plan restriction → logged with reason plan_restricted and the plan message", async () => {
+    mockSearch({ message: "Upgrade required" }, { ok: false, status: 403 });
+    await expect(api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", activePlatforms: ["facebook"] }))
+      .rejects.toThrow("Upgrade required");
+    await flush();
+    const b = activity();
+    expect(b.get("ads_count_reason")).toBe("plan_restricted");
+    expect(JSON.parse(b.get("search_error_detail"))[0].message).toBe("Upgrade required");
+  });
+
+  it("aborted (superseded) search → nothing logged", async () => {
+    const controller = new AbortController();
+    globalThis.fetch.mockReset().mockImplementation((url) => {
+      if (String(url).includes("user-activity")) return Promise.resolve({ ok: true, status: 200 });
+      controller.abort();
+      const e = new Error("aborted"); e.name = "AbortError";
+      return Promise.reject(e);
+    });
+    await expect(api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", activePlatforms: ["facebook"] }, { signal: controller.signal }))
+      .rejects.toThrow("aborted");
+    await flush();
+    expect(activity()).toBeNull();
+  });
+
+  it("search completed but was superseded before tracking → nothing logged", async () => {
+    const controller = new AbortController();
+    mockSearch({ data: [], meta: { total: { facebook: 0 } } });
+    const p = api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", activePlatforms: ["facebook"] }, { signal: controller.signal });
+    controller.abort();
+    await p;
+    await flush();
+    expect(activity()).toBeNull();
+  });
+
+  it("pagination (skip > 0) → nothing logged, even on failure", async () => {
+    mockSearch({}, { ok: false, status: 500 });
+    await expect(api.fetchAds({ searchIn: "keyword", searchQuery: "coffee", activePlatforms: ["facebook"], skip: 2 }))
+      .rejects.toThrow();
+    await flush();
+    expect(activity()).toBeNull();
+  });
+});
+
 describe("trackProjectEvent", () => {
   it("no PAS base → early return (no fetch)", async () => {
     vi.resetModules();
