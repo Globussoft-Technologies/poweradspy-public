@@ -9162,7 +9162,7 @@ paths:
         A per-fetcher 2 s timeout ensures slow queries never block the rest.
 
         **`network` parameter** selects the platform controller:
-        `facebook` (default), `instagram`, `pinterest`, `youtube`, `gdn`, `google`, `native`, `linkedin`, `reddit`, `quora`, `tiktok`
+        `facebook` (default), `instagram`, `pinterest`, `youtube`, `gdn`, `google`, `native`, `linkedin`, `reddit`, `quora`, `tiktok`, `chatgptads`
 
         ### SSE event format
         ```
@@ -9188,8 +9188,48 @@ paths:
         | native    | native_ad_id       | ✓ | ✓ | ✓ | — | — | — | — | — | — | — |
         | quora     | quora_ad_id        | ✓ | — | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
         | tiktok    | tiktok_ad_id       | — | ✓ | — | — | — | — | — | — | — | — |
+        | chatgptads | chatgptads_ad_id  | ✓ | — | ✓ | — | — | — | ✓ | — | — | — |
 
         **TikTok additional events:** `analytics`, `industries`
+
+        ### ChatGPT Ads (`network: chatgptads`, platform 21)
+
+        `chatgptads_ad_id` is the **internal** numeric id (`chatgptads_ad.id` / ES field `id`),
+        not the extension's 12-digit `ad_id` string. `ad_id` is accepted as an alias for it.
+        `user_id` is not required for this network.
+
+        Three events are streamed:
+
+        - **`adDetails`** — read from the `chatgpt_search_mix` ES index only. `data` is a one-item
+          array with: `id`, `ad_id`, `ad_text`, `ad_title`, `newsfeed_description`,
+          `post_owner_image`, `post_owner_name`, `new_nas_image_url`, `first_seen`, `last_seen`,
+          `ad_position`, `type`, `domain`, `destination_url`, `image_video_url`,
+          `image_url_original`, `days_running`, `lang_detect`, `language`. `lang_detect` is the
+          full language name (e.g. `English`); `language` carries the same value. `image_video_url` is our NAS copy of the creative as a full CDN
+          URL (for `VIDEO` ads: the video, or its thumbnail until the video is stored);
+          `image_url_original` is the source URL the extension sent, unchanged.
+          `post_owner_image` and `new_nas_image_url` are also full CDN URLs;
+          `new_nas_image_url` is `null` for `type: VIDEO` ads. Returns `code: 404` when the ad
+          is not in the index.
+        - **`country`** — every country this one ad has been seen in, from the ad's ES document:
+          `data: [{ "country": "India", "iso": null }]`. `iso` is always `null` (names only).
+        - **`advertiserCountryData`** — all ads of the same advertiser whose `last_seen` falls in
+          `year` (default: the year of this ad's `last_seen`), grouped by country. `ad_count` is
+          the number of distinct ads seen in that country (up to 10,000 ads per advertiser/year).
+          Only the full country name is stored for this network, so **`iso` is always `null`** —
+          the client resolves the ISO code from the name (same as AdMob).
+
+        Sample ChatGPT Ads stream:
+        ```
+        event: adDetails
+        data: {"code":200,"data":[{"id":42,"ad_id":"123456789012","ad_text":"For long sitting in an ergonomic office chair, here is a back-support option.","ad_title":"Make Every Chair More Comfortable","newsfeed_description":"Add lower back support to your everyday chair for better comfort while you sit.","post_owner_image":"https://media.globussoft.com/pas-dev/stream/gpt/postowner/202610/3.png","post_owner_name":"Leeford Ortho","new_nas_image_url":"https://media.globussoft.com/pas-dev/stream/gpt/adImage/202610/42.png","first_seen":"2026-10-01 10:30:55","last_seen":"2026-10-01 10:30:55","ad_position":"conversational_bottom","type":"IMAGE","domain":"leeford.example.com","destination_url":"https://leeford.example.com/landing?utm_source=chatgpt","image_url_original":"https://example-cdn.com/ads/chair-ad.jpg","image_video_url":"https://media.globussoft.com/pas-dev/stream/gpt/adImage/202610/42.png"}],"message":"Ad details fetched successfully"}
+
+        event: advertiserCountryData
+        data: {"code":200,"message":"Advertiser country data fetched.","post_owner_id":3,"year":2026,"available_years":[2026],"data":[{"country":"India","iso":null,"ad_ids":[42,43],"ad_count":2},{"country":"USA","iso":null,"ad_ids":[42],"ad_count":1}]}
+
+        event: done
+        data: {"code":200,"message":"All insights complete"}
+        ```
 
         
         ```
@@ -9203,7 +9243,7 @@ paths:
               properties:
                 network:
                   type: string
-                  enum: [facebook, instagram, pinterest, youtube, gdn, google, native, linkedin, reddit, quora, tiktok]
+                  enum: [facebook, instagram, pinterest, youtube, gdn, google, native, linkedin, reddit, quora, tiktok, chatgptads]
                   default: facebook
                   description: Target ad network
                 facebook_ad_id:
@@ -9240,6 +9280,13 @@ paths:
                 tiktok_ad_id:
                   type: integer
                   description: Required when network = tiktok
+                chatgptads_ad_id:
+                  type: integer
+                  description: Required when network = chatgptads. Internal chatgptads_ad.id (`ad_id` accepted as an alias).
+                year:
+                  type: integer
+                  description: chatgptads only — year for advertiserCountryData. Defaults to the year of the ad's last_seen.
+                  example: 2026
                 user_id:
                   type: integer
                   example: 281
@@ -9285,6 +9332,9 @@ paths:
               tiktok:
                 summary: TikTok insights
                 value: { network: tiktok, tiktok_ad_id: 11001, user_id: 281 }
+              chatgptads:
+                summary: ChatGPT Ads insights
+                value: { network: chatgptads, chatgptads_ad_id: 42, user_id: 281 }
       responses:
         '200':
           description: SSE stream of insight events
@@ -9328,7 +9378,7 @@ paths:
                     example: 400
                   message:
                     type: string
-                    example: "Unsupported network: unknown. Available: facebook, instagram, pinterest, youtube, gdn, google, native, linkedin, reddit, quora, tiktok"
+                    example: "Unsupported network: unknown. Available: facebook, instagram, pinterest, youtube, gdn, google, native, linkedin, reddit, quora, tiktok, chatgptads"
         '401':
           description: Missing required parameters
           content:

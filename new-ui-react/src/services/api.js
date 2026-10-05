@@ -1049,6 +1049,7 @@ const PLATFORM_ROUTE_MAP = {
   pinterest: 'pinterest',
   tiktok: 'tiktok',
   admob: 'admob',
+  chatgptads: 'chatgptads',
 };
 
 const HIDDEN_STATE_CACHE_MS = 30 * 1000;
@@ -1953,6 +1954,12 @@ function sumRequestedTotal(metaTotal, networkArr, isAll) {
   return { total, present };
 }
 
+// The search effect can re-run with an unchanged request when state that is not
+// part of the payload changes, so an identical search is logged only once
+// within this window.
+const USER_ACTIVITY_DEDUPE_MS = 5000;
+let lastUserActivity = { key: null, at: 0 };
+
 async function trackUserActivity(payload, meta, info = {}) {
   if (!PAS_API_BASE) return;
   const authUser = getAuthUser();
@@ -1961,6 +1968,16 @@ async function trackUserActivity(payload, meta, info = {}) {
   if (info.signal?.aborted) return;
   const userCurrentCountry = await getCountryByIP();
   if (info.signal?.aborted) return;
+  let dedupeKey = null;
+  try {
+    const { _aiSearchExecution, ...loggedFields } = payload;
+    dedupeKey = `${authUser.user_id}:${JSON.stringify(loggedFields)}:${info.failureReason || ''}`;
+  } catch {}
+  if (dedupeKey) {
+    const now = Date.now();
+    if (lastUserActivity.key === dedupeKey && now - lastUserActivity.at < USER_ACTIVITY_DEDUPE_MS) return;
+    lastUserActivity = { key: dedupeKey, at: now };
+  }
   const networkRaw = payload.network;
   /* v8 ignore next -- payload.network always comes from buildSearchPayload (resolvedNetworks array); the non-array fallback is defensive */
   const networkArr = Array.isArray(networkRaw) ? networkRaw.map(n => String(n).toLowerCase()) : [String(networkRaw || 'all').toLowerCase()];

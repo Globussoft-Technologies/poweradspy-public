@@ -20,6 +20,7 @@ const { getAdInsights: liAdInsights } = require('../controllers/linkedinCommonIn
 const { getAdInsights: redAdInsights } = require('../controllers/redditCommonInsightsController');
 const { getAdInsights: qrAdInsights } = require('../controllers/quoraCommonInsightsController');
 const { getAdInsights: ttAdInsights } = require('../controllers/tiktokCommonInsightsController');
+const { getAdInsights: cgaAdInsights } = require('../controllers/chatgptadsCommonInsightsController');
 const { getAdCountry } = require('../controllers/adCountryController');
 const { createShareLink, getSharedAd } = require('../controllers/shareAdController');
 const { syncCategory, syncAllCategories } = require('../controllers/categoryController');
@@ -204,6 +205,7 @@ const insightHandlers = {
   reddit:    redAdInsights,
   quora:     qrAdInsights,
   tiktok:    ttAdInsights,
+  chatgptads: cgaAdInsights,
 };
 
 const availableNetworks = Object.keys(insightHandlers).join(', ');

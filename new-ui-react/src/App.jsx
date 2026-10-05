@@ -498,7 +498,7 @@ const App = () => {
   // bounce to '/', and a returning '/' session (activePage='projects' persisted)
   // to bounce to /projects.
   const didInitialNavSyncRef = useRef(false);
-  const _VALID_NETWORKS = ["facebook","instagram","youtube","google","gdn","native","linkedin","reddit","quora","pinterest","tiktok","admob"];
+  const _VALID_NETWORKS = ["facebook","instagram","youtube","google","gdn","native","linkedin","reddit","quora","pinterest","tiktok","admob","chatgptads"];
   const _isAdAnalyticsUrl = (() => {
     const parts = location.pathname.split("/").filter(Boolean);
     return parts.length === 2 && _VALID_NETWORKS.includes(parts[0].toLowerCase()) && !!parts[1];
@@ -692,6 +692,7 @@ const App = () => {
       "facebook", "instagram", "youtube", "google", "gdn", "native",
       "linkedin", "reddit", "quora", "pinterest", "tiktok",
       "admob",
+      "chatgptads",
     ];
     if (pathParts.length === 2) {
       const [network, adId] = pathParts;
@@ -854,6 +855,7 @@ const App = () => {
         "pinterest",
         "tiktok",
         "admob",
+        "chatgptads",
       ];
 
       // Pattern 1: /{network}/{adId}

@@ -389,6 +389,18 @@ const BasicInfo = ({
         hoverColor: "hover:text-emerald-400",
       },
     ];
+  } else if (p === "chatgptads") {
+    // ChatGPT Ads only has the ad's destination_url — no redirect chain or separate ad URL
+    // is captured, so those rows are not shown.
+    basicRows = [
+      {
+        label: "INITIAL URL",
+        icon: Globe,
+        value: initialUrl,
+        href: initialUrl,
+        hoverColor: "hover:text-[#6b99ff]",
+      },
+    ];
   } else {
     basicRows = [
       {

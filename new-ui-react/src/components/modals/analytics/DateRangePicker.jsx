@@ -90,7 +90,10 @@ const DateRangePicker = ({ availableYears = [], onApply, isLight }) => {
     const start = startDate;
     const end = endDate || startDate;
     
-    const formatDateApi = (d) => d.toISOString().split('T')[0];
+    // Local calendar date, not toISOString() — that converts to UTC, which shifts the
+    // picked (local-midnight) date back a day in any timezone ahead of UTC (e.g. IST).
+    const formatDateApi = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     
     onApply({ 
       fromDate: formatDateApi(start), 

@@ -17,6 +17,7 @@ const NETWORK_AD_ID_FIELD = {
   quora:     'quora_ad_id',
   pinterest: 'pinterest_ad_id',
   tiktok:    'tiktok_ad_id',
+  chatgptads: 'chatgptads_ad_id',
 };
 
 // Google's outgoingLinks event can arrive as one SQL row per link. Every

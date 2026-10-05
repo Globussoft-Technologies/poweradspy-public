@@ -1643,7 +1643,11 @@ const AnalyticsModal = ({
   const isLight = theme === 'light';
 const isAdmob =
   normalizePlatformSlug(ad?.network || ad?.platform) === "admob";
-const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
+// ChatGPT Ads: the card `id` is the extension's 12-digit ad_id, but the insights API
+// looks the ad up by its internal id (chatgptads_ad.id) — same as AdMob.
+const isChatgpt =
+  normalizePlatformSlug(ad?.network || ad?.platform) === "chatgptads";
+const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id;
   const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(
     insightAdId,
     ad?.network,
@@ -2260,14 +2264,23 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
         icon: Hash,
         color: "text-purple-400",
       }]),
-      ...(ctx.platform === 'quora' ? [] : [{
+      ...(ctx.platform === 'quora' ? [] : (() => {
+        // ChatGPT Ads: use the backend's days_running (computed at insertion, minimum 1) —
+        // the date-difference fallback returns null for an ad first and last seen the same day.
+        const runningDaysValue = isAdmob
+          ? analyticsActiveDays
+          : isChatgpt
+            ? (d.days_running ?? analyticsRunningDays)
+            : analyticsRunningDays;
+        return [{
         label: isAdmob ? "ACTIVE DAYS" : "RUNNING DAYS",
-        value: (isAdmob ? analyticsActiveDays : analyticsRunningDays) != null
-          ? `${isAdmob ? analyticsActiveDays : analyticsRunningDays} days`
+        value: runningDaysValue != null
+          ? `${runningDaysValue} days`
           : "—",
         icon: Clock,
         color: "text-orange-400",
-      }]),
+      }];
+      })()),
       ...(isAdmob ? [
         ...(Number(analyticsOccurrenceCount) > 0 ? [{
           label: "AD OCCURRENCE COUNT",
@@ -2365,12 +2378,13 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
         icon: Youtube,
         color: "text-red-500",
       }] : []),
-      {
+      // ChatGPT Ads has no source data — hide the row instead of showing "—".
+      ...(isChatgpt ? [] : [{
         label: "SOURCE",
         value: formatSource(d.source) || "—",
         icon: ExternalLink,
         color: "text-[#5f8ae7]",
-      },
+      }]),
       {
         label: "DOMAIN",
         value: formatDomainValue(d.domain, ad?.domain),
@@ -3402,7 +3416,7 @@ const insightAdId = isAdmob ? (ad?.internalId ?? ad?.id) : ad?.id;
                 targetSiteData={insights.targetSite}
                 isLight={isLight}
               />
-            ) : !isTransparency && (!isAdmob || hasAdmobDemographics) && !["gdn", "pinterest", "reddit", "linkedin", "youtube", "quora"].includes(
+            ) : !isTransparency && (!isAdmob || hasAdmobDemographics) && !["gdn", "pinterest", "reddit", "linkedin", "youtube", "quora", "chatgptads"].includes(
                 ctx.platform,
               ) && !(insightErrors.userData && !insights.advertiserUserData) ? (
               <Demographics
