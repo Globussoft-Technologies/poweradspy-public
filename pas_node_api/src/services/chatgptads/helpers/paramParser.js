@@ -20,6 +20,30 @@ function getCountryName(code) {
   try { return regionNames.of(code); } catch { return null; }
 }
 
+// ISO-639 code → English language name ("en" → "English"), which is what insertion stores
+// in the ChatGPT index's `lang_detect`.
+const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
+
+/**
+ * Languages from the shared Language filter. The frontend always sends a default `language`
+ * ('en') even when the user never touched the filter, so it only applies when
+ * `language_explicit` is true — the same rule the common search uses for narrowing.
+ */
+function parseLanguages(raw) {
+  if (!flag(raw.language_explicit)) return [];
+  const out = new Set();
+  for (const value of [...list(raw.lang), ...list(raw.language)]) {
+    if (value.toLowerCase() === 'un') continue; // legacy "unknown" companion value
+    out.add(value);
+    if (/^[a-z]{2,3}(-[a-z]{2})?$/i.test(value)) {
+      let name = null;
+      try { name = languageNames.of(value); } catch { name = null; }
+      if (name && name.toLowerCase() !== value.toLowerCase()) out.add(name);
+    }
+  }
+  return [...out];
+}
+
 /**
  * Countries for the ChatGPT index, which stores resolved country NAMES ("India").
  * Accepts the dashboard's shared Country filter (`country`, ISO codes like "IN") and an
@@ -106,6 +130,13 @@ function parseSearchParams(raw = {}) {
     advertisers: list(raw.chatgpt_advertiser),
     countries: parseCountries(raw),
     types: list(raw.type),
+    languages: parseLanguages(raw),
+    adPositions: list(raw.ad_position ?? raw.ad_position_filter),
+    marketPlatforms: list(raw.market_platform ?? raw.marketing_platform_filter ?? raw.marketingPlatform),
+    // Saved / Hidden pages (SavedAdsPage sends favorite / hidden = 'true')
+    favorite: flag(raw.favorite),
+    hidden: flag(raw.hidden),
+    userId: raw.user_id != null && String(raw.user_id).trim() !== '' ? String(raw.user_id).trim() : null,
     firstSeen: parseDatePair(raw.first_seen_btn_sort),
     lastSeen: parseDatePair(raw.seen_btn_sort),
     sort: parseSort(raw),

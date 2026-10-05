@@ -62,10 +62,6 @@ const LAST_SEEN_NETWORKS = new Set([
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
   'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob', 'chatgptads',
 ]);
-
-// ChatGPT Ads is tab-only: it is searched only when the request names it explicitly,
-// never as part of an "all" request (its own filters/fields don't overlap the others').
-const TAB_ONLY_NETWORKS = new Set(['chatgptads']);
 const DOMAIN_DATE_NETWORKS = new Set([
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
   'reddit', 'quora', 'pinterest', 'google',
@@ -277,9 +273,7 @@ async function searchAllNetworks(req, res) {
   const _popularitySortActive =
     _body.popularity_sort === 'popularity_sort' || _body.sortBy === 'Popularity';
 
-  const isUserRequested  = (net) => TAB_ONLY_NETWORKS.has(net)
-    ? Array.isArray(reqNetworks) && reqNetworks.includes(net)
-    : reqNetworks === 'all' || reqNetworks.includes(net);
+  const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
   const isCustomPlan = req.planAccess?.isCustomPlan === true;
   const hasPlanControlSearchDecision = Array.isArray(req.planControlDecisions) &&
     req.planControlDecisions.some((decision) => decision?.capabilityId === 'ads.search');

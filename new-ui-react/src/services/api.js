@@ -1259,7 +1259,7 @@ export const FILTER_PLATFORM_SUPPORT = {
   activeDaysRange: ['admob'],
   native_network: ['native'],
   has_ai_meta:    ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'google', 'tiktok'],
-  language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google'],
+  language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google', 'chatgptads'],
 };
 
 // SDUI option labels remain configuration data. This allowlist only defines

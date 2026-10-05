@@ -17,7 +17,8 @@
  * Supported search/filter set (per product scope — Category and CTA are intentionally
  * absent: the payload carries neither field yet):
  *   keyword search (ad text / advertiser / domain), advertiser, country, ad type (image/video),
- *   first seen / last seen date range, sort newest | most seen | longest running.
+ *   language, ad position, marketing platform, first seen / last seen date range,
+ *   sort newest | most seen | longest running.
  */
 
 const { chatgptads: cgaNet } = require('../../../config/networks');
@@ -127,10 +128,62 @@ class ChatgptSearchQueryBuilder {
     return this;
   }
 
+  /**
+   * Language filter — the ad's detected language as stored by insertion in `lang_detect`
+   * (full English name, e.g. "English"; keyword + lowercase normalizer).
+   */
+  setLanguage(values) {
+    const list = cleanList(values);
+    if (list.length) this.filter.push({ terms: { lang_detect: list } });
+    return this;
+  }
+
+  /** Ad Position filter — ChatGPT placement as sent by the extension, e.g. "conversational_bottom". */
+  setAdPosition(values) {
+    const list = cleanList(values);
+    if (list.length) this.filter.push({ terms: { ad_position: list } });
+    return this;
+  }
+
+  /**
+   * Marketing Platform filter — SDUI option values are URL fragments ("doubleclick",
+   * "hubs.ly", …), so this is a containment match on the ad's destination URL and domain.
+   * The one deliberate `*wildcard*` in this builder: URL substrings genuinely need it, and
+   * every other clause stays in filter context so the cost is bounded to the matched set.
+   */
+  setMarketPlatform(values) {
+    const list = cleanList(values).map((v) => v.toLowerCase());
+    if (!list.length) return this;
+    const should = [];
+    for (const v of list) {
+      should.push({ wildcard: { destination_url: { value: `*${v}*` } } });
+      should.push({ wildcard: { domain: { value: `*${v}*` } } });
+    }
+    this.filter.push({ bool: { should, minimum_should_match: 1 } });
+    return this;
+  }
+
   /** Country filter — country NAMES (the payload sends resolved names, not ISO codes). */
   setCountry(values) {
     const list = cleanList(values);
     if (list.length) this.filter.push({ terms: { country: list } });
+    return this;
+  }
+
+  /** Saved page — restrict to these external ad ids. */
+  setAdIds(adIds) {
+    this.filter.push({ terms: { ad_id: cleanList(adIds) } });
+    return this;
+  }
+
+  /** Hidden page — ads the user hid OR any ad from an advertiser they hid. */
+  setHiddenScope({ adIds = [], ownerLowers = [] }) {
+    const should = [];
+    const ids = cleanList(adIds);
+    const owners = cleanList(ownerLowers);
+    if (ids.length) should.push({ terms: { ad_id: ids } });
+    if (owners.length) should.push({ terms: { post_owner_lower: owners } });
+    this.filter.push({ bool: { should, minimum_should_match: 1 } });
     return this;
   }
 

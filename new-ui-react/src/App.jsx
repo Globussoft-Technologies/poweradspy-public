@@ -1138,11 +1138,8 @@ const App = () => {
   }, [dispatch, sdui.sortBy, sortTabs, ui.activeTab]);
 
   const allPlatformValues = useMemo(() => {
-    // ChatGPT Ads is tab-only — never part of the "All" selection.
     if (platformOptions.length > 0)
-      return platformOptions
-        .map((opt) => opt.value ?? opt.label)
-        .filter((value) => String(value).toLowerCase() !== 'chatgptads');
+      return platformOptions.map((opt) => opt.value ?? opt.label);
     const platforms = [
       "facebook",
       "instagram",
@@ -1387,9 +1384,7 @@ const App = () => {
         const platforms = [...new Set(
           sdui.activePlatforms
             .filter((network) => isPlanNetworkAllowed(planAllowedPlatforms, network))
-            .map((p) => p.toLowerCase())
-            // ChatGPT Ads has no hidden/saved-ads endpoints (no save/hide on its cards).
-            .filter((p) => p !== 'chatgptads'),
+            .map((p) => p.toLowerCase()),
         )];
         if (platforms.length === 0) return;
         const results = [];

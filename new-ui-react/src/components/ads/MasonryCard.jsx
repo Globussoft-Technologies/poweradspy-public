@@ -274,8 +274,7 @@ const MasonryCard = ({
   sduiConfig,
 }) => {
   const platform = String(ad.network || "").toLowerCase();
-  // ChatGPT Ads: no save/hide (no saved-ads storage for this network yet) and its own
-  // card stats (times seen + landing domain) instead of engagement metrics.
+  // ChatGPT Ads: its own card stats (times seen + landing domain) instead of engagement metrics.
   const isChatgpt = platform === "chatgptads";
   // AI enrichment is an ad property, not only a search-result property. The
   // boolean is intentionally lightweight; full labels are loaded on demand.
@@ -1033,8 +1032,7 @@ const MasonryCard = ({
               {cornerBadgeLabel}
             </span>
 
-            {/* Save / unsave — not offered for ChatGPT Ads (no saved-ads storage yet) */}
-            {!isChatgpt && (
+            {/* Save / unsave */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -1062,7 +1060,6 @@ const MasonryCard = ({
                 }
               />
             </button>
-            )}
 
             {/* Download */}
             <button
@@ -1095,7 +1092,7 @@ const MasonryCard = ({
                 </button>
               )
             ) : (
-              !isChatgpt && onHideAd && (
+              onHideAd && (
                 <button
                   ref={hideButtonRef}
                   onClick={(e) => {

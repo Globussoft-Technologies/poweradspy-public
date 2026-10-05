@@ -863,7 +863,12 @@ const AdGrid = ({
     URL.revokeObjectURL(url);
   };
 
-  const activePlatformLabel = activePlatforms[0] || "facebook";
+  // Slugs whose CSS-capitalized form doesn't read as the network's name.
+  const PLATFORM_DISPLAY_NAMES = { chatgptads: "ChatGPT" };
+  const activePlatformLabel =
+    PLATFORM_DISPLAY_NAMES[String(activePlatforms[0] || "").toLowerCase()] ||
+    activePlatforms[0] ||
+    "facebook";
 
   // Auto-reset sort when active tab is not valid for current platforms
   useEffect(() => {

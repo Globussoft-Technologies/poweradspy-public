@@ -16,6 +16,7 @@
 
 const ChatgptSearchQueryBuilder = require('../builders/ChatgptSearchQueryBuilder');
 const { parseSearchParams, mediaUrl, parseJsonArray } = require('../helpers/paramParser');
+const { getUserAdLists } = require('./hideAdsController');
 
 const PLATFORM_ID = 21;
 const NETWORK = 'chatgptads';
@@ -151,6 +152,20 @@ async function searchAds(req, db, logger) {
 
   const p = parseSearchParams({ ...(req.query || {}), ...(req.body || {}) });
 
+  // Saved / Hidden pages: scope the search to this user's chatgptads_hidden_ads rows.
+  let userLists = null;
+  if (p.favorite || p.hidden) {
+    if (!db.sql) return { code: 503, message: 'SQL connection not available', data: [], total: 0 };
+    if (!p.userId) return { code: 400, message: 'Missing param: user_id', data: [], total: 0 };
+    userLists = await getUserAdLists(db, p.userId);
+    const empty = p.favorite
+      ? userLists.savedAdIds.length === 0
+      : userLists.hiddenAdIds.length === 0 && userLists.hiddenOwners.length === 0;
+    if (empty) {
+      return { code: 200, data: [], total: 0, message: p.favorite ? 'No favorite ads found' : 'No hidden ads found' };
+    }
+  }
+
   const builder = new ChatgptSearchQueryBuilder(db.elastic.indexName)
     .setFrom(p.from)
     .setSize(p.size)
@@ -161,8 +176,13 @@ async function searchAds(req, db, logger) {
     .setAdvertisers(p.advertisers)
     .setCountry(p.countries)
     .setAdType(p.types)
+    .setLanguage(p.languages)
+    .setAdPosition(p.adPositions)
+    .setMarketPlatform(p.marketPlatforms)
     .setFirstSeen(p.firstSeen)
     .setLastSeen(p.lastSeen);
+  if (p.favorite) builder.setAdIds(userLists.savedAdIds);
+  else if (p.hidden) builder.setHiddenScope({ adIds: userLists.hiddenAdIds, ownerLowers: userLists.hiddenOwners });
 
   const esParams = builder.build();
 
@@ -180,10 +200,21 @@ async function searchAds(req, db, logger) {
     const sqlRows = await hydrateFromSql(db.sql, ids, logger);
 
     // Keep ES order (it carries the sort); SQL only fills in fields.
-    const data = esHits.map((hit) => {
+    let data = esHits.map((hit) => {
       const src = hit._source || {};
       return toCardRow(src, sqlRows.get(String(src.id ?? hit._id)));
     });
+
+    // Hidden page: tell the card what was hidden (ad vs advertiser) so Unhide sends the
+    // right type — same hideType / ad_type / hiddenPostOwnerId fields other networks attach.
+    if (p.hidden) {
+      data = data.map((ad) => {
+        const ownerKey = `owner:${String(ad.post_owner || '').toLowerCase()}`;
+        const meta = userLists.hideMeta.get(String(ad.ad_id)) || userLists.hideMeta.get(ownerKey);
+        if (!meta) return ad;
+        return { ...ad, hideType: meta.hideType, ad_type: meta.hideType, hiddenPostOwnerId: meta.postOwnerId };
+      });
+    }
 
     return { code: 200, data, total, message: 'Ads fetched successfully' };
   } catch (err) {

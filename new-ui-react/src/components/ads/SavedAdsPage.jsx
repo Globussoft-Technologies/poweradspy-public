@@ -133,12 +133,24 @@ const SavedAdsPage = ({
   const platformsDoc = sdui?.config?.navbar?.find((d) => d._id === "platforms");
   const platformFilter = platformsDoc?.filters?.[0];
   const platformOptions = useMemo(() => {
-    // ChatGPT Ads can't be saved/hidden yet, so it has no tab on this page.
-    const opts = (platformFilter?.options || [])
-      .filter((o) => String(o.value ?? o.label ?? "").toLowerCase() !== "chatgptads");
-    if (opts.length === 0 || opts.some((o) => (o.value || "").toLowerCase() === "tiktok")) return opts;
-    return [...opts, { value: "tiktok", label: "TT", icon_url: null }];
-  }, [platformFilter]);
+    let opts = platformFilter?.options || [];
+    if (opts.length > 0 && !opts.some((o) => (o.value || "").toLowerCase() === "tiktok")) {
+      opts = [...opts, { value: "tiktok", label: "TT", icon_url: null }];
+    }
+    // ChatGPT Ads tab — same rule as the Ads Library tab bar (App.jsx): shown only when the
+    // user's allowed platforms include it, and placed after AdMob until the admin SDUI
+    // platform_selector carries its own option.
+    const isChatgptOpt = (o) => String(o.value ?? o.label ?? "").toLowerCase() === "chatgptads";
+    const chatgptAllowed = Array.isArray(allowedPlatforms) &&
+      allowedPlatforms.some((network) => String(network).toLowerCase() === "chatgptads");
+    if (!chatgptAllowed) return opts.filter((o) => !isChatgptOpt(o));
+    if (opts.length === 0 || opts.some(isChatgptOpt)) return opts;
+    const chatgptOpt = { value: "chatgptads", label: "GPT", icon_url: null };
+    const admobIndex = opts.findIndex((o) => String(o.value ?? o.label ?? "").toLowerCase() === "admob");
+    return admobIndex === -1
+      ? [...opts, chatgptOpt]
+      : [...opts.slice(0, admobIndex + 1), chatgptOpt, ...opts.slice(admobIndex + 1)];
+  }, [platformFilter, allowedPlatforms]);
 
   const allPlatformValues = useMemo(() => {
     if (platformOptions.length > 0) return platformOptions.map((o) => o.value ?? o.label);

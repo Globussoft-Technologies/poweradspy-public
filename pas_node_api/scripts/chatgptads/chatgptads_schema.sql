@@ -205,6 +205,31 @@ CREATE TABLE IF NOT EXISTS chatgptads_translation (
     REFERENCES chatgptads_ad(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ── chatgptads_hidden_ads (per-user save / hide — added 2026-10-05) ──
+-- Same contract as facebook's hidden_ads, which the dashboard's
+-- /ads/hide_ads, /ads/un-hide and /ads/getHiddenPostOwners endpoints read and write:
+--   type 1 = hidden advertiser (post_owner_id), 2 = hidden ad (ad_id), 3 = saved ad (ad_id).
+-- `ad_id` is the EXTERNAL ad id (chatgptads_ad.ad_id — what the dashboard card carries), not
+-- the internal numeric id. `target_key` ('owner:<id>' for type 1, 'ad:<ad_id>' otherwise) makes
+-- the UNIQUE key dedupe double-clicks even though one of post_owner_id / ad_id is NULL per row.
+-- FKs cascade, so deleting an ad (or advertiser) also removes it from everyone's Saved/Hidden.
+CREATE TABLE IF NOT EXISTS chatgptads_hidden_ads (
+  id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id        VARCHAR(64) NOT NULL,
+  type           TINYINT UNSIGNED NOT NULL COMMENT '1 = hidden advertiser, 2 = hidden ad, 3 = saved ad',
+  post_owner_id  INT UNSIGNED NULL,
+  ad_id          VARCHAR(32) NULL,
+  target_key     VARCHAR(48) NOT NULL,
+  created_at     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_chatgptads_hidden_user_type_target (user_id, type, target_key),
+  KEY idx_chatgptads_hidden_user (user_id),
+  CONSTRAINT fk_chatgptads_hidden_ad FOREIGN KEY (ad_id)
+    REFERENCES chatgptads_ad(ad_id) ON DELETE CASCADE,
+  CONSTRAINT fk_chatgptads_hidden_post_owner FOREIGN KEY (post_owner_id)
+    REFERENCES chatgptads_ad_post_owners(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ── chatgptads_es_outbox (ES-write durability — added 2026-10-01 after live testing) ──
 -- Every other network (and admob's own mob_es_outbox) only retries the INSERT/UPDATE
 -- index-failure case, and even admob's outbox FK-cascades away silently on ad delete — so
