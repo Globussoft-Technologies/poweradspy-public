@@ -131,6 +131,7 @@ class InsertHtmlContentService {
     if (data.status === 3) {
       const redirectStatus = data.crawled_by === '.net' ? 3 : 5;
       await NativeAdMetaData.updateRedirectStatus(data.ad_id, redirectStatus);
+      await NativeAdMetaData.resetLanderScreenshot(data.ad_id);
       return {
         success: true,
         adId: data.ad_id,

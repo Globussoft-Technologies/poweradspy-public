@@ -113,6 +113,10 @@ async function insertHtmlContent(req, db, log) {
     if (Number(value.status) === 3) {
       if (blackhat_status != 1 || whitehat_status != 0 || whitehat_status != 2) {
         update_meta_table.redirect_status = value.crawled_by === '.net' ? 3 : 5;
+        // No lander was captured -> screenshot goes back to the placeholder (same value insertion uses)
+        // and the stored whitehat screenshot list is cleared, so the next crawl starts a clean list.
+        update_meta_table.screenshot_url = 'processing.gif';
+        update_meta_table.white_ad_screenshot = null;
         const upd = await repo.updateMeta(sql, ad_id, update_meta_table);
         response.code = upd === 1 ? 200 : 400;
         response.message = upd === 1 ? 'Redirect status updated succesfully' : 'Redirect status updated previously';

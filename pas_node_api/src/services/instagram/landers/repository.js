@@ -60,6 +60,18 @@ class InstagramRepository {
     return result.affectedRows > 0;
   }
 
+  // Status 3 (no lander captured): screenshot goes back to the placeholder (same value insertion
+  // uses) and the stored whitehat screenshot list is cleared, so the next crawl starts a clean list.
+  static async resetLanderScreenshot(adId) {
+    const sql = `
+      UPDATE instagram_ad_meta_data
+      SET screenshot_url = 'processing.gif', white_ad_screenshot = NULL
+      WHERE instagram_ad_id = ?
+    `;
+    const result = await executeQuery(sql, [adId]);
+    return result.affectedRows > 0;
+  }
+
   // Claim an ad for the lander worker: redirect_status = status and updated_date = NOW().
   // updated_date is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
   // already-IN_PROCESSING ad is re-served (no column value changes).

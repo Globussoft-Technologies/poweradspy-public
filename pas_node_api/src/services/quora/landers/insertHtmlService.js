@@ -123,8 +123,13 @@ async function insertHtmlRedirectCountry(req, db, log) {
         // repo.updateAdMetaData returns the affectedRows count (a number), not a
         // { code } object — reading `.code` off it made this response's code
         // undefined, which crashed res.status() in the route (HTTP 500).
+        // No lander was captured → screenshot goes back to the placeholder (the value existing
+        // quora_ad_meta_data rows carry) and the stored whitehat screenshot list is cleared,
+        // so the next crawl starts a clean list.
         const affectedRows = await repo.updateAdMetaData( item.ad_id, {
-          redirect_status: redirectStatus
+          redirect_status: redirectStatus,
+          screenshot_url: 'https://api.poweradspy.com/processing.gif',
+          white_ad_screenshot: null
         });
         const updated = affectedRows > 0;
 

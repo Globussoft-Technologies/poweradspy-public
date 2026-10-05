@@ -51,6 +51,18 @@ class NativeAdMetaData {
     return result.affectedRows > 0;
   }
 
+  // Status 3 (no lander captured): screenshot goes back to the placeholder (same value insertion
+  // uses) and the stored whitehat screenshot list is cleared, so the next crawl starts a clean list.
+  static async resetLanderScreenshot(adId) {
+    const sql = `
+      UPDATE native_ad_meta_data
+      SET screenshot_url = '/processing.gif', white_ad_screenshot = NULL
+      WHERE native_ad_id = ?
+    `;
+    const result = await executeQuery(sql, [adId]);
+    return result.affectedRows > 0;
+  }
+
   // Batch update redirect statuses
   static async batchUpdateRedirectStatus(updates) {
     if (!updates || updates.length === 0) {

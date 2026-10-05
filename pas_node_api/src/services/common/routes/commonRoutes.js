@@ -167,7 +167,7 @@ router.post(
   '/catsearch',
   authMiddleware,
   asyncHandler(async (req, res) => {
-    const DS_CAT_SEARCH_URL = process.env.AI_CATEGORY || 'https://ai-cat-search.poweradspy.ai/search';
+    const DS_CAT_SEARCH_URL = process.env.AI_CATEGORY || 'https://ai-suggestions-optra-lin-3.poweradspy.ai/search';
     try {
       const response = await fetch(DS_CAT_SEARCH_URL, {
         method: 'POST',

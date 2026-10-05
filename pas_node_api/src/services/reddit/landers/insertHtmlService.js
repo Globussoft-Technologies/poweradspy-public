@@ -235,8 +235,13 @@ async function insertHtmlRedirectCountry(req, db, log) {
 
           if (bStatus !== 1 || wStatus !== 0 || wStatus !== 2) {
             const redirectStatus = item.crawled_by === '.net' ? 3 : 5;
+            // No lander was captured → screenshot goes back to the placeholder (the value existing
+            // reddit_ad_meta_data rows carry) and the stored whitehat screenshot list is cleared,
+            // so the next crawl starts a clean list.
             const updateResult = await repo.updateAdMetaData(item.ad_id, {
-              redirect_status: redirectStatus
+              redirect_status: redirectStatus,
+              screenshot_url: 'https://api.poweradspy.com/processing.gif',
+              white_ad_screenshot: null
             });
 
             return {

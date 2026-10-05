@@ -130,6 +130,7 @@ class InsertHtmlContentService {
         // Status 3 = data not found: only flag redirect_status (5, or 3 for .net); skip content writes.
         if (parseInt(data.status, 10) === 3) {
           const flagged = await repository.updateRedirectStatus(data.ad_id, data.crawled_by === '.net' ? 3 : 5);
+          await repository.resetLanderScreenshot(data.ad_id);
           results.push({
             ad_id: data.ad_id,
             code: flagged ? 200 : 400,
